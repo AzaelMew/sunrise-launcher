@@ -82,16 +82,19 @@ impl Launcher {
                 |step| {
                     let _ = tx.send(Msg::NativeProgress(step));
                 },
-                &|inventory| {
-                    let (reply, answer) = std::sync::mpsc::channel();
-                    tx.send(Msg::NativeRegistryConsent(inventory.clone(), reply))
-                        .is_ok()
-                        && answer.recv().unwrap_or(false)
-                },
+                &|inventory| ask_registry(&tx, inventory),
             );
             let _ = tx.send(Msg::Native(result));
         });
     }
+}
+
+/// The SDK may ask before compiling added registry code. Losing the waiting window refuses it.
+pub(super) fn ask_registry(tx: &Sender<Msg>, inventory: &native_mods::Consent) -> bool {
+    let (reply, answer) = std::sync::mpsc::channel();
+    tx.send(Msg::NativeRegistryConsent(inventory.clone(), reply))
+        .is_ok()
+        && answer.recv().unwrap_or(false)
 }
 
 /// What a failed build says, and the mods that stopped it: a mod's own compile failure, or its
@@ -111,6 +114,33 @@ fn failure_message(error: String, built: &[String]) -> (String, Vec<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_sdk_dependency_request_gets_only_its_own_answer() {
+        let (tx, requests) = std::sync::mpsc::channel();
+        let inventory = native_mods::Consent {
+            added_crates: 2,
+            build_scripts: vec!["builder".into()],
+            proc_macros: vec!["macro".into()],
+        };
+        std::thread::scope(|scope| {
+            for allowed in [false, true] {
+                let worker = scope.spawn(|| ask_registry(&tx, &inventory));
+                let Msg::NativeRegistryConsent(asked, reply) = requests.recv().unwrap() else {
+                    panic!("expected a dependency-consent request");
+                };
+                assert_eq!(asked, inventory);
+                if allowed {
+                    reply.send(true).unwrap();
+                } else {
+                    drop(reply);
+                }
+                assert_eq!(worker.join().unwrap(), allowed);
+            }
+        });
+        drop(requests);
+        assert!(!ask_registry(&tx, &inventory));
+    }
 
     #[test]
     fn a_failure_after_switching_instances_is_read_against_the_mods_built() {

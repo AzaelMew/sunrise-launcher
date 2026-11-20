@@ -64,6 +64,7 @@ impl Switch {
         tag: &str,
         profile: native_mods::Profile,
         progress: impl Fn(native_mods::Step),
+        registry_consent: &dyn Fn(&native_mods::Consent) -> bool,
     ) -> Result<Option<Self>, String> {
         build::validate_tag(tag)?;
         let prior = owner.active_build()?;
@@ -86,7 +87,12 @@ impl Switch {
                 (root, Basis::First(binding))
             }
         };
-        match Self::plan(owner.clone(), basis, tag, profile, &root, progress) {
+        let compiler = CandidateBuild {
+            profile,
+            cancellation: native_mods::Cancellation::for_profile(owner.clone()),
+            registry_consent: Some(registry_consent),
+        };
+        match Self::plan(owner.clone(), basis, tag, compiler, &root, progress) {
             Ok(plan) => Ok(Some(plan)),
             Err(error) => {
                 owner.recover_abandoned()?;
@@ -99,7 +105,7 @@ impl Switch {
         owner: Arc<Lease>,
         basis: Basis,
         tag: &str,
-        profile: native_mods::Profile,
+        compiler: CandidateBuild<'_>,
         root: &Path,
         progress: impl Fn(native_mods::Step),
     ) -> Result<Self, String> {
@@ -114,12 +120,6 @@ impl Switch {
         let game = backend::game_of_build(tag).ok_or_else(unsettled)?;
         let (catalogue, index) = sunrise::authoritative_index()?;
         let slots = candidates(&source, &catalogue, &game, root)?;
-        let cancellation = native_mods::Cancellation::for_profile(owner.clone());
-        let compiler = CandidateBuild {
-            profile,
-            cancellation: cancellation.clone(),
-            registry_consent: None,
-        };
         let mut native_refusals = BTreeMap::new();
         let mut solved = None;
         best_survivor_set(&slots, &source, |chosen| {
@@ -211,7 +211,7 @@ impl Switch {
             next,
             initial_inputs,
             index,
-            cancellation,
+            cancellation: compiler.cancellation,
             fence,
             question,
             effects,

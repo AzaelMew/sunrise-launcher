@@ -166,6 +166,7 @@ impl StagedPack {
 pub fn prepare(
     id: &str,
     progress: &dyn Fn(&str, f32),
+    registry_consent: &dyn Fn(&native_mods::Consent) -> bool,
 ) -> Result<PackInstall, installed::InstallError> {
     let (index, evidence) = authoritative_index()?;
     let staged = stage_in(
@@ -175,6 +176,7 @@ pub fn prepare(
         &packs_dir(),
         || backend::resolve_version(None),
         progress,
+        Some(registry_consent),
     )?;
     Ok(PackInstall {
         staged,
@@ -189,6 +191,7 @@ fn stage_in(
     dir: &Path,
     initial_base: impl FnOnce() -> Result<String, String>,
     progress: &dyn Fn(&str, f32),
+    registry_consent: Option<&dyn Fn(&native_mods::Consent) -> bool>,
 ) -> Result<StagedPack, installed::InstallError> {
     let p = index
         .project(id)
@@ -227,6 +230,7 @@ fn stage_in(
                     &[RECORD, ARCHIVE],
                     native_mods::Profile::Optimized,
                     steps,
+                    registry_consent,
                 )
                 .map_err(|e| installed::InstallError::for_build(e, &p.name))?;
             (
@@ -255,6 +259,7 @@ fn stage_in(
                 target.base(),
                 native_mods::Profile::Optimized,
                 steps,
+                registry_consent,
             )
             .map_err(|e| installed::InstallError::for_build(e, &p.name))?;
             (
@@ -766,7 +771,7 @@ mod tests {
             br#"{"version_id":"26.3"}"#,
         )
         .unwrap();
-        stage_in(index, true, id, packs, || Ok(tag), &|_, _| {})?
+        stage_in(index, true, id, packs, || Ok(tag), &|_, _| {}, None)?
             .commit(false, || Ok(()))
             .map_err(Into::into)
     }
@@ -980,7 +985,7 @@ mod tests {
         .unwrap();
         let file = PathBuf::from(&entries[0].file);
         let ready = plan
-            .prepare(&index, &[], native_mods::Profile::Optimized, |_| {})
+            .prepare(&index, &[], native_mods::Profile::Optimized, |_| {}, None)
             .unwrap();
         assert!(owner.active_build().unwrap().is_none());
         assert!(!home.join(&file).exists());
@@ -1045,6 +1050,7 @@ mod tests {
                 &packs,
                 || panic!("keep bound build"),
                 &|_, _| {},
+                None,
             )
             .unwrap();
             let question = ready.question().unwrap();
@@ -1110,6 +1116,7 @@ mod tests {
                     &index,
                     native_mods::Profile::Optimized,
                     |_| {},
+                    None,
                 )
                 .unwrap();
             assert_eq!(ready.question().affected.len(), 1);
@@ -1132,6 +1139,7 @@ mod tests {
                     &index,
                     native_mods::Profile::Optimized,
                     |_| {},
+                    None,
                 )
                 .is_err());
             assert_eq!(fs::read(&pointer).unwrap(), original);
@@ -1209,6 +1217,7 @@ mod tests {
                 &index,
                 native_mods::Profile::Optimized,
                 |_| {},
+                None,
             )
         };
         let dependent = home.join("sunrise-mods/dependent.smod");
@@ -1277,6 +1286,7 @@ mod tests {
                 &index,
                 native_mods::Profile::Optimized,
                 |_| {},
+                None,
             )
             .unwrap();
         assert!(file.is_file() && origin_file.is_file());

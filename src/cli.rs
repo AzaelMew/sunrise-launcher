@@ -2143,6 +2143,7 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                 &instance,
                 std::slice::from_ref(&project.id),
                 &line,
+                &registry_consent,
             )?
             .commit(false);
         }
@@ -2297,7 +2298,7 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                 ));
             }
             if p.kind == Kind::Modpack && p.source == SourceId::Sunrise {
-                let proposal = sunrise::pack::prepare(&p.id, &line)?;
+                let proposal = sunrise::pack::prepare(&p.id, &line, &registry_consent)?;
                 if let Some(question) = proposal.question() {
                     if !switch::approve_world_change(question, tr("Update anyway? [y/N]"))? {
                         return Err(tr("Update cancelled. Nothing was changed.").into());
@@ -2426,7 +2427,13 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                     format!("{} ({})", entry.title, entry.file),
                 )
             };
-            let plan = prepare_mod_edit(owner, &instance, ModEdit::Remove(vec![remove]), &line)?;
+            let plan = prepare_mod_edit(
+                owner,
+                &instance,
+                ModEdit::Remove(vec![remove]),
+                &line,
+                &registry_consent,
+            )?;
             if !switch::approve_world_change(plan.question(), tr("Remove anyway? [y/N]"))? {
                 return Err(tr("Removal cancelled. Nothing was changed.").into());
             }
@@ -2451,6 +2458,7 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                     enabled: on,
                 },
                 &line,
+                &registry_consent,
             )?
             .commit(false)?;
             println!("{} is {}.", e.title, if on { "on" } else { "off" });

@@ -93,9 +93,15 @@ impl Launcher {
         self.ui.sheets.error = None;
         let tx = self.tx.clone();
         let work = cx.background_executor().spawn(async move {
-            Switch::stage(lease, &tag, instance.native_profile, |step| {
-                let _ = tx.send(Msg::NativeProgress(step));
-            })
+            Switch::stage(
+                lease,
+                &tag,
+                instance.native_profile,
+                |step| {
+                    let _ = tx.send(Msg::NativeProgress(step));
+                },
+                &|inventory| crate::native_build::ask_registry(&tx, inventory),
+            )
         });
         cx.spawn(async move |this, cx| {
             let result = work.await;

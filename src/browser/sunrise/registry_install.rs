@@ -1,7 +1,7 @@
 //! Explicit registry mutations on an admitted build. Download and compilation happen in
 //! the reserved private candidate; the approval object has no request it could run again.
 use super::{authoritative_index, dependencies, installed, registry_candidates, txn, Install};
-use crate::{backend, i18n::tr, worlds};
+use crate::{backend, i18n::tr, native_mods, worlds};
 use std::sync::Arc;
 
 pub struct RegistryInstall {
@@ -38,6 +38,7 @@ pub fn prepare_registry_install(
     instance: &crate::instances::Instance,
     ids: &[String],
     progress: &dyn Fn(&str, f32),
+    registry_consent: &dyn Fn(&native_mods::Consent) -> bool,
 ) -> Result<RegistryInstall, installed::InstallError> {
     let (index, evidence) = authoritative_index()?;
     let waiting = txn::waiting_packages(owner.home())?;
@@ -57,9 +58,13 @@ pub fn prepare_registry_install(
         &waiting,
     )?;
     let ready = plan
-        .prepare(&index, &[], instance.native_profile, |step| {
-            progress(&step.label(), 0.99)
-        })
+        .prepare(
+            &index,
+            &[],
+            instance.native_profile,
+            |step| progress(&step.label(), 0.99),
+            Some(registry_consent),
+        )
         .map_err(|e| installed::InstallError::for_build(e, &ids.join(", ")))?;
     Ok(RegistryInstall {
         ready: Box::new(ready),

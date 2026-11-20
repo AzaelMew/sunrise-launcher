@@ -451,11 +451,18 @@ impl Launcher {
         self.mods.busy = Some((name.clone(), tr("Working…").into(), 0.));
         self.mods.message = None;
         let tx = self.mods.tx.clone();
+        let launcher = self.tx.clone();
         std::thread::spawn(move || {
             let prepared = sunrise::txn::Lease::admit(&instance.home).and_then(|owner| {
-                sunrise::txn::prepare_mod_edit(Arc::new(owner), &instance, edit, &|line, f| {
-                    let _ = tx.send(Event::Progress(line.into(), f));
-                })
+                sunrise::txn::prepare_mod_edit(
+                    Arc::new(owner),
+                    &instance,
+                    edit,
+                    &|line, f| {
+                        let _ = tx.send(Event::Progress(line.into(), f));
+                    },
+                    &|inventory| crate::native_build::ask_registry(&launcher, inventory),
+                )
             });
             let event = match prepared {
                 Ok(plan) if plan.question().needed() => Event::ReadyEdit(Box::new(PreparedEdit {
@@ -577,6 +584,7 @@ impl Launcher {
         let everything =
             self.mods.everything || self.mods.browse.filters.other_version(&self.mods.game);
         let tx = self.mods.tx.clone();
+        let launcher = self.tx.clone();
         let queue::Target { home, game, .. } = target.clone();
         self.mods.running = Some(target.clone());
         let retry = known.clone();
@@ -631,7 +639,9 @@ impl Launcher {
                     )));
                 }
                 if p.kind == PackKind::Modpack && p.source == SourceId::Sunrise {
-                    let plan = sunrise::pack::prepare(&p.id, &progress)?;
+                    let plan = sunrise::pack::prepare(&p.id, &progress, &|inventory| {
+                        crate::native_build::ask_registry(&launcher, inventory)
+                    })?;
                     return PreparedInstall {
                         target: target.clone(),
                         label: id.clone(),
@@ -649,6 +659,7 @@ impl Launcher {
                         instance,
                         std::slice::from_ref(&p.id),
                         &progress,
+                        &|inventory| crate::native_build::ask_registry(&launcher, inventory),
                     )?;
                     let finished = Finished::registry_install(plan.entries(), &before, &p.id);
                     return PreparedInstall {
@@ -785,6 +796,7 @@ impl Launcher {
             0.,
         ));
         let tx = self.mods.tx.clone();
+        let launcher = self.tx.clone();
         let home = target.home.clone();
         self.mods.running = Some(target.clone());
         let instance = self
@@ -805,8 +817,13 @@ impl Launcher {
                     .as_ref()
                     .ok_or_else(backend::no_version_installed)?;
                 let before = installed::Installed::load(&home).entries;
-                let plan =
-                    sunrise::prepare_registry_install(lease.clone(), instance, &ids, &progress)?;
+                let plan = sunrise::prepare_registry_install(
+                    lease.clone(),
+                    instance,
+                    &ids,
+                    &progress,
+                    &|inventory| crate::native_build::ask_registry(&launcher, inventory),
+                )?;
                 let finished = Finished::registry_install(plan.entries(), &before, "");
                 PreparedInstall {
                     target: target.clone(),

@@ -127,11 +127,12 @@ impl StagedInstall {
         sidecars: &[&str],
         profile: native_mods::Profile,
         progress: impl Fn(native_mods::Step),
+        registry_consent: Option<&dyn Fn(&native_mods::Consent) -> bool>,
     ) -> Result<ReadyInstall, native_mods::Failed> {
         let compiler = CandidateBuild {
             profile,
             cancellation: native_mods::Cancellation::for_profile(self.owner.clone()),
-            registry_consent: None,
+            registry_consent,
         };
         self.prepare_with(index, sidecars, compiler, progress)
     }
@@ -329,12 +330,17 @@ pub fn prepare_mod_edit(
     instance: &Instance,
     edit: ModEdit,
     progress: &dyn Fn(&str, f32),
+    registry_consent: &dyn Fn(&native_mods::Consent) -> bool,
 ) -> Result<PreparedModEdit, String> {
     let (index, evidence) = sunrise::authoritative_index()?;
     let plan = StagedInstall::for_instance(owner, instance, progress)?;
-    let ready = plan.edit(edit, &index, instance.native_profile, |step| {
-        progress(&step.label(), 0.99)
-    })?;
+    let ready = plan.edit(
+        edit,
+        &index,
+        instance.native_profile,
+        |step| progress(&step.label(), 0.99),
+        Some(registry_consent),
+    )?;
     Ok(PreparedModEdit {
         ready,
         index: evidence,
@@ -348,6 +354,7 @@ impl StagedInstall {
         index: &index::Index,
         profile: native_mods::Profile,
         progress: impl Fn(native_mods::Step),
+        registry_consent: Option<&dyn Fn(&native_mods::Consent) -> bool>,
     ) -> Result<ReadyInstall, String> {
         let mut sidecars = Vec::new();
         let mut requested_off = Vec::new();
@@ -425,7 +432,7 @@ impl StagedInstall {
         let compiler = CandidateBuild {
             profile,
             cancellation: native_mods::Cancellation::for_profile(self.owner.clone()),
-            registry_consent: None,
+            registry_consent,
         };
         self.seal(after, sidecars, &requested_off, compiler, progress)
             .map_err(Into::into)
@@ -504,6 +511,7 @@ pub(in crate::browser::sunrise) fn seal_private_profile(
     base: &str,
     profile: native_mods::Profile,
     progress: impl Fn(native_mods::Step),
+    registry_consent: Option<&dyn Fn(&native_mods::Consent) -> bool>,
 ) -> Result<SealedProfile, native_mods::Failed> {
     let home = owner.home();
     let inventory = switch::Inventory::read(home)?;
@@ -512,7 +520,7 @@ pub(in crate::browser::sunrise) fn seal_private_profile(
     let compiler = CandidateBuild {
         profile,
         cancellation: native_mods::Cancellation::for_profile(owner.clone()),
-        registry_consent: None,
+        registry_consent,
     };
     let image = verify_candidate(target.base(), home, &compiler, &progress, &chosen)?;
     let binding = build::Bootstrap::bind(home, target)?;

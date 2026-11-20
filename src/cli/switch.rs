@@ -67,11 +67,17 @@ pub(super) fn run(instance: &instances::Instance, tag: &str, as_json: bool) -> R
     catch_interrupt().map_err(|e| e.to_string())?;
     let owner = Arc::new(Lease::admit(&instance.home)?);
     let progress = native_progress(io::stderr().is_terminal());
-    let plan = Switch::stage(owner, tag, instance.native_profile, |step| {
-        if let Some(line) = progress(step) {
-            let _ = writeln!(io::stderr(), "{line}");
-        }
-    })?;
+    let plan = Switch::stage(
+        owner,
+        tag,
+        instance.native_profile,
+        |step| {
+            if let Some(line) = progress(step) {
+                let _ = writeln!(io::stderr(), "{line}");
+            }
+        },
+        &registry_consent,
+    )?;
     let tty = io::stdin().is_terminal() && io::stdout().is_terminal();
     let mut output = io::stdout().lock();
     let Some(plan) = plan else {
