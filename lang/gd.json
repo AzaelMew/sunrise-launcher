@@ -200,7 +200,6 @@
   "Installed": "Air a stàladh",
   "Installed {mods} from GitHub ({source}). Build it on the Mods page.": "Air a chuir a-steach {mods} bho GitHub ({source}). Tog e air duilleag Mòdan.",
   "Installed {mods} into sunrise-mods and turned it on, checksum checked (Options > Mods in the game).": "Stàlaichte {mods} ann an sunrise-mods agus air a chur air, seic air a sgrùdadh (Roghainnean > Mòdan sa gheama).",
-  "Installed {mods} into {instance}. Build to play with it.": "Stàlaichte {mods} ann an {instance}. Tog gus cluich leis.",
   "Installed {mods}, checksums checked. Turn it on in the game: Options > Resource Packs.": "Stàlaichte {mods}, seicean air an sgrùdadh. Cuir air e sa gheama: Roghainnean > Pacaidean Goireasan.",
   "Installed {pack} {version} as its own profile with {mods}, each checked. Play it from the list above.": "Stàlaichte {pack} {version} mar phròifil fhèin le {mods}, gach fear air a sgrùdadh. Cluich e bhon liosta gu h-àrd.",
   "Installing the build": "Stàladh an togail",

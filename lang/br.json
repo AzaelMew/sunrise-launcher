@@ -200,7 +200,6 @@
   "Installed": "Staliet",
   "Installed {mods} from GitHub ({source}). Build it on the Mods page.": "Staliet {mods} adalek GitHub ({source}). Sevel anezhañ war ar bajenn Mods.",
   "Installed {mods} into sunrise-mods and turned it on, checksum checked (Options > Mods in the game).": "Staliet {mods} e sunrise-mods ha lakaet war-sav, ar sammad gwiriañ gwiriet (Options > Mods er c'hoari).",
-  "Installed {mods} into {instance}. Build to play with it.": "Staliet {mods} e {instance}. Savit evit c'hoari ganto.",
   "Installed {mods}, checksums checked. Turn it on in the game: Options > Resource Packs.": "Staliet {mods}, sammadoù gwiriañ gwiriet. Lakait anezhañ war-sav er c'hoari: Options > Resource Packs.",
   "Installed {pack} {version} as its own profile with {mods}, each checked. Play it from the list above.": "Staliet {pack} {version} evel ur profil dezhañ e-unan gant {mods}, pep hini gwiriet. C'hoariit anezhañ eus ar roll amañ a-us.",
   "Installing the build": "O staliañ ar sevel",

@@ -200,7 +200,6 @@
   "Installed": "Instalováno",
   "Installed {mods} from GitHub ({source}). Build it on the Mods page.": "Nainstalováno {mods} z GitHubu ({source}). Vytvořte jej na stránce Mods.",
   "Installed {mods} into sunrise-mods and turned it on, checksum checked (Options > Mods in the game).": "Mody {mods} byly nainstalovány do sunrise-mods a aktivovány, kontrolní součet ověřen (v nabídce Možnosti > Mody ve hře).",
-  "Installed {mods} into {instance}. Build to play with it.": "Mody {mods} byly nainstalovány do instance {instance}. Pro hraní proveďte sestavení.",
   "Installed {mods}, checksums checked. Turn it on in the game: Options > Resource Packs.": "Nainstalováno: {mods}, kontrolní součty ověřeny. Aktivujte ve hře: Možnosti > Balíčky zdrojů.",
   "Installed {pack} {version} as its own profile with {mods}, each checked. Play it from the list above.": "Balíček {pack} {version} byl nainstalován jako samostatný profil s {mods}, vše bylo ověřeno. Spusťte jej ze seznamu výše.",
   "Installing the build": "Instalace sestavení",

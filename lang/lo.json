@@ -200,7 +200,6 @@
   "Installed": "ຕິດຕັ້ງແລ້ວ",
   "Installed {mods} from GitHub ({source}). Build it on the Mods page.": "ຕິດຕັ້ງ {mods} ຈາກ GitHub ({source}). ສ້າງມັນຢູ່ໃນຫນ້າ Mods.",
   "Installed {mods} into sunrise-mods and turned it on, checksum checked (Options > Mods in the game).": "ຕິດຕັ້ງ {mods} ໃສ່ sunrise-mods ແລະ ເປີດມັນແລ້ວ, ກວດ checksum ແລ້ວ (Options > Mods ໃນເກມ).",
-  "Installed {mods} into {instance}. Build to play with it.": "ຕິດຕັ້ງ {mods} ໃສ່ {instance} ແລ້ວ. ສ້າງເພື່ອຫຼິ້ນກັບມັນ.",
   "Installed {mods}, checksums checked. Turn it on in the game: Options > Resource Packs.": "ຕິດຕັ້ງ {mods} ແລ້ວ, ກວດ checksum ແລ້ວ. ເປີດມັນໃນເກມ: Options > Resource Packs.",
   "Installed {pack} {version} as its own profile with {mods}, each checked. Play it from the list above.": "ຕິດຕັ້ງ {pack} {version} ເປັນໂປຣໄຟລ໌ຂອງມັນເອງພ້ອມ {mods}, ກວດແຕ່ລະອັນແລ້ວ. ຫຼິ້ນມັນຈາກລາຍການຂ້າງເທິງ.",
   "Installing the build": "ການຕິດຕັ້ງການກໍ່ສ້າງ",

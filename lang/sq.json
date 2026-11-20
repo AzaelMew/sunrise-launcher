@@ -200,7 +200,6 @@
   "Installed": "Instaluar",
   "Installed {mods} from GitHub ({source}). Build it on the Mods page.": "Instaluar {mods} nga GitHub ({source}). Ndërtojeni atë në faqen Mods.",
   "Installed {mods} into sunrise-mods and turned it on, checksum checked (Options > Mods in the game).": "Instaluar {mods} në sunrise-mods dhe u ndez, suma e kontrollit u verifikua (Options > Mods në lojë).",
-  "Installed {mods} into {instance}. Build to play with it.": "Instaluar {mods} në {instance}. Ndërtoni për të luajtur me të.",
   "Installed {mods}, checksums checked. Turn it on in the game: Options > Resource Packs.": "Instaluar {mods}, sumat e kontrollit u verifikuan. Ndizeni në lojë: Options > Resource Packs.",
   "Installed {pack} {version} as its own profile with {mods}, each checked. Play it from the list above.": "Instaluar {pack} {version} si profil të vet me {mods}, secili i kontrolluar. Luajeni nga lista më sipër.",
   "Installing the build": "Instalimi i ndërtimit",

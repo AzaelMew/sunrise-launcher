@@ -200,7 +200,6 @@
   "Installed": "Naka-install",
   "Installed {mods} from GitHub ({source}). Build it on the Mods page.": "Na-install ang {mods} mula sa GitHub ({source}). Buuin ito sa pahina ng Mods.",
   "Installed {mods} into sunrise-mods and turned it on, checksum checked (Options > Mods in the game).": "Na-install ang {mods} sa sunrise-mods at in-on ito, nasuri ang checksum (Options > Mods sa laro).",
-  "Installed {mods} into {instance}. Build to play with it.": "Na-install ang {mods} sa {instance}. Mag-build para makapaglaro kasama nito.",
   "Installed {mods}, checksums checked. Turn it on in the game: Options > Resource Packs.": "Na-install ang {mods}, nasuri ang mga checksum. I-on ito sa laro: Options > Resource Packs.",
   "Installed {pack} {version} as its own profile with {mods}, each checked. Play it from the list above.": "Na-install ang {pack} {version} bilang sarili nitong profile kasama ang {mods}, nasuri ang bawat isa. Laruin ito mula sa listahan sa itaas.",
   "Installing the build": "Pag-install ng build",

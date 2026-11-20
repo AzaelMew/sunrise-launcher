@@ -200,7 +200,6 @@
   "Installed": "Geïnstalleerd",
   "Installed {mods} from GitHub ({source}). Build it on the Mods page.": "{mods} geïnstalleerd vanaf GitHub ({source}). Bouw het op de Mods-pagina.",
   "Installed {mods} into sunrise-mods and turned it on, checksum checked (Options > Mods in the game).": "{mods} geïnstalleerd in sunrise-mods en ingeschakeld, controlesom gecontroleerd (Opties > Mods in het spel).",
-  "Installed {mods} into {instance}. Build to play with it.": "{mods} geïnstalleerd in {instance}. Bouw om ermee te spelen.",
   "Installed {mods}, checksums checked. Turn it on in the game: Options > Resource Packs.": "{mods} geïnstalleerd, controlesommen gecontroleerd. Schakel het in in het spel: Opties > Resourcepakketten.",
   "Installed {pack} {version} as its own profile with {mods}, each checked. Play it from the list above.": "{pack} {version} geïnstalleerd als eigen profiel met {mods}, elk gecontroleerd. Speel het via de lijst hierboven.",
   "Installing the build": "Het installeren van de constructie",

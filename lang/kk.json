@@ -200,7 +200,6 @@
   "Installed": "Орнатылған",
   "Installed {mods} from GitHub ({source}). Build it on the Mods page.": "GitHub ({source}) жүйесінен {mods} орнатылды. Оны Mods бетінде жасаңыз.",
   "Installed {mods} into sunrise-mods and turned it on, checksum checked (Options > Mods in the game).": "{mods} sunrise-mods ішіне орнатылып, қосылды, бақылау сомасы тексерілді (ойында Параметрлер > Модтар).",
-  "Installed {mods} into {instance}. Build to play with it.": "{mods} {instance} данасына орнатылды. Онымен ойнау үшін құрастырыңыз.",
   "Installed {mods}, checksums checked. Turn it on in the game: Options > Resource Packs.": "{mods} орнатылды, бақылау сомалары тексерілді. Ойында қосыңыз: Параметрлер > Ресурстар бумалары.",
   "Installed {pack} {version} as its own profile with {mods}, each checked. Play it from the list above.": "{pack} {version} {mods} модтарымен жеке профиль ретінде орнатылды, әрқайсысы тексерілді. Оны жоғарыдағы тізімнен ойнаңыз.",
   "Installing the build": "Құрылымды орнату",

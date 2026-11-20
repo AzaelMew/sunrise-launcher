@@ -200,7 +200,6 @@
   "Installed": "Yüklendi",
   "Installed {mods} from GitHub ({source}). Build it on the Mods page.": "GitHub'dan ({source}) {mods} yüklendi. Modlar sayfasından derleyin.",
   "Installed {mods} into sunrise-mods and turned it on, checksum checked (Options > Mods in the game).": "{mods}, sunrise-mods içine yüklendi ve etkinleştirildi, sağlama toplamı kontrol edildi (oyunda Seçenekler > Modlar).",
-  "Installed {mods} into {instance}. Build to play with it.": "{mods}, {instance} içine yüklendi. Onlarla oynamak için derleyin.",
   "Installed {mods}, checksums checked. Turn it on in the game: Options > Resource Packs.": "{mods} yüklendi, sağlama toplamları kontrol edildi. Oyunda açın: Seçenekler > Kaynak Paketleri.",
   "Installed {pack} {version} as its own profile with {mods}, each checked. Play it from the list above.": "{pack} {version}, {mods} ile kendi profili olarak yüklendi, her biri kontrol edildi. Yukarıdaki listeden oynayın.",
   "Installing the build": "Derleme yükleniyor",

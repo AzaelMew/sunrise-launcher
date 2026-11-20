@@ -200,7 +200,6 @@
   "Installed": "Installat",
   "Installed {mods} from GitHub ({source}). Build it on the Mods page.": "Installat {mods} minn GitHub ({source}). Ibniha fuq il-paġna Mods.",
   "Installed {mods} into sunrise-mods and turned it on, checksum checked (Options > Mods in the game).": "Installajt {mods} f'sunrise-mods u xegħelthom, iċċekkjat il-checksum (Għażliet > Mods fil-logħba).",
-  "Installed {mods} into {instance}. Build to play with it.": "Installajt {mods} fi {instance}. Ibni biex tilgħab bihom.",
   "Installed {mods}, checksums checked. Turn it on in the game: Options > Resource Packs.": "Installajt {mods}, iċċekkjati l-checksums. Ixgħel fil-logħba: Għażliet > Pakketti tar-riżorsi.",
   "Installed {pack} {version} as its own profile with {mods}, each checked. Play it from the list above.": "Installajt {pack} {version} bħala profil tiegħu stess ma' {mods}, kull wieħed iċċekkjat. Ilgħabha mil-lista ta' fuq.",
   "Installing the build": "Installazzjoni tal-bini",

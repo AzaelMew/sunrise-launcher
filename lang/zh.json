@@ -200,7 +200,6 @@
   "Installed": "已安装",
   "Installed {mods} from GitHub ({source}). Build it on the Mods page.": "已从 GitHub（{source}）安装 {mods}。请在“模组”页面中构建。",
   "Installed {mods} into sunrise-mods and turned it on, checksum checked (Options > Mods in the game).": "已将 {mods} 安装到 sunrise-mods 并已启用，校验和已核对（游戏内：选项 > 模组）。",
-  "Installed {mods} into {instance}. Build to play with it.": "已将 {mods} 安装到 {instance}。构建后即可用它游玩。",
   "Installed {mods}, checksums checked. Turn it on in the game: Options > Resource Packs.": "已安装 {mods}，校验和已核对。请在游戏中启用：选项 > 资源包。",
   "Installed {pack} {version} as its own profile with {mods}, each checked. Play it from the list above.": "已将 {pack} {version} 作为独立配置文件安装，包含 {mods}，均已校验。请从上方列表中开始游戏。",
   "Installing the build": "正在安装构建",

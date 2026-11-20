@@ -200,7 +200,6 @@
   "Installed": "Урнаштырылды",
   "Installed {mods} from GitHub ({source}). Build it on the Mods page.": "{mods} GitHub ({source}) урнаштырылган. Аны Mods битендә төзегез.",
   "Installed {mods} into sunrise-mods and turned it on, checksum checked (Options > Mods in the game).": "{mods} sunrise-mods эченә урнаштырылды һәм кабызылды, тикшерү суммасы тикшерелде (уенда «Көйләүләр > Модлар»).",
-  "Installed {mods} into {instance}. Build to play with it.": "{mods} {instance} эченә урнаштырылды. Аның белән уйнау өчен төзегез.",
   "Installed {mods}, checksums checked. Turn it on in the game: Options > Resource Packs.": "{mods} урнаштырылды, тикшерү суммалары тикшерелде. Аны уенда кабызыгыз: «Көйләүләр > Ресурс пакетлары».",
   "Installed {pack} {version} as its own profile with {mods}, each checked. Play it from the list above.": "{pack} {version} {mods} белән аерым профиль буларак урнаштырылды, һәрберсе тикшерелде. Аны өстәге исемлектән уйнагыз.",
   "Installing the build": "Бинаны урнаштыру",

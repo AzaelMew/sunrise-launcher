@@ -200,7 +200,6 @@
   "Installed": "نصب شده است",
   "Installed {mods} from GitHub ({source}). Build it on the Mods page.": "نصب {mods} از GitHub ({source}). آن را در صفحه Mods بسازید.",
   "Installed {mods} into sunrise-mods and turned it on, checksum checked (Options > Mods in the game).": "{mods} در sunrise-mods نصب و روشن شد و چک‌سوم بررسی شد (Options > Mods در بازی).",
-  "Installed {mods} into {instance}. Build to play with it.": "{mods} در {instance} نصب شد. برای بازی با آن بسازید.",
   "Installed {mods}, checksums checked. Turn it on in the game: Options > Resource Packs.": "{mods} نصب شد، چک‌سوم‌ها بررسی شدند. آن را در بازی روشن کنید: Options > Resource Packs.",
   "Installed {pack} {version} as its own profile with {mods}, each checked. Play it from the list above.": "{pack} {version} به‌عنوان نمایه مستقل خودش همراه با {mods} نصب شد و هر کدام بررسی شدند. از فهرست بالا بازی کنید.",
   "Installing the build": "نصب بیلد",

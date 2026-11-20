@@ -200,7 +200,6 @@
   "Installed": "Установлено",
   "Installed {mods} from GitHub ({source}). Build it on the Mods page.": "Установлено {mods} с GitHub ({source}). Соберите его на странице «Моды».",
   "Installed {mods} into sunrise-mods and turned it on, checksum checked (Options > Mods in the game).": "Установил {mods} в папку sunrise-mods и включил их, проверил контрольную сумму (Настройки > Моды в игре)",
-  "Installed {mods} into {instance}. Build to play with it.": "Моды {mods} установлены в {instance}. Соберите проект, чтобы поиграть.",
   "Installed {mods}, checksums checked. Turn it on in the game: Options > Resource Packs.": "Установлены {mods}, хеши проверены. Включите их в игре: Настройки > Наборы ресурсов.",
   "Installed {pack} {version} as its own profile with {mods}, each checked. Play it from the list above.": "Установил {pack} {version} в отдельном профиле с {mods}, каждый из которых был проверен. Запустите игру из списка выше.",
   "Installing the build": "Установка сборки",

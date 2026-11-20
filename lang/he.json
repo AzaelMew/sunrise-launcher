@@ -200,7 +200,6 @@
   "Installed": "מותקן",
   "Installed {mods} from GitHub ({source}). Build it on the Mods page.": "הותקן {mods} מ-GitHub ({source}). בנה את זה בדף המודים.",
   "Installed {mods} into sunrise-mods and turned it on, checksum checked (Options > Mods in the game).": "הותקנו {mods} ב-sunrise-mods והופעלו, סכום הבדיקה נבדק (אפשרויות > מודים במשחק).",
-  "Installed {mods} into {instance}. Build to play with it.": "הותקנו {mods} בתוך {instance}. בנה כדי לשחק איתם.",
   "Installed {mods}, checksums checked. Turn it on in the game: Options > Resource Packs.": "הותקנו {mods}, סכומי הבדיקה נבדקו. הפעל אותם במשחק: אפשרויות > חבילות משאבים.",
   "Installed {pack} {version} as its own profile with {mods}, each checked. Play it from the list above.": "הותקן {pack} {version} כפרופיל משלו עם {mods}, כל אחד נבדק. הפעל אותו מהרשימה שלמעלה.",
   "Installing the build": "התקנת ה-build",

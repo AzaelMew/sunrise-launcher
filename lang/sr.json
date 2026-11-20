@@ -200,7 +200,6 @@
   "Installed": "Инсталиран",
   "Installed {mods} from GitHub ({source}). Build it on the Mods page.": "Инсталирано {mods} са GitHub-а ({source}). Направите га на страници „Модови“.",
   "Installed {mods} into sunrise-mods and turned it on, checksum checked (Options > Mods in the game).": "Инсталирано {mods} у sunrise-mods и укључено, контролна сума проверена (Опције > Модови у игри).",
-  "Installed {mods} into {instance}. Build to play with it.": "Инсталирано {mods} у {instance}. Изградите да бисте играли са тим.",
   "Installed {mods}, checksums checked. Turn it on in the game: Options > Resource Packs.": "Инсталирано {mods}, контролне суме проверене. Укључите га у игри: Опције > Пакети ресурса.",
   "Installed {pack} {version} as its own profile with {mods}, each checked. Play it from the list above.": "Инсталирано {pack} {version} као сопствени профил са {mods}, сваки проверен. Играјте га са листе изнад.",
   "Installing the build": "Инсталирање конструкције",

@@ -200,7 +200,6 @@
   "Installed": "installed",
   "Installed {mods} from GitHub ({source}). Build it on the Mods page.": "installed{mods}e*GitHub({source}). In Mods paginam aedifica.",
   "Installed {mods} into sunrise-mods and turned it on, checksum checked (Options > Mods in the game).": "Instituti {mods} in sunrise-mods et accensi, checksum comprobato (Occasus > Mods in ludo).",
-  "Installed {mods} into {instance}. Build to play with it.": "Instituti {mods} in {instance}. Aedifica ut cum eis ludas.",
   "Installed {mods}, checksums checked. Turn it on in the game: Options > Resource Packs.": "Instituti {mods}, checksum comprobato. Accende eos in ludo: Occasus > Sarcinae opum.",
   "Installed {pack} {version} as its own profile with {mods}, each checked. Play it from the list above.": "Instituta est {pack} {version} in profilo proprio cum {mods}, singulis comprobatis. Lude eam ex indice supra.",
   "Installing the build": "Installing constructum",

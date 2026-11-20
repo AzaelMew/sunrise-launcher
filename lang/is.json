@@ -200,7 +200,6 @@
   "Installed": "Uppsett",
   "Installed {mods} from GitHub ({source}). Build it on the Mods page.": "Sett upp {mods} frá GitHub ({source}). Byggðu það á Mods síðunni.",
   "Installed {mods} into sunrise-mods and turned it on, checksum checked (Options > Mods in the game).": "Setti upp {mods} í sunrise-mods og kveikti á því, eftirlitssumma athuguð (Options > Mods í leiknum).",
-  "Installed {mods} into {instance}. Build to play with it.": "Setti upp {mods} í {instance}. Byggðu til að spila með það.",
   "Installed {mods}, checksums checked. Turn it on in the game: Options > Resource Packs.": "Setti upp {mods}, eftirlitssummur athugaðar. Kveiktu á því í leiknum: Options > Resource Packs.",
   "Installed {pack} {version} as its own profile with {mods}, each checked. Play it from the list above.": "Setti upp {pack} {version} sem eigin prófíl með {mods}, hvert athugað. Spilaðu það af listanum hér að ofan.",
   "Installing the build": "Að setja upp bygginguna",

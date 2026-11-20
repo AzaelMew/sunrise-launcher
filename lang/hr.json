@@ -200,7 +200,6 @@
   "Installed": "Instalirano",
   "Installed {mods} from GitHub ({source}). Build it on the Mods page.": "Instalirano {mods} s GitHuba ({source}). Izgradite ga na stranici Modovi.",
   "Installed {mods} into sunrise-mods and turned it on, checksum checked (Options > Mods in the game).": "Instalirano {mods} u sunrise-mods i uključeno, kontrolni zbroj provjeren (Opcije > Modovi u igri).",
-  "Installed {mods} into {instance}. Build to play with it.": "Instalirano {mods} u {instance}. Izgradite da biste igrali s tim.",
   "Installed {mods}, checksums checked. Turn it on in the game: Options > Resource Packs.": "Instalirano {mods}, kontrolni zbrojevi provjereni. Uključite to u igri: Opcije > Paketi resursa.",
   "Installed {pack} {version} as its own profile with {mods}, each checked. Play it from the list above.": "Instaliran {pack} {version} kao vlastiti profil s {mods}, svaki provjeren. Igrajte ga s popisa iznad.",
   "Installing the build": "Instalacija verzije",

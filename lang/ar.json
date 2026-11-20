@@ -200,7 +200,6 @@
   "Installed": "مثبت",
   "Installed {mods} from GitHub ({source}). Build it on the Mods page.": "تم تثبيت {mods} من جيت هاب ({source}). قم ببنائه في صفحة التعديلات.",
   "Installed {mods} into sunrise-mods and turned it on, checksum checked (Options > Mods in the game).": "تم تثبيت {mods} في sunrise-mods وتشغيله، مع التحقق من المجموع الاختصاري (الخيارات > التعديلات في اللعبة).",
-  "Installed {mods} into {instance}. Build to play with it.": "تم تثبيت {mods} في {instance}. ابنِ لتلعب بها.",
   "Installed {mods}, checksums checked. Turn it on in the game: Options > Resource Packs.": "تم تثبيت {mods}، مع التحقق من المجاميع الاختصارية. شغّله في اللعبة: الخيارات > حزم الموارد.",
   "Installed {pack} {version} as its own profile with {mods}, each checked. Play it from the list above.": "تم تثبيت {pack} {version} كملف تعريفي خاص به مع {mods}، مع التحقق من كل منها. شغّله من القائمة أعلاه.",
   "Installing the build": "جاري تثبيت الإصدار",

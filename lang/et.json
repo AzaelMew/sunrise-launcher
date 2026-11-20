@@ -200,7 +200,6 @@
   "Installed": "Paigaldatud",
   "Installed {mods} from GitHub ({source}). Build it on the Mods page.": "Installitud {mods} GitHubist ({source}). Ehitage see lehel Modifikatsioonid.",
   "Installed {mods} into sunrise-mods and turned it on, checksum checked (Options > Mods in the game).": "{mods} paigaldati kausta sunrise-mods ja lülitati sisse, kontrollsumma kontrollitud (mängus Valikud > Modifikatsioonid).",
-  "Installed {mods} into {instance}. Build to play with it.": "{mods} paigaldati eksemplari {instance}. Mängimiseks ehitage.",
   "Installed {mods}, checksums checked. Turn it on in the game: Options > Resource Packs.": "Paigaldatud {mods}, kontrollsummad kontrollitud. Lülitage see mängus sisse: Valikud > Ressursipaketid.",
   "Installed {pack} {version} as its own profile with {mods}, each checked. Play it from the list above.": "{pack} {version} paigaldati eraldi profiilina koos {mods}, igaüks kontrollitud. Mängige seda ülalolevast loendist.",
   "Installing the build": "Ehitise paigaldamine",

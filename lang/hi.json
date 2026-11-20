@@ -200,7 +200,6 @@
   "Installed": "इंस्टॉल किया गया",
   "Installed {mods} from GitHub ({source}). Build it on the Mods page.": "GitHub ({source}) से {mods} इंस्टॉल किया गया। इसे मॉड पेज पर बनाएं।",
   "Installed {mods} into sunrise-mods and turned it on, checksum checked (Options > Mods in the game).": "{mods} को sunrise-mods में इंस्टॉल किया और चालू किया, चेकसम जाँचा गया (गेम में Options > Mods)।",
-  "Installed {mods} into {instance}. Build to play with it.": "{mods} को {instance} में इंस्टॉल किया गया। इसके साथ खेलने के लिए बिल्ड करें।",
   "Installed {mods}, checksums checked. Turn it on in the game: Options > Resource Packs.": "{mods} इंस्टॉल किए गए, चेकसम जाँचे गए। इसे गेम में चालू करें: Options > Resource Packs।",
   "Installed {pack} {version} as its own profile with {mods}, each checked. Play it from the list above.": "{pack} {version} को {mods} के साथ उसके अपने प्रोफ़ाइल के रूप में इंस्टॉल किया गया, प्रत्येक की जाँच हुई। इसे ऊपर की सूची से खेलें।",
   "Installing the build": "बिल्ड इंस्टॉल हो रहा है",

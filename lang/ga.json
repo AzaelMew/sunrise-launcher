@@ -200,7 +200,6 @@
   "Installed": "Suiteáilte",
   "Installed {mods} from GitHub ({source}). Build it on the Mods page.": "Suiteáilte {mods} ó GitHub ({source}). Tóg é ar an leathanach Mods.",
   "Installed {mods} into sunrise-mods and turned it on, checksum checked (Options > Mods in the game).": "Suiteáladh {mods} i sunrise-mods agus casadh air é, seiceáil deimhnithe (Roghanna > Mods sa chluiche).",
-  "Installed {mods} into {instance}. Build to play with it.": "Suiteáladh {mods} i {instance}. Tóg chun imirt leis.",
   "Installed {mods}, checksums checked. Turn it on in the game: Options > Resource Packs.": "Suiteáilte {mods}, seiceálacha deimhnithe. Cas air é sa chluiche: Roghanna > Pacáistí Acmhainní.",
   "Installed {pack} {version} as its own profile with {mods}, each checked. Play it from the list above.": "Suiteáladh {pack} {version} mar phróifíl féin le {mods}, gach ceann seiceáilte. Imir é ón liosta thuas.",
   "Installing the build": "Suiteáil an tógáil",

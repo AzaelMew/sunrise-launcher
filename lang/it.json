@@ -200,7 +200,6 @@
   "Installed": "Installato",
   "Installed {mods} from GitHub ({source}). Build it on the Mods page.": "Installato {mods} da GitHub ({source}). Costruiscilo nella pagina Mods.",
   "Installed {mods} into sunrise-mods and turned it on, checksum checked (Options > Mods in the game).": "Installate {mods} in sunrise-mods e attivate, checksum verificato (Opzioni > Mod nel gioco).",
-  "Installed {mods} into {instance}. Build to play with it.": "Installate {mods} in {instance}. Compila per giocarci.",
   "Installed {mods}, checksums checked. Turn it on in the game: Options > Resource Packs.": "Installati {mods}, checksum verificati. Attivali nel gioco: Opzioni > Pacchetti di risorse.",
   "Installed {pack} {version} as its own profile with {mods}, each checked. Play it from the list above.": "Installato {pack} {version} come profilo separato con {mods}, ognuno verificato. Avvialo dalla lista qui sopra.",
   "Installing the build": "Installazione della build",

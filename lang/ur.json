@@ -200,7 +200,6 @@
   "Installed": "انسٹال",
   "Installed {mods} from GitHub ({source}). Build it on the Mods page.": "GitHub ({source}) سے {mods} انسٹال ہوا۔ اسے Mods صفحہ پر بنائیں۔",
   "Installed {mods} into sunrise-mods and turned it on, checksum checked (Options > Mods in the game).": "{mods} sunrise-mods میں انسٹال ہوئے اور آن کر دیے گئے، چیک سم جانچا گیا (گیم میں Options > Mods)۔",
-  "Installed {mods} into {instance}. Build to play with it.": "{mods} {instance} میں انسٹال ہوئے۔ اس کے ساتھ کھیلنے کے لیے تعمیر کریں۔",
   "Installed {mods}, checksums checked. Turn it on in the game: Options > Resource Packs.": "{mods} انسٹال ہوئے، چیک سمز جانچے گئے۔ اسے گیم میں آن کریں: Options > Resource Packs۔",
   "Installed {pack} {version} as its own profile with {mods}, each checked. Play it from the list above.": "{pack} {version} {mods} کے ساتھ الگ پروفائل کے طور پر انسٹال ہوا، ہر ایک جانچا گیا۔ اسے اوپر کی فہرست سے کھیلیں۔",
   "Installing the build": "تعمیر کو انسٹال کرنا",

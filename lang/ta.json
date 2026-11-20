@@ -200,7 +200,6 @@
   "Installed": "நிறுவப்பட்டது",
   "Installed {mods} from GitHub ({source}). Build it on the Mods page.": "GitHub ({source}) இலிருந்து {mods} நிறுவப்பட்டது. மோட்ஸ் பக்கத்தில் அதை உருவாக்கவும்.",
   "Installed {mods} into sunrise-mods and turned it on, checksum checked (Options > Mods in the game).": "{mods} ஐ sunrise-mods இல் நிறுவி இயக்கியது, செக்சம் சரிபார்க்கப்பட்டது (விளையாட்டில் விருப்பங்கள் > மோட்ஸ்).",
-  "Installed {mods} into {instance}. Build to play with it.": "{mods} ஐ {instance} இல் நிறுவியது. அதனுடன் விளையாட உருவாக்கவும்.",
   "Installed {mods}, checksums checked. Turn it on in the game: Options > Resource Packs.": "{mods} நிறுவப்பட்டது, செக்சம்கள் சரிபார்க்கப்பட்டன. விளையாட்டில் இயக்கவும்: விருப்பங்கள் > வளப் பொதிகள்.",
   "Installed {pack} {version} as its own profile with {mods}, each checked. Play it from the list above.": "{pack} {version} ஐ {mods} உடன் அதன் சொந்த சுயவிவரமாக நிறுவியது, ஒவ்வொன்றும் சரிபார்க்கப்பட்டது. மேலே உள்ள பட்டியலிலிருந்து அதை விளையாடவும்.",
   "Installing the build": "கட்டமைப்பை நிறுவுதல்",

@@ -200,7 +200,6 @@
   "Installed": "Dipasang",
   "Installed {mods} from GitHub ({source}). Build it on the Mods page.": "Dipasang {mods} daripada GitHub ({source}). Bina pada halaman Mods.",
   "Installed {mods} into sunrise-mods and turned it on, checksum checked (Options > Mods in the game).": "{mods} telah dipasang ke dalam sunrise-mods dan dihidupkan, jumlah semak disemak (Pilihan > Mod dalam permainan).",
-  "Installed {mods} into {instance}. Build to play with it.": "{mods} telah dipasang ke dalam {instance}. Bina untuk bermain dengannya.",
   "Installed {mods}, checksums checked. Turn it on in the game: Options > Resource Packs.": "{mods} telah dipasang, jumlah semak disemak. Hidupkannya dalam permainan: Pilihan > Pek Sumber.",
   "Installed {pack} {version} as its own profile with {mods}, each checked. Play it from the list above.": "Memasang {pack} {version} sebagai profilnya sendiri dengan {mods}, setiap satu disemak. Mainkannya daripada senarai di atas.",
   "Installing the build": "Memasang binaan",

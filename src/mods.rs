@@ -42,7 +42,6 @@ mod packs;
 mod project;
 mod search;
 mod ui;
-pub(crate) use data_packs::names;
 pub(crate) use model::collection::{needs_consent, run_in_order};
 pub(crate) use search::Installed;
 mod viewer;

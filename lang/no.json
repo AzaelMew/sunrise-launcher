@@ -200,7 +200,6 @@
   "Installed": "Installert",
   "Installed {mods} from GitHub ({source}). Build it on the Mods page.": "Installert {mods} fra GitHub ({source}). Bygg den på Mods-siden.",
   "Installed {mods} into sunrise-mods and turned it on, checksum checked (Options > Mods in the game).": "Installerte {mods} i sunrise-mods og slo det på, kontrollsum kontrollert (Alternativer > Mods i spillet).",
-  "Installed {mods} into {instance}. Build to play with it.": "Installerte {mods} i {instance}. Bygg for å spille med den.",
   "Installed {mods}, checksums checked. Turn it on in the game: Options > Resource Packs.": "Installerte {mods}, kontrollsummer kontrollert. Slå den på i spillet: Alternativer > Ressurspakker.",
   "Installed {pack} {version} as its own profile with {mods}, each checked. Play it from the list above.": "Installerte {pack} {version} som egen profil med {mods}, hver kontrollert. Spill den fra listen over.",
   "Installing the build": "Installerer bygget",

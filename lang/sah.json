@@ -200,7 +200,6 @@
   "Installed": "Установлено",
   "Installed {mods} from GitHub ({source}). Build it on the Mods page.": "Установлен {mods} с GitHub ({source}). Модтар страницаларыгар оҥор.",
   "Installed {mods} into sunrise-mods and turned it on, checksum checked (Options > Mods in the game).": "{mods} sunrise-mods иһигэр туруоруллубут уонна холбоммут, суумата бэрэбиэркэлэммит (оонньууга Options > Mods).",
-  "Installed {mods} into {instance}. Build to play with it.": "{mods} {instance} иһигэр туруоруллубут. Кинини кытта оонньуурга тут.",
   "Installed {mods}, checksums checked. Turn it on in the game: Options > Resource Packs.": "{mods} туруоруллубут, суумалар бэрэбиэркэлэммиттэр. Оонньууга холбоо: Options > Resource Packs.",
   "Installed {pack} {version} as its own profile with {mods}, each checked. Play it from the list above.": "{pack} {version} бэйэтин профилын быһыытынан {mods} кытта туруоруллубут, хас биирдиитин бэрэбиэркэлэммит. Үөһээ испииһэккэ баартан оонньоо.",
   "Installing the build": "Сборканы туруоруу",
