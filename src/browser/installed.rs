@@ -9,7 +9,43 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-pub(crate) const MANIFEST: &str = "mod-browser.json";
+pub(crate) use sunrise_launcher_smod::index::browser_state::MANIFEST;
+
+/// A game-owned install not safe to finish. The full diagnostic belongs in Details, not in a banner.
+#[derive(Debug)]
+pub struct GameInstallProblem(String);
+
+impl GameInstallProblem {
+    pub fn summary() -> &'static str {
+        crate::i18n::tr("A mod install the game started was interrupted and couldn't be finished. Your mods and files were left as they are.")
+    }
+
+    pub fn details(&self) -> String {
+        format!("{}\n{}", Self::summary(), self.0)
+    }
+}
+
+impl From<GameInstallProblem> for String {
+    fn from(value: GameInstallProblem) -> Self {
+        value.details()
+    }
+}
+
+/// Settle the game's sidecar using its own home lock. Callers that mutate the profile
+/// hold the same, reentrant lock through their changes. No launcher journal is involved.
+pub fn recover_game_install(home: &Path) -> Result<(), GameInstallProblem> {
+    sunrise_launcher_smod::index::browser_state::reconcile(home).map_err(|error| {
+        // Relative file names and the cause are useful; the host's local path is not.
+        let folder = home.display().to_string();
+        let prefix = format!("{folder}{}", std::path::MAIN_SEPARATOR);
+        let detail = error.strip_prefix(&prefix).map_or_else(
+            || error.strip_prefix(&format!("{folder}: ")).unwrap_or(&error),
+            |relative| relative,
+        );
+        GameInstallProblem(detail.to_owned())
+    })
+}
+
 /// The folders the browser installs into: an entry's `file` is always inside one of them.
 const FOLDERS: [&str; 5] = [
     "mods",
@@ -92,10 +128,19 @@ fn readable_entries<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<Entry>
 
 impl Installed {
     pub fn load(home: &Path) -> Self {
-        fs::read_to_string(home.join(MANIFEST))
-            .ok()
-            .and_then(|t| serde_json::from_str(&t).ok())
-            .unwrap_or_default()
+        Self::read(home).unwrap_or_default()
+    }
+
+    pub fn read(home: &Path) -> Result<Self, String> {
+        let path = home.join(MANIFEST);
+        let text = match fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(Self::default())
+            }
+            Err(error) => return Err(format!("{MANIFEST}: {error}")),
+        };
+        serde_json::from_str(&text).map_err(|error| format!("{MANIFEST}: {error}"))
     }
 
     /// Atomically publishes the list. Mutating callers must hold `lock_home`
@@ -251,7 +296,8 @@ pub(super) fn put(
     progress: &dyn Fn(&str, f32),
 ) -> Result<Vec<Entry>, String> {
     let _lock = super::lock_home(home).map_err(|e| e.to_string())?;
-    let mut installed = Installed::load(home);
+    recover_game_install(home)?;
+    let mut installed = Installed::read(home)?;
     let mut done = Vec::new();
     for step in steps {
         let p = &step.project;
@@ -331,7 +377,8 @@ fn legacy_mod_folder(home: &Path, file: &str) -> bool {
 /// Removes what the browser installed for `name` (a project id or slug): its file and its entry.
 pub fn remove(home: &Path, name: &str) -> Result<Entry, String> {
     let _lock = super::lock_home(home).map_err(|e| e.to_string())?;
-    let mut installed = Installed::load(home);
+    recover_game_install(home)?;
+    let mut installed = Installed::read(home)?;
     let entry = installed
         .lookup(name)
         .cloned()

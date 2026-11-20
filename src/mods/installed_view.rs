@@ -26,8 +26,75 @@ impl Launcher {
             .children(self.strip(cx));
 
         self.ui.mods.build_button_drawn = false;
+        let refresh = match InstalledRefresh::of(self.ui.mods.snapshot.as_ref()) {
+            InstalledRefresh::Ready => None,
+            InstalledRefresh::Reading => Some(
+                card()
+                    .p(px(16.))
+                    .child(muted(tr("Refreshing Installed mods…"))),
+            ),
+            InstalledRefresh::Failed(error, home) => {
+                let (summary, action) = match error {
+                    InstalledReadError::GameInstall(problem) => {
+                        let home = home.to_owned();
+                        let summary = installed::GameInstallProblem::summary().to_owned();
+                        let text = problem.details();
+                        let action =
+                            crate::frame::button("installed-recovery-details", tr("Show details"))
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.open_notice(
+                                        text.clone(),
+                                        Some(crate::sheets::WayOut::ProfileFolder(home.clone())),
+                                    );
+                                    cx.notify();
+                                }));
+                        (summary, Some(action))
+                    }
+                    InstalledReadError::Other(error) => (
+                        trf(
+                            "Could not refresh Installed mods: {error}",
+                            &[("error", error)],
+                        ),
+                        None,
+                    ),
+                };
+                Some(
+                    card()
+                        .p(px(16.))
+                        .flex()
+                        .flex_col()
+                        .items_start()
+                        .gap(px(8.))
+                        .child(muted(summary))
+                        .child(
+                            div()
+                                .flex()
+                                .flex_wrap()
+                                .items_center()
+                                .gap(px(8.))
+                                .children(action)
+                                .child(
+                                    crate::frame::button("retry-installed", tr("Retry")).on_click(
+                                        cx.listener(|this, _, _, cx| {
+                                            if let Some(snapshot) = &mut this.ui.mods.snapshot {
+                                                snapshot.key.clear();
+                                            }
+                                            this.mods_refresh();
+                                            cx.notify();
+                                        }),
+                                    ),
+                                ),
+                        ),
+                )
+            }
+        };
+        let refresh_ready = refresh.is_none();
+        page = page.children(refresh);
         let rows = self.rows();
         if rows.is_empty() {
+            if !refresh_ready {
+                return page.into_any_element();
+            }
             return page
                 .child(
                     card()
@@ -417,16 +484,7 @@ impl Launcher {
             }
             list = list.child(self.row(n, pos, r, shown_ids.clone(), busy, cx));
         }
-        let reading = self.ui.mods.snapshot.as_ref().is_some_and(|s| s.reading);
-        if reading {
-            list = list.child(
-                div()
-                    .p(px(16.))
-                    .child(muted(tr("Reading the mods you added by hand…"))),
-            );
-        }
-        // Hand-added mods may still arrive, so an empty list isn't final while reading.
-        if visible.is_empty() && !reading {
+        if visible.is_empty() && refresh_ready {
             list = list.child(
                 div()
                     .p(px(16.))

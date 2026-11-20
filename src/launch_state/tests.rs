@@ -653,3 +653,36 @@ fn the_way_out_is_the_said_problems_own() {
     .view();
     assert_eq!(quiet.act, None);
 }
+
+#[test]
+fn an_interrupted_game_install_has_a_plain_message_and_exact_profile_folder() {
+    let folder = std::path::PathBuf::from("profile-with-journal");
+    let detail = format!(
+        "{}\n.mod-browser.pending.json: duplicate project",
+        sunrise_launcher::browser::installed::GameInstallProblem::summary()
+    );
+    let facts = Facts {
+        install_recovery: Some((folder.clone(), detail.clone())),
+        ..idle()
+    };
+    let view = facts.view();
+    assert_eq!(
+        view.said.as_deref(),
+        Some("A mod install couldn't be finished.")
+    );
+    assert!(
+        view.failed && view.enabled,
+        "Play can retry admission after repair"
+    );
+    assert_eq!(
+        view.act,
+        Some(Act::Notice {
+            text: detail,
+            way_out: Some(WayOut::ProfileFolder(folder)),
+        })
+    );
+    assert!(
+        idle().view().act.is_none(),
+        "another profile has no repair action"
+    );
+}

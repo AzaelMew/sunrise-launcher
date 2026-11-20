@@ -42,10 +42,11 @@ pub(crate) enum Sheet {
 }
 
 /// The way out of a problem the play bar raised, as the Notice sheet's one action.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum WayOut {
     /// The game's own files were not found: point Sunrise at the Minecraft folder.
     MinecraftFolder,
+    ProfileFolder(std::path::PathBuf),
     /// The build this setup stays on can't be built for any more: follow its channel again.
     Newest(instances::Channel),
 }
@@ -806,7 +807,7 @@ impl Launcher {
             .map(|p| div().text_size(px(tokens::LABEL)).child(p.to_owned()))
             .collect();
         let main = |label: SharedString| crate::frame::primary("alt-notice-way-out", label);
-        let way_out = self.ui.sheets.way_out.map(|way| match way {
+        let way_out = self.ui.sheets.way_out.clone().map(|way| match way {
             WayOut::MinecraftFolder => main(tr("Choose Minecraft folder").into()).on_click(
                 cx.listener(|this, _: &ClickEvent, _, cx| {
                     this.close_sheet();
@@ -814,6 +815,11 @@ impl Launcher {
                     cx.notify();
                 }),
             ),
+            WayOut::ProfileFolder(home) => {
+                main(tr("Open folder").into()).on_click(move |_, _, cx| {
+                    glass_toast::open(cx, &home);
+                })
+            }
             // One press follows the channel again, and the build sheet opens on what that chose.
             WayOut::Newest(channel) => main(match channel {
                 instances::Channel::Stable => tr("Use the newest Stable").into(),
@@ -821,7 +827,7 @@ impl Launcher {
             })
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                 this.native_error = None;
-                this.pin_build(None, channel);
+                this.pin_build(None, channel, false);
                 // The chooser opens under Home's build picker.
                 this.navigate(crate::frame::Page::Home);
                 this.open_sheet(Sheet::Build);
@@ -1206,7 +1212,12 @@ impl Launcher {
         })
     }
 
-    pub(crate) fn pin_build(&mut self, version: Option<String>, channel: instances::Channel) {
+    pub(crate) fn pin_build(
+        &mut self,
+        version: Option<String>,
+        channel: instances::Channel,
+        close_versions: bool,
+    ) {
         if self.launch_busy() || self.client.is_some() {
             self.ui.sheets.error = Some(tr("Wait for the current operation to finish.").into());
             return;
@@ -1214,24 +1225,53 @@ impl Launcher {
         let Some(instance) = self.selected_instance() else {
             return;
         };
-        let id = instance.id.clone();
-        // Backstop for the sheet's own gate: never pin another build under native mods.
-        if let (Some(to), Some(plays)) = (&version, self.version_of(instance)) {
-            if to != plays && !native_status::enabled(&instance.home).is_empty() {
-                self.ui.sheets.error =
-                    Some(tr("Check your native mods against that build first.").into());
-                return;
-            }
+        let (id, home) = (instance.id.clone(), instance.home.clone());
+        let plays = self.version_of(instance).cloned();
+        self.pinning_build = true;
+        self.ui.sheets.error = None;
+        let tx = self.tx.clone();
+        std::thread::spawn(move || {
+            use sunrise_launcher::browser::{installed, lock_home};
+            let publish = || -> Result<(), String> {
+                let _lock = lock_home(&home).map_err(|error| error.to_string())?;
+                installed::recover_game_install(&home)
+                    .map_err(|_| installed::GameInstallProblem::summary().to_owned())?;
+                // Recheck after recovery; never pin another build under native mods.
+                if let (Some(to), Some(plays)) = (&version, &plays) {
+                    if to != plays && !native_status::enabled(&home).is_empty() {
+                        return Err(tr("Check your native mods against that build first.").into());
+                    }
+                }
+                instances::edit(&id, |m| {
+                    m.version = version;
+                    m.channel = Some(channel);
+                })?;
+                Ok(())
+            };
+            let result = publish();
+            let _ = tx.send(Msg::PinnedBuild {
+                home,
+                result,
+                close_versions,
+            });
+        });
+    }
+
+    pub(super) fn finish_build_pin(
+        &mut self,
+        home: &std::path::Path,
+        result: Result<(), String>,
+        close_versions: bool,
+    ) {
+        self.pinning_build = false;
+        if result.is_ok() {
+            self.reload_instances();
         }
-        match instances::edit(&id, |m| {
-            m.version = version;
-            m.channel = Some(channel);
-        }) {
-            Ok(_) => {
-                self.ui.sheets.error = None;
-                self.reload_instances();
+        if self.selected_instance().is_some_and(|i| i.home == home) {
+            if result.is_ok() && close_versions && self.ui.sheet == Some(Sheet::Versions) {
+                self.close_sheet();
             }
-            Err(e) => self.ui.sheets.error = Some(e),
+            self.ui.sheets.error = result.err();
         }
     }
 
@@ -1318,7 +1358,7 @@ impl Launcher {
             })
             .when(!nightly_gated, |d| {
                 d.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                    this.pin_build(None, instances::Channel::Nightly);
+                    this.pin_build(None, instances::Channel::Nightly, false);
                     cx.notify();
                 }))
             }),
@@ -1342,7 +1382,7 @@ impl Launcher {
             })
             .when(!stable_off, |d| {
                 d.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                    this.pin_build(None, instances::Channel::Stable);
+                    this.pin_build(None, instances::Channel::Stable, false);
                     cx.notify();
                 }))
             }),

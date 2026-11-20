@@ -351,6 +351,8 @@ fn no_mods_to_build() -> &'static str {
 
 /// [`installed_mods`] into `out`, which it empties first.
 pub(crate) fn stage_installed(home: &Path, out: PathBuf) -> Result<Option<PathBuf>, String> {
+    let _lock = crate::browser::lock_home(home).map_err(|error| error.to_string())?;
+    crate::browser::installed::recover_game_install(home)?;
     let _ = fs::remove_dir_all(&out);
     let mut paths: Vec<PathBuf> = fs::read_dir(home.join(INSTALLED))
         .map(|dir| dir.flatten().map(|e| e.path()).collect())
@@ -1851,6 +1853,8 @@ pub fn build(
     catalogue: impl FnOnce() -> Option<Vec<backend::Release>>,
 ) -> Result<ClientBuild, Failed> {
     cancellation.admit_native_work()?;
+    crate::browser::installed::recover_game_install(&instance.home)
+        .map_err(|problem| Failed::Other(problem.details()))?;
     if let Some(error) = backend::native_mod_architecture_error() {
         return Err(Failed::Other(error));
     }

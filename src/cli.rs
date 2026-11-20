@@ -2495,7 +2495,11 @@ fn instance(action: InstanceCmd, as_json: bool) -> Result<(), String> {
                 "latest" => None,
                 tag => Some(backend::resolve_version(Some(tag))?),
             };
-            changed(instances::edit(&instance, |m| m.version = pin)?)
+            let profile = instances::find(&instance)?;
+            let _lock = sunrise_launcher::browser::lock_home(&profile.home)
+                .map_err(|error| error.to_string())?;
+            sunrise_launcher::browser::installed::recover_game_install(&profile.home)?;
+            changed(instances::edit(&profile.id, |m| m.version = pin)?)
         }
         InstanceCmd::Launch {
             instance,

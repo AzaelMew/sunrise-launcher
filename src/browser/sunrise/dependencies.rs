@@ -17,11 +17,13 @@ pub(super) fn install(
 ) -> Result<Vec<installed::Entry>, String> {
     let home = install.home;
     let _lock = crate::browser::lock_home(home).map_err(|e| e.to_string())?;
+    installed::recover_game_install(home)?;
     let staged = tempfile::Builder::new()
         .prefix(".installed-mods-")
         .tempdir_in(home)
         .map_err(|e| format!("{}: {e}", home.display()))?;
-    let installed = installed::Installed::load(home);
+    let installed = installed::Installed::read(home)?;
+    let claims = index::browser_state::Installed::load(home)?;
     // The index's claims plan the versions first: an unsatisfiable set is refused with the planner's
     // reason before anything downloads, and each dependency is fetched at the version it chose.
     let held = super::held_mods(&installed.entries);
@@ -49,6 +51,7 @@ pub(super) fn install(
         install,
         staged: staged.path(),
         installed,
+        claims,
         selected: Vec::new(),
         unreadable: Vec::new(),
         native_allowed,
@@ -140,6 +143,7 @@ struct Plan<'a> {
     install: &'a Install<'a>,
     staged: &'a Path,
     installed: installed::Installed,
+    claims: index::browser_state::Installed,
     selected: Vec<(installed::Entry, Option<PathBuf>)>,
     /// Installed files that no longer parse and are about to be replaced.
     unreadable: Vec<PathBuf>,
@@ -155,9 +159,13 @@ impl Plan<'_> {
         if depth > installed::MAX_DEPTH {
             return Err(format!("{}'s dependencies go too deep.", p.name));
         }
-        let (mut entry, download, unreadable) =
-            self.install
-                .prepare(p, v, &self.installed, &self.staged.join(&p.id))?;
+        let (mut entry, download, unreadable) = self.install.prepare(
+            p,
+            v,
+            &self.installed,
+            &self.claims,
+            &self.staged.join(&p.id),
+        )?;
         self.unreadable.extend(unreadable);
         let (path, facts) = match download {
             Some((path, facts)) => {

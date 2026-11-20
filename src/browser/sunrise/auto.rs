@@ -316,6 +316,8 @@ fn lock_for_updates(home: &Path) -> Result<crate::browser::HomeLockGuard, String
 /// not Play. Can't move just the ledger away: the updater could overwrite a retained copy.
 pub fn recover(home: &Path) -> Result<(), String> {
     let _lock = lock_for_updates(home)?;
+    installed::recover_game_install(home)
+        .map_err(|_| installed::GameInstallProblem::summary().to_owned())?;
     let notice = || {
         tr("A backup from an older mod update was kept because it couldn't be checked. You can still play.").to_owned()
     };

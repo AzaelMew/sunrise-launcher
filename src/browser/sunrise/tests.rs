@@ -455,7 +455,8 @@ fn an_installed_entry_pointing_out_of_the_game_folder_is_refused() {
         home: &home,
         progress: &|_, _| {},
     };
-    let result = install.prepare(p, &p.versions[0], &list, &home.join("staging"));
+    let claims = index::browser_state::Installed::load(&home).unwrap();
+    let result = install.prepare(p, &p.versions[0], &list, &claims, &home.join("staging"));
     assert!(result.is_err());
     assert_eq!(fs::read(&outside).unwrap(), b"not a zip");
     fs::remove_file(outside).unwrap();
@@ -997,6 +998,161 @@ fn registry_play_warns_for_disk_cache_and_turns_off_only_from_a_live_index() {
         ["Coordinates HUD was taken down and is off: Test."]
     );
     assert!(!mod_list::is_enabled(home, "coords_hud"));
+}
+
+fn interrupted_game_install(
+    home: &Path,
+    registry: &Index,
+    title: String,
+) -> (installed::Entry, installed::Entry) {
+    let old = put(registry, true, home).unwrap().remove(0);
+    let bytes = sunrise_launcher_smod::Package::write_files(
+        "id='coords_hud'\nname='Coordinates HUD'\nversion='1.0.0'\napi='0.2'\ncapabilities=['registries']\n",
+        &[],
+    )
+    .unwrap();
+    let mut new = old.clone();
+    new.title = title;
+    new.version = "1.0.0".into();
+    new.number = new.version.clone();
+    new.checksum = format!("SHA-256:{}", index::sha256(&bytes));
+    fs::write(
+        home.join(index::browser_state::PENDING),
+        serde_json::to_vec(&serde_json::json!({
+            "id": "coords_hud", "file": old.file, "old": old, "new": new,
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    fs::write(home.join(&old.file), bytes).unwrap();
+    mod_list::set_enabled(home, "coords_hud", true).unwrap();
+    (old, new)
+}
+
+#[test]
+fn duplicate_or_unplaceable_ownership_stops_a_registry_install_before_download() {
+    let root = tempfile::tempdir().unwrap();
+    let home = root.path();
+    let index = sample();
+    let old = put(&index, true, home).unwrap().remove(0);
+    let project = index.project("coords_hud").unwrap();
+    let version = &project.versions[0];
+    let path = home.join(installed::MANIFEST);
+    let bytes = fs::read(home.join(&old.file)).unwrap();
+    let mut duplicate = old.clone();
+    duplicate.file = "sunrise-mods/other.smod".into();
+    let alias = serde_json::json!({
+        "source": "future-source", "project": "other", "title": "Other",
+        "file": "packs/../sunrise-mods/coords_hud.smod"
+    });
+    for (rows, expected) in [
+        (serde_json::json!([old, duplicate]), "several entries"),
+        (serde_json::json!([old, alias]), "belongs to Other"),
+    ] {
+        let before = serde_json::to_vec(&serde_json::json!({ "entries": rows })).unwrap();
+        fs::write(&path, &before).unwrap();
+        let error = install_version_guarded(
+            &index,
+            true,
+            project,
+            version,
+            home,
+            &|_| panic!("ownership must be checked first"),
+            &|_, _| panic!("ownership must be checked before downloading"),
+        )
+        .unwrap_err();
+        assert!(error.contains(expected), "{error}");
+        assert_eq!(fs::read(&path).unwrap(), before);
+        assert_eq!(fs::read(home.join(&old.file)).unwrap(), bytes);
+    }
+}
+
+#[test]
+fn registry_play_recovers_a_large_game_journal_before_checking_revocations() {
+    let root = tempfile::tempdir().unwrap();
+    let home = root.path();
+    let mut registry = sample();
+    let (old, new) = interrupted_game_install(home, &registry, "an allowed title ".repeat(20_000));
+    let pending = home.join(index::browser_state::PENDING);
+    assert!(fs::metadata(&pending).unwrap().len() > 256 << 10);
+    let file = home.join(&old.file);
+    let bytes = fs::read(&file).unwrap();
+    registry.revoked.push(index::Revoked {
+        id: "coords_hud".into(),
+        sha256: Some(old.checksum.strip_prefix("SHA-256:").unwrap().into()),
+        reason: "Old file taken down.".into(),
+        date: String::new(),
+    });
+
+    let notices = check_before_play(home, &[], || Some(Arc::new(registry))).unwrap();
+    assert!(notices.is_empty(), "{notices:?}");
+    assert!(mod_list::is_enabled(home, "coords_hud"));
+    assert!(!pending.exists());
+    let rows: installed::Installed =
+        serde_json::from_slice(&fs::read(home.join(installed::MANIFEST)).unwrap()).unwrap();
+    assert_eq!(rows.entries, [new]);
+    assert_eq!(fs::read(file).unwrap(), bytes);
+}
+
+#[test]
+fn play_admission_names_the_game_journal_and_leaves_other_profiles_playable() {
+    let first = tempfile::tempdir().unwrap();
+    let second = tempfile::tempdir().unwrap();
+    let home = first.path();
+    let registry = sample();
+    let (old, _) = interrupted_game_install(home, &registry, "Coordinates HUD".into());
+    let pending = home.join(index::browser_state::PENDING);
+    let manifest = home.join(installed::MANIFEST);
+    let package = home.join(&old.file);
+    let package_bytes = fs::read(&package).unwrap();
+    let valid_journal = fs::read(&pending).unwrap();
+    let valid_manifest = fs::read(&manifest).unwrap();
+    let duplicate = serde_json::to_vec(&serde_json::json!({"entries": [old, old]})).unwrap();
+    for (journal, rows, expected) in [
+        (
+            b"invalid json".as_slice(),
+            &valid_manifest,
+            index::browser_state::PENDING,
+        ),
+        (&valid_journal, &duplicate, "several entries"),
+    ] {
+        fs::write(&pending, journal).unwrap();
+        fs::write(&manifest, rows).unwrap();
+        let detail = installed::recover_game_install(home).unwrap_err().details();
+        assert!(
+            !detail.contains(&home.display().to_string()),
+            "local path leaked: {detail}"
+        );
+        assert!(
+            check_before_play(home, &[], || panic!("no registry call before recovery")).is_err()
+        );
+        assert!(detail.contains(expected), "{detail}");
+        assert_eq!(fs::read(&pending).unwrap(), journal);
+        assert_eq!(fs::read(&manifest).unwrap(), *rows);
+        assert_eq!(fs::read(&package).unwrap(), package_bytes);
+        assert!(check_before_play(second.path(), &[], || None).is_ok());
+    }
+    fs::write(&manifest, valid_manifest).unwrap();
+    assert!(installed::recover_game_install(home).is_ok());
+    assert!(!pending.exists());
+}
+
+#[test]
+fn registry_play_preserves_metadata_edited_after_a_game_journal_was_written() {
+    let root = tempfile::tempdir().unwrap();
+    let home = root.path();
+    let registry = sample();
+    let (mut current, _) = interrupted_game_install(home, &registry, "Coordinates HUD".into());
+    current.dependency = !current.dependency;
+    let manifest = home.join(installed::MANIFEST);
+    let edited = serde_json::to_vec(&serde_json::json!({ "entries": [current] })).unwrap();
+    fs::write(&manifest, &edited).unwrap();
+
+    let error = check_before_play(home, &[], || Some(Arc::new(registry))).unwrap_err();
+    assert!(error.contains("changed since the install began"));
+    assert!(mod_list::is_enabled(home, "coords_hud"));
+    assert_eq!(fs::read(manifest).unwrap(), edited);
+    assert!(home.join(index::browser_state::PENDING).exists());
 }
 
 #[test]

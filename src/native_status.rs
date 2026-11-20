@@ -489,9 +489,12 @@ pub fn fingerprint(home: &Path, version: Option<&str>) -> String {
         .into_iter()
         .chain(content_files(home))
         .flat_map(|p| [p.clone(), p.with_extension("origin.json")])
-        .chain([home.join("mod-browser.json")])
+        .chain([
+            home.join("mod-browser.json"),
+            home.join(sunrise_launcher_smod::index::browser_state::PENDING),
+        ])
     {
-        let meta = fs::metadata(&path).ok();
+        let meta = fs::symlink_metadata(&path).ok();
         let time = meta.as_ref().and_then(|m| m.modified().ok());
         out += &format!("\n{} {:?} {time:?}", path.display(), meta.map(|m| m.len()));
     }

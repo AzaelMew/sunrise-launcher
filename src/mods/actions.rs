@@ -24,7 +24,11 @@ impl Launcher {
 
     /// Why nothing may change now: the game, a launch step or a build is under way.
     pub(crate) fn mods_locked(&self) -> Option<&'static str> {
-        if self.client.is_some() || self.starting_client.is_some() || self.starting_play.is_some() {
+        if self.client.is_some()
+            || self.starting_client.is_some()
+            || self.starting_play.is_some()
+            || self.play_admission.is_some()
+        {
             Some(tr(
                 "The game is running or starting. Close it before changing mods.",
             ))
@@ -32,6 +36,7 @@ impl Launcher {
             || self.installing.is_some()
             || self.play_when_prepared.is_some()
             || self.play_after_build.is_some()
+            || self.pinning_build
         {
             Some(tr(
                 "Sunrise is getting ready to play. Wait for it to finish before changing mods.",
@@ -49,6 +54,11 @@ impl Launcher {
     pub(super) fn guard(&mut self) -> bool {
         let refusal = if let Some(why) = self.mods_locked() {
             Some(why.to_string())
+        } else if self.ui.mods.snapshot.as_ref().is_some_and(|s| {
+            s.home == self.mods_home()
+                && matches!(s.error, Some(InstalledReadError::GameInstall(_)))
+        }) {
+            Some(installed::GameInstallProblem::summary().into())
         } else if self.mutating() {
             Some(tr("Wait for the current operation to finish.").to_string())
         } else {

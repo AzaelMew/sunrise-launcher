@@ -1132,7 +1132,9 @@ fn install_version_guarded(
     progress: &dyn Fn(&str, f32),
 ) -> Result<installed::Entry, String> {
     let _lock = super::lock_home(home).map_err(|e| e.to_string())?;
-    let mut list = installed::Installed::load(home);
+    installed::recover_game_install(home)?;
+    let mut list = installed::Installed::read(home)?;
+    let claims = index::browser_state::Installed::load(home)?;
     let install = Install {
         index,
         local,
@@ -1140,7 +1142,7 @@ fn install_version_guarded(
         progress,
     };
     let (entry, file, unreadable) =
-        install.prepare(p, v, &list, &home.join("mod-browser/downloads"))?;
+        install.prepare(p, v, &list, &claims, &home.join("mod-browser/downloads"))?;
     let Some((path, _)) = file else {
         return Ok(entry);
     };
@@ -1213,6 +1215,7 @@ impl Install<'_> {
         p: &index::Project,
         v: &index::Version,
         list: &installed::Installed,
+        claims: &index::browser_state::Installed,
         staging: &Path,
     ) -> Result<Prepared, String> {
         let index = self.index;
@@ -1226,6 +1229,7 @@ impl Install<'_> {
             true => format!("{}/{}.smod", crate::native_mods::INSTALLED, p.id),
             false => relative(project.kind, &p.id, &v.file.name)?,
         };
+        claims.check_install(&p.id, &relative)?;
         let ours = |e: &installed::Entry| e.source == SourceId::Sunrise && e.project == p.id;
         let old = list.entries.iter().find(|e| ours(e)).cloned();
         let mut unreadable = None;
@@ -1273,14 +1277,7 @@ impl Install<'_> {
             return Ok((old.expect("checked"), None, None));
         }
         let target = self.home.join(&relative);
-        let taken_by = list.entries.iter().find(|e| !ours(e) && e.file == relative);
         let folder_mod = self.home.join(mod_list::MODS_DIR).join(&p.id);
-        if let Some(other) = taken_by {
-            return Err(format!(
-                "{relative} belongs to {}: remove it first.",
-                other.title
-            ));
-        }
         let clash = target.exists() && old.as_ref().is_none_or(|o| o.file != relative);
         if project.kind == Kind::Mod && (clash || (!native && folder_mod.exists())) {
             return Err(format!(
@@ -1335,7 +1332,8 @@ pub fn mod_id(entry: &installed::Entry) -> Option<&str> {
 pub fn turn_off_revoked(index: &Index, home: &Path) -> Result<Vec<String>, String> {
     let _lock = crate::browser::lock_home(home).map_err(|e| e.to_string())?;
     let mut out = Vec::new();
-    for e in installed::Installed::load(home).entries {
+    installed::recover_game_install(home)?;
+    for e in installed::Installed::read(home)?.entries {
         let hash = e.checksum.strip_prefix("SHA-256:").unwrap_or_default();
         let Some(r) = (e.source == SourceId::Sunrise)
             .then(|| index.revoked(&e.project, hash))
@@ -1390,7 +1388,8 @@ fn check_before_play(
     included: &[crate::native_status::Included],
     load: impl FnOnce() -> Option<Arc<Index>>,
 ) -> Result<Vec<String>, String> {
-    let entries = installed::Installed::load(home).entries;
+    installed::recover_game_install(home)?;
+    let entries = installed::Installed::read(home)?.entries;
     if included.is_empty() && !entries.iter().any(|e| e.source == SourceId::Sunrise) {
         return Ok(Vec::new());
     }
