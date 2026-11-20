@@ -217,6 +217,16 @@ fn add(
     Ok(())
 }
 
+/// An installed registry mod an install removes with it, as the player approved it: this exact
+/// file (its checksum), and whether they also agreed to what saved worlds that use it lose.
+/// Checked again under the install's lock, since the approval may have waited in a queue.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Replace {
+    pub id: String,
+    pub checksum: String,
+    pub worlds_ok: bool,
+}
+
 /// Why an install didn't happen: native code the player hasn't allowed yet (the plan may not
 /// have known it was there), which the launcher answers by asking and trying again, or any
 /// other reason, in words.
@@ -293,7 +303,7 @@ pub fn install(
     everything: bool,
     home: &Path,
     game: &str,
-    replacing: &[String],
+    replacing: &[Replace],
     progress: &dyn Fn(&str, f32),
 ) -> Result<Vec<Entry>, InstallError> {
     let _lock = super::lock_home(home).map_err(|e| e.to_string())?;

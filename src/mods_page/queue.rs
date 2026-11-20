@@ -22,7 +22,7 @@ pub(crate) enum Request {
         id: String,
         known: Option<Box<Project>>,
         /// Installed registry mods this install removes with it (the ones it can't live with).
-        replacing: Vec<String>,
+        replacing: Vec<sunrise_launcher::browser::installed::Replace>,
     },
     /// A collection's mods, and the collection's name.
     Many(Target, Vec<String>, String),
@@ -277,7 +277,11 @@ mod tests {
             source: SourceId::Sunrise,
             id: "lumen".into(),
             known: None,
-            replacing: vec!["lamps".into()],
+            replacing: vec![sunrise_launcher::browser::installed::Replace {
+                id: "lamps".into(),
+                checksum: "SHA-256:1".into(),
+                worlds_ok: false,
+            }],
         };
         // What came behind it waits while the question is open (the caller holds the queue)...
         assert!(queue.submit(one("later"), false).is_some());
@@ -296,7 +300,7 @@ mod tests {
                     (target.instance.as_str(), target.game.as_str()),
                     ("other", "26.2")
                 );
-                assert_eq!(replacing, ["lamps"]);
+                assert_eq!(replacing[0].id, "lamps");
             }
             _ => panic!("the held request starts"),
         }

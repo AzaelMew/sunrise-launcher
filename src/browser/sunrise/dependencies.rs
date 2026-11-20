@@ -1,5 +1,6 @@
 //! A manual registry install stages and verifies the whole set before changing the profile.
 use super::{fs, index, installed, mod_list, Install, SourceId};
+use crate::i18n::trf;
 use semver::{Version, VersionReq};
 use std::collections::BTreeMap;
 use std::io;
@@ -29,11 +30,44 @@ pub(super) fn install(
         );
     }
     let mut installed = installed::Installed::load(home);
+    // An approval that waited in a queue is read again here, under the lock: each mod it
+    // removes must still be the file the player saw, and a world that uses it must have been
+    // agreed to (worlds that can't be looked at stop the install).
+    for r in install.replacing {
+        let now = installed
+            .entries
+            .iter()
+            .find(|e| e.source == SourceId::Sunrise && e.project == r.id);
+        if now.is_some_and(|e| e.checksum != r.checksum) {
+            return Err(trf(
+                "{mod} changed since you approved removing it. Install again to review it.",
+                &[("mod", &r.id)],
+            )
+            .into());
+        }
+    }
+    let unagreed: Vec<String> = install
+        .replacing
+        .iter()
+        .filter(|r| !r.worlds_ok)
+        .map(|r| r.id.clone())
+        .collect();
+    let question = if unagreed.is_empty() {
+        None
+    } else {
+        crate::worlds::question(home, &unagreed)?
+    };
+    if let Some(question) = question {
+        return Err(trf(
+            "A saved world uses {mods}: install again to be asked about it.",
+            &[("mods", &question.mods.join(", "))],
+        )
+        .into());
+    }
     // The mods this install replaces are out of the picture for the plan and go with it.
-    let (removing, kept): (Vec<_>, Vec<_>) = installed
-        .entries
-        .drain(..)
-        .partition(|e| e.source == SourceId::Sunrise && install.replacing.contains(&e.project));
+    let (removing, kept): (Vec<_>, Vec<_>) = installed.entries.drain(..).partition(|e| {
+        e.source == SourceId::Sunrise && install.replacing.iter().any(|r| r.id == e.project)
+    });
     installed.entries = kept;
     // The index's claims plan the versions first: an unsatisfiable set is refused with the planner's
     // reason before anything downloads, and each dependency is fetched at the version it chose.
