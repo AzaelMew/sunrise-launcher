@@ -489,6 +489,13 @@ fn deleted_instances_go_to_the_trash_and_are_forgotten() {
     let survival = create_in(&home, &data, "Survival", None).unwrap();
     put(&survival.home.join("saves/Base/level.dat"), "base");
     edit_in(&home, &data, "Survival", |m| m.group = Some("Mine".into())).unwrap();
+    let lease = crate::browser::sunrise::txn::Lease::admit(&survival.home).unwrap();
+    assert!(delete_in(&home, &data, "Survival", &|_| panic!(
+        "a live profile must not move"
+    ))
+    .is_err());
+    assert!(survival.home.is_dir());
+    drop(lease);
     let gone = delete_in(&home, &data, "Survival", &to_trash).unwrap();
     assert_eq!(gone.id, "survival");
     assert_eq!(
@@ -497,6 +504,11 @@ fn deleted_instances_go_to_the_trash_and_are_forgotten() {
     );
     assert!(find_in(&list_in(&home, &data), "Survival").is_err());
     assert!(!Store::load(&data).instances.contains_key("survival"));
+    assert!(crate::browser::sunrise::txn::Lease::admit(&survival.home).is_err());
+    assert!(
+        !survival.home.exists(),
+        "a stale Play cannot recreate a deleted profile"
+    );
     // The game's home stays.
     assert!(delete_in(&home, &data, DEFAULT, &to_trash)
         .unwrap_err()
@@ -511,6 +523,34 @@ fn deleted_instances_go_to_the_trash_and_are_forgotten() {
     let again = create_in(&home, &data, "Skyblock", None).unwrap();
     assert_eq!(again.group, None);
     fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn an_unavailable_system_trash_does_not_put_back_or_delete_a_profile() {
+    let root = scratch("system-trash-fails");
+    let (home, data) = (root.join("home"), root.join("data"));
+    let instance = create_in(&home, &data, "Survival", None).unwrap();
+    put(
+        &instance.home.join("saves/World/level.dat"),
+        "keep the world",
+    );
+    let retired = std::cell::RefCell::new(PathBuf::new());
+    assert!(delete_in(&home, &data, "Survival", &|path| {
+        assert!(!instance.home.exists());
+        retired.replace(path.to_path_buf());
+        Err("no OS Trash".into())
+    })
+    .is_err());
+    let retired = retired.into_inner();
+    assert_eq!(
+        fs::read(retired.join("saves/World/level.dat")).unwrap(),
+        b"keep the world"
+    );
+    let other = create_in(&home, &data, "Survival", None).unwrap();
+    assert_eq!(other.home, instance.home);
+    assert!(retired.starts_with(home.join(RETIRED)));
+    assert!(retired.is_dir());
+    fs::remove_dir_all(root).unwrap();
 }
 
 /// A chosen picture is kept scaled to 128 pixels in the instance's folder; removing it moves it

@@ -66,8 +66,11 @@ impl Drop for Lease {
 
 impl Lease {
     pub fn try_acquire(home: &Path) -> Result<Option<Self>, String> {
-        let pack_owner = super::pack::owner_file(home)?;
-        let path = if let Some(path) = &pack_owner {
+        let external_owner = match super::pack::owner_file(home)? {
+            Some(path) => Some(path),
+            None => crate::instances::owner_file(home)?,
+        };
+        let path = if let Some(path) = &external_owner {
             path.clone()
         } else {
             fs::create_dir_all(home).map_err(|e| format!("{}: {e}", home.display()))?;
@@ -101,9 +104,9 @@ impl Lease {
             Err(fs::TryLockError::WouldBlock) => return Ok(None),
             Err(fs::TryLockError::Error(e)) => return Err(fail(e)),
         }
-        if pack_owner.is_some() {
-            // The pack may have been detached between identifying it and opening the owner.
-            // Never recreate its home, and keep the guard outside the directory being moved.
+        if external_owner.is_some() {
+            // A managed profile may have been detached between finding it and opening the
+            // owner. Never recreate its home; the guard is outside the movable directory.
             build::require_dir(home)?;
         }
         Ok(Some(Self {
@@ -1828,6 +1831,7 @@ mod tests {
         // Cache eviction can select the installed unit now, before either profile has a reference.
         assert!(!references("nightly-original").unwrap());
         let first = crate::backend::game_home().join("instances/first");
+        fs::create_dir_all(&first).unwrap();
         let owner = Lease::admit(&first).unwrap();
         let target = owner
             .play_target(|| Target::legacy("nightly-original"))

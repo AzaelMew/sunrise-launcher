@@ -26,6 +26,8 @@ const OWN: &str = "instances";
 /// Where a new instance is put together, in the game's home (the same disk as [`OWN`], so
 /// moving it there is one rename). Never listed: an instance exists once it is whole.
 const STAGING: &str = ".new-instance";
+const GATES: &str = ".launcher-instance-gates";
+const RETIRED: &str = ".launcher-instance-trash";
 /// Initial choices published with the folder, used until the metadata store can record them.
 const CREATED_WITH: &str = ".profile-creation.json";
 
@@ -723,8 +725,31 @@ fn delete_in(
             instance.name
         ));
     }
-    trash(&instance.work)
-        .map_err(|e| format!("{} could not go to the Trash: {e}", instance.name))?;
+    let owner = crate::browser::sunrise::txn::Lease::admit(&instance.home)?;
+    let problem = |e| format!("{} could not go to the Trash: {e}", instance.name);
+    let root = game_home.canonicalize().map_err(problem)?;
+    let staging = creation_parent(&root, RETIRED).map_err(problem)?;
+    let retired = tempfile::tempdir_in(&staging).map_err(problem)?;
+    let path = retired
+        .path()
+        .join(instance.work.file_name().expect("a non-default profile"));
+    let retired = retired.keep();
+    {
+        let _publication =
+            crate::run_leases::installation().map_err(crate::native_mods::cache_error)?;
+        crate::browser::sunrise::txn::durable::move_new_directory(&instance.work, &path)
+            .map_err(problem)?;
+    }
+    drop(owner);
+    // The live name is already detached. Never delete or recreate it on Trash failure.
+    trash(&path).map_err(|e| {
+        format!(
+            "{} could not go to the Trash: {e}. The profile is still at {}.",
+            instance.name,
+            path.display()
+        )
+    })?;
+    let _ = fs::remove_dir(&retired);
     Store::mutate(data, |store| {
         if matches!(fs::symlink_metadata(&instance.work), Err(e) if e.kind() == std::io::ErrorKind::NotFound)
         {
@@ -812,6 +837,8 @@ fn slug(name: &str) -> String {
 const NOT_COPIED: &[&str] = &[
     OWN,
     STAGING,
+    GATES,
+    RETIRED,
     "ports",
     "sunrise-packs",
     "logs",
@@ -976,6 +1003,36 @@ fn create_whole_in(
     // Irrevocably visible. `list_in` repairs missing ancillary metadata without rolling back
     // the rename, including if an earlier process died before it could return from this call.
     find_in(&list_in(game_home, data), &slug)
+}
+
+/// Keep the owner outside an ordinary instance so Windows can detach its complete home
+/// while the inherited profile lease still excludes Play and every other mutation.
+pub(crate) fn owner_file(home: &Path) -> Result<Option<PathBuf>, String> {
+    let Some(parent) = home
+        .parent()
+        .filter(|p| p.file_name() == Some(OWN.as_ref()))
+    else {
+        return Ok(None);
+    };
+    let id = home
+        .file_name()
+        .and_then(std::ffi::OsStr::to_str)
+        .filter(|id| crate::browser::safe_name(id) == Some(*id))
+        .ok_or_else(|| format!("Invalid profile folder: {}", home.display()))?;
+    let root = parent
+        .parent()
+        .expect("instance collection is below its game home");
+    let problem = |e| format!("{}: {e}", home.display());
+    let canonical = root.canonicalize().map_err(problem)?;
+    let own = creation_parent(&canonical, OWN).map_err(problem)?;
+    if std::fs::symlink_metadata(parent)
+        .map_or(true, |m| sunrise_launcher_smod::runtime_leases::linked(&m))
+        || parent.canonicalize().map_err(problem)? != own
+    {
+        return Err(problem(std::io::ErrorKind::InvalidInput.into()));
+    }
+    let gate = creation_parent(&canonical, GATES).map_err(problem)?;
+    Ok(Some(gate.join(id)))
 }
 
 /// A real child directory of the canonical game root, not a symlink or a junction.
