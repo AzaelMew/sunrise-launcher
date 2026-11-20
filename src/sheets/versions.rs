@@ -63,6 +63,18 @@ struct Build {
 }
 
 /// "November 2026" for `2026-11`.
+/// The one line the picker says about the mods on the row picked: how many would be removed.
+fn picker_note(removed: usize) -> String {
+    match removed {
+        0 => tr("All your mods work with this version").to_string(),
+        1 => tr("1 of your mods isn't ready for this version and will be removed").to_string(),
+        n => trf(
+            "{count} of your mods aren't ready for this version and will be removed",
+            &[("count", &n.to_string())],
+        ),
+    }
+}
+
 fn month(year_month: &str) -> String {
     let (year, month) = year_month.split_once('-').unwrap_or((year_month, ""));
     let name = match month {
@@ -216,7 +228,6 @@ impl Launcher {
         };
         let (pinned, channel) = (instance.version.clone(), instance.channel);
         let plays = self.version_of(instance).cloned();
-        // Another build under native mods isn't kept from here: they are checked first.
         let has_native = !native_status::enabled(&instance.home).is_empty();
         let releases: &[Release] = match &self.releases {
             Load::Ready(rows) => rows,
@@ -289,7 +300,6 @@ impl Launcher {
                         Line::Build(b) => {
                             let on = chosen.as_deref() == Some(b.tag.as_str());
                             let playing = now.as_deref() == Some(b.tag.as_str());
-                            let blocked = has_native && !playing;
                             let tag = b.tag.clone();
                             let handle = this
                                 .ui
@@ -345,19 +355,14 @@ impl Launcher {
                                         .flex_none()
                                         .text_size(px(tokens::SMALL))
                                 }))
-                                .when(blocked, |d| d.opacity(0.45))
-                                .when(!blocked, |d| {
-                                    d.track_focus(&handle)
-                                        .reach()
-                                        .cursor_pointer()
-                                        .hover(|s| s.bg(rgb(palette().hover)))
-                                        .on_click(cx.listener(
-                                            move |this, _: &ClickEvent, _, cx| {
-                                                this.ui.sheets.versions.pick = Some(tag.clone());
-                                                cx.notify();
-                                            },
-                                        ))
-                                })
+                                .track_focus(&handle)
+                                .reach()
+                                .cursor_pointer()
+                                .hover(|s| s.bg(rgb(palette().hover)))
+                                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                    this.ui.sheets.versions.pick = Some(tag.clone());
+                                    cx.notify();
+                                }))
                         }
                     })
                     .collect::<Vec<_>>()
@@ -367,6 +372,16 @@ impl Launcher {
         // As tall as what it lists, up to the room the window has; past that it scrolls.
         .h(px((list.len() as f32 * LINE_H)
             .min((self.window_height - 330.).clamp(LINE_H * 4., LINE_H * 9.))));
+        // What switching would cost the mods, tied to the row picked: the line under the list
+        // names that build, and the row says it short.
+        let note = pick.as_ref().and_then(|tag| {
+            let removals = self.mods_removed_by(tag);
+            let build = list.iter().find_map(|line| match line {
+                Line::Build(b) if &b.tag == tag => Some(b.name.clone()),
+                _ => None,
+            })?;
+            Some((build, picker_note(removals.len())))
+        });
         let nothing = list.is_empty().then(|| {
             muted(match (&self.releases, query.trim().is_empty()) {
                 (Load::Loading, _) => tr("Reading the list of builds…"),
@@ -406,14 +421,14 @@ impl Launcher {
                 .flex()
                 .flex_col()
                 .child(muted(tr(
-                    "Your native mods are made for the build you play. Another build needs them checked first.",
+                    "Your native mods are rebuilt for the build you switch to. Check them against a newer build first if you like.",
                 ))
                 .text_size(px(tokens::SMALL)))
                 .children(self.native_check_block(cx))
         });
         // Up and Down move through the builds, from the field or from a row: the list scrolls to
         // the row and the row takes the keyboard.
-        let (all, playing, blocked_by_native) = (Rc::clone(&list), plays.clone(), has_native);
+        let all = Rc::clone(&list);
         let body = div()
             .flex()
             .flex_col()
@@ -429,9 +444,7 @@ impl Launcher {
                     .iter()
                     .find(|(_, h)| h.is_focused(window))
                     .map(|(n, _)| *n);
-                let usable =
-                    |b: &Build| !blocked_by_native || playing.as_deref() == Some(b.tag.as_str());
-                if let Some(to) = next_row(&all, from, down, usable) {
+                if let Some(to) = next_row(&all, from, down, |_: &Build| true) {
                     v.scroll.scroll_to_item(to, gpui::ScrollStrategy::Nearest);
                     let row = v
                         .rows
@@ -452,6 +465,9 @@ impl Launcher {
                 .into(),
             ))
             .child(field)
+            .children(note.map(|(build, said)| {
+                muted(format!("{build}: {said}")).text_size(px(tokens::SMALL))
+            }))
             .children(native)
             .child(
                 div()
@@ -504,6 +520,16 @@ mod tests {
             about: String::new(),
             installed: false,
         })
+    }
+
+    #[test]
+    fn the_picker_says_how_many_mods_the_row_would_remove() {
+        assert_eq!(picker_note(0), "All your mods work with this version");
+        assert!(picker_note(1).starts_with("1 of your mods isn't ready"));
+        assert_eq!(
+            picker_note(2),
+            "2 of your mods aren't ready for this version and will be removed"
+        );
     }
 
     #[test]

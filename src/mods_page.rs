@@ -744,6 +744,22 @@ impl Launcher {
             .collect()
     }
 
+    /// The mods switching the selected profile to the game build `tag` would remove, by the
+    /// index already read and the registry mods installed: content mods only; native mods are
+    /// said by the build's own check.
+    pub(crate) fn mods_removed_by(&self, tag: &str) -> Vec<sunrise::auto::Removal> {
+        let (Some(index), Some(instance)) = (sunrise::known_index(), self.selected_instance())
+        else {
+            return Vec::new();
+        };
+        let ctx = sunrise::auto::Context {
+            in_pack: sunrise::auto::in_pack(&instance.home),
+            game: &backend::played_version_id_by(Some(tag)),
+            native_allowed: self.settings.native_mods_allowed_at.is_some(),
+        };
+        sunrise::auto::removals(&index, &self.mods.installed, &ctx, &[])
+    }
+
     /// The answer to the break sheet: Install removes the mods it would break, then installs;
     /// Don't install leaves everything as it is.
     pub(crate) fn answer_break(&mut self, install: bool) {

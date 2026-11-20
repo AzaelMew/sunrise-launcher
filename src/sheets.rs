@@ -1195,14 +1195,6 @@ impl Launcher {
             return;
         };
         let id = instance.id.clone();
-        // Backstop for the sheet's own gate: never pin another build under native mods.
-        if let (Some(to), Some(plays)) = (&version, self.version_of(instance)) {
-            if to != plays && !native_status::enabled(&instance.home).is_empty() {
-                self.ui.sheets.error =
-                    Some(tr("Check your native mods against that build first.").into());
-                return;
-            }
-        }
         match instances::edit(&id, |m| {
             m.version = version;
             m.channel = Some(channel);
