@@ -1,0 +1,10 @@
+{
+  "suite": "install-recovery",
+  "source_head": "8d6febe16ac8037e1a8e707ea99f4bfdd7dbf477",
+  "binary_sha256": "097deb5794eebc45e005acb8e0fedd4a3697113f1938474087b6792559a4baca",
+  "size": [
+    "1280x800",
+    "800x600"
+  ],
+  "status": "captured"
+}
