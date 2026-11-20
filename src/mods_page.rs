@@ -148,8 +148,6 @@ pub(super) struct Mods {
     pub(crate) card_error: Option<CardError>,
     /// An install that would break installed mods, asked before anything is downloaded.
     pub(crate) break_ask: Option<BreakAsk>,
-    /// The player answered the break sheet: the install it asked about goes ahead.
-    break_cleared: bool,
     /// The mods that go once the player continues (`removal`).
     pub(crate) removal: Option<removal::Removal>,
     /// The native mods the running build was started to take up.
@@ -275,7 +273,6 @@ impl Mods {
             world_ask: None,
             removal: None,
             break_ask: None,
-            break_cleared: false,
             also: HashMap::new(),
             updated: HashMap::new(),
             card_error: None,
@@ -516,7 +513,7 @@ impl Launcher {
         }
         // An install the plan refuses because of what installed mods need would break them:
         // one sheet asks first.
-        if source == SourceId::Sunrise && !std::mem::take(&mut self.mods.break_cleared) {
+        if source == SourceId::Sunrise {
             let broken = self.would_break(std::slice::from_ref(&id));
             if !broken.is_empty() {
                 self.mods.break_ask = Some(BreakAsk {
@@ -534,6 +531,7 @@ impl Launcher {
             source,
             id,
             known: known.map(Box::new),
+            replacing: Vec::new(),
         };
         self.submit_install(request);
     }
@@ -567,7 +565,8 @@ impl Launcher {
                 source,
                 id,
                 known,
-            } => self.start_install_one(target, source, id, known.map(|p| *p)),
+                replacing,
+            } => self.start_install_one(target, source, id, known.map(|p| *p), replacing),
             queue::Request::Many(target, ids, shown) => self.start_install_many(target, ids, shown),
         }
     }
@@ -578,6 +577,7 @@ impl Launcher {
         source: SourceId,
         id: String,
         known: Option<Project>,
+        replacing: Vec<String>,
     ) {
         self.mods.message = None;
         self.mods.card_error = None;
@@ -648,7 +648,9 @@ impl Launcher {
                     )));
                 }
                 let before = installed::Installed::load(&home).entries;
-                let done = installed::install(&*source, &p, everything, &home, &game, &progress)?;
+                let done = installed::install(
+                    &*source, &p, everything, &home, &game, &replacing, &progress,
+                )?;
                 if p.source == SourceId::Sunrise && p.kind == PackKind::Mod {
                     return Ok(Finished {
                         said: None,
@@ -699,14 +701,14 @@ impl Launcher {
         if answer == sunrise_launcher::worlds::Answer::Stay {
             return;
         }
-        if let Some(base) = ask.build_on {
-            self.build_native_on(Some(base), true);
-            return;
-        }
         let allow = ask.question.mods.into_iter().collect();
-        match ask.switch {
-            Some((version, channel)) => self.commit_switch(&ask.instance, version, channel, allow),
-            None => self.migrate_mods(&ask.instance, allow),
+        match ask.then {
+            Then::Build(base) => self.build_native_on(Some(base), true),
+            Then::Switch(version, channel) => {
+                self.commit_switch(&ask.instance, version, channel, allow)
+            }
+            Then::Install(ask) => self.install_replacing(*ask),
+            Then::Update => self.migrate_mods(&ask.instance, allow),
         }
     }
 
@@ -857,8 +859,9 @@ impl Launcher {
         sunrise::auto::removals(&index, &self.mods.installed, &ctx, native_off)
     }
 
-    /// The answer to the break sheet: Install removes the mods it would break, then installs;
-    /// Don't install leaves everything as it is.
+    /// The answer to the break sheet: Install goes ahead and removes the mods it would break as
+    /// part of the install (all or nothing); Don't install leaves everything as it is. A mod a
+    /// saved world uses asks the world question first.
     pub(crate) fn answer_break(&mut self, install: bool) {
         let Some(ask) = self.mods.break_ask.take() else {
             return;
@@ -866,15 +869,33 @@ impl Launcher {
         if !install {
             return;
         }
-        let home = self.mods.home();
-        for (id, ..) in &ask.broken {
-            if let Err(e) = installed::remove(&home, id) {
-                self.mods.message = Some(Err(e));
-                return;
-            }
+        let ids: Vec<String> = ask.broken.iter().map(|(id, ..)| id.clone()).collect();
+        let instance = self
+            .selected_instance()
+            .map(|i| i.id.clone())
+            .unwrap_or_default();
+        if let Ok(Some(question)) = sunrise_launcher::worlds::question(&self.mods.home(), &ids) {
+            self.mods.world_ask = Some(WorldAsk {
+                instance,
+                question,
+                then: Then::Install(Box::new(ask)),
+            });
+            return;
         }
-        self.mods.break_cleared = true;
-        self.mods_install(ask.source, ask.id, ask.known.map(|p| *p), ask.shown);
+        self.install_replacing(ask);
+    }
+
+    /// Queues the install a break sheet asked for, with the mods it would break going in the
+    /// same transaction.
+    fn install_replacing(&mut self, ask: BreakAsk) {
+        let request = queue::Request::One {
+            target: self.queue_target(),
+            source: ask.source,
+            id: ask.id,
+            known: ask.known,
+            replacing: ask.broken.into_iter().map(|(id, ..)| id).collect(),
+        };
+        self.submit_install(request);
     }
 
     /// Whether installing the registry mods `ids` would put native code in, by the index
@@ -932,7 +953,7 @@ impl Launcher {
                     let progress = |line: &str, f: f32| {
                         let _ = tx.send(Event::Progress(line.to_string(), (i as f32 + f) / total));
                     };
-                    installed::install(&*source, &p, false, &home, &game, &progress)
+                    installed::install(&*source, &p, false, &home, &game, &[], &progress)
                         .map(|done| {
                             native.borrow_mut().extend(
                                 done.iter()
@@ -1000,8 +1021,7 @@ pub(super) fn auto_update(
                 out.asks.push(WorldAsk {
                     instance: i.id.clone(),
                     question,
-                    build_on: None,
-                    switch: None,
+                    then: Then::Update,
                 });
             }
         }
@@ -1026,19 +1046,26 @@ impl AutoOutcome {
     }
 }
 
-/// A switch or update that waits for the player's answer: it would remove mods that saved
-/// worlds use. Staying is the default; "switch anyway" runs it again with those mods allowed.
-#[derive(Clone, Debug, PartialEq)]
+/// What goes on once the player answers Switch anyway to a world question.
+pub(crate) enum Then {
+    /// The mods are updated again with the ones named allowed to go.
+    Update,
+    /// A build that stopped for the question is made again, leaving those mods out: the build
+    /// it was on.
+    Build(String),
+    /// A switch of build: the pin and channel it would save, saved only now.
+    Switch(Option<String>, instances::Channel),
+    /// An install that removes mods a world uses.
+    Install(Box<BreakAsk>),
+}
+
+/// A switch, update or install that waits for the player's answer: it would remove mods that
+/// saved worlds use. Staying is the default; Switch anyway goes on with those mods allowed.
 pub(crate) struct WorldAsk {
     /// The instance whose profile it is.
     pub(crate) instance: String,
     pub(crate) question: sunrise_launcher::worlds::Question,
-    /// For a build that stopped for the question: the build it was on. Switching anyway
-    /// builds on it again, leaving those mods out.
-    pub(crate) build_on: Option<String>,
-    /// For a switch of build that waits for the question: the pin and channel it would save.
-    /// Nothing is saved until the answer is Switch anyway.
-    pub(crate) switch: Option<(Option<String>, instances::Channel)>,
+    pub(crate) then: Then,
 }
 
 impl WorldAsk {
@@ -1051,8 +1078,7 @@ impl WorldAsk {
                 mods: stake.mods.clone(),
                 worlds: stake.worlds.clone(),
             },
-            build_on: Some(stake.base.clone()),
-            switch: None,
+            then: Then::Build(stake.base.clone()),
         }
     }
 }

@@ -1254,8 +1254,7 @@ impl Launcher {
                 self.mods.world_ask = Some(crate::mods_page::WorldAsk {
                     instance: id,
                     question,
-                    build_on: None,
-                    switch: Some((version, channel)),
+                    then: crate::mods_page::Then::Switch(version, channel),
                 });
             }
             None => self.commit_switch(&id, version, channel, Default::default()),

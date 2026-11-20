@@ -218,18 +218,21 @@ fn add(
 }
 
 /// Installs `project` (and what it needs) into the game folder `home`. A project already
-/// installed is updated to the version chosen. `progress` gets a line per file and the fraction.
+/// installed is updated to the version chosen. `replacing` are registry mods that are removed
+/// as part of the same install (the ones it can't live with): all or nothing. `progress` gets
+/// a line per file and the fraction.
 pub fn install(
     source: &dyn Source,
     project: &Project,
     everything: bool,
     home: &Path,
     game: &str,
+    replacing: &[String],
     progress: &dyn Fn(&str, f32),
 ) -> Result<Vec<Entry>, String> {
     let _lock = super::lock_home(home).map_err(|e| e.to_string())?;
     if project.source == SourceId::Sunrise {
-        return super::sunrise::install(project, home, game, progress);
+        return super::sunrise::install(project, home, game, replacing, progress);
     }
     let steps = plan(source, project, everything, game)?;
     put(

@@ -2289,7 +2289,7 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                 }
                 return Ok(());
             }
-            let done = installed::install(&*source, &p, everything, &home, &game, &line)?;
+            let done = installed::install(&*source, &p, everything, &home, &game, &[], &line)?;
             if as_json {
                 json(done.iter().map(entry_json).collect());
             }
@@ -2323,7 +2323,8 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                     }
                     Some(_) => {
                         let p = source.project(&e.project)?;
-                        let done = installed::install(&*source, &p, true, &home, &game, &line)?;
+                        let done =
+                            installed::install(&*source, &p, true, &home, &game, &[], &line)?;
                         for done in done {
                             println!("{} {}: {}", done.title, done.number, done.file);
                         }

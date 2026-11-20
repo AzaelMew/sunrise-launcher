@@ -28,7 +28,13 @@ pub(super) fn install(
             "An earlier install is still being undone. Restart the launcher and try again.".into(),
         );
     }
-    let installed = installed::Installed::load(home);
+    let mut installed = installed::Installed::load(home);
+    // The mods this install replaces are out of the picture for the plan and go with it.
+    let (removing, kept): (Vec<_>, Vec<_>) = installed
+        .entries
+        .drain(..)
+        .partition(|e| e.source == SourceId::Sunrise && install.replacing.contains(&e.project));
+    installed.entries = kept;
     // The index's claims plan the versions first: an unsatisfiable set is refused with the planner's
     // reason before anything downloads, and each dependency is fetched at the version it chose.
     let held = super::held_mods(&installed.entries);
@@ -120,7 +126,7 @@ pub(super) fn install(
                     stale.extend(old_path.filter(|path| plan.unreadable.contains(path)));
                 }
             }
-            changes.push((file, home.join(&entry.file)));
+            changes.push((Some(file), home.join(&entry.file)));
             plan.installed
                 .entries
                 .retain(|e| e.source != SourceId::Sunrise || e.project != entry.project);
@@ -141,14 +147,23 @@ pub(super) fn install(
         fs::copy(broken, &copy).map_err(|e| format!("{}: {e}", broken.display()))?;
         aside.push((broken.clone(), copy));
     }
-    if !changes.is_empty() {
+    // What it replaces is moved aside with the rest, so a failure brings it back.
+    let mut disable = Vec::new();
+    for old in &removing {
+        if home.join(&old.file).symlink_metadata().is_ok() {
+            changes.push((None, home.join(&old.file)));
+        }
+        disable.extend(super::mod_id(old).map(str::to_owned));
+    }
+    if !changes.is_empty() || !removing.is_empty() {
         plan.installed.save(staged.path())?;
         changes.push((
-            staged.path().join(installed::MANIFEST),
+            Some(staged.path().join(installed::MANIFEST)),
             home.join(installed::MANIFEST),
         ));
     }
-    if enable.iter().any(|id| !mod_list::is_enabled(home, id)) {
+    let stays_on = |id: &String| !mod_list::is_enabled(home, id);
+    if enable.iter().any(stays_on) || disable.iter().any(|id| mod_list::is_enabled(home, id)) {
         let saved = home.join(ENABLED);
         let next = staged.path().join(ENABLED);
         match fs::copy(&saved, &next) {
@@ -158,7 +173,9 @@ pub(super) fn install(
         }
         let ids = enable.iter().map(String::as_str).collect::<Vec<_>>();
         mod_list::set_all_enabled(staged.path(), &ids, true)?;
-        changes.push((next, saved));
+        let ids = disable.iter().map(String::as_str).collect::<Vec<_>>();
+        mod_list::set_all_enabled(staged.path(), &ids, false)?;
+        changes.push((Some(next), saved));
     }
     let _staged = publish(staged, changes)?;
     // The files are in place and the list is still kept: what is left to do is part of the
@@ -328,7 +345,7 @@ impl Plan<'_> {
 /// The profile lock keeps another launcher or game start from seeing an intermediate state.
 fn publish(
     staged: tempfile::TempDir,
-    changes: Vec<(PathBuf, PathBuf)>,
+    changes: Vec<(Option<PathBuf>, PathBuf)>,
 ) -> Result<tempfile::TempDir, String> {
     let home = staged
         .path()
@@ -354,8 +371,11 @@ fn publish(
                 Err(e) => return Err(e),
             };
             undo.push((to.clone(), backup, false));
-            fs::rename(&from, &to)?;
-            undo.last_mut().expect("just recorded").2 = true;
+            // No file to put there: the one that was is removed.
+            if let Some(from) = from {
+                fs::rename(&from, &to)?;
+                undo.last_mut().expect("just recorded").2 = true;
+            }
             Ok(())
         })();
         if let Err(e) = result {
