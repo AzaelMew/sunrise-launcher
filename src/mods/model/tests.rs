@@ -1104,3 +1104,14 @@ fn a_mod_is_unknown_not_unfit_until_there_is_a_game_to_judge_by() {
     );
     assert!(cards(&idx, GAME).iter().all(|c| c.fit == Fit::Fits));
 }
+
+#[test]
+fn the_installed_list_names_its_groups_only_when_there_is_more_than_one() {
+    assert!(!names_groups([Group::Rest, Group::Rest]));
+    assert!(!names_groups([]));
+    assert!(names_groups([Group::Updates, Group::Rest]));
+    assert!(
+        names_groups([Group::Updates]),
+        "its Update button lives in the heading"
+    );
+}

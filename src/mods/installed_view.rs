@@ -359,10 +359,11 @@ impl Launcher {
         let group_counts = |g: Group| visible.iter().filter(|&&i| rows[i].group() == g).count();
         // Only what the plan would really update: with none, there is no button.
         let update_all = model::update_all_button(&rows, native_allowed);
+        let headings = model::names_groups(visible.iter().map(|&i| rows[i].group()));
         for (n, &i) in visible.iter().enumerate() {
             let r = rows[i].clone();
             let g = r.group();
-            if last != Some(g) {
+            if headings && last != Some(g) {
                 last = Some(g);
                 let (title, count) = match g {
                     Group::Updates => (tr("UPDATES"), group_counts(g)),
