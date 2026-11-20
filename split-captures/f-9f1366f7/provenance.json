@@ -1,0 +1,10 @@
+{
+  "suite": "profile and world lifecycle",
+  "source_head": "9f1366f7ca9107021ab1a06a232d2eaaa0fafbf8",
+  "binary_sha256": "75e47640639f396f1f769b705363af9d8d350081216db09d947db25fc2c6baee",
+  "size": [
+    "1280x800",
+    "800x600"
+  ],
+  "status": "captured"
+}
