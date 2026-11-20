@@ -10,7 +10,7 @@
 //! written whole beside the old one and renamed over it; if it can't be written, nothing is
 //! published. One that can't be undone stays, and the profile takes no new install until it is.
 //!
-//! The record's root names its kind ([`Kind`]): `install` now, and a version switch's attempt
+//! The record names its kind ([`Intent`]): `install` now, and a version switch's attempt
 //! later, never both in one file. A record of another kind, another version or that can't be read
 //! blocks the profile and is never guessed at. [`begin`], [`done`], [`undo`] and the cleanup act
 //! only on the attempt ids they are given, so a late call from an older build can't touch a newer
@@ -24,10 +24,12 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+mod build;
 mod durable;
+pub use build::{Active, Target};
 
 const FILE: &str = "mod-browser/install-txn.json";
-const VERSION: u64 = 1;
+const VERSION: u64 = 2;
 
 /// The live owner of one profile's install batch. The file is never removed: all launchers
 /// must contend on the same inode, even when the record itself is replaced or absent.
@@ -52,7 +54,13 @@ impl Drop for Lease {
 impl Lease {
     pub fn try_acquire(home: &Path) -> Result<Option<Self>, String> {
         fs::create_dir_all(home).map_err(|e| format!("{}: {e}", home.display()))?;
+        build::require_dir(home)?;
         let path = home.join(".install-txn.lock");
+        match fs::symlink_metadata(&path) {
+            Ok(meta) if meta.is_file() && build::regular(&meta) => {}
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+            _ => return Err(unsettled()),
+        }
         let fail = |e| format!("{}: {e}", path.display());
         let mut open = fs::File::options();
         open.read(true).write(true).create(true).truncate(false);
@@ -119,6 +127,7 @@ impl Lease {
     pub fn recover_abandoned(&self) -> Result<(), String> {
         let _lock = locked(&self.home)?;
         let mut record = read(&self.home)?.unwrap_or_default();
+        recover_pointer(&self.home, &mut record)?;
         reconcile_legacy(&self.home)?;
         while !record.attempts.is_empty() {
             undo_last(&self.home, &mut record)?;
@@ -163,7 +172,7 @@ struct Step {
     backup: PathBuf,
 }
 
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 enum Image {
     Missing,
@@ -174,7 +183,7 @@ impl Image {
     fn at(path: &Path) -> Result<Self, String> {
         let inspect = || -> io::Result<Self> {
             match fs::symlink_metadata(path) {
-                Ok(meta) if meta.is_file() => {}
+                Ok(meta) if meta.is_file() && build::regular(&meta) => {}
                 Ok(_) => return Err(io::Error::from(io::ErrorKind::InvalidData)),
                 Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Self::Missing),
                 Err(e) => return Err(e),
@@ -219,28 +228,160 @@ struct Attempt {
     undo: Option<usize>,
 }
 
-/// What the record's attempts are of: one kind in a file.
-#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-enum Kind {
-    Install,
+/// One intent owns both the ordered file operations and the final pointer step.
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
+enum Intent {
+    Install { bootstrap: Option<build::Bootstrap> },
+    Switch { profile: [u8; 16], generation: u64 },
 }
 
 #[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Record {
     version: u64,
-    kind: Kind,
+    intent: Intent,
     attempts: Vec<Attempt>,
+    pointer: Option<Pointer>,
+}
+
+#[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+enum PointerPhase {
+    Publishing,
+    Undoing,
+    Committed,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Pointer {
+    phase: PointerPhase,
+    before: Option<Vec<u8>>,
+    after: Vec<u8>,
 }
 
 impl Default for Record {
     fn default() -> Self {
         Self {
             version: VERSION,
-            kind: Kind::Install,
+            intent: Intent::Install { bootstrap: None },
             attempts: Vec::new(),
+            pointer: None,
         }
     }
+}
+
+impl Record {
+    fn bootstrap(&self) -> Option<&build::Bootstrap> {
+        match &self.intent {
+            Intent::Install { bootstrap } => bootstrap.as_ref(),
+            Intent::Switch { .. } => None,
+        }
+    }
+}
+
+impl Lease {
+    /// Runs the legacy resolver once, under the profile gate, before beginning deferred work.
+    /// It is not called again if an abandoned operation already bound a target.
+    pub fn bind_bootstrap(
+        &self,
+        resolve: impl FnOnce() -> Result<Target, String>,
+    ) -> Result<Target, String> {
+        let _lock = locked(&self.home)?;
+        let mut record = read(&self.home)?.unwrap_or_default();
+        if record.pointer.is_some()
+            || !record.attempts.is_empty()
+            || build::read(&self.home)?.is_some()
+        {
+            return Err(unsettled());
+        }
+        if let Some(bootstrap) = record.bootstrap() {
+            bootstrap.verify(&self.home)?;
+            return Ok(bootstrap.target.clone());
+        }
+        if !matches!(record.intent, Intent::Install { .. }) {
+            return Err(unsettled());
+        }
+        let target = resolve()?;
+        record.intent = Intent::Install {
+            bootstrap: Some(build::Bootstrap::bind(&self.home, target.clone())?),
+        };
+        write(&self.home, &record)?;
+        Ok(target)
+    }
+
+    /// Commit the matched image, or keep the bootstrap binding if publication is interrupted.
+    pub fn commit_bootstrap(&self, image: &str) -> Result<Active, String> {
+        let _lock = locked(&self.home)?;
+        let mut record = read(&self.home)?.ok_or_else(unsettled)?;
+        let active = record
+            .bootstrap()
+            .ok_or_else(unsettled)?
+            .active(image, &self.home)?;
+        publish_bootstrap(&self.home, &mut record, &active, |_| {})?;
+        Ok(active)
+    }
+}
+
+fn publish_bootstrap(
+    home: &Path,
+    record: &mut Record,
+    active: &Active,
+    mut after_step: impl FnMut(PointerPhase),
+) -> Result<(), String> {
+    if record.pointer.is_some() || !record.attempts.is_empty() || build::read(home)?.is_some() {
+        return Err(unsettled());
+    }
+    let after = serde_json::to_vec(active).map_err(|e| e.to_string())?;
+    record.pointer = Some(Pointer {
+        phase: PointerPhase::Publishing,
+        before: None,
+        after,
+    });
+    write(home, record)?;
+    build::publish(home, active)?;
+    after_step(PointerPhase::Publishing);
+    record.pointer.as_mut().ok_or_else(unsettled)?.phase = PointerPhase::Committed;
+    write(home, record)?;
+    after_step(PointerPhase::Committed);
+    recover_pointer(home, record)
+}
+
+/// Retire exactly the state on disk. In particular, neither marker errors nor a failed
+/// retirement are a reason to start another install or launch the tentative generation.
+fn recover_pointer(home: &Path, record: &mut Record) -> Result<(), String> {
+    let Some(pointer) = record.pointer.as_ref() else {
+        return Ok(());
+    };
+    let path = home.join(build::FILE);
+    let fail = |e| format!("{}: {e}", path.display());
+    let live = build::optional_bytes(&path)?;
+    let is_after = live.as_ref() == Some(&pointer.after);
+    let is_before = live == pointer.before;
+    if pointer.phase == PointerPhase::Committed {
+        if !is_after {
+            return Err(unsettled());
+        }
+        record.intent = Intent::Install { bootstrap: None };
+    } else {
+        if !is_before && !is_after {
+            return Err(unsettled());
+        }
+        record.pointer.as_mut().ok_or_else(unsettled)?.phase = PointerPhase::Undoing;
+        write(home, record)?;
+        let pointer = record.pointer.as_ref().ok_or_else(unsettled)?;
+        if !is_before {
+            match &pointer.before {
+                Some(before) => durable::replace(home, &path, before),
+                None => durable::retire(&path),
+            }
+            .map_err(fail)?;
+        }
+        durable::sync_restored(&path, &path, pointer.before.is_none()).map_err(fail)?;
+    }
+    record.pointer = None;
+    write(home, record)
 }
 
 /// Whether a build has sealed this batch; later installs and removals must wait.
@@ -252,10 +393,14 @@ pub(in crate::browser) fn has_build(home: &Path) -> Result<bool, String> {
 /// or guessed at: it is an error that stops every change in the profile.
 fn read(home: &Path) -> Result<Option<Record>, String> {
     let file = home.join(FILE);
-    let text = match fs::read_to_string(&file) {
-        Ok(text) => text,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => return Err(format!("{}: {e}", file.display())),
+    let parent = file.parent().expect("profile record has a parent");
+    match fs::symlink_metadata(parent) {
+        Ok(meta) if meta.is_dir() && build::regular(&meta) => {}
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+        _ => return Err(unsettled()),
+    }
+    let Some(bytes) = build::optional_bytes(&file)? else {
+        return Ok(None);
     };
     let kept = |why: String| {
         trf(
@@ -263,13 +408,61 @@ fn read(home: &Path) -> Result<Option<Record>, String> {
             &[("file", &file.display().to_string()), ("why", &why)],
         )
     };
-    let value: serde_json::Value = serde_json::from_str(&text).map_err(|e| kept(e.to_string()))?;
+    let value: serde_json::Value =
+        serde_json::from_slice(&bytes).map_err(|e| kept(e.to_string()))?;
     if value["version"].as_u64() != Some(VERSION) {
         return Err(kept(
             tr("another version of the launcher made it").to_string(),
         ));
     }
-    let record: Record = serde_json::from_value(value).map_err(|e| kept(e.to_string()))?;
+    let record: Record = serde_json::from_slice(&bytes).map_err(|e| kept(e.to_string()))?;
+    if let Some(binding) = record.bootstrap() {
+        binding.target.validate()?;
+        if !record.attempts.is_empty() || binding.profile == [0; 16] {
+            return Err(kept(unsettled()));
+        }
+    }
+    if let Some(pointer) = &record.pointer {
+        let after = build::parse(&pointer.after).map_err(kept)?;
+        let before = pointer
+            .before
+            .as_deref()
+            .map(build::parse)
+            .transpose()
+            .map_err(kept)?;
+        let valid = match (&record.intent, before) {
+            (
+                Intent::Install {
+                    bootstrap: Some(bootstrap),
+                },
+                None,
+            ) => {
+                after.profile == bootstrap.profile
+                    && after.generation == 1
+                    && after.base() == bootstrap.target.base()
+            }
+            (
+                Intent::Switch {
+                    profile,
+                    generation,
+                },
+                Some(before),
+            ) => {
+                before.profile == *profile
+                    && after.profile == *profile
+                    && before.generation == *generation
+                    && after.generation.checked_sub(1) == Some(*generation)
+            }
+            _ => false,
+        };
+        if !valid || !record.attempts.is_empty() {
+            return Err(kept(unsettled()));
+        }
+    }
+    // A Switch is not usable by the legacy Install callbacks.
+    if matches!(record.intent, Intent::Switch { .. }) && record.pointer.is_none() {
+        return Err(kept(unsettled()));
+    }
     use std::path::Component;
     let inside = |path: &Path| {
         !path.as_os_str().is_empty() && path.components().all(|c| matches!(c, Component::Normal(_)))
@@ -294,12 +487,13 @@ fn read(home: &Path) -> Result<Option<Record>, String> {
 /// A failed persistence barrier is reported, even if the namespace change already happened.
 fn write(home: &Path, record: &Record) -> Result<(), String> {
     let file = home.join(FILE);
-    let persisted = if record.attempts.is_empty() {
-        durable::retire(&file)
-    } else {
-        let text = serde_json::to_vec(record).map_err(|e| e.to_string())?;
-        durable::replace(home, &file, &text)
-    };
+    let persisted =
+        if record.attempts.is_empty() && record.pointer.is_none() && record.bootstrap().is_none() {
+            durable::retire(&file)
+        } else {
+            let text = serde_json::to_vec(record).map_err(|e| e.to_string())?;
+            durable::replace(home, &file, &text)
+        };
     persisted.map_err(|e| format!("{}: {e}", file.display()))
 }
 
@@ -313,6 +507,9 @@ pub(super) fn begin(
     approvals: &[Approval],
 ) -> Result<String, String> {
     let mut record = read(home)?.unwrap_or_default();
+    if !matches!(record.intent, Intent::Install { bootstrap: None }) || record.pointer.is_some() {
+        return Err(unsettled());
+    }
     if record
         .attempts
         .iter()
@@ -943,7 +1140,7 @@ mod tests {
         let scene = scene();
         let file = scene.home().join(FILE);
         fs::create_dir_all(file.parent().unwrap()).unwrap();
-        let text = r#"{"version": 2, "attempts": []}"#;
+        let text = r#"{"version": 1, "kind": "install", "attempts": []}"#;
         fs::write(&file, text).unwrap();
         let staged = staging(scene.home());
         assert!(begin(
@@ -1299,6 +1496,77 @@ mod tests {
             fs::read_to_string(scene.home().join(FILE)).unwrap(),
             "not a transaction"
         );
+    }
+
+    #[test]
+    fn live_bootstrap_process() {
+        let Some(home) = std::env::var_os("SUNRISE_TEST_INSTALL_OWNER") else {
+            return;
+        };
+        let home = PathBuf::from(home);
+        let stop = std::env::var("SUNRISE_TEST_LIVE_PROFILE_WORKER").unwrap();
+        let owner = Lease::admit(&home).unwrap();
+        owner
+            .bind_bootstrap(|| Target::legacy("nightly-original"))
+            .unwrap();
+        if stop == "deferred-work" {
+            wait_to_be_killed();
+            return;
+        }
+        let mut record = read(&home).unwrap().unwrap();
+        let active = record.bootstrap().unwrap().test_active();
+        publish_bootstrap(&home, &mut record, &active, |phase| {
+            if (phase == PointerPhase::Publishing && stop == "pointer")
+                || (phase == PointerPhase::Committed && stop == "marker")
+            {
+                wait_to_be_killed();
+            }
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn bootstrap_admission_survives_a_kill() {
+        let home = tempfile::tempdir().unwrap();
+        let home = home.path();
+        let child = "browser::sunrise::txn::tests::live_bootstrap_process";
+        for phase in ["deferred-work", "pointer", "marker"] {
+            crash_process(child, home, Some(phase), || {
+                assert!(Lease::admit(home).is_err());
+            });
+            let owner = Lease::admit(home).unwrap();
+            if phase == "marker" {
+                assert_eq!(
+                    owner.active_build().unwrap().unwrap().base(),
+                    "nightly-original"
+                );
+                assert!(!home.join(FILE).exists());
+            } else {
+                assert!(owner.active_build().unwrap().is_none());
+                assert_eq!(
+                    owner
+                        .bind_bootstrap(|| panic!("the catalogue changed"))
+                        .unwrap()
+                        .base(),
+                    "nightly-original"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn bootstrap_refuses_changed_legacy_inputs_without_rebinding() {
+        let scene = scene();
+        let owner = Lease::admit(scene.home()).unwrap();
+        owner
+            .bind_bootstrap(|| Target::legacy("nightly-original"))
+            .unwrap();
+        let bytes = fs::read(scene.home().join(FILE)).unwrap();
+        fs::write(&scene.dep, "a different package").unwrap();
+        assert!(owner.bind_bootstrap(|| panic!("no retargeting")).is_err());
+        assert!(owner.commit_bootstrap("nightly-original").is_err());
+        assert_eq!(fs::read(scene.home().join(FILE)).unwrap(), bytes);
+        assert!(owner.active_build().unwrap().is_none());
     }
 
     #[test]
