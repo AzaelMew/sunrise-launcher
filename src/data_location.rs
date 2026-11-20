@@ -412,12 +412,16 @@ fn migrate_locked(
     for root in [&source.launcher, &source.game, &source.build] {
         leases.acquire(root, true)?;
     }
-    let bootstrap = pointer_path(bootstrap)?;
-    let mut controls = vec![
-        bootstrap.clone(),
+    // Canonical spellings are only for excluding controls from the copied tree. Commit
+    // to the caller's bootstrap, and report that same path if replacement is refused.
+    let mut controls = [
+        bootstrap.to_owned(),
         bootstrap.with_file_name("migration.lock"),
         bootstrap.with_file_name("location.json.new"),
-    ];
+    ]
+    .iter()
+    .map(|path| pointer_path(path))
+    .collect::<Result<Vec<_>>>()?;
     controls.extend(leases.0.iter().map(|(path, _)| path.clone()));
     // Both pointer and source leases cover recovery and the entire snapshot/commit.
     crate::relocation::admit_idle_profiles(&source)?;
@@ -452,7 +456,7 @@ fn migrate_locked(
         fs::remove_dir(&stage).map_err(|e| problem(&stage, e))?;
         sync_dir(&target)?;
         progress("Committing data location");
-        commit(&bootstrap, &destination)?;
+        commit(bootstrap, &destination)?;
         Ok(destination)
     })();
     result.map_err(|e: String| format!("{e}. Original data was kept. Partial copies may remain in {}; choose an empty folder to retry", target.display()))
