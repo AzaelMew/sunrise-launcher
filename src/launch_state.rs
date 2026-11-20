@@ -30,6 +30,7 @@ pub(crate) struct Facts {
     /// The configured data folder could be opened, regardless of any move notice.
     pub located: bool,
     pub client_error: Option<String>,
+    pub install_recovery: Option<(std::path::PathBuf, String)>,
     /// The game's own files were not found.
     pub prepare_error: Option<String>,
     pub native_error: Option<String>,
@@ -252,8 +253,14 @@ impl Facts {
             .update
             .as_ref()
             .filter(|_| self.installed && !busy && !self.running);
-        let failed = brief.is_some() && !self.building;
-        let said = brief
+        let recovery = self
+            .install_recovery
+            .as_ref()
+            .filter(|_| !busy && !self.running);
+        let failed = (recovery.is_some() || brief.is_some()) && !self.building;
+        let said = recovery
+            .map(|_| tr("A mod install couldn't be finished.").into())
+            .or(brief)
             .filter(|_| !self.building)
             .or_else(|| hold.clone())
             .or_else(|| update.map(|build| trf("{build} is available", &[("build", build)])));
@@ -264,6 +271,11 @@ impl Facts {
         };
         let act = if self.building {
             Some(Act::StopBuild)
+        } else if let Some((home, detail)) = recovery {
+            Some(Act::Notice {
+                text: detail.clone(),
+                way_out: Some(WayOut::ProfileFolder(home.clone())),
+            })
         } else if let Some(text) = problem.filter(|_| way_out.is_some() || more) {
             Some(Act::Notice { text, way_out })
         } else if hold.is_some() && !busy {
@@ -405,9 +417,9 @@ impl Launcher {
             installing: self.installing.as_ref().map(|(_, progress)| *progress),
             preparing: self.preparing,
             building: self.native_step.is_some(),
-            starting: self.starting_client.is_some(),
+            starting: self.starting_client.is_some() || self.play_admission.is_some(),
             step: self.play_step,
-            mutating: self.mutating(),
+            mutating: self.mutating() || self.pinning_build,
             running: self.client.is_some(),
             ..Facts::default()
         }
@@ -425,6 +437,11 @@ impl Launcher {
             installed: active.and_then(|i| self.version_of(i)).is_some(),
             located: !self.location_unavailable,
             client_error: self.client_error.clone(),
+            install_recovery: self
+                .play_install_recovery
+                .as_ref()
+                .filter(|(home, _)| active.is_some_and(|i| i.home == *home))
+                .cloned(),
             prepare_error: self.prepare_error.clone(),
             native_error: self.native_error.clone(),
             install_error: self.install_error.as_ref().map(|(_, e)| e.clone()),
@@ -456,7 +473,7 @@ impl Launcher {
     pub(crate) fn launch_act(&mut self, act: &Act) {
         match act {
             Act::StopBuild => self.stop_build(),
-            Act::Notice { text, way_out } => self.open_notice(text.clone(), *way_out),
+            Act::Notice { text, way_out } => self.open_notice(text.clone(), way_out.clone()),
             Act::Resolve => self.open_sheet(Sheet::Resolve),
             Act::Update => {
                 let (Some(release), Some(instance)) =

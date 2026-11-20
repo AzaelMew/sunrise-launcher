@@ -306,9 +306,32 @@ impl Launcher {
         if self.client.is_some() || self.launch_busy() {
             return;
         }
-        let Some(instance) = self
+        let Some(home) = self
             .selected_instance()
             .filter(|i| i.id == intent.instance)
+            .map(|i| i.home.clone())
+        else {
+            return;
+        };
+        self.play_admission = Some(intent);
+        let tx = self.tx.clone();
+        std::thread::spawn(move || {
+            let result = sunrise_launcher::browser::installed::recover_game_install(&home);
+            let _ = tx.send(Msg::PlayAdmission(home, result));
+        });
+    }
+
+    pub(super) fn play_after_journal_check(
+        &mut self,
+        intent: launcher_play::PlayIntent,
+        home: &std::path::Path,
+    ) {
+        if self.client.is_some() || self.launch_busy() {
+            return;
+        }
+        let Some(instance) = self
+            .selected_instance()
+            .filter(|i| i.id == intent.instance && i.home == home)
             .cloned()
         else {
             return;

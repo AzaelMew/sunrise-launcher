@@ -97,6 +97,29 @@ impl Launcher {
                         self.play_step = Some(step);
                     }
                 }
+                Msg::PlayAdmission(home, result) => {
+                    let Some(intent) = self.play_admission.take() else {
+                        continue;
+                    };
+                    if self
+                        .selected_instance()
+                        .is_none_or(|i| i.home != home || i.id != intent.instance)
+                    {
+                        continue;
+                    }
+                    self.play_install_recovery = None;
+                    match result {
+                        Ok(()) => self.play_after_journal_check(intent, &home),
+                        Err(problem) => {
+                            self.play_install_recovery = Some((home, problem.details()))
+                        }
+                    }
+                }
+                Msg::PinnedBuild {
+                    home,
+                    result,
+                    close_versions,
+                } => self.finish_build_pin(&home, result, close_versions),
                 Msg::Session(session) => self.handle_game_session(session),
                 Msg::JarConsent { jars, reply } => jar_launch::consent(window, jars, reply, cx),
                 Msg::JarClient {

@@ -5783,6 +5783,7 @@ dependencies = [
  "os_pipe",
  "png 0.18.1",
  "rustix",
+ "same-file",
  "semver",
  "serde",
  "serde_json",

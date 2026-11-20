@@ -58,15 +58,6 @@ impl Launcher {
             .into_iter()
             .map(|(id, ..)| id)
             .collect();
-        let folder = match self.native_mods_to_build() {
-            Ok((folder, _)) => folder,
-            Err(e) => {
-                self.native_log_preflight(&e);
-                self.native_error = Some(e);
-                self.play_after_build = None;
-                return;
-            }
-        };
         // The attempt belongs to both the controls and the worker from the start. A stop
         // before the worker is scheduled is already visible when the worker first checks it.
         let cancellation = native_mods::Cancellation::default();
@@ -103,24 +94,29 @@ impl Launcher {
             _ => None,
         };
         std::thread::spawn(move || {
-            let result = native_mods::build(
-                &base,
-                &folder,
-                &instance,
-                None,
-                leave_out,
-                &cancellation,
-                |step| {
-                    let _ = tx.send(Msg::NativeProgress(step));
-                },
-                |inventory| {
-                    let (reply, answer) = std::sync::mpsc::channel();
-                    tx.send(Msg::NativeRegistryConsent(inventory.clone(), reply))
-                        .is_ok()
-                        && answer.recv().unwrap_or(false)
-                },
-                move || catalogue,
-            );
+            let result = native_mods::installed_mods(&instance.home)
+                .and_then(|folder| native_mods::bundles(&folder).map(|_| folder))
+                .map_err(native_mods::Failed::Other)
+                .and_then(|folder| {
+                    native_mods::build(
+                        &base,
+                        &folder,
+                        &instance,
+                        None,
+                        leave_out,
+                        &cancellation,
+                        |step| {
+                            let _ = tx.send(Msg::NativeProgress(step));
+                        },
+                        |inventory| {
+                            let (reply, answer) = std::sync::mpsc::channel();
+                            tx.send(Msg::NativeRegistryConsent(inventory.clone(), reply))
+                                .is_ok()
+                                && answer.recv().unwrap_or(false)
+                        },
+                        move || catalogue,
+                    )
+                });
             let _ = tx.send(Msg::Native(
                 result.map(native_mods::ClientBuild::into_version),
             ));

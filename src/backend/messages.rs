@@ -37,6 +37,17 @@ pub enum Msg {
     Session(Result<Option<crate::account::GameSession>, crate::account::NoOwner>),
     /// The step Play is at before the game starts, for the button's label.
     PlayStep(PlayStep),
+    /// The worker checked the game's journal for the selected profile before Play changed it.
+    PlayAdmission(
+        PathBuf,
+        Result<(), crate::browser::installed::GameInstallProblem>,
+    ),
+    /// The existing build picker changed the pin, or refused an unsettled game journal.
+    PinnedBuild {
+        home: PathBuf,
+        result: Result<(), String>,
+        close_versions: bool,
+    },
     JarConsent {
         jars: Vec<sunrise_launcher_smod::manifest::JarRef>,
         reply: std::sync::mpsc::Sender<bool>,

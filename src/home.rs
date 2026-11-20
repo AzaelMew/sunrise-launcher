@@ -563,6 +563,22 @@ impl Launcher {
             (p.text, p.warning, p.accent_ink)
         };
         let status_ink = if view.failed { warning } else { text };
+        // Recovery needs the whole row, not the space left over after the profile shortcuts.
+        let recovering = matches!(
+            view.act.as_ref(),
+            Some(crate::launch_state::Act::Notice {
+                way_out: Some(crate::sheets::WayOut::ProfileFolder(_)),
+                ..
+            })
+        );
+        let recovery = recovering.then(|| {
+            let line = div()
+                .min_w_0()
+                .text_size(px(tokens::LABEL))
+                .text_color(rgb(status_ink))
+                .children(view.said.clone());
+            self.ui.home.shade_behind(line, self.settings.scenery())
+        });
         let other_running = self
             .client_run
             .as_ref()
@@ -580,7 +596,7 @@ impl Launcher {
             .children(self.build_line(true, cx))
             .children(self.build_said())
             .children(other_running)
-            .children(view.said.clone())
+            .children(view.said.filter(|_| !recovering))
             // Nothing to act on here: the row under Mods says why and what to do.
             .children(view.mods_off.map(|count| {
                 div()
@@ -605,7 +621,7 @@ impl Launcher {
         // button stands in its way.
         let (lane, _) = self.cat(act.is_none(), false, window, cx);
         let tall = tokens::PLAY;
-        div()
+        let controls = div()
             .flex()
             .items_end()
             .child(
@@ -622,7 +638,12 @@ impl Launcher {
                     .children(act)
                     .child(says),
             )
-            .child(lane.ml(px(12.)).mb(px(-GAP - crate::cat::BELOW_FEET)))
+            .child(lane.ml(px(12.)).mb(px(-GAP - crate::cat::BELOW_FEET)));
+        div()
+            .flex()
+            .flex_col()
+            .child(controls)
+            .children(recovery.map(|line| line.mt(px(8.))))
     }
 
     /// The build the profile plays. Press to see how it follows new ones.

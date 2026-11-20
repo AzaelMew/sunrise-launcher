@@ -101,23 +101,100 @@ fn enabled_ids(home: &Path, entries: &[Entry], local: &[model::Local]) -> HashSe
     enabled
 }
 
-struct Snapshot {
-    key: String,
-    home: PathBuf,
+#[derive(Default)]
+struct InstalledRows {
     entries: Vec<Entry>,
     enabled: HashSet<String>,
     chosen: std::collections::BTreeMap<String, String>,
-    /// Mod files the registry didn't install: on/off is editable, the files are not.
     local: Vec<model::Local>,
-    /// The hand-placed packages are being read off the window thread (`Event::Local`): `local`
-    /// holds what was known before.
+}
+
+#[derive(Debug)]
+enum InstalledReadError {
+    GameInstall(installed::GameInstallProblem),
+    Other(String),
+}
+
+impl InstalledRows {
+    fn read(home: &Path) -> Result<(Self, Option<String>), InstalledReadError> {
+        // Resolve the hard game journal before the advisory or the visible rows.
+        let _lock = sunrise_launcher::browser::lock_home(home)
+            .map_err(|error| InstalledReadError::Other(error.to_string()))?;
+        installed::recover_game_install(home).map_err(InstalledReadError::GameInstall)?;
+        let backup_notice = sunrise::auto::recover(home).err();
+        let entries = installed::Installed::read(home)
+            .map_err(InstalledReadError::Other)?
+            .entries;
+        let local = read_local(home);
+        let enabled = enabled_ids(home, &entries, &local);
+        let chosen = sunrise::chosen(home);
+        Ok((
+            Self {
+                entries,
+                enabled,
+                chosen,
+                local,
+            },
+            backup_notice,
+        ))
+    }
+}
+
+struct Snapshot {
+    key: String,
+    home: PathBuf,
+    rows: InstalledRows,
     reading: bool,
+    error: Option<InstalledReadError>,
     backup_notice: Option<String>,
 }
 
+impl std::ops::Deref for Snapshot {
+    type Target = InstalledRows;
+
+    fn deref(&self) -> &Self::Target {
+        &self.rows
+    }
+}
+
+impl Snapshot {
+    fn finish(&mut self, result: Result<(InstalledRows, Option<String>), InstalledReadError>) {
+        self.reading = false;
+        self.error = match result {
+            Ok((rows, backup_notice)) => {
+                self.rows = rows;
+                self.backup_notice = backup_notice;
+                None
+            }
+            Err(error) => Some(error),
+        };
+    }
+}
+
+enum InstalledRefresh<'a> {
+    Reading,
+    Failed(&'a InstalledReadError, &'a Path),
+    Ready,
+}
+
+impl InstalledRefresh<'_> {
+    fn of(snapshot: Option<&Snapshot>) -> InstalledRefresh<'_> {
+        match snapshot {
+            Some(snapshot) if !snapshot.reading => match &snapshot.error {
+                Some(error) => InstalledRefresh::Failed(error, &snapshot.home),
+                None => InstalledRefresh::Ready,
+            },
+            _ => InstalledRefresh::Reading,
+        }
+    }
+}
+
 enum Event {
-    /// The hand-placed mods read for the folder and fingerprint the snapshot was made for.
-    Local(String, Vec<model::Local>, Option<String>),
+    /// Installed rows read for the requested folder and fingerprint, off the window thread.
+    Local(
+        String,
+        Result<(InstalledRows, Option<String>), InstalledReadError>,
+    ),
     Catalog(Result<(Vec<Card>, Vec<String>), String>),
     Page(String, Result<Box<model::Page>, String>),
     Progress(String, f32),
@@ -503,15 +580,16 @@ impl Launcher {
                     m.catalog = Catalog::Ready(cards, categories)
                 }
                 Event::Catalog(Err(e)) => m.catalog = Catalog::Failed(e),
-                Event::Local(key, local, backup_notice) => {
+                Event::Local(key, result) => {
                     if let Some(snap) = m.snapshot.as_mut().filter(|s| s.key == key) {
-                        snap.backup_notice = backup_notice;
-                        snap.enabled = enabled_ids(&snap.home, &snap.entries, &local);
-                        snap.local = local;
-                        snap.reading = false;
+                        let refreshed = result.is_ok();
+                        snap.finish(result);
+                        if refreshed {
+                            let rows: HashSet<String> =
+                                self.rows().into_iter().map(|r| r.id).collect();
+                            self.ui.mods.selection.retain(|id| rows.contains(id));
+                        }
                     }
-                    let rows: HashSet<String> = self.rows().into_iter().map(|r| r.id).collect();
-                    self.ui.mods.selection.retain(|id| rows.contains(id));
                 }
                 Event::Page(id, page) => {
                     if let Some(open) = m.open.as_mut().filter(|o| o.id == id) {
@@ -580,48 +658,35 @@ impl Launcher {
             self.pack_setup_moved();
         }
         if self.ui.mods.snapshot.as_ref().is_none_or(|s| s.key != key) {
-            let entries = installed::Installed::load(&home).entries;
-            // Reading every hand-placed package takes long with many of them: it is done on a
-            // worker, and the rows of the same folder known before stay until it answers.
-            let local: Vec<model::Local> = self
+            // Keep the same profile's confirmed rows and advisory until the worker answers.
+            let (rows, backup_notice) = self
                 .ui
                 .mods
                 .snapshot
                 .take()
                 .filter(|s| s.home == home)
-                .map(|s| s.local)
+                .map(|s| (s.rows, s.backup_notice))
                 .unwrap_or_default();
             let (tx, worker_home, worker_key) =
                 (self.ui.mods.tx.clone(), home.clone(), key.clone());
             std::thread::spawn(move || {
-                let backup_notice = sunrise::auto::recover(&worker_home).err();
-                let _ = tx.send(Event::Local(
-                    worker_key,
-                    read_local(&worker_home),
-                    backup_notice,
-                ));
+                let _ = tx.send(Event::Local(worker_key, InstalledRows::read(&worker_home)));
             });
-            let enabled = enabled_ids(&home, &entries, &local);
-            let chosen = sunrise::chosen(&home);
             self.ui.mods.snapshot = Some(Snapshot {
                 key,
                 home,
-                entries,
-                enabled,
-                chosen,
-                local,
+                rows,
                 reading: true,
-                backup_notice: None,
+                error: None,
+                backup_notice,
             });
-            let rows: HashSet<String> = self.rows().into_iter().map(|r| r.id).collect();
-            self.ui.mods.selection.retain(|id| rows.contains(id));
         }
         let wants_index = self
             .ui
             .mods
             .snapshot
             .as_ref()
-            .is_some_and(|s| !s.entries.is_empty())
+            .is_some_and(|s| !s.rows.entries.is_empty())
             || self.ui.page != Page::Installed;
         if wants_index {
             self.ensure_mod_catalog();
@@ -681,8 +746,9 @@ impl Launcher {
         let Some(snap) = &self.ui.mods.snapshot else {
             return Vec::new();
         };
-        let unbuilt: HashSet<String> = match !snap.local.is_empty()
+        let unbuilt: HashSet<String> = match !snap.rows.local.is_empty()
             || snap
+                .rows
                 .entries
                 .iter()
                 .any(|e| native_status::is_native_file(&e.file))
@@ -701,15 +767,15 @@ impl Launcher {
         let index = sunrise::fetched_index();
         let game = self.mods_game();
         let mut rows = model::rows(
-            &snap.entries,
+            &snap.rows.entries,
             &model::World {
                 index: index.as_deref(),
                 game: &game,
-                enabled: &snap.enabled,
+                enabled: &snap.rows.enabled,
                 unbuilt: &unbuilt,
                 native_allowed: self.settings.native_mods_allowed_at.is_some(),
-                chosen: &snap.chosen,
-                local: &snap.local,
+                chosen: &snap.rows.chosen,
+                local: &snap.rows.local,
             },
         );
         // A mod the game was made without isn't waiting for a build: it waits for its author.
@@ -992,8 +1058,50 @@ mod enabled_tests {
 }
 
 #[cfg(test)]
-mod upgrade_notice_tests {
+mod installed_refresh_tests {
     use super::*;
+
+    #[test]
+    fn retry_after_a_game_journal_error_keeps_the_last_good_rows_until_success() {
+        let home = tempfile::tempdir().unwrap();
+        let journal = home
+            .path()
+            .join(sunrise_launcher_smod::index::browser_state::PENDING);
+        std::fs::write(&journal, b"not a journal").unwrap();
+        let mut snapshot = Snapshot {
+            key: String::new(),
+            home: home.path().into(),
+            rows: InstalledRows {
+                enabled: HashSet::from(["ruby".into()]),
+                ..Default::default()
+            },
+            reading: true,
+            error: None,
+            backup_notice: None,
+        };
+        assert!(matches!(
+            InstalledRefresh::of(None),
+            InstalledRefresh::Reading
+        ));
+        assert!(matches!(
+            InstalledRefresh::of(Some(&snapshot)),
+            InstalledRefresh::Reading
+        ));
+        snapshot.finish(InstalledRows::read(home.path()));
+        assert!(snapshot.enabled.contains("ruby"));
+        assert!(matches!(
+            InstalledRefresh::of(Some(&snapshot)),
+            InstalledRefresh::Failed(InstalledReadError::GameInstall(_), _)
+        ));
+        assert_eq!(std::fs::read(&journal).unwrap(), b"not a journal");
+        std::fs::remove_file(journal).unwrap();
+        snapshot.finish(InstalledRows::read(home.path()));
+        assert!(matches!(
+            InstalledRefresh::of(Some(&snapshot)),
+            InstalledRefresh::Ready
+        ));
+        assert!(snapshot.enabled.is_empty());
+    }
 
     #[test]
     fn the_backup_advisory_is_the_last_fallback() {
@@ -1002,11 +1110,9 @@ mod upgrade_notice_tests {
             snapshot: Some(Snapshot {
                 key: String::new(),
                 home: PathBuf::new(),
-                entries: Vec::new(),
-                enabled: HashSet::new(),
-                chosen: Default::default(),
-                local: Vec::new(),
+                rows: InstalledRows::default(),
                 reading: false,
+                error: None,
                 backup_notice: Some(backup.clone()),
             }),
             ..ModsState::default()

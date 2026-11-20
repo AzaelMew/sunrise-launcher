@@ -1,5 +1,6 @@
 //! A manual registry install stages and verifies the whole set before changing the profile.
 use super::{fs, index, installed, mod_list, Install, SourceId};
+use crate::i18n::trf;
 use semver::{Version, VersionReq};
 use std::collections::BTreeMap;
 use std::io;
@@ -17,11 +18,13 @@ pub(super) fn install(
 ) -> Result<Vec<installed::Entry>, String> {
     let home = install.home;
     let _lock = crate::browser::lock_home(home).map_err(|e| e.to_string())?;
+    installed::recover_game_install(home)?;
     let staged = tempfile::Builder::new()
         .prefix(".installed-mods-")
         .tempdir_in(home)
         .map_err(|e| format!("{}: {e}", home.display()))?;
-    let installed = installed::Installed::load(home);
+    let installed = installed::Installed::read(home)?;
+    let claims = index::browser_state::Installed::read(home).map_err(|error| error.details(trf))?;
     // The index's claims plan the versions first: an unsatisfiable set is refused with the planner's
     // reason before anything downloads, and each dependency is fetched at the version it chose.
     let held = super::held_mods(&installed.entries);
@@ -49,6 +52,7 @@ pub(super) fn install(
         install,
         staged: staged.path(),
         installed,
+        claims,
         selected: Vec::new(),
         unreadable: Vec::new(),
         native_allowed,
@@ -57,6 +61,7 @@ pub(super) fn install(
     };
     plan.add(project, version, 0)?;
 
+    let claims = index::browser_state::Installed::read(home).map_err(|error| error.details(trf))?;
     let mut changes = Vec::new();
     let mut done = Vec::new();
     // Unreadable files whose new version goes elsewhere: published over nothing, so removed.
@@ -68,7 +73,15 @@ pub(super) fn install(
     };
     for (entry, file) in plan.selected {
         if let Some(file) = file {
-            if let Some(old) = plan.installed.find(SourceId::Sunrise, &entry.project) {
+            let old = plan.installed.find(SourceId::Sunrise, &entry.project);
+            super::check_replacement_claims(
+                &claims,
+                home,
+                &entry.project,
+                &entry.file,
+                old.map(|old| old.file.as_str()),
+            )?;
+            if let Some(old) = old {
                 // A file that is gone or no longer parses is replaced wherever the new one goes
                 // (a native mod and a plain one live in different places); a good one is not.
                 let old_path = old.path(home);
@@ -140,6 +153,7 @@ struct Plan<'a> {
     install: &'a Install<'a>,
     staged: &'a Path,
     installed: installed::Installed,
+    claims: index::browser_state::Installed,
     selected: Vec<(installed::Entry, Option<PathBuf>)>,
     /// Installed files that no longer parse and are about to be replaced.
     unreadable: Vec<PathBuf>,
@@ -155,9 +169,13 @@ impl Plan<'_> {
         if depth > installed::MAX_DEPTH {
             return Err(format!("{}'s dependencies go too deep.", p.name));
         }
-        let (mut entry, download, unreadable) =
-            self.install
-                .prepare(p, v, &self.installed, &self.staged.join(&p.id))?;
+        let (mut entry, download, unreadable) = self.install.prepare(
+            p,
+            v,
+            &self.installed,
+            &self.claims,
+            &self.staged.join(&p.id),
+        )?;
         self.unreadable.extend(unreadable);
         let (path, facts) = match download {
             Some((path, facts)) => {
@@ -314,4 +332,32 @@ fn publish(
         }
     }
     Ok(staged)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_later_publish_failure_restores_the_archive_that_was_already_moved() {
+        let home = tempfile::tempdir().unwrap();
+        let stage = tempfile::tempdir_in(home.path()).unwrap();
+        let old = home.path().join("ruby.smod");
+        let next = stage.path().join("ruby.smod");
+        let manifest = home.path().join(installed::MANIFEST);
+        fs::write(&old, b"old archive").unwrap();
+        fs::write(&next, b"new archive").unwrap();
+        fs::create_dir(&manifest).unwrap();
+        let next_manifest = stage.path().join(installed::MANIFEST);
+        fs::write(&next_manifest, b"new manifest").unwrap();
+
+        let error = publish(
+            stage,
+            vec![(next, old.clone()), (next_manifest, manifest.clone())],
+        )
+        .unwrap_err();
+        assert!(error.contains("not a regular file"), "{error}");
+        assert_eq!(fs::read(old).unwrap(), b"old archive");
+        assert!(manifest.is_dir());
+    }
 }

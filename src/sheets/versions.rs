@@ -391,10 +391,7 @@ impl Launcher {
         let keep = match pick.filter(|p| Some(p) != pinned.as_ref()) {
             Some(tag) if !self.launch_busy() && self.client.is_none() => {
                 keep.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    this.pin_build(Some(tag.clone()), channel);
-                    if sheet && this.ui.sheets.error.is_none() {
-                        this.close_sheet();
-                    }
+                    this.pin_build(Some(tag.clone()), channel, sheet);
                     cx.notify();
                 }))
             }
