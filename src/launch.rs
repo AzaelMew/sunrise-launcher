@@ -429,7 +429,7 @@ pub fn plan(launch: &Launch, words: Vec<OsString>, windows: bool, found: &Found)
 }
 
 /// `to` gets `from`'s folder and variables.
-fn same_place(from: &Command, to: &mut Command) {
+pub(crate) fn same_place(from: &Command, to: &mut Command) {
     if let Some(dir) = from.get_current_dir() {
         to.current_dir(dir);
     }
@@ -444,7 +444,13 @@ fn same_place(from: &Command, to: &mut Command) {
 /// Runs the pre-launch `line` in `game`'s folder with its variables and waits for it. Err, with
 /// the end of what it printed, when it fails: the game must not start.
 fn run_first(line: &str, game: &Command) -> Result<(), String> {
-    let mut cmd = cmd_line(line);
+    let mut cmd = if cfg!(windows) {
+        cmd_line(line)
+    } else {
+        let mut shell = Command::new("/bin/sh");
+        shell.arg("-c").arg(line);
+        shell
+    };
     same_place(game, &mut cmd);
     crate::process::hide_console(&mut cmd);
     let out = cmd
@@ -503,6 +509,46 @@ pub fn wrap(mut cmd: Command, launch: &Launch) -> Result<Command, String> {
         run_first(&line, &out)?;
     }
     Ok(out)
+}
+
+/// Apply instance switches before validating exact selection. Hooks run before the final
+/// verification, not inside a short-lived relay authorization. Game arguments remain structured.
+pub(crate) fn managed_wrapper(command: &mut Command, launch: &Launch) -> Vec<OsString> {
+    let found = if cfg!(target_os = "linux") {
+        Found::here()
+    } else {
+        Found::default()
+    };
+    command.envs(switch_env(launch, &found));
+    for (name, value) in &launch.env {
+        if ![
+            "SUNRISE_SESSION_FILE",
+            "SUNRISE_LAUNCHER_EXE",
+            crate::developer_offline::ENV,
+        ]
+        .iter()
+        .any(|key| {
+            if cfg!(windows) {
+                name.eq_ignore_ascii_case(key)
+            } else {
+                name == key
+            }
+        }) {
+            command.env(name, value);
+        }
+    }
+    let mut prefix = switch_programs(launch, &found);
+    prefix.extend(split_args(&launch.wrapper).into_iter().map(OsString::from));
+    prefix
+}
+
+pub(crate) fn managed_pre_launch(command: &Command, launch: &Launch) -> Result<(), String> {
+    let line = launch.pre_launch.trim();
+    if line.is_empty() {
+        Ok(())
+    } else {
+        run_first(line, command)
+    }
 }
 
 /// Apply the final instance environment before either selection or process wrapping.

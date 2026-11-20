@@ -58,6 +58,22 @@ impl Child {
         }
     }
 
+    #[cfg(windows)]
+    pub(super) fn wrapper_job(&self) -> Option<std::sync::Arc<super::leases::WrapperJob>> {
+        match &self.process {
+            Handle::Std(_) => None,
+            Handle::Windows(child) => child.wrapper_job(),
+        }
+    }
+
+    #[cfg(windows)]
+    pub(super) fn wrapper_leader_exited(&self) -> io::Result<bool> {
+        match &self.process {
+            Handle::Std(_) => Err(io::ErrorKind::InvalidInput.into()),
+            Handle::Windows(child) => child.wrapper_leader_exited(),
+        }
+    }
+
     pub fn id(&self) -> u32 {
         match &self.process {
             Handle::Std(child) => child.id(),

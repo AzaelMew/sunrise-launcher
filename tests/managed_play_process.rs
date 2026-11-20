@@ -7,24 +7,42 @@ use std::{
 };
 use sunrise_launcher::{
     backend,
+    launch::Launch,
     managed_play::{FirstBuild, Profile},
     native_mods::{Cancellation, Profile as BuildMode},
 };
 
 const ROLE: &str = "SUNRISE_MANAGED_PLAY_PROCESS_TEST";
+const MODE: &str = "SUNRISE_MANAGED_PLAY_PROCESS_MODE";
 const BUILD: &str = "v0.7.1";
 
 fn main() {
+    let mut args = std::env::args_os().skip(1);
+    if let Some(mode) = args.next() {
+        match mode.to_str() {
+            Some("--fixture-wrapper") => return wrapper(args),
+            Some("--fixture-late") => return late(args),
+            _ => {
+                if let Some(status) = sunrise_launcher::process::relay::private(&mode, args) {
+                    std::process::exit(status);
+                }
+            }
+        }
+    }
     match std::env::var(ROLE).as_deref() {
         Ok("owner") => owner(),
         Ok("contender") => contender(),
         Ok("game") => game(),
         Ok(role) => panic!("unexpected fixture role {role}"),
-        Err(_) => scenario(),
+        Err(_) => {
+            scenario("direct");
+            scenario("wrapped");
+            scenario("failed");
+        }
     }
 }
 
-fn scenario() {
+fn scenario(mode: &str) {
     let root = tempfile::tempdir().unwrap();
     let root_path = root.path().canonicalize().unwrap();
     let home = root_path.join("game");
@@ -32,12 +50,19 @@ fn scenario() {
     let process = |role| {
         let mut cmd = Command::new(std::env::current_exe().unwrap());
         cmd.env(ROLE, role)
+            .env(MODE, mode)
             .env("SUNRISE_HOME", &home)
             .env("SUNRISE_LAUNCHER_HOME", root_path.join("launcher"))
             .env("XDG_CONFIG_HOME", root_path.join("config"))
             .stdin(Stdio::null());
         cmd
     };
+    if mode == "failed" {
+        assert!(process("owner").status().unwrap().success());
+        assert!(home.join("late-refused").is_file());
+        assert!(!home.join("game-ready").exists());
+        return;
+    }
     let contender = Guard(process("contender").spawn().unwrap());
     await_event(|| home.join("contender-ready").is_file());
     let mut owner = Guard(process("owner").spawn().unwrap());
@@ -50,7 +75,10 @@ fn scenario() {
     await_event(|| home.join("unlocked").is_file());
     let mut contender = contender;
     assert!(contender.0.wait().unwrap().success());
-    println!("direct managed Play retained cache and profile claims after launcher death");
+    if mode == "wrapped" {
+        assert!(home.join("wrapper-ran").is_file());
+    }
+    println!("{mode} managed Play retained cache and profile claims after launcher death");
 }
 
 fn owner() {
@@ -86,6 +114,7 @@ fn owner() {
     };
     let outside = home.with_file_name("other");
     fs::create_dir(&outside).unwrap();
+    let mode = std::env::var(MODE).unwrap();
     for flag in [
         "--home",
         "--gameDir",
@@ -103,9 +132,76 @@ fn owner() {
         );
         assert!(!home.join("game-ready").exists());
     }
-    let (_child, _runtime) = profile
-        .spawn_direct(&active, &cancellation, command(), false)
-        .unwrap();
+    let wrap = |case| {
+        #[cfg(unix)]
+        let program = std::env::current_exe().unwrap().into_os_string();
+        #[cfg(windows)]
+        let program = executable.file_name().unwrap().to_owned();
+        let mut launch = Launch {
+            wrapper: format!(
+                "\"{}\" --fixture-wrapper {case}",
+                program
+                    .to_string_lossy()
+                    .replace('\\', "\\\\")
+                    .replace('"', "\\\"")
+            ),
+            ..Launch::default()
+        };
+        // Windows also proves that a bare wrapper is found on its configured PATH.
+        if cfg!(windows) {
+            launch.env.insert(
+                "PATH".into(),
+                executable.parent().unwrap().display().to_string(),
+            );
+        }
+        launch
+    };
+    if mode == "failed" {
+        for case in ["none", "stall", "late"] {
+            let result =
+                profile.spawn_configured(&active, &cancellation, command(), &wrap(case), false);
+            let error = match result {
+                Err(error) => error,
+                Ok(_) => panic!("wrapper {case} started a game without the relay"),
+            };
+            assert!(
+                error.contains("Could not start Sunrise through"),
+                "wrapper {case}: {error}"
+            );
+            assert!(!active.resource_path().join(".last-used").exists());
+            if case == "stall" {
+                assert!(home.join("stall-ready").is_file());
+                fs::write(home.join("stall-stop"), []).unwrap();
+            }
+            assert!(!home.join("game-ready").exists());
+        }
+        assert!(home.join("late-waiting").is_file());
+        drop(profile);
+        // The independently started late relay is still alive. Revocation must release
+        // both claims before it is allowed to try its formerly valid invocation.
+        drop(Profile::open(&home, None).unwrap());
+        assert!(can_lock_build(&backend::version_dir(BUILD)));
+        fs::write(home.join("try-late"), []).unwrap();
+        await_event(|| home.join("late-refused").is_file());
+        println!("wrapper exit revoked an unused token; its late relay could not start a game");
+        return;
+    }
+    let (_child, _runtime) = if mode == "wrapped" {
+        use std::io::Read as _;
+        let (mut child, runtime) = profile
+            .spawn_configured(&active, &cancellation, command(), &wrap("close"), true)
+            .unwrap();
+        for (pipe, letter) in [(&mut child.stdout, b'o'), (&mut child.stderr, b'e')] {
+            let mut prefix = [0; 4096];
+            pipe.as_mut().unwrap().read_exact(&mut prefix).unwrap();
+            assert_eq!(prefix, [letter; 4096]);
+        }
+        (child, runtime)
+    } else {
+        profile
+            .spawn_direct(&active, &cancellation, command(), false)
+            .unwrap()
+    };
     drop(profile);
     fs::write(home.join("game-spawned"), []).unwrap();
     await_event(|| false);
@@ -134,6 +230,66 @@ fn can_lock_build(path: &Path) -> bool {
     registry.lock(&dir, LockMode::Exclusive).is_ok()
 }
 
+fn wrapper(mut args: impl Iterator<Item = std::ffi::OsString>) {
+    let mode = args.next().unwrap();
+    let home = backend::game_home();
+    assert!(std::env::var_os("SUNRISE_RUNTIME_LEASE_FDS").is_none());
+    assert!(std::env::var_os("SUNRISE_RUNTIME_LEASE_HANDLES").is_none());
+    // The actual wrapper may close everything except stdio and still invoke its program.
+    #[cfg(unix)]
+    for fd in 3..1024 {
+        // SAFETY: this private fixture is single-threaded and doesn't own any live Rust IO
+        // objects in the inherited descriptor range; no claim numbers came from the parent.
+        unsafe {
+            libc::close(fd);
+        }
+    }
+    if mode == "none" {
+        return;
+    }
+    if mode == "stall" {
+        fs::write(home.join("stall-ready"), []).unwrap();
+        await_event(|| home.join("stall-stop").is_file());
+        return;
+    }
+    if mode == "late" {
+        std::mem::forget(
+            Command::new(std::env::current_exe().unwrap())
+                .arg("--fixture-late")
+                .args(args)
+                .spawn()
+                .unwrap(),
+        );
+        await_event(|| home.join("late-waiting").is_file());
+        return;
+    }
+    assert_eq!(mode, "close");
+    use std::io::Write as _;
+    std::io::stdout().write_all(&vec![b'o'; 256 << 10]).unwrap();
+    std::io::stderr().write_all(&vec![b'e'; 256 << 10]).unwrap();
+    fs::write(home.join("wrapper-ran"), []).unwrap();
+    let status = Command::new(args.next().unwrap())
+        .args(args)
+        .env("SUNRISE_HOME", home.with_file_name("wrong-home"))
+        .env("SUNRISE_MANAGED_WRAPPER_OVERLAY", "kept")
+        .status()
+        .unwrap();
+    std::process::exit(status.code().unwrap_or(1));
+}
+
+fn late(mut args: impl Iterator<Item = std::ffi::OsString>) {
+    let home = backend::game_home();
+    fs::write(home.join("late-waiting"), []).unwrap();
+    await_event(|| home.join("try-late").is_file());
+    let result = Command::new(args.next().unwrap())
+        .args(args)
+        .output()
+        .unwrap();
+    assert_eq!(result.status.code(), Some(78));
+    assert!(String::from_utf8_lossy(&result.stderr).contains("game launch is no longer active"));
+    fs::write(home.join("late-refused"), []).unwrap();
+}
+
 fn game() {
     let home = backend::game_home();
     let cmd: Vec<_> = std::env::args_os().collect();
@@ -149,6 +305,12 @@ fn game() {
     );
     assert!(std::env::var_os("SUNRISE_RUNTIME_HOLDER").is_none());
     assert_eq!(std::env::var("SUNRISE_NO_DATA_FILE").unwrap(), "1");
+    if std::env::var(MODE).as_deref() == Ok("wrapped") {
+        assert_eq!(
+            std::env::var("SUNRISE_MANAGED_WRAPPER_OVERLAY").unwrap(),
+            "kept"
+        );
+    }
     assert_eq!(
         std::env::current_dir().unwrap().canonicalize().unwrap(),
         home.canonicalize().unwrap()

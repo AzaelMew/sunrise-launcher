@@ -98,7 +98,7 @@ impl ChildLeases {
         Ok(())
     }
 
-    fn files(&self) -> Vec<&File> {
+    pub(super) fn files(&self) -> Vec<&File> {
         let claims = self.claims.iter().flat_map(Claim::files);
         #[cfg(windows)]
         let claims = claims.chain(self.extra.iter());
@@ -250,7 +250,9 @@ fn spawn_unix(
 #[cfg(windows)]
 pub(super) mod windows;
 #[cfg(windows)]
-pub(crate) use windows::CompilerJob;
+pub(crate) use windows::Job as CompilerJob;
+#[cfg(windows)]
+pub(super) use windows::Job as WrapperJob;
 #[cfg(windows)]
 pub use windows::WindowsChild;
 
@@ -265,6 +267,39 @@ pub(crate) fn spawn_compiler(command: &std::process::Command) -> io::Result<supe
             ..windows::Start::default()
         },
         true,
+    )
+}
+
+#[cfg(windows)]
+pub(super) fn spawn_windows_wrapper(
+    command: &std::process::Command,
+    piped: bool,
+) -> io::Result<super::child::Child> {
+    spawn_windows_command(
+        command,
+        &[],
+        windows::Start {
+            wrapper: true,
+            attached: !piped,
+            ..windows::Start::default()
+        },
+        piped,
+    )
+}
+
+#[cfg(windows)]
+pub(super) fn spawn_windows_relay(
+    command: &std::process::Command,
+    files: &[&File],
+) -> io::Result<super::child::Child> {
+    spawn_windows_command(
+        command,
+        files,
+        windows::Start {
+            attached: true,
+            ..windows::Start::default()
+        },
+        false,
     )
 }
 

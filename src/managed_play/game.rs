@@ -24,8 +24,36 @@ impl Profile {
         piped: bool,
     ) -> Result<(Child, RuntimeGuard), String> {
         let selection = validate_selection(self.home(), &active.resource_path(), &command)?;
+        self.spawn_selected(active, cancellation, command, selection, &[], piped)
+    }
+
+    /// Apply instance switches and hooks, then start either the exact image or the
+    /// one-time relay authenticated by this same launcher admission.
+    pub fn spawn_configured(
+        &self,
+        active: &Active,
+        cancellation: &Cancellation,
+        mut command: Command,
+        launch: &crate::launch::Launch,
+        piped: bool,
+    ) -> Result<(Child, RuntimeGuard), String> {
+        let wrapper = crate::launch::managed_wrapper(&mut command, launch);
+        let selection = validate_selection(self.home(), &active.resource_path(), &command)?;
+        crate::launch::managed_pre_launch(&command, launch)?;
+        self.spawn_selected(active, cancellation, command, selection, &wrapper, piped)
+    }
+
+    fn spawn_selected(
+        &self,
+        active: &Active,
+        cancellation: &Cancellation,
+        command: Command,
+        selection: LaunchArguments,
+        wrapper: &[std::ffi::OsString],
+        piped: bool,
+    ) -> Result<(Child, RuntimeGuard), String> {
         self.verified_handoff(active, cancellation, |profile| {
-            let (mut command, runtime) = prepare(active, command)?;
+            let (mut command, runtime) = prepare(self.home(), active, command)?;
             let data = backend::data_dir();
             let data = data
                 .canonicalize()
@@ -81,22 +109,30 @@ impl Profile {
                 use std::os::unix::process::CommandExt;
                 command.process_group(0);
             }
-            let program = command.get_program().to_string_lossy().into_owned();
-            let child = leases
-                .spawn_game(command, profile, piped)
-                .map_err(|error| {
-                    crate::i18n::trf(
-                        "Could not run {program}: {error}",
-                        &[("program", &program), ("error", &error.to_string())],
-                    )
-                })?;
+            let child = if wrapper.is_empty() {
+                let program = command.get_program().to_string_lossy().into_owned();
+                leases
+                    .spawn_game(command, profile, piped)
+                    .map_err(|error| {
+                        crate::i18n::trf(
+                            "Could not run {program}: {error}",
+                            &[("program", &program), ("error", &error.to_string())],
+                        )
+                    })?
+            } else {
+                crate::process::relay::start(&command, wrapper, &leases, profile, piped)?
+            };
             drop(record);
             Ok((child, runtime))
         })
     }
 }
 
-fn prepare(active: &Active, mut command: Command) -> Result<(Command, RuntimeGuard), String> {
+fn prepare(
+    home: &Path,
+    active: &Active,
+    mut command: Command,
+) -> Result<(Command, RuntimeGuard), String> {
     let source = backend::version_dir(active.executable());
     let program = Path::new(command.get_program());
     let expected = source.join(backend::CLIENT);
@@ -130,11 +166,12 @@ fn prepare(active: &Active, mut command: Command) -> Result<(Command, RuntimeGua
     }
     #[cfg(windows)]
     command.env_remove(crate::windows_runtime::SLOT);
+    command.env("SUNRISE_HOME", home);
     run_leases::mark(&mut command, &source);
     if !active.allow_accelerator() {
         command.env("SUNRISE_NO_DATA_FILE", "1");
     }
-    let (command, runtime) = backend::prepare_command(command)?;
+    let (command, runtime) = backend::prepare_managed_command(command, &active.resource_path())?;
     #[cfg(windows)]
     active.verify_runtime_copy(runtime.windows()?.game())?;
     Ok((command, runtime))
