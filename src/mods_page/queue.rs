@@ -7,15 +7,15 @@ use sunrise_launcher::browser::{Project, SourceId};
 
 /// The profile an install or build was asked for.
 #[derive(Clone, Debug, PartialEq)]
-pub(super) struct Target {
-    pub(super) instance: String,
+pub(crate) struct Target {
+    pub(crate) instance: String,
     pub(super) home: PathBuf,
     /// The Minecraft version that profile plays.
     pub(super) game: String,
 }
 
 /// An install that was asked for and waits its turn.
-pub(super) enum Request {
+pub(crate) enum Request {
     One {
         target: Target,
         source: SourceId,
@@ -263,5 +263,42 @@ mod tests {
             "the other profile's build is for that profile"
         );
         assert_eq!(id_of(queue.next("other", false, false, false)), "build o");
+    }
+
+    #[test]
+    fn a_request_held_for_the_native_question_starts_again_whole_and_the_queue_waits() {
+        let mut queue = Queue::default();
+        let held = Request::One {
+            target: Target {
+                instance: "other".into(),
+                home: "/home/other".into(),
+                game: "26.2".into(),
+            },
+            source: SourceId::Sunrise,
+            id: "lumen".into(),
+            known: None,
+            replacing: vec!["lamps".into()],
+        };
+        // What came behind it waits while the question is open (the caller holds the queue)...
+        assert!(queue.submit(one("later"), false).is_some());
+        let mut queue = Queue::default();
+        queue.submit(one("behind"), true);
+        assert_eq!(id_of(queue.next("main", false, false, true)), "nothing");
+        // ...and the answer submits the held request again: it goes behind what waits, with
+        // its own profile, game and approvals, whatever is selected by then.
+        assert!(queue.submit(held, false).is_none());
+        assert_eq!(id_of(queue.next("main", false, false, false)), "behind");
+        match queue.next("main", false, false, false) {
+            Some(Step::Install(Request::One {
+                target, replacing, ..
+            })) => {
+                assert_eq!(
+                    (target.instance.as_str(), target.game.as_str()),
+                    ("other", "26.2")
+                );
+                assert_eq!(replacing, ["lamps"]);
+            }
+            _ => panic!("the held request starts"),
+        }
     }
 }
