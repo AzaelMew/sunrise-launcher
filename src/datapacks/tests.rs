@@ -183,3 +183,28 @@ fn a_data_pack_without_a_description_is_not_listed() {
     assert_eq!(names, ["Fine"]);
     fs::remove_dir_all(&root).unwrap();
 }
+
+#[test]
+fn a_data_pack_without_a_description_is_refused_before_it_is_copied() {
+    let root = scratch("no-description");
+    let world = root.join("saves/W");
+    let drops = root.join("drops");
+    for (name, meta) in [("Bare.zip", r#"{"pack":{}}"#), ("Empty.zip", "{}")] {
+        zip_file(
+            &drops.join(name),
+            &[("pack.mcmeta", meta), ("data/t/a.json", "{}")],
+        );
+        assert!(add(&world, &drops.join(name)).is_err());
+    }
+    let left = fs::read_dir(world.join("datapacks")).map_or(0, Iterator::count);
+    assert_eq!(left, 0);
+    zip_file(
+        &drops.join("Fine.zip"),
+        &[("pack.mcmeta", META), ("data/t/a.json", "{}")],
+    );
+    assert_eq!(
+        add(&world, &drops.join("Fine.zip")).unwrap().file,
+        "Fine.zip"
+    );
+    fs::remove_dir_all(&root).unwrap();
+}

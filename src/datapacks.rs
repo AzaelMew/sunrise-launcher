@@ -73,6 +73,14 @@ fn check(file: &Path) -> Result<(), String> {
     if zip.index_for_name("pack.mcmeta").is_none() {
         return Err(format!("{name} is not a pack: it has no pack.mcmeta."));
     }
+    // What `list` needs to show it, checked before the pack is copied.
+    if entry(file, "pack.mcmeta")
+        .and_then(|bytes| pack_meta(&bytes))
+        .and_then(|meta| pack_description(&meta))
+        .is_none()
+    {
+        return Err(format!("{name} is not a data pack the game reads."));
+    }
     let names: Vec<_> = zip
         .file_names()
         .collect::<Result<_, _>>()
