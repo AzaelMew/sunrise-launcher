@@ -323,12 +323,7 @@ impl Launcher {
                     }
                     // What an install's build cost it: the mods that failed to compile go, or
                     // all of them when the build stopped for another reason.
-                    self.install_build_ended(match &result {
-                        Err(e) if !matches!(e, native_mods::Failed::Mods { .. }) => {
-                            Some(e.to_string())
-                        }
-                        _ => None,
-                    });
+                    self.install_build_ended(crate::mods_page::BuildEnd::of(&result));
                     // The build window's build ends as the build did. With its window closed,
                     // the strip says how it went for a moment.
                     let shown = self.ui.sheet == Some(crate::sheets::Sheet::ModBuild);

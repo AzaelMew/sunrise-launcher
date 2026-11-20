@@ -152,3 +152,19 @@ fn a_question_or_a_removal_stops_the_play_that_waited_for_the_update() {
     };
     assert!(out.blocks_play());
 }
+
+#[test]
+fn only_a_build_that_stopped_for_another_reason_rolls_its_install_back() {
+    use native_mods::Failed;
+    let ok: Result<(), Failed> = Ok(());
+    assert!(matches!(BuildEnd::of(&ok), BuildEnd::Finished));
+    let nothing: Result<(), Failed> = Err(Failed::Nothing);
+    assert!(matches!(BuildEnd::of(&nothing), BuildEnd::Finished));
+    let consent: Result<(), Failed> = Err(Failed::NoConsent);
+    assert!(
+        matches!(BuildEnd::of(&consent), BuildEnd::Pending),
+        "a question to answer is not a failure"
+    );
+    let tools: Result<(), Failed> = Err(Failed::Other("download failed".into()));
+    assert!(matches!(BuildEnd::of(&tools), BuildEnd::Stopped(why) if why == "download failed"));
+}
