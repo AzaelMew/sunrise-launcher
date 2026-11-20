@@ -1032,6 +1032,13 @@ fn a_card_that_cannot_install_says_why_in_the_words_of_the_table() {
         card("old").fit.reason().as_deref(),
         Some("Not available for your version (made for 26.2)")
     );
+    assert_eq!(
+        Fit::OtherBuild("nightly-2026-11-17-abcdef0".into())
+            .reason()
+            .as_deref(),
+        Some("Not available for your version (made for the Nov 17 Nightly)"),
+        "a Nightly is named by its day, as the build sheets name it"
+    );
     assert_eq!(card("future").fit, Fit::NeedsNewerSunrise);
     assert_eq!(
         card("future").fit.reason().as_deref(),

@@ -42,6 +42,11 @@ pub(crate) enum Stage {
     Building(f32),
 }
 
+/// A size in whole megabytes, rounded down so that "at least" stays true: "207 MB".
+pub(crate) fn whole_mb(bytes: u64) -> String {
+    format!("{} MB", bytes / 1_000_000)
+}
+
 impl Stage {
     pub(crate) fn label(&self) -> String {
         match self {
@@ -51,7 +56,7 @@ impl Stage {
             ),
             Stage::BuildTools(bytes) => trf(
                 "Getting build tools (at least {size})",
-                &[("size", &crate::storage::format_bytes(*bytes))],
+                &[("size", &whole_mb(*bytes))],
             ),
             Stage::Building(_) => tr("Building").to_string(),
         }
@@ -201,6 +206,16 @@ mod tests {
         assert_eq!(
             updated_line(&[m("A", "1", "2"), m("B", "1", "2"), m("C", "1", "2")]).unwrap(),
             "Also updated: A 1 → 2, B 1 → 2 and 1 more"
+        );
+    }
+
+    #[test]
+    fn the_build_tools_size_is_whole_megabytes() {
+        assert_eq!(whole_mb(207_000_000), "207 MB");
+        assert_eq!(whole_mb(207_640_000), "207 MB");
+        assert_eq!(
+            Stage::BuildTools(207_000_000).label(),
+            "Getting build tools (at least 207 MB)"
         );
     }
 

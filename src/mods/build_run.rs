@@ -290,10 +290,25 @@ impl Run {
         (building > 0).then_some((built + 1, total))
     }
 
+    /// The compiler's size while this build is downloading it: before any mod is built.
+    pub(crate) fn getting_tools(&self) -> Option<u64> {
+        self.first_build.filter(|_| self.progress.is_none())
+    }
+
     /// The one line the strip, Home and the Build button say while it runs:
-    /// "Building your mods · 2 of 3 · 51%".
+    /// "Building your mods · 2 of 3 · 51%", or, while the compiler comes,
+    /// "Getting build tools · at least 207 MB · 4%".
     pub(crate) fn line(&self) -> String {
         let percent = format!("{:.0}", self.fraction() * 100.);
+        if let Some(bytes) = self.getting_tools() {
+            return trf(
+                "Getting build tools · at least {size} · {percent}%",
+                &[
+                    ("size", &super::install_state::whole_mb(bytes)),
+                    ("percent", &percent),
+                ],
+            );
+        }
         match self.at() {
             Some((at, total)) => trf(
                 "Building your mods · {at} of {total} · {percent}%",
@@ -453,6 +468,19 @@ mod tests {
         assert_eq!(run.fraction(), 0.);
         assert_eq!(run.headline(), "Building your mods");
         assert_eq!(run.at(), None);
+    }
+
+    #[test]
+    fn while_the_compiler_comes_the_strip_says_so_with_its_size() {
+        let mut run = run(false);
+        run.first_build = Some(207_000_000);
+        assert_eq!(
+            run.line(),
+            "Getting build tools · at least 207 MB · 0%",
+            "not \"Building your mods\" before any mod is built"
+        );
+        run.step(&Step::Checking(4));
+        assert!(run.line().starts_with("Building your mods"));
     }
 
     #[test]

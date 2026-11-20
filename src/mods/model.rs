@@ -47,10 +47,17 @@ impl Fit {
     pub(super) fn reason(&self) -> Option<String> {
         match self {
             Fit::Fits => None,
-            Fit::OtherBuild(game) => Some(trf(
-                "Not available for your version (made for {game})",
-                &[("game", game)],
-            )),
+            // A game id that is a Nightly's is named by its day, any other stays as it is.
+            Fit::OtherBuild(game) => Some(match sunrise_launcher::nightly::date_of(game) {
+                Some(date) => trf(
+                    "Not available for your version (made for the {day} Nightly)",
+                    &[("day", &sunrise_launcher::nightly::day(date))],
+                ),
+                None => trf(
+                    "Not available for your version (made for {game})",
+                    &[("game", game)],
+                ),
+            }),
             Fit::NeedsNewerSunrise => Some(tr("Needs a newer Sunrise").to_string()),
             Fit::Refused(why) => Some(why.clone()),
         }
