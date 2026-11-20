@@ -1,0 +1,19 @@
+[
+  {
+    "entry": {
+      "source": "sunrise",
+      "project": "ruby",
+      "slug": "ruby",
+      "title": "Ruby",
+      "kind": "mod",
+      "version": "1.0.0",
+      "number": "1.0.0",
+      "file": "sunrise-mods/ruby-1.0.0.smod",
+      "checksum": "SHA-256:PACKAGE_DIGEST",
+      "page": "https://registry.example.invalid/ruby",
+      "dependency": false
+    },
+    "copy": "mod-browser/replaced/ruby",
+    "pid": 0
+  }
+]

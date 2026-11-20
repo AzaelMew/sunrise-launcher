@@ -396,24 +396,35 @@ fn unproved_backup_stops_the_old_updater_but_not_play() {
         &|_, _| {},
     )
     .unwrap();
-    let entry = installed::Installed::load(&home).entries.remove(0);
-    let mut kept = keep(&home, &entry).unwrap();
-    kept.session = None; // Exactly the 1.1.2 JSON shape, including a possibly reused PID.
     let ledger = home.join(KEPT);
-    let backup = home.join(&kept.copy);
-    let valid = serde_json::to_vec(&[kept]).unwrap();
+    let backup = home.join("mod-browser/replaced/ruby");
+    fs::create_dir_all(backup.parent().unwrap()).unwrap();
+    fs::copy(&v1, &backup).unwrap();
+    let valid = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/replaced-v1.1.2.json"
+    ))
+    .replace("PACKAGE_DIGEST", &index::sha256_file(&v1).unwrap())
+    .replace("\"pid\": 0", &format!("\"pid\": {}", std::process::id()));
+    // A reused legacy PID does not grant ownership to this launcher.
+    fs::write(&ledger, &valid).unwrap();
+    assert!(run(&home, &PLAY, false, &|_, _| {}).is_none());
+    assert!(!ledger.exists());
+    assert!(backup.is_file());
     let active = installed_ruby(&home);
     let v2 = ruby(&dir, "1.1.0", &["lamp", "brick"], &[]);
     let newer = index_of(&[("1.1.0", GAME, &v2), ("1.0.0", GAME, &v1)]);
     for (bytes, copy) in [
-        (b"invalid JSON".as_slice(), true),
-        (valid.as_slice(), false),
+        (b"invalid JSON".as_slice(), "present"),
+        (valid.as_bytes(), "missing"),
+        (valid.as_bytes(), "directory"),
     ] {
         fs::write(&ledger, bytes).unwrap();
-        if !copy {
-            fs::remove_file(&backup).unwrap();
+        match copy {
+            "missing" => fs::remove_file(&backup).unwrap(),
+            "directory" => fs::create_dir(&backup).unwrap(),
+            _ => (),
         }
-        // This is the real pre-Play caller's shape: the report is advisory, not an error.
         let report = run(&home, &PLAY, false, &|_, _| {}).unwrap();
         assert!(report.lines()[0].contains("You can still play."));
         assert!(report.failed.is_empty());
@@ -421,7 +432,8 @@ fn unproved_backup_stops_the_old_updater_but_not_play() {
         assert!(report.updated.is_empty());
         assert!(update_to(&newer, "ruby", "1.1.0", &home, &|_, _| {}).is_err());
         assert_eq!(fs::read(&ledger).unwrap(), bytes);
-        assert_eq!(backup.is_file(), copy);
+        assert_eq!(backup.is_file(), copy == "present");
+        assert_eq!(backup.is_dir(), copy == "directory");
         assert_eq!(installed_ruby(&home), active);
     }
     fs::remove_dir_all(dir).unwrap();
