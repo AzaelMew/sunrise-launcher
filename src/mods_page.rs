@@ -301,6 +301,7 @@ impl Launcher {
         let mut native = Vec::new();
         let mut native_in = None;
         let mut play_ready = false;
+        let mut play_blocked = false;
         while let Ok(event) = self.mods.rx.try_recv() {
             changed = true;
             let is_play = matches!(event, Event::PlayUpdated(..));
@@ -348,6 +349,9 @@ impl Launcher {
                 Event::Loaded(l) => loaded.push(l),
                 Event::AutoUpdated(out) | Event::PlayUpdated(out) => {
                     play_ready |= is_play;
+                    // A question or a list of mods to remove is a barrier: Play doesn't start
+                    // under it, the player presses Play again once it is answered.
+                    play_blocked |= is_play && out.blocks_play();
                     if !is_play {
                         m.updating = false;
                     }
@@ -379,7 +383,7 @@ impl Launcher {
         }
         if play_ready {
             self.play_step = None;
-            if let Some(intent) = self.play_when_updated.take() {
+            if let Some(intent) = self.play_when_updated.take().filter(|_| !play_blocked) {
                 self.resume_play_with(intent, true);
             }
         }
@@ -693,7 +697,21 @@ impl Launcher {
             self.build_native_on(Some(base), true);
             return;
         }
-        let Some(instance) = self.instances.list.iter().find(|i| i.id == ask.instance) else {
+        let allow = ask.question.mods.into_iter().collect();
+        match ask.switch {
+            Some((version, channel)) => self.commit_switch(&ask.instance, version, channel, allow),
+            None => self.migrate_mods(&ask.instance, allow),
+        }
+    }
+
+    /// Brings every mod of profile `instance` to the game it plays now, on a worker: the update
+    /// of a switch or of a question answered. `allow` are the mods a world may lose.
+    pub(super) fn migrate_mods(
+        &mut self,
+        instance: &str,
+        allow: std::collections::BTreeSet<String>,
+    ) {
+        let Some(instance) = self.instances.list.iter().find(|i| i.id == instance) else {
             return;
         };
         let target = AutoTarget {
@@ -701,8 +719,8 @@ impl Launcher {
             game: self.game_of(instance),
         };
         let native_allowed = self.settings.native_mods_allowed_at.is_some();
-        let allow = ask.question.mods.into_iter().collect();
         let tx = self.mods.tx.clone();
+        self.mods.updating = true;
         std::thread::spawn(move || {
             let out = auto_update(&[target], true, native_allowed, &allow);
             let _ = tx.send(Event::AutoUpdated(out));
@@ -972,6 +990,7 @@ pub(super) fn auto_update(
                     instance: i.id.clone(),
                     question,
                     build_on: None,
+                    switch: None,
                 });
             }
         }
@@ -989,6 +1008,13 @@ pub(crate) struct AutoOutcome {
     pub(crate) removals: Vec<(String, Vec<sunrise::auto::Removal>)>,
 }
 
+impl AutoOutcome {
+    /// A question to answer or mods to confirm for removal: Play doesn't start under either.
+    fn blocks_play(&self) -> bool {
+        !self.asks.is_empty() || !self.removals.is_empty()
+    }
+}
+
 /// A switch or update that waits for the player's answer: it would remove mods that saved
 /// worlds use. Staying is the default; "switch anyway" runs it again with those mods allowed.
 #[derive(Clone, Debug, PartialEq)]
@@ -999,6 +1025,9 @@ pub(crate) struct WorldAsk {
     /// For a build that stopped for the question: the build it was on. Switching anyway
     /// builds on it again, leaving those mods out.
     pub(crate) build_on: Option<String>,
+    /// For a switch of build that waits for the question: the pin and channel it would save.
+    /// Nothing is saved until the answer is Switch anyway.
+    pub(crate) switch: Option<(Option<String>, instances::Channel)>,
 }
 
 impl WorldAsk {
@@ -1012,6 +1041,7 @@ impl WorldAsk {
                 worlds: stake.worlds.clone(),
             },
             build_on: Some(stake.base.clone()),
+            switch: None,
         }
     }
 }

@@ -860,3 +860,29 @@ fn a_switch_that_would_remove_a_mod_a_world_uses_asks_and_changes_nothing_until_
     );
     fs::remove_dir_all(&dir).unwrap();
 }
+
+#[test]
+fn a_switch_asks_before_anything_changes_and_only_for_mods_it_would_remove() {
+    let dir = scratch("auto-switch-before");
+    let a = ruby(&dir, "1.0.0", &["a"], &[]);
+    let index = index_of(&[("1.0.0", "26.2", &a)]);
+    let home = dir.join("profile");
+    fs::create_dir_all(home.join("sunrise-mods")).unwrap();
+    fs::copy(&a, home.join("sunrise-mods/ruby.smod")).unwrap();
+    let mut list = installed::Installed::load(&home);
+    list.entries.push(entry("1.0.0"));
+    list.save(&home).unwrap();
+    // No world uses it: the switch goes ahead without a question.
+    assert!(switch_question(&index, &home, &PLAY).is_none());
+    world_using(&home, "ruby");
+    let ask = switch_question(&index, &home, &PLAY).expect("a world uses ruby");
+    assert_eq!(ask.mods, ["ruby"]);
+    assert_eq!(ask.worlds, ["Home"]);
+    // A game it fits on removes nothing: nothing to ask.
+    let fits = Context {
+        game: "26.2",
+        ..PLAY
+    };
+    assert!(switch_question(&index, &home, &fits).is_none());
+    fs::remove_dir_all(&dir).unwrap();
+}

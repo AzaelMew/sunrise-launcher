@@ -22,7 +22,11 @@ impl Launcher {
     /// of the Sunrise the instance plays; with `leave_out`, the player chose to build without the mods
     /// that worlds were saved with.
     pub(super) fn build_native_on(&mut self, base: Option<String>, leave_out: bool) {
-        if self.native_step.is_some() {
+        // A question about worlds, or mods waiting to be removed, is answered first.
+        if self.native_step.is_some()
+            || self.mods.world_ask.is_some()
+            || self.mods.removal.is_some()
+        {
             return;
         }
         // Every way to a build asks first while native mods aren't allowed (permission taken
@@ -36,7 +40,6 @@ impl Launcher {
         self.pending_consent = None;
         self.native_error = None;
         self.native_failed_mods.clear();
-        self.mods.world_ask = None;
         self.mods.unbuilt = None;
         // This attempt's own log, starting empty: an open panel shows it rather than the last
         // attempt's (`native_log_page`).
