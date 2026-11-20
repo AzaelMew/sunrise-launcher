@@ -20,6 +20,11 @@ fn main() {
     let mut args = std::env::args_os().skip(1);
     if let Some(mode) = args.next() {
         match mode.to_str() {
+            #[cfg(windows)]
+            Some("--launch-api") => {
+                println!(r#"{{"options":[{{"name":"--developer-single-player"}}]}}"#);
+                return;
+            }
             Some("--fixture-wrapper") => return wrapper(args),
             Some("--fixture-late") => return late(args),
             Some("--fixture-wrapper-linger") => {
@@ -50,6 +55,8 @@ fn main() {
             scenario("different-status");
             scenario("early-wrapper");
             scenario("failed");
+            #[cfg(windows)]
+            ordinary_cli();
         }
     }
 }
@@ -97,6 +104,97 @@ fn scenario(mode: &str) {
         assert!(home.join("wrapper-ran").is_file());
     }
     println!("{mode} managed Play retained cache and profile claims after launcher death");
+}
+
+/// Unlike the library scenarios, this enters through the shipped `play` command and its
+/// offline capability check, pin, jar, hook and attached exit-status handling.
+#[cfg(windows)]
+fn ordinary_cli() {
+    use serde_json::json;
+    const TAG: &str = "developer-local";
+    let root = tempfile::tempdir().unwrap();
+    let root_path = root.path().canonicalize().unwrap();
+    let home = root_path.join("game");
+    let data = root_path.join("launcher");
+    let build = data.join("versions").join(TAG);
+    let resources = build.join(".local/sunrise-client/26.3");
+    fs::create_dir(&home).unwrap();
+    fs::create_dir_all(&resources).unwrap();
+    fs::write(resources.join("sunrise-resources.json"), "{}").unwrap();
+    fs::write(build.join(".installed"), []).unwrap();
+    fs::write(
+        build.join("developer.json"),
+        json!({"revision":"a".repeat(40)}).to_string(),
+    )
+    .unwrap();
+    fs::write(
+        build.join("research-lock.json"),
+        r#"{"minecraft":{"version":"26.3"}}"#,
+    )
+    .unwrap();
+    fs::copy(
+        std::env::current_exe().unwrap(),
+        build.join("sunrise-client.exe"),
+    )
+    .unwrap();
+    fs::write(
+        data.join("instances.json"),
+        json!({"instances": {"sunrise": {
+            "version": TAG,
+            "launch": {
+                "wrapper": "sunrise-client.exe --fixture-wrapper different-status",
+                "pre_launch": "echo ready>fixture-prelaunch",
+                "env": {
+                    "PATH": build,
+                    "SUNRISE_SESSION_FILE": "not-the-selected-session",
+                    "SUNRISE_LAUNCHER_EXE": "not-the-launcher",
+                    "SUNRISE_LAUNCHER_DEVELOPER_OFFLINE": "0",
+                },
+            },
+        }}})
+        .to_string(),
+    )
+    .unwrap();
+    let mut launcher = Guard(
+        Command::new(env!("CARGO_BIN_EXE_sunrise-launcher"))
+            .arg("play")
+            .env(ROLE, "game")
+            .env(MODE, "ordinary-cli")
+            .env("SUNRISE_HOME", &home)
+            .env("SUNRISE_LAUNCHER_HOME", &data)
+            .env("SUNRISE_LAUNCHER_DEVELOPER_OFFLINE", "1")
+            .env("SUNRISE_SESSION_FILE", "inherited-stale-session")
+            .env("SUNRISE_NO_KEYCHAIN", "1")
+            .env("SUNRISE_TELEMETRY_URL", "off")
+            .stdin(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    await_event(|| {
+        assert!(
+            launcher.0.try_wait().unwrap().is_none(),
+            "CLI exited before Play"
+        );
+        home.join("game-ready").is_file() && home.join("linger-live").is_file()
+    });
+    assert!(home.join("mod-browser/active-build.json").is_file());
+    assert_eq!(
+        fs::read_to_string(home.join("fixture-prelaunch"))
+            .unwrap()
+            .trim(),
+        "ready"
+    );
+    fs::write(home.join("game-stop"), []).unwrap();
+    let mut status = None;
+    await_event(|| {
+        status = launcher.0.try_wait().unwrap();
+        status.is_some()
+    });
+    assert!(!home.join("linger-stopped").exists());
+    fs::write(home.join("linger-stop"), []).unwrap();
+    await_event(|| home.join("linger-stopped").is_file());
+    assert_eq!(status.unwrap().code(), Some(23));
+    println!("Windows ordinary CLI Play used its exact copied game and returned its status, not the wrapper's");
 }
 
 fn owner() {
@@ -469,14 +567,24 @@ fn game() {
         home.canonicalize().unwrap()
     );
     #[cfg(windows)]
-    assert!(std::env::current_exe()
-        .unwrap()
-        .starts_with(backend::data_dir().join("run")));
+    {
+        assert!(std::env::current_exe()
+            .unwrap()
+            .canonicalize()
+            .unwrap()
+            .starts_with(backend::data_dir().canonicalize().unwrap().join("run")));
+        if std::env::var(MODE).as_deref() == Ok("ordinary-cli") {
+            assert!(cmd.iter().any(|arg| arg == "--developer-single-player"));
+            assert!(std::env::var_os("SUNRISE_SESSION_FILE").is_none());
+            assert!(std::env::var_os("SUNRISE_LAUNCHER_EXE").is_none());
+            assert!(std::env::var("SUNRISE_LAUNCHER_DEVELOPER_OFFLINE").is_ok_and(|v| v == "1"));
+        }
+    }
     fs::write(home.join("game-ready"), []).unwrap();
     await_event(|| home.join("game-stop").is_file());
     if matches!(
         std::env::var(MODE).as_deref(),
-        Ok("different-status" | "early-wrapper")
+        Ok("different-status" | "early-wrapper" | "ordinary-cli")
     ) {
         std::process::exit(23);
     }

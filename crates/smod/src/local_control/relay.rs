@@ -104,7 +104,7 @@ impl Channel {
 
     #[cfg(unix)]
     pub fn send_relay_claims(mut self, files: &[&std::fs::File]) -> io::Result<Self> {
-        use rustix::net::{sendmsg, SendAncillaryBuffer, SendAncillaryMessage, SendFlags};
+        use rustix::net::{SendAncillaryBuffer, SendAncillaryMessage, SendFlags, sendmsg};
         use std::{io::IoSlice, mem::MaybeUninit, os::fd::AsFd};
         if files.is_empty() || files.len() > MAX_RELAY_CLAIMS {
             return Err(io::ErrorKind::InvalidInput.into());
@@ -131,8 +131,8 @@ impl Channel {
     #[cfg(unix)]
     pub fn receive_relay_claims(mut self, count: usize) -> io::Result<(Self, Vec<std::fs::File>)> {
         use rustix::{
-            io::{fcntl_setfd, FdFlags},
-            net::{recvmsg, RecvAncillaryBuffer, RecvAncillaryMessage, RecvFlags, ReturnFlags},
+            io::{FdFlags, fcntl_setfd},
+            net::{RecvAncillaryBuffer, RecvAncillaryMessage, RecvFlags, ReturnFlags, recvmsg},
         };
         use std::{io::IoSliceMut, mem::MaybeUninit};
         if count == 0 || count > MAX_RELAY_CLAIMS {
