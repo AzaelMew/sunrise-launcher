@@ -162,7 +162,7 @@ impl Admission {
         Ok(lease)
     }
 
-    fn claim(home: &Path, external_owner: Option<&Path>) -> Result<Self, String> {
+    pub(crate) fn claim(home: &Path, external_owner: Option<&Path>) -> Result<Self, String> {
         let identity = Identity::of(home)?;
         let gate = match external_owner {
             Some(path) => NameGate::open(path)?,
@@ -190,6 +190,10 @@ impl Admission {
 
     pub fn home(&self) -> &Path {
         &self.home
+    }
+
+    pub(crate) fn identity(&self) -> Identity {
+        self.identity
     }
 
     /// Reserve the candidate artifacts before exposing them. Hold the reference guard

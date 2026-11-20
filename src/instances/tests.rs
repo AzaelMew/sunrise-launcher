@@ -484,6 +484,48 @@ fn a_profile_lookup_pairs_its_old_row_with_its_old_directory() {
 }
 
 #[test]
+fn a_delayed_play_completion_never_records_time_or_runs_a_hook_for_a_replacement() {
+    let root = scratch("delayed-exit");
+    let (game, cache, trash) = (root.join("game"), root.join("cache"), root.join("trash"));
+    let accepted = create_in(&game, &cache, "Rocket!", None).unwrap();
+    let elapsed = Duration::from_secs(73);
+    // Model a delivered exit using the same completion routine as the GUI and CLI. The hook
+    // also asserts it runs while the accepted profile is still admitted.
+    finish_play_in(&game, &cache, &accepted, elapsed, || {
+        assert!(ManagedProfile::open_instance(&game, &cache, &accepted).is_err());
+        put(&accepted.home.join("owned-hook"), "old profile");
+    })
+    .unwrap();
+    assert_eq!(
+        find_in(&list_in(&game, &cache), &accepted.id)
+            .unwrap()
+            .played,
+        elapsed
+    );
+    delete_in(&game, &cache, &accepted.id, &|dir| {
+        fs::rename(dir, &trash).map_err(|e| e.to_string())
+    })
+    .unwrap();
+    let replacement = create_in(&game, &cache, "Rocket?", None).unwrap();
+    assert_eq!(accepted.id, replacement.id);
+    assert_ne!(accepted.incarnation, replacement.incarnation);
+    let before = fs::read(cache.join(FILE)).unwrap();
+    let result = finish_play_in(&game, &cache, &accepted, elapsed, || {
+        panic!("the detached run's hook reached a replacement profile");
+    });
+    assert_eq!(result.unwrap_err(), lifecycle::changed());
+    assert_eq!(fs::read(cache.join(FILE)).unwrap(), before);
+    assert_eq!(
+        find_in(&list_in(&game, &cache), &replacement.id)
+            .unwrap()
+            .played,
+        Duration::ZERO
+    );
+    assert!(!replacement.home.join("owned-hook").exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_delayed_delete_does_not_admit_a_replacement_at_the_same_slug() {
     let root = scratch("delete-old-incarnation");
     let (game, cache, trash) = (root.join("game"), root.join("cache"), root.join("trash"));

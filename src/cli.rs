@@ -1429,7 +1429,7 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
             };
             let jar_permission = jars::Permission::headless(allow_jar_downloads);
             let vars = instance.vars();
-            let (started, played) = if instance.kind == instances::Kind::Pack {
+            let (started, played, finished) = if instance.kind == instances::Kind::Pack {
                 let tag = instance.resolve_version(version.as_deref())?;
                 let mut cmd = backend::client_as(&tag, account.map(|a| a.uuid.as_str()))?;
                 instances::apply(&mut cmd, &instance)?;
@@ -1445,7 +1445,7 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
                 jars::prepare_launch(&mut cmd, &instance.launch, jar_permission)
                     .map_err(|error| error.to_string())?;
                 let command = sunrise_launcher::launch::wrap(cmd, &instance.launch)?;
-                (std::time::Instant::now(), attached(command))
+                (std::time::Instant::now(), attached(command), Some(instance))
             } else {
                 let start = managed_play::Client {
                     instance: &instance,
@@ -1490,12 +1490,18 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
                     .wait()
                     .map_err(sunrise_launcher::process::child::unconfirmed_exit)?;
                 game.runtime.game_exited();
-                (started, attached_status(status))
+                (started, attached_status(status), Some(game.instance))
             };
-            if let Err(e) = instances::record_play(&instance.id, started.elapsed()) {
-                eprintln!("Play time not saved: {e}");
+            if let Some(finished) = finished {
+                if let Err(error) = instances::finish_play(&finished, started.elapsed(), || {
+                    after_exit(&finished, &vars)
+                }) {
+                    eprintln!(
+                        "{}",
+                        crate::trf("Play time not saved: {error}", &[("error", &error)])
+                    );
+                }
             }
-            after_exit(&instance, &vars);
             return played;
         }
         Cmd::Server {

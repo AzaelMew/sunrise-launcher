@@ -221,6 +221,13 @@ impl Profile {
         Ok(Self(profile))
     }
 
+    pub(super) fn admitted_instance(
+        &self,
+        instance: &crate::instances::Instance,
+    ) -> crate::instances::Instance {
+        instance.after_admission(self.0.identity())
+    }
+
     pub(crate) fn lock_inputs(&self) -> Result<HomeLockGuard, String> {
         game_lock(self.home())
     }

@@ -460,6 +460,15 @@ pub struct Instance {
 }
 
 impl Instance {
+    /// Preserve the accepted selection, or stamp the default directory created by first Play.
+    pub(crate) fn after_admission(&self, home: Identity) -> Self {
+        let mut instance = self.clone();
+        instance
+            .incarnation
+            .get_or_insert(Incarnation { work: home, home });
+        instance
+    }
+
     /// The installed version this instance plays: its pinned one, else `requested` (the
     /// command line's `--version`) or the launcher's (`backend::resolve_version`).
     pub fn resolve_version(&self, requested: Option<&str>) -> Result<String, String> {
@@ -1127,8 +1136,36 @@ fn edit_in(
 
 /// Adds a finished run of the game to the instance's play time (by id: a renamed instance keeps
 /// it).
-pub fn record_play(id: &str, played: Duration) -> Result<(), String> {
-    record_play_in(&backend::data_dir(), id, played, SystemTime::now())
+/// Complete the accepted run, not the profile (if any) currently using its name.
+/// The callback must run synchronously so the profile cannot be replaced during the hook.
+pub fn finish_play(
+    instance: &Instance,
+    played: Duration,
+    hook: impl FnOnce(),
+) -> Result<(), String> {
+    finish_play_in(
+        &backend::game_home(),
+        &backend::data_dir(),
+        instance,
+        played,
+        hook,
+    )
+}
+
+fn finish_play_in(
+    game: &Path,
+    data: &Path,
+    instance: &Instance,
+    played: Duration,
+    hook: impl FnOnce(),
+) -> Result<(), String> {
+    let expected = instance.incarnation.ok_or_else(lifecycle::changed)?;
+    let owner = lifecycle::owner_file(game, &instance.home)?;
+    let profile = crate::profile_txn::Admission::claim(&instance.home, owner.as_deref())?;
+    expected.check(instance, profile.identity())?;
+    let saved = record_play_in(data, &instance.id, played, SystemTime::now());
+    hook();
+    saved
 }
 
 fn record_play_in(
