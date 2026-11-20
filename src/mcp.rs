@@ -376,6 +376,23 @@ mod tests {
     use super::*;
 
     #[test]
+    fn mcp_cannot_select_another_build_for_a_profile() {
+        let tools = tools();
+        for name in ["play", "modpack_play"] {
+            let tool = tools.iter().find(|tool| tool["name"] == name).unwrap();
+            assert!(!tool["inputSchema"]["properties"]
+                .as_object()
+                .unwrap()
+                .contains_key("version"));
+        }
+        for name in ["switch", "instance_version"] {
+            assert!(!tools.iter().any(|tool| tool["name"] == name));
+        }
+        let server = tools.iter().find(|tool| tool["name"] == "server").unwrap();
+        assert!(server["inputSchema"]["properties"]["version"].is_object());
+    }
+
+    #[test]
     fn a_console_command_is_one_line() {
         assert_eq!(console_line("/list").unwrap(), "list");
         assert!(console_line("list\nstop").is_err());

@@ -3374,6 +3374,21 @@ mod tests {
     }
 
     #[test]
+    fn profile_build_changes_use_switch_not_a_play_or_instance_override() {
+        for old in [
+            &["play", "--version", "other"][..],
+            &["modpack", "play", "example", "--version", "other"][..],
+            &["instance", "version", "example", "other"][..],
+        ] {
+            assert!(Cli::try_parse_from([&["sunrise-launcher"][..], old].concat()).is_err());
+        }
+        assert!(Cli::try_parse_from(["sunrise-launcher", "switch", "other", "--yes"]).is_err());
+        assert!(
+            matches!(Cli::try_parse_from(["sunrise-launcher", "switch", "other", "--profile", "example"]).unwrap().command, Some(Cmd::Switch { tag, profile: Some(profile) }) if tag == "other" && profile == "example")
+        );
+    }
+
+    #[test]
     fn play_takes_an_account_for_one_launch() {
         let cli = Cli::try_parse_from(["sunrise-launcher", "play", "--account", "Alex"]).unwrap();
         match cli.command {
