@@ -2970,7 +2970,12 @@ pub fn agree_eula(folder: &Path) -> Result<(), String> {
     let folder = server_root(folder)?;
     fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
     let text = "#By changing the setting below to TRUE you are indicating your agreement to our EULA (https://aka.ms/MinecraftEULA).\neula=true\n";
-    fs::write(folder.join("eula.txt"), text).map_err(|e| e.to_string())
+    // Replace a directory entry rather than writing through an existing link to player data.
+    let mut eula = tempfile::NamedTempFile::new_in(&folder).map_err(|e| e.to_string())?;
+    eula.write_all(text.as_bytes()).map_err(|e| e.to_string())?;
+    eula.persist(folder.join("eula.txt"))
+        .map(|_| ())
+        .map_err(|e| e.error.to_string())
 }
 
 // ----- Shared steps for the front ends -----------------------------------------------------------

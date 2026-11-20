@@ -138,6 +138,32 @@ fn main() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(fs::read(accepted.join("server-ran")).unwrap(), b"yes");
+    let profile_file = own.join("keep-unchanged.txt");
+    fs::write(&profile_file, "profile sentinel").unwrap();
+    let hard_link = root.join("dedicated/hard-link-eula");
+    fs::create_dir(&hard_link).unwrap();
+    fs::hard_link(&profile_file, hard_link.join("eula.txt")).unwrap();
+    #[cfg(unix)]
+    let sym_link = {
+        let folder = root.join("dedicated/symlink-eula");
+        fs::create_dir(&folder).unwrap();
+        std::os::unix::fs::symlink(&profile_file, folder.join("eula.txt")).unwrap();
+        folder
+    };
+    let assert_replaced = |folder: &Path| {
+        let output = cli(folder);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(fs::read(folder.join("server-ran")).unwrap(), b"yes");
+        assert!(backend::eula_agreed(folder));
+        assert_eq!(fs::read(&profile_file).unwrap(), b"profile sentinel");
+    };
+    assert_replaced(&hard_link);
+    #[cfg(unix)]
+    assert_replaced(&sym_link);
     assert_eq!(
         fs::read_to_string(data.join("instances.json")).unwrap(),
         r#"{"instances":{"old-slug":{}}}"#
