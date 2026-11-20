@@ -2830,6 +2830,10 @@ fn strip_launcher_render_env(cmd: &mut Command) {
 }
 
 pub fn client_command(tag: &str) -> Command {
+    client_with_resources(tag, &resources(tag))
+}
+
+pub(crate) fn client_with_resources(tag: &str, resources: &Path) -> Command {
     let home = game_home();
     let _ = fs::create_dir_all(&home);
     let mut cmd = Command::new(client_program(tag));
@@ -2842,7 +2846,7 @@ pub fn client_command(tag: &str) -> Command {
     cmd.current_dir(&home)
         .env("SUNRISE_HOME", &home)
         .arg("--resources")
-        .arg(resources(tag));
+        .arg(resources);
     // How the game asks for a renewed session (`account session`) while it runs.
     if let Ok(exe) = std::env::current_exe() {
         cmd.env("SUNRISE_LAUNCHER_EXE", exe);
@@ -3144,6 +3148,9 @@ pub fn need_prepared(tag: &str) -> Result<(), String> {
 pub enum PlayStep {
     Assets,
     Mods,
+    Download,
+    Prepare,
+    Native,
     SignIn,
 }
 
@@ -3219,6 +3226,15 @@ impl Logged {
     pub fn start(job: Job, cmd: Command) -> Result<Self, String> {
         let (tx, rx) = std::sync::mpsc::channel();
         let running = spawn(job, cmd, tx)?;
+        Ok(Self::keep(running, rx))
+    }
+
+    pub fn monitor_game(child: Child, runtime: RuntimeGuard) -> Self {
+        let (tx, rx) = std::sync::mpsc::channel();
+        Self::keep(monitor_game(child, tx, runtime), rx)
+    }
+
+    fn keep(running: Running, rx: std::sync::mpsc::Receiver<Msg>) -> Self {
         let log = Arc::new(Mutex::new(std::collections::VecDeque::new()));
         let exit = Arc::new(Mutex::new(None));
         let (l, e) = (log.clone(), exit.clone());
@@ -3237,7 +3253,7 @@ impl Logged {
                 }
             }
         });
-        Ok(Self { running, log, exit })
+        Self { running, log, exit }
     }
 
     pub fn finished(&self) -> Option<Result<(), String>> {

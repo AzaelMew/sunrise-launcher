@@ -1,11 +1,13 @@
 //! Exact managed Play state. The profile journal owns admission and publication;
 //! this boundary owns the types, verification and interpretation of its saved pointers.
 mod artifact;
+mod client;
 mod first;
 mod game;
 mod inputs;
 mod resources;
 mod roots;
+pub use client::{headless_first, Client, Progress, StartError, Started};
 pub use first::{FirstAttempt, FirstBuild, Profile};
 use inputs::inputs;
 pub use inputs::{scan_packages, ScannedPackage};

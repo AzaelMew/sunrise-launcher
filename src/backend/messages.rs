@@ -37,6 +37,10 @@ pub enum Msg {
     Session(Result<Option<crate::account::GameSession>, crate::account::NoOwner>),
     /// The step Play is at before the game starts, for the button's label.
     PlayStep(PlayStep),
+    ManagedClient {
+        instance: Box<crate::instances::Instance>,
+        result: Box<Result<crate::managed_play::Started, crate::managed_play::StartError>>,
+    },
     /// The worker checked the game's journal for the selected profile before Play changed it.
     PlayAdmission(
         PathBuf,

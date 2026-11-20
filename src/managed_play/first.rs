@@ -146,13 +146,21 @@ impl Profile {
     /// Acquire profile, then game manifest, then cache publication. Cache scans never
     /// take either profile lock. Keep the same admission through the game handoff.
     pub fn open(home: &Path, external_owner: Option<&Path>) -> Result<Self, String> {
+        Self::open_checked(home, external_owner).map_err(Into::into)
+    }
+
+    pub(super) fn open_checked(
+        home: &Path,
+        external_owner: Option<&Path>,
+    ) -> Result<Self, super::client::StartError> {
         let profile = Admission::open_fenced(home, external_owner, || {
             let manifest = game_lock(home)?;
             let references = ReferencePublication::begin(home)?;
             Ok((manifest, references))
         })?;
         let _manifest = game_lock(home)?;
-        crate::browser::installed::recover_game_install(home)?;
+        crate::browser::installed::recover_game_install(home)
+            .map_err(super::client::StartError::Journal)?;
         Ok(Self(profile))
     }
 
@@ -256,6 +264,15 @@ impl Profile {
         choose: impl FnOnce() -> Result<FirstBuild, String>,
         progress: impl Fn(f32),
     ) -> Result<FirstAttempt<'_>, String> {
+        self.begin_requested(None, choose, progress)
+    }
+
+    pub(super) fn begin_requested(
+        &mut self,
+        requested: Option<&str>,
+        choose: impl FnOnce() -> Result<FirstBuild, String>,
+        progress: impl Fn(f32),
+    ) -> Result<FirstAttempt<'_>, String> {
         let home = self.home().to_path_buf();
         let mut admitted = None;
         let initial = {
@@ -265,6 +282,7 @@ impl Profile {
             let initial = self.0.bind_bootstrap(
                 || {
                     let choice = choose()?;
+                    assert_requested(requested, &choice.base, &choice.image)?;
                     let mut profile = [0; 16];
                     while profile == [0; 16] {
                         getrandom::fill(&mut profile).map_err(|e| e.to_string())?;
@@ -295,6 +313,7 @@ impl Profile {
             initial
         };
         let mut bound = admitted.map_or_else(|| Bound::from_record(initial), Ok)?;
+        assert_requested(requested, &bound.base, &bound.image)?;
         if let Selection::Download { archive } = &bound.selection {
             if bound.proof.is_none() {
                 let proof = archive.prove(&bound.base)?;
@@ -320,6 +339,20 @@ impl Profile {
         };
         Ok(FirstAttempt { home, bound, stage })
     }
+}
+
+pub(super) fn assert_requested(
+    requested: Option<&str>,
+    base: &str,
+    image: &str,
+) -> Result<(), String> {
+    if let Some(requested) = requested.filter(|tag| *tag != base && *tag != image) {
+        return Err(crate::i18n::trf(
+            "This profile is bound to {build}, not {requested}. Change the profile's build before playing another one.",
+            &[("build", base), ("requested", requested)],
+        ));
+    }
+    Ok(())
 }
 
 pub struct FirstAttempt<'a> {

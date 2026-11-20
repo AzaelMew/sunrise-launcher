@@ -24,7 +24,14 @@ impl Profile {
         piped: bool,
     ) -> Result<(Child, RuntimeGuard), String> {
         let selection = validate_selection(self.home(), &active.resource_path(), &command)?;
-        self.spawn_selected(active, cancellation, command, selection, &[], piped)
+        self.spawn_selected(
+            active,
+            cancellation,
+            (command, selection),
+            &[],
+            piped,
+            || Ok(()),
+        )
     }
 
     /// Apply instance switches and hooks, then start either the exact image or the
@@ -33,26 +40,54 @@ impl Profile {
         &self,
         active: &Active,
         cancellation: &Cancellation,
-        mut command: Command,
+        command: Command,
         launch: &crate::launch::Launch,
         piped: bool,
     ) -> Result<(Child, RuntimeGuard), String> {
+        self.spawn_checked_account(
+            active,
+            cancellation,
+            command,
+            (launch, piped),
+            |_| Ok(()),
+            || Ok(()),
+        )
+    }
+
+    pub(super) fn spawn_checked_account(
+        &self,
+        active: &Active,
+        cancellation: &Cancellation,
+        mut command: Command,
+        (launch, piped): (&crate::launch::Launch, bool),
+        prepare_jars: impl FnOnce(&mut Command) -> Result<(), String>,
+        check_account: impl FnOnce() -> Result<(), String>,
+    ) -> Result<(Child, RuntimeGuard), String> {
         let wrapper = crate::launch::managed_wrapper(&mut command, launch);
         let selection = validate_selection(self.home(), &active.resource_path(), &command)?;
+        prepare_jars(&mut command)?;
         crate::launch::managed_pre_launch(&command, launch)?;
-        self.spawn_selected(active, cancellation, command, selection, &wrapper, piped)
+        self.spawn_selected(
+            active,
+            cancellation,
+            (command, selection),
+            &wrapper,
+            piped,
+            check_account,
+        )
     }
 
     fn spawn_selected(
         &self,
         active: &Active,
         cancellation: &Cancellation,
-        command: Command,
-        selection: LaunchArguments,
+        selected: (Command, LaunchArguments),
         wrapper: &[std::ffi::OsString],
         piped: bool,
+        check_account: impl FnOnce() -> Result<(), String>,
     ) -> Result<(Child, RuntimeGuard), String> {
         self.verified_handoff(active, cancellation, |profile| {
+            let (command, selection) = selected;
             let (mut command, runtime) = prepare(self.home(), active, command)?;
             let data = backend::data_dir();
             let data = data
@@ -109,6 +144,7 @@ impl Profile {
                 use std::os::unix::process::CommandExt;
                 command.process_group(0);
             }
+            check_account()?;
             let child = if wrapper.is_empty() {
                 let program = command.get_program().to_string_lossy().into_owned();
                 leases
