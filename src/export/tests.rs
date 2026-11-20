@@ -24,6 +24,7 @@ fn level_dat() -> Vec<u8> {
     let mut data = BTreeMap::new();
     data.insert("LevelName".into(), Tag::String("Base".into()));
     data.insert("Player".into(), Tag::Compound(player));
+    data.insert("singleplayer_uuid".into(), Tag::IntArray(vec![5, 6, 7, 8]));
     let mut root = BTreeMap::new();
     root.insert("Data".into(), Tag::Compound(data));
     let raw = nbt::write_named(
@@ -55,6 +56,9 @@ fn home(name: &str) -> PathBuf {
     put(&home.join("saves/Base/region/r.0.0.mca"), b"region");
     put(&home.join("saves/Base/playerdata/0001.dat"), b"me");
     put(&home.join("saves/Base/stats/0001.json"), b"{}");
+    put(&home.join("saves/Base/level.dat_old"), &level_dat());
+    put(&home.join("saves/Base/players/data/0001.dat"), b"me");
+    put(&home.join("saves/Base/players/stats/0001.json"), b"{}");
     put(&home.join("saves/Base/session.lock"), b"");
     put(&home.join("saves/Other/level.dat"), &level_dat());
     for private in [
@@ -123,7 +127,7 @@ fn a_zip_has_the_instance_and_the_picked_world_and_nothing_private() {
     let out = home.join("out/Hardcore.zip");
     let done = export(&home, "Hardcore", &["Base".into()], &out).unwrap();
     assert_eq!(done.copied, 8);
-    // Settings, packs, the mod and the picked world, without its per-player files; no logs,
+    // Settings (not the server list), packs, the mod and the picked world, without its per-player files; no logs,
     // screenshots, backups, caches, account files or the other world.
     assert_eq!(
         names(&out),
@@ -132,26 +136,29 @@ fn a_zip_has_the_instance_and_the_picked_world_and_nothing_private() {
             "resourcepacks/Glass.zip",
             "resourcepacks/Own.zip",
             "saves/Base/level.dat",
+            "saves/Base/level.dat_old",
             "saves/Base/region/r.0.0.mca",
-            "servers.dat",
             "sunrise-graphics.txt",
             "sunrise-mods/coords/sunrise-mod.toml",
         ]
     );
-    // The world's level.dat keeps the player, without the UUID.
-    let mut raw = Vec::new();
-    flate2::read::GzDecoder::new(&read(&out, "saves/Base/level.dat")[..])
-        .read_to_end(&mut raw)
-        .unwrap();
-    let (root, _) = nbt::read_named(&raw, Limits::default()).unwrap();
-    let Some(Tag::Compound(data)) = root.tag.get("Data") else {
-        panic!("no Data")
-    };
-    let Some(Tag::Compound(player)) = data.get(&"Player".into()) else {
-        panic!("no Player")
-    };
-    assert!(player.get(&"UUID".into()).is_none());
-    assert_eq!(player.get(&"XpLevel".into()), Some(&Tag::Int(7)));
+    // The world's level.dat and level.dat_old keep the player, without any UUID.
+    for file in ["saves/Base/level.dat", "saves/Base/level.dat_old"] {
+        let mut raw = Vec::new();
+        flate2::read::GzDecoder::new(&read(&out, file)[..])
+            .read_to_end(&mut raw)
+            .unwrap();
+        let (root, _) = nbt::read_named(&raw, Limits::default()).unwrap();
+        let Some(Tag::Compound(data)) = root.tag.get("Data") else {
+            panic!("no Data")
+        };
+        assert!(data.get(&"singleplayer_uuid".into()).is_none(), "{file}");
+        let Some(Tag::Compound(player)) = data.get(&"Player".into()) else {
+            panic!("no Player")
+        };
+        assert!(player.get(&"UUID".into()).is_none(), "{file}");
+        assert_eq!(player.get(&"XpLevel".into()), Some(&Tag::Int(7)));
+    }
     assert!(!out.with_extension("part").exists());
 
     assert!(export(&home, "Hardcore", &["../x".into()], &out).is_err());

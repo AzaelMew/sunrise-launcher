@@ -325,19 +325,246 @@ fn installed_kind_comes_from_the_archive_not_its_folder() {
 }
 
 #[test]
-fn corrupt_installed_archive_is_not_treated_as_content() {
+fn corrupt_installed_archive_is_moved_aside_by_its_update() {
     let index = sample();
     let home = scratch("corrupt-installed");
     put(&index, true, &home).unwrap();
     let path = home.join("sunrise-mods/coords_hud.smod");
     fs::write(&path, b"not a zip").unwrap();
-    let before = fs::read(&path).unwrap();
-    let modified = fs::metadata(&path).unwrap().modified().unwrap();
+    let mut list = installed::Installed::load(&home);
+    list.entries[0].version = "0.0.1".into();
+    list.save(&home).unwrap();
+    let p = index.project("coords_hud").unwrap();
+    install_version(&index, true, p, &p.versions[0], &home, &|_, _| {}).unwrap();
+    // The new file is a real package, and the broken bytes are kept, not deleted.
+    assert!(index::inspect(&index::Kind::Mod, &path).is_ok());
+    let kept: Vec<_> = fs::read_dir(home.join("mod-browser/unreadable"))
+        .unwrap()
+        .map(|e| fs::read(e.unwrap().path()).unwrap())
+        .collect();
+    assert_eq!(kept, [b"not a zip".to_vec()]);
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn a_mod_install_with_dependencies_keeps_the_unreadable_file_it_replaces() {
+    let index = sample();
+    let home = scratch("corrupt-with-deps");
+    put(&index, true, &home).unwrap();
+    let path = home.join("sunrise-mods/coords_hud.smod");
+    fs::write(&path, b"not a zip").unwrap();
+    let mut list = installed::Installed::load(&home);
+    list.entries[0].version = "0.0.1".into();
+    list.save(&home).unwrap();
+    let p = index.project("coords_hud").unwrap();
+    let install = Install {
+        index: &index,
+        local: true,
+        home: &home,
+        progress: &|_, _| {},
+    };
+    dependencies::install(&install, p, &p.versions[0], false).unwrap();
+    assert!(index::inspect(&index::Kind::Mod, &path).is_ok());
+    let kept: Vec<_> = fs::read_dir(home.join("mod-browser/unreadable"))
+        .unwrap()
+        .map(|e| fs::read(e.unwrap().path()).unwrap())
+        .collect();
+    assert_eq!(kept, [b"not a zip".to_vec()]);
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn an_installed_file_that_cannot_be_read_is_refused_not_moved_aside() {
+    let index = sample();
+    let home = scratch("unreadable-io");
+    put(&index, true, &home).unwrap();
+    // A directory where the file was: it exists, but reading it as a file fails.
+    let path = home.join("sunrise-mods/coords_hud.smod");
+    fs::remove_file(&path).unwrap();
+    fs::create_dir(&path).unwrap();
+    let mut list = installed::Installed::load(&home);
+    list.entries[0].version = "0.0.1".into();
+    list.save(&home).unwrap();
     let p = index.project("coords_hud").unwrap();
     let error = install_version(&index, true, p, &p.versions[0], &home, &|_, _| {}).unwrap_err();
-    assert!(error.contains("Cannot inspect installed"), "{error}");
-    assert_eq!(fs::read(&path).unwrap(), before);
-    assert_eq!(fs::metadata(&path).unwrap().modified().unwrap(), modified);
+    // Unix opens the directory and says it isn't a regular file; Windows refuses to open it
+    // (access denied). Either way the update names the file, refuses and leaves it.
+    assert!(error.contains("coords_hud.smod"), "{error}");
+    assert!(path.is_dir());
+    assert!(!home.join("mod-browser/unreadable").exists());
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn an_installed_entry_pointing_out_of_the_game_folder_is_refused() {
+    let index = sample();
+    let home = scratch("escaping-entry");
+    put(&index, true, &home).unwrap();
+    let outside = home.parent().unwrap().join("escaped-by-entry.smod");
+    fs::write(&outside, b"not a zip").unwrap();
+    let name = format!("../{}", outside.file_name().unwrap().to_string_lossy());
+    // The manifest loader drops such an entry; a list built in memory still must not reach it.
+    let mut list = installed::Installed::load(&home);
+    list.entries[0].version = "0.0.1".into();
+    list.entries[0].file = name;
+    let p = index.project("coords_hud").unwrap();
+    let install = Install {
+        index: &index,
+        local: true,
+        home: &home,
+        progress: &|_, _| {},
+    };
+    let result = install.prepare(p, &p.versions[0], &list, &home.join("staging"));
+    assert!(result.is_err());
+    assert_eq!(fs::read(&outside).unwrap(), b"not a zip");
+    fs::remove_file(outside).unwrap();
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn a_failed_install_with_dependencies_leaves_no_copy_of_the_unreadable_file() {
+    let index = sample();
+    let home = scratch("failed-with-deps");
+    put(&index, true, &home).unwrap();
+    let path = home.join("sunrise-mods/coords_hud.smod");
+    fs::write(&path, b"not a zip").unwrap();
+    let mut list = installed::Installed::load(&home);
+    list.entries[0].version = "0.0.1".into();
+    list.save(&home).unwrap();
+    // The list of enabled mods can't be read, so turning the mod on fails before anything lands.
+    let enabled = home.join(sunrise_launcher_smod::mod_list::FILE);
+    let _ = fs::remove_file(&enabled);
+    fs::create_dir(&enabled).unwrap();
+    let p = index.project("coords_hud").unwrap();
+    let install = Install {
+        index: &index,
+        local: true,
+        home: &home,
+        progress: &|_, _| {},
+    };
+    assert!(dependencies::install(&install, p, &p.versions[0], false).is_err());
+    assert_eq!(fs::read(&path).unwrap(), b"not a zip");
+    assert!(!home.join("mod-browser/unreadable").exists());
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn update_replaces_an_entry_whose_file_is_gone() {
+    let index = sample();
+    let home = scratch("gone-installed");
+    put(&index, true, &home).unwrap();
+    let path = home.join("sunrise-mods/coords_hud.smod");
+    fs::remove_file(&path).unwrap();
+    let mut list = installed::Installed::load(&home);
+    list.entries[0].version = "0.0.1".into();
+    list.save(&home).unwrap();
+    let p = index.project("coords_hud").unwrap();
+    install_version(&index, true, p, &p.versions[0], &home, &|_, _| {}).unwrap();
+    assert!(index::inspect(&index::Kind::Mod, &path).is_ok());
+    assert_eq!(installed::Installed::load(&home).entries.len(), 1);
+    assert!(!home.join("mod-browser/unreadable").exists());
+    fs::remove_dir_all(home).unwrap();
+}
+
+/// The sample's `coords_hud` as a native mod, its file written under `home`.
+fn native_sample(home: &Path) -> Index {
+    use std::io::Write;
+    let archive = home.join("source.smod");
+    let (a, b) = ("a".repeat(40), "b".repeat(40));
+    let mut zip = zip::ZipWriter::new(fs::File::create(&archive).unwrap());
+    for (name, text) in [
+        ("Cargo.toml", "[package]\nname='coords_hud'\nversion='0.1.0'\n".to_string()),
+        ("src/lib.rs", "fn hook() {}".to_string()),
+        ("sunrise-mod.toml", format!("id='coords_hud'\nname='HUD'\nversion='0.1.0'\napi='0.2'\ncapabilities=['registries']\n[native]\ngame='{GAME}'\nsunrise='{a}'\nmixins='{b}'\n")),
+    ] {
+        zip.start_file(name, zip::write::SimpleFileOptions::default()).unwrap();
+        zip.write_all(text.as_bytes()).unwrap();
+    }
+    zip.finish().unwrap();
+    let bytes = fs::read(&archive).unwrap();
+    let mut index = sample();
+    let p = &mut index.projects[0];
+    p.kind = index::Kind::NativeMod;
+    p.key = None;
+    let v = &mut p.versions[0];
+    v.api = format!("native-1/{a}/{b}");
+    v.version = "0.1.0".into();
+    v.game = GAME.into();
+    v.side = None;
+    v.requires.clear();
+    v.capabilities = Default::default();
+    v.file.name = "coords_hud.smod".into();
+    v.file.url = format!("file://{}", archive.display());
+    v.file.size = bytes.len() as u64;
+    v.file.sha256 = index::sha256(&bytes);
+    v.file.signature = None;
+    index
+}
+
+#[test]
+fn a_plain_to_native_flip_with_dependencies_replaces_an_unreadable_or_gone_file() {
+    for gone in [false, true] {
+        let home = scratch(if gone { "flip-gone" } else { "flip-unreadable" });
+        let plain = sample();
+        put(&plain, true, &home).unwrap();
+        let old = home.join("sunrise-mods/coords_hud.smod");
+        if gone {
+            fs::remove_file(&old).unwrap();
+        } else {
+            fs::write(&old, b"not a zip").unwrap();
+        }
+        let mut list = installed::Installed::load(&home);
+        list.entries[0].version = "0.0.1".into();
+        list.save(&home).unwrap();
+        let index = native_sample(&home);
+        let p = &index.projects[0];
+        let install = Install {
+            index: &index,
+            local: true,
+            home: &home,
+            progress: &|_, _| {},
+        };
+        let done = dependencies::install(&install, p, &p.versions[0], true).unwrap();
+        assert_eq!(done[0].file, "sunrise-native-mods/coords_hud.smod");
+        assert!(home.join("sunrise-native-mods/coords_hud.smod").is_file());
+        assert!(!old.exists());
+        let list = installed::Installed::load(&home);
+        assert_eq!(list.entries.len(), 1);
+        assert_eq!(list.entries[0].file, "sunrise-native-mods/coords_hud.smod");
+        let aside = home.join("mod-browser/unreadable");
+        if gone {
+            assert!(!aside.exists());
+        } else {
+            let kept: Vec<_> = fs::read_dir(aside)
+                .unwrap()
+                .map(|e| fs::read(e.unwrap().path()).unwrap())
+                .collect();
+            assert_eq!(kept, [b"not a zip".to_vec()]);
+        }
+        fs::remove_dir_all(home).unwrap();
+    }
+}
+
+#[test]
+fn a_mod_install_with_dependencies_replaces_an_entry_whose_file_is_gone() {
+    let index = sample();
+    let home = scratch("gone-with-deps");
+    put(&index, true, &home).unwrap();
+    let path = home.join("sunrise-mods/coords_hud.smod");
+    fs::remove_file(&path).unwrap();
+    let mut list = installed::Installed::load(&home);
+    list.entries[0].version = "0.0.1".into();
+    list.save(&home).unwrap();
+    let p = index.project("coords_hud").unwrap();
+    let install = Install {
+        index: &index,
+        local: true,
+        home: &home,
+        progress: &|_, _| {},
+    };
+    dependencies::install(&install, p, &p.versions[0], false).unwrap();
+    assert!(index::inspect(&index::Kind::Mod, &path).is_ok());
+    assert!(!home.join("mod-browser/unreadable").exists());
     fs::remove_dir_all(home).unwrap();
 }
 

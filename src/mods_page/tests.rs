@@ -28,7 +28,7 @@ fn build_consent_binds_an_unopened_mods_page_to_the_selected_profile() {
         let mut zip =
             zip::ZipWriter::new(fs::File::create(dir.join(format!("{id}.smod"))).unwrap());
         let pin = "f".repeat(40);
-        let manifest = format!("id = '{id}'\nname = '{id}'\nversion = '1.0.0'\napi = '0.2'\n[native]\ngame = '26.3'\nsunrise = '{pin}'\nmixins = '{pin}'\n");
+        let manifest = format!("id = '{id}'\nname = '{id}'\nversion = '1.0.0'\napi = '0.2'\ncapabilities = ['registries']\n[native]\ngame = '26.3'\nsunrise = '{pin}'\nmixins = '{pin}'\n");
         for (name, text) in [
             ("sunrise-mod.toml", manifest.as_str()),
             (

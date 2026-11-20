@@ -137,3 +137,74 @@ fn coverage_says_what_runs() {
     );
     fs::remove_dir_all(&root).unwrap();
 }
+
+#[test]
+fn a_data_pack_mcmeta_with_a_byte_order_mark_or_comments_is_listed() {
+    let root = scratch("lenient-meta");
+    let packs = root.join("datapacks");
+    zip_file(
+        &packs.join("Bom.zip"),
+        &[("pack.mcmeta", "\u{feff}{\"pack\":{\"description\":\"B\"}}")],
+    );
+    fs::create_dir_all(packs.join("Note")).unwrap();
+    fs::write(
+        packs.join("Note/pack.mcmeta"),
+        "{\"pack\":{\"description\":\"N\"} // trailing note\n}",
+    )
+    .unwrap();
+    let seen: Vec<(String, String)> = list(&root)
+        .into_iter()
+        .map(|p| (p.file, p.description))
+        .collect();
+    assert_eq!(
+        seen,
+        [
+            ("Bom.zip".to_string(), "B".to_string()),
+            ("Note".to_string(), "N".to_string())
+        ]
+    );
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn a_data_pack_without_a_description_is_not_listed() {
+    let root = scratch("no-description");
+    let packs = root.join("datapacks");
+    zip_file(&packs.join("Bare.zip"), &[("pack.mcmeta", "{}")]);
+    fs::create_dir_all(packs.join("NoText")).unwrap();
+    fs::write(
+        packs.join("NoText/pack.mcmeta"),
+        r#"{"pack":{"pack_format":88}}"#,
+    )
+    .unwrap();
+    fs::create_dir_all(packs.join("Fine")).unwrap();
+    fs::write(packs.join("Fine/pack.mcmeta"), META).unwrap();
+    let names: Vec<String> = list(&root).into_iter().map(|p| p.file).collect();
+    assert_eq!(names, ["Fine"]);
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn a_data_pack_without_a_description_is_refused_before_it_is_copied() {
+    let root = scratch("no-description-add");
+    let world = root.join("saves/W");
+    let drops = root.join("drops");
+    for (name, meta) in [("Bare.zip", r#"{"pack":{}}"#), ("Empty.zip", "{}")] {
+        zip_file(
+            &drops.join(name),
+            &[("pack.mcmeta", meta), ("data/t/a.json", "{}")],
+        );
+        assert!(add(&world, &drops.join(name)).is_err());
+    }
+    let left = fs::read_dir(world.join("datapacks")).map_or(0, Iterator::count);
+    assert_eq!(left, 0);
+    zip_file(
+        &drops.join("Fine.zip"),
+        &[("pack.mcmeta", META), ("data/t/a.json", "{}")],
+    );
+    assert_eq!(
+        add(&world, &drops.join("Fine.zip")).unwrap().file,
+        "Fine.zip"
+    );
+    fs::remove_dir_all(&root).unwrap();
+}

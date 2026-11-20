@@ -161,6 +161,18 @@ pub fn known_folders(os: Os, f: &Folders) -> Vec<(&'static str, PathBuf)> {
     list
 }
 
+/// Folders that hold only a launcher's Java runtimes, not a game directory: searched for
+/// Java and nowhere else (never the default game folder or an import source). The Microsoft
+/// Store's Minecraft Launcher keeps its runtimes under its package's local cache.
+pub fn java_only_folders(os: Os, f: &Folders) -> Vec<PathBuf> {
+    match os {
+        Os::Windows => vec![f
+            .home
+            .join("AppData/Local/Packages/Microsoft.4297127D64EC6_8wekyb3d8bbwe/LocalCache/Local")],
+        _ => Vec::new(),
+    }
+}
+
 /// The client jar's path in a Maven repository: `com.mojang:minecraft:26.3:client` is
 /// `com/mojang/minecraft/26.3/minecraft-26.3-client.jar`.
 pub fn maven_path(name: &str) -> Option<String> {
@@ -538,27 +550,53 @@ fn make_link(target: &Path, link: &Path) -> std::io::Result<()> {
     junction(target, link)
 }
 
+#[cfg(any(windows, test))]
+const JUNCTION_LINK: &str = "SUNRISE_JUNCTION_LINK";
+#[cfg(any(windows, test))]
+const JUNCTION_TARGET: &str = "SUNRISE_JUNCTION_TARGET";
+
+/// What `cmd` is run with to make a junction: the arguments cmd gets as they are (`plain`),
+/// the ones written to its command line unquoted-by-Rust (`raw`) and the environment.
+///
+/// `/D` skips cmd's AutoRun registry command (for example, ANSICon), which can otherwise
+/// change or fail the junction command before it runs. The paths travel in environment
+/// variables, never in the command line: cmd reads `&`, `^` or `(` in a path (a user folder
+/// may have them) as its own syntax, and expands `%NAME%` even inside quotes, but it does
+/// not read what a variable holds again.
+#[cfg(any(windows, test))]
+struct JunctionCommand {
+    plain: Vec<String>,
+    raw: Vec<String>,
+    env: Vec<(&'static str, PathBuf)>,
+}
+
+#[cfg(any(windows, test))]
+fn junction_command(target: &Path, link: &Path) -> JunctionCommand {
+    JunctionCommand {
+        plain: ["/D", "/C", "mklink", "/J"].map(String::from).into(),
+        raw: vec![
+            format!("\"%{JUNCTION_LINK}%\""),
+            format!("\"%{JUNCTION_TARGET}%\""),
+        ],
+        env: vec![
+            (JUNCTION_LINK, link.to_path_buf()),
+            (JUNCTION_TARGET, target.to_path_buf()),
+        ],
+    }
+}
+
 /// Makes `link` a junction to the folder `target` (no admin rights needed, unlike a symlink). The
 /// error carries cmd's own message ("Access is denied", "The system cannot find the path…").
 #[cfg(windows)]
 pub(crate) fn junction(target: &Path, link: &Path) -> std::io::Result<()> {
     use std::os::windows::process::CommandExt;
-    // `/D` skips cmd's AutoRun registry command (for example, ANSICon), which
-    // can otherwise change or fail the junction command before it runs.
-    // Always quoted: cmd reads `&`, `^` or `(` in an unquoted path (a user
-    // folder may have them) as its own syntax. A Windows path never holds a
-    // quote.
-    let quoted = |path: &Path| {
-        let mut arg = std::ffi::OsString::from("\"");
-        arg.push(path);
-        arg.push("\"");
-        arg
-    };
-    let out = crate::process::command("cmd")
-        .args(["/D", "/C", "mklink", "/J"])
-        .raw_arg(quoted(link))
-        .raw_arg(quoted(target))
-        .output()?;
+    let line = junction_command(target, link);
+    let mut cmd = crate::process::command("cmd");
+    cmd.args(&line.plain);
+    for arg in &line.raw {
+        cmd.raw_arg(arg);
+    }
+    let out = cmd.envs(line.env).output()?;
     if out.status.success() {
         return Ok(());
     }

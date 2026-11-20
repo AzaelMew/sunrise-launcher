@@ -99,6 +99,39 @@ fn a_repository_resolves_to_its_latest_releases_smod_and_commit() {
 }
 
 #[test]
+fn a_link_in_another_letter_case_still_finds_the_releases_smod() {
+    let api = recorded(vec![
+        (
+            "repos/Acme/Zoom/releases/latest",
+            release("v1", json!([asset("zoom-1.smod", None)])),
+        ),
+        ("repos/Acme/Zoom/commits/v1", json!({ "sha": SHA })),
+    ]);
+    let found = resolve(&link("https://github.com/Acme/Zoom"), &api).unwrap();
+    let file = found.asset.expect("the release's package is kept");
+    assert_eq!(
+        file.url,
+        "https://github.com/acme/zoom/releases/download/v1/zoom-1.smod"
+    );
+    // Only the same repository: another one's file is still dropped.
+    let other = recorded(vec![
+        (
+            "repos/Acme/Zoom/releases/latest",
+            release(
+                "v1",
+                json!([{"name": "zoom-1.smod",
+                    "browser_download_url": "https://github.com/acme/zoomer/releases/download/v1/zoom-1.smod"}]),
+            ),
+        ),
+        ("repos/Acme/Zoom/commits/v1", json!({ "sha": SHA })),
+    ]);
+    assert!(resolve(&link("https://github.com/Acme/Zoom"), &other)
+        .unwrap()
+        .asset
+        .is_none());
+}
+
+#[test]
 fn a_release_with_no_smod_falls_back_to_its_commit() {
     let api = recorded(vec![
         (

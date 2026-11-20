@@ -939,10 +939,104 @@ pub fn build_dir() -> PathBuf {
 #[cfg(windows)]
 fn windows_build_dir(real: &Path) -> PathBuf {
     let dir = ascii_build_dir(real, std::env::var_os("ProgramData").map(PathBuf::from));
-    if fs::create_dir_all(&dir).is_ok() {
+    // ProgramData is writable by every account, so the folder may be another account's: its
+    // `bin` and `cargo\config.toml` would run as this player. Only a folder made here, or owned
+    // by this account, is used.
+    // The parent is made with `create_dir_all` (ProgramData may be missing); only the final
+    // component is made with `create_dir`, which fails on a folder that already exists.
+    let claim = |dir: &Path| {
+        if let Some(parent) = dir.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        fs::create_dir(dir).is_ok() || owned_by_this_account(dir)
+    };
+    if let Some(dir) = first_claimed_dir(&dir, claim) {
         return dir;
     }
-    short_path(real).filter(|p| tool_safe(p)).unwrap_or(dir)
+    // Never an unclaimed folder: the short name of the data folder, else a folder of this
+    // process's own in the temporary folder.
+    build_fallback(short_path(real), std::process::id(), &std::env::temp_dir())
+}
+
+/// The build folder when no numbered name could be claimed: `short` if it is [`tool_safe`],
+/// else a folder named for the process under `temp`, which no other account made.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn build_fallback(short: Option<PathBuf>, pid: u32, temp: &Path) -> PathBuf {
+    short
+        .filter(|p| tool_safe(p))
+        .unwrap_or_else(|| temp.join(format!("sunrise-launcher-{pid}")))
+}
+
+/// `base`, else `base-2`, `base-3`… (up to `base-9`): the first one `claim` takes, which makes
+/// the folder or finds it to be the caller's own. A folder someone else made is passed over.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn first_claimed_dir(base: &Path, claim: impl Fn(&Path) -> bool) -> Option<PathBuf> {
+    let name = base.file_name()?.to_os_string();
+    std::iter::once(base.to_path_buf())
+        .chain((2..=9).map(|n| {
+            let mut next = name.clone();
+            next.push(format!("-{n}"));
+            base.with_file_name(next)
+        }))
+        .find(|dir| claim(dir))
+}
+
+/// Whether the folder `path` is owned by the account this process runs as: the owner a folder
+/// it creates gets (the token's default owner). A folder the same player made in an elevated
+/// session is owned by Administrators, so it is passed over and a numbered folder is made
+/// instead: safe, but the toolchain is built again there.
+#[cfg(windows)]
+fn owned_by_this_account(path: &Path) -> bool {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Foundation::{CloseHandle, LocalFree, HANDLE};
+    use windows_sys::Win32::Security::Authorization::{GetNamedSecurityInfoW, SE_FILE_OBJECT};
+    use windows_sys::Win32::Security::{
+        EqualSid, GetTokenInformation, TokenOwner, OWNER_SECURITY_INFORMATION,
+        PSECURITY_DESCRIPTOR, PSID, TOKEN_OWNER, TOKEN_QUERY,
+    };
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+    let wide: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
+    // SAFETY: every pointer handed over is to a live local; the token and the descriptor
+    // GetNamedSecurityInfoW allocates are released before returning, and the owner SID is only
+    // read while that descriptor is alive.
+    unsafe {
+        let mut token: HANDLE = std::ptr::null_mut();
+        if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
+            return false;
+        }
+        let mut buffer = vec![0u64; 128];
+        let mut length = 0;
+        let got = GetTokenInformation(
+            token,
+            TokenOwner,
+            buffer.as_mut_ptr().cast(),
+            (buffer.len() * 8) as u32,
+            &mut length,
+        );
+        CloseHandle(token);
+        if got == 0 {
+            return false;
+        }
+        let ours: PSID = (*buffer.as_ptr().cast::<TOKEN_OWNER>()).Owner;
+        let mut owner: PSID = std::ptr::null_mut();
+        let mut descriptor: PSECURITY_DESCRIPTOR = std::ptr::null_mut();
+        let status = GetNamedSecurityInfoW(
+            wide.as_ptr(),
+            SE_FILE_OBJECT,
+            OWNER_SECURITY_INFORMATION,
+            &mut owner,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            &mut descriptor,
+        );
+        if status != 0 {
+            return false;
+        }
+        let same = !owner.is_null() && EqualSid(owner, ours) != 0;
+        LocalFree(descriptor);
+        same
+    }
 }
 
 /// The build folder for a data folder `real` whose path isn't [`ascii`]: in `program_data`
@@ -1228,8 +1322,19 @@ mod installation;
 pub(crate) use installation::install_as;
 
 pub fn remove(tag: &str) -> Result<(), String> {
+    // A native build's base keeps its prepared data, so it stays while one is installed.
+    if let Some(build) = installed()
+        .into_iter()
+        .find(|version| crate::native_mods::about(version).is_some_and(|about| about.base == tag))
+    {
+        return Err(crate::i18n::trf(
+            "This version supplies resources to native build {build}. Remove that build first.",
+            &[("build", &build)],
+        ));
+    }
     let dir = version_dir(tag);
-    crate::cache_cleanup::delete_game_unit(&dir).map_err(crate::native_mods::cache_error)?;
+    crate::cache_cleanup::delete_version(&dir, !in_use(tag))
+        .map_err(crate::native_mods::cache_error)?;
     forget_prepared();
     Ok(())
 }
@@ -1321,9 +1426,14 @@ fn played_in(versions: &Path, selected: Option<&str>, field: &str) -> String {
         .unwrap_or_else(|| PINNED_GAME.into())
 }
 
+/// The version whose folder holds `tag`'s prepared resources: a native build shares its base's
+/// (`copy_base` leaves `.local` out), any other version keeps its own.
+pub fn resources_owner(tag: &str) -> String {
+    crate::native_mods::about(tag).map_or_else(|| tag.to_owned(), |about| about.base)
+}
+
 pub fn resources(tag: &str) -> PathBuf {
-    let base = crate::native_mods::about(tag).map(|about| about.base);
-    resources_at(&version_dir(base.as_deref().unwrap_or(tag)))
+    resources_at(&version_dir(&resources_owner(tag)))
 }
 
 fn resources_at(dir: &Path) -> PathBuf {
@@ -1853,7 +1963,10 @@ fn complete_reports(versions: &Path, tag: &str) -> bool {
             continue;
         };
         // Copied beside it and renamed: an interrupted copy never looks complete.
-        let partial = to.join(format!(".{name}.partial-{}", std::process::id()));
+        // The name is this call's own, as the window's start and Play can both complete one version.
+        static COPIES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let n = COPIES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let partial = to.join(format!(".{name}.partial-{}-{n}", std::process::id()));
         let copied = fs::copy(&from, &partial).and_then(|_| fs::rename(&partial, to.join(name)));
         if copied.is_err() {
             let _ = fs::remove_file(&partial);
@@ -1874,6 +1987,19 @@ pub fn complete_assets(tag: &str) {
     });
 }
 
+/// Whether Sunrise's own store is asked to download again: it has an asset index, the version
+/// lacks some extra (any kind: the download fetches the whole asset index, which holds the
+/// sounds, languages, fonts, panorama and built-in packs) and it was not asked this run yet.
+fn refill_wanted(
+    has_index: bool,
+    missing: Option<&crate::preparer::Extras>,
+    asked: &std::sync::atomic::AtomicBool,
+) -> bool {
+    has_index
+        && missing.is_some_and(|m| !m.is_empty())
+        && !asked.swap(true, std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Sunrise's own download (an owner's) may have stopped before the sounds and the languages,
 /// and the copies of `complete_assets` read them from its store: asked again, once per run, through
 /// the same owner gate as any download from Mojang (`download_for_owner`), which keeps the files
@@ -1883,21 +2009,16 @@ fn refill_own_store(tag: &str) {
     let own = data_dir().join("minecraft");
     let root = versions_dir().join(tag);
     let resources = resources_at(&root);
-    let lacks_store_extras = crate::preparer::binary(&root)
-        .and_then(|binary| {
-            crate::preparer::missing_extras(&binary, &root, &resources)
-                .ok()
-                .flatten()
-        })
-        .is_some_and(|missing| {
-            missing
-                .iter()
-                .any(|(kind, _)| matches!(kind.as_str(), "languages" | "sounds"))
-        });
-    if !own.join("assets/indexes").is_dir()
-        || !lacks_store_extras
-        || ASKED.swap(true, std::sync::atomic::Ordering::Relaxed)
-    {
+    let missing = crate::preparer::binary(&root).and_then(|binary| {
+        crate::preparer::missing_extras(&binary, &root, &resources)
+            .ok()
+            .flatten()
+    });
+    if !refill_wanted(
+        own.join("assets/indexes").is_dir(),
+        missing.as_ref(),
+        &ASKED,
+    ) {
         return;
     }
     let Some(pins) = read_json(&version_dir(tag).join("research-lock.json"))
@@ -2048,6 +2169,15 @@ pub fn download_version_for_owner(
     Ok(dir)
 }
 
+/// What a player with no account signed in can do: a sentence that stands alone, and reads as one
+/// more bullet after a list of places Sunrise looked.
+fn sign_in_to_download(version: &str) -> String {
+    crate::i18n::trf(
+        "Sign in with the Microsoft account that owns Minecraft: Sunrise then downloads {version} from Mojang itself.",
+        &[("version", version)],
+    )
+}
+
 /// What [`download_for_owner`] does with the owner gate's answer: Mojang's files only for its
 /// `owner`, an account the services said owns the game just now.
 fn download_for(
@@ -2087,10 +2217,7 @@ fn download_for(
             "\n  • No signed-in account owns Minecraft: Java Edition, so Sunrise can't download it."
                 .into(),
         ),
-        Err(_) => Err(format!(
-            "\n  • Or sign in with the Microsoft account that owns Minecraft: Sunrise then \
-             downloads {v} from Mojang itself."
-        )),
+        Err(_) => Err(format!("\n  • {}", sign_in_to_download(v))),
     }
 }
 
@@ -2110,6 +2237,41 @@ fn java(
     } else {
         crate::jdk::find_runtime
     };
+    java_with(find, major, games, manifest, &|component, missing| {
+        // Mojang builds its Linux Java for glibc: without glibc's loader (NixOS without nix-ld,
+        // musl distributions) it cannot start, so don't download it.
+        if cfg!(all(target_os = "linux", target_arch = "x86_64"))
+            && !Path::new(GLIBC_LOADER).exists()
+        {
+            return Err(format!(
+                "{missing}\n  • Minecraft's own Java from Mojang needs glibc ({GLIBC_LOADER} is missing; on NixOS, enable programs.nix-ld), so install compatible Java instead."
+            ));
+        }
+        let fetch = |url: &str| -> Result<Vec<u8>, String> {
+            let mut body = Vec::new();
+            get(url)?
+                .into_reader()
+                .read_to_end(&mut body)
+                .map_err(|e| e.to_string())?;
+            Ok(body)
+        };
+        let runtime = data_dir().join("minecraft").join("runtime");
+        mojang::java_runtime(component, &runtime, 8, &fetch, &mojang::CANCEL, log).map_err(|e| {
+            format!("{missing}\n  • Sunrise also tried to download Minecraft's own Java from Mojang, but: {e}")
+        })
+    })
+}
+
+/// [`java`] with its Java lookup (`find`) and Mojang download (`download` of a runtime
+/// component, given what was missing) passed in. A downloaded runtime's home is looked up
+/// through [`crate::java::home_in`], so a macOS `jre.bundle` is entered.
+fn java_with(
+    find: impl Fn(i64, &[PathBuf]) -> Result<crate::jdk::Jdk, String>,
+    major: i64,
+    games: &[PathBuf],
+    manifest: &Path,
+    download: &dyn Fn(&str, &str) -> Result<PathBuf, String>,
+) -> Result<PathBuf, String> {
     if let Ok(jdk) = find(major, &[]) {
         return Ok(jdk.home());
     }
@@ -2129,26 +2291,8 @@ fn java(
     let component = read_json(manifest)
         .and_then(|json| json["javaVersion"]["component"].as_str().map(String::from))
         .ok_or_else(|| missing.clone())?;
-    // Mojang builds its Linux Java for glibc: without glibc's loader (NixOS without nix-ld,
-    // musl distributions) it cannot start, so don't download it.
-    if cfg!(all(target_os = "linux", target_arch = "x86_64")) && !Path::new(GLIBC_LOADER).exists() {
-        return Err(format!(
-            "{missing}\n  • Minecraft's own Java from Mojang needs glibc ({GLIBC_LOADER} is missing; on NixOS, enable programs.nix-ld), so install compatible Java instead."
-        ));
-    }
-    let fetch = |url: &str| -> Result<Vec<u8>, String> {
-        let mut body = Vec::new();
-        get(url)?
-            .into_reader()
-            .read_to_end(&mut body)
-            .map_err(|e| e.to_string())?;
-        Ok(body)
-    };
-    let runtime = data_dir().join("minecraft").join("runtime");
-    let home = mojang::java_runtime(&component, &runtime, 8, &fetch, &mojang::CANCEL, log)
-        .map_err(|e| {
-        format!("{missing}\n  • Sunrise also tried to download Minecraft's own Java from Mojang, but: {e}")
-    })?;
+    let home = download(&component, &missing)?;
+    let home = crate::java::home_in(&home).unwrap_or(home);
     find(major, &[home]).map(|jdk| jdk.home())
 }
 
@@ -2255,6 +2399,15 @@ pub fn preparer(
     log: &dyn Fn(String),
 ) -> Result<(Command, PathBuf), String> {
     set_prepare_step(PrepareStep::Files);
+    // A native build reads the resources of its base, so it is the base that gets prepared.
+    let owner = resources_owner(tag);
+    if owner != tag && !version_dir(&owner).join(COMPLETE).is_file() {
+        return Err(crate::i18n::trf(
+            "This native build needs its base version {base}; reinstall it.",
+            &[("base", &owner)],
+        ));
+    }
+    let tag = owner.as_str();
     let version = game_version(tag);
     let dir = version_dir(tag);
     let binary = crate::preparer::binary(&dir).ok_or_else(|| crate::preparer::too_old(tag))?;
@@ -2323,29 +2476,29 @@ pub fn preparer(
             .into_iter()
             .map(|(_, dir)| dir),
     );
+    games.extend(
+        sources::Folders::current()
+            .map(|f| sources::java_only_folders(sources::Os::current(), &f))
+            .unwrap_or_default(),
+    );
     set_prepare_step(PrepareStep::Java);
     let java_home = java(major, needs.jdk, &games, &manifest, log)?;
     let jar = data_dir()
         .join("server-jars")
         .join(format!("{version}.jar"));
-    if !reused && !jar.exists() {
+    if !reused {
         let json: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(&manifest).map_err(|e| e.to_string())?)
                 .map_err(|e| e.to_string())?;
-        let url = json["downloads"]["server"]["url"]
-            .as_str()
-            .ok_or_else(|| format!("{} has no server download", manifest.display()))?;
-        log(format!("Downloading the {version} server jar from Mojang"));
-        fs::create_dir_all(jar.parent().unwrap()).map_err(|e| e.to_string())?;
-        let mut body = Vec::new();
-        get(url)?
-            .into_reader()
-            .read_to_end(&mut body)
-            .map_err(|e| e.to_string())?;
-        let partial = jar.with_extension("partial");
-        fs::write(&partial, body)
-            .and_then(|_| fs::rename(&partial, &jar))
-            .map_err(|e| e.to_string())?;
+        let fetch = |url: &str| -> Result<Vec<u8>, String> {
+            let mut body = Vec::new();
+            get(url)?
+                .into_reader()
+                .read_to_end(&mut body)
+                .map_err(|e| e.to_string())?;
+            Ok(body)
+        };
+        ensure_server_jar(&jar, &json, &fetch, log)?;
     }
     let mut cmd = Command::new(binary);
     with_java(&mut cmd, &java_home);
@@ -2357,9 +2510,48 @@ pub fn preparer(
     Ok((cmd, minecraft))
 }
 
+/// Makes sure `jar` holds the server jar `manifest` names: one already cached whose sha1 is not
+/// the manifest's (a cut-off or captive-portal download) is fetched again, and a download is
+/// kept only when it matches. A manifest without a sha1 can't check either.
+fn ensure_server_jar(
+    jar: &Path,
+    manifest: &serde_json::Value,
+    fetch: sources::Fetch,
+    log: &dyn Fn(String),
+) -> Result<(), String> {
+    use crate::i18n::{tr, trf};
+    let server = &manifest["downloads"]["server"];
+    let sha1 = server["sha1"].as_str();
+    let whole =
+        |body: &[u8]| sha1.is_none_or(|want| sources::sha1_hex(body).eq_ignore_ascii_case(want));
+    if fs::read(jar).is_ok_and(|body| whole(&body)) {
+        return Ok(());
+    }
+    let url = server["url"]
+        .as_str()
+        .ok_or_else(|| tr("The version file has no server download").to_string())?;
+    log(trf(
+        "Downloading the {version} server jar from Mojang",
+        &[(
+            "version",
+            &jar.file_stem().unwrap_or_default().to_string_lossy(),
+        )],
+    ));
+    let body = fetch(url)?;
+    if !whole(&body) {
+        return Err(trf(
+            "The server jar from Mojang is not the one its version file names (sha1 {sha1})",
+            &[("sha1", &sources::sha1_hex(&body))],
+        ));
+    }
+    sources::write_file(jar, &body)
+}
+
 /// Copies the pinned version's sounds from the player's own launcher install into the version's resources with its own `sunrise-prepare sounds`; sound is optional, so a failure is a line in `log`.
 pub fn sounds(tag: &str, minecraft: &Path, log: &dyn Fn(String)) {
     use crate::i18n::{tr, trf};
+    let tag = resources_owner(tag);
+    let tag = tag.as_str();
     let dir = version_dir(tag);
     set_prepare_step(PrepareStep::Sounds);
     log(tr("Copying the sounds from your Minecraft install").into());
@@ -2699,9 +2891,54 @@ pub fn server_command(tag: &str, folder: &Path) -> Command {
     cmd
 }
 
+/// Whether `eula.txt` says `eula` is true, read as a Java properties file as the server reads it:
+/// `#` and `!` lines are comments, the key ends at the first `=`, `:` or blank, spaces around the
+/// separator are free, the value runs to the end of the line (a trailing blank is part of it), the
+/// last `eula` line wins, and the value counts as true in any case. A line ending in a backslash
+/// continues on the next line (its leading blanks dropped), and `\n`, `\r\n` and a lone `\r` all end
+/// a line. Left out: backslash escapes inside the text (`\u0074rue`), which no real file uses.
 pub fn eula_agreed(folder: &Path) -> bool {
-    fs::read_to_string(folder.join("eula.txt"))
-        .is_ok_and(|s| s.lines().any(|l| l.trim() == "eula=true"))
+    let Ok(text) = fs::read_to_string(folder.join("eula.txt")) else {
+        return false;
+    };
+    let mut agreed = false;
+    // The logical lines: a physical line ending in an odd number of backslashes joins the next.
+    let mut logical: Vec<String> = Vec::new();
+    let mut joining = false;
+    for physical in text.replace("\r\n", "\n").replace('\r', "\n").split('\n') {
+        let physical = physical.trim_start_matches([' ', '\t', '\x0c']);
+        let comment = !joining && physical.starts_with(['#', '!']);
+        if joining {
+            logical.last_mut().unwrap().push_str(physical);
+        } else {
+            logical.push(physical.to_string());
+        }
+        let slashes = physical.len() - physical.trim_end_matches('\\').len();
+        joining = !comment && slashes % 2 == 1;
+        if joining {
+            let last = logical.last_mut().unwrap();
+            last.pop();
+        }
+    }
+    for line in &logical {
+        if line.starts_with(['#', '!']) {
+            continue;
+        }
+        let Some(rest) = line.strip_prefix("eula") else {
+            continue;
+        };
+        // `eulas=...` is another key.
+        if !rest.is_empty() && !rest.starts_with([' ', '\t', '\x0c', '=', ':']) {
+            continue;
+        }
+        let rest = rest.trim_start_matches([' ', '\t', '\x0c']);
+        let value = rest
+            .strip_prefix(['=', ':'])
+            .unwrap_or(rest)
+            .trim_start_matches([' ', '\t', '\x0c']);
+        agreed = value.eq_ignore_ascii_case("true");
+    }
+    agreed
 }
 
 /// Writes eula.txt as vanilla's server expects it, once the player agreed in the launcher.
@@ -2744,15 +2981,6 @@ pub fn no_version_installed() -> String {
 pub fn remove_version(tag: &str) -> Result<(), String> {
     if !installed().iter().any(|t| t == tag) {
         return Err(format!("{tag} is not installed."));
-    }
-    if let Some(build) = installed()
-        .into_iter()
-        .find(|version| crate::native_mods::about(version).is_some_and(|about| about.base == tag))
-    {
-        return Err(crate::i18n::trf(
-            "This version supplies resources to native build {build}. Remove that build first.",
-            &[("build", &build)],
-        ));
     }
     if in_use(tag) {
         return Err(format!("{tag} is running. Quit it first."));
@@ -2916,6 +3144,14 @@ pub fn need_prepared(tag: &str) -> Result<(), String> {
             v = game_version(tag)
         ))
     }
+}
+
+/// A step Play waits on before the game starts that the window says by name (`Msg::PlayStep`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlayStep {
+    Assets,
+    Mods,
+    SignIn,
 }
 
 /// Says on stderr which step Play is at, one line each: a terminal run shows where it stops when
@@ -3897,9 +4133,12 @@ pub fn spawn(job: Job, cmd: Command, tx: Sender<Msg>) -> Result<Running, String>
     spawn_holding(job, cmd, tx, None)
 }
 
-/// Holds `version`'s preparation lock, so a second preparation of it can't start while one runs; it is released when the guard drops.
+/// Holds the preparation lock of the version that owns `version`'s resources (its base, for a
+/// native build), so a second preparation of the same folder can't start while one runs; it is
+/// released when the guard drops.
 pub fn prepare_lock(version: &str) -> Result<sunrise_launcher_smod::locks::Locked, String> {
-    prepare_lock_at(&version_dir(version), version)
+    let owner = resources_owner(version);
+    prepare_lock_at(&version_dir(&owner), &owner)
 }
 
 fn prepare_lock_at(
@@ -4413,7 +4652,7 @@ impl Settings {
         let json =
             serde_json::to_vec_pretty(self).map_err(|e| format!("{}: {e}", path.display()))?;
         let written = fs::create_dir_all(&dir)
-            .and_then(|()| fs::write(&tmp, json))
+            .and_then(|()| write_private(&tmp, &json))
             .and_then(|()| fs::rename(&tmp, &path));
         if let Err(e) = written {
             let _ = fs::remove_file(&tmp);
@@ -4422,6 +4661,25 @@ impl Settings {
         Ok(())
     }
 }
+
+/// Writes `bytes` to `path` readable by its owner alone (the file may hold proxy credentials);
+/// the mode applies where the file is created, and a file already there is emptied first.
+fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    let mut file = options.open(path)?;
+    // A file left by a crashed run keeps its old mode when opened: tighten it too.
+    #[cfg(unix)]
+    file.set_permissions(std::os::unix::fs::PermissionsExt::from_mode(0o600))?;
+    file.write_all(bytes)
+}
+
+#[cfg(test)]
+#[path = "backend/eula_tests.rs"]
+mod eula_tests;
 
 #[cfg(test)]
 #[path = "backend/release_loading_tests.rs"]
@@ -4436,6 +4694,126 @@ mod tests {
     use super::*;
     use std::cmp::Ordering::*;
     use std::ffi::OsStr;
+
+    #[cfg(unix)]
+    #[test]
+    fn private_files_are_readable_by_their_owner_alone() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("settings.tmp");
+        write_private(&file, b"{\"proxy\":\"http://u:p@h:1\"}").unwrap();
+        let mode = fs::metadata(&file).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+        assert_eq!(fs::read(&file).unwrap(), b"{\"proxy\":\"http://u:p@h:1\"}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_leftover_looser_file_is_made_private_too() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("settings.1.tmp");
+        fs::write(&file, b"old old old").unwrap();
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o644)).unwrap();
+        write_private(&file, b"new").unwrap();
+        assert_eq!(
+            fs::metadata(&file).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert_eq!(fs::read(&file).unwrap(), b"new");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn saving_settings_leaves_settings_json_private() {
+        use std::os::unix::fs::PermissionsExt;
+        Settings::default().save().unwrap();
+        let mode = fs::metadata(data_dir().join("settings.json"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+
+    #[test]
+    fn with_every_name_taken_the_fallback_is_never_a_claimed_folder() {
+        let temp = Path::new("/scratch/tmp");
+        let short = Some(PathBuf::from("C:/PROGRA~3/ok"));
+        assert_eq!(
+            build_fallback(short, 7, temp),
+            PathBuf::from("C:/PROGRA~3/ok")
+        );
+        // No short name, or one that is no better than the long one.
+        let expected = temp.join("sunrise-launcher-7");
+        assert_eq!(build_fallback(None, 7, temp), expected);
+        assert_eq!(
+            build_fallback(Some(PathBuf::from("C:/Users/Ж/x")), 7, temp),
+            expected
+        );
+    }
+
+    #[test]
+    fn a_build_folder_made_by_another_account_is_passed_over() {
+        let base = Path::new("C:/ProgramData/sunrise-launcher-1a2b3c4d");
+        // The first two are taken by another account; the third is free.
+        let claimed = first_claimed_dir(base, |dir| {
+            let name = dir.file_name().unwrap().to_str().unwrap();
+            name.ends_with("-3")
+        });
+        assert_eq!(
+            claimed,
+            Some(PathBuf::from("C:/ProgramData/sunrise-launcher-1a2b3c4d-3"))
+        );
+        assert_eq!(first_claimed_dir(base, |_| true), Some(base.to_path_buf()));
+        assert_eq!(first_claimed_dir(base, |_| false), None);
+    }
+
+    #[test]
+    fn a_cached_server_jar_that_fails_its_sha1_is_fetched_again() {
+        let dir = std::env::temp_dir().join(format!("sunrise-jar-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let jar = dir.join("server-jars/26.3.jar");
+        let good = b"the real server jar".to_vec();
+        // The sha1 of `good`, from `printf 'the real server jar' | sha1sum`.
+        let manifest = serde_json::json!({"downloads": {"server": {
+            "url": "https://piston-data.mojang.com/server.jar",
+            "sha1": "0527c3af27483cb5b7a62b046066baf42588a449"}}});
+        let served = |body: Vec<u8>| move |_: &str| Ok(body.clone());
+        let nothing = |_: String| {};
+        // A captive portal's page was cached: it is replaced.
+        fs::create_dir_all(jar.parent().unwrap()).unwrap();
+        fs::write(&jar, b"<html>sign in</html>").unwrap();
+        ensure_server_jar(&jar, &manifest, &served(good.clone()), &nothing).unwrap();
+        assert_eq!(fs::read(&jar).unwrap(), good);
+        // A whole cached jar is not fetched again.
+        let refuse = |_: &str| -> Result<Vec<u8>, String> { Err("fetched".into()) };
+        ensure_server_jar(&jar, &manifest, &refuse, &nothing).unwrap();
+        // A bad download is refused and never cached.
+        fs::remove_file(&jar).unwrap();
+        let error = ensure_server_jar(&jar, &manifest, &served(b"cut".to_vec()), &nothing);
+        assert!(error.is_err());
+        assert!(!jar.exists());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_server_jar_whose_version_file_has_no_sha1_is_kept_and_not_checked() {
+        let dir = std::env::temp_dir().join(format!("sunrise-jar-nosha-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let jar = dir.join("server-jars/26.3.jar");
+        let manifest = serde_json::json!({"downloads": {"server": {
+            "url": "https://piston-data.mojang.com/server.jar"}}});
+        let nothing = |_: String| {};
+        let served = |_: &str| Ok(b"whatever came down".to_vec());
+        // With nothing to check against, a download is kept as it came.
+        ensure_server_jar(&jar, &manifest, &served, &nothing).unwrap();
+        assert_eq!(fs::read(&jar).unwrap(), b"whatever came down");
+        // And a cached jar is trusted, not fetched again.
+        let refuse = |_: &str| -> Result<Vec<u8>, String> { Err("fetched".into()) };
+        ensure_server_jar(&jar, &manifest, &refuse, &nothing).unwrap();
+        assert_eq!(fs::read(&jar).unwrap(), b"whatever came down");
+        fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn the_launchers_build_is_its_selected_one_when_installed_else_the_newest() {
@@ -4572,6 +4950,20 @@ mod tests {
         assert!(!dir.exists());
     }
 
+    /// A build from before runtime leases has no lease marker in its client; with nothing
+    /// running from it, removing it must still work.
+    #[test]
+    fn a_version_without_the_lease_marker_can_be_removed_when_idle() {
+        let dir = version_dir("v0.0.1-preleases");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join(COMPLETE), b"").unwrap();
+        fs::write(dir.join(CLIENT), b"a client from before leases").unwrap();
+        assert!(installed().contains(&"v0.0.1-preleases".to_string()));
+        remove("v0.0.1-preleases").unwrap();
+        assert!(!dir.exists());
+        assert!(!installed().contains(&"v0.0.1-preleases".to_string()));
+    }
+
     /// A canonical path loses Windows' verbatim prefix on a drive (horizon-mixins' output
     /// check stats `\\?\C:`, the volume itself, which Windows refuses, os error 1), and keeps
     /// it where there is no drive form.
@@ -4681,6 +5073,20 @@ mod tests {
         }
         assert!(asked.lock().unwrap().is_empty());
         assert!(!dir.exists());
+        // With no account, the message stands alone once its bullet is taken off.
+        let said = download_for(
+            &pins,
+            &dir,
+            Err(account::NoOwner::default()),
+            false,
+            &fetch,
+            &log,
+        )
+        .unwrap_err();
+        assert_eq!(
+            said.trim_start_matches("\n  • "),
+            "Sign in with the Microsoft account that owns Minecraft: Sunrise then downloads 26.3 from Mojang itself."
+        );
         // An owner: Mojang is asked (and the download fails here, without network).
         let owner = account::Account {
             uuid: "069a79f444e94726a5befca90e38aaf5".into(),
@@ -4866,8 +5272,41 @@ pub fn {f}("
             "base": base, "sunrise": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "target": "client"
         }).to_string()).unwrap();
         assert_eq!(resources(&native), resources(&base));
+        // Preparing a native build prepares the base whose resources it reads.
+        assert_eq!(resources_owner(&native), base);
+        assert_eq!(resources_owner(&base), base);
+        // Two native builds on one base, and the base itself, share one preparation lock.
+        let sibling = format!("{native}-sibling");
+        fs::create_dir_all(version_dir(&sibling)).unwrap();
+        fs::copy(
+            native_dir.join("native-mods.json"),
+            version_dir(&sibling).join("native-mods.json"),
+        )
+        .unwrap();
+        {
+            let _held = prepare_lock(&native).unwrap();
+            assert!(prepare_lock(&base).is_err());
+            assert!(prepare_lock(&sibling).is_err());
+        }
+        assert!(prepare_lock(&base).is_ok());
+        // Preparing a native build runs the base's preparer, and says so when it can't.
+        let try_prepare = || {
+            preparer(&native, Path::new("."), MinecraftFrom::Install, &|_| {})
+                .map(|_| ())
+                .unwrap_err()
+        };
+        assert_eq!(try_prepare(), crate::preparer::too_old(&base));
+        fs::remove_file(base_dir.join(COMPLETE)).unwrap();
+        let error = try_prepare();
+        assert!(
+            error.contains(&base) && !error.contains("too old"),
+            "{error}"
+        );
+        fs::write(base_dir.join(COMPLETE), "").unwrap();
+        fs::remove_dir_all(version_dir(&sibling)).unwrap();
         assert!(crate::native_mods::resource_dependents(&base));
         assert!(remove_version(&base).is_err());
+        assert!(remove(&base).is_err());
         assert!(base_dir.join(COMPLETE).exists());
         fs::remove_dir_all(&base_dir).unwrap();
         let error = need_prepared(&native).unwrap_err();
@@ -6705,6 +7144,39 @@ pub fn {f}("
     }
 
     #[test]
+    fn any_missing_extra_sends_the_store_refill_once_per_run() {
+        use std::sync::atomic::AtomicBool;
+        let lacks = |kinds: &[&str]| -> crate::preparer::Extras {
+            kinds.iter().map(|k| (k.to_string(), "x".into())).collect()
+        };
+        for kinds in [
+            &["fonts"][..],
+            &["packs"],
+            &["panorama"],
+            &["sounds", "fonts"],
+            &["languages"],
+        ] {
+            let asked = AtomicBool::new(false);
+            assert!(
+                refill_wanted(true, Some(&lacks(kinds)), &asked),
+                "{kinds:?}"
+            );
+            // Asked once: the second call in the run says no.
+            assert!(
+                !refill_wanted(true, Some(&lacks(kinds)), &asked),
+                "{kinds:?}"
+            );
+        }
+        // Nothing missing, no answer from the preparer, or no asset index: not asked, and a
+        // refusal does not use up the run's one ask.
+        let asked = AtomicBool::new(false);
+        assert!(!refill_wanted(true, Some(&lacks(&[])), &asked));
+        assert!(!refill_wanted(true, None, &asked));
+        assert!(!refill_wanted(false, Some(&lacks(&["fonts"])), &asked));
+        assert!(refill_wanted(true, Some(&lacks(&["fonts"])), &asked));
+    }
+
+    #[test]
     fn prepared_versions_get_the_run_time_reports_without_preparing_again() {
         let versions = std::env::temp_dir().join(format!(
             "sunrise-launcher-reports-test-{}",
@@ -6750,6 +7222,18 @@ pub fn {f}("
         }
         assert!(!resources("v2026.10.15").join("registries.json").exists());
         assert!(!complete_reports(&versions, "v2026.10.15"));
+        // A copy that already holds the old shared temp name (another call mid-copy) does not
+        // stop this call: each call copies to a name of its own.
+        let squatted =
+            resources("v2026.10.14").join(format!(".commands.json.partial-{}", std::process::id()));
+        fs::remove_file(resources("v2026.10.14").join("commands.json")).unwrap();
+        fs::create_dir(&squatted).unwrap();
+        assert!(complete_reports(&versions, "v2026.10.14"));
+        assert_eq!(
+            fs::read_to_string(resources("v2026.10.14").join("commands.json")).unwrap(),
+            "v2026.10.13"
+        );
+        fs::remove_dir(&squatted).unwrap();
         // Once there they stay as they are, even when the scratch output is gone.
         fs::remove_dir_all(versions.join("v2026.10.13/.local/datagen")).unwrap();
         assert!(complete_reports(&versions, "v2026.10.13"));

@@ -138,7 +138,7 @@ pub(super) fn parse_version(v: &Value) -> Option<Version> {
         .filter_map(|f| {
             Some(FileRef {
                 url: f["url"].as_str()?.to_owned(),
-                name: f["filename"].as_str()?.to_owned(),
+                name: super::plain_name(f["filename"].as_str()?),
                 size: f["size"].as_u64().unwrap_or(0),
                 sha512: f["hashes"]["sha512"].as_str().map(str::to_ascii_lowercase),
                 sha256: None,

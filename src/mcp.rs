@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 use sunrise_launcher::account::{self, Accounts, SignIn, SignInState};
 use sunrise_launcher::backend::{self, Job, Logged};
+use sunrise_launcher::i18n::tr;
 use sunrise_launcher::instances;
 use sunrise_launcher::jars::{self, Permission};
 
@@ -177,10 +178,11 @@ impl Session {
                 ))
             }
             "server_command" => {
+                let command = arg_str(args, "command").ok_or("command is required")?;
+                let command = console_line(command)?;
                 let server = self.running_server()?;
                 let before = server.log.lock().unwrap().len();
-                let command = arg_str(args, "command").ok_or("command is required")?;
-                server.running.send(command.trim_start_matches('/'));
+                server.running.send(command);
                 std::thread::sleep(Duration::from_millis(700));
                 let log = server.log.lock().unwrap();
                 let reply: Vec<_> = log.iter().skip(before.min(log.len())).cloned().collect();
@@ -353,9 +355,48 @@ pub fn serve() -> Result<(), String> {
     served
 }
 
+/// `command` as one console line without its leading '/'. The console runs each line it reads,
+/// so a line break would run the text after it as another command.
+fn console_line(command: &str) -> Result<&str, String> {
+    if command.contains(['\n', '\r']) {
+        return Err(tr("A server command is one line: it can't contain a line break.").into());
+    }
+    Ok(command.trim_start_matches('/'))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_console_command_is_one_line() {
+        assert_eq!(console_line("/list").unwrap(), "list");
+        assert!(console_line("list\nstop").is_err());
+        assert!(console_line("list\rstop").is_err());
+        assert!(console_line("say hi\r\n").is_err());
+    }
+
+    #[test]
+    fn the_server_command_tool_refuses_a_line_break_before_it_reaches_a_server() {
+        let mut session = Session {
+            server: None,
+            client: None,
+            sign_in: None,
+            game: None,
+        };
+        let refused = session
+            .call("server_command", &json!({ "command": "list\nstop" }))
+            .unwrap_err();
+        assert_eq!(
+            refused,
+            "A server command is one line: it can't contain a line break."
+        );
+        // A one-line command gets past the check and only then finds no server.
+        let one_line = session
+            .call("server_command", &json!({ "command": "list" }))
+            .unwrap_err();
+        assert_ne!(one_line, refused);
+    }
 
     #[test]
     fn the_server_advertises_what_it_serves() {

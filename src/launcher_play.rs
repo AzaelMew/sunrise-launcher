@@ -194,6 +194,7 @@ impl Launcher {
         // round trip when the token needs renewing) come first; `drain` starts the game when the
         // session arrives.
         self.starting_client = Some(tag.clone());
+        self.play_step = None;
         let accepted = intent.account.clone();
         self.play_pressed = Some(Instant::now());
         let tx = self.tx.clone();
@@ -213,15 +214,18 @@ impl Launcher {
         std::thread::spawn(move || {
             // One line per step: a terminal run shows where Play stops (#12179).
             backend::play_step("checking the game's assets");
+            let _ = tx.send(Msg::PlayStep(backend::PlayStep::Assets));
             backend::complete_assets(&tag);
             if let Some(auto) = auto {
                 backend::play_step("updating registry mods");
+                let _ = tx.send(Msg::PlayStep(backend::PlayStep::Mods));
                 let lines = mods_page::auto_update(&[auto], auto_enabled);
                 if !lines.is_empty() {
                     let _ = mods_tx.send(mods_page::Event::AutoUpdated(lines));
                 }
             }
             backend::play_step("reading the sign-in");
+            let _ = tx.send(Msg::PlayStep(backend::PlayStep::SignIn));
             let session = if sunrise_launcher::developer_offline::enabled(&tag) {
                 Ok(None)
             } else {

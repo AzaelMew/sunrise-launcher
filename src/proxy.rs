@@ -34,10 +34,22 @@ pub fn spec_for(url: &str) -> Option<String> {
 /// Puts the launcher's network settings in `command`'s environment, as the programs it starts (the porter, the native build tool) read them: its proxy setting in `HTTPS_PROXY`/`HTTP_PROXY` (the environment's own, and `NO_PROXY`, pass through), and the GitHub mirror.
 pub fn child_env(command: &mut std::process::Command) {
     if let Some(spec) = setting() {
+        let spec = address(spec);
         command.env("HTTPS_PROXY", &spec).env("HTTP_PROXY", spec);
     }
     if let Some(mirror) = crate::github::mirror_named() {
         command.env("SUNRISE_GITHUB_MIRROR", mirror);
+    }
+}
+
+/// `spec` as a program that is handed it reads it, and as the launcher's own downloads do: a bare
+/// `socks://` or `socks5://` would be SOCKS4 or resolve names locally there, so both become
+/// `socks5h://` (SOCKS5, the proxy resolving names), and a bare `host:port` gets `http://`.
+pub fn address(spec: String) -> String {
+    match spec.split_once("://") {
+        Some(("socks" | "socks5", address)) => format!("socks5h://{address}"),
+        Some(_) => spec,
+        None => format!("http://{spec}"),
     }
 }
 
@@ -135,6 +147,38 @@ mod tests {
             .to_string();
         // The port is closed, so it fails reaching the proxy: never for want of SOCKS in the build.
         assert!(!error.contains("SOCKS feature disabled"), "{error}");
+    }
+
+    #[test]
+    fn a_proxy_address_is_read_the_same_for_downloads_and_children() {
+        let spec = |s: &str| address(s.to_owned());
+        assert_eq!(spec("socks://10.0.0.2:1080"), "socks5h://10.0.0.2:1080");
+        assert_eq!(
+            spec("socks5://u:p@10.0.0.2:1080"),
+            "socks5h://u:p@10.0.0.2:1080"
+        );
+        assert_eq!(spec("socks5h://10.0.0.2:1080"), "socks5h://10.0.0.2:1080");
+        assert_eq!(spec("http://10.0.0.2:3128"), "http://10.0.0.2:3128");
+        assert_eq!(spec("10.0.0.2:3128"), "http://10.0.0.2:3128");
+    }
+
+    #[test]
+    fn child_env_gives_a_child_the_socks5h_address() {
+        static TURN: Mutex<()> = Mutex::new(());
+        let _turn = TURN.lock().unwrap_or_else(|e| e.into_inner());
+        let kept = held().replace(Some("socks://h:1".into()));
+        let mut command = std::process::Command::new("unused");
+        child_env(&mut command);
+        *held() = kept;
+        let env = |name: &str| {
+            command
+                .get_envs()
+                .find(|(key, _)| *key == name)
+                .and_then(|(_, value)| value)
+                .map(|value| value.to_string_lossy().into_owned())
+        };
+        assert_eq!(env("HTTPS_PROXY").as_deref(), Some("socks5h://h:1"));
+        assert_eq!(env("HTTP_PROXY").as_deref(), Some("socks5h://h:1"));
     }
 
     #[test]

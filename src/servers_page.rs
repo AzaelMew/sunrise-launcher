@@ -870,7 +870,7 @@ impl Launcher {
     fn open_create(&mut self, cx: &mut Context<Self>) {
         self.focus_handle(Field::Name, cx);
         self.servers.focus_soon = Some(Field::Name);
-        let worlds = servers::player_worlds();
+        let worlds = servers::player_worlds(&backend::game_home());
         let name = if self.servers.list.is_empty() {
             "My server".to_string()
         } else {

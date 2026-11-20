@@ -408,3 +408,65 @@ fn the_engine_command_reply_becomes_the_command_and_its_problems() {
         newer.message
     );
 }
+
+/// A world folder whose level.dat (plain NBT) holds `data`; written after `pause` so its file
+/// time is later than the folders before it.
+fn saved_world(home: &Path, folder: &str, name: &str, last_played: i64) {
+    let dir = home.join("saves").join(folder);
+    fs::create_dir_all(&dir).unwrap();
+    let data = sunrise_launcher_nbt::Tag::compound([(
+        "Data",
+        sunrise_launcher_nbt::Tag::compound([
+            ("LevelName", sunrise_launcher_nbt::Tag::String(name.into())),
+            ("LastPlayed", sunrise_launcher_nbt::Tag::Long(last_played)),
+        ]),
+    )]);
+    let root = sunrise_launcher_nbt::NamedTag {
+        name: "".into(),
+        tag: data,
+    };
+    let bytes =
+        sunrise_launcher_nbt::write_named(&root, sunrise_launcher_nbt::Limits::default()).unwrap();
+    fs::write(dir.join("level.dat"), bytes).unwrap();
+}
+
+#[test]
+fn the_copy_list_names_worlds_as_the_game_does_and_orders_by_last_played() {
+    let home = scratch("player-worlds");
+    // Written last, so the newest file time, but played the longest ago.
+    saved_world(
+        &home,
+        "played-long-ago",
+        "Renamed in game",
+        1_000_000_000_000,
+    );
+    saved_world(&home, "played-today", "Today", 1_700_000_000_000);
+    // A folder without level.dat is no world.
+    fs::create_dir_all(home.join("saves/empty")).unwrap();
+    std::thread::sleep(Duration::from_millis(20));
+    saved_world(&home, "restored", "Restored", 1_500_000_000_000);
+    let names: Vec<String> = player_worlds(&home).into_iter().map(|w| w.0).collect();
+    assert_eq!(names, ["Today", "Restored", "Renamed in game"]);
+    let first = player_worlds(&home).remove(0).1;
+    assert_eq!(first, home.join("saves/played-today"));
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn the_copy_list_leaves_out_folders_without_a_readable_level_dat() {
+    let home = scratch("player-worlds-broken");
+    saved_world(&home, "good", "Good", 1_000_000_000_000);
+    std::thread::sleep(Duration::from_millis(20));
+    // Both newer by file time than the good world, so either would be preselected if listed.
+    let old_only = home.join("saves/old-only");
+    fs::create_dir_all(&old_only).unwrap();
+    fs::write(old_only.join("level.dat_old"), b"not nbt").unwrap();
+    std::thread::sleep(Duration::from_millis(20));
+    let garbage = home.join("saves/garbage");
+    fs::create_dir_all(&garbage).unwrap();
+    fs::write(garbage.join("level.dat"), b"not nbt").unwrap();
+    let listed = player_worlds(&home);
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].1, home.join("saves/good"));
+    fs::remove_dir_all(home).unwrap();
+}

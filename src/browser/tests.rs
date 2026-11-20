@@ -202,6 +202,26 @@ fn file_names_must_be_plain() {
 }
 
 #[test]
+fn modrinth_file_name_with_a_colon_is_saved_under_a_plain_name() {
+    let version = parse_version_for_test("Yet Another Bingo: Ultimate-2.15.1.mrpack");
+    let name = &version.files[0].name;
+    assert_eq!(name, "Yet Another Bingo- Ultimate-2.15.1.mrpack");
+    assert_eq!(safe_name(name), Some(name.as_str()));
+    let hostile = parse_version_for_test("../a:b.zip");
+    assert_eq!(hostile.files[0].name, "../a-b.zip");
+    assert_eq!(safe_name(&hostile.files[0].name), None);
+}
+
+fn parse_version_for_test(filename: &str) -> Version {
+    let json = json!({
+        "id": "v1", "version_number": "1", "date_published": "2026-01-01T00:00:00Z",
+        "files": [{"url": "https://cdn.modrinth.com/data/a/x.zip", "filename": filename,
+                   "size": 1, "primary": true, "hashes": {"sha512": "ab"}}],
+    });
+    super::modrinth::parse_version(&json).expect("a version with one file")
+}
+
+#[test]
 fn modrinth_search_asks_for_what_runs() {
     let q = Query::new("  faithful ", Kind::ResourcePack);
     assert_eq!(q.text, "faithful");

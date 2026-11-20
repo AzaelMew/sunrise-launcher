@@ -49,6 +49,7 @@ pub(super) fn install(
         staged: staged.path(),
         installed,
         selected: Vec::new(),
+        unreadable: Vec::new(),
         native_allowed,
         chosen,
     };
@@ -56,15 +57,26 @@ pub(super) fn install(
 
     let mut changes = Vec::new();
     let mut done = Vec::new();
+    // Unreadable files whose new version goes elsewhere: published over nothing, so removed.
+    let mut stale = Vec::new();
     let mut enable = vec![project.id.clone()];
     for (entry, file) in plan.selected {
         if let Some(file) = file {
             if let Some(old) = plan.installed.find(SourceId::Sunrise, &entry.project) {
-                if old.file != entry.file {
+                // A file that is gone or no longer parses is replaced wherever the new one goes
+                // (a native mod and a plain one live in different places); a good one is not.
+                let old_path = old.path(home);
+                let replaceable = old_path.as_ref().is_some_and(|path| {
+                    plan.unreadable.contains(path) || path.try_exists().is_ok_and(|there| !there)
+                });
+                if old.file != entry.file && !replaceable {
                     return Err(format!(
                         "{} is installed in a different location: remove it first.",
                         entry.title
                     ));
+                }
+                if old.file != entry.file {
+                    stale.extend(old_path.filter(|path| plan.unreadable.contains(path)));
                 }
             }
             changes.push((file, home.join(&entry.file)));
@@ -79,6 +91,14 @@ pub(super) fn install(
         } else if entry.project == project.id {
             done.push(entry);
         }
+    }
+    // Publishing drops what it replaces, so a file that no longer parses is copied into the
+    // staging folder first, and kept in `mod-browser/unreadable` only once publishing worked.
+    let mut aside = Vec::new();
+    for (n, broken) in plan.unreadable.iter().enumerate() {
+        let copy = staged.path().join(format!("aside-{n}"));
+        fs::copy(broken, &copy).map_err(|e| format!("{}: {e}", broken.display()))?;
+        aside.push((broken.clone(), copy));
     }
     if !changes.is_empty() {
         plan.installed.save(staged.path())?;
@@ -99,7 +119,14 @@ pub(super) fn install(
         mod_list::set_all_enabled(staged.path(), &ids, true)?;
         changes.push((next, saved));
     }
-    publish(staged, changes)?;
+    let _staged = publish(staged, changes)?;
+    for (broken, copy) in aside {
+        let to = super::unreadable_slot(home, &broken)?;
+        fs::copy(copy, &to).map_err(|e| format!("{}: {e}", to.display()))?;
+    }
+    for path in stale {
+        let _ = fs::remove_file(path);
+    }
     Ok(done)
 }
 
@@ -108,6 +135,8 @@ struct Plan<'a> {
     staged: &'a Path,
     installed: installed::Installed,
     selected: Vec<(installed::Entry, Option<PathBuf>)>,
+    /// Installed files that no longer parse and are about to be replaced.
+    unreadable: Vec<PathBuf>,
     native_allowed: bool,
     /// The version the index plan chose for each mod it installs or updates.
     chosen: BTreeMap<String, String>,
@@ -118,9 +147,10 @@ impl Plan<'_> {
         if depth > installed::MAX_DEPTH {
             return Err(format!("{}'s dependencies go too deep.", p.name));
         }
-        let (mut entry, download) =
+        let (mut entry, download, unreadable) =
             self.install
                 .prepare(p, v, &self.installed, &self.staged.join(&p.id))?;
+        self.unreadable.extend(unreadable);
         let (path, facts) = match download {
             Some((path, facts)) => {
                 entry.dependency = depth != 0
@@ -226,7 +256,10 @@ impl Plan<'_> {
 
 /// Same-filesystem moves with an undo list; even a failed metadata write restores old files.
 /// The profile lock keeps another launcher or game start from seeing an intermediate state.
-fn publish(staged: tempfile::TempDir, changes: Vec<(PathBuf, PathBuf)>) -> Result<(), String> {
+fn publish(
+    staged: tempfile::TempDir,
+    changes: Vec<(PathBuf, PathBuf)>,
+) -> Result<tempfile::TempDir, String> {
     let mut undo = Vec::new();
     for (i, (from, to)) in changes.into_iter().enumerate() {
         let result = (|| -> io::Result<()> {
@@ -272,5 +305,5 @@ fn publish(staged: tempfile::TempDir, changes: Vec<(PathBuf, PathBuf)>) -> Resul
             });
         }
     }
-    Ok(())
+    Ok(staged)
 }

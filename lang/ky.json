@@ -1255,6 +1255,7 @@
   "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Маалыматты жылдыруудан мурун оюнду жана серверлерди жабыңыз, жүктөөлөр, куруулар, импорттоолор жана кирүү бүтүшүн күтүңүз.",
   "No pack {query} in {folder}": "No pack {query} in {folder}",
   "{name} is not a pack: packs are .zip or .sshader files.": "{name} is not a pack: packs are .zip or .sshader files.",
+  "{name} must be named with a lowercase .zip ending for the game to load it": "{name} must be named with a lowercase .zip ending for the game to load it",
   "{name} has an entry whose name can't be read: {error}": "{name} has an entry whose name can't be read: {error}",
   "{name} has neither a pack.mcmeta (a resource pack) nor a shaders folder (a shader pack).": "{name} has neither a pack.mcmeta (a resource pack) nor a shaders folder (a shader pack).",
   "{file} and {neighbor} are not next to each other any more.": "{file} and {neighbor} are not next to each other any more.",
@@ -1478,5 +1479,16 @@
   "Updates 1 installed mod": "Updates 1 installed mod",
   "Updates {count} installed mods": "Updates {count} installed mods",
   "Everything you picked is installed.": "Everything you picked is installed.",
-  "Some picks can't be installed together.": "Some picks can't be installed together."
+  "Some picks can't be installed together.": "Some picks can't be installed together.",
+  "Microsoft says this is a child account (error {code}). An adult has to add it to a Microsoft family at {url}. If it is an adult account, check its family settings there.": "Microsoft says this is a child account (error {code}). An adult has to add it to a Microsoft family at {url}. If it is an adult account, check its family settings there.",
+  "That is not a server address: use a name or IP address, then an optional port from 0 to 65535.": "That is not a server address: use a name or IP address, then an optional port from 0 to 65535.",
+  "Downloading the {version} server jar from Mojang": "Downloading the {version} server jar from Mojang",
+  "The server jar from Mojang is not the one its version file names (sha1 {sha1})": "The server jar from Mojang is not the one its version file names (sha1 {sha1})",
+  "The version file has no server download": "The version file has no server download",
+  "{name} is recorded outside the mod folders: remove it before installing this version.": "{name} is recorded outside the mod folders: remove it before installing this version.",
+  "Checking game files…": "Checking game files…",
+  "Updating mods…": "Updating mods…",
+  "Signing in…": "Signing in…",
+  "Reading the mods you added by hand…": "Reading the mods you added by hand…",
+  "Sign in with the Microsoft account that owns Minecraft: Sunrise then downloads {version} from Mojang itself.": "Sign in with the Microsoft account that owns Minecraft: Sunrise then downloads {version} from Mojang itself."
 }

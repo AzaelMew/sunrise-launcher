@@ -81,8 +81,19 @@ pub fn list(home: &Path) -> Vec<World> {
         .flatten()
         .filter_map(|e| scanned_world(&e.path()).ok().flatten())
         .collect();
-    worlds.sort_by_key(|s| std::cmp::Reverse(s.played));
+    // Worlds played at the same moment go by folder name, not by the order the disk lists them.
+    worlds.sort_by(|a, b| {
+        b.played
+            .cmp(&a.played)
+            .then_with(|| a.world.folder.cmp(&b.world.folder))
+    });
     worlds.into_iter().map(|s| s.world).collect()
+}
+
+/// Whether `folder` has a level.dat file the game's reader can read (no recovery from level.dat_old).
+pub(crate) fn has_readable_level_dat(folder: &Path) -> bool {
+    let dat = folder.join("level.dat");
+    dat.is_file() && level_dat(&dat).is_some()
 }
 
 /// level.dat: gzip, as vanilla writes it, or plain. Read with the limits the game reads a world's
@@ -139,8 +150,13 @@ fn scanned_world(path: &Path) -> std::io::Result<Option<Scanned>> {
     let field = |key: &str| data.and_then(|d| d.get(key));
     let number = |tag: Option<&Tag>| match tag {
         Some(Tag::Byte(v)) => i64::from(*v),
+        Some(Tag::Short(v)) => i64::from(*v),
         Some(Tag::Int(v)) => i64::from(*v),
         Some(Tag::Long(v)) => *v,
+        // As the game's numeric tags give a long: a float's `longValue` casts, so it truncates
+        // toward zero (-0.5 is 0), while a double's floors (-0.5 is -1). A NaN is 0.
+        Some(Tag::Float(bits)) => f64::from(f32::from_bits(*bits)).trunc() as i64,
+        Some(Tag::Double(bits)) => f64::from_bits(*bits).floor() as i64,
         _ => 0,
     };
     let text = |tag: Option<&Tag>| match tag {

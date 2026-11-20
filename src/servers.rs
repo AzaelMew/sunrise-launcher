@@ -10,6 +10,7 @@
 
 use crate::backend;
 use crate::i18n::{tr, trf};
+use crate::worlds;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::fs;
@@ -788,26 +789,16 @@ fn ports_taken() -> Vec<u16> {
     out
 }
 
-/// The player's worlds (the game home's `saves/`), newest first: their name and folder.
-pub fn player_worlds() -> Vec<(String, PathBuf)> {
-    let saves = backend::game_home().join("saves");
-    let mut worlds: Vec<(std::time::SystemTime, String, PathBuf)> = fs::read_dir(saves)
+/// The player's worlds (`saves/` in the game folder `home`), the last played first: their name
+/// as the game's list shows it and their folder.
+pub fn player_worlds(home: &Path) -> Vec<(String, PathBuf)> {
+    worlds::list(home)
         .into_iter()
-        .flatten()
-        .flatten()
-        .filter(|e| e.path().join("level.dat").is_file())
-        .map(|e| {
-            let when = e
-                .path()
-                .join("level.dat")
-                .metadata()
-                .and_then(|m| m.modified())
-                .unwrap_or(std::time::UNIX_EPOCH);
-            (when, e.file_name().to_string_lossy().into_owned(), e.path())
-        })
-        .collect();
-    worlds.sort_by_key(|w| std::cmp::Reverse(w.0));
-    worlds.into_iter().map(|(_, n, p)| (n, p)).collect()
+        // Only a readable level.dat is a world to copy; the Worlds page also keeps folders with
+        // just a level.dat_old or a damaged level.dat, so they can be backed up.
+        .filter(|w| worlds::has_readable_level_dat(&w.path))
+        .map(|w| (w.name, w.path))
+        .collect()
 }
 
 /// The `sunrise-server init` arguments for a new server.

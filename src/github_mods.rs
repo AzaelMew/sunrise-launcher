@@ -250,15 +250,17 @@ fn assets(release: &serde_json::Value, link: &Link) -> Option<Asset> {
             let url = a["browser_download_url"].as_str()?.to_owned();
             let name = a["name"].as_str()?.to_owned();
             // Only this repository's own release files.
-            url.starts_with(&prefix).then(|| Asset {
-                name,
-                url,
-                sha256: a["digest"]
-                    .as_str()
-                    .and_then(|d| d.strip_prefix("sha256:"))
-                    .filter(|d| d.len() == 64)
-                    .map(str::to_ascii_lowercase),
-            })
+            url.get(..prefix.len())
+                .is_some_and(|head| head.eq_ignore_ascii_case(&prefix))
+                .then(|| Asset {
+                    name,
+                    url,
+                    sha256: a["digest"]
+                        .as_str()
+                        .and_then(|d| d.strip_prefix("sha256:"))
+                        .filter(|d| d.len() == 64)
+                        .map(str::to_ascii_lowercase),
+                })
         })
 }
 

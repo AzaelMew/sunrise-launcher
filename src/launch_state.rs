@@ -17,6 +17,8 @@ pub(crate) struct Facts {
     /// Native mods are being built.
     pub building: bool,
     pub starting: bool,
+    /// The step the start is at, once it has said (`Main::Step`).
+    pub step: Option<backend::PlayStep>,
     /// Mods are being added, removed or updated.
     pub mutating: bool,
     /// The game runs.
@@ -50,6 +52,8 @@ pub(crate) enum Main {
     Preparing,
     Building,
     Starting,
+    /// Starting, and the step it is at before the game opens.
+    Step(backend::PlayStep),
     ChangingMods,
     /// The game runs: the button stops it.
     Stop,
@@ -211,7 +215,7 @@ impl Facts {
         } else if self.building {
             Main::Building
         } else if self.starting {
-            Main::Starting
+            self.step.map_or(Main::Starting, Main::Step)
         } else if self.mutating {
             Main::ChangingMods
         } else if self.running {
@@ -292,6 +296,9 @@ impl Main {
             Main::Preparing => tr("Preparing…").into(),
             Main::Building => tr("Building mods…").into(),
             Main::Starting => tr("Starting…").into(),
+            Main::Step(backend::PlayStep::Assets) => tr("Checking game files…").into(),
+            Main::Step(backend::PlayStep::Mods) => tr("Updating mods…").into(),
+            Main::Step(backend::PlayStep::SignIn) => tr("Signing in…").into(),
             Main::ChangingMods => tr("Changing mods…").into(),
             Main::Stop => tr("Stop game").into(),
             Main::SignIn => tr("Sign in with Microsoft").into(),
@@ -308,6 +315,7 @@ impl Main {
                 | Main::Preparing
                 | Main::Building
                 | Main::Starting
+                | Main::Step(_)
                 | Main::ChangingMods
         )
     }
@@ -391,6 +399,7 @@ impl Launcher {
             preparing: self.preparing,
             building: self.native_step.is_some(),
             starting: self.starting_client.is_some(),
+            step: self.play_step,
             mutating: self.mutating(),
             running: self.client.is_some(),
             ..Facts::default()

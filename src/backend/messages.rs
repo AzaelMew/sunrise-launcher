@@ -34,6 +34,8 @@ pub enum Msg {
     /// The owner gate's answer for the game about to start: the selected account's session
     /// file (none = offline) and why it plays offline, if it does.
     Session(Result<Option<crate::account::GameSession>, crate::account::NoOwner>),
+    /// The step Play is at before the game starts, for the button's label.
+    PlayStep(PlayStep),
     JarConsent {
         jars: Vec<sunrise_launcher_smod::manifest::JarRef>,
         reply: std::sync::mpsc::Sender<bool>,

@@ -92,6 +92,11 @@ impl Launcher {
                     }
                 }
                 Msg::Playing(playing) => self.playing = playing,
+                Msg::PlayStep(step) => {
+                    if self.starting_client.is_some() {
+                        self.play_step = Some(step);
+                    }
+                }
                 Msg::Session(session) => self.handle_game_session(session),
                 Msg::JarConsent { jars, reply } => jar_launch::consent(window, jars, reply, cx),
                 Msg::JarClient {

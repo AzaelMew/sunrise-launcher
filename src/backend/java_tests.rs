@@ -82,3 +82,46 @@ fn selected_jdk_reaches_external_preparers() {
     );
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn a_downloaded_macos_runtime_is_found_inside_its_bundle() {
+    let program = if cfg!(windows) { "java.exe" } else { "java" };
+    let manifest_dir = tempfile::tempdir().unwrap();
+    let manifest = manifest_dir.path().join("version.json");
+    fs::write(
+        &manifest,
+        r#"{"javaVersion":{"component":"java-runtime-test"}}"#,
+    )
+    .unwrap();
+    // A stand-in for `jdk::find`: it accepts a candidate only with `bin/java` directly in it.
+    let find = |_: i64, more: &[PathBuf]| {
+        let java = more
+            .first()
+            .ok_or_else(|| "no java".to_string())?
+            .join("bin")
+            .join(program);
+        if java.is_file() {
+            Ok(crate::jdk::Jdk {
+                javac: java.clone(),
+                java,
+            })
+        } else {
+            Err("no java".to_string())
+        }
+    };
+    for bundle in [true, false] {
+        let dir = tempfile::tempdir().unwrap();
+        let expected = if bundle {
+            dir.path().join("jre.bundle/Contents/Home")
+        } else {
+            dir.path().to_path_buf()
+        };
+        fs::create_dir_all(expected.join("bin")).unwrap();
+        fs::write(expected.join("bin").join(program), b"").unwrap();
+        let download = |component: &str, _: &str| {
+            assert_eq!(component, "java-runtime-test");
+            Ok(dir.path().to_path_buf())
+        };
+        assert_eq!(java_with(find, 21, &[], &manifest, &download), Ok(expected));
+    }
+}

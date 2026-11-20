@@ -204,8 +204,9 @@ fn wasm_points_at(
 }
 
 /// The native mods turned on in game folder `home`, read from their `.smod`s. One that can't be
-/// read always counts, with its file name and no version, so it needs a build (which says why):
-/// the on/off list is keyed by the manifest id, which an unreadable file can't give.
+/// read is left out: the on/off list is keyed by the manifest id, which an unreadable file can't
+/// give, so it is neither on nor a build input (the game doesn't load it either). Its file name
+/// is no id: it could be a working mod's, and turning the file off would turn that mod off.
 pub fn enabled(home: &Path) -> Vec<Mod> {
     enabled_files(home).into_iter().map(|(_, m)| m).collect()
 }
@@ -214,18 +215,12 @@ pub fn enabled(home: &Path) -> Vec<Mod> {
 fn enabled_files(home: &Path) -> Vec<(std::path::PathBuf, Mod)> {
     let mut out = Vec::new();
     for path in hmods(home) {
-        match sunrise_launcher_smod::index::native::Bundle::read(&path) {
-            Ok(b) => {
-                if mod_list::is_enabled(home, &b.manifest.id) {
-                    let digest =
-                        archive_digest(b.files.iter().map(|(n, d)| (n.as_str(), d.as_slice())));
-                    out.push((path, (b.manifest.id, b.manifest.version, Some(digest))));
-                }
-            }
-            Err(_) => {
-                let id = stem(&path);
-                out.push((path, (id, String::new(), None)));
-            }
+        let Ok(b) = sunrise_launcher_smod::index::native::Bundle::read(&path) else {
+            continue;
+        };
+        if mod_list::is_enabled(home, &b.manifest.id) {
+            let digest = archive_digest(b.files.iter().map(|(n, d)| (n.as_str(), d.as_slice())));
+            out.push((path, (b.manifest.id, b.manifest.version, Some(digest))));
         }
     }
     out.extend(wasm_points_at(home).into_iter().map(|(path, b)| {
@@ -238,8 +233,7 @@ fn enabled_files(home: &Path) -> Vec<(std::path::PathBuf, Mod)> {
 /// One package a build takes in, as the native-code question names it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct BuildInput {
-    /// The manifest's id (the file's name without `.smod` when it can't be read): the key of the
-    /// on/off list.
+    /// The manifest's id: the key of the on/off list.
     pub id: String,
     /// The package's file name in the game folder.
     pub file: String,
@@ -376,7 +370,17 @@ fn untracked_in(
             if !path.is_file() || tracked.entries.iter().any(|e| e.file == file) {
                 return None;
             }
-            let package = sunrise_launcher_smod::manifest::Package::read(&path);
+            let mut package = sunrise_launcher_smod::manifest::Package::read(&path);
+            // The build and the enabled list read a native file as a bundle; a file that is not
+            // one is no mod there, so the page must not show it as one either.
+            if native {
+                if let (Ok(_), Err(e)) = (
+                    &package,
+                    sunrise_launcher_smod::index::native::Bundle::read(&path),
+                ) {
+                    package = Err(e);
+                }
+            }
             let (id, version) = package
                 .as_ref()
                 .map(|p| (p.manifest.id.clone(), p.manifest.version.clone()))
@@ -585,6 +589,40 @@ mod tests {
         assert!(wasm_hmods(home.path()).is_empty());
         assert!(enabled(home.path()).is_empty());
         assert!(untracked(home.path()).is_empty());
+    }
+
+    #[test]
+    fn an_unreadable_file_is_no_build_input_and_never_stands_for_a_mod_of_its_name() {
+        let home = tempfile::tempdir().unwrap();
+        let native = home.path().join(native_mods::INSTALLED);
+        fs::create_dir_all(&native).unwrap();
+        fs::write(native.join("ruby.smod"), b"not a package").unwrap();
+        // Another mod called `ruby` is on, as its own file or its content says.
+        mod_list::set_enabled(home.path(), "ruby", true).unwrap();
+        assert!(enabled(home.path()).is_empty());
+        assert!(build_inputs(home.path(), None).is_empty());
+    }
+
+    #[test]
+    fn a_native_file_the_build_cannot_read_is_listed_unreadable() {
+        use std::io::Write;
+        let home = tempfile::tempdir().unwrap();
+        let native = home.path().join(native_mods::INSTALLED);
+        fs::create_dir_all(&native).unwrap();
+        // A well-formed package with no `[native]` table: the build reads it as no native mod.
+        let mut zip = zip::ZipWriter::new(fs::File::create(native.join("plain.smod")).unwrap());
+        zip.start_file("sunrise-mod.toml", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(
+            b"id='plain'\nname='Plain'\nversion='1.0.0'\napi='0.2'\ncapabilities=['registries']\n",
+        )
+        .unwrap();
+        zip.finish().unwrap();
+        mod_list::set_enabled(home.path(), "plain", true).unwrap();
+        let found = untracked(home.path());
+        assert_eq!(found.len(), 1);
+        assert!(found[0].icon.is_err());
+        assert!(enabled(home.path()).is_empty());
     }
 
     #[test]

@@ -659,7 +659,11 @@ fn refusals_have_messages() {
     let (_, ep) = mock(|m| m.xerr = Some(2148916238));
     assert!(finish_sign_in(&ep, tokens())
         .unwrap_err()
-        .contains("child account"));
+        .contains("child account (error 2148916238)"));
+    let (_, ep) = mock(|m| m.xerr = Some(2148916238));
+    assert!(finish_sign_in(&ep, tokens())
+        .unwrap_err()
+        .contains("https://account.microsoft.com/family"));
     let (_, ep) = mock(|m| m.owns_game = false);
     assert_eq!(finish_sign_in(&ep, tokens()).unwrap_err(), DOES_NOT_OWN);
     let (_, ep) = mock(|m| m.no_profile = true);
