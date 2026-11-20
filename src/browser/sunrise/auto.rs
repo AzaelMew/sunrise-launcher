@@ -293,12 +293,12 @@ fn restore(home: &Path, kept: &Kept) -> Result<(), String> {
 /// Retire only advisory entries proved redundant. The legacy updater still owns the live
 /// ledger name here, so unreadable or ambiguous evidence stays in place and refuses *updates*,
 /// not Play. Can't move just the ledger away: the updater could overwrite a retained copy.
-fn recover(home: &Path) -> Result<(), String> {
+pub fn recover(home: &Path) -> Result<(), String> {
     let _lock = crate::browser::lock_home(home).map_err(|e| e.to_string())?;
     let notice = || {
         trf(
-        "An older mod-update backup in {folder} was kept because it couldn't be verified. You can still play.",
-        &[("folder", &home.join("mod-browser").display().to_string())],
+        "An older mod-update backup ({file}) was kept because it couldn't be verified. You can still play.",
+        &[("file", KEPT)],
     )
     };
     let (mine, earlier): (Vec<Kept>, Vec<Kept>) = kept_list(home)

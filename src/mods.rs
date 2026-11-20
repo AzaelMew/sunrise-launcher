@@ -116,7 +116,7 @@ struct Snapshot {
 
 enum Event {
     /// The hand-placed mods read for the folder and fingerprint the snapshot was made for.
-    Local(String, Vec<model::Local>),
+    Local(String, Vec<model::Local>, Option<String>),
     Catalog(Result<(Vec<Card>, Vec<String>), String>),
     Page(String, Result<Box<model::Page>, String>),
     Progress(String, f32),
@@ -489,8 +489,11 @@ impl Launcher {
                     m.catalog = Catalog::Ready(cards, categories)
                 }
                 Event::Catalog(Err(e)) => m.catalog = Catalog::Failed(e),
-                Event::Local(key, local) => {
+                Event::Local(key, local, backup_notice) => {
                     if let Some(snap) = m.snapshot.as_mut().filter(|s| s.key == key) {
+                        if m.notice.is_none() {
+                            m.notice = backup_notice.map(Ok);
+                        }
                         snap.enabled = enabled_ids(&snap.home, &snap.entries, &local);
                         snap.local = local;
                         snap.reading = false;
@@ -579,7 +582,12 @@ impl Launcher {
             let (tx, worker_home, worker_key) =
                 (self.ui.mods.tx.clone(), home.clone(), key.clone());
             std::thread::spawn(move || {
-                let _ = tx.send(Event::Local(worker_key, read_local(&worker_home)));
+                let backup_notice = sunrise::auto::recover(&worker_home).err();
+                let _ = tx.send(Event::Local(
+                    worker_key,
+                    read_local(&worker_home),
+                    backup_notice,
+                ));
             });
             let enabled = enabled_ids(&home, &entries, &local);
             let chosen = sunrise::chosen(&home);
