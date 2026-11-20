@@ -1083,7 +1083,7 @@ fn short_path(path: &Path) -> Option<PathBuf> {
     (got != 0 && got < need).then(|| PathBuf::from(std::ffi::OsString::from_wide(&buf[..got])))
 }
 
-fn versions_dir() -> PathBuf {
+pub(crate) fn versions_dir() -> PathBuf {
     data_dir().join("versions")
 }
 
@@ -1267,19 +1267,14 @@ pub use developer_play::client_as;
 pub(crate) mod installation;
 
 pub fn remove(tag: &str) -> Result<(), String> {
-    // A native build's base keeps its prepared data, so it stays while one is installed.
-    if let Some(build) = installed()
-        .into_iter()
-        .find(|version| crate::native_mods::about(version).is_some_and(|about| about.base == tag))
-    {
-        return Err(crate::i18n::trf(
-            "This version supplies resources to native build {build}. Remove that build first.",
-            &[("build", &build)],
-        ));
-    }
+    remove_observed(tag, || {})
+}
+
+pub(crate) fn remove_observed(tag: &str, selected: impl FnOnce()) -> Result<(), String> {
     let dir = version_dir(tag);
-    crate::cache_cleanup::delete_version(&dir, !in_use(tag))
-        .map_err(crate::native_mods::cache_error)?;
+    let idle = !in_use(tag);
+    selected();
+    crate::cache_cleanup::delete_version(&dir, idle).map_err(crate::native_mods::cache_error)?;
     forget_prepared();
     Ok(())
 }
@@ -3031,7 +3026,7 @@ pub fn prune_old_versions() -> Vec<String> {
         &protected,
         auto_installed,
     ) {
-        if crate::native_mods::resource_dependents(&tag) {
+        if crate::native_mods::resource_dependent(&tag).is_some() {
             eprintln!("Keeping old version {tag}: a native build uses its resources.");
             continue;
         }
@@ -5232,7 +5227,7 @@ pub fn {f}("
         );
         fs::write(base_dir.join(COMPLETE), "").unwrap();
         fs::remove_dir_all(version_dir(&sibling)).unwrap();
-        assert!(crate::native_mods::resource_dependents(&base));
+        assert!(crate::native_mods::resource_dependent(&base).is_some());
         assert!(remove_version(&base).is_err());
         assert!(remove(&base).is_err());
         assert!(base_dir.join(COMPLETE).exists());
@@ -5240,7 +5235,7 @@ pub fn {f}("
         let error = need_prepared(&native).unwrap_err();
         assert!(error.contains(&base), "{error}");
         fs::remove_dir_all(&native_dir).unwrap();
-        assert!(!crate::native_mods::resource_dependents(&base));
+        assert!(crate::native_mods::resource_dependent(&base).is_none());
     }
 
     #[test]

@@ -296,9 +296,12 @@ mod tests;
 
 fn error(error: Error) -> io::Error {
     match error {
-        Error::Busy | Error::UnprovenExclusion | Error::IncompleteUnit => {
-            io::ErrorKind::WouldBlock.into()
-        }
+        Error::Busy
+        | Error::UnprovenExclusion
+        | Error::IncompleteUnit
+        | Error::ResourceDependent(_)
+        | Error::ReferencedProfile
+        | Error::UnprovenReferences => io::ErrorKind::WouldBlock.into(),
         Error::UnsupportedFilesystem => io::ErrorKind::Unsupported.into(),
         Error::Unsafe(_) => io::ErrorKind::InvalidInput.into(),
         Error::Io(error) => error,

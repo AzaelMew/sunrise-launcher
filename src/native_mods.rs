@@ -315,6 +315,12 @@ pub fn cache_error(error: crate::storage::Error) -> String {
             tr("A native build or cache cleanup is running. Try again when it finishes.").into()
         }
         crate::native_cache::Error::IncompleteUnit => tr("Native compilation outputs were kept because their executable completeness cannot be proven.").into(),
+        crate::native_cache::Error::ResourceDependent(build) => trf(
+            "This version supplies resources to native build {build}. Remove that build first.",
+            &[("build", &build)],
+        ),
+        crate::native_cache::Error::ReferencedProfile => tr("A profile still uses this build, so it was kept.").into(),
+        crate::native_cache::Error::UnprovenReferences => tr("Sunrise couldn't check which profiles use this build, so it was kept.").into(),
         crate::native_cache::Error::UnprovenExclusion => tr(
             "An older game build can use this cache without runtime leases.",
         )
@@ -545,12 +551,11 @@ fn about_in(dir: &Path) -> Option<About> {
     })
 }
 
-/// The newest installed release or Nightly in `installed` (newest first).
-/// Installed native clients retain their base's prepared data even when not selected.
-pub(crate) fn resource_dependents(tag: &str) -> bool {
+/// An installed native client that retains this base's prepared data even if not selected.
+pub(crate) fn resource_dependent(tag: &str) -> Option<String> {
     backend::installed()
-        .iter()
-        .any(|version| about(version).is_some_and(|about| about.base == tag))
+        .into_iter()
+        .find(|version| about(version).is_some_and(|about| about.base.eq_ignore_ascii_case(tag)))
 }
 
 /// The newest installed release or Nightly in the launcher's newest-first build list.

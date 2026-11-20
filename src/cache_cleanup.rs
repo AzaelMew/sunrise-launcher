@@ -384,6 +384,19 @@ fn delete_unit(path: &Path, idle: bool, after_classification: impl FnOnce()) -> 
             Access::UninstrumentedGame if idle => {}
             access => access.check()?,
         }
+        // remove_unit holds the same exclusive fence as journal publication and
+        // roster changes. Candidate selection alone can never authorize detaching.
+        if path.parent() == Some(crate::backend::versions_dir().as_path()) {
+            let tag = path
+                .file_name()
+                .and_then(std::ffi::OsStr::to_str)
+                .ok_or_else(|| Error::Unsafe(path.to_owned()))?;
+            // Traditional native builds also keep the resources of their base build.
+            if let Some(build) = crate::native_mods::resource_dependent(tag) {
+                return Err(Error::ResourceDependent(build));
+            }
+            crate::managed_play::authorize_cache_removal(tag)?;
+        }
         after_classification();
         if is_directory && contains_operational_locks(directory)? {
             return Err(Error::IncompleteUnit);

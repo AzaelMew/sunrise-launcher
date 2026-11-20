@@ -3,8 +3,42 @@
 mod artifact;
 mod inputs;
 mod resources;
+mod roots;
 use inputs::inputs;
 pub use inputs::{scan_packages, ScannedPackage};
+
+/// Called only within the cache publication fence immediately before detaching a build.
+pub(crate) fn authorize_cache_removal(tag: &str) -> Result<(), crate::native_cache::Error> {
+    use crate::{backend, native_cache::Error};
+    match roots::referenced(&backend::data_dir(), &backend::game_home(), tag) {
+        Ok(false) => Ok(()),
+        Ok(true) => Err(Error::ReferencedProfile),
+        Err(error) => {
+            eprintln!("profile artifact references: {error}");
+            Err(Error::UnprovenReferences)
+        }
+    }
+}
+
+/// The profile gate is already owned. Holding this fence excludes both deletion and
+/// another roster writer until the caller durably publishes its new reference.
+pub struct ReferencePublication {
+    _fence: sunrise_launcher_smod::runtime_leases::Publication,
+}
+
+impl ReferencePublication {
+    pub fn begin(home: &Path) -> Result<Self, String> {
+        use sunrise_launcher_smod::{
+            locks::{LockMode, Release},
+            runtime_leases::Registry,
+        };
+        let fence = Registry::with_release(&crate::backend::data_dir(), Release::Close)
+            .and_then(|registry| registry.publication(LockMode::Exclusive))
+            .map_err(|e| native_mods::cache_error(e.into()))?;
+        roots::register(home)?;
+        Ok(Self { _fence: fence })
+    }
+}
 
 use crate::{native_mods, native_status};
 use artifact::Artifact;
