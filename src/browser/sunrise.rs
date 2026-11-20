@@ -1340,6 +1340,9 @@ fn install_version_guarded(
     let aside = unreadable
         .map(|broken| {
             let to = unreadable_slot(home, &broken)?;
+            if let Some(dir) = to.parent() {
+                fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+            }
             fs::rename(&broken, &to).map_err(|e| format!("{}: {e}", broken.display()))?;
             Ok::<_, String>((broken, to))
         })
@@ -1370,7 +1373,6 @@ fn install_version_guarded(
 /// Where an installed file that no longer parses is kept when its update replaces it.
 fn unreadable_slot(home: &Path, broken: &Path) -> Result<PathBuf, String> {
     let dir = home.join("mod-browser/unreadable");
-    fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let name = broken.file_name().unwrap_or_default().to_string_lossy();
     Ok((0..)
         .map(|n| dir.join(format!("{name}.{n}")))
@@ -1622,7 +1624,7 @@ fn check_before_play(
 
 pub mod auto;
 mod dependencies;
-mod journal;
 pub mod pack;
 #[cfg(test)]
 mod tests;
+pub mod txn;

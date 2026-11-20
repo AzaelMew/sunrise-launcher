@@ -456,7 +456,10 @@ fn an_installed_file_that_cannot_be_read_is_refused_not_moved_aside() {
     // (access denied). Either way the update names the file, refuses and leaves it.
     assert!(error.contains("coords_hud.smod"), "{error}");
     assert!(path.is_dir());
-    assert!(!home.join("mod-browser/unreadable").exists());
+    // No copy of it is kept (the folder it would go to may exist, empty).
+    assert!(fs::read_dir(home.join("mod-browser/unreadable"))
+        .map_or(true, |mut dir| dir.next().is_none()));
+    assert!(!home.join("mod-browser/install-txn.json").exists());
     fs::remove_dir_all(home).unwrap();
 }
 
@@ -630,6 +633,33 @@ fn an_install_brings_native_code_in_when_what_it_needs_is_native() {
         "the native mod is already installed"
     );
     assert!(!ask(&["nothing_like_it"], &[]), "no plan, no claim");
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn an_install_with_native_code_keeps_its_record_until_the_build_ends() {
+    let home = scratch("txn-native");
+    let index = native_sample(&home);
+    let hud = project_of(&index, index.project("coords_hud").unwrap(), GAME).unwrap();
+    let install = || {
+        install_from(&index, true, &hud, &home, GAME, true, true, &[], &|_, _| {}).unwrap();
+    };
+    let record = home.join("mod-browser/install-txn.json");
+    install();
+    assert!(record.is_file(), "native code waits for its build");
+    assert!(home.join("sunrise-mods").is_dir() || home.join("sunrise-native-mods").is_dir());
+    // The build stopped for a reason outside the mods: the install is undone whole.
+    txn::undo(&home).unwrap();
+    assert!(installed::Installed::load(&home).entries.is_empty());
+    assert!(!record.exists());
+    // The build worked: the install is done, and a restart changes nothing.
+    install();
+    txn::done(&home);
+    assert!(!record.exists());
+    assert!(txn::recover(&home));
+    assert!(installed::Installed::load(&home)
+        .find(SourceId::Sunrise, "coords_hud")
+        .is_some());
     fs::remove_dir_all(home).unwrap();
 }
 
@@ -2007,7 +2037,7 @@ fn an_install_that_replaces_a_conflicting_mod_removes_it_with_the_install() {
     assert!(!home.join("sunrise-mods/lamps.smod").exists());
     assert!(!mod_list::is_enabled(&home, "lamps"));
     assert!(mod_list::is_enabled(&home, "fireflies"));
-    assert!(!home.join("mod-browser/install-journal.json").exists());
+    assert!(!home.join("mod-browser/install-txn.json").exists());
 }
 
 #[test]

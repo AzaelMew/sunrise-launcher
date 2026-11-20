@@ -342,7 +342,10 @@ pub fn recover(home: &Path) {
             return;
         }
     };
-    super::journal::recover(home);
+    // A cut-off publish is undone before anything else; installs waiting for their build stay.
+    if let Err(e) = super::txn::settle(home) {
+        eprintln!("{e}");
+    }
     let me = std::process::id();
     let (mut mine, earlier): (Vec<Kept>, Vec<Kept>) =
         kept_list(home).into_iter().partition(|k| k.pid == me);

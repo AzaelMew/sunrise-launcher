@@ -13,7 +13,6 @@ use sunrise_launcher::native_status;
 
 mod queue;
 pub(crate) mod removal;
-mod undo;
 
 /// How a build ended, for the install behind it.
 pub(super) enum BuildEnd {
@@ -111,8 +110,6 @@ pub(super) struct Finished {
     also: Vec<String>,
     /// The dependencies it moved to another version: title, before, after.
     updated: Vec<(String, String, String)>,
-    /// What it replaced or added, to put back if the build it asks for stops.
-    touched: Vec<undo::Touched>,
 }
 
 impl Finished {
@@ -122,7 +119,6 @@ impl Finished {
             native: Vec::new(),
             also: Vec::new(),
             updated: Vec::new(),
-            touched: Vec::new(),
         }
     }
 }
@@ -134,7 +130,7 @@ pub(super) enum Event {
     /// it: the question to ask, whose answer starts the same install again.
     NeedsConsent(Box<PendingConsent>, Box<queue::Request>),
     /// The native mods an install put in before it failed: a build takes them up.
-    Brought(Vec<String>, Vec<undo::Touched>),
+    Brought(Vec<String>),
     /// What the automatic updates did (`sunrise::auto`).
     AutoUpdated(AutoOutcome),
     /// The same, for the Play that waited for the mods to be up to date.
@@ -194,8 +190,6 @@ pub(super) struct Mods {
     pub(crate) removal: removal::Pending,
     /// The native mods the running build was started to take up.
     building: (String, Vec<String>),
-    /// What the installs behind that build replaced or added.
-    undo: Vec<undo::Touched>,
     /// How the last build of an install ended, when it cost the install: read by the card and
     /// by the failure sheet, until the next build starts.
     pub(crate) failed: Option<InstallFailure>,
@@ -277,19 +271,6 @@ impl Mods {
         }
     }
 
-    /// Keeps what an install touched, the state before the earliest install first.
-    fn remember(&mut self, touched: Vec<undo::Touched>) {
-        for t in touched {
-            if !self
-                .undo
-                .iter()
-                .any(|have| have.id == t.id && have.home == t.home)
-            {
-                self.undo.push(t);
-            }
-        }
-    }
-
     /// Whether a build that takes up mod `id` in profile `instance` is waiting to start or
     /// running. The same mod in another profile has its own.
     pub(crate) fn builds(&self, instance: &str, id: &str) -> bool {
@@ -331,7 +312,6 @@ impl Mods {
             switching: None,
             consent_request: None,
             building: Default::default(),
-            undo: Vec::new(),
             world_ask: None,
             removal: Default::default(),
             break_ask: None,
@@ -409,9 +389,6 @@ impl Launcher {
                                 m.also.insert(id.clone(), finished.also);
                                 m.updated.insert(id, finished.updated);
                             }
-                            if !finished.native.is_empty() {
-                                m.remember(finished.touched);
-                            }
                             native.extend(finished.native);
                             finished.said.map(|said| {
                                 crate::glass_toast::say(said.clone());
@@ -423,9 +400,8 @@ impl Launcher {
                     m.reload_installed();
                     m.installed_list.reset();
                 }
-                Event::Brought(ids, touched) => {
+                Event::Brought(ids) => {
                     native.extend(ids);
-                    m.remember(touched);
                     native_in = m.running.as_ref().map(|t| t.instance.clone());
                 }
                 Event::Loaded(l) => loaded.push(l),
@@ -548,10 +524,11 @@ impl Launcher {
         let tx = self.mods.tx.clone();
         self.mods.updating = true;
         std::thread::spawn(move || {
-            // A build that never ended (the launcher closed or crashed under it) is undone first.
+            // An install cut off by the launcher closing is undone first, and so is a build that
+            // never ended: the one record of each profile says how (`txn`).
             for target in &list {
                 sunrise::auto::recover(&target.instance.home);
-                undo::recover(&target.instance.home);
+                sunrise::txn::recover(&target.instance.home);
             }
             let out = auto_update(&list, enabled, native_allowed, &Default::default());
             let _ = tx.send(Event::AutoUpdated(out));
@@ -781,32 +758,17 @@ impl Launcher {
                     )));
                 }
                 let before = installed::Installed::load(&home).entries;
-                let tracked = p.source == SourceId::Sunrise && p.kind == PackKind::Mod;
-                let removing: Vec<String> = replacing.iter().map(|r| r.id.clone()).collect();
-                let priors = undo::capture(&home, &before, &p.id, &game, &removing);
-                // Kept in the profile before anything is published, so that a launcher that
-                // closes from here on puts the mods back at its next start.
-                let previous = tracked.then(|| undo::begin(&home, &before, &priors));
                 let done = installed::install(
                     &*source, &p, everything, &home, &game, &replacing, &progress,
-                )
-                .inspect_err(|_| {
-                    if let Some(previous) = previous.clone() {
-                        undo::restore(&home, previous);
-                    }
-                })?;
-                if tracked {
-                    let native: Vec<String> = done
-                        .iter()
-                        .filter(|e| native_status::is_native_file(&e.file))
-                        .map(|e| e.project.clone())
-                        .collect();
-                    if native.is_empty() {
-                        undo::restore(&home, previous.flatten());
-                    }
+                )?;
+                if p.source == SourceId::Sunrise && p.kind == PackKind::Mod {
                     return Ok(Finished {
                         said: None,
-                        native,
+                        native: done
+                            .iter()
+                            .filter(|e| native_status::is_native_file(&e.file))
+                            .map(|e| e.project.clone())
+                            .collect(),
                         also: done
                             .iter()
                             .filter(|e| e.project != p.id)
@@ -822,7 +784,6 @@ impl Launcher {
                                 })
                             })
                             .collect(),
-                        touched: undo::touched(&home, &done, &priors),
                     });
                 }
                 let names: Vec<String> = done
@@ -957,9 +918,7 @@ impl Launcher {
             return;
         };
         let (_, brought) = std::mem::take(&mut self.mods.building);
-        let touched = undo::take_for(&mut self.mods.undo, &instance.home);
         if instance.is_pack_profile() {
-            undo::clear(&instance.home);
             return;
         }
         let stopped = match end {
@@ -971,23 +930,19 @@ impl Launcher {
             None => native_mods::build_failures(&self.native_left_out_of(&instance)),
         };
         match build_cost(&brought, stopped.is_some(), failures) {
-            BuildCost::Nothing => {}
+            BuildCost::Nothing => sunrise::txn::done(&instance.home),
             BuildCost::Rollback(ids) => {
-                let home = instance.home.clone();
-                for t in &touched {
-                    let _ = t.undo();
-                }
-                for id in ids
-                    .iter()
-                    .filter(|id| !touched.iter().any(|t| &t.id == *id))
-                {
-                    let _ = installed::remove(&home, id);
-                }
+                // Every install since the build began goes back as the record says. If that
+                // can't be done the record stays, the profile takes no install until it can,
+                // and the player is told.
+                self.mods.message = match sunrise::txn::undo(&instance.home) {
+                    Ok(()) => stopped.clone().map(Err),
+                    Err(e) => Some(Err(e)),
+                };
                 self.mods.failed = Some(InstallFailure::Interrupted {
-                    ids: touched.iter().map(|t| t.id.clone()).chain(ids).collect(),
+                    ids,
                     reason: stopped.clone().unwrap_or_default(),
                 });
-                self.mods.message = stopped.map(Err);
                 self.mods.reload_installed();
             }
             BuildCost::Failures(failures) => {
@@ -1004,9 +959,9 @@ impl Launcher {
                     checksum: String::new(),
                 });
                 self.mods.removal.add(&instance.id, &entries, items);
+                sunrise::txn::done(&instance.home);
             }
         }
-        undo::clear(&instance.home);
     }
 
     /// Continue on the removal sheet: the listed mods go. Those whose build failed are
@@ -1191,7 +1146,6 @@ impl Launcher {
         self.mods.running = Some(target.clone());
         std::thread::spawn(move || {
             let native = std::cell::RefCell::new(Vec::new());
-            let touched = std::cell::RefCell::new(Vec::new());
             let consent = std::cell::Cell::new(false);
             let result = (|| -> Result<Finished, String> {
                 // The whole set is planned once first: a conflict between picks refuses all of
@@ -1209,27 +1163,16 @@ impl Launcher {
                     let progress = |line: &str, f: f32| {
                         let _ = tx.send(Event::Progress(line.to_string(), (i as f32 + f) / total));
                     };
-                    let before = installed::Installed::load(&home).entries;
-                    let priors = undo::capture(&home, &before, &p.id, &game, &[]);
-                    let previous = undo::begin(&home, &before, &priors);
                     installed::install(&*source, &p, false, &home, &game, &[], &progress)
                         .map(|done| {
-                            touched
-                                .borrow_mut()
-                                .extend(undo::touched(&home, &done, &priors));
-                            let brought: Vec<String> = done
-                                .iter()
-                                .filter(|e| native_status::is_native_file(&e.file))
-                                .map(|e| e.project.clone())
-                                .collect();
-                            if brought.is_empty() {
-                                undo::restore(&home, previous.clone());
-                            }
-                            native.borrow_mut().extend(brought);
+                            native.borrow_mut().extend(
+                                done.iter()
+                                    .filter(|e| native_status::is_native_file(&e.file))
+                                    .map(|e| e.project.clone()),
+                            );
                             done.into_iter().map(|e| e.title).collect()
                         })
                         .map_err(|why| {
-                            undo::restore(&home, previous.clone());
                             consent.set(matches!(
                                 why,
                                 installed::InstallError::NeedsNativeConsent { .. }
@@ -1245,13 +1188,12 @@ impl Launcher {
                     native: native.take(),
                     also: Vec::new(),
                     updated: Vec::new(),
-                    touched: touched.take(),
                 })
             })();
             // The members that went in before one failed stay installed: the native ones among
             // them are still built.
             if result.is_err() {
-                let _ = tx.send(Event::Brought(native.take(), touched.take()));
+                let _ = tx.send(Event::Brought(native.take()));
             }
             let _ = tx.send(if consent.get() {
                 Event::NeedsConsent(
