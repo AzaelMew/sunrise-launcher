@@ -2002,8 +2002,10 @@ mod tests {
         let data = PathBuf::from(data);
         let base = crate::backend::version_dir("nightly-original");
         fs::create_dir_all(&base).unwrap();
-        fs::write(base.join(crate::backend::CLIENT), b"original image").unwrap();
+        let binary = sunrise_launcher_smod::holder::CAPABILITY;
+        fs::write(base.join(crate::backend::CLIENT), binary).unwrap();
         fs::write(base.join(".installed"), b"").unwrap();
+        crate::run_leases::publish(&base).unwrap();
         let preparation = crate::backend::resources("nightly-original");
         fs::create_dir_all(&preparation).unwrap();
         fs::write(
@@ -2052,7 +2054,7 @@ mod tests {
         )
         .unwrap();
         assert!(owner.needs_bootstrap_download(&target).is_err());
-        fs::write(base.join(crate::backend::CLIENT), b"original image").unwrap();
+        fs::write(base.join(crate::backend::CLIENT), binary).unwrap();
         let prepare = |owner: &Lease, target: &Target| {
             owner.play_image(
                 target,
@@ -2081,6 +2083,15 @@ mod tests {
             crate::cache_cleanup::delete_version(&base, true),
             Err(crate::storage::Error::IncompleteUnit)
         ));
+        let mut rechecked = false;
+        assert!(matches!(
+            crate::cache_cleanup::delete_game_unit_observed(&base, || rechecked = true),
+            Err(crate::storage::Error::IncompleteUnit)
+        ));
+        assert!(
+            rechecked,
+            "eviction reached deletion after the profile published its reference"
+        );
         assert!(base.join(crate::backend::CLIENT).is_file());
         let second = Lease::admit(&data.join("second")).unwrap();
         assert_eq!(
