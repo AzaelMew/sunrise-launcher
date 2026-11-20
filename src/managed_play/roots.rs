@@ -249,12 +249,27 @@ mod tests {
             fs::create_dir_all(&home).unwrap();
             let mut admission = Admission::open(&home, None).unwrap();
             let epoch = crate::managed_play::inputs(&home, None).unwrap();
-            let active = Active::capture([1; 16], BASE, &image, &home, epoch, None).unwrap();
-            let pointer = serde_json::to_vec(&active).unwrap();
             let _fence = crate::managed_play::ReferencePublication::begin(&home).unwrap();
-            admission
-                .reserve(Intent::Install, BTreeSet::from([BASE.into(), image]))
-                .unwrap()
+            let stage = admission
+                .reserve(
+                    Intent::Install,
+                    BTreeSet::from([BASE.into(), image.clone()]),
+                )
+                .unwrap();
+            let resources = super::super::Resources::capture(BASE, &stage).unwrap();
+            let active = Active::capture(
+                BASE,
+                &image,
+                &home,
+                epoch,
+                super::super::Generation::First {
+                    profile: [1; 16],
+                    resources,
+                },
+            )
+            .unwrap();
+            let pointer = serde_json::to_vec(&active).unwrap();
+            stage
                 .seal(pointer.clone(), &[])
                 .unwrap()
                 .publish(|| Ok(()))

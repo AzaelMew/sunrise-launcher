@@ -21,14 +21,17 @@ pub(super) struct Resources {
 }
 
 impl Resources {
-    pub(super) fn capture(base: &str) -> Result<Self, String> {
+    pub(super) fn capture(
+        base: &str,
+        stage: &crate::profile_txn::Staging<'_>,
+    ) -> Result<Self, String> {
         let _prepare = backend::prepare_lock(base)?;
         backend::need_prepared(base)?;
-        backend::complete_assets(base);
+        backend::complete_assets_for_play(base, stage);
         let root = backend::version_dir(base);
         Self::seal(&root, &backend::resources(base), |resources| {
             let binary = preparer::binary(&root)?;
-            match preparer::data_file(&binary, &root, resources) {
+            match preparer::data_file(&binary, &root, resources, Some(stage.handoff())) {
                 Ok(Some(true)) => digest_file(&resources.join(preparer::DATA_FILE))
                     .ok()
                     .flatten(),

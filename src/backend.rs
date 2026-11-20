@@ -1789,6 +1789,15 @@ fn reuse_prepared(versions: &Path, tag: &str) -> Option<String> {
     None
 }
 
+/// A first Play already owns the preparation lock. Reuse compatible resources but leave
+/// preparer children to the staged path; they must retain its profile admission.
+pub(crate) fn reuse_prepared_for_play(tag: &str) {
+    let versions = versions_dir();
+    reuse_prepared(&versions, tag);
+    complete_reports(&versions, tag);
+    forget_prepared();
+}
+
 /// What an install does once its folder is in place (an imported build's too, `build_import`):
 /// another installed version's resources if it has none, whatever its resources lack, then its
 /// data file.
@@ -1820,7 +1829,7 @@ fn write_data_file(root: &Path, resources: &Path) -> Result<(), String> {
         return Ok(());
     }
     match crate::preparer::binary(root) {
-        Some(binary) => crate::preparer::data_file(&binary, root, resources).map(drop),
+        Some(binary) => crate::preparer::data_file(&binary, root, resources, None).map(drop),
         None => Ok(()),
     }
 }
@@ -1923,9 +1932,23 @@ fn complete_reports(versions: &Path, tag: &str) -> bool {
 /// in any Minecraft folder, one line each in the log, once per launcher run, and the version plays
 /// as before. Nothing is prepared again.
 pub fn complete_assets(tag: &str) {
-    complete_assets_in(&versions_dir(), tag, minecraft_folders, &|line| {
-        eprintln!("{line}")
-    });
+    complete_assets_in(
+        &versions_dir(),
+        tag,
+        minecraft_folders,
+        &|line| eprintln!("{line}"),
+        None,
+    );
+}
+
+pub(crate) fn complete_assets_for_play(tag: &str, stage: &crate::profile_txn::Staging<'_>) {
+    complete_assets_in(
+        &versions_dir(),
+        tag,
+        minecraft_folders,
+        &|line| eprintln!("{line}"),
+        Some(stage),
+    );
 }
 
 /// Whether Sunrise's own store is asked to download again: it has an asset index, the version
@@ -1951,7 +1974,7 @@ fn refill_own_store(tag: &str) {
     let root = versions_dir().join(tag);
     let resources = resources_at(&root);
     let missing = crate::preparer::binary(&root).and_then(|binary| {
-        crate::preparer::missing_extras(&binary, &root, &resources)
+        crate::preparer::missing_extras(&binary, &root, &resources, None)
             .ok()
             .flatten()
     });
@@ -1986,6 +2009,7 @@ fn complete_assets_in(
     tag: &str,
     folders: impl Fn() -> Vec<PathBuf>,
     log: &dyn Fn(String),
+    stage: Option<&crate::profile_txn::Staging<'_>>,
 ) {
     // The versions tried this run. Held while adding: the start, an install and Play can complete one version at once.
     static TRIED: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
@@ -1998,7 +2022,8 @@ fn complete_assets_in(
     let Some(binary) = crate::preparer::binary(&root) else {
         return;
     };
-    let lacking = match crate::preparer::missing_extras(&binary, &root, &resources) {
+    let handoff = || stage.map(crate::profile_txn::Staging::handoff);
+    let lacking = match crate::preparer::missing_extras(&binary, &root, &resources, handoff()) {
         Ok(Some(lacking)) if !lacking.is_empty() => lacking,
         Ok(_) => return,
         Err(e) => return log(format!("{tag}: {e}")),
@@ -2009,7 +2034,15 @@ fn complete_assets_in(
     }
     tried.push(root.clone());
     let kinds: Vec<String> = lacking.iter().map(|(kind, _)| kind.clone()).collect();
-    match crate::preparer::add_extras(&binary, &root, &resources, &kinds, &folders(), log) {
+    match crate::preparer::add_extras(
+        &binary,
+        &root,
+        &resources,
+        &kinds,
+        &folders(),
+        log,
+        handoff(),
+    ) {
         Ok(Some(added)) => {
             for (kind, error) in added.failed {
                 let what = lacking
@@ -2339,6 +2372,16 @@ pub fn preparer(
     from: MinecraftFrom,
     log: &dyn Fn(String),
 ) -> Result<(Command, PathBuf), String> {
+    preparer_staged(tag, minecraft, from, log, None)
+}
+
+pub(crate) fn preparer_staged(
+    tag: &str,
+    minecraft: &Path,
+    from: MinecraftFrom,
+    log: &dyn Fn(String),
+    profile: Option<crate::process::leases::ProfileHandoff<'_>>,
+) -> Result<(Command, PathBuf), String> {
     set_prepare_step(PrepareStep::Files);
     // A native build reads the resources of its base, so it is the base that gets prepared.
     let owner = resources_owner(tag);
@@ -2353,8 +2396,8 @@ pub fn preparer(
     let dir = version_dir(tag);
     let binary = crate::preparer::binary(&dir).ok_or_else(|| crate::preparer::too_old(tag))?;
     // The version's own answer: a sibling's verified import is linked in when found, and whether its exporters ship.
-    let needs =
-        crate::preparer::needs(&binary, &dir, log)?.ok_or_else(|| crate::preparer::too_old(tag))?;
+    let needs = crate::preparer::needs(&binary, &dir, log, profile)?
+        .ok_or_else(|| crate::preparer::too_old(tag))?;
     let reused = !needs.server_jar;
     let chosen = minecraft.to_path_buf();
     // Resolved even when the game files are reused: the assets still come from the install.
@@ -7255,8 +7298,8 @@ esac"#
         };
 
         let root = version("v1", true, &preparer);
-        complete_assets_in(&versions, "v1", folders, &log);
-        complete_assets_in(&versions, "v1", folders, &log);
+        complete_assets_in(&versions, "v1", folders, &log, None);
+        complete_assets_in(&versions, "v1", folders, &log, None);
         assert_eq!(
             *lines.borrow(),
             [
@@ -7288,7 +7331,13 @@ esac"#
             r#"printf '%s\n' '{"format": 1, "prepared": true, "missing": []}'"#,
         );
         for tag in ["v0", "v2", "v3"] {
-            complete_assets_in(&versions, tag, || unreachable!("no folder is needed"), &log);
+            complete_assets_in(
+                &versions,
+                tag,
+                || unreachable!("no folder is needed"),
+                &log,
+                None,
+            );
         }
         assert!(lines.borrow().is_empty(), "{:?}", lines.borrow());
         let _ = fs::remove_dir_all(&dir);

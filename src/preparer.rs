@@ -199,7 +199,11 @@ fn tail(stream: impl std::io::Read) -> Vec<String> {
 }
 
 /// The JSON reply on the last stdout line of `command`, when the preparer has the subcommand (exit 2 means it doesn't); its log lines go to `line`.
-fn reply(command: Command, line: &dyn Fn(String)) -> Result<Option<Value>, String> {
+fn reply(
+    command: Command,
+    line: &dyn Fn(String),
+    profile: Option<crate::process::leases::ProfileHandoff<'_>>,
+) -> Result<Option<Value>, String> {
     let mut last = None;
     let (status, errors) = run(
         command,
@@ -211,7 +215,7 @@ fn reply(command: Command, line: &dyn Fn(String)) -> Result<Option<Value>, Strin
                 None => {}
             }
         },
-        None,
+        profile,
     )?;
     if status.code() == Some(2) {
         return Ok(None);
@@ -290,9 +294,14 @@ pub struct Needs {
 }
 
 /// [`Needs`] from the version's own preparer; `None` when it is too old to answer.
-pub fn needs(binary: &Path, root: &Path, line: &dyn Fn(String)) -> Result<Option<Needs>, String> {
+pub(crate) fn needs(
+    binary: &Path,
+    root: &Path,
+    line: &dyn Fn(String),
+    profile: Option<crate::process::leases::ProfileHandoff<'_>>,
+) -> Result<Option<Needs>, String> {
     Ok(
-        reply(json_command(binary, root, "needs"), line)?.map(|value| Needs {
+        reply(json_command(binary, root, "needs"), line, profile)?.map(|value| Needs {
             server_jar: value["server_jar"].as_bool().unwrap_or(true),
             jdk: value["jdk"].as_bool().unwrap_or(true),
         }),
@@ -317,21 +326,27 @@ fn extras(value: &Value) -> Extras {
 }
 
 /// The extras the prepared `resources` of `root` lack (`missing-extras --json`); `None` when the preparer is too old to answer.
-pub fn missing_extras(
+pub(crate) fn missing_extras(
     binary: &Path,
     root: &Path,
     resources: &Path,
+    profile: Option<crate::process::leases::ProfileHandoff<'_>>,
 ) -> Result<Option<Extras>, String> {
     let mut command = json_command(binary, root, "missing-extras");
     command.arg("--output").arg(resources);
-    Ok(reply(command, &|_| {})?.map(|value| extras(&value["missing"])))
+    Ok(reply(command, &|_| {}, profile)?.map(|value| extras(&value["missing"])))
 }
 
 /// Writes the prepared `resources`' cache of prepared data (`data-file --json`): whether it wrote one; `None` when the preparer is too old to.
-pub fn data_file(binary: &Path, root: &Path, resources: &Path) -> Result<Option<bool>, String> {
+pub(crate) fn data_file(
+    binary: &Path,
+    root: &Path,
+    resources: &Path,
+    profile: Option<crate::process::leases::ProfileHandoff<'_>>,
+) -> Result<Option<bool>, String> {
     let mut command = json_command(binary, root, "data-file");
     command.arg("--output").arg(resources);
-    Ok(reply(command, &|_| {})?.map(|value| value["written"].as_bool().unwrap_or(false)))
+    Ok(reply(command, &|_| {}, profile)?.map(|value| value["written"].as_bool().unwrap_or(false)))
 }
 
 /// What `extras` did: the kinds added, each that failed with why, and what still lacks.
@@ -343,13 +358,14 @@ pub struct Added {
 }
 
 /// Adds the `only` extras `resources` lack, each from the first of `folders` that has it (`extras --json`); `None` when the preparer is too old.
-pub fn add_extras(
+pub(crate) fn add_extras(
     binary: &Path,
     root: &Path,
     resources: &Path,
     only: &[String],
     folders: &[PathBuf],
     line: &dyn Fn(String),
+    profile: Option<crate::process::leases::ProfileHandoff<'_>>,
 ) -> Result<Option<Added>, String> {
     let mut command = json_command(binary, root, "extras");
     command
@@ -360,7 +376,7 @@ pub fn add_extras(
     for folder in folders {
         command.arg("--minecraft-dir").arg(folder);
     }
-    Ok(reply(command, line)?.map(|value| Added {
+    Ok(reply(command, line, profile)?.map(|value| Added {
         added: value["added"]
             .as_array()
             .into_iter()
@@ -412,7 +428,7 @@ esac"#,
         );
         let lines = std::cell::RefCell::new(Vec::new());
         let log = |line: String| lines.borrow_mut().push(line);
-        let answered = needs(&binary, &dir, &log).unwrap();
+        let answered = needs(&binary, &dir, &log, None).unwrap();
         assert_eq!(
             answered,
             Some(Needs {
@@ -428,7 +444,7 @@ esac"#,
         );
 
         let old = fake(&dir.join("old"), "exit 2");
-        assert_eq!(needs(&old, &dir, &log).unwrap(), None);
+        assert_eq!(needs(&old, &dir, &log, None).unwrap(), None);
         assert_eq!(sounds(&old, &dir, &dir, &log, None).unwrap(), None);
         let _ = fs::remove_dir_all(&dir);
     }

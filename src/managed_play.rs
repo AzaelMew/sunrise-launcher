@@ -137,6 +137,14 @@ struct Receipt {
     removed: Vec<(String, String)>,
 }
 
+enum Generation<'a> {
+    First {
+        profile: [u8; 16],
+        resources: Resources,
+    },
+    Advance(&'a Active),
+}
+
 impl Active {
     pub fn parse(bytes: &[u8]) -> Result<Self, String> {
         let value: Self = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
@@ -199,13 +207,12 @@ impl Active {
 
     /// Capture a full immutable generation after owning the admitted profile and checking
     /// the chosen image. A previous generation is only advanced on the same exact base.
-    pub fn capture(
-        profile: [u8; 16],
+    fn capture(
         base: &str,
         executable: &str,
         home: &Path,
         epoch: [u8; 32],
-        previous: Option<&Self>,
+        previous: Generation<'_>,
     ) -> Result<Self, String> {
         scan_packages(home)?;
         verify_included(base, executable, home)?;
@@ -218,18 +225,20 @@ impl Active {
         } else {
             Artifact::capture(executable)?
         };
-        let (generation, resources, receipts) = if let Some(old) = previous {
-            if profile != old.profile || base != old.base {
-                return Err(unsettled());
+        let (profile, generation, resources, receipts) = match previous {
+            Generation::First { profile, resources } => (profile, 1, resources, Vec::new()),
+            Generation::Advance(old) => {
+                if base != old.base {
+                    return Err(unsettled());
+                }
+                old.resources.verify(&base.tag)?;
+                (
+                    old.profile,
+                    old.generation.checked_add(1).ok_or_else(unsettled)?,
+                    old.resources.clone(),
+                    old.receipts.clone(),
+                )
             }
-            old.resources.verify(&base.tag)?;
-            (
-                old.generation.checked_add(1).ok_or_else(unsettled)?,
-                old.resources.clone(),
-                old.receipts.clone(),
-            )
-        } else {
-            (1, Resources::capture(&base.tag)?, Vec::new())
         };
         Ok(Self {
             version: 1,

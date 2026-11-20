@@ -1,5 +1,8 @@
 //! First Play freezes the candidate and its proof before downloading or preparing anything.
-use super::{at, inputs, scan_packages, unsettled, Active, Artifact, ReferencePublication};
+use super::{
+    at, inputs, scan_packages, unsettled, Active, Artifact, Generation, ReferencePublication,
+    Resources,
+};
 use crate::{
     backend::{
         self,
@@ -214,7 +217,7 @@ impl Profile {
         let _manifest = game_lock(&home)?;
         crate::browser::installed::recover_game_install(&home).map_err(String::from)?;
         let _references = ReferencePublication::begin(&home)?;
-        let active = Active::capture(old.profile, old.base(), &image, &home, epoch, Some(&old))?;
+        let active = Active::capture(old.base(), &image, &home, epoch, Generation::Advance(&old))?;
         Ok(Some(publish_generation(
             stage,
             active,
@@ -342,14 +345,20 @@ impl FirstAttempt<'_> {
             return Ok(());
         }
         let _prepare = backend::prepare_lock(base)?;
+        backend::reuse_prepared_for_play(base);
         if backend::check_prepared(base) {
             return Ok(());
         }
         let minecraft = backend::Settings::load()
             .minecraft_dir
             .unwrap_or_else(|| crate::preparer::minecraft_dir(None));
-        let (command, minecraft) =
-            backend::preparer(base, &minecraft, backend::MinecraftFrom::Install, log)?;
+        let (command, minecraft) = backend::preparer_staged(
+            base,
+            &minecraft,
+            backend::MinecraftFrom::Install,
+            log,
+            Some(self.handoff()),
+        )?;
         backend::sounds_staged(base, &minecraft, log, Some(self.handoff()));
         self.run_prepare(command, log)
     }
@@ -389,17 +398,23 @@ impl FirstAttempt<'_> {
         if native_mods::is_native(image) {
             cancellation.admit_native_work().map_err(String::from)?;
         }
+        // The pending binding already reserves the base. Do not hold the cache-wide
+        // publication fence while waiting on a preparer child for this one version.
+        self.bound.verify_image()?;
+        let resources = Resources::capture(self.base(), &self.stage)?;
         let _manifest = game_lock(&self.home)?;
         crate::browser::installed::recover_game_install(&self.home)?;
         let _references = ReferencePublication::begin(&self.home)?;
         self.bound.verify_image()?;
         let active = Active::capture(
-            self.bound.profile,
             &self.bound.base,
             image,
             &self.home,
             self.bound.inputs,
-            None,
+            Generation::First {
+                profile: self.bound.profile,
+                resources,
+            },
         )?;
         let repair = super::inputs::browser_repair(&self.home, &scan_packages(&self.home)?)?;
         publish_generation(

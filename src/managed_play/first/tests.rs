@@ -210,6 +210,134 @@ fn game_replacements_repair_only_owned_row_fields_and_advance_the_same_base() {
     assert_eq!(fs::read(&path).unwrap(), before);
 }
 
+#[cfg(unix)]
+#[test]
+fn first_play_preparer_subcommands_keep_admission_and_never_trust_an_unrecorded_cache() {
+    use std::os::unix::fs::PermissionsExt;
+
+    const CASE: &str = "managed_play::first::tests::first_play_preparer_subcommands_keep_admission_and_never_trust_an_unrecorded_cache";
+    let actor = |role| {
+        let mut actor = Command::new(std::env::current_exe().unwrap());
+        actor
+            .args(["--exact", CASE, "--nocapture"])
+            .env("PREPARE_CASE_ROLE", role);
+        actor
+    };
+    let Ok(role) = std::env::var("PREPARE_CASE_ROLE") else {
+        for pass in ["needs", "extras", "data-file"] {
+            let temp = tempfile::tempdir().unwrap();
+            let root = backend::plain(temp.path().canonicalize().unwrap());
+            assert!(actor("scenario")
+                .env("PREPARE_CASE_PASS", pass)
+                .env("SUNRISE_HOME", root.join("game"))
+                .env("SUNRISE_LAUNCHER_HOME", root.join("launcher"))
+                .env("XDG_CONFIG_HOME", root.join("config"))
+                .status()
+                .unwrap()
+                .success());
+        }
+        return;
+    };
+    let pass = std::env::var("PREPARE_CASE_PASS").unwrap();
+    let home = backend::game_home();
+    let resources = backend::resources(BUILD);
+    let root = home.parent().unwrap();
+    let prepared = || {
+        fs::create_dir_all(&resources).unwrap();
+        fs::write(resources.join("sunrise-resources.json"), "{}").unwrap();
+    };
+    let admit = || Profile::open(&home, None);
+    if role == "attempt" {
+        let mut profile = admit().unwrap();
+        let attempt = profile
+            .begin_first(|| FirstBuild::installed(BUILD), |_| {})
+            .unwrap();
+        attempt.prepare(&|_| {}).unwrap();
+        attempt
+            .commit(BUILD, &native_mods::Cancellation::default())
+            .unwrap();
+        panic!("the scenario should kill Play while its preparer is running");
+    }
+    assert_eq!(role, "scenario");
+    fs::create_dir_all(&home).unwrap();
+    let cache = backend::version_dir(BUILD);
+    fs::create_dir_all(&cache).unwrap();
+    fs::write(cache.join(".installed"), []).unwrap();
+    fs::write(cache.join(backend::CLIENT), b"local fixture client").unwrap();
+    let binary = cache.join(crate::preparer::BINARY);
+    fs::write(
+        &binary,
+        r#"#!/bin/sh
+set -eu
+cmd=$1
+shift
+out=
+while [ "$#" -ne 0 ]; do
+  if [ "$1" = --output ]; then out=$2; shift; fi
+  shift
+done
+root=${SUNRISE_HOME%/*}
+# Write the accelerator before announcing the interruption, while it still has no evidence.
+if [ "$cmd" = data-file ]; then printf 'fixture data' > "$out/sunrise-data.bin"; fi
+if [ "$cmd" = "$PREPARE_CASE_PASS" ] && [ ! -f "$root/finish" ]; then
+  : > "$root/entered"
+  n=0
+  while [ ! -f "$root/finish" ] && [ "$n" -lt 1500 ]; do sleep 0.01; n=$((n+1)); done
+  [ -f "$root/finish" ] || exit 1
+fi
+case "$cmd" in
+  needs) printf '%s\n' '{"format":1,"server_jar":false,"jdk":false}';;
+  missing-extras) printf '%s\n' '{"format":1,"missing":[{"kind":"sounds","what":"sounds"}]}';;
+  extras) printf 'extra' > "$out/extra"; printf '%s\n' '{"format":1,"added":["sounds"]}';;
+  data-file) printf '%s\n' '{"format":1,"written":true}';;
+  *) exit 2;;
+esac
+"#,
+    )
+    .unwrap();
+    fs::set_permissions(&binary, fs::Permissions::from_mode(0o755)).unwrap();
+    if pass != "needs" {
+        prepared();
+    }
+    let mut attempt = Running(actor("attempt").spawn().unwrap());
+    await_fixture(|| root.join("entered").is_file());
+    attempt.0.kill().unwrap();
+    assert!(!attempt.0.wait().unwrap().success());
+    assert!(
+        admit().is_err(),
+        "the live {pass} child lost admission when Play died"
+    );
+    assert!(profile_txn::references(&home).unwrap().pointer.is_none());
+    fs::write(root.join("finish"), []).unwrap();
+    let mut resumed = None;
+    await_fixture(|| {
+        resumed = admit().ok();
+        resumed.is_some()
+    });
+    if pass == "needs" {
+        // The fixture does not implement Mojang input resolution. Supply prepared inputs
+        // after proving the real `needs` call survived and held off the next launcher.
+        prepared();
+    }
+    let mut profile = resumed.unwrap();
+    let attempt = profile
+        .begin_first(|| panic!("the unstamped local selection changed"), |_| {})
+        .unwrap();
+    let active = attempt
+        .commit(BUILD, &native_mods::Cancellation::default())
+        .unwrap();
+    assert_eq!(
+        fs::read(active.resource_path().join("extra")).unwrap(),
+        b"extra"
+    );
+    assert_eq!(
+        fs::read(active.resource_path().join(crate::preparer::DATA_FILE)).unwrap(),
+        b"fixture data"
+    );
+    assert_eq!(active.allow_accelerator(), pass != "data-file");
+    active.verify_artifacts().unwrap();
+}
+
 struct Running(Child);
 impl Drop for Running {
     fn drop(&mut self) {

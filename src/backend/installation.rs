@@ -99,7 +99,8 @@ pub(crate) fn install_as(
         }
         Err(e) => return Err(crate::native_mods::cache_error(e)),
     }
-    reuse_prepared_for(tag);
+    // First Play prepares through the profile's staged handoff, not the cache-only
+    // import hook (whose detached preparer could otherwise outlive that admission).
     progress(1.0);
     Ok(())
 }
