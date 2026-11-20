@@ -445,6 +445,12 @@ pub fn profile_target<'a>(
     installed: &'a [String],
     launcher_version: Option<&'a String>,
 ) -> Option<&'a String> {
+    if pin.is_none() && releases.is_empty() && channel == Channel::Stable {
+        // Before the release list arrives, protect the locally installed Stable target.
+        if let Some(stable) = installed.iter().find(|tag| backend::is_game_tag(tag)) {
+            return Some(stable);
+        }
+    }
     pin.or_else(|| match channel.following(releases) {
         Channel::Stable => {
             // Keep the existing policy: prefer an installed Stable build.

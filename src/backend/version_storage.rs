@@ -380,6 +380,12 @@ mod tests {
         fs::write(version_dir(spare).join(super::super::COMPLETE), "").unwrap();
         fs::write(version_dir(spare).join(super::super::CLIENT), "fixture").unwrap();
         let profile = instances::create("Survival", None).unwrap();
+        let stable = instances::create("Offline Stable", None).unwrap();
+        let stable = instances::edit(&stable.id, |meta| {
+            meta.channel = Some(instances::Channel::Stable)
+        })
+        .unwrap();
+        assert!(profile_user(&[stable], &installed(), None, &[], recent).is_some());
         let worlds = profile.home.join("saves");
         fs::create_dir_all(&worlds).unwrap();
         fs::write(worlds.join("world"), "keep me").unwrap();
