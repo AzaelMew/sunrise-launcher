@@ -172,29 +172,58 @@ pub fn would_break(
     let Err(refusal) = check_set(index, ids, held, game) else {
         return Vec::new();
     };
-    held.iter()
+    let works_without = |gone: &[&index::resolve::InstalledMod]| {
+        let rest: Vec<_> = held
+            .iter()
+            .filter(|h| !gone.iter().any(|g| g.id == h.id))
+            .cloned()
+            .collect();
+        check_set(index, ids, &rest, game).is_ok()
+    };
+    // Every installed mod that needs something the plan refuses is a suspect; two may pin the
+    // same dependency, so removing one alone doesn't make the plan work.
+    let mut gone: Vec<&index::resolve::InstalledMod> = held
+        .iter()
         .filter(|m| !ids.contains(&m.id))
-        .filter(|m| {
-            let without: Vec<_> = held.iter().filter(|h| h.id != m.id).cloned().collect();
-            check_set(index, ids, &without, game).is_ok()
-        })
+        .filter(|m| needs_refused(index, m, &refusal).is_some())
+        .collect();
+    if !works_without(&gone) {
+        return Vec::new();
+    }
+    // Then only those the plan needs gone: one that can stay is put back.
+    let mut i = 0;
+    while i < gone.len() {
+        let mut fewer = gone.clone();
+        fewer.remove(i);
+        if works_without(&fewer) {
+            gone = fewer;
+        } else {
+            i += 1;
+        }
+    }
+    gone.into_iter()
         .filter_map(|m| {
-            let version = index
-                .project(&m.id)?
-                .versions
-                .iter()
-                .find(|v| v.version == m.version)?;
-            let dep = version
-                .dependencies
-                .iter()
-                .flatten()
-                .find(|d| !d.optional && refusal.contains(&d.id))?;
             Some(Broken {
                 id: m.id.clone(),
-                needs: format!("{} {}", dep.id, dep.version),
+                needs: needs_refused(index, m, &refusal)?,
             })
         })
         .collect()
+}
+
+/// What installed mod `m` needs that the plan's `refusal` names, as "id version".
+fn needs_refused(index: &Index, m: &index::resolve::InstalledMod, refusal: &str) -> Option<String> {
+    let version = index
+        .project(&m.id)?
+        .versions
+        .iter()
+        .find(|v| v.version == m.version)?;
+    let dep = version
+        .dependencies
+        .iter()
+        .flatten()
+        .find(|d| !d.optional && refusal.contains(&d.id))?;
+    Some(format!("{} {}", dep.id, dep.version))
 }
 
 /// The index read last in this run, without asking the network: for what must not wait.
