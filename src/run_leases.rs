@@ -459,6 +459,17 @@ pub(crate) fn publish(path: &Path) -> Result<(), Error> {
     Ok(())
 }
 
+/// Expose a fully written private tree without replacing anything. The directory's lock
+/// identities survive its same-volume rename. The caller holds the cache publication fence.
+pub(crate) fn publish_build(from: &Path, to: &Path) -> Result<(), Error> {
+    use crate::profile_txn::durable;
+    publish(from)?;
+    fs::File::create_new(from.join(".installed"))?;
+    durable::flush_tree(from)?;
+    durable::move_new_directory(from, to)?;
+    Ok(())
+}
+
 /// Register older installations before startup can offer cleanup. Never scan Cargo artifacts.
 pub(crate) fn publish_existing() -> Result<(), Error> {
     let data = crate::backend::data_dir();

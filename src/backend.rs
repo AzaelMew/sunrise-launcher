@@ -1126,16 +1126,6 @@ pub(crate) fn fetch_small(url: &str) -> Result<Option<Vec<u8>>, String> {
     Ok(Some(body))
 }
 
-/// The SHA-256 the release's signed checksums give for `asset`, or why it must not be installed.
-fn signed_digest(tag: &str, asset: &str) -> Result<String, String> {
-    crate::signed::digest(
-        tag,
-        asset,
-        &sunrise_launcher_release_verify::trusted_keys_for(GAME_REPO),
-        fetch_small,
-    )
-}
-
 /// Downloads `url` into `to`; the file is kept only if its SHA-256 is `sha256`, the signed (or
 /// pinned) one. A `size` of 0 takes the server's Content-Length for the progress.
 pub(crate) fn download(
@@ -1220,88 +1210,33 @@ fn unpack(archive: &Path, url: &str, to: &Path) -> Result<(), String> {
 /// Downloads one release, checks it against its signed checksums and unpacks it; `progress` gets
 /// the fraction done.
 pub fn install(release: &Release, progress: impl Fn(f32)) -> Result<(), String> {
-    let tag = release.tag.as_str();
-    let settings = Settings::load();
-    let assets = game_assets_for(
-        std::env::consts::OS,
-        native_windows_architecture(),
-        std::env::consts::ARCH,
-        settings.game_architecture,
-    );
-    let (asset, fallback) = assets.map_or((ASSET, GAME_FALLBACK), |(asset, fallback)| {
-        (Some(asset), fallback)
-    });
-    let asset = asset_installed(release, asset, fallback).ok_or_else(|| {
-        crate::i18n::trf(
-            "{tag} has no build for the selected game architecture.",
-            &[("tag", tag)],
-        )
-        .to_string()
-    })?;
-    let sha256 = match &release.nightly {
-        // Signed for its own version (SHA256SUMS.v2.sig), which its title names and it installs as;
-        // served under its own GitHub tag. A title that doesn't parse strictly is refused: nothing
-        // signs GitHub's publication time.
-        Some(github_tag) => {
-            let version = crate::signed::title_version(github_tag, &release.name)
-                .filter(|v| *v == release.tag)
-                .ok_or_else(|| {
-                    crate::i18n::trf(
-                        "This Nightly's title ({title}) doesn't name its date and commit as Sunrise \
-                         signs them, so it can't be checked: it was not installed.",
-                        &[("title", &format!("{:?}", release.name))],
-                    )
-                })?;
-            crate::signed::build_digest(
-                github_tag,
-                &version,
-                asset,
-                &sunrise_launcher_release_verify::trusted_keys_for(GAME_REPO),
-                fetch_small,
-            )?
-        }
-        None if is_game_tag(tag) => signed_digest(tag, asset)?,
-        None => return Err(format!("{tag} is not a Sunrise release.")),
-    };
-    install_as(
-        release,
-        tag,
-        &sha256,
-        selected_game_architecture(&settings),
-        progress,
-    )?;
-    // An older build publishes no release file; `played` then reads its research-lock.json.
-    let source = release.nightly.as_deref().unwrap_or(tag);
-    let bytes = fetch_small(&crate::signed::asset_url(source, RELEASE_FILE));
-    if let (Ok(Some(bytes)), Ok(sha256)) = (bytes, release_file_digest(release, source)) {
-        let _ = keep_release_file(&version_dir(tag), &bytes, &sha256);
-    }
-    Ok(())
+    let download = installation::GameDownload::select(release)?;
+    let proof = download.prove(&release.tag)?;
+    download.install(&release.tag, &proof, progress)
 }
 
 /// The build's facts a launcher reads first (docs/api/release-file.md), signed beside its archives.
 const RELEASE_FILE: &str = "sunrise-release.json";
-
-/// [`RELEASE_FILE`]'s signed digest in `release`, published under the GitHub tag `source`.
-fn release_file_digest(release: &Release, source: &str) -> Result<String, String> {
-    match &release.nightly {
-        Some(_) => crate::signed::build_digest(
-            source,
-            &release.tag,
-            RELEASE_FILE,
-            &sunrise_launcher_release_verify::trusted_keys_for(GAME_REPO),
-            fetch_small,
-        ),
-        None => signed_digest(source, RELEASE_FILE),
-    }
-}
 
 /// Keeps `bytes` as the installed build's [`RELEASE_FILE`] in `dir` when they are the signed `sha256`'s.
 fn keep_release_file(dir: &Path, bytes: &[u8], sha256: &str) -> Result<(), String> {
     if sunrise_launcher_release_verify::sha256_hex(bytes) != sha256 {
         return Err(format!("{RELEASE_FILE}: not the signed file"));
     }
-    fs::write(dir.join(RELEASE_FILE), bytes).map_err(|e| format!("{RELEASE_FILE}: {e}"))
+    let file = dir.join(RELEASE_FILE);
+    match fs::File::create_new(&file) {
+        Ok(mut file) => file.write_all(bytes),
+        Err(error)
+            if error.kind() == std::io::ErrorKind::AlreadyExists
+                && fs::symlink_metadata(&file)
+                    .is_ok_and(|meta| meta.is_file() && !crate::native_cache::linked(&meta))
+                && fs::read(&file).is_ok_and(|existing| existing == bytes) =>
+        {
+            Ok(())
+        }
+        Err(error) => Err(error),
+    }
+    .map_err(|e| format!("{RELEASE_FILE}: {e}"))
 }
 
 /// The asset `release` installs from: the fallback when [`game_releases_with`] took it (its file
@@ -1329,8 +1264,7 @@ pub use developer_play::client_as;
 
 /// Downloads `release`'s archive for this platform, checks it against `sha256` (its signed
 /// checksum), and unpacks it as the installed version `tag`.
-mod installation;
-pub(crate) use installation::install_as;
+pub(crate) mod installation;
 
 pub fn remove(tag: &str) -> Result<(), String> {
     // A native build's base keeps its prepared data, so it stays while one is installed.

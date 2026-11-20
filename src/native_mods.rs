@@ -2400,8 +2400,17 @@ mod tests {
                 prerelease: false,
                 nightly: None,
             };
-            backend::install_as(&release, tag, &sha256, None, |_| {}).unwrap();
+            use backend::installation::install_as;
+            install_as(&release, tag, &sha256, None, None, |_| {}).unwrap();
             server.join().unwrap();
+            // The server is gone. An exact retry is local; even a request with a
+            // different proof must not remove the bytes that already occupy this name.
+            install_as(&release, tag, &sha256, None, None, |_| {}).unwrap();
+            assert!(install_as(&release, tag, &"c".repeat(64), None, None, |_| {}).is_err());
+            assert_eq!(
+                fs::read(backend::version_dir(tag).join(backend::CLIENT)).unwrap(),
+                b"release game"
+            );
             // `sunrise-launcher prepare` writes the resources from the player's own Minecraft.
             let resources = backend::resources(tag);
             fs::create_dir_all(&resources).unwrap();

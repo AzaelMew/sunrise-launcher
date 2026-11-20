@@ -2,7 +2,7 @@
 //! This layer doesn't select a build, inspect the network or decide what mods a player wants.
 //! Existing launcher routes are not cut over to this record until their replacements can all
 //! observe the same admission and committed generation.
-mod durable;
+pub(crate) mod durable;
 mod progress;
 
 use cap_fs_ext::MetadataExt;
