@@ -712,13 +712,13 @@ impl Launcher {
             (true, Some((mods, setups))) => (
                 match (mods, setups) {
                     (0, _) => tr("No mod with native code is turned on. Sunrise will ask again before the next one.").to_string(),
-                    (1, _) => tr("This also turns off your one mod with native code. Turn it back on in Mods; Sunrise asks again then.").to_string(),
+                    (1, _) => tr("Sunrise will ask again before running your one mod with native code. Your mod selection won't change.").to_string(),
                     (_, 1) => trf(
-                        "This also turns off {mods} mods with native code. Turn them back on in Mods; Sunrise asks again then.",
+                        "Sunrise will ask again before running your {mods} mods with native code. Your mod selection won't change.",
                         &[("mods", &mods.to_string())],
                     ),
                     _ => trf(
-                        "This also turns off {mods} mods with native code in {profiles} profiles. Turn them back on in each profile's Mods; Sunrise asks again then.",
+                        "Sunrise will ask again before running {mods} mods with native code in {profiles} profiles. Your mod selection won't change.",
                         &[("mods", &mods.to_string()), ("profiles", &setups.to_string())],
                     ),
                 },

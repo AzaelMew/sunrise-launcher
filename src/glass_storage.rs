@@ -2,7 +2,6 @@
 use super::*;
 
 use storage::Category;
-use sunrise_launcher::browser;
 
 impl Launcher {
     pub(super) fn refresh_storage(&mut self, clear: Option<Category>, all: bool) {
@@ -61,49 +60,17 @@ impl Launcher {
         cx.notify();
     }
 
-    /// Takes the permission back (saved first: nothing changes if it can't be), then switches
-    /// every native mod off, on a worker; a build card still open is cleared, so its buttons ask
-    /// again rather than fail.
+    /// Revoke permission without changing what the player selected in any profile.
     pub(crate) fn turn_off_native_mods(&mut self, cx: &mut Context<Self>) {
         self.storage_revoke = None;
-        if let Err(error) = self.settings.revoke_native_mods() {
-            self.storage_revoke_error = Some(error);
-            cx.notify();
-            return;
-        }
-        self.native_error = None;
-        self.native_worlds = None;
-        self.native_failed_mods.clear();
-        let task = cx.background_executor().spawn(async move {
-            let mut failure = None;
-            for instance in instances::list() {
-                for (id, _, _) in native_status::enabled(&instance.home) {
-                    if let Err(error) = browser::mod_list::set_enabled(&instance.home, &id, false) {
-                        failure.get_or_insert((id, instance.name.clone(), error));
-                    }
-                }
+        match self.settings.revoke_native_mods() {
+            Ok(()) => {
+                self.native_error = None;
+                self.native_worlds = None;
+                self.native_failed_mods.clear();
             }
-            failure
-        });
-        cx.spawn(async move |this, cx| {
-            let failure = task.await;
-            let _ = this.update(cx, |this, cx| {
-                this.storage_revoke_error = failure.map(|(id, instance, error)| {
-                    trf(
-                        "The permission is off, but {mod} in {instance} couldn't be switched off \
-                         ({error}). Switch it off in {instance}'s Installed mods.",
-                        &[
-                            ("mod", &id),
-                            ("instance", &instance),
-                            ("error", error.trim_end_matches('.')),
-                        ],
-                    )
-                });
-                this.instance_mods_changed();
-                cx.notify();
-            });
-        })
-        .detach();
+            Err(error) => self.storage_revoke_error = Some(error),
+        }
         cx.notify();
     }
 }

@@ -278,7 +278,7 @@ fn run(
         .stdin(Stdio::piped())
         .stdout(Stdio::piped());
     let (mut child, errors) = start(command, cancellation, true)?;
-    let result = talk(&mut child, plan, consent, on_mod);
+    let result = talk(&mut child, plan, consent, on_mod, cancellation);
     let status = child.wait();
     let join_stderr = if let Some(proved) = quiescent {
         #[cfg(target_os = "linux")]
@@ -385,6 +385,7 @@ fn talk(
     plan: &str,
     consent: Option<&dyn Fn(&Consent) -> bool>,
     on_mod: &dyn Fn(&str, usize, usize),
+    cancellation: &Cancellation,
 ) -> std::io::Result<Option<Result<Built, Failure>>> {
     let mut input = child.child().stdin.take().expect("piped");
     writeln!(input, "{plan}")?;
@@ -406,6 +407,15 @@ fn talk(
                     proc_macros,
                 };
                 let yes = consent.is_some_and(|ask| ask(&question));
+                // The answer can arrive after revoke and regrant. Bind the affirmative
+                // write, not the dialog, to this attempt's original revision.
+                let _permission = if yes {
+                    cancellation
+                        .publication_guard()
+                        .map_err(std::io::Error::other)?
+                } else {
+                    None
+                };
                 writeln!(input, "{yes}")?;
             }
             Event::Built { built } => return Ok(Some(Ok(built))),

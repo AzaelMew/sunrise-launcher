@@ -1856,8 +1856,7 @@ pub fn build(
     registry_consent: impl Fn(&Consent) -> bool,
     catalogue: impl FnOnce() -> Option<Vec<backend::Release>>,
 ) -> Result<ClientBuild, Failed> {
-    cancellation.check()?;
-    require_consent()?;
+    cancellation.admit_native_work()?;
     if let Some(error) = backend::native_mod_architecture_error() {
         return Err(Failed::Other(error));
     }
@@ -1887,66 +1886,80 @@ pub fn build(
             },
             &progress,
         );
-        // Before using the result (including a cached one), check Stop directly. The UI
-        // may not have received any progress yet.
-        cancellation.check()?;
-        // Every mod with native code was left out: the game is the plain one, as it is. The
-        // instance plays it (following its channel when that is the build the channel gives),
-        // and keeps which mods wait and why.
-        if let Err(Failed::Mods { left, .. }) = &built {
-            let plain = checked_about(base)?.map_or_else(|| base.to_owned(), |about| about.base);
-            isolate::keep(&instance.home, &plain, left)?;
-            let installed = backend::installed();
-            let selected = backend::Settings::load()
-                .selected
-                .filter(|s| installed.contains(s));
-            let pin = plain_pin(
-                instance.channel,
-                &plain,
-                selected.as_deref(),
-                &installed,
-                catalogue,
-                || cancellation.check(),
-            )?;
-            instances::edit(&instance.id, |meta| {
-                let unchanged = meta.version == instance.version
-                    && meta.channel.unwrap_or_default() == instance.channel;
-                if unchanged {
-                    meta.version = pin;
-                }
-            })?;
-            return Ok(ClientBuild::Plain(plain));
-        }
-        let built = built.map_err(|failed| match failed {
-            // "Stay" keeps the build the instance plays now.
-            Failed::Worlds(stake) => Failed::Worlds(Box::new(AtStake {
-                stay: playing(instance),
-                base: base.to_owned(),
-                ..*stake
-            })),
-            other => other,
-        })?;
-        cancellation.check()?;
-        isolate::forget(&instance.home);
-        // A version or channel the player saved while this built wins: the build stays
-        // available, the instance keeps their choice.
+        finish_profile_build(base, instance, cancellation, built, &progress, catalogue)
+    })
+}
+
+/// Apply either legacy pin or plain fallback only under this attempt's original grant.
+fn finish_profile_build(
+    base: &str,
+    instance: &Instance,
+    cancellation: &Cancellation,
+    built: Result<Built, Failed>,
+    progress: &impl Fn(Step),
+    catalogue: impl FnOnce() -> Option<Vec<backend::Release>>,
+) -> Result<ClientBuild, Failed> {
+    // Before using the result (including a cached one), check Stop directly. The UI
+    // may not have received any progress yet.
+    cancellation.check()?;
+    // Every mod with native code was left out: the game is the plain one, as it is. The
+    // instance plays it (following its channel when that is the build the channel gives),
+    // and keeps which mods wait and why.
+    if let Err(Failed::Mods { left, .. }) = &built {
+        let plain = checked_about(base)?.map_or_else(|| base.to_owned(), |about| about.base);
+        let installed = backend::installed();
+        let selected = backend::Settings::load()
+            .selected
+            .filter(|s| installed.contains(s));
+        let pin = plain_pin(
+            instance.channel,
+            &plain,
+            selected.as_deref(),
+            &installed,
+            catalogue,
+            || cancellation.check(),
+        )?;
+        let _permission = cancellation.publication_guard()?;
+        isolate::keep(&instance.home, &plain, left)?;
         instances::edit(&instance.id, |meta| {
             let unchanged = meta.version == instance.version
                 && meta.channel.unwrap_or_default() == instance.channel;
             if unchanged {
-                meta.version = Some(built.version.clone());
+                meta.version = pin;
             }
         })?;
-        // logged() runs central eviction under the retained build lease.
-        if built.plan != Plan::UpToDate {
-            progress(Step::Done {
-                secs: built.secs,
-                profile: built.profile,
-                plan: built.plan,
-            });
+        return Ok(ClientBuild::Plain(plain));
+    }
+    let built = built.map_err(|failed| match failed {
+        // "Stay" keeps the build the instance plays now.
+        Failed::Worlds(stake) => Failed::Worlds(Box::new(AtStake {
+            stay: playing(instance),
+            base: base.to_owned(),
+            ..*stake
+        })),
+        other => other,
+    })?;
+    let permission = cancellation.publication_guard()?;
+    isolate::forget(&instance.home);
+    // A version or channel the player saved while this built wins: the build stays
+    // available, the instance keeps their choice.
+    instances::edit(&instance.id, |meta| {
+        let unchanged = meta.version == instance.version
+            && meta.channel.unwrap_or_default() == instance.channel;
+        if unchanged {
+            meta.version = Some(built.version.clone());
         }
-        Ok(ClientBuild::Native(built.version))
-    })
+    })?;
+    drop(permission);
+    // logged() runs central eviction under the retained build lease.
+    if built.plan != Plan::UpToDate {
+        progress(Step::Done {
+            secs: built.secs,
+            profile: built.profile,
+            plan: built.plan,
+        });
+    }
+    Ok(ClientBuild::Native(built.version))
 }
 
 /// Clearing the pin must play the checked base both in the window and on the command line.
@@ -2020,8 +2033,8 @@ pub fn build_server(
     progress: impl Fn(Step),
     registry_consent: impl Fn(&Consent) -> bool,
 ) -> Result<PathBuf, Failed> {
-    require_consent()?;
     let cancellation = Cancellation::default();
+    cancellation.admit_native_work()?;
     logged(|cache| {
         if output.symlink_metadata().is_ok() {
             return Err(trf(
@@ -3349,6 +3362,44 @@ mod tests {
             assert!(!seen.contains(&now), "{file} is in the key");
             seen.push(now);
         }
+    }
+
+    #[test]
+    fn a_revoked_then_regranted_attempt_cannot_apply_a_cached_build_pin() {
+        let _scratch = scratch_state();
+        let mut settings = backend::Settings::default();
+        settings.allow_native_mods().unwrap();
+        let instance = instances::list()
+            .into_iter()
+            .find(|row| row.id == "sunrise")
+            .unwrap();
+        let cancellation = Cancellation::default();
+        cancellation.admit_native_work().unwrap();
+        settings.revoke_native_mods().unwrap();
+        settings.allow_native_mods().unwrap();
+        let cache_hit = Ok(Built {
+            version: "native-retained-fixture".into(),
+            plan: Plan::UpToDate,
+            profile: Profile::Optimized,
+            secs: 0,
+            left_out: Vec::new(),
+        });
+        let error = finish_profile_build(
+            "v0.0.0",
+            &instance,
+            &cancellation,
+            cache_hit,
+            &|_| panic!("stale work can't complete"),
+            || panic!("cache hit needs no catalogue"),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("Native mod permission changed"), "{error}");
+        let after = instances::list()
+            .into_iter()
+            .find(|row| row.id == "sunrise")
+            .unwrap();
+        assert_eq!(after.version, instance.version);
     }
 
     #[test]

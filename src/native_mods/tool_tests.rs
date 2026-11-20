@@ -121,6 +121,61 @@ fn a_tool_run_reports_its_mods_asks_consent_and_ends_built_or_blamed() {
 }
 
 #[test]
+#[cfg(unix)]
+fn a_regrant_cannot_admit_a_stale_sdk_check_or_registry_yes() {
+    let _scratch = super::super::tests::scratch_state();
+    let mut settings = crate::backend::Settings::default();
+    settings.allow_native_mods().unwrap();
+    let cancellation = Cancellation::default();
+    cancellation.admit_native_work().unwrap();
+    settings.revoke_native_mods().unwrap();
+    settings.allow_native_mods().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let error = ask(
+        fake(dir.path(), &[]),
+        "native-check",
+        &serde_json::json!({}),
+        &cancellation,
+    )
+    .unwrap_err();
+    assert!(error.contains("Native mod permission changed"), "{error}");
+    assert!(!dir.path().join("plan").exists());
+
+    let current = Cancellation::default();
+    current.admit_native_work().unwrap();
+    let settings = RefCell::new(settings);
+    let consent = |_: &Consent| {
+        settings.borrow_mut().revoke_native_mods().unwrap();
+        settings.borrow_mut().allow_native_mods().unwrap();
+        true
+    };
+    let failure = run(
+        fake(dir.path(), &["CONSENT", "EXIT1"]),
+        "{}",
+        Some(&consent),
+        &|_, _, _| unreachable!(),
+        &current,
+        None,
+    )
+    .unwrap_err();
+    assert!(
+        failure.error.contains("Native mod permission changed"),
+        "{}",
+        failure.error
+    );
+    assert_ne!(
+        std::fs::read_to_string(dir.path().join("answer"))
+            .unwrap_or_default()
+            .trim(),
+        "true"
+    );
+    assert!(
+        dir.path().join("plan").is_file(),
+        "the revision was valid at spawn"
+    );
+}
+
+#[test]
 fn build_plan_and_process_use_the_same_private_cargo_home() {
     let dir = tempfile::tempdir().unwrap();
     let workspace = super::super::workspace::Workspace::new(dir.path()).unwrap();
