@@ -11,9 +11,6 @@ use crate::instances;
 use std::{fs, path::Path};
 use sunrise_launcher_release_verify::NIGHTLY;
 
-/// The id of the instance (its folder in `instances/`) the opt-in Nightly played in.
-pub const INSTANCE: &str = "nightly";
-
 /// The version a nightly installs as: `nightly-2026-10-28-0c02067`, from its title
 /// ("Nightly 2026-10-28 · 0c02067"), else its publication date.
 pub fn version_of(release: &Release) -> String {
@@ -248,16 +245,9 @@ fn is_date(text: &str) -> bool {
         })
 }
 
-/// After `version`, a Nightly, installed as an update: the old Nightly instance follows it, and the
-/// older Nightlies go unless the selection or an instance still plays them. Worlds stay.
+/// After a Nightly update, prune old automatic installs that no profile or global selection keeps.
+/// An exact profile pin is a choice, including one in the former opt-in Nightly profile.
 pub fn after_update(version: &str) {
-    let list = instances::list();
-    if list
-        .iter()
-        .any(|i| i.id == INSTANCE && i.version.as_deref().is_some_and(|v| date_of(v).is_some()))
-    {
-        let _ = instances::edit(INSTANCE, |meta| meta.version = Some(version.to_owned()));
-    }
     let selected = backend::Settings::load().selected;
     let pinned: Vec<String> = instances::list()
         .into_iter()

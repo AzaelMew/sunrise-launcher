@@ -962,3 +962,55 @@ fn same_day_rolling_nightly_remains_the_play_target_offline() {
     assert_eq!(result.stdout, CURRENT.as_bytes());
     crate::account::discard_unread_sessions();
 }
+
+#[test]
+fn channel_less_cli_play_refuses_to_fall_through_to_installed_stable() {
+    const ACTOR: &str = "SUNRISE_TEST_NIGHTLY_WITH_ONLY_STABLE";
+    const STABLE: &str = "26.3-0.1.0";
+    if std::env::var_os(ACTOR).is_none() {
+        let root = tempfile::tempdir().unwrap();
+        assert!(Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "instances::tests::channel_less_cli_play_refuses_to_fall_through_to_installed_stable"])
+            .env(ACTOR, "1")
+            .env("SUNRISE_LAUNCHER_HOME", root.path().join("launcher"))
+            .env("SUNRISE_HOME", root.path().join("game"))
+            .status().unwrap().success());
+        return;
+    }
+    put(&backend::version_dir(STABLE).join(".installed"), "");
+    put(
+        &backend::data_dir().join("settings.json"),
+        &format!(r#"{{"selected":"{STABLE}"}}"#),
+    );
+    put(
+        &backend::data_dir().join(FILE),
+        r#"{"instances":{"sunrise":{}}}"#,
+    );
+    let profile = selection().unwrap();
+    assert_eq!(profile.channel, Channel::Nightly);
+    assert!(profile.version.is_none());
+    assert!(profile.resolve_version(None).is_err());
+    assert_eq!(profile.resolve_version(Some(STABLE)).unwrap(), STABLE);
+    assert_eq!(
+        edit(DEFAULT, |meta| meta.version = Some(STABLE.into()))
+            .unwrap()
+            .resolve_version(None)
+            .unwrap(),
+        STABLE
+    );
+
+    // A historical profile named "nightly" has the same exact-pin contract as any other.
+    const OLD: &str = "nightly-2026-11-15-aaaaaaa";
+    const NEW: &str = "nightly-2026-11-16-bbbbbbb";
+    fs::create_dir_all(backend::game_home().join(OWN).join("nightly")).unwrap();
+    put(&backend::version_dir(OLD).join(".installed"), "");
+    edit("nightly", |meta| meta.version = Some(OLD.into())).unwrap();
+    crate::nightly::after_update(NEW);
+    assert_eq!(
+        edit("nightly", |_| {})
+            .unwrap()
+            .resolve_version(None)
+            .unwrap(),
+        OLD
+    );
+}

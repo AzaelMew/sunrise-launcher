@@ -191,6 +191,38 @@ mod tests {
     }
 
     #[test]
+    fn channel_less_home_never_uses_stable_as_its_offline_fallback() {
+        let stable = "26.3-0.1.0".to_owned();
+        let nightly = "nightly-2026-11-18-ccccccc";
+        let installed = [stable.clone()];
+        let releases = [release(nightly, true, true)];
+        let channel = Channel::default();
+        let target =
+            |pin, releases| profile_target(pin, channel, releases, &installed, None, Some(&stable));
+        assert_eq!(channel, Channel::Nightly);
+        assert_eq!(target(None, &[]), None);
+        assert_eq!(target(None, &releases).map(String::as_str), Some(nightly));
+        assert_eq!(target(Some(&stable), &[]), Some(&stable));
+        assert_eq!(
+            profile_target(None, Channel::Stable, &releases, &[], None, None).map(String::as_str),
+            Some(nightly)
+        );
+
+        let legacy = "v2026.10.13".to_owned();
+        assert_eq!(
+            profile_target(
+                None,
+                channel,
+                &[],
+                std::slice::from_ref(&legacy),
+                None,
+                Some(&legacy)
+            ),
+            Some(&legacy)
+        );
+    }
+
+    #[test]
     fn a_pin_names_the_play_target_even_before_installing_it() {
         let pin = "nightly-2026-11-17-bbbbbbb".to_owned();
         let old = "nightly-2026-11-16-aaaaaaa".to_owned();

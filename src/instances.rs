@@ -266,7 +266,7 @@ impl Channel {
             (None, None) if self == Self::Stable => {
                 Self::Nightly.play_target(releases, installed, nightly, selected)
             }
-            (None, None) => selected.filter(|tag| Self::of_build(tag) != Some(Self::Nightly)),
+            (None, None) => selected.filter(|tag| Self::of_build(tag).is_none()),
         }
     }
 
