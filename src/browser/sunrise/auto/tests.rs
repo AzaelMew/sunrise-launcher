@@ -65,6 +65,7 @@ fn index_of(versions: &[(&str, &str, &Path)]) -> Index {
 const PLAY: Context = Context {
     in_pack: false,
     game: GAME,
+    native_allowed: true,
 };
 
 /// The browser's entry for `ruby` at `version`.
@@ -88,7 +89,7 @@ fn entry(version: &str) -> installed::Entry {
 fn version_of(d: Decision) -> Option<String> {
     match d {
         Decision::Update(v) => Some(v.version.clone()),
-        Decision::Skip => None,
+        Decision::Skip | Decision::Remove(_) => None,
     }
 }
 
@@ -115,7 +116,7 @@ fn updates_forward_on_the_same_game_only() {
     );
     let in_pack = Context {
         in_pack: true,
-        game: GAME,
+        ..PLAY
     };
     assert_eq!(to(&entry("1.0.0"), &in_pack), None, "a modpack's profile");
     let native = installed::Entry {
@@ -124,8 +125,17 @@ fn updates_forward_on_the_same_game_only() {
     };
     assert_eq!(
         to(&native, &PLAY),
+        Some("1.2.0".into()),
+        "native mods update too"
+    );
+    let not_allowed = Context {
+        native_allowed: false,
+        ..PLAY
+    };
+    assert_eq!(
+        to(&native, &not_allowed),
         None,
-        "native mods require an explicit update"
+        "until native mods are allowed"
     );
     let data = installed::Entry {
         kind: Kind::DataPack,
@@ -147,9 +157,83 @@ fn updates_forward_on_the_same_game_only() {
         date: String::new(),
     });
     assert_eq!(version_of(decide(&down, &entry("1.2.0"), &PLAY)), None);
-    // Never across Minecraft versions: what is installed was for another game.
-    let other = index_of(&[("1.2.0", GAME, &c), ("1.0.0", "26.2", &a)]);
-    assert_eq!(version_of(decide(&other, &entry("1.0.0"), &PLAY)), None);
+    fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn a_game_switch_moves_each_mod_to_its_newest_fitting_version_and_removes_the_rest() {
+    let dir = scratch("auto-switch");
+    let (a, c) = (
+        ruby(&dir, "1.0.0", &["a"], &[]),
+        ruby(&dir, "1.2.0", &["a"], &[]),
+    );
+    // Installed for the old game, with a version for the new one: it moves.
+    let moves = index_of(&[("1.2.0", GAME, &c), ("1.0.0", "26.2", &a)]);
+    assert_eq!(
+        version_of(decide(&moves, &entry("1.0.0"), &PLAY)),
+        Some("1.2.0".into())
+    );
+    // No version for the new game: removed, and the picker would list it.
+    let none = index_of(&[("1.0.0", "26.2", &a)]);
+    let why = match decide(&none, &entry("1.0.0"), &PLAY) {
+        Decision::Remove(why) => why,
+        other => panic!("{other:?}"),
+    };
+    assert!(why.contains(GAME), "{why}");
+    let kept = [entry("1.0.0")];
+    let gone = removals(&none, &kept, &PLAY, &[]);
+    assert_eq!(gone.len(), 1);
+    assert_eq!(
+        (gone[0].id.as_str(), gone[0].reason.as_str()),
+        ("ruby", why.as_str())
+    );
+    assert!(removals(&moves, &kept, &PLAY, &[]).is_empty());
+    // A native mod is never removed by the index: the SDK check names it.
+    let native = installed::Entry {
+        file: "sunrise-native-mods/ruby.smod".into(),
+        ..entry("1.0.0")
+    };
+    assert!(removals(&none, &[native.clone()], &PLAY, &[]).is_empty());
+    let off = [(
+        "ruby".to_string(),
+        "it uses a function that changed".to_string(),
+    )];
+    assert_eq!(removals(&none, &[native], &PLAY, &off)[0].reason, off[0].1);
+    // Taken down with nothing to move to: removed with the reason.
+    let mut down = index_of(&[("1.0.0", GAME, &a)]);
+    down.revoked.push(index::Revoked {
+        id: "ruby".into(),
+        sha256: Some(index::sha256_file(&a).unwrap()),
+        reason: "Stole saves.".into(),
+        date: String::new(),
+    });
+    let sha = format!("SHA-256:{}", index::sha256_file(&a).unwrap());
+    let taken = installed::Entry {
+        checksum: sha,
+        ..entry("1.0.0")
+    };
+    assert!(
+        matches!(decide(&down, &taken, &PLAY), Decision::Remove(w) if w.contains("Stole saves."))
+    );
+    fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn a_switch_run_removes_the_mods_that_cannot_stay_and_says_so() {
+    let dir = scratch("auto-switch-run");
+    let a = ruby(&dir, "1.0.0", &["a"], &[]);
+    let index = index_of(&[("1.0.0", "26.2", &a)]);
+    let home = dir.join("profile");
+    fs::create_dir_all(home.join("sunrise-mods")).unwrap();
+    fs::copy(&a, home.join("sunrise-mods/ruby.smod")).unwrap();
+    let mut list = installed::Installed::load(&home);
+    list.entries.push(entry("1.0.0"));
+    list.save(&home).unwrap();
+    let report = run_with(&index, true, &home, &PLAY, &|_, _| {});
+    assert_eq!(report.removed.len(), 1, "{report:?}");
+    assert!(installed::Installed::load(&home).entries.is_empty());
+    assert!(!home.join("sunrise-mods/ruby.smod").exists());
+    assert!(report.lines()[0].contains("Ruby"));
     fs::remove_dir_all(&dir).unwrap();
 }
 

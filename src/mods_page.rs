@@ -13,10 +13,10 @@ use sunrise_launcher::native_status;
 
 mod queue;
 
-/// The mods to remove when the build an install started has ended, and the failures to tell
-/// the player about. `brought` are the mods the build was started for; `stopped` is whether
-/// it stopped for a reason outside the mods (every one of them goes); else only those of
-/// `failures` that were among them do, and the build already went on without them.
+/// The mods to remove when a build has ended, and the failures to tell the player about.
+/// `brought` are the mods an install started the build for; `stopped` is whether it stopped
+/// for a reason outside the mods (every one of them goes). Otherwise the build went on without
+/// the mods it listed as `failures`, and they go.
 fn removed_after_build(
     brought: &[String],
     stopped: bool,
@@ -25,10 +25,6 @@ fn removed_after_build(
     if stopped {
         return (brought.to_vec(), Vec::new());
     }
-    let failures: Vec<_> = failures
-        .into_iter()
-        .filter(|f| brought.contains(&f.id))
-        .collect();
     (failures.iter().map(|f| f.id.clone()).collect(), failures)
 }
 
@@ -314,6 +310,7 @@ impl Launcher {
     /// content when enabled ([`auto_update`]), reading the selected instance's list again after.
     pub(super) fn mods_auto_update(&mut self) {
         let enabled = self.settings.auto_updates_mods();
+        let native_allowed = self.settings.native_mods_allowed_at.is_some();
         let list: Vec<AutoTarget> = self
             .instances
             .list
@@ -325,7 +322,7 @@ impl Launcher {
             .collect();
         let tx = self.mods.tx.clone();
         std::thread::spawn(move || {
-            let lines = auto_update(&list, enabled);
+            let lines = auto_update(&list, enabled, native_allowed);
             if !lines.is_empty() {
                 let _ = tx.send(Event::AutoUpdated(lines));
             }
@@ -498,12 +495,15 @@ impl Launcher {
 }
 
 impl Launcher {
-    /// A build ended. The mods its installs brought in that failed to compile are removed, and
-    /// the build already went on without them; if it stopped for another reason (`stopped`),
+    /// A build ended. The mods it left out because they didn't compile or don't fit are
+    /// removed, and the build already went on without them; if it stopped for another reason (`stopped`),
     /// every mod it was started for is removed. Either way nothing broken stays in the list.
     pub(super) fn install_build_ended(&mut self, stopped: Option<String>) {
         let brought = std::mem::take(&mut self.mods.building);
-        if brought.is_empty() {
+        if self
+            .selected_instance()
+            .is_none_or(|i| i.id.starts_with("pack:"))
+        {
             return;
         }
         let home = self.mods.home();
@@ -612,7 +612,11 @@ pub(super) struct AutoTarget {
 
 /// Updates the registry projects of `targets`: Sunrise's own instances only, never a modpack's
 /// profile, whose pack pins its mods. Returns what happened for the page's notice.
-pub(super) fn auto_update(targets: &[AutoTarget], enabled: bool) -> Vec<String> {
+pub(super) fn auto_update(
+    targets: &[AutoTarget],
+    enabled: bool,
+    native_allowed: bool,
+) -> Vec<String> {
     let mut lines = Vec::new();
     for t in targets {
         let i = &t.instance;
@@ -622,6 +626,7 @@ pub(super) fn auto_update(targets: &[AutoTarget], enabled: bool) -> Vec<String> 
         let ctx = sunrise::auto::Context {
             in_pack: sunrise::auto::in_pack(&i.home),
             game: &t.game,
+            native_allowed,
         };
         if let Some(report) = sunrise::auto::run(&i.home, &ctx, enabled, &|_, _| {}) {
             lines.extend(report.lines());
