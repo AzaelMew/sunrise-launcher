@@ -1,0 +1,176 @@
+//! The dedicated CLI must refuse a profile before touching EULA, even on the same build.
+use super::{execute, Cli};
+use clap::Parser;
+use std::{fs, path::Path, process::Command};
+use sunrise_launcher::backend;
+
+const DIRECTORY: &str = "SUNRISE_TEST_DEDICATED_DIRECTORY";
+const TAG: &str = "nightly-same-build";
+const CLIENT: &str = if cfg!(windows) {
+    "sunrise-client.exe"
+} else {
+    "sunrise-client"
+};
+
+fn link_dir(target: &Path, alias: &Path) {
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(target, alias).unwrap();
+    #[cfg(windows)]
+    assert!(Command::new("cmd.exe")
+        .args(["/d", "/c", "mklink", "/J"])
+        .arg(alias)
+        .arg(target)
+        .status()
+        .unwrap()
+        .success());
+}
+
+#[test]
+fn dedicated_cli_serves_a_separate_folder_but_refuses_profile_aliases_before_eula() {
+    let root = tempfile::tempdir().unwrap();
+    let root = root.path();
+    let game = root.join("game");
+    let data = root.join("launcher");
+    let own = game.join("instances/friends");
+    let pack = game.join("sunrise-packs/adventures/home");
+    let external = root.join("external-profile");
+    let alias = root.join("alias");
+    let accepted = root.join("dedicated/new-server");
+    let image = data.join("versions").join(TAG);
+    let resources = image
+        .join(".local/sunrise-client")
+        .join(backend::PINNED_GAME);
+    for folder in [&own, &pack, &external, &resources] {
+        fs::create_dir_all(folder).unwrap();
+    }
+    link_dir(&own, &alias);
+    link_dir(&external, &game.join("instances/external"));
+    fs::write(image.join(".installed"), []).unwrap();
+    fs::write(resources.join("sunrise-resources.json"), "{}").unwrap();
+    fs::write(
+        data.join("instances.json"),
+        r#"{"instances":{"old-slug":{}}}"#,
+    )
+    .unwrap();
+
+    let source = root.join("actor.rs");
+    fs::write(&source, r#"
+fn main() {
+    let args = std::env::args_os().skip(1).collect::<Vec<_>>();
+    assert_eq!(args.len(), 4);
+    assert_eq!(args[0], "--resources");
+    assert!(std::path::Path::new(&args[1]).join("sunrise-resources.json").is_file());
+    assert_eq!(args[2], "--dedicated");
+    assert_eq!(args[3], "--nogui");
+    let expected = std::path::PathBuf::from(std::env::var_os("SUNRISE_TEST_DEDICATED_DIRECTORY").unwrap()).canonicalize().unwrap();
+    assert_eq!(std::env::current_dir().unwrap().canonicalize().unwrap(), expected);
+    assert_eq!(std::path::PathBuf::from(std::env::var_os("SUNRISE_HOME").unwrap()).canonicalize().unwrap(), expected);
+    assert!(std::env::var_os("SUNRISE_ACCOUNT_SESSIONS").is_none());
+    assert!(std::fs::read_to_string("eula.txt").unwrap().contains("eula=true"));
+    std::fs::write("server-ran", "yes").unwrap();
+}
+"#).unwrap();
+    let rustc = std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
+    assert!(Command::new(rustc)
+        .arg(&source)
+        .arg("-o")
+        .arg(image.join(CLIENT))
+        .status()
+        .unwrap()
+        .success());
+
+    let cli = |dir: &Path| {
+        Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "cli::server_tests::dedicated_cli_actor",
+                "--nocapture",
+            ])
+            .env(DIRECTORY, dir)
+            .envs((dir == accepted).then_some(("SUNRISE_TEST_DEDICATED_CHECK_COMMAND", "1")))
+            .env("SUNRISE_HOME", &game)
+            .env("SUNRISE_LAUNCHER_HOME", &data)
+            .env("SUNRISE_LAUNCHER_NO_SELF_UPDATE", "1")
+            .env("SUNRISE_NO_AUDIO", "1")
+            .env("SUNRISE_ACCOUNT_SESSIONS", game.join("sessions"))
+            .output()
+            .unwrap()
+    };
+    for folder in [
+        &game,
+        &own,
+        &pack,
+        &alias,
+        &external,
+        &alias.join("missing"),
+        root,
+    ] {
+        let output = cli(folder);
+        let err = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(1), "{folder:?}: {err}");
+        assert!(
+            err.contains("separate from a game profile"),
+            "{folder:?}: {err}"
+        );
+        assert!(!folder.join("eula.txt").exists());
+        assert!(!folder.join("server-ran").exists());
+    }
+    #[cfg(windows)]
+    {
+        let different_case = game.with_file_name("GAME");
+        let output = cli(&different_case);
+        assert_eq!(output.status.code(), Some(1));
+        assert!(String::from_utf8_lossy(&output.stderr).contains("separate from a game profile"));
+        assert!(!game.join("eula.txt").exists());
+    }
+    let output = cli(&accepted);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(fs::read(accepted.join("server-ran")).unwrap(), b"yes");
+    assert_eq!(
+        fs::read_to_string(data.join("instances.json")).unwrap(),
+        r#"{"instances":{"old-slug":{}}}"#
+    );
+}
+
+#[test]
+fn dedicated_cli_actor() {
+    let Some(dir) = std::env::var_os(DIRECTORY) else {
+        return;
+    };
+    if std::env::var_os("SUNRISE_TEST_DEDICATED_CHECK_COMMAND").is_some() {
+        let dir = Path::new(&dir);
+        let game = backend::game_home();
+        let mut command = backend::server_command(TAG, dir).unwrap();
+        backend::verify_server_command(TAG, dir, &command).unwrap();
+        command.env("SUNRISE_HOME", &game);
+        assert!(backend::verify_server_command(TAG, dir, &command).is_err());
+        let mut command = backend::server_command(TAG, dir).unwrap();
+        command.current_dir(&game);
+        assert!(backend::verify_server_command(TAG, dir, &command).is_err());
+        let mut command = backend::server_command(TAG, dir).unwrap();
+        command.arg("--home").arg(&game);
+        assert!(backend::verify_server_command(TAG, dir, &command).is_err());
+    }
+    let args = [
+        "sunrise-launcher",
+        "server",
+        "--version",
+        TAG,
+        "--accept-eula",
+        "--dir",
+    ];
+    let cli =
+        Cli::try_parse_from(args.into_iter().map(std::ffi::OsString::from).chain([dir])).unwrap();
+    let code = match execute(cli.command.unwrap(), cli.json) {
+        Ok(code) => code,
+        Err(error) => {
+            eprintln!("{error}");
+            1
+        }
+    };
+    std::process::exit(code);
+}

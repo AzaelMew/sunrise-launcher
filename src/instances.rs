@@ -395,6 +395,31 @@ pub fn list() -> Vec<Instance> {
     list_in(&backend::game_home(), &backend::data_dir())
 }
 
+/// Read the profile directories without the migrations or housekeeping of `list`.
+pub(crate) fn profile_homes_strict(game: &Path) -> Result<Vec<PathBuf>, String> {
+    let mut homes = Vec::new();
+    for (directory, pack) in [(OWN, false), ("sunrise-packs", true)] {
+        let root = game.join(directory);
+        let error = |e: std::io::Error| format!("{}: {e}", root.display());
+        let entries = match fs::read_dir(&root) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => return Err(error(e)),
+        };
+        for entry in entries {
+            let path = entry.map_err(error)?.path();
+            let meta = fs::symlink_metadata(&path).map_err(error)?;
+            if meta.is_dir() || sunrise_launcher_smod::runtime_leases::linked(&meta) {
+                if pack {
+                    homes.push(registry_pack::home(&path));
+                }
+                homes.push(path);
+            }
+        }
+    }
+    Ok(homes)
+}
+
 fn list_in(game_home: &Path, data: &Path) -> Vec<Instance> {
     let mut store = Store::load(data);
     let mut found = vec![(

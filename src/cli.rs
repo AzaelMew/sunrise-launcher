@@ -1452,6 +1452,7 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
                 sunrise_launcher::jars::Permission::headless(allow_jar_downloads),
             )
             .map_err(|error| error.to_string())?;
+            backend::verify_server_command(&tag, &dir, &cmd)?;
             return attached(cmd);
         }
         Cmd::Notes { tag } => {
@@ -3048,6 +3049,8 @@ fn modpack(action: ModpackCmd, as_json: bool) -> Result<i32, String> {
     Ok(0)
 }
 
+#[cfg(test)]
+mod server_tests;
 #[cfg(test)]
 mod storage_tests;
 #[cfg(test)]
