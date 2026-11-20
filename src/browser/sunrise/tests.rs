@@ -657,7 +657,7 @@ fn an_install_with_native_code_keeps_its_record_until_the_build_ends() {
     assert!(!record.exists());
     // The build worked: the install is done, and a restart changes nothing.
     install();
-    lease.done(&lease.mark_build("tag").unwrap());
+    lease.done(&lease.mark_build("tag").unwrap()).unwrap();
     assert!(!record.exists());
     drop(lease);
     assert!(txn::recover(&home));

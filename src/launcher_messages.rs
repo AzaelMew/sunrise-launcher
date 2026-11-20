@@ -323,14 +323,18 @@ impl Launcher {
                     }
                     // What an install's build cost it: the mods that failed to compile go, or
                     // all of them when the build stopped for another reason.
-                    self.install_build_ended(crate::mods_page::BuildEnd::of(&result));
+                    let reaped = self.install_build_ended(crate::mods_page::BuildEnd::of(&result));
                     // The build window's build ends as the build did. With its window closed,
                     // the strip says how it went for a moment.
                     let shown = self.ui.sheet == Some(crate::sheets::Sheet::ModBuild);
                     if no_consent {
                         self.ui.mods.build = None;
                     } else if let Some(run) = &mut self.ui.mods.build {
-                        match (result.is_ok(), cancelled, &self.native_error) {
+                        match (
+                            result.is_ok() && reaped,
+                            cancelled && reaped,
+                            &self.native_error,
+                        ) {
                             (true, ..) => run.done(),
                             (false, true, _) => run.cancelled(),
                             (false, false, error) => run.stopped(
@@ -358,7 +362,7 @@ impl Launcher {
                         .map(|i| (i.id.as_str(), self.version_of(i).map(String::as_str)));
                     // A question or a list of mods to remove that the build left stops this Play.
                     let decision_open =
-                        !self.mods.removal.is_empty() || self.mods.world_ask.is_some();
+                        !reaped || !self.mods.removal.is_empty() || self.mods.world_ask.is_some();
                     if let Some(play) = crate::mods::build_run::play_on_finish(
                         wanted,
                         &result,

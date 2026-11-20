@@ -946,73 +946,69 @@ impl Launcher {
     /// A build ended. The mods it left out because they didn't compile or don't fit are
     /// listed to go (`continue_removal`); the build already went on without them. If it stopped
     /// for another reason, every mod it touched is put back as it was, and the ones it added go
-    /// at once. A build waiting for the player's answer (worlds, permission) ends nothing yet.
-    pub(super) fn install_build_ended(&mut self, end: BuildEnd) {
+    /// at once. A build waiting for the player ends nothing yet. False means reaping failed:
+    /// report the error rather than reporting a completed install or proceeding to Play.
+    pub(super) fn install_build_ended(&mut self, end: BuildEnd) -> bool {
         if matches!(end, BuildEnd::Pending) {
-            return;
+            return true;
         }
         let Some((lease, attempts)) = self.native_attempts.take() else {
-            return;
+            return true;
         };
-        let (_, brought) = std::mem::take(&mut self.mods.building);
-        let Some(instance) = self
-            .native_for
-            .as_ref()
-            .and_then(|id| self.instances.list.iter().find(|i| &i.id == id))
-            .cloned()
-        else {
-            if let Err(error) = lease.undo(&attempts) {
-                self.mods.message = Some(Err(error));
-            }
-            return;
-        };
-        if instance.is_pack_profile() {
-            return;
-        }
-        let stopped = match end {
-            BuildEnd::Stopped(why) => Some(why),
-            _ => None,
-        };
-        let failures = match &stopped {
-            Some(_) => Vec::new(),
-            None => native_mods::build_failures(&self.native_left_out_of(&instance)),
-        };
-        match build_cost(&brought, stopped.is_some(), failures) {
-            BuildCost::Nothing => lease.done(&attempts),
-            BuildCost::Rollback(ids) => {
-                // Every install since the build began goes back as the record says. If that
-                // can't be done the record stays, the profile takes no install until it can,
-                // and the player is told.
-                self.mods.message = match lease.undo(&attempts) {
-                    Ok(()) => stopped.clone().map(Err),
-                    Err(e) => Some(Err(e)),
+        let (id, brought) = std::mem::take(&mut self.mods.building);
+        let instance_id = self.native_for.clone().unwrap_or(id);
+        let instance = self.instances.list.iter().find(|i| i.id == instance_id);
+        let reaped = match instance {
+            None => lease.undo(&attempts),
+            Some(instance) if instance.is_pack_profile() => Ok(()),
+            Some(instance) => {
+                let stopped = match end {
+                    BuildEnd::Stopped(why) => Some(why),
+                    _ => None,
                 };
-                self.mods.failed = Some(InstallFailure::Interrupted {
-                    ids,
-                    reason: stopped.clone().unwrap_or_default(),
-                });
-                self.mods.reload_installed();
+                let failures = match &stopped {
+                    Some(_) => Vec::new(),
+                    None => native_mods::build_failures(&self.native_left_out_of(instance)),
+                };
+                match build_cost(&brought, stopped.is_some(), failures) {
+                    BuildCost::Nothing => lease.done(&attempts),
+                    BuildCost::Rollback(ids) => {
+                        let result = lease.undo(&attempts);
+                        self.mods.message = stopped.clone().map(Err);
+                        self.mods.failed = Some(InstallFailure::Interrupted {
+                            ids,
+                            reason: stopped.unwrap_or_default(),
+                        });
+                        self.mods.reload_installed();
+                        result
+                    }
+                    BuildCost::Failures(failures) => lease.done(&attempts).map(|()| {
+                        let entries = installed::Installed::load(&instance.home).entries;
+                        let titles: HashMap<String, String> = entries
+                            .iter()
+                            .map(|e| (e.project.clone(), e.title.clone()))
+                            .collect();
+                        let items = failures.into_iter().map(|f| removal::Item {
+                            title: titles.get(&f.id).cloned().unwrap_or_else(|| f.id.clone()),
+                            id: f.id,
+                            reason: f.reason,
+                            log: Some(f.log),
+                            checksum: String::new(),
+                        });
+                        self.mods.removal.add(&instance_id, &entries, items);
+                    }),
+                }
             }
-            BuildCost::Failures(failures) => {
-                let entries = installed::Installed::load(&instance.home).entries;
-                let titles: std::collections::HashMap<String, String> = entries
-                    .iter()
-                    .map(|e| (e.project.clone(), e.title.clone()))
-                    .collect();
-                let items = failures.into_iter().map(|f| removal::Item {
-                    title: titles.get(&f.id).cloned().unwrap_or_else(|| f.id.clone()),
-                    id: f.id,
-                    reason: f.reason,
-                    log: Some(f.log),
-                    checksum: String::new(),
-                });
-                self.mods.removal.add(&instance.id, &entries, items);
-                lease.done(&attempts);
-            }
+        };
+        if let Err(error) = reaped {
+            self.mods.message = Some(Err(error.clone()));
+            self.native_error = Some(error);
+            return false;
         }
         if !lease.outstanding() {
-            self.mods.install_owners.remove(&instance.id);
+            self.mods.install_owners.remove(&instance_id);
         }
+        true
     }
 
     /// Continue on the removal sheet: the listed mods go. Those whose build failed are

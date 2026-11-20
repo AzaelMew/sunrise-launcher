@@ -100,8 +100,8 @@ impl Lease {
         undo(&self.home, ids)
     }
 
-    pub fn done(&self, ids: &[String]) {
-        done(&self.home, ids);
+    pub fn done(&self, ids: &[String]) -> Result<(), String> {
+        done(&self.home, ids, write)
     }
 }
 
@@ -530,22 +530,36 @@ fn mark_build(home: &Path, tag: &str) -> Result<Vec<String>, String> {
     Ok(ids)
 }
 
-/// The build worked: the installs `ids` names are done, and their backups go. A later attempt
-/// stays.
-fn done(home: &Path, ids: &[String]) {
-    let Ok(_lock) = locked(home) else {
-        return;
-    };
-    if let Ok(Some(mut record)) = read(home) {
-        record.attempts.retain(|attempt| {
-            let finished = ids.contains(&attempt.id);
-            if finished {
-                let _ = fs::remove_dir_all(home.join(&attempt.staging));
-            }
-            !finished
-        });
-        let _ = write(home, &record);
+/// The build worked: the installs `ids` names leave the record before any backups are deleted.
+/// If persistence fails, retain every backup; a later build/recovery may still need it.
+fn done(
+    home: &Path,
+    ids: &[String],
+    persist: impl FnOnce(&Path, &Record) -> Result<(), String>,
+) -> Result<(), String> {
+    if ids.is_empty() {
+        return Ok(());
     }
+    let _lock = locked(home)?;
+    let Some(mut record) = read(home)? else {
+        return Ok(());
+    };
+    let mut finished = Vec::new();
+    record.attempts.retain(|attempt| {
+        if ids.contains(&attempt.id) {
+            finished.push(home.join(&attempt.staging));
+            false
+        } else {
+            true
+        }
+    });
+    if !finished.is_empty() {
+        persist(home, &record)?;
+        for staging in finished {
+            let _ = fs::remove_dir_all(staging);
+        }
+    }
+    Ok(())
 }
 
 /// Whether installs of this profile wait for a build, or a restore is still owed.
@@ -672,11 +686,32 @@ mod tests {
         let id = scene.begin(&staged);
         scene.publish(&staged, 3);
         commit(scene.home(), &id, staged, true).unwrap();
-        done(scene.home(), &[id]);
+        done(scene.home(), &[id], write).unwrap();
         assert!(!kept.exists() && !scene.home().join(FILE).exists());
         assert_eq!(fs::read_to_string(&scene.dep).unwrap(), "flywheel 0.4");
         assert!(recover(scene.home()));
         assert_eq!(fs::read_to_string(&scene.dep).unwrap(), "flywheel 0.4");
+    }
+
+    #[test]
+    fn failed_build_commit_keeps_the_record_and_undo_files() {
+        let scene = scene();
+        let lease = Lease::acquire(scene.home()).unwrap();
+        let id = waiting(&scene);
+        let ids = lease.mark_build("tag").unwrap();
+        let record = scene.home().join(FILE);
+        let before = fs::read(&record).unwrap();
+        let backup = scene.home().join(&id).join("old-0");
+        let fail = |_: &Path, _: &Record| Err("cannot persist the commit".into());
+        assert_eq!(
+            done(scene.home(), &ids, fail),
+            Err("cannot persist the commit".into())
+        );
+        assert_eq!(fs::read(&record).unwrap(), before);
+        assert_eq!(fs::read_to_string(&backup).unwrap(), "flywheel 0.3");
+        drop(lease);
+        assert!(recover(scene.home()));
+        scene.is_as_it_was();
     }
 
     #[test]
@@ -857,12 +892,12 @@ mod tests {
             "retry uses the same batch"
         );
         assert!(lease.mark_build("other").is_err());
-        lease.done(&build);
+        lease.done(&build).unwrap();
         let newer_id = begin_second().unwrap();
         fs::write(&newer, "newer").unwrap();
         commit(scene.home(), &newer_id, second, true).unwrap();
         // A late callback for the first batch cannot touch the next batch.
-        lease.done(&build);
+        lease.done(&build).unwrap();
         lease.undo(&build).unwrap();
         assert!(lease.outstanding() && newer.is_file());
         lease.undo(&[newer_id]).unwrap();
