@@ -131,6 +131,8 @@ pub(super) struct Mods {
     pub(super) message: Option<Result<String, String>>,
     /// What waits for the install and build slot.
     queue: queue::Queue,
+    /// The profile the install that runs was asked for.
+    running: Option<queue::Target>,
     /// The question a switch or update asks before it removes mods saved worlds use. Nothing
     /// is removed until it is answered, and the answer defaults to Stay.
     pub(crate) world_ask: Option<WorldAsk>,
@@ -263,6 +265,7 @@ impl Mods {
             busy: None,
             message: None,
             queue: Default::default(),
+            running: None,
             building: Vec::new(),
             world_ask: None,
             removal: None,
@@ -293,6 +296,7 @@ impl Launcher {
         let mut loaded = Vec::new();
         let mut done = false;
         let mut native = Vec::new();
+        let mut native_in = None;
         let mut play_ready = false;
         while let Ok(event) = self.mods.rx.try_recv() {
             changed = true;
@@ -308,6 +312,7 @@ impl Launcher {
                 Event::Done(result) => {
                     done = true;
                     let id = m.busy.take().map(|(id, ..)| id);
+                    native_in = m.running.take().map(|t| t.instance);
                     m.card_error = match (&result, &id) {
                         (Err(why), Some(id)) => Some(CardError {
                             title: sunrise::known_index()
@@ -372,8 +377,8 @@ impl Launcher {
                 self.resume_play_with(intent, true);
             }
         }
-        if !native.is_empty() {
-            self.mods.queue.build_after_install(native);
+        if let Some(instance) = native_in.filter(|_| !native.is_empty()) {
+            self.mods.queue.build_after_install(&instance, native);
         }
         // Installs that waited start in order. The build that finishes them goes through the
         // Build button's entry, so its own planner decides what to build: native mods share a
@@ -384,21 +389,19 @@ impl Launcher {
             self.mods_lock(),
             Some(crate::mods::Lock::GameRunning | crate::mods::Lock::Preparing)
         );
-        let step =
-            self.mods
-                .queue
-                .next(self.mods.busy.is_some(), self.native_step.is_some(), locked);
+        let selected = self
+            .selected_instance()
+            .map(|i| i.id.clone())
+            .unwrap_or_default();
+        let step = self.mods.queue.next(
+            &selected,
+            self.mods.busy.is_some(),
+            self.native_step.is_some(),
+            locked,
+        );
         changed |= step.is_some();
         match step {
-            Some(queue::Step::Install(queue::Request::One {
-                source,
-                id,
-                known,
-                shown,
-            })) => self.mods_install(source, id, known.map(|p| *p), shown),
-            Some(queue::Step::Install(queue::Request::Many(ids, shown))) => {
-                self.mods_install_many(ids, shown)
-            }
+            Some(queue::Step::Install(request)) => self.start_install(request),
             Some(queue::Step::Build(ids)) => {
                 self.mods.building = ids;
                 self.build_native()
@@ -511,16 +514,56 @@ impl Launcher {
                 return;
             }
         }
-        // Behind an install or a build, and behind what already waits: one at a time, in order.
-        if self.mods.busy.is_some() || self.native_step.is_some() || self.mods.queue.is_waiting() {
-            self.mods.queue.push(queue::Request::One {
+        let request = queue::Request::One {
+            target: self.queue_target(),
+            source,
+            id,
+            known: known.map(Box::new),
+        };
+        self.submit_install(request);
+    }
+
+    /// The profile an install asked for now is bound to.
+    fn queue_target(&self) -> queue::Target {
+        queue::Target {
+            instance: self
+                .selected_instance()
+                .map(|i| i.id.clone())
+                .unwrap_or_default(),
+            home: self.mods.home(),
+            game: self.mods_game(),
+        }
+    }
+
+    /// Behind an install or a build, and behind what already waits: one at a time, in order.
+    /// What the queue hands out later starts through [`Self::start_install`] and is not asked
+    /// again.
+    fn submit_install(&mut self, request: queue::Request) {
+        let busy = self.mods.busy.is_some() || self.native_step.is_some();
+        if let Some(request) = self.mods.queue.submit(request, busy) {
+            self.start_install(request);
+        }
+    }
+
+    fn start_install(&mut self, request: queue::Request) {
+        match request {
+            queue::Request::One {
+                target,
                 source,
                 id,
-                known: known.map(Box::new),
-                shown,
-            });
-            return;
+                known,
+            } => self.start_install_one(target, source, id, known.map(|p| *p)),
+            queue::Request::Many(target, ids, shown) => self.start_install_many(target, ids, shown),
         }
+    }
+
+    fn start_install_one(
+        &mut self,
+        target: queue::Target,
+        source: SourceId,
+        id: String,
+        known: Option<Project>,
+    ) {
         self.mods.message = None;
         self.mods.card_error = None;
         self.mods.busy = Some((id.clone(), format!("Asking {}…", source.label()), 0.));
@@ -528,8 +571,8 @@ impl Launcher {
         let everything =
             self.mods.everything || self.mods.browse.filters.other_version(&self.mods.game);
         let tx = self.mods.tx.clone();
-        let home = self.mods.home();
-        let game = self.mods_game();
+        let queue::Target { home, game, .. } = target.clone();
+        self.mods.running = Some(target);
         let world = self.mods.world.clone().and_then(|path| {
             let (_, name) = self.mods.worlds.iter().find(|(p, _)| *p == path)?;
             Some((path, name.clone()))
@@ -828,17 +871,20 @@ impl Launcher {
                 .set_offset(gpui::point(px(0.), px(0.)));
             return;
         }
-        if self.mods.busy.is_some() || self.native_step.is_some() || self.mods.queue.is_waiting() {
-            self.mods.queue.push(queue::Request::Many(ids, shown));
-            return;
-        }
+        let request = queue::Request::Many(self.queue_target(), ids, shown);
+        self.submit_install(request);
+    }
+
+    fn start_install_many(&mut self, target: queue::Target, ids: Vec<String>, shown: String) {
         self.mods.message = None;
         self.mods.busy = Some((
             shown.clone(),
             tr("Asking the Sunrise registry…").to_string(),
             0.,
         ));
-        let (tx, home, game) = (self.mods.tx.clone(), self.mods.home(), self.mods_game());
+        let tx = self.mods.tx.clone();
+        let queue::Target { home, game, .. } = target.clone();
+        self.mods.running = Some(target);
         std::thread::spawn(move || {
             let result = (|| -> Result<Finished, String> {
                 // The whole set is planned once first: a conflict between picks refuses all of
