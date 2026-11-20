@@ -60,9 +60,14 @@ impl Drop for Lease {
 
 impl Lease {
     pub fn try_acquire(home: &Path) -> Result<Option<Self>, String> {
-        fs::create_dir_all(home).map_err(|e| format!("{}: {e}", home.display()))?;
-        build::require_dir(home)?;
-        let path = home.join(".install-txn.lock");
+        let pack_owner = super::pack::owner_file(home)?;
+        let path = if let Some(path) = &pack_owner {
+            path.clone()
+        } else {
+            fs::create_dir_all(home).map_err(|e| format!("{}: {e}", home.display()))?;
+            build::require_dir(home)?;
+            home.join(".install-txn.lock")
+        };
         match fs::symlink_metadata(&path) {
             Ok(meta) if meta.is_file() && build::regular(&meta) => {}
             Err(e) if e.kind() == io::ErrorKind::NotFound => {}
@@ -89,6 +94,11 @@ impl Lease {
             Ok(()) => {}
             Err(fs::TryLockError::WouldBlock) => return Ok(None),
             Err(fs::TryLockError::Error(e)) => return Err(fail(e)),
+        }
+        if pack_owner.is_some() {
+            // The pack may have been detached between identifying it and opening the owner.
+            // Never recreate its home, and keep the guard outside the directory being moved.
+            build::require_dir(home)?;
         }
         Ok(Some(Self {
             home: home.to_path_buf(),
