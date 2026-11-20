@@ -178,6 +178,33 @@ fn fit_field(input: &mut line_edit::LineEdit, window_width: f32) {
     input.show(field_chars(window_width));
 }
 
+/// Writes a failed launcher update check's full error (it holds URLs and local addresses) to
+/// the launcher's log through `log`; the window shows [`launcher_check_line`]'s plain line.
+pub(crate) fn log_launcher_check_failure(error: &str, log: impl FnOnce(&str)) {
+    log(&format!("Launcher update check failed: {error}"));
+}
+
+/// What the launcher's own update row says when no update is found: a plain line for a failure
+/// (a retry is offered beside it, and the detail is in the log), "checked just now" for a
+/// minute after an explicit check, or just "up to date" once any check has run.
+fn launcher_check_line(
+    error: Option<&str>,
+    checked_now: Option<Instant>,
+    checked_before: bool,
+) -> (String, bool) {
+    match error {
+        Some(_) => (
+            tr("Couldn't check for updates. Check your connection and try again.").to_string(),
+            true,
+        ),
+        None if checked_now.is_some_and(|at| at.elapsed() < Duration::from_secs(60)) => {
+            (tr("up to date · checked just now").to_string(), false)
+        }
+        None if checked_before => (tr("up to date").to_string(), false),
+        None => (String::new(), false),
+    }
+}
+
 impl Launcher {
     /// A [`row`] whose controls are wide: in a narrow window they would leave the words a
     /// column a syllable wide, so there they go under the words.
@@ -723,11 +750,6 @@ impl Launcher {
 
     fn settings_storage(&mut self, cx: &mut Context<Self>) -> Div {
         let game = backend::game_home();
-        let backups = self
-            .selected_instance()
-            .map_or_else(|| game.clone(), |i| i.home.clone())
-            .join("backups");
-        let has_backups = backups.is_dir();
         let files = row(
             tr("Game files and worlds"),
             short(&game),
@@ -735,21 +757,6 @@ impl Launcher {
                 let dir = game.clone();
                 button("alt-open-game", tr("Open folder"))
                     .on_click(move |_, _, cx| glass_toast::open(cx, &dir))
-            }),
-        );
-        let open_backups = button("alt-open-backups", tr("Open folder"));
-        let kept = row(
-            tr("World backups"),
-            if has_backups {
-                short(&backups)
-            } else {
-                tr("None yet. Sunrise makes one before a mod change that could harm a world.")
-                    .to_string()
-            },
-            div().child(if has_backups {
-                open_backups.on_click(move |_, _, cx| glass_toast::open(cx, &backups))
-            } else {
-                off(open_backups)
             }),
         );
 
@@ -948,7 +955,7 @@ impl Launcher {
             .flex_col()
             .gap(px(14.))
             .child(group(vec![self.location_row(cx)]))
-            .child(group(vec![files, kept]))
+            .child(group(vec![files]))
             .child(group(cache))
             .children(notes.into_iter().flatten())
     }
@@ -1503,10 +1510,25 @@ impl Launcher {
                         false,
                     )
                 }
-                None if self.checked.is_some() && self.update_error.is_none() => {
-                    (tr("up to date").to_string(), None, false)
+                None if self.checking_updates => (
+                    String::new(),
+                    Some(off(button("alt-launcher-check", tr("Checking…")))),
+                    false,
+                ),
+                None => {
+                    let (about, bad) = launcher_check_line(
+                        self.updates.launcher_error.as_deref(),
+                        self.launcher_checked_now,
+                        self.checked.is_some(),
+                    );
+                    let check = button("alt-launcher-check", tr("Check now")).on_click(
+                        cx.listener(|this, _: &ClickEvent, _, cx| {
+                            this.check_updates(UpdateCheck::ManualLauncher);
+                            cx.notify();
+                        }),
+                    );
+                    (about, Some(check), bad)
                 }
-                None => (String::new(), None, false),
             },
         };
         let mut words = div().flex().flex_col().gap(px(2.));
@@ -1610,6 +1632,43 @@ mod tests {
         assert_eq!(
             idle_update_about("1.2.3", false),
             "Update this launcher with your package manager."
+        );
+    }
+
+    #[test]
+    fn the_launcher_row_says_what_its_check_found() {
+        let now = Some(Instant::now());
+        // A failure is shown as one and is retryable (the row keeps its button); it is never
+        // passed off as up to date, even right after a check.
+        let raw = "No connection: https://api.github.com/repos/sunrise-org/sunrise-launcher/releases?per_page=100 Dns Failed: resolve dns name 'api.github.com:443', and Sunrise's mirror of GitHub couldn't help either (http://127.0.0.1:40319/repos/x answered 500)";
+        let (line, bad) = launcher_check_line(Some(raw), now, true);
+        assert!(bad);
+        for leaked in ["http", "127.0.0.1", "40319", "api.github.com", "500", "Dns"] {
+            assert!(!line.contains(leaked), "{leaked} in {line}");
+        }
+        assert_eq!(
+            line,
+            "Couldn't check for updates. Check your connection and try again."
+        );
+        // The detail goes to the log instead.
+        let mut logged = String::new();
+        log_launcher_check_failure(raw, |l| logged = l.to_string());
+        assert!(
+            logged.contains(raw) && logged.contains("127.0.0.1:40319"),
+            "{logged}"
+        );
+        assert_eq!(
+            launcher_check_line(None, now, true),
+            ("up to date · checked just now".into(), false)
+        );
+        let long_ago = Instant::now().checked_sub(Duration::from_secs(120));
+        assert_eq!(
+            launcher_check_line(None, long_ago, true),
+            ("up to date".into(), false)
+        );
+        assert_eq!(
+            launcher_check_line(None, None, false),
+            (String::new(), false)
         );
     }
 }

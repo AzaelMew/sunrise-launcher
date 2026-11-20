@@ -699,7 +699,7 @@ impl Launcher {
                 saved => format!(
                     "{kept} {}",
                     trf(
-                        "{worlds} is backed up first: opened without the mod, a world loses what the mod added to it, for good.",
+                        "{worlds}: opened without the mod, a world loses what the mod added to it, for good. Back it up first in the game (Edit World, then Make Backup) if you want to keep it.",
                         &[("worlds", &saved.join(", "))],
                     )
                 ),
@@ -722,16 +722,13 @@ impl Launcher {
             cx.notify();
         }));
         let go = (!blocked).then(|| {
-            let back_up = !worlds.is_empty();
             button(
                 "alt-resolve-update",
                 trf("Update without {them}", &[("them", &them)]),
             )
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                 this.close_sheet();
-                // With worlds at stake the worker backs each up and checks the backup before
-                // anything is turned off; a backup that fails stops with nothing changed.
-                this.build_native_on(Some(base.clone()), back_up);
+                this.build_native_on(Some(base.clone()), true);
                 cx.notify();
             }))
         });
@@ -1032,8 +1029,9 @@ impl Launcher {
                 match action {
                     PendingConsent::ReadingBuild(_) => {}
                     PendingConsent::Build(_) => {
-                        let (base, back_up) = self.native_consent_build.take().unwrap_or_default();
-                        self.build_native_on(base, back_up)
+                        let (base, leave_out) =
+                            self.native_consent_build.take().unwrap_or_default();
+                        self.build_native_on(base, leave_out)
                     }
                     PendingConsent::Toggle(entry) => self.mods_switch(&entry),
                     PendingConsent::Install(source, id, known, _) => {

@@ -49,3 +49,49 @@ fn the_strip_takes_over_once_play_is_scrolled_out_of_view() {
     assert!(!play_shows(Some(at(50., 50.)), view));
     assert!(!play_shows(Some(at(-400., 50.)), view));
 }
+
+#[test]
+fn the_launcher_update_notice_shows_only_when_there_is_something_to_do() {
+    let release = Release {
+        tag: "launcher-v1.1.3".into(),
+        name: String::new(),
+        body: String::new(),
+        date: String::new(),
+        time: String::new(),
+        asset: None,
+        prerelease: false,
+        nightly: None,
+    };
+    let show = |hidden, state: &SelfUpdate, found: Option<&Release>, allowed| {
+        launcher_notice(hidden, state, found, allowed)
+            .map(|(version, get)| (version, get.is_some()))
+    };
+    // Downloaded and ready: Update applies it.
+    assert_eq!(
+        show(false, &SelfUpdate::Ready("1.1.3".into()), None, true),
+        Some(("1.1.3".into(), false))
+    );
+    // Found by a check, not yet downloaded: Update starts the download.
+    let found = show(false, &SelfUpdate::Idle, Some(&release), true).unwrap();
+    assert!(found.1);
+    // Nothing found, dismissed, a copy that can't replace itself, mid-download and failure.
+    assert_eq!(show(false, &SelfUpdate::Idle, None, true), None);
+    assert_eq!(
+        show(true, &SelfUpdate::Ready("1.1.3".into()), None, true),
+        None
+    );
+    assert_eq!(show(false, &SelfUpdate::Idle, Some(&release), false), None);
+    assert_eq!(
+        show(
+            false,
+            &SelfUpdate::Downloading("1.1.3".into(), 0.5),
+            Some(&release),
+            true
+        ),
+        None
+    );
+    assert_eq!(
+        show(false, &SelfUpdate::Failed("x".into()), Some(&release), true),
+        None
+    );
+}

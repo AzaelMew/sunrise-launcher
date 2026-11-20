@@ -125,7 +125,11 @@ impl Launcher {
         let all_on = selected_here > 0 && selected_here == shown_ids.len();
         let n_sel = selected.len();
         let busy = self.mods_busy();
-        let with_update = selected.iter().filter(|r| r.update.is_some()).count();
+        let native_allowed = self.settings.native_mods_allowed_at.is_some();
+        let with_update = {
+            let chosen: Vec<Row> = selected.iter().map(|r| (*r).clone()).collect();
+            model::plan_updates(&chosen, native_allowed).included.len()
+        };
         let bulk = |id: &'static str, label: String, enabled: bool, danger: bool| {
             let b = crate::frame::button(id, label);
             let b = if danger {
@@ -292,40 +296,10 @@ impl Launcher {
                                     crate::frame::button("alt-confirm-remove", trf("Remove {count}", &[("count", &items.len().to_string())]))
                                         .text_color(c(palette().danger))
                                         .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                            this.run(actions::Action::Remove(items.clone()), false);
+                                            this.run(actions::Action::Remove(items.clone()));
                                             cx.notify();
                                         })),
                                 ),
-                        )
-                }
-                Confirm::Stake(action, worlds) => {
-                    let action = action.clone();
-                    let n = worlds.len();
-                    panel
-                        .child(div().font_weight(FontWeight::SEMIBOLD).child(crate::selectable::selectable(trf(
-                            "{count} of your worlds were saved with these mods",
-                            &[("count", &n.to_string())],
-                        ))))
-                        .children(worlds.iter().map(|(world, mods)| {
-                            div().text_size(px(tokens::LABEL)).child(trf("{world}: {mods}", &[("world", world), ("mods", &mods.join(", "))]))
-                        }))
-                        .child(div().text_size(px(tokens::LABEL)).text_color(c(palette().warning)).child(crate::selectable::selectable(trf(
-                            "{what} can permanently remove blocks, items and other content from these worlds. Nothing has been changed yet.",
-                            &[("what", action.consequence())],
-                        ))))
-                        .child(muted(tr("Sunrise backs up each of these worlds first (a zip in backups/) and reads the backup back. If one can't be made or checked, nothing is changed.")))
-                        .child(
-                            div()
-                                .flex()
-                                .gap(px(10.))
-                                .child(crate::frame::button("alt-confirm-cancel", tr("Cancel")).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                                    this.ui.mods.confirm = None;
-                                    cx.notify();
-                                })))
-                                .child(primary("alt-confirm-backup", trf("Back up {count} worlds and continue", &[("count", &n.to_string())])).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                    this.run(action.clone(), true);
-                                    cx.notify();
-                                }))),
                         )
                 }
                 Confirm::Update(plan) => {
@@ -371,7 +345,7 @@ impl Launcher {
                                         dim(b)
                                     } else {
                                         b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                            this.run(actions::Action::Update(included.clone()), false);
+                                            this.run(actions::Action::Update(included.clone()));
                                             cx.notify();
                                         }))
                                     }
@@ -386,7 +360,8 @@ impl Launcher {
         let mut last: Option<Group> = None;
         let mut position = 0;
         let group_counts = |g: Group| visible.iter().filter(|&&i| rows[i].group() == g).count();
-        let updates_total = rows.iter().filter(|r| r.update.is_some()).count();
+        // Only what the plan would really update: with none, there is no button.
+        let update_all = model::update_all_button(&rows, native_allowed);
         for (n, &i) in visible.iter().enumerate() {
             let r = rows[i].clone();
             let g = r.group();
@@ -417,7 +392,7 @@ impl Launcher {
                     // The button has as much room above and below as beside it.
                     head = head.py(px(14.)).child(self.build_button(waiting, busy, cx));
                 }
-                if g == Group::Updates {
+                if let (Group::Updates, Some(updates_total)) = (g, update_all) {
                     let b = crate::frame::button(
                         "alt-update-all",
                         trf(
@@ -537,7 +512,12 @@ impl Launcher {
             .filter(|_| r.on)
             .and_then(|run| run.state_of(&r.id, &r.version));
         let failed = matches!(building, Some(State::Failed(_)));
-        let cells = model::cells(&r, error.as_deref(), building);
+        let cells = model::cells(
+            &r,
+            error.as_deref(),
+            building,
+            self.settings.native_mods_allowed_at.is_some(),
+        );
         let tone = |tone: model::Tone| match tone {
             model::Tone::Warning => palette().warning,
             model::Tone::Info => palette().info,

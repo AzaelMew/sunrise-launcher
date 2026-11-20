@@ -374,26 +374,68 @@ fn update_all_covers_the_whole_pack_and_names_what_it_leaves_out() {
 }
 
 #[test]
-fn an_update_never_switches_a_turned_off_mod_on() {
+fn a_mod_that_is_off_is_in_the_plan() {
     let (idx, entries) = pack();
     let on: HashSet<String> = ["zoom".to_string()].into();
     let none = HashSet::new();
     let r = rows(&entries, &world(&idx, &on, &none, true));
-    let plan = plan_updates(&r, true);
-    assert_eq!(
-        plan.included
-            .iter()
-            .map(|i| i.id.as_str())
-            .collect::<Vec<_>>(),
-        ["zoom"]
-    );
-    let off: Vec<&str> = plan
-        .skipped
+    assert!(r
         .iter()
-        .filter(|(_, why)| why.contains("turned off"))
-        .map(|(t, _)| t.as_str())
-        .collect();
-    assert_eq!(off, ["BAD", "DEEP"]);
+        .any(|r| r.id == "bad" && !r.on && r.update.is_some()));
+    let plan = plan_updates(&r, true);
+    let mut ids: Vec<&str> = plan.included.iter().map(|i| i.id.as_str()).collect();
+    ids.sort();
+    assert_eq!(ids, ["bad", "deep", "zoom"]);
+    assert!(plan.skipped.is_empty(), "{:?}", plan.skipped);
+}
+
+#[test]
+fn the_update_button_counts_only_what_the_plan_includes() {
+    let (idx, entries) = pack();
+    let on: HashSet<String> = ["zoom", "bad", "deep"].map(String::from).into();
+    let none = HashSet::new();
+    let r = rows(&entries, &world(&idx, &on, &none, false));
+    // "deep" is native and not allowed: it is left out, so the button counts two, not three.
+    assert_eq!(r.iter().filter(|r| r.update.is_some()).count(), 3);
+    assert_eq!(update_all_button(&r, false), Some(2));
+    assert_eq!(update_all_button(&r, true), Some(3));
+    // Nothing the plan can update: no button at all, not "Update 0 mods".
+    let only_deep: Vec<Row> = r.into_iter().filter(|r| r.id == "deep").collect();
+    assert_eq!(update_all_button(&only_deep, false), None);
+    assert_eq!(update_all_button(&[], true), None);
+}
+
+#[test]
+fn a_skipped_native_row_says_why() {
+    let (idx, entries) = pack();
+    let on: HashSet<String> = ["deep"].map(String::from).into();
+    let none = HashSet::new();
+    let r = rows(&entries, &world(&idx, &on, &none, false));
+    let deep = r.iter().find(|r| r.id == "deep").unwrap();
+    let tip = cells(deep, None, None, false).status.unwrap().tip;
+    assert!(tip.contains("native code: allow it first"), "{tip}");
+    let tip = cells(deep, None, None, true).status.unwrap().tip;
+    assert!(!tip.contains("allow it first"), "{tip}");
+}
+
+#[test]
+fn a_row_the_plan_cannot_update_says_why() {
+    let (idx, entries) = pack();
+    let on: HashSet<String> = ["zoom"].map(String::from).into();
+    let none = HashSet::new();
+    let pins = std::collections::BTreeMap::from([("zoom".to_string(), "1.0.0".to_string())]);
+    let w = World {
+        chosen: &pins,
+        ..world(&idx, &on, &none, true)
+    };
+    let r = rows(&entries, &w);
+    let zoom = r.iter().find(|r| r.id == "zoom").unwrap();
+    assert!(update_refusal(zoom, true).is_some_and(|w| w.contains("you chose")));
+    let tip = cells(zoom, None, None, true)
+        .status
+        .expect("says something")
+        .tip;
+    assert!(tip.contains("you chose its version"), "{tip}");
 }
 
 #[test]
@@ -479,7 +521,7 @@ fn turning_on_a_local_native_file_exposes_permission_then_build() {
     };
     let off = row(false);
     assert!(!off.on);
-    assert!(cells(&off, None, None).switch);
+    assert!(cells(&off, None, None, true).switch);
     mod_list::set_enabled(on_list, id, true).unwrap();
     let needs_permission = row(false);
     assert!(needs_permission.on);
@@ -586,7 +628,7 @@ fn every_reason_a_build_left_a_mod_out_is_shown_and_counted() {
     ];
     mark_left_out(&mut r, &list, "Nov 17", |tag| format!("name of {tag}"));
     let row = |id: &str| r.iter().find(|r| r.id == id).unwrap();
-    let failed = cells(row("lib"), None, None);
+    let failed = cells(row("lib"), None, None, true);
     let status = failed.status.unwrap();
     assert_eq!(status.label, "Failed");
     assert!(status.tip.contains("lib"));
@@ -644,13 +686,13 @@ fn every_row_fills_the_same_columns_whatever_it_has_to_say() {
     let row = |id: &str| r.iter().find(|r| r.id == id && r.local.is_some()).unwrap();
     // Every row has a kind and a version for the same two columns.
     for row in &r {
-        let cells = cells(row, None, None);
+        let cells = cells(row, None, None, true);
         assert_eq!(cells.version, row.version);
         assert_eq!(cells.kind, row.make.map_or("", Make::label));
     }
     // A mod that needs an update keeps the switch's place, and its status opens the popover:
     // no file or type name in the label or the tooltip.
-    let old = cells(row("old"), None, None);
+    let old = cells(row("old"), None, None, true);
     let status = old.status.unwrap();
     assert_eq!(status.label, "Needs an update");
     assert_eq!(status.tone, Tone::Warning);
@@ -661,7 +703,7 @@ fn every_row_fills_the_same_columns_whatever_it_has_to_say() {
     let addon = row("addon");
     assert_eq!(addon.need, Some(Need::Build));
     assert_eq!(
-        cells(addon, None, None).status.unwrap().label,
+        cells(addon, None, None, true).status.unwrap().label,
         "Needs a build"
     );
     for (at, label, tone) in [
@@ -682,7 +724,7 @@ fn every_row_fills_the_same_columns_whatever_it_has_to_say() {
             Tone::Warning,
         ),
     ] {
-        let cells = cells(addon, None, Some(&at));
+        let cells = cells(addon, None, Some(&at), true);
         let status = cells.status.unwrap();
         assert_eq!((status.label.as_str(), status.tone), (label, tone));
         match at {
@@ -697,7 +739,7 @@ fn every_row_fills_the_same_columns_whatever_it_has_to_say() {
         }
     }
     // A row with nothing pressing says where it is from, quietly; its cells are still there.
-    let fine = cells(row("fine"), None, None);
+    let fine = cells(row("fine"), None, None, true);
     assert_eq!(fine.status.as_ref().unwrap().tone, Tone::Muted);
     assert_eq!(fine.action, None);
     assert!(fine.switch, "local files can be switched on and off");
@@ -706,7 +748,7 @@ fn every_row_fills_the_same_columns_whatever_it_has_to_say() {
         .iter()
         .find(|r| r.local.is_none() && r.need.is_none() && r.update.is_none());
     if let Some(plain) = plain {
-        let cells = cells(plain, None, None);
+        let cells = cells(plain, None, None, true);
         assert_eq!(
             (cells.status, cells.action, cells.switch),
             (None, None, true)
@@ -716,7 +758,7 @@ fn every_row_fills_the_same_columns_whatever_it_has_to_say() {
     // Update whenever a newer version is out.
     let mut both = row("addon").clone();
     both.update = Some("1.1".into());
-    let cells_both = cells(&both, Some("the download stopped"), None);
+    let cells_both = cells(&both, Some("the download stopped"), None, true);
     let status = cells_both.status.unwrap();
     assert_eq!(status.label, "Update failed");
     assert!(status.tip.contains("the download stopped"));
@@ -725,7 +767,10 @@ fn every_row_fills_the_same_columns_whatever_it_has_to_say() {
     assert_eq!(cells_both.action, Some(RowAction::Update));
     // Permission comes before a newer version: its button is Allow.
     both.need = Some(Need::Permission);
-    assert_eq!(cells(&both, None, None).action, Some(RowAction::Allow));
+    assert_eq!(
+        cells(&both, None, None, true).action,
+        Some(RowAction::Allow)
+    );
 }
 
 #[test]
@@ -1284,12 +1329,12 @@ fn an_unreadable_file_is_never_on_and_cannot_switch_a_working_mod_of_its_name() 
         .expect("listed");
     assert!(!broken.on);
     assert_eq!(broken.need, None);
-    assert!(!cells(broken, None, None).switch);
+    assert!(!cells(broken, None, None, true).switch);
     let good = r
         .iter()
         .find(|r| r.local.as_ref().is_some_and(|l| !l.unreadable))
         .expect("listed");
     assert!(good.on);
     assert_eq!(good.need, Some(Need::Permission));
-    assert!(cells(good, None, None).switch);
+    assert!(cells(good, None, None, true).switch);
 }

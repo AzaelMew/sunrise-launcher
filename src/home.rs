@@ -266,6 +266,30 @@ pub(crate) fn muted(text: impl Into<SharedString>) -> Div {
         .child(text.into())
 }
 
+/// Whether Home shows the launcher-update notice, and for which version: one that is downloaded
+/// and ready (`None`: Update applies it), or one the last check found that this copy can fetch
+/// (`Some`: Update starts the download). Dismissed, mid-download, failed or not allowed: none.
+fn launcher_notice(
+    hidden: bool,
+    state: &SelfUpdate,
+    found: Option<&Release>,
+    allowed: bool,
+) -> Option<(String, Option<Release>)> {
+    if hidden {
+        return None;
+    }
+    match (state, found) {
+        (SelfUpdate::Ready(version), _) => Some((version.clone(), None)),
+        (SelfUpdate::Idle, Some(release)) if allowed => Some((
+            backend::launcher_version(&release.tag)
+                .unwrap_or_default()
+                .to_string(),
+            Some(release.clone()),
+        )),
+        _ => None,
+    }
+}
+
 impl Launcher {
     pub(crate) fn home(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         self.ui.home.hero.set(None);
@@ -280,6 +304,7 @@ impl Launcher {
         self.load_worlds(instance.home.clone(), cx);
         let header = self.profile_header(&instance, window, cx);
         let body = self.continue_playing(&instance, window, cx);
+        let notice = self.launcher_update_notice(cx);
         div()
             .id("alt-home")
             .size_full()
@@ -291,6 +316,7 @@ impl Launcher {
             .pt(px(24.))
             // The profile sits on the scene, inset like the text of the panel under it.
             .child(header.flex_none().px(px(INSET)))
+            .children(notice)
             // The panel is the sidebar's material and fills Home's box to its left, right and
             // bottom edges, so the frame lines it up with the sidebar. It reaches the foot when
             // the worlds leave room and is never squeezed: a short window scrolls the page.
@@ -309,6 +335,66 @@ impl Launcher {
                     .child(body),
             )
             .into_any_element()
+    }
+
+    /// A quiet line under the profile when a launcher update is ready: its version and Update,
+    /// and a close that hides it until the launcher restarts. Settings keeps the same action.
+    fn launcher_update_notice(&mut self, cx: &mut Context<Self>) -> Option<Div> {
+        let (version, release) = launcher_notice(
+            self.launcher_notice_hidden,
+            &self.self_update,
+            self.updates.launcher.as_ref(),
+            backend::self_update_allowed(),
+        )?;
+        let update = button("alt-home-launcher-update", tr("Update")).on_click(cx.listener(
+            move |this, _: &ClickEvent, _, cx| {
+                match &release {
+                    Some(release) => this.update_launcher(release.clone()),
+                    None => this.apply_launcher_update(cx),
+                }
+                cx.notify();
+            },
+        ));
+        let close = div()
+            .id("alt-home-launcher-dismiss")
+            .reach()
+            .cursor_pointer()
+            .px(px(8.))
+            .text_size(px(tokens::SMALL))
+            .text_color(rgb(palette().muted))
+            .tooltip(crate::glass_ui::tip(tr("Hide until the launcher restarts")))
+            .child("×")
+            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                this.launcher_notice_hidden = true;
+                cx.notify();
+            }));
+        Some(
+            div().px(px(INSET)).flex_none().child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(12.))
+                    .px(px(16.))
+                    .py(px(10.))
+                    .rounded(crate::tokens::r(crate::tokens::R_CARD))
+                    .bg(palette().chrome_plate())
+                    .border_1()
+                    .border_color(rgb(palette().divider))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_size(px(tokens::LABEL))
+                            .text_color(rgb(palette().text))
+                            .child(crate::selectable::selectable(trf(
+                                "Sunrise Launcher {version} available",
+                                &[("version", &version)],
+                            ))),
+                    )
+                    .child(update)
+                    .child(close),
+            ),
+        )
     }
 
     /// The selected profile: its mark and name, its play time, then Play, the build it plays
@@ -393,6 +479,7 @@ impl Launcher {
                 inset: false,
             }]
         };
+        let signed_out = view.main == Main::SignIn;
         let play = crate::frame::input(false)
             .id("alt-play")
             .flex_none()
@@ -405,8 +492,18 @@ impl Launcher {
             .font_weight(FontWeight::BOLD)
             .text_size(px(tokens::LEAD))
             .text_color(on)
-            .bg(p.play_gradient())
-            .shadow(glow(false))
+            // Signed out: plainly disabled, a muted fill with no glow.
+            .when(!signed_out, |d| d.bg(p.play_gradient()).shadow(glow(false)))
+            .when(signed_out, |d| {
+                d.bg(rgb(p.hover))
+                    .text_color(rgb(p.muted))
+                    .opacity(0.8)
+                    .cursor_default()
+            })
+            // Nothing is added to the page: the reason is only a tooltip on the disabled Play.
+            .when_some(view.main.tooltip(), |d, text| {
+                d.tooltip(crate::glass_ui::tip(text))
+            })
             .when(idle, |d| d.child(blocks::icon("play", 17., on.into())))
             .child(view.main.label())
             .when(view.enabled, |d| {

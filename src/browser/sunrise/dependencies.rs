@@ -13,6 +13,7 @@ pub(super) fn install(
     project: &index::Project,
     version: &index::Version,
     native_allowed: bool,
+    turn_on: bool,
 ) -> Result<Vec<installed::Entry>, String> {
     let home = install.home;
     let _lock = crate::browser::lock_home(home).map_err(|e| e.to_string())?;
@@ -51,6 +52,7 @@ pub(super) fn install(
         selected: Vec::new(),
         unreadable: Vec::new(),
         native_allowed,
+        turn_on,
         chosen,
     };
     plan.add(project, version, 0)?;
@@ -59,7 +61,11 @@ pub(super) fn install(
     let mut done = Vec::new();
     // Unreadable files whose new version goes elsewhere: published over nothing, so removed.
     let mut stale = Vec::new();
-    let mut enable = vec![project.id.clone()];
+    let mut enable = if turn_on {
+        vec![project.id.clone()]
+    } else {
+        Vec::new()
+    };
     for (entry, file) in plan.selected {
         if let Some(file) = file {
             if let Some(old) = plan.installed.find(SourceId::Sunrise, &entry.project) {
@@ -84,7 +90,7 @@ pub(super) fn install(
                 .entries
                 .retain(|e| e.source != SourceId::Sunrise || e.project != entry.project);
             plan.installed.entries.push(entry.clone());
-            if entry.project != project.id {
+            if turn_on && entry.project != project.id {
                 enable.push(entry.project.clone());
             }
             done.push(entry);
@@ -138,6 +144,8 @@ struct Plan<'a> {
     /// Installed files that no longer parse and are about to be replaced.
     unreadable: Vec<PathBuf>,
     native_allowed: bool,
+    /// False when an installed mod that is off is being updated and must stay off.
+    turn_on: bool,
     /// The version the index plan chose for each mod it installs or updates.
     chosen: BTreeMap<String, String>,
 }
@@ -224,7 +232,7 @@ impl Plan<'_> {
                 .ok_or_else(|| {
                     format!("installed {} does not match; change it first", old.version)
                 })?;
-            if !mod_list::is_enabled(self.install.home, id) {
+            if self.turn_on && !mod_list::is_enabled(self.install.home, id) {
                 return Err("it is installed but off; turn it on first".into());
             }
             v

@@ -1,12 +1,9 @@
 //! Everything on the Mods screens that changes files. Each action is refused while the game or
-//! a launch step is running; one that could take content out of a saved world (turning off,
-//! removing or updating a mod a world was saved with) stops first and says which worlds, and
-//! only goes on after each of those worlds is backed up and the backup read back. If the worlds
-//! can't be read or a backup fails, nothing is changed.
+//! a launch step is running. The launcher makes no backups of worlds itself: the game's own
+//! Edit World › Make Backup is the way to keep one.
 use super::model::{self, Included, Row};
 use super::*;
 use sunrise_launcher::browser::sunrise::auto;
-use sunrise_launcher::worlds;
 
 #[derive(Clone)]
 pub(super) enum Action {
@@ -15,25 +12,6 @@ pub(super) enum Action {
     /// (mod id, project id, title)
     Remove(Vec<(String, String, String)>),
     Update(Vec<Included>),
-}
-
-impl Action {
-    /// (mod id, title) of every mod the action touches.
-    pub(super) fn mods(&self) -> Vec<(String, String)> {
-        match self {
-            Action::TurnOff(v) => v.clone(),
-            Action::Remove(v) => v.iter().map(|(i, _, t)| (i.clone(), t.clone())).collect(),
-            Action::Update(v) => v.iter().map(|i| (i.id.clone(), i.title.clone())).collect(),
-        }
-    }
-
-    pub(super) fn consequence(&self) -> &'static str {
-        match self {
-            Action::TurnOff(_) => tr("Turning them off"),
-            Action::Remove(_) => tr("Removing them"),
-            Action::Update(_) => tr("Updating them"),
-        }
-    }
 }
 
 impl Launcher {
@@ -123,10 +101,7 @@ impl Launcher {
             return;
         }
         if row.on {
-            self.run(
-                Action::TurnOff(vec![(row.id.clone(), row.title.clone())]),
-                false,
-            );
+            self.run(Action::TurnOff(vec![(row.id.clone(), row.title.clone())]));
         } else if let Some(entry) = &row.entry {
             self.mods.message = None;
             self.mods_switch(entry);
@@ -209,7 +184,7 @@ impl Launcher {
             ));
             return;
         }
-        self.run(Action::TurnOff(chosen), false);
+        self.run(Action::TurnOff(chosen));
     }
 
     /// Asks for confirmation before removing the chosen mods.
@@ -247,11 +222,7 @@ impl Launcher {
         let Some(to) = row.update.clone().filter(|_| row.local.is_none()) else {
             return;
         };
-        let refusal = if !row.on {
-            Some(tr(
-                "It is turned off. Turn it on first: an update never switches a mod on.",
-            ))
-        } else if row.native() && self.settings.native_mods_allowed_at.is_none() {
+        let refusal = if row.native() && self.settings.native_mods_allowed_at.is_none() {
             Some(tr(
                 "It runs native code. Allow native mods first (Allow… on its row), then update it.",
             ))
@@ -262,21 +233,17 @@ impl Launcher {
             self.ui.mods.notice = Some(Err(why.to_string()));
             return;
         }
-        self.run(
-            Action::Update(vec![Included {
-                id: row.id.clone(),
-                title: row.title.clone(),
-                from: row.version.clone(),
-                to,
-                native: row.native(),
-            }]),
-            false,
-        );
+        self.run(Action::Update(vec![Included {
+            id: row.id.clone(),
+            title: row.title.clone(),
+            from: row.version.clone(),
+            to,
+            native: row.native(),
+        }]));
     }
 
-    /// Starts `action` on a worker. `backed_up` is the player's yes to backing up the worlds it
-    /// would touch; without it the worker only checks and, if worlds are at stake, stops.
-    pub(super) fn run(&mut self, action: Action, backed_up: bool) {
+    /// Starts `action` on a worker.
+    pub(super) fn run(&mut self, action: Action) {
         if !self.guard() {
             return;
         }
@@ -299,7 +266,7 @@ impl Launcher {
         m.confirm = None;
         m.notice = None;
         m.errors.clear();
-        m.busy = Some((tr("Checking your worlds…").to_string(), 0.));
+        m.busy = Some((tr("Working…").to_string(), 0.));
         if matches!(action, Action::Remove(_)) {
             m.selection.clear();
         }
@@ -310,7 +277,7 @@ impl Launcher {
                 .map(|s| s.home.clone())
                 .unwrap_or_else(backend::game_home),
         );
-        std::thread::spawn(move || run(action, backed_up, &home, &game, &tx));
+        std::thread::spawn(move || run(action, &home, &game, &tx));
     }
 }
 
@@ -319,7 +286,15 @@ fn reviewed_here(confirming: bool, reviewed: &Option<PathBuf>, current: &std::pa
     !confirming || reviewed.as_deref() == Some(current)
 }
 
-fn run(action: Action, backed_up: bool, home: &std::path::Path, game: &str, tx: &Sender<Event>) {
+/// `one` for a count of 1, else `many` with its `{count}` filled in.
+fn counted(count: usize, one: &'static str, many: &'static str) -> String {
+    match count {
+        1 => tr(one).to_string(),
+        n => trf(many, &[("count", &n.to_string())]),
+    }
+}
+
+fn run(action: Action, home: &std::path::Path, game: &str, tx: &Sender<Event>) {
     let refuse = |why: String| {
         let _ = tx.send(Event::Refused(why));
     };
@@ -327,82 +302,18 @@ fn run(action: Action, backed_up: bool, home: &std::path::Path, game: &str, tx: 
         Ok(lock) => lock,
         Err(e) => return refuse(e.to_string()),
     };
-    // Which saved worlds hold content of these mods; a world whose list can't be read counts as
-    // holding all of them.
-    let mods = action.mods();
-    let ids: Vec<String> = mods.iter().map(|(id, _)| id.clone()).collect();
-    // A switch is just a switch (owner, 2026-11-19): turning a mod off writes the list and
-    // nothing else. Only removing a mod's file still checks the worlds that use it.
-    let at_stake = match &action {
-        Action::TurnOff(_) => Vec::new(),
-        _ => match worlds::at_risk(home, &ids) {
-            Ok(worlds) => worlds,
-            Err(e) => return refuse(trf(
-                "Your worlds can't be read, so Sunrise can't tell whether they use these mods. Nothing was changed. ({error})", &[("error", &e)],
-            )),
-        },
-    };
-    let mut backups = 0;
-    if !at_stake.is_empty() {
-        if !backed_up {
-            let title = |id: &String| {
-                mods.iter()
-                    .find(|(m, _)| m == id)
-                    .map_or(id.clone(), |(_, t)| t.clone())
-            };
-            let list = at_stake
-                .iter()
-                .map(|(w, used, known)| {
-                    let name = match known {
-                        true => w.name.clone(),
-                        false => trf(
-                            "{name} (its list of mods can't be read)",
-                            &[("name", &w.name)],
-                        ),
-                    };
-                    (name, used.iter().map(title).collect())
-                })
-                .collect();
-            let _ = tx.send(Event::Stake(home.to_path_buf(), action, list));
-            return;
-        }
-        for (i, (world, _, _)) in at_stake.iter().enumerate() {
-            let _ = tx.send(Event::Progress(
-                trf("Backing up {world}…", &[("world", &world.name)]),
-                i as f32 / at_stake.len() as f32,
-            ));
-            match worlds::backup_verified(home, world) {
-                Ok(_) => backups += 1,
-                Err(e) => {
-                    return refuse(trf(
-                        "Backing up {world} failed, so nothing was changed: {error}",
-                        &[("world", &world.name), ("error", &e)],
-                    ))
-                }
-            }
-        }
-    }
-    let backed = match backups {
-        0 => String::new(),
-        n => trf(
-            "Backed up {count} worlds first (see backups/).",
-            &[("count", &n.to_string())],
-        ),
-    };
     let done = |said: String, failed: Vec<(String, String)>| {
-        let _ = tx.send(Event::Done(
-            format!("{said} {backed}").trim().to_string(),
-            failed,
-        ));
+        let _ = tx.send(Event::Done(said, failed));
     };
     match action {
         Action::TurnOff(items) => {
             let ids: Vec<&str> = items.iter().map(|(id, _)| id.as_str()).collect();
             match mod_list::set_all_enabled(home, &ids, false) {
                 Ok(()) => done(
-                    trf(
+                    counted(
+                        ids.len(),
+                        "Turned off 1 mod. The game reads this when it starts.",
                         "Turned off {count} mods. The game reads this when it starts.",
-                        &[("count", &ids.len().to_string())],
                     ),
                     Vec::new(),
                 ),
@@ -422,7 +333,7 @@ fn run(action: Action, backed_up: bool, home: &std::path::Path, game: &str, tx: 
                 }
             }
             done(
-                trf("Removed {count} mods.", &[("count", &removed.to_string())]),
+                counted(removed, "Removed 1 mod.", "Removed {count} mods."),
                 failed,
             );
         }
@@ -447,15 +358,12 @@ fn run(action: Action, backed_up: bool, home: &std::path::Path, game: &str, tx: 
                         (i as f32 + f) / count as f32,
                     ));
                 };
-                // Read again now: it may have been switched off since the plan was made.
-                if !mod_list::is_enabled(home, &item.id) {
-                    failed.push((item.id.clone(), tr("turned off: left as it is").to_string()));
-                    continue;
-                }
+                // Read now, not at planning: a mod that is off stays off.
+                let was_on = mod_list::is_enabled(home, &item.id);
                 let result = match item.native {
                     true => sunrise::Registry
                         .project(&item.id)
-                        .and_then(|p| sunrise::install(&p, home, game, &step))
+                        .and_then(|p| sunrise::update_native(&p, home, game, was_on, &step))
                         .map(|_| None),
                     false => auto::update_to(&index, &item.id, &item.to, home, &step),
                 };
@@ -466,9 +374,10 @@ fn run(action: Action, backed_up: bool, home: &std::path::Path, game: &str, tx: 
                 }
             }
             done(
-                trf(
+                counted(
+                    updated,
+                    "Updated 1 mod, checked against the registry.",
                     "Updated {count} mods, each checked against the registry.",
-                    &[("count", &updated.to_string())],
                 ),
                 failed,
             );
@@ -533,7 +442,7 @@ mod tests {
     fn turning_off_a_mod_a_world_was_saved_with_is_just_the_switch() {
         let home = home_with_world("bricks");
         let (tx, rx) = channel();
-        run(off(&["bricks"]), false, &home, "26.3", &tx);
+        run(off(&["bricks"]), &home, "26.3", &tx);
         assert!(matches!(rx.try_iter().last(), Some(Event::Done(..))));
         assert!(!mod_list::is_enabled(&home, "bricks"));
         assert!(mod_list::is_enabled(&home, "unrelated"));
@@ -542,42 +451,54 @@ mod tests {
     }
 
     #[test]
-    fn a_mod_no_world_uses_changes_at_once() {
+    fn old_backups_are_left_exactly_where_they_are() {
         let home = home_with_world("bricks");
+        let old = home.join("backups");
+        std::fs::create_dir_all(&old).unwrap();
+        std::fs::write(old.join("2026-01-01_00-00-00_Home.zip"), b"older backup").unwrap();
         let (tx, rx) = channel();
-        run(off(&["unrelated"]), false, &home, "26.3", &tx);
-        assert!(matches!(rx.try_iter().last(), Some(Event::Done(..))));
-        assert!(!mod_list::is_enabled(&home, "unrelated"));
+        run(off(&["bricks"]), &home, "26.3", &tx);
+        run(
+            Action::Remove(vec![("bricks".into(), "bricks".into(), "BRICKS".into())]),
+            &home,
+            "26.3",
+            &tx,
+        );
+        assert!(rx
+            .try_iter()
+            .any(|e| matches!(e, Event::Done(..) | Event::Refused(_))));
+        let kept: Vec<_> = std::fs::read_dir(&old)
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(kept, ["2026-01-01_00-00-00_Home.zip"]);
+        assert_eq!(std::fs::read(old.join(&kept[0])).unwrap(), b"older backup");
         std::fs::remove_dir_all(home).ok();
     }
 
     #[test]
-    fn a_backup_is_only_good_if_every_file_reads_back_whole() {
-        let home = home_with_world("bricks");
-        let world = worlds::list(&home).remove(0);
-        let zip = worlds::backup(&home, &world).unwrap();
-        worlds::verify_backup(&zip, &world).unwrap();
-
-        // A file the world has that the backup doesn't.
-        std::fs::write(world.path.join("region/r.1.1.mca"), [1u8; 10]).unwrap();
-        assert!(worlds::verify_backup(&zip, &world)
-            .unwrap_err()
-            .contains("lacks"));
-        std::fs::remove_file(world.path.join("region/r.1.1.mca")).unwrap();
-
-        // A damaged byte inside an entry's data.
-        let start = {
-            let mut archive = zip::ZipArchive::new(std::fs::File::open(&zip).unwrap()).unwrap();
-            let entry = archive.by_name("Home/region/r.0.0.mca").unwrap();
-            entry.data_start().unwrap() as usize
-        };
-        let mut bytes = std::fs::read(&zip).unwrap();
-        bytes[start + 1] ^= 0xff;
-        std::fs::write(&zip, bytes).unwrap();
-        assert!(
-            worlds::verify_backup(&zip, &world).is_err(),
-            "a bad checksum or stream is found"
+    fn counts_of_mods_say_mod_once_and_mods_otherwise() {
+        assert_eq!(
+            counted(1, "Removed 1 mod.", "Removed {count} mods."),
+            "Removed 1 mod."
         );
+        assert_eq!(
+            counted(3, "Removed 1 mod.", "Removed {count} mods."),
+            "Removed 3 mods."
+        );
+        assert_eq!(
+            counted(0, "Removed 1 mod.", "Removed {count} mods."),
+            "Removed 0 mods."
+        );
+    }
+
+    #[test]
+    fn a_mod_no_world_uses_changes_at_once() {
+        let home = home_with_world("bricks");
+        let (tx, rx) = channel();
+        run(off(&["unrelated"]), &home, "26.3", &tx);
+        assert!(matches!(rx.try_iter().last(), Some(Event::Done(..))));
+        assert!(!mod_list::is_enabled(&home, "unrelated"));
         std::fs::remove_dir_all(home).ok();
     }
 

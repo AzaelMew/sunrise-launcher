@@ -319,7 +319,7 @@ impl Launcher {
                     }
                 });
                 if matches!(self.releases, Load::Failed(_)) {
-                    self.fetch_startup_releases();
+                    self.check_updates(UpdateCheck::Startup);
                 }
             }
             return;
