@@ -1,5 +1,7 @@
 //! The SDK's native build tool, `cargo sunrise-mod native-build`, run as a process with the launcher's toolchain (docs/modding/src/reference/sdk/08-native-build.md).
+use crate::backend::{NativeGrant, Settings};
 use crate::i18n::{tr, trf};
+use crate::local_json::LockedJson;
 use crate::rust_toolchain::Toolchain;
 use serde::Deserialize;
 use serde_json::Value;
@@ -30,6 +32,7 @@ pub struct Cancellation(
 struct Attempt {
     stopped: bool,
     tool: Option<u32>,
+    grant: Option<NativeGrant>,
 }
 
 impl Attempt {
@@ -52,8 +55,34 @@ impl Cancellation {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
+    pub(super) fn admit_native_work(&self) -> Result<(), super::Failed> {
+        let mut state = self.state();
+        state.check()?;
+        if let Some(grant) = state.grant {
+            drop(grant.hold()?);
+        } else {
+            state.grant = Some(Settings::native_grant()?.ok_or(super::Failed::NoConsent)?);
+        }
+        Ok(())
+    }
+
     pub(super) fn check(&self) -> Result<(), String> {
-        self.state().check()
+        let state = self.state();
+        state.check()?;
+        if let Some(grant) = state.grant {
+            drop(grant.hold()?);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn grant(&self) -> Result<Option<NativeGrant>, String> {
+        let state = self.state();
+        state.check()?;
+        Ok(state.grant)
+    }
+
+    pub(crate) fn publication_guard(&self, image: &str) -> Result<Option<LockedJson>, String> {
+        crate::native_status::publication_guard(image, self.grant()?)
     }
 
     /// Stops this attempt and the SDK tool it started, if any.
@@ -380,12 +409,15 @@ fn start(
     // Stop either prevents the spawn or sees the PID. It cannot fall between them.
     let mut state = cancellation.state();
     state.check()?;
+    // The settings lock is held through the OS handoff, not while the SDK runs or asks.
+    let permission = state.grant.map(NativeGrant::hold).transpose()?;
     let mut child = match &cancellation.1 {
         Some(lease) => crate::process::owned::Owned::spawn_profile(&mut command, lease),
         None => crate::process::owned::Owned::spawn(&mut command),
     }
     .map_err(unrun)?;
     state.tool = Some(child.child().id());
+    drop(permission);
     drop(state);
     let stderr = child.child().stderr.take().expect("piped");
     Ok((child, std::thread::spawn(move || tail(stderr))))

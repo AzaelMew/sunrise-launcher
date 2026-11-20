@@ -45,6 +45,7 @@ pub struct Switch {
     next: Active,
     initial_inputs: [u8; 32],
     index: String,
+    cancellation: native_mods::Cancellation,
     fence: worlds::switch::Fence,
     question: worlds::SwitchQuestion,
     effects: SwitchEffects,
@@ -205,6 +206,7 @@ impl Switch {
             next,
             initial_inputs,
             index,
+            cancellation,
             fence,
             question,
             effects,
@@ -244,8 +246,10 @@ impl Switch {
         }
         self.prior.verify_artifacts()?;
         self.next.verify_artifacts()?;
-        crate::native_status::check_permission(self.next.executable())?;
-        self.owner.publish_staged_set(cutoff)?;
+        self.owner.publish_staged_set(|| {
+            cutoff()?;
+            self.cancellation.publication_guard(self.next.executable())
+        })?;
         self.live = false;
         Ok((!self.effects.is_empty()).then(|| {
             self.next

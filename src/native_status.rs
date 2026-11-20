@@ -64,18 +64,29 @@ pub fn check_permission(version: &str) -> Result<(), String> {
     check_permission_in(version, &backend::data_dir())
 }
 
-fn check_permission_in(version: &str, data: &Path) -> Result<(), String> {
-    if native_mods::is_native(version)
-        && backend::Settings::load_from(data)
-            .native_mods_allowed_at
-            .is_none()
-    {
-        return Err(crate::i18n::tr(
-            "This profile plays a build made with native mods, and native mods are turned off. Choose another game build for it in Versions.",
-        )
-        .into());
+pub(crate) fn publication_guard(
+    version: &str,
+    grant: Option<backend::NativeGrant>,
+) -> Result<Option<crate::local_json::LockedJson>, String> {
+    match grant {
+        Some(grant) => Ok(Some(grant.hold()?)),
+        None => game_grant(version, &backend::data_dir())?
+            .map(backend::NativeGrant::hold)
+            .transpose(),
     }
-    Ok(())
+}
+
+fn check_permission_in(version: &str, data: &Path) -> Result<(), String> {
+    game_grant(version, data).map(drop)
+}
+
+fn game_grant(version: &str, data: &Path) -> Result<Option<backend::NativeGrant>, String> {
+    if !native_mods::is_native(version) {
+        return Ok(None);
+    }
+    backend::Settings::native_grant_from(data)?.map(Some).ok_or_else(|| crate::i18n::tr(
+        "Native mods need permission before this profile can play. Allow native code in Settings or choose a different game build.",
+    ).into())
 }
 
 /// A `.smod`'s digest as a build records it: its files without the uses table, which the

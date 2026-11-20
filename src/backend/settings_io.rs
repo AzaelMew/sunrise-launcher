@@ -21,10 +21,41 @@ struct NativePermission {
     native_consent_revision: u64,
 }
 
+/// The grant under which native work was admitted, not the time displayed in Settings.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct NativeGrant(u64);
+
+impl NativeGrant {
+    pub(crate) fn hold(self) -> Result<LockedJson, String> {
+        self.hold_in(&data_dir())
+    }
+
+    pub(crate) fn hold_in(self, dir: &Path) -> Result<LockedJson, String> {
+        let file = LockedJson::open(dir, FILE)?;
+        if NativePermission::grant(&file)? == Some(self) {
+            Ok(file)
+        } else {
+            Err(crate::i18n::tr("Native mod permission changed. Start again.").into())
+        }
+    }
+}
+
+impl NativePermission {
+    fn grant(file: &LockedJson) -> Result<Option<NativeGrant>, String> {
+        let permission: Self = file.read()?;
+        Ok(permission
+            .native_mods_allowed_at
+            .map(|_| NativeGrant(permission.native_consent_revision)))
+    }
+}
+
 impl Settings {
-    pub(crate) fn native_allowed() -> Result<bool, String> {
-        let permission: NativePermission = LockedJson::open(&data_dir(), FILE)?.read()?;
-        Ok(permission.native_mods_allowed_at.is_some())
+    pub(crate) fn native_grant() -> Result<Option<NativeGrant>, String> {
+        Self::native_grant_from(&data_dir())
+    }
+
+    pub(crate) fn native_grant_from(data: &Path) -> Result<Option<NativeGrant>, String> {
+        NativePermission::grant(&LockedJson::open(data, FILE)?)
     }
 
     pub(super) fn record_baseline(&mut self) {
@@ -177,6 +208,26 @@ mod tests {
             .read::<NativePermission>()
             .unwrap();
         assert_eq!(consent.native_consent_revision, 2);
+    }
+
+    #[test]
+    fn a_new_grant_never_authorizes_work_admitted_under_a_revoked_revision() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let mut editor = Settings::load_from(dir);
+        editor.set_native_permission(dir, Some(123)).unwrap();
+        let old = NativePermission::grant(&LockedJson::open(dir, FILE).unwrap())
+            .unwrap()
+            .unwrap();
+        drop(old.hold_in(dir).unwrap());
+        editor.set_native_permission(dir, None).unwrap();
+        assert!(old.hold_in(dir).is_err());
+        editor.set_native_permission(dir, Some(123)).unwrap();
+        assert!(old.hold_in(dir).is_err());
+        let new = NativePermission::grant(&LockedJson::open(dir, FILE).unwrap())
+            .unwrap()
+            .unwrap();
+        drop(new.hold_in(dir).unwrap());
     }
 
     #[cfg(unix)]
