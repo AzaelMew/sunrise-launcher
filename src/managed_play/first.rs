@@ -199,13 +199,21 @@ impl Profile {
             .pointer
             .ok_or_else(unsettled)?;
         let mut current = Active::parse(&before)?;
-        let Some(position) = current.receipts.iter().position(|receipt| receipt.id == id) else {
+        let Some(position) = current
+            .receipts
+            .iter()
+            .position(|receipt| receipt.id == id && !receipt.acknowledged)
+        else {
             return Ok(false);
         };
         if current != *shown {
             return Err(unsettled());
         }
-        current.receipts.remove(position);
+        if current.receipts[position].waiting_for_update.is_empty() {
+            current.receipts.remove(position);
+        } else {
+            current.receipts[position].acknowledged = true;
+        }
         current.generation = current.generation.checked_add(1).ok_or_else(unsettled)?;
         let next = serde_json::to_vec(&current).map_err(|error| error.to_string())?;
         let targets = [current.base().to_owned(), current.executable().to_owned()]

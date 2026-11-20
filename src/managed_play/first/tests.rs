@@ -295,9 +295,13 @@ fn receipt_acknowledgement_recovers_the_exact_pointer_across_all_durable_cuts() 
     let build = backend::version_dir(BUILD);
     fs::write(build.join(".installed"), []).unwrap();
     fs::write(build.join(backend::CLIENT), b"local executable fixture").unwrap();
-    fs::create_dir_all(home.join(mod_list::DIR)).unwrap();
-    let mod_path = home.join(mod_list::DIR).join("lantern.smod");
-    let package = manifest::Package::write_files(&format!("id='lantern'\nname='Lantern'\nversion='1.0.0'\napi='{}'\ncapabilities=['registries']\n", manifest::API), &[]).unwrap();
+    let kept = format!("{}/lantern.smod", mod_list::NATIVE_DIR);
+    fs::create_dir_all(home.join(mod_list::NATIVE_DIR)).unwrap();
+    let mod_path = home.join(&kept);
+    let package = manifest::Package::write_files(
+        &format!("id='lantern'\nname='Lantern'\nversion='1.0.0'\napi='{}'\ncapabilities=['registries']\n[native]\nsunrise='{}'\ngame='26.3'\n", manifest::API, "a".repeat(40)),
+        &[("Cargo.toml", b"[package]\nname='lantern'\nversion='1.0.0'"), ("src/lib.rs", b"")],
+    ).unwrap();
     fs::write(&mod_path, &package).unwrap();
     let mut profile = Profile::open(&home, None).unwrap();
     let mut shown = profile
@@ -305,15 +309,65 @@ fn receipt_acknowledgement_recovers_the_exact_pointer_across_all_durable_cuts() 
         .unwrap()
         .commit(BUILD, &native_mods::Cancellation::default())
         .unwrap();
-    shown.receipts = [[7; 16], [8; 16]]
-        .into_iter()
-        .map(|id| super::super::Receipt {
-            id,
-            waiting_for_update: vec![("lantern".into(), "Lantern".into())],
+    use crate::managed_play::{Held, HeldReason, HeldSource, Receipt};
+    use sha2::{Digest, Sha256};
+    let hold = Held::new(
+        "lantern".into(),
+        Sha256::digest(&package).into(),
+        kept,
+        HeldSource::Local {
+            version: "1.0.0".into(),
+        },
+        true,
+        HeldReason::NoFit {
+            build: BUILD.into(),
+        },
+    )
+    .unwrap();
+    shown.receipts = vec![
+        Receipt {
+            id: ID,
+            waiting_for_update: vec![hold.clone()],
             removed: Vec::new(),
-        })
-        .collect();
+            acknowledged: false,
+        },
+        Receipt {
+            id: [8; 16],
+            waiting_for_update: Vec::new(),
+            removed: vec![("another".into(), "Another".into())],
+            acknowledged: false,
+        },
+    ];
     let mut before = serde_json::to_vec_pretty(&shown).unwrap();
+    assert_eq!(Active::parse(&before).unwrap(), shown);
+    let seed: serde_json::Value = serde_json::from_slice(&before).unwrap();
+    for (field, invalid) in [
+        ("digest", serde_json::json!(vec![0; 16])),
+        (
+            "path",
+            serde_json::json!("sunrise-native-mods/../lantern.smod"),
+        ),
+        (
+            "source",
+            serde_json::json!({"kind":"other", "version":"1.0.0"}),
+        ),
+        (
+            "reason",
+            serde_json::json!({"kind":"no_fit", "build":"../somewhere"}),
+        ),
+        ("enabled_before", serde_json::json!("true")),
+        ("title", serde_json::json!("not authority")),
+    ] {
+        let mut invalid_pointer = seed.clone();
+        invalid_pointer["receipts"][0]["waiting_for_update"][0][field] = invalid;
+        assert!(
+            Active::parse(&serde_json::to_vec(&invalid_pointer).unwrap()).is_err(),
+            "accepted invalid {field}"
+        );
+    }
+    let mut ambiguous = seed;
+    ambiguous["receipts"][1]["waiting_for_update"] = serde_json::json!([hold.clone()]);
+    assert!(Active::parse(&serde_json::to_vec(&ambiguous).unwrap()).is_err());
     before.push(b'\n');
     fs::write(&pointer, &before).unwrap();
     let mut stale = shown.clone();
@@ -343,8 +397,9 @@ fn receipt_acknowledgement_recovers_the_exact_pointer_across_all_durable_cuts() 
     let after = profile.active().unwrap().unwrap();
     let mut expected = shown.clone();
     expected.generation += 1;
-    expected.receipts.remove(0);
+    expected.receipts[0].acknowledged = true;
     assert_eq!(after, expected);
+    assert_eq!(after.holds().collect::<Vec<_>>(), [&hold]);
     assert!(!profile.acknowledge_receipt(&shown, ID).unwrap());
     assert_eq!(fs::read(mod_path).unwrap(), package);
     assert_eq!(profile.active().unwrap(), Some(after));

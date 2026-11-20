@@ -138,8 +138,129 @@ pub struct Active {
 #[serde(deny_unknown_fields)]
 struct Receipt {
     id: [u8; 16],
-    waiting_for_update: Vec<(String, String)>,
+    waiting_for_update: Vec<Held>,
     removed: Vec<(String, String)>,
+    /// Acknowledging the notice must not discard the evidence an explicit update needs.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    acknowledged: bool,
+}
+
+/// An exact native package left installed but held off by a proved no-fit on Switch.
+/// This is update authority, not the notice's display text.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Held {
+    id: String,
+    digest: [u8; 32],
+    path: String,
+    source: HeldSource,
+    enabled_before: bool,
+    reason: HeldReason,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum HeldSource {
+    Registry {
+        project: String,
+        version: String,
+    },
+    Github {
+        owner: String,
+        repo: String,
+        commit: String,
+        version: String,
+    },
+    Local {
+        version: String,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum HeldReason {
+    NoFit { build: String },
+}
+
+impl Held {
+    pub fn new(
+        id: String,
+        digest: [u8; 32],
+        path: String,
+        source: HeldSource,
+        enabled_before: bool,
+        reason: HeldReason,
+    ) -> Result<Self, String> {
+        let held = Self {
+            id,
+            digest,
+            path,
+            source,
+            enabled_before,
+            reason,
+        };
+        held.validate()?;
+        Ok(held)
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        use sunrise_launcher_smod::{index::valid_id, manifest::revision, mod_list::NATIVE_DIR};
+        let leaf = self
+            .path
+            .split_once('/')
+            .filter(|(dir, _)| *dir == NATIVE_DIR)
+            .and_then(|(_, leaf)| leaf.strip_suffix(".smod"))
+            .ok_or_else(unsettled)?;
+        if !valid_id(&self.id)
+            || leaf.is_empty()
+            || leaf.ends_with(['.', ' '])
+            || leaf
+                .chars()
+                .any(|c| c.is_control() || "<>:\"/\\|?*".contains(c))
+        {
+            return Err(unsettled());
+        }
+        let version = match &self.source {
+            HeldSource::Registry { project, version } if project == &self.id => version,
+            HeldSource::Github {
+                owner,
+                repo,
+                commit,
+                version,
+            } if crate::github_mods::plain(owner)
+                && crate::github_mods::plain(repo)
+                && revision(commit) =>
+            {
+                version
+            }
+            HeldSource::Local { version } => version,
+            _ => return Err(unsettled()),
+        };
+        if version.is_empty() || version.chars().any(char::is_control) {
+            return Err(unsettled());
+        }
+        let HeldReason::NoFit { build } = &self.reason;
+        validate_tag(build)
+    }
+
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+    pub fn digest(&self) -> &[u8; 32] {
+        &self.digest
+    }
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+    pub fn source(&self) -> &HeldSource {
+        &self.source
+    }
+    pub fn enabled_before(&self) -> bool {
+        self.enabled_before
+    }
+    pub fn reason(&self) -> &HeldReason {
+        &self.reason
+    }
 }
 
 enum Generation<'a> {
@@ -162,15 +283,30 @@ impl Active {
         if value.base() == value.executable() && value.base != value.executable {
             return Err(unsettled());
         }
-        let mut ids = std::collections::HashSet::new();
-        if value.receipts.iter().any(|receipt| {
-            receipt.id == [0; 16]
-                || !ids.insert(receipt.id)
-                || (receipt.removed.is_empty() && receipt.waiting_for_update.is_empty())
-        }) {
-            return Err(unsettled());
+        let mut receipts = std::collections::HashSet::new();
+        let mut holds = std::collections::HashSet::new();
+        for receipt in &value.receipts {
+            if receipt.id == [0; 16]
+                || !receipts.insert(receipt.id)
+                || (receipt.waiting_for_update.is_empty()
+                    && (receipt.acknowledged || receipt.removed.is_empty()))
+            {
+                return Err(unsettled());
+            }
+            for held in &receipt.waiting_for_update {
+                held.validate()?;
+                if !holds.insert(held.id()) {
+                    return Err(unsettled());
+                }
+            }
         }
         Ok(value)
+    }
+
+    pub fn holds(&self) -> impl Iterator<Item = &Held> {
+        self.receipts
+            .iter()
+            .flat_map(|receipt| &receipt.waiting_for_update)
     }
 
     pub fn base(&self) -> &str {
