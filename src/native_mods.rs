@@ -315,6 +315,7 @@ pub fn cache_error(error: crate::storage::Error) -> String {
             tr("A native build or cache cleanup is running. Try again when it finishes.").into()
         }
         crate::native_cache::Error::IncompleteUnit => tr("Native compilation outputs were kept because their executable completeness cannot be proven.").into(),
+        crate::native_cache::Error::UnpublishedGame => tr("An unpublished game download was kept. It may still be in use by another launcher.").into(),
         crate::native_cache::Error::ResourceDependent(build) => trf(
             "This version supplies resources to native build {build}. Remove that build first.",
             &[("build", &build)],
@@ -2483,7 +2484,41 @@ mod tests {
                 nightly: None,
             };
             use backend::installation::install_as;
-            install_as(&release, tag, &sha256, None, None, |_| {}).unwrap();
+            let inventoried = std::cell::Cell::new(false);
+            install_as(&release, tag, &sha256, None, None, |fraction| {
+                if fraction != 0.97 {
+                    return;
+                }
+                let versions = backend::versions_dir();
+                let stage = fs::read_dir(&versions)
+                    .unwrap()
+                    .map(|entry| entry.unwrap().path())
+                    .find(|path| backend::installation::private_stage(path.file_name().unwrap()))
+                    .unwrap();
+                assert!(stage.join("unpacked").is_dir());
+                let storage = crate::storage::Storage::open().unwrap();
+                let report = storage
+                    .report(Some(crate::storage::Category::SpareGameBuilds), true)
+                    .unwrap();
+                let staged = report
+                    .rows
+                    .iter()
+                    .find(|row| row.category == crate::storage::Category::SpareGameBuilds)
+                    .unwrap();
+                assert!(staged.kept.iter().any(
+                    |keep| keep.bytes > 0 && keep.reason.contains("unpublished game download")
+                ));
+                assert!(!stage.join(".last-used").exists());
+                assert!(stage.join("unpacked").is_dir());
+                assert!(
+                    backend::remove(stage.file_name().unwrap().to_str().unwrap())
+                        .unwrap_err()
+                        .contains("unpublished game download")
+                );
+                inventoried.set(true);
+            })
+            .unwrap();
+            assert!(inventoried.get());
             server.join().unwrap();
             // The server is gone. An exact retry is local; even a request with a
             // different proof must not remove the bytes that already occupy this name.

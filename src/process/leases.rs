@@ -352,6 +352,7 @@ fn error(error: Error) -> io::Error {
         Error::Busy
         | Error::UnprovenExclusion
         | Error::IncompleteUnit
+        | Error::UnpublishedGame
         | Error::ResourceDependent(_)
         | Error::ReferencedProfile
         | Error::UnprovenReferences => io::ErrorKind::WouldBlock.into(),

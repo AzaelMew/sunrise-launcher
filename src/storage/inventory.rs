@@ -207,7 +207,18 @@ impl Entry {
                 })
     }
 
+    fn unpublished_game(&self) -> bool {
+        self.relative.parent() == Some(Path::new("versions"))
+            && self
+                .relative
+                .file_name()
+                .is_some_and(crate::backend::installation::private_stage)
+    }
+
     fn last_used(&self) -> Result<Option<std::time::SystemTime>, Error> {
+        if self.unpublished_game() {
+            return Ok(None); // Inventory never stamps a private publisher's staged directory.
+        }
         let Some(root) = &self.directory else {
             return Ok(None);
         };
@@ -680,6 +691,7 @@ impl Storage {
                         error @ (Error::Busy
                         | Error::UnprovenExclusion
                         | Error::IncompleteUnit
+                        | Error::UnpublishedGame
                         | Error::ResourceDependent(_)
                         | Error::ReferencedProfile
                         | Error::UnprovenReferences),
@@ -830,6 +842,7 @@ impl Storage {
                         error @ (Error::Busy
                         | Error::UnprovenExclusion
                         | Error::IncompleteUnit
+                        | Error::UnpublishedGame
                         | Error::ResourceDependent(_)
                         | Error::ReferencedProfile
                         | Error::UnprovenReferences),

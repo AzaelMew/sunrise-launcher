@@ -6,6 +6,13 @@ pub(crate) use bound::{GameDownload, GameProof};
 
 use crate::managed_play::Artifact;
 
+const STAGE_PREFIX: &str = ".build-stage-";
+
+pub(crate) fn private_stage(name: &std::ffi::OsStr) -> bool {
+    name.to_str()
+        .is_some_and(|name| name.starts_with(STAGE_PREFIX))
+}
+
 pub(crate) fn valid_archive_digest(digest: &str) -> bool {
     digest.len() == 64
         && digest
@@ -39,7 +46,7 @@ pub(crate) fn install_as(
     }
     fs::create_dir_all(&root).map_err(|e| e.to_string())?;
     let stage = tempfile::Builder::new()
-        .prefix(".build-stage-")
+        .prefix(STAGE_PREFIX)
         .tempdir_in(root)
         .map_err(|e| e.to_string())?;
     let archive = stage.path().join("download");

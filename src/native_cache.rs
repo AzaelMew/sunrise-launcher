@@ -14,6 +14,7 @@ pub enum Error {
     Busy,
     UnprovenExclusion,
     IncompleteUnit,
+    UnpublishedGame,
     ReferencedProfile,
     ResourceDependent(String),
     UnprovenReferences,

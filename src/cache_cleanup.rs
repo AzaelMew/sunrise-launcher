@@ -18,6 +18,7 @@ pub(crate) enum Access {
     UninstrumentedGame,
     LeasedGame,
     IncompleteGame,
+    UnpublishedGame,
 }
 impl Access {
     /// Installed units trust only their own executable; shared units require all potentially
@@ -63,6 +64,11 @@ impl Access {
         ] {
             if let Ok(relative) = path.strip_prefix(root) {
                 if let Some(unit) = relative.components().next() {
+                    if root == &versions
+                        && crate::backend::installation::private_stage(unit.as_os_str())
+                    {
+                        return Ok(Self::UnpublishedGame);
+                    }
                     let image = root.join(unit).join(binary);
                     return Ok(if capable_image(&image, &data)? {
                         Self::LeasedGame
@@ -140,6 +146,7 @@ impl Access {
         match self {
             Self::BuildTools | Self::LeasedGame => Ok(()),
             Self::IncompleteGame => Err(Error::IncompleteUnit),
+            Self::UnpublishedGame => Err(Error::UnpublishedGame),
             Self::UninstrumentedGame => Err(Error::UnprovenExclusion),
         }
     }
