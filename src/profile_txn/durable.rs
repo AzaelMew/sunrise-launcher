@@ -3,11 +3,16 @@ use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::Path;
 
-pub fn replace(home: &Path, record: &Path, bytes: &[u8]) -> io::Result<()> {
+pub(super) fn replace(home: &Path, record: &Path, bytes: &[u8]) -> io::Result<()> {
     replace_at(home, record, bytes, || {})
 }
 
-fn replace_at(home: &Path, record: &Path, bytes: &[u8], renamed: impl FnOnce()) -> io::Result<()> {
+pub(super) fn replace_at(
+    home: &Path,
+    record: &Path,
+    bytes: &[u8],
+    renamed: impl FnOnce(),
+) -> io::Result<()> {
     let dir = record.parent().expect("inside the profile");
     fs::create_dir_all(dir)?;
     let mut next = tempfile::Builder::new().prefix(".txn-").tempfile_in(dir)?;
@@ -34,7 +39,7 @@ fn replace_at(home: &Path, record: &Path, bytes: &[u8], renamed: impl FnOnce()) 
     }
 }
 
-pub fn retire(record: &Path) -> io::Result<()> {
+pub(super) fn retire(record: &Path) -> io::Result<()> {
     #[cfg(not(windows))]
     {
         // On macOS the device flush after the directory sync uses the still-open file.
@@ -72,7 +77,7 @@ pub fn retire(record: &Path) -> io::Result<()> {
 
 /// Repeat the restoration barrier when the target already matches the recorded preimage.
 /// A pending addition may never have created its target directory at all.
-pub fn sync_restored(to: &Path, backup: &Path, missing: bool) -> io::Result<()> {
+pub(super) fn sync_restored(to: &Path, backup: &Path, missing: bool) -> io::Result<()> {
     #[cfg(target_os = "macos")]
     let file = if missing { None } else { Some(File::open(to)?) };
     #[cfg(not(windows))]
@@ -104,11 +109,11 @@ pub fn sync_restored(to: &Path, backup: &Path, missing: bool) -> io::Result<()> 
 
 /// A restore is also a same-filesystem rename. Flush its data and both changed directories
 /// before the journal can advance to an older step that may touch the same target again.
-pub fn restore_move(from: &Path, to: &Path) -> io::Result<()> {
+pub(super) fn restore_move(from: &Path, to: &Path) -> io::Result<()> {
     restore_move_at(from, to, || {})
 }
 
-fn restore_move_at(from: &Path, to: &Path, renamed: impl FnOnce()) -> io::Result<()> {
+pub(super) fn restore_move_at(from: &Path, to: &Path, renamed: impl FnOnce()) -> io::Result<()> {
     #[cfg(windows)]
     let file = File::options().write(true).open(from)?;
     #[cfg(not(windows))]
@@ -135,11 +140,15 @@ fn restore_move_at(from: &Path, to: &Path, renamed: impl FnOnce()) -> io::Result
 }
 
 /// Rename a prepared directory into an absent destination, or undo that move.
-pub fn move_new_directory(from: &Path, to: &Path) -> io::Result<()> {
+pub(super) fn move_new_directory(from: &Path, to: &Path) -> io::Result<()> {
     move_new_directory_at(from, to, || {})
 }
 
-fn move_new_directory_at(from: &Path, to: &Path, renamed: impl FnOnce()) -> io::Result<()> {
+pub(super) fn move_new_directory_at(
+    from: &Path,
+    to: &Path,
+    renamed: impl FnOnce(),
+) -> io::Result<()> {
     #[cfg(not(windows))]
     sync_directory(from)?;
     crate::instances::publish_new_folder(from, to)?;
@@ -175,13 +184,13 @@ fn sync_directory(dir: &Path) -> io::Result<()> {
 }
 
 #[cfg(not(windows))]
-pub fn flush(file: &File) -> io::Result<()> {
+pub(super) fn flush(file: &File) -> io::Result<()> {
     // Rust's File::sync_all uses F_FULLFSYNC on macOS and fsync on Linux.
     file.sync_all()
 }
 
 #[cfg(windows)]
-pub fn flush(file: &File) -> io::Result<()> {
+pub(super) fn flush(file: &File) -> io::Result<()> {
     use std::os::windows::io::AsRawHandle;
     use windows_sys::Win32::Storage::FileSystem::FlushFileBuffers;
     // SAFETY: the handle is for the open staging file, not a directory or volume.

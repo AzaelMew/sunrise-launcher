@@ -17,7 +17,7 @@ const CHECKSUM_AT: usize = BLOCK - 32;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
-pub enum Phase {
+pub(super) enum Phase {
     Ready = 0,
     Publishing,
     Committed,
@@ -25,10 +25,10 @@ pub enum Phase {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct State {
+pub(super) struct State {
     sequence: u64,
-    pub phase: Phase,
-    pub frontier: usize,
+    pub(super) phase: Phase,
+    pub(super) frontier: usize,
 }
 
 impl State {
@@ -103,7 +103,7 @@ impl State {
     }
 }
 
-pub struct Slots {
+pub(super) struct Slots {
     file: File,
     path: PathBuf,
     plan: [u8; 32],
@@ -112,7 +112,7 @@ pub struct Slots {
 }
 
 impl Slots {
-    pub fn create(stage: &Path, plan: [u8; 32]) -> io::Result<()> {
+    pub(super) fn create(stage: &Path, plan: [u8; 32]) -> io::Result<()> {
         let mut bytes = [0u8; 2 * BLOCK];
         bytes[..BLOCK].copy_from_slice(&State::READY.encode(plan));
         // Write a nonzero second block so a common sparse allocation optimization does
@@ -121,7 +121,7 @@ impl Slots {
         durable::replace(stage, &stage.join(NAME), &bytes)
     }
 
-    pub fn open(stage: &Path, plan: [u8; 32], steps: usize) -> Result<Self, String> {
+    pub(super) fn open(stage: &Path, plan: [u8; 32], steps: usize) -> Result<Self, String> {
         let path = stage.join(NAME);
         let meta = std::fs::symlink_metadata(&path).map_err(|e| at(&path, e))?;
         if !regular(&meta) || !meta.is_file() || meta.len() != (2 * BLOCK) as u64 {
@@ -152,19 +152,19 @@ impl Slots {
         })
     }
 
-    pub fn current(&self) -> State {
+    pub(super) fn current(&self) -> State {
         self.state
     }
 
-    fn sync(&self) -> Result<(), String> {
+    pub(super) fn sync(&self) -> Result<(), String> {
         durable::flush(&self.file).map_err(|e| at(&self.path, e))
     }
 
-    pub fn advance(&mut self, phase: Phase, frontier: usize) -> Result<(), String> {
+    pub(super) fn advance(&mut self, phase: Phase, frontier: usize) -> Result<(), String> {
         self.advance_at(phase, frontier, || Ok(()))
     }
 
-    fn advance_at(
+    pub(super) fn advance_at(
         &mut self,
         phase: Phase,
         frontier: usize,
