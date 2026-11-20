@@ -5,6 +5,38 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 const GAME: &str = crate::backend::PINNED_GAME;
 
+#[test]
+fn recovery_barrier_error_does_not_promise_that_nothing_changed() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path();
+    let journal = home.join(browser_state::PENDING);
+    let problem = GameInstallProblem::from_recovery(
+        home,
+        RecoveryProblem::Durability {
+            path: journal.clone(),
+            error: std::io::Error::other("retirement sync failed"),
+        },
+    );
+    assert_eq!(
+        problem.summary(),
+        "A mod install the game started was interrupted and couldn't be finished."
+    );
+    assert_eq!(
+        problem.details(),
+        format!(
+            "{}\n{}: retirement sync failed",
+            problem.summary(),
+            browser_state::PENDING
+        )
+    );
+
+    fs::write(journal, b"{").unwrap();
+    let refused = recover_game_install(home).unwrap_err();
+    assert!(refused
+        .summary()
+        .ends_with("Your mods and files were left as they are."));
+}
+
 /// A source in memory: projects, their versions, and the bytes each file URL serves.
 #[derive(Default)]
 struct Fake {

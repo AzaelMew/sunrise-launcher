@@ -10,18 +10,44 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 pub(crate) use sunrise_launcher_smod::index::browser_state::MANIFEST;
+use sunrise_launcher_smod::index::browser_state::{self, RecoveryProblem};
 
 /// A game-owned install not safe to finish. The full diagnostic belongs in Details, not in a banner.
 #[derive(Debug)]
-pub struct GameInstallProblem(String);
+pub struct GameInstallProblem {
+    detail: String,
+    may_have_changed: bool,
+}
 
 impl GameInstallProblem {
-    pub fn summary() -> &'static str {
-        crate::i18n::tr("A mod install the game started was interrupted and couldn't be finished. Your mods and files were left as they are.")
+    fn from_recovery(home: &Path, error: RecoveryProblem) -> Self {
+        let may_have_changed = matches!(error, RecoveryProblem::Durability { .. });
+        let error = error.details(crate::i18n::trf);
+        // Relative file names and the cause are useful; the host's local path is not.
+        let folder = home.display().to_string();
+        let prefix = format!("{folder}{}", std::path::MAIN_SEPARATOR);
+        let detail = error.strip_prefix(&prefix).map_or_else(
+            || error.strip_prefix(&format!("{folder}: ")).unwrap_or(&error),
+            |relative| relative,
+        );
+        Self {
+            detail: detail.to_owned(),
+            may_have_changed,
+        }
+    }
+
+    pub fn summary(&self) -> &'static str {
+        if self.may_have_changed {
+            crate::i18n::tr(
+                "A mod install the game started was interrupted and couldn't be finished.",
+            )
+        } else {
+            crate::i18n::tr("A mod install the game started was interrupted and couldn't be finished. Your mods and files were left as they are.")
+        }
     }
 
     pub fn details(&self) -> String {
-        format!("{}\n{}", Self::summary(), self.0)
+        format!("{}\n{}", self.summary(), self.detail)
     }
 }
 
@@ -34,17 +60,7 @@ impl From<GameInstallProblem> for String {
 /// Settle the game's sidecar using its own home lock. Callers that mutate the profile
 /// hold the same, reentrant lock through their changes. No launcher journal is involved.
 pub fn recover_game_install(home: &Path) -> Result<(), GameInstallProblem> {
-    sunrise_launcher_smod::index::browser_state::reconcile(home).map_err(|error| {
-        let error = error.details(crate::i18n::trf);
-        // Relative file names and the cause are useful; the host's local path is not.
-        let folder = home.display().to_string();
-        let prefix = format!("{folder}{}", std::path::MAIN_SEPARATOR);
-        let detail = error.strip_prefix(&prefix).map_or_else(
-            || error.strip_prefix(&format!("{folder}: ")).unwrap_or(&error),
-            |relative| relative,
-        );
-        GameInstallProblem(detail.to_owned())
-    })
+    browser_state::reconcile(home).map_err(|error| GameInstallProblem::from_recovery(home, error))
 }
 
 /// The folders the browser installs into: an entry's `file` is always inside one of them.

@@ -1235,7 +1235,7 @@ impl Launcher {
             let publish = || -> Result<(), String> {
                 let _lock = lock_home(&home).map_err(|error| error.to_string())?;
                 installed::recover_game_install(&home)
-                    .map_err(|_| installed::GameInstallProblem::summary().to_owned())?;
+                    .map_err(|problem| problem.summary().to_owned())?;
                 // Recheck after recovery; never pin another build under native mods.
                 if let (Some(to), Some(plays)) = (&version, &plays) {
                     if to != plays && !native_status::enabled(&home).is_empty() {

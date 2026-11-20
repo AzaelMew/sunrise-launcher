@@ -106,6 +106,11 @@ pub enum RecoveryProblem {
         journal: PathBuf,
         problem: ClaimProblem,
     },
+    /// A write, sync or retirement failed. Manifest or journal changes may be visible.
+    Durability {
+        path: PathBuf,
+        error: io::Error,
+    },
 }
 
 impl From<String> for RecoveryProblem {
@@ -131,6 +136,7 @@ impl RecoveryProblem {
             Self::Claim { journal, problem } => {
                 format!("{}: {}", journal.display(), problem.render(format))
             }
+            Self::Durability { path, error } => format!("{}: {error}", path.display()),
         }
     }
 }
@@ -220,6 +226,10 @@ fn reconcile_locked(
         Err(e) if e.kind() == ErrorKind::NotFound => false,
         Err(e) => return Err(format!("{}: {e}", target.display()).into()),
     };
+    let durability = |path: &Path, error| RecoveryProblem::Durability {
+        path: path.to_owned(),
+        error,
+    };
     if published {
         let current = list
             .single(&pending.id)
@@ -227,23 +237,23 @@ fn reconcile_locked(
             .map(|i| &list.entries[i]);
         if current == Some(&pending.new) {
             // The row may be visible before its rename is durable.
-            sync(&manifest).map_err(|e| manifest_problem(e.into()))?;
+            sync(&manifest).map_err(|e| durability(&manifest, e))?;
         } else if current == pending.old.as_ref() {
-            sync(&target).map_err(|e| format!("{}: {e}", target.display()))?;
+            sync(&target).map_err(|e| durability(&target, e))?;
             list.record(pending.new);
             *entries = list.entries;
             let bytes = serde_json::to_vec_pretty(&document)
                 .map_err(|e| manifest_problem(DetailReason::Diagnostic(e.to_string())))?;
-            save(&manifest, &bytes).map_err(|e| manifest_problem(e.into()))?;
+            save(&manifest, &bytes).map_err(|e| durability(&manifest, e))?;
         } else {
             return Err(pending_problem(DetailReason::ChangedRow));
         }
     }
     // Old or unrelated bytes keep the old row. Don't discard recovery data after an I/O error.
     match fs::remove_file(path) {
-        Ok(()) => sync(path).map_err(|e| pending_problem(e.into())),
+        Ok(()) => sync(path).map_err(|e| durability(path, e)),
         Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(pending_problem(e.into())),
+        Err(e) => Err(durability(path, e)),
     }
 }
 

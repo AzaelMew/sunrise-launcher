@@ -657,10 +657,7 @@ fn the_way_out_is_the_said_problems_own() {
 #[test]
 fn an_interrupted_game_install_has_a_plain_message_and_exact_profile_folder() {
     let folder = std::path::PathBuf::from("profile-with-journal");
-    let detail = format!(
-        "{}\n.mod-browser.pending.json: duplicate project",
-        sunrise_launcher::browser::installed::GameInstallProblem::summary()
-    );
+    let detail = "A mod install the game started was interrupted and couldn't be finished.\n.mod-browser.pending.json: duplicate project".to_owned();
     let facts = Facts {
         install_recovery: Some((folder.clone(), detail.clone())),
         ..idle()

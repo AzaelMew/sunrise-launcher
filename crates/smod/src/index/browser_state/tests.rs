@@ -85,21 +85,27 @@ fn already_published_manifest_is_synced_before_removing_the_sidecar() {
         Err(io::Error::other("manifest sync failed"))
     });
     assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("manifest sync failed")
+        matches!(result, Err(RecoveryProblem::Durability { path, error })
+        if path == manifest && error.to_string() == "manifest sync failed")
     );
     assert_eq!(fs::read(&sidecar).unwrap(), pending);
 
     let calls = std::cell::RefCell::new(Vec::new());
-    reconcile_locked(home, &sidecar, sha256_file, |path| {
+    let retirement = reconcile_locked(home, &sidecar, sha256_file, |path| {
         calls
             .borrow_mut()
             .push((path.to_path_buf(), sidecar.exists()));
-        Ok(())
+        if path == sidecar {
+            Err(io::Error::other("retirement sync failed"))
+        } else {
+            Ok(())
+        }
     })
-    .unwrap();
+    .unwrap_err();
+    assert!(
+        matches!(retirement, RecoveryProblem::Durability { path, error }
+        if path == sidecar && error.to_string() == "retirement sync failed")
+    );
     assert_eq!(
         calls.into_inner(),
         [(manifest, true), (sidecar.clone(), false)]

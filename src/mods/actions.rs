@@ -54,11 +54,15 @@ impl Launcher {
     pub(super) fn guard(&mut self) -> bool {
         let refusal = if let Some(why) = self.mods_locked() {
             Some(why.to_string())
-        } else if self.ui.mods.snapshot.as_ref().is_some_and(|s| {
-            s.home == self.mods_home()
-                && matches!(s.error, Some(InstalledReadError::GameInstall(_)))
-        }) {
-            Some(installed::GameInstallProblem::summary().into())
+        } else if let Some(InstalledReadError::GameInstall(problem)) = self
+            .ui
+            .mods
+            .snapshot
+            .as_ref()
+            .filter(|s| s.home == self.mods_home())
+            .and_then(|s| s.error.as_ref())
+        {
+            Some(problem.summary().into())
         } else if self.mutating() {
             Some(tr("Wait for the current operation to finish.").to_string())
         } else {

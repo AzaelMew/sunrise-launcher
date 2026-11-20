@@ -37,7 +37,7 @@ impl Launcher {
                 let (summary, action) = match error {
                     InstalledReadError::GameInstall(problem) => {
                         let home = home.to_owned();
-                        let summary = installed::GameInstallProblem::summary().to_owned();
+                        let summary = problem.summary().to_owned();
                         let text = problem.details();
                         let action =
                             crate::frame::button("installed-recovery-details", tr("Show details"))
