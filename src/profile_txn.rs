@@ -1068,23 +1068,7 @@ impl Record {
                             )?;
                         } else if step < directories {
                             let (src, dst, id) = plan.directory(home, &stage, step)?;
-                            if absent(&dst)? {
-                                if Identity::of(&src)? != id {
-                                    return Err(at(&src, unsettled()));
-                                }
-                                durable::sync_restored(&dst, &src, true)
-                                    .map_err(|e| at(&dst, e))?;
-                            } else {
-                                if Identity::of(&dst)? != id
-                                    || fs::read_dir(&dst)
-                                        .map_err(|e| at(&dst, e))?
-                                        .next()
-                                        .is_some()
-                                {
-                                    return Err(at(&dst, unsettled()));
-                                }
-                                durable::move_new_directory(&dst, &src).map_err(|e| at(&dst, e))?;
-                            }
+                            restore_directory(&src, &dst, id)?;
                         } else {
                             let index = step - directories;
                             let spec = &plan.files[index];
@@ -1128,6 +1112,39 @@ impl Record {
         // proof for the next admission (which checks the barrier again before removing it).
         let _ = remove_retired(home, &retired_file, &op.stage);
         Ok(committed)
+    }
+}
+
+/// Prove the directory is back on the private volume before advancing the undo frontier.
+fn restore_directory(src: &Path, dst: &Path, id: Identity) -> Result<(), String> {
+    if !absent(dst)? {
+        if Identity::of(dst)? != id || fs::read_dir(dst).map_err(|e| at(dst, e))?.next().is_some() {
+            return Err(at(dst, unsettled()));
+        }
+        return durable::move_new_directory(dst, src).map_err(|e| at(dst, e));
+    }
+    #[cfg(not(windows))]
+    {
+        if Identity::of(src)? != id {
+            return Err(at(src, unsettled()));
+        }
+        durable::sync_restored(dst, src, true).map_err(|e| at(dst, e))
+    }
+    #[cfg(windows)]
+    {
+        // A visible name alone cannot stand in for the same-volume write-through move.
+        // Retry in the private stage, never temporarily returning the directory to live.
+        // If killed between moves, the same identity can be at exactly one of these names.
+        let replay = src.with_extension("undo-directory");
+        if !absent(src)? {
+            if Identity::of(src)? != id {
+                return Err(at(src, unsettled()));
+            }
+            durable::move_new_directory(src, &replay).map_err(|e| at(src, e))?;
+        } else if Identity::of(&replay)? != id {
+            return Err(at(&replay, unsettled()));
+        }
+        durable::move_new_directory(&replay, src).map_err(|e| at(src, e))
     }
 }
 

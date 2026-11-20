@@ -22,7 +22,7 @@ pub(super) fn replace_at(
     {
         let staged = next.into_temp_path();
         let _ = home;
-        move_through(&staged, record)?;
+        move_through(&staged, record, true)?;
         renamed();
         Ok(())
     }
@@ -64,7 +64,7 @@ pub(super) fn retire(record: &Path) -> io::Result<()> {
         // No unprivileged directory flush. Retire with the same write-through move as
         // replacement; only the live filename is read, so tombstone cleanup needn't be durable.
         let retired = record.with_extension("json.retired");
-        match move_through(record, &retired) {
+        match move_through(record, &retired, true) {
             Ok(()) => {
                 let _ = fs::remove_file(retired);
                 Ok(())
@@ -85,7 +85,7 @@ pub(super) fn mark_retired(home: &Path, from: &Path, to: &Path) -> io::Result<()
     #[cfg(windows)]
     {
         let _ = home;
-        move_through(from, to)?;
+        move_through(from, to, false)?;
         #[cfg(test)]
         fail_barrier_if_injected(to)?;
         Ok(())
@@ -179,7 +179,7 @@ pub(super) fn restore_move_at(from: &Path, to: &Path, renamed: impl FnOnce()) ->
     #[cfg(windows)]
     {
         drop(file);
-        move_through(from, to)?;
+        move_through(from, to, true)?;
         renamed();
         Ok(())
     }
@@ -208,7 +208,10 @@ pub(super) fn move_new_directory_at(
 ) -> io::Result<()> {
     #[cfg(not(windows))]
     sync_directory(from)?;
+    #[cfg(not(windows))]
     crate::instances::publish_new_folder(from, to)?;
+    #[cfg(windows)]
+    move_through(from, to, false)?;
     renamed();
     #[cfg(not(windows))]
     for path in [from, to] {
@@ -258,7 +261,7 @@ pub(super) fn flush(file: &File) -> io::Result<()> {
 }
 
 #[cfg(windows)]
-fn move_through(from: &Path, to: &Path) -> io::Result<()> {
+fn move_through(from: &Path, to: &Path, replace: bool) -> io::Result<()> {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Storage::FileSystem::{
         MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
@@ -275,15 +278,12 @@ fn move_through(from: &Path, to: &Path) -> io::Result<()> {
             .collect())
     };
     let (from, to) = (wide(from)?, wide(to)?);
+    let mut flags = MOVEFILE_WRITE_THROUGH;
+    if replace {
+        flags |= MOVEFILE_REPLACE_EXISTING;
+    }
     // SAFETY: both buffers are NUL-terminated; cross-volume copies are not enabled.
-    if unsafe {
-        MoveFileExW(
-            from.as_ptr(),
-            to.as_ptr(),
-            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-        )
-    } == 0
-    {
+    if unsafe { MoveFileExW(from.as_ptr(), to.as_ptr(), flags) } == 0 {
         return Err(io::Error::last_os_error());
     }
     Ok(())

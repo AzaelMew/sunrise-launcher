@@ -600,6 +600,57 @@ fn another_process_sees_only_the_exact_old_or_committed_generation_after_kills()
 }
 
 #[test]
+fn directory_restore_does_not_replace_an_occupied_stage_destination() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    initialized(home, false);
+    let mut owner = Admission::open(home, None).unwrap();
+    let sealed = seal(&mut owner, true);
+    let record = &sealed.0.record;
+    let op = record.operation().unwrap();
+    let plan = op.ready.as_ref().unwrap();
+    let stage = op.stage.path(home);
+    let (src, dst, id) = plan.directory(home, &stage, 0).unwrap();
+    let mut slots = progress::Slots::open(&stage, record.digest().unwrap(), plan.steps()).unwrap();
+    slots.advance(progress::Phase::Publishing, 1).unwrap();
+    drop(slots);
+    durable::move_new_directory(&src, &dst).unwrap();
+    fs::create_dir(&src).unwrap();
+    assert!(record.complete(home, |_| {}, || {}).is_err());
+    assert!(Identity::of(&dst).unwrap() == id);
+    assert!(Identity::of(&src).unwrap() != id);
+    fs::remove_dir(&src).unwrap();
+    assert!(!record.complete(home, |_| {}, || {}).unwrap());
+    pair(home, true, false);
+}
+
+#[cfg(windows)]
+#[test]
+fn interrupted_private_directory_replay_recovers_only_its_recorded_identity() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    initialized(home, false);
+    let mut owner = Admission::open(home, None).unwrap();
+    let sealed = seal(&mut owner, true);
+    let record = &sealed.0.record;
+    let op = record.operation().unwrap();
+    let plan = op.ready.as_ref().unwrap();
+    let stage = op.stage.path(home);
+    let (src, dst, id) = plan.directory(home, &stage, 0).unwrap();
+    let mut slots = progress::Slots::open(&stage, record.digest().unwrap(), plan.steps()).unwrap();
+    slots.advance(progress::Phase::Publishing, 1).unwrap();
+    slots.advance(progress::Phase::Undoing, 1).unwrap();
+    drop(slots);
+    let replay = src.with_extension("undo-directory");
+    // Recreate a process killed during the private barrier's first rename.
+    durable::move_new_directory(&src, &replay).unwrap();
+    assert!(absent(&dst).unwrap() && Identity::of(&replay).unwrap() == id);
+    assert!(!record.complete(home, |_| {}, || {}).unwrap());
+    assert!(absent(&replay).unwrap());
+    pair(home, true, false);
+}
+
+#[test]
 fn a_killed_retirement_reclaims_its_exact_tree_but_never_a_loose_one() {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path();
