@@ -520,6 +520,7 @@ impl Launcher {
         std::thread::spawn(move || {
             // A build that never ended (the launcher closed or crashed under it) is undone first.
             for target in &list {
+                sunrise::auto::recover(&target.instance.home);
                 undo::recover(&target.instance.home);
             }
             let out = auto_update(&list, enabled, native_allowed, &Default::default());
@@ -729,18 +730,31 @@ impl Launcher {
                     )));
                 }
                 let before = installed::Installed::load(&home).entries;
-                let priors = undo::capture(&home, &before, &p.id, &game);
+                let tracked = p.source == SourceId::Sunrise && p.kind == PackKind::Mod;
+                let priors = undo::capture(&home, &before, &p.id, &game, &replacing);
+                // Kept in the profile before anything is published, so that a launcher that
+                // closes from here on puts the mods back at its next start.
+                let previous = tracked.then(|| undo::begin(&home, &before, &priors));
                 let done = installed::install(
                     &*source, &p, everything, &home, &game, &replacing, &progress,
-                )?;
-                if p.source == SourceId::Sunrise && p.kind == PackKind::Mod {
+                )
+                .inspect_err(|_| {
+                    if let Some(previous) = previous.clone() {
+                        undo::restore(&home, previous);
+                    }
+                })?;
+                if tracked {
+                    let native: Vec<String> = done
+                        .iter()
+                        .filter(|e| native_status::is_native_file(&e.file))
+                        .map(|e| e.project.clone())
+                        .collect();
+                    if native.is_empty() {
+                        undo::restore(&home, previous.flatten());
+                    }
                     return Ok(Finished {
                         said: None,
-                        native: done
-                            .iter()
-                            .filter(|e| native_status::is_native_file(&e.file))
-                            .map(|e| e.project.clone())
-                            .collect(),
+                        native,
                         also: done
                             .iter()
                             .filter(|e| e.project != p.id)
@@ -769,13 +783,6 @@ impl Launcher {
                     &[("mods", &names.join(", "))],
                 )))
             })();
-            // Kept in the profile before the install reports done, so a launcher that closes
-            // before the build ends puts the mods back at its next start.
-            if let Ok(finished) = &result {
-                if !finished.native.is_empty() {
-                    undo::keep(&home, &finished.touched);
-                }
-            }
             let _ = tx.send(match result {
                 Err(Stop::Consent) => {
                     Event::NeedsConsent(Box::new(PendingConsent::Install(source, id, retry, None)))
@@ -1113,20 +1120,26 @@ impl Launcher {
                         let _ = tx.send(Event::Progress(line.to_string(), (i as f32 + f) / total));
                     };
                     let before = installed::Installed::load(&home).entries;
-                    let priors = undo::capture(&home, &before, &p.id, &game);
+                    let priors = undo::capture(&home, &before, &p.id, &game, &[]);
+                    let previous = undo::begin(&home, &before, &priors);
                     installed::install(&*source, &p, false, &home, &game, &[], &progress)
                         .map(|done| {
                             touched
                                 .borrow_mut()
                                 .extend(undo::touched(&home, &done, &priors));
-                            native.borrow_mut().extend(
-                                done.iter()
-                                    .filter(|e| native_status::is_native_file(&e.file))
-                                    .map(|e| e.project.clone()),
-                            );
+                            let brought: Vec<String> = done
+                                .iter()
+                                .filter(|e| native_status::is_native_file(&e.file))
+                                .map(|e| e.project.clone())
+                                .collect();
+                            if brought.is_empty() {
+                                undo::restore(&home, previous.clone());
+                            }
+                            native.borrow_mut().extend(brought);
                             done.into_iter().map(|e| e.title).collect()
                         })
                         .map_err(|why| {
+                            undo::restore(&home, previous.clone());
                             consent.set(matches!(
                                 why,
                                 installed::InstallError::NeedsNativeConsent { .. }
@@ -1147,11 +1160,6 @@ impl Launcher {
             })();
             // The members that went in before one failed stay installed: the native ones among
             // them are still built.
-            match &result {
-                Ok(finished) if !finished.native.is_empty() => undo::keep(&home, &finished.touched),
-                Err(_) if !native.borrow().is_empty() => undo::keep(&home, &touched.borrow()),
-                _ => {}
-            }
             if result.is_err() {
                 let _ = tx.send(Event::Brought(native.take(), touched.take()));
             }
