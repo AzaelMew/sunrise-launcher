@@ -612,3 +612,14 @@ fn the_way_out_is_the_said_problems_own() {
     .view();
     assert_eq!(quiet.act, None);
 }
+
+#[test]
+fn play_is_taken_while_the_mods_are_brought_up_to_date() {
+    let updating = Facts {
+        updating: true,
+        ..idle()
+    };
+    assert!(updating.busy(), "a second Play waits");
+    assert_eq!(updating.view().main, Main::ChangingMods);
+    assert!(!idle().busy());
+}

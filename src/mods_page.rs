@@ -131,6 +131,8 @@ pub(super) struct Mods {
     pub(super) message: Option<Result<String, String>>,
     /// What waits for the install and build slot.
     queue: queue::Queue,
+    /// The start's automatic update runs: Play and installs wait for it.
+    pub(super) updating: bool,
     /// The profile the install that runs was asked for.
     running: Option<queue::Target>,
     /// The question a switch or update asks before it removes mods saved worlds use. Nothing
@@ -266,6 +268,7 @@ impl Mods {
             message: None,
             queue: Default::default(),
             running: None,
+            updating: false,
             building: Vec::new(),
             world_ask: None,
             removal: None,
@@ -345,6 +348,9 @@ impl Launcher {
                 Event::Loaded(l) => loaded.push(l),
                 Event::AutoUpdated(out) | Event::PlayUpdated(out) => {
                     play_ready |= is_play;
+                    if !is_play {
+                        m.updating = false;
+                    }
                     let AutoOutcome {
                         lines,
                         asks,
@@ -429,11 +435,10 @@ impl Launcher {
             })
             .collect();
         let tx = self.mods.tx.clone();
+        self.mods.updating = true;
         std::thread::spawn(move || {
             let out = auto_update(&list, enabled, native_allowed, &Default::default());
-            if !out.lines.is_empty() || !out.asks.is_empty() || !out.removals.is_empty() {
-                let _ = tx.send(Event::AutoUpdated(out));
-            }
+            let _ = tx.send(Event::AutoUpdated(out));
         });
     }
 
