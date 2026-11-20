@@ -1,10 +1,8 @@
 //! What the Mods screens show, worked out from the registry index and the installed list:
 //! pure data in and out, no files, no network, no window. Everything here only reads.
-use super::build_run::State as BuildState;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use sunrise_launcher::browser::installed::Entry;
 use sunrise_launcher::i18n::{tr, trf};
-use sunrise_launcher::native_mods;
 use sunrise_launcher_smod::index::{self, Index};
 use sunrise_launcher_smod::manifest::Side;
 
@@ -395,10 +393,6 @@ pub(super) fn page(
 pub(super) enum Need {
     /// Taken down by the registry: it can't be turned on.
     TakenDown(String),
-    /// A native mod, on, whose build for this computer isn't made yet.
-    Build,
-    /// A native mod that can't run until the player allows native code.
-    Permission,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -422,64 +416,6 @@ pub(super) struct Row {
     pub(super) local: Option<Local>,
     pub(super) icon: Option<String>,
     pub(super) entry: Option<Entry>,
-    /// It can't run on the game this setup plays: the build left it out.
-    pub(super) unfit: Option<Unfit>,
-    /// The build left it out for another reason (it didn't build, it needs a mod that was left
-    /// out, it clashes with another): what the player reads, in a sentence.
-    pub(super) left_out: Option<Omission>,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub(super) enum Omission {
-    Failed(String),
-    Skipped(String),
-}
-
-/// Why a mod is not on the game build its setup plays, in parts the row says in its own words.
-#[derive(Clone, Debug, PartialEq)]
-pub(super) struct Unfit {
-    /// The build played, as people read it ("Nov 17").
-    pub(super) on: String,
-    /// The build it was made for: its version and its name ("Nov 16"), when known.
-    pub(super) made_for: Option<(String, String)>,
-    /// Each thing the game changed that it uses, for its author.
-    pub(super) changes: Vec<String>,
-}
-
-/// Marks the rows of mods the last build left out: those the game was made without (another
-/// version, or not fit for it) get their [`Unfit`] words, every other reason (it didn't build,
-/// it needs a mod that was left out, it clashes) its sentence. A row left out has nothing to
-/// build, so it no longer asks for a build. `on` is the build played, `name` how a build tag is
-/// read by people.
-pub(super) fn mark_left_out(
-    rows: &mut [Row],
-    left: &[native_mods::LeftOut],
-    on: &str,
-    name: impl Fn(&str) -> String,
-) {
-    for row in rows.iter_mut().filter(|r| r.on) {
-        let Some(l) = left
-            .iter()
-            .find(|l| l.id == row.id && l.version == row.version)
-        else {
-            continue;
-        };
-        if !matches!(row.need, Some(Need::TakenDown(_))) {
-            row.need = None;
-        }
-        match l.why {
-            native_mods::Why::Unfit(_) | native_mods::Why::OtherVersion => {
-                let detail = l.detail.clone().unwrap_or_default();
-                row.unfit = Some(Unfit {
-                    on: on.to_owned(),
-                    made_for: detail.made_for.map(|tag| (tag.clone(), name(&tag))),
-                    changes: detail.changes,
-                });
-            }
-            native_mods::Why::DidNotBuild => row.left_out = Some(Omission::Failed(l.label())),
-            _ => row.left_out = Some(Omission::Skipped(l.label())),
-        }
-    }
 }
 
 /// How a status reads: which of the theme's colours its glyph takes.
@@ -487,8 +423,6 @@ pub(super) fn mark_left_out(
 pub(super) enum Tone {
     Warning,
     Info,
-    Accent,
-    Success,
     Muted,
 }
 
@@ -504,7 +438,6 @@ pub(super) struct Status {
 /// The one button a row may hold.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum RowAction {
-    Allow,
     Update,
 }
 
@@ -517,13 +450,9 @@ pub(super) struct Cells {
     pub(super) kind: &'static str,
     pub(super) version: String,
     pub(super) status: Option<Status>,
-    /// The status opens the "needs an update" popover.
-    pub(super) popover: bool,
     pub(super) action: Option<RowAction>,
     /// The switch can be flipped (a taken-down mod's is drawn dim).
     pub(super) switch: bool,
-    /// The switch records the player's preference, but the mod isn't in the build.
-    pub(super) unavailable: bool,
 }
 
 /// The widths of the list's fixed columns on a roomy window.
@@ -537,12 +466,7 @@ pub(super) mod column {
 
 /// `row`'s cells. `error` is why its last update failed. The status is the first thing that
 /// applies, most pressing first; whatever else applies is in its tooltip.
-pub(super) fn cells(
-    row: &Row,
-    error: Option<&str>,
-    building: Option<&BuildState>,
-    native_allowed: bool,
-) -> Cells {
+pub(super) fn cells(row: &Row, error: Option<&str>, native_allowed: bool) -> Cells {
     let mut said: Vec<Status> = Vec::new();
     let mut say = |icon, label: String, tone, tip: String| {
         said.push(Status {
@@ -560,80 +484,13 @@ pub(super) fn cells(
             why.to_owned(),
         );
     }
-    match &row.need {
-        Some(Need::TakenDown(why)) => say(
+    if let Some(Need::TakenDown(why)) = &row.need {
+        say(
             "cancel-01",
             tr("Taken down").into(),
             Tone::Warning,
             trf("Taken down: {reason}", &[("reason", why)]),
-        ),
-        Some(Need::Permission) => say(
-            "shield",
-            tr("Needs permission").into(),
-            Tone::Warning,
-            tr("Needs your permission to run native code").into(),
-        ),
-        Some(Need::Build) | None => {}
-    }
-    if let Some(unfit) = &row.unfit {
-        say(
-            "information-circle",
-            tr("Needs an update").into(),
-            Tone::Warning,
-            trf(
-                "{mod} needs an update for {build}. It comes back when its author releases one.",
-                &[("mod", &row.title), ("build", &unfit.on)],
-            ),
         );
-    } else if let Some(omission) = &row.left_out {
-        match omission {
-            Omission::Failed(why) => {
-                say("cancel-01", tr("Failed").into(), Tone::Warning, why.clone())
-            }
-            Omission::Skipped(why) => say(
-                "information-circle",
-                tr("Not in this build").into(),
-                Tone::Warning,
-                why.clone(),
-            ),
-        }
-    } else {
-        match (building, &row.need) {
-            (Some(BuildState::NeedsUpdate { why, .. }), _) => say(
-                "information-circle",
-                tr("Needs an update").into(),
-                Tone::Warning,
-                why.clone(),
-            ),
-            (Some(BuildState::Failed(why)), _) => {
-                say("cancel-01", tr("Failed").into(), Tone::Warning, why.clone())
-            }
-            (Some(BuildState::Building), Some(Need::Build)) => say(
-                "hammer",
-                tr("Building").into(),
-                Tone::Accent,
-                tr("Its build is running").into(),
-            ),
-            (Some(BuildState::Built), Some(Need::Build)) => say(
-                "tick-02",
-                tr("Built").into(),
-                Tone::Success,
-                tr("Built. It is in the game once the build is done.").into(),
-            ),
-            (Some(BuildState::Waiting), Some(Need::Build)) => say(
-                "clock",
-                tr("Waiting").into(),
-                Tone::Muted,
-                tr("Its build is running").into(),
-            ),
-            (_, Some(Need::Build)) => say(
-                "clock",
-                tr("Needs a build").into(),
-                Tone::Warning,
-                tr("Not built for this computer yet").into(),
-            ),
-            _ => {}
-        }
     }
     if let Some(to) = &row.update {
         say(
@@ -663,10 +520,6 @@ pub(super) fn cells(
             },
         );
     }
-    let popover = row.unfit.is_some()
-        && said
-            .first()
-            .is_some_and(|s| s.label == tr("Needs an update"));
     let tip = said
         .iter()
         .map(|s| s.tip.as_str())
@@ -676,20 +529,9 @@ pub(super) fn cells(
         kind: row.make.map_or("", Make::label),
         version: row.version.clone(),
         status: said.into_iter().next().map(|first| Status { tip, ..first }),
-        popover,
-        action: match (&row.need, &row.update) {
-            (Some(Need::Permission), _) => Some(RowAction::Allow),
-            (_, Some(_)) => Some(RowAction::Update),
-            _ => None,
-        },
+        action: row.update.as_ref().map(|_| RowAction::Update),
         switch: !matches!(row.need, Some(Need::TakenDown(_)))
             && !row.local.as_ref().is_some_and(|l| l.unreadable),
-        unavailable: row.unfit.is_some()
-            || row.left_out.is_some()
-            || matches!(
-                building,
-                Some(BuildState::Failed(_) | BuildState::NeedsUpdate { .. })
-            ),
     }
 }
 
@@ -701,16 +543,13 @@ impl Row {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Group {
-    NeedsYou,
     Updates,
     Rest,
 }
 
 impl Row {
     pub(super) fn group(&self) -> Group {
-        if self.need.is_some() {
-            Group::NeedsYou
-        } else if self.update.is_some() {
+        if self.update.is_some() {
             Group::Updates
         } else {
             Group::Rest
@@ -723,9 +562,6 @@ pub(super) struct World<'a> {
     pub(super) index: Option<&'a Index>,
     pub(super) game: &'a str,
     pub(super) enabled: &'a HashSet<String>,
-    /// Native mods whose build isn't made.
-    pub(super) unbuilt: &'a HashSet<String>,
-    pub(super) native_allowed: bool,
     /// The versions the player picked, by project id.
     pub(super) chosen: &'a std::collections::BTreeMap<String, String>,
     /// Native files the browser didn't install.
@@ -767,15 +603,7 @@ pub(super) fn rows(entries: &[Entry], w: &World) -> Vec<Row> {
                 let hash = e.checksum.strip_prefix("SHA-256:").unwrap_or_default();
                 i.revoked(&e.project, hash).map(|r| r.reason.clone())
             });
-            let need = if let Some(reason) = taken_down {
-                Some(Need::TakenDown(reason))
-            } else if native && on && !w.native_allowed {
-                Some(Need::Permission)
-            } else if native && on && w.unbuilt.contains(&id) {
-                Some(Need::Build)
-            } else {
-                None
-            };
+            let need = taken_down.map(Need::TakenDown);
             let update = w
                 .index
                 .zip(p)
@@ -795,18 +623,11 @@ pub(super) fn rows(entries: &[Entry], w: &World) -> Vec<Row> {
                 local: None,
                 icon: p.and_then(|p| p.icon.clone()),
                 entry: Some(e.clone()),
-                unfit: None,
-                left_out: None,
             })
         })
         .collect();
     out.extend(w.local.iter().map(|l| {
         let on = !l.unreadable && w.enabled.contains(&l.id);
-        let need = match on && l.native {
-            true if !w.native_allowed => Some(Need::Permission),
-            true if w.unbuilt.contains(&l.id) => Some(Need::Build),
-            _ => None,
-        };
         Row {
             id: l.id.clone(),
             title: l.name.clone(),
@@ -814,7 +635,7 @@ pub(super) fn rows(entries: &[Entry], w: &World) -> Vec<Row> {
             make: l.native.then_some(Make::Native),
             version: l.version.clone(),
             on,
-            need,
+            need: None,
             registry_unchecked: false,
             update: None,
             dependency: false,
@@ -822,8 +643,6 @@ pub(super) fn rows(entries: &[Entry], w: &World) -> Vec<Row> {
             local: Some(l.clone()),
             icon: None,
             entry: None,
-            unfit: None,
-            left_out: None,
         }
     }));
     sort(&mut out);
@@ -883,15 +702,6 @@ impl Default for RowFilter {
             makes: BTreeSet::new(),
         }
     }
-}
-
-/// How many mods the one Build button builds, when the list shows it: it sits in the head of
-/// the NEEDS YOU group, so a search or filter that hides every row of that group hides it.
-/// `visible` are the rows shown ([`visible`]). Whoever draws a build's bar elsewhere asks
-/// this, so a build is never left without one.
-pub(super) fn build_in_head(rows: &[Row], visible: &[usize]) -> Option<usize> {
-    let waiting = rows.iter().filter(|r| r.need == Some(Need::Build)).count();
-    (waiting > 0 && visible.iter().any(|&i| rows[i].group() == Group::NeedsYou)).then_some(waiting)
 }
 
 /// Indexes into `rows` that pass the filter; the order of `rows` (grouped, by name) is kept.

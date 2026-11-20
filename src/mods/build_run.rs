@@ -280,18 +280,6 @@ impl Run {
 }
 
 impl Run {
-    /// The Installed row follows the build for this version of the mod. An incompatibility
-    /// or compile failure remains visible after the build ends, but progress does not.
-    pub(crate) fn state_of(&self, id: &str, version: &str) -> Option<&State> {
-        self.lines
-            .iter()
-            .find(|line| line.id == id && line.version == version)
-            .map(|line| &line.state)
-            .filter(|state| {
-                self.running() || matches!(state, State::NeedsUpdate { .. } | State::Failed(_))
-            })
-    }
-
     /// Which mod of those the build compiles it is at, and of how many: "2 of 3". The mods it
     /// left out are not counted.
     pub(crate) fn at(&self) -> Option<(usize, usize)> {
@@ -579,21 +567,6 @@ mod tests {
         assert_eq!(states(&run), ["waiting", "waiting", "waiting", "failed"]);
         assert_eq!(run.counts().failed, 1);
         assert_eq!(run.headline(), "The build stopped");
-        // Its row on Mods says so after the window is closed, for the version that failed.
-        assert_eq!(
-            run.state_of("zoom", "1.0.0"),
-            Some(&State::Failed("Zoom couldn't be built.".into()))
-        );
-        assert_eq!(
-            run.state_of("zoom", "1.0.1"),
-            None,
-            "an updated mod starts over"
-        );
-        assert_eq!(
-            run.state_of("minimap", "1.0.0"),
-            None,
-            "progress is not live"
-        );
     }
 
     #[test]
@@ -690,15 +663,6 @@ mod tests {
             "The build stopped.".into(),
             &["jei".into(), "minimap".into()],
         );
-        assert!(matches!(
-            run.state_of("jei", "1.0.0"),
-            Some(State::NeedsUpdate { .. })
-        ));
-        assert!(
-            matches!(run.state_of("minimap", "1.0.0"), Some(State::Failed(why)) if !why.is_empty())
-        );
-        assert_eq!(run.state_of("jei", "1.0.1"), None);
-        assert_eq!(run.state_of("zoom", "1.0.0"), None);
         assert_eq!(run.counts().needs_update, 1);
         assert_eq!(run.counts().failed, 1);
     }
