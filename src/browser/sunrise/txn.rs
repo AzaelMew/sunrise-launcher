@@ -425,7 +425,7 @@ impl Lease {
         download.install(
             target.base(),
             &proof,
-            backend::version_storage::Download::Automatic,
+            crate::backend::version_storage::Download::Automatic,
             progress,
         )
     }
