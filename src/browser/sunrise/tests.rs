@@ -117,13 +117,11 @@ fn a_required_mod_is_installed_once_and_refusals_leave_the_profile_intact() {
     );
     assert!(!home.join(installed::MANIFEST).exists());
 
-    // A failure after moving the mod files must also leave none behind.
+    // A directory at the manifest path is refused before any package is published.
     fs::create_dir(home.join(installed::MANIFEST)).unwrap();
     assert!(run(&index).is_err());
-    assert!(fs::read_dir(home.join(mod_list::MODS_DIR))
-        .unwrap()
-        .next()
-        .is_none());
+    assert!(!home.join(mod_list::MODS_DIR).exists());
+    assert!(home.join(installed::MANIFEST).is_dir());
     assert!(!home.join("sunrise-mods.txt").exists());
     fs::remove_dir(home.join(installed::MANIFEST)).unwrap();
 
