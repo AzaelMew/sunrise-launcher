@@ -795,6 +795,16 @@ impl Default for RowFilter {
 }
 
 /// Indexes into `rows` that pass the filter; the order of `rows` (grouped, by name) is kept.
+pub(super) fn visible_count(rows: &[Row], visible: &[usize]) -> String {
+    trf(
+        "{shown} of {total} mods shown",
+        &[
+            ("shown", &visible.len().to_string()),
+            ("total", &rows.len().to_string()),
+        ],
+    )
+}
+
 pub(super) fn visible(rows: &[Row], f: &RowFilter) -> Vec<usize> {
     let words: Vec<String> = f.text.split_whitespace().map(str::to_lowercase).collect();
     (0..rows.len())
