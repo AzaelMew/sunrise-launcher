@@ -1226,6 +1226,9 @@ impl Launcher {
         })
     }
 
+    /// Switches the selected setup to another build. The switch is staged against the build kept
+    /// now: when it would remove mods that saved worlds use, the world question comes first and
+    /// the pin changes only if the answer is Switch anyway (`commit_switch`).
     pub(crate) fn pin_build(&mut self, version: Option<String>, channel: instances::Channel) {
         if self.launch_busy() || self.client.is_some() {
             self.ui.sheets.error = Some(tr("Wait for the current operation to finish.").into());
@@ -1234,14 +1237,53 @@ impl Launcher {
         let Some(instance) = self.selected_instance() else {
             return;
         };
+        let mut staged = instance.clone();
+        staged.version = version.clone();
+        staged.channel = channel;
+        let ctx = sunrise_launcher::browser::sunrise::auto::Context {
+            in_pack: sunrise_launcher::browser::sunrise::auto::in_pack(&instance.home),
+            game: &self.game_of(&staged),
+            native_allowed: self.settings.native_mods_allowed_at.is_some(),
+        };
+        let question = sunrise_launcher::browser::sunrise::known_index().and_then(|index| {
+            sunrise_launcher::browser::sunrise::auto::switch_question(&index, &instance.home, &ctx)
+        });
         let id = instance.id.clone();
-        match instances::edit(&id, |m| {
+        match question {
+            Some(question) => {
+                self.mods.world_ask = Some(crate::mods_page::WorldAsk {
+                    instance: id,
+                    question,
+                    build_on: None,
+                    switch: Some((version, channel)),
+                });
+            }
+            None => self.commit_switch(&id, version, channel, Default::default()),
+        }
+    }
+
+    /// Saves the new pin, then moves every mod on to it, whatever the setting for routine
+    /// updates says: a switch is not a routine update. `allow` are the mods the player let a
+    /// world lose.
+    pub(crate) fn commit_switch(
+        &mut self,
+        id: &str,
+        version: Option<String>,
+        channel: instances::Channel,
+        allow: std::collections::BTreeSet<String>,
+    ) {
+        if self.launch_busy() || self.client.is_some() {
+            self.ui.sheets.error = Some(tr("Wait for the current operation to finish.").into());
+            return;
+        }
+        match instances::edit(id, |m| {
             m.version = version;
             m.channel = Some(channel);
         }) {
             Ok(_) => {
                 self.ui.sheets.error = None;
                 self.reload_instances();
+                self.migrate_mods(id, allow);
             }
             Err(e) => self.ui.sheets.error = Some(e),
         }

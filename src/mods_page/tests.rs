@@ -124,3 +124,32 @@ fn a_builds_stop_for_worlds_becomes_the_world_question_that_builds_on_when_switc
     assert_eq!(ask.question.worlds, ["Home"]);
     assert_eq!(ask.build_on.as_deref(), Some("nightly-2026-11-17-abcdef0"));
 }
+
+#[test]
+fn a_question_or_a_removal_stops_the_play_that_waited_for_the_update() {
+    let mut out = AutoOutcome::default();
+    assert!(!out.blocks_play());
+    out.removals.push((
+        "main".into(),
+        vec![sunrise::auto::Removal {
+            id: "ruby".into(),
+            title: "Ruby".into(),
+            reason: "no version for 26.3".into(),
+        }],
+    ));
+    assert!(out.blocks_play());
+    let ask = WorldAsk {
+        instance: "main".into(),
+        question: sunrise_launcher::worlds::Question {
+            mods: vec!["ruby".into()],
+            worlds: vec!["Home".into()],
+        },
+        build_on: None,
+        switch: None,
+    };
+    let out = AutoOutcome {
+        asks: vec![ask],
+        ..AutoOutcome::default()
+    };
+    assert!(out.blocks_play());
+}

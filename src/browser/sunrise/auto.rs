@@ -163,6 +163,24 @@ pub fn removals(
         .collect()
 }
 
+/// The question a switch to `ctx.game` puts before anything is changed, not even the pin: the
+/// mods it would remove (by [`decide`]) that saved worlds use. None when no world is at stake.
+/// A world that can't be read is not answered for the player: the run that follows then
+/// removes nothing, as [`run_with`] does.
+pub fn switch_question(
+    index: &Index,
+    home: &Path,
+    ctx: &Context,
+) -> Option<crate::worlds::Question> {
+    let ids: Vec<String> = installed::Installed::load(home)
+        .entries
+        .iter()
+        .filter(|entry| matches!(decide(index, entry, ctx), Decision::Remove(_)))
+        .map(|entry| entry.project.clone())
+        .collect();
+    crate::worlds::question(home, &ids).ok().flatten()
+}
+
 /// The kinds a content mod declares one file each for (`data/<namespace>/sunrise/<kind>/<id>.json`), as notices name them.
 const DECLARED: [(&str, &str); 6] = [
     ("block", "block"),
