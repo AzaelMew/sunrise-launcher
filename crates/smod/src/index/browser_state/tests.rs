@@ -79,7 +79,7 @@ fn already_published_manifest_is_synced_before_removing_the_sidecar() {
     fs::write(&sidecar, &pending).unwrap();
     let _lock = lock_home(home).unwrap();
 
-    let result = reconcile_locked(home, &sidecar, |path| {
+    let result = reconcile_locked(home, &sidecar, sha256_file, |path| {
         assert_eq!(path, manifest);
         assert_eq!(fs::read(&sidecar).unwrap(), pending);
         Err(io::Error::other("manifest sync failed"))
@@ -93,7 +93,7 @@ fn already_published_manifest_is_synced_before_removing_the_sidecar() {
     assert_eq!(fs::read(&sidecar).unwrap(), pending);
 
     let calls = std::cell::RefCell::new(Vec::new());
-    reconcile_locked(home, &sidecar, |path| {
+    reconcile_locked(home, &sidecar, sha256_file, |path| {
         calls
             .borrow_mut()
             .push((path.to_path_buf(), sidecar.exists()));

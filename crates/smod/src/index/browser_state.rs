@@ -74,12 +74,13 @@ pub fn reconcile(home: &Path) -> Result<(), RecoveryProblem> {
         return Ok(());
     }
     let _lock = lock_home(home).map_err(|e| format!("{}: {e}", home.display()))?;
-    reconcile_locked(home, &path, sync_parent)
+    reconcile_locked(home, &path, sha256_file, sync_parent)
 }
 
 fn reconcile_locked(
     home: &Path,
     path: &Path,
+    hash: impl FnOnce(&Path) -> Result<String, String>,
     sync: impl Fn(&Path) -> io::Result<()>,
 ) -> Result<(), RecoveryProblem> {
     let error =
@@ -134,7 +135,7 @@ fn reconcile_locked(
 
     let target = home.join(&pending.file);
     let published = match target.symlink_metadata() {
-        Ok(info) => info.len() <= MAX_FILE && sha256_file(&target)? == sha,
+        Ok(info) => info.len() <= MAX_FILE && hash(&target)? == sha,
         Err(e) if e.kind() == ErrorKind::NotFound => false,
         Err(e) => return Err(format!("{}: {e}", target.display()).into()),
     };

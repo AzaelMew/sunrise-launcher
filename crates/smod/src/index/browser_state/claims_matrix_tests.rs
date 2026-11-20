@@ -233,6 +233,35 @@ fn ownership_is_checked_even_without_new_bytes_or_with_an_already_new_row() {
 }
 
 #[test]
+fn a_competing_claim_refuses_before_the_archive_reader_is_called() {
+    let fixture = Recovery::new();
+    fixture.archive(b"new");
+    let claim = json!({"source": "future-source", "project": "other", "file": FILE});
+    let before = fixture.manifest(&[&fixture.old, &claim]);
+    let journal = fixture.home.join(PENDING);
+    let _lock = lock_home(&fixture.home).unwrap();
+    let result = reconcile_locked(
+        &fixture.home,
+        &journal,
+        |_| panic!("read an archive with a competing claim"),
+        |_| panic!("synced an archive with a competing claim"),
+    );
+    assert!(matches!(
+        result,
+        Err(RecoveryProblem::Claim {
+            problem: ClaimProblem::Conflict {
+                possible: false,
+                ..
+            },
+            ..
+        })
+    ));
+    fixture.assert_pending("competing claim");
+    fixture.assert_archive("competing claim", Some(b"new"));
+    assert_eq!(fs::read(fixture.home.join(MANIFEST)).unwrap(), before);
+}
+
+#[test]
 fn unusable_manifest_keeps_intent_even_when_target_bytes_do_not_match() {
     for bytes in [None, Some(&b"old"[..])] {
         let fixture = Recovery::new();
