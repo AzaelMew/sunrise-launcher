@@ -646,7 +646,7 @@ fn a_native_dependency_installs_under_the_choice_and_is_refused_before_it_with_n
         progress: &|_, _| {},
     };
     let refused = dependencies::install(&install, p, &p.versions[0], false, true).unwrap_err();
-    assert!(refused.contains("coords_hud"), "{refused}");
+    assert!(refused.contains("runs native code"), "{refused}");
     // Refused from the plan: nothing was downloaded or written.
     assert!(!home.join(installed::MANIFEST).exists());
     assert!(!home.join("sunrise-native-mods").exists());
@@ -659,6 +659,47 @@ fn a_native_dependency_installs_under_the_choice_and_is_refused_before_it_with_n
     assert!(done[1].dependency);
     assert!(home.join("sunrise-native-mods/coords_hud.smod").is_file());
     assert!(mod_list::is_enabled(&home, "coords_hud"));
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn native_code_is_refused_without_the_choice_whoever_brings_it() {
+    let home = scratch("native-consent-all");
+    let mut index = fireflies_needing_a_native_mod(&home);
+    let install = |index: &Index| {
+        let p = index.project("fireflies").unwrap();
+        let native = index.project("coords_hud").unwrap();
+        let run = |project: &index::Project| {
+            dependencies::install(
+                &Install {
+                    index,
+                    local: true,
+                    home: &home,
+                    replacing: &[],
+                    progress: &|_, _| {},
+                },
+                project,
+                &project.versions[0],
+                false,
+                true,
+            )
+        };
+        (run(p), run(native))
+    };
+    // The requested mod is native itself.
+    let (_, root) = install(&index);
+    assert!(root.unwrap_err().contains("runs native code"));
+    // An index of the older format that doesn't list the dependency: the file does.
+    for project in &mut index.projects {
+        for version in &mut project.versions {
+            version.dependencies = None;
+        }
+    }
+    let (content, _) = install(&index);
+    let refused = content.unwrap_err();
+    assert!(refused.contains("runs native code"), "{refused}");
+    assert!(!home.join("sunrise-native-mods").exists());
+    assert!(!home.join(installed::MANIFEST).exists());
     fs::remove_dir_all(home).unwrap();
 }
 
