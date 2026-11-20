@@ -1988,8 +1988,32 @@ mod tests {
         fs::write(preparation.join("blocks.json"), b"{}").unwrap();
         // Cache eviction can select the installed unit now, before either profile has a reference.
         assert!(!references("nightly-original").unwrap());
+        use sunrise_launcher_smod::{index, manifest, mod_list};
         let first = crate::backend::game_home().join("instances/first");
-        fs::create_dir_all(&first).unwrap();
+        fs::create_dir_all(first.join(mod_list::DIR)).unwrap();
+        let package = |version: &str| {
+            sunrise_launcher_smod::Package::write_files(
+                &format!(
+                    "id='lantern'\nname='Lantern'\nversion='{version}'\napi='{}'\ncapabilities=['registries']\n",
+                    manifest::API
+                ),
+                &[],
+            )
+            .unwrap()
+        };
+        let relative = format!("{}/lantern.smod", mod_list::DIR);
+        let old = package("1.0.0");
+        fs::write(first.join(&relative), &old).unwrap();
+        let manifest = serde_json::to_vec(&serde_json::json!({"entries":[{
+            "source":"sunrise", "project":"lantern", "slug":"lantern", "title":"Lantern",
+            "kind":"mod", "version":"1.0.0", "number":"1.0.0", "file":relative,
+            "checksum":format!("SHA-256:{}", index::sha256(&old)), "page":"",
+        }]}))
+        .unwrap();
+        let row_file = first.join(crate::browser::installed::MANIFEST);
+        fs::create_dir_all(row_file.parent().unwrap()).unwrap();
+        fs::write(&row_file, &manifest).unwrap();
+        fs::write(first.join(mod_list::FILE), b"mod.lantern:true\n").unwrap();
         let owner = Lease::admit(&first).unwrap();
         let target = owner
             .play_target(|| Target::first_play("nightly-original", |_| panic!("already installed")))
@@ -2044,8 +2068,22 @@ mod tests {
         let target = owner
             .play_target(|| panic!("the channel does not replace a committed pointer"))
             .unwrap();
-        fs::write(first.join(sunrise_launcher_smod::mod_list::FILE), b"").unwrap();
+        // Model the game replacing a valid package without updating the browser's
+        // checksum, then leaving an incomplete enable list on exit.
+        let new = package("1.1.0");
+        fs::write(first.join(&relative), &new).unwrap();
+        let truncated = b"mod.lant";
+        fs::write(first.join(mod_list::FILE), truncated).unwrap();
+        assert!(
+            owner.verify_launch().is_err(),
+            "old generation cannot start"
+        );
         assert_eq!(prepare(&owner, &target).unwrap(), "nightly-original");
+        assert!(owner.verify_launch().is_ok());
+        assert_eq!(fs::read(first.join(&relative)).unwrap(), new);
+        assert_eq!(fs::read(row_file).unwrap(), manifest);
+        assert_eq!(fs::read(first.join(mod_list::FILE)).unwrap(), truncated);
+        assert!(!mod_list::ModList::load(&first).enabled.contains("lantern"));
         let original = owner.active_build().unwrap().unwrap().test_receipt(1);
         assert_eq!(original.generation, 2);
         build::publish(&first, &original).unwrap();
