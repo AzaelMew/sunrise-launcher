@@ -221,7 +221,7 @@ impl GameDownload {
         // installed it. Repair is explicit: it must also prove the new request marker.
         if intent == InstallIntent::Exact && self.is_installed(tag, proof) {
             progress(1.0);
-            return Ok(InstallOutcome::Installed(None));
+            return Ok(InstallOutcome::AlreadyInstalled(None));
         }
         let home = version_dir(tag);
         if intent == InstallIntent::Repair
@@ -233,12 +233,24 @@ impl GameDownload {
             let _publication = registry
                 .publication(LockMode::Exclusive)
                 .map_err(|e| crate::native_mods::cache_error(e.into()))?;
-            // Retrying the rolling receipt needs neither the archive nor a new image. An
-            // architecture or signed-proof mismatch still takes the existing Repair route.
+            // A proved cache hit needs neither the archive nor a new image. A stale
+            // receipt alone isn't a failed install: only a noted failure makes the
+            // operation a receipt-only retry rather than an ordinary Install or Update.
             if self.installed_at(&home, tag, proof, intent).is_ok() {
-                let warning = super::save_nightly_receipt(&versions_dir(), tag);
+                let versions = versions_dir();
+                let outcome = if crate::nightly::has_current_receipt(&versions, tag) {
+                    InstallOutcome::AlreadyInstalled(None)
+                } else {
+                    let retry = crate::nightly::failed_install_receipt(&versions, tag);
+                    let warning = super::save_nightly_receipt(&versions, tag);
+                    if retry {
+                        InstallOutcome::ReceiptOnly(warning)
+                    } else {
+                        InstallOutcome::AlreadyInstalled(warning)
+                    }
+                };
                 progress(1.0);
-                return Ok(InstallOutcome::ReceiptOnly(warning));
+                return Ok(outcome);
             }
         }
         let release = Release {
@@ -496,6 +508,7 @@ mod tests {
                     "{retry:?}"
                 );
                 assert_eq!(fs::read_to_string(receipt).unwrap(), ROLLING);
+                assert!(!crate::nightly::failed_install_receipt(&versions, ROLLING));
                 assert_eq!(crate::profile_txn::Identity::of(&target).unwrap(), identity);
                 assert_eq!(
                     download
@@ -503,6 +516,83 @@ mod tests {
                         .unwrap(),
                     image
                 );
+            },
+        );
+    }
+
+    #[test]
+    fn install_nightly_selects_the_current_build_cached_by_versions() {
+        isolated_case(
+            "install_nightly_selects_the_current_build_cached_by_versions",
+            || {
+                const ROLLING: &str = "nightly-2026-11-20-aaaaaaa";
+                let (mut download, proof, url, server) = serve_windows_archive(
+                    GameArchitecture::X64,
+                    "sunrise-windows-x64.zip",
+                    b"verified Nightly image",
+                );
+                download.source = NIGHTLY.into();
+                let stable = version_dir(TAG);
+                fs::create_dir_all(&stable).unwrap();
+                fs::write(stable.join(COMPLETE), []).unwrap();
+                let mut settings = Settings::load();
+                settings.selected = Some(TAG.into());
+                settings.save().unwrap();
+
+                // Versions publishes through the same worker without changing selection.
+                let cached = download
+                    .publish(
+                        ROLLING,
+                        &proof,
+                        InstallIntent::Repair,
+                        |_| {},
+                        |_, _| url.clone(),
+                    )
+                    .unwrap();
+                server.join().unwrap();
+                assert!(matches!(cached, InstallOutcome::Installed(None)));
+                assert_eq!(Settings::load().selected.as_deref(), Some(TAG));
+                let versions = versions_dir();
+                assert!(crate::nightly::has_current_receipt(&versions, ROLLING));
+                let target = version_dir(ROLLING);
+                let identity = crate::profile_txn::Identity::of(&target).unwrap();
+                let release = Release {
+                    tag: ROLLING.into(),
+                    name: "Nightly 2026-11-20 · aaaaaaa".into(),
+                    body: String::new(),
+                    date: "2026-11-20".into(),
+                    time: String::new(),
+                    asset: Some((url, download.size)),
+                    prerelease: true,
+                    nightly: Some(NIGHTLY.into()),
+                };
+
+                // Exercise both an already-current receipt and a stale receipt without a
+                // failed install. Neither should suppress the CLI's normal selection.
+                for prior_receipt in [ROLLING, "nightly-2026-11-20-bbbbbbb"] {
+                    crate::nightly::record_current(&versions, prior_receipt).unwrap();
+                    settings.save().unwrap();
+                    let selected = install_offered_tag(
+                        std::slice::from_ref(&release),
+                        NIGHTLY,
+                        false,
+                        |offered| {
+                            assert_eq!(offered.tag, ROLLING);
+                            download.publish(
+                                &offered.tag,
+                                &proof,
+                                InstallIntent::Repair,
+                                |_| {},
+                                |_, _| panic!("a cache hit must not request any assets"),
+                            )
+                        },
+                    )
+                    .unwrap();
+                    assert_eq!(selected, ROLLING);
+                    assert_eq!(Settings::load().selected.as_deref(), Some(ROLLING));
+                    assert!(crate::nightly::has_current_receipt(&versions, ROLLING));
+                    assert_eq!(crate::profile_txn::Identity::of(&target).unwrap(), identity);
+                }
             },
         );
     }

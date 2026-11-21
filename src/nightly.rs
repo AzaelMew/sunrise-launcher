@@ -60,14 +60,41 @@ pub fn day(date: &str) -> String {
 static SAME_DAY: std::sync::RwLock<Vec<(String, String)>> = std::sync::RwLock::new(Vec::new());
 
 const CURRENT_INSTALL: &str = ".nightly-current";
+const FAILED_INSTALL_RECEIPT: &str = ".nightly-receipt-failed";
 
-/// Record the verified rolling build on install, independently of the global or profile selection.
+/// Record the verified rolling build, independently of the global or profile selection.
 /// A concurrent reader sees the previous choice or the complete new one, never a partial tag.
 pub(crate) fn record_current(versions: &Path, tag: &str) -> std::io::Result<()> {
+    write_receipt(versions, CURRENT_INSTALL, tag)?;
+    let _ = fs::remove_file(versions.join(FAILED_INSTALL_RECEIPT));
+    Ok(())
+}
+
+pub(crate) fn has_current_receipt(versions: &Path, tag: &str) -> bool {
+    receipt_matches(&versions.join(CURRENT_INSTALL), tag)
+}
+
+pub(crate) fn failed_install_receipt(versions: &Path, tag: &str) -> bool {
+    receipt_matches(&versions.join(FAILED_INSTALL_RECEIPT), tag)
+}
+
+fn receipt_matches(path: &Path, tag: &str) -> bool {
+    fs::symlink_metadata(path).is_ok_and(|meta| {
+        meta.is_file() && !crate::native_cache::linked(&meta) && meta.len() == tag.len() as u64
+    }) && fs::read(path).is_ok_and(|bytes| bytes == tag.as_bytes())
+}
+
+pub(crate) fn remember_install_receipt_failure(versions: &Path, tag: &str) {
+    // The error may also prevent this independent write (e.g. a full volume). A
+    // missing note never blocks using the image or implies an interrupted install.
+    let _ = write_receipt(versions, FAILED_INSTALL_RECEIPT, tag);
+}
+
+fn write_receipt(versions: &Path, name: &str, tag: &str) -> std::io::Result<()> {
     use std::io::Write as _;
     let mut part = tempfile::NamedTempFile::new_in(versions)?;
     part.write_all(tag.as_bytes())?;
-    part.persist(versions.join(CURRENT_INSTALL))?;
+    part.persist(versions.join(name))?;
     Ok(())
 }
 

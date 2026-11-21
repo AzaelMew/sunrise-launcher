@@ -130,19 +130,23 @@ pub(crate) enum InstallIntent {
 #[derive(Debug)]
 pub enum InstallOutcome {
     Installed(Option<String>),
+    AlreadyInstalled(Option<String>),
     ReceiptOnly(Option<String>),
 }
 
 impl InstallOutcome {
     pub fn receipt_warning(&self) -> Option<&str> {
         match self {
-            Self::Installed(warning) | Self::ReceiptOnly(warning) => warning.as_deref(),
+            Self::Installed(warning)
+            | Self::AlreadyInstalled(warning)
+            | Self::ReceiptOnly(warning) => warning.as_deref(),
         }
     }
 }
 
 fn save_nightly_receipt(root: &Path, tag: &str) -> Option<String> {
     crate::nightly::record_current(root, tag).err().map(|error| {
+        crate::nightly::remember_install_receipt_failure(root, tag);
         crate::i18n::trf(
             "{build} is installed, but Sunrise couldn't save which Nightly is current. The rolling receipt wasn't updated.\n{reason}",
             &[("build", tag), ("reason", &error.to_string())],

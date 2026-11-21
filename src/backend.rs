@@ -1329,8 +1329,8 @@ fn unpack(archive: &Path, url: &str, to: &Path) -> Result<(), String> {
 
 pub use installation::InstallOutcome;
 
-/// Downloads one release, checks it against its signed checksums and unpacks it; `progress` gets
-/// the fraction done. A retry of a verified rolling build only saves its receipt.
+/// Installs one signed release or reuses its proved rolling Nightly image. Only a retry of
+/// a known receipt failure skips the normal post-install actions.
 pub fn install(release: &Release, progress: impl Fn(f32)) -> Result<InstallOutcome, String> {
     let tag = &release.tag;
     installation::recover_replacement(tag)?;
@@ -3626,22 +3626,33 @@ pub use update_selection::select_after_update;
 /// `select_after_update` says when `as_update`, or always selects it otherwise.
 pub fn install_tag(tag: &str, as_update: bool, progress: impl Fn(f32)) -> Result<String, String> {
     let releases = [releases()?, release_selection::snapshot(tag)?].concat();
+    install_offered_tag(&releases, tag, as_update, |release| {
+        install(release, progress)
+    })
+}
+
+fn install_offered_tag(
+    releases: &[Release],
+    tag: &str,
+    as_update: bool,
+    install: impl FnOnce(&Release) -> Result<InstallOutcome, String>,
+) -> Result<String, String> {
     let release = if tag == "latest" {
         crate::instances::selected()
             .channel
-            .following(&releases)
-            .builds(&releases)
+            .following(releases)
+            .builds(releases)
             .next()
             .ok_or("No release has a build for this platform yet.")?
     } else {
-        release_selection::by_tag(&releases, tag)
+        release_selection::by_tag(releases, tag)
             .ok_or_else(|| format!("No Sunrise release is tagged {tag}."))?
     };
     if release.asset.is_none() {
         return Err(format!("{} has no build for this platform.", release.tag));
     }
     let before = installed();
-    let outcome = install(release, progress)?;
+    let outcome = install(release)?;
     if let Some(warning) = outcome.receipt_warning() {
         eprintln!("{warning}");
     }
