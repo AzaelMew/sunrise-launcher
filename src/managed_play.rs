@@ -362,30 +362,50 @@ enum Generation<'a> {
     },
 }
 
-/// Read only the last settled pointer for display. Preparing a candidate never makes it
-/// the profile's visible build; mutators and Play must still claim admission themselves.
-pub fn display_active(home: &Path) -> Result<Option<Active>, String> {
+pub enum DisplayActiveError {
+    Publishing,
+    Read(String),
+}
+
+/// Read only the last settled pointer for display. The Installed list must distinguish a
+/// temporarily busy reader from a settled profile with no holds.
+pub fn try_display_active(home: &Path) -> Result<Option<Active>, DisplayActiveError> {
     use sunrise_launcher_smod::{
         locks::LockMode,
         runtime_leases::{Error, Registry},
     };
-    let _reader = DISPLAY_PUBLICATION
-        .try_lock()
-        .map_err(|error| match error {
-            std::sync::TryLockError::WouldBlock => native_mods::cache_error(Error::Busy.into()),
-            std::sync::TryLockError::Poisoned(_) => unsettled(),
-        })?;
+    let _reader = match DISPLAY_PUBLICATION.try_lock() {
+        Ok(guard) => guard,
+        Err(std::sync::TryLockError::WouldBlock) => return Err(DisplayActiveError::Publishing),
+        Err(std::sync::TryLockError::Poisoned(_)) => {
+            return Err(DisplayActiveError::Read(unsettled()))
+        }
+    };
     let _publication = match Registry::existing(&crate::backend::data_dir())
         .and_then(|registry| registry.publication(LockMode::Shared))
     {
         Ok(lock) => Some(lock),
         Err(Error::Io(error)) if error.kind() == io::ErrorKind::NotFound => None,
-        Err(error) => return Err(native_mods::cache_error(error.into()).to_string()),
+        Err(Error::Busy) => return Err(DisplayActiveError::Publishing),
+        Err(error) => {
+            return Err(DisplayActiveError::Read(native_mods::cache_error(
+                error.into(),
+            )))
+        }
     };
-    crate::profile_txn::display_pointer(home)?
-        .as_deref()
-        .map(Active::parse)
-        .transpose()
+    crate::profile_txn::display_pointer(home)
+        .and_then(|active| active.as_deref().map(Active::parse).transpose())
+        .map_err(DisplayActiveError::Read)
+}
+
+/// A display snapshot never authorizes mutation; those callers still claim profile admission.
+pub fn display_active(home: &Path) -> Result<Option<Active>, String> {
+    try_display_active(home).map_err(|error| match error {
+        DisplayActiveError::Publishing => {
+            native_mods::cache_error(sunrise_launcher_smod::runtime_leases::Error::Busy.into())
+        }
+        DisplayActiveError::Read(error) => error,
+    })
 }
 
 /// A paint can request an admitted read, but this hint never authorizes an action.

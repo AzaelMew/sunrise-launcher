@@ -191,7 +191,7 @@ impl Launcher {
             .count();
         let all_on = selected_here > 0 && selected_here == shown_ids.len();
         let n_sel = selected.len();
-        let busy = self.mods_busy();
+        let busy = !refresh_ready || self.mods_busy();
         let native_allowed = self.settings.native_mods_allowed_at.is_some();
         let with_update = {
             let chosen: Vec<Row> = selected.iter().map(|r| (*r).clone()).collect();
@@ -665,7 +665,7 @@ impl Launcher {
                     "Enabled for this profile, but not included in the build.",
                 )))
             });
-            if cells.switch && !switch_held {
+            if cells.switch && !switch_held && !busy {
                 let row = r.clone();
                 s.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     this.toggle(&row);
