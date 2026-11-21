@@ -36,6 +36,8 @@ pub(super) enum Fit {
     OtherBuild(String),
     /// Taken down, or asks for something this Sunrise doesn't have.
     Refused(String),
+    /// No registry fit evidence, as for a local archive's details.
+    Unknown,
 }
 
 impl Fit {
@@ -48,6 +50,7 @@ impl Fit {
             Fit::Fits => None,
             Fit::OtherBuild(game) => Some(trf("Made for {game}", &[("game", game)])),
             Fit::Refused(why) => Some(why.clone()),
+            Fit::Unknown => Some(tr("Fit could not be verified").to_owned()),
         }
     }
 }
