@@ -205,7 +205,12 @@ fn namespace_only_and_malformed_worlds_cannot_bypass_the_decision() {
 
 #[test]
 fn changed_world_evidence_at_cutoff_keeps_live_update_and_remove_unchanged() {
-    for action in ["update", "remove"] {
+    for (action, replace) in [
+        ("update", false),
+        ("update", true),
+        ("remove", false),
+        ("remove", true),
+    ] {
         let fixture = Fixture::new();
         let (mut registry, _) = fixture.content_index();
         let defs: &[(&str, &[u8])] = &[("data/root_mod/sunrise/item/amber.json", b"{}")];
@@ -224,10 +229,21 @@ fn changed_world_evidence_at_cutoff_keeps_live_update_and_remove_unchanged() {
         let output = worker
             .args(["--exact", "install::mutations::world_cutoff_worker"])
             .env("FIXTURE_WORLD_CUTOFF", action)
+            .env("FIXTURE_WORLD_REPLACE", if replace { "1" } else { "0" })
             .output()
             .unwrap();
-        assert!(output.status.success(), "{output:?}");
-        assert!(fixture.home.join("saves/New world/level.dat").is_file());
+        assert!(
+            output.status.success(),
+            "{action} replace={replace}: {output:?}"
+        );
+        if replace {
+            assert_eq!(
+                fs::read(fixture.home.join("saves/First world/level.dat")).unwrap(),
+                fs::read(fixture.home.join("previous-world/level.dat")).unwrap()
+            );
+        } else {
+            assert!(fixture.home.join("saves/New world/level.dat").is_file());
+        }
         assert_eq!(live_state(&fixture), old);
         assert_eq!(fs::read(required).unwrap(), required_bytes);
     }
@@ -247,7 +263,16 @@ fn world_cutoff_worker() {
         if action == "remove" {
             assert!(detail.contains("Lanterns (root_mod)"), "{detail}");
         }
-        world(&instance.home, "New world", &["root_mod"]);
+        if std::env::var("FIXTURE_WORLD_REPLACE").as_deref() == Ok("1") {
+            fs::rename(
+                instance.home.join("saves/First world"),
+                instance.home.join("previous-world"),
+            )
+            .unwrap();
+            world(&instance.home, "First world", &["root_mod"]);
+        } else {
+            world(&instance.home, "New world", &["root_mod"]);
+        }
         true
     };
     let hooks = InstallHooks {
