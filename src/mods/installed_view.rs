@@ -286,44 +286,14 @@ impl Launcher {
                         }))
                     });
                 }
-                if source_update {
-                    let update = bulk(
-                        "nightly-source-update-all",
-                        if any_update {
-                            tr("Update all from source")
-                        } else {
-                            tr("Update all")
-                        }
-                        .into(),
-                        true,
-                        false,
-                    );
-                    bar = bar.child(if busy {
-                        update
-                    } else {
-                        update.on_click(cx.listener(|this, _, _, cx| {
-                            this.submit_source_update(None);
-                            cx.notify();
-                        }))
-                    });
-                }
-                if any_update {
-                    let update_all = bulk(
-                        "alt-update-all",
-                        if source_update {
-                            tr("Update all from registry")
-                        } else {
-                            tr("Update all")
-                        }
-                        .into(),
-                        true,
-                        false,
-                    );
+                if any_update || source_update {
+                    let update_all = bulk("alt-update-all", tr("Update all").into(), true, false);
                     bar = bar.child(if busy {
                         update_all
                     } else {
-                        update_all.on_click(cx.listener(|this, _, _, cx| {
-                            this.ask_update(false);
+                        let names = remove_names(&rows, &labels);
+                        update_all.on_click(cx.listener(move |this, _, _, cx| {
+                            this.submit_mod_update_all(names.clone());
                             cx.notify();
                         }))
                     });
@@ -687,7 +657,7 @@ impl Launcher {
                 match action {
                     model::RowAction::Allow => this.allow(),
                     model::RowAction::Update if nightly::installed_source(&row).is_some() => {
-                        this.submit_source_update(Some(&row.id));
+                        this.submit_source_update(&row.id);
                     }
                     model::RowAction::Update => this.update_one(&row),
                 }
@@ -1011,7 +981,7 @@ impl Launcher {
                     Some(b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                         this.ui.mods.unfit_open = None;
                         if nightly::installed_source(&row).is_some() {
-                            this.submit_source_update(Some(&row.id));
+                            this.submit_source_update(&row.id);
                         } else {
                             this.update_one(&row);
                         }

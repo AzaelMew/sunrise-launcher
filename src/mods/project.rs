@@ -420,7 +420,7 @@ impl Launcher {
                         let row = row.clone();
                         b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                             if nightly::installed_source(&row).is_some() {
-                                this.submit_source_update(Some(&row.id));
+                                this.submit_source_update(&row.id);
                             } else {
                                 this.update_one(&row);
                             }
