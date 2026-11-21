@@ -56,7 +56,9 @@ fn clone_file(from: &Path, to: &Path) -> io::Result<()> {
         let target = fs::File::create(to)?;
         // SAFETY: FICLONE takes a source fd, both descriptors stay open for the call.
         if unsafe { libc::ioctl(target.as_raw_fd(), libc::FICLONE, source.as_raw_fd()) } == 0 {
-            return Ok(());
+            // The clone shares the bytes, not the mode: `create` made the file 0644 (after umask),
+            // so an executable would stop being one. Match `fs::copy`, the fallback.
+            return target.set_permissions(source.metadata()?.permissions());
         }
         Err(io::Error::last_os_error())
     }
@@ -491,6 +493,28 @@ pub(crate) fn add_extras(
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+
+    /// A native build copies the SDK's `sunrise-client` with this, then runs it. Checked in the
+    /// system temp folder (often tmpfs: the plain copy) and under the crate's `target/` (a
+    /// reflink where the disk has them, such as btrfs and XFS).
+    #[test]
+    fn a_cloned_or_copied_executable_stays_executable() {
+        use std::os::unix::fs::PermissionsExt;
+        let target = Path::new(env!("CARGO_MANIFEST_DIR")).join("target");
+        fs::create_dir_all(&target).unwrap();
+        for dir in [
+            tempfile::tempdir().unwrap(),
+            tempfile::tempdir_in(&target).unwrap(),
+        ] {
+            let from = dir.path().join("sunrise-client");
+            fs::write(&from, b"#!/bin/sh\n").unwrap();
+            fs::set_permissions(&from, fs::Permissions::from_mode(0o755)).unwrap();
+            let to = dir.path().join("copy");
+            clone_or_copy(&from, &to).unwrap();
+            let mode = fs::metadata(&to).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o755, "{}", dir.path().display());
+        }
+    }
 
     #[test]
     fn an_unhanded_preparation_unlocks_despite_an_incidental_descriptor() {
