@@ -20,7 +20,7 @@ At 800×600 the bottom of the disabled Extras note in the Home build menu remain
 |---|---|---|
 | [discover-stable-800x600.png](discover-stable-800x600.png) | The Stable profile shows only registry mods and keeps the Stable · 0.1.0 build label. | `0f78e6f37d2b4240dca9d49b7adf86dc130a8036` |
 | [discover-stable-1280x800.png](discover-stable-1280x800.png) | The Stable profile shows only registry mods and keeps the Stable · 0.1.0 build label. | `0f78e6f37d2b4240dca9d49b7adf86dc130a8036` |
-| [discover-nightly-800x600.png](discover-nightly-800x600.png) | The published Nightly · Nov 20 profile shows only source projects, the unreviewed-code note, and Also on Stable. | `0f78e6f37d2b4240dca9d49b7adf86dc130a8036` |
+| [discover-nightly-800x600.png](discover-nightly-800x600.png) | The top of the Nightly source list, with the first row fully visible and the profile on published Nightly · Nov 20. | `0f78e6f37d2b4240dca9d49b7adf86dc130a8036` |
 | [discover-nightly-1280x800.png](discover-nightly-1280x800.png) | The published Nightly · Nov 20 profile shows only source projects, the unreviewed-code note, and Also on Stable. | `0f78e6f37d2b4240dca9d49b7adf86dc130a8036` |
 
 ## Installed
@@ -49,8 +49,8 @@ At 800×600 the bottom of the disabled Extras note in the Home build menu remain
 |---|---|---|
 | [nightly-readme-800x600.png](nightly-readme-800x600.png) | Nightly mod Details show the pinned repository’s README. | `7dd5ea80f619c52dfadba5c3a9e09c3db4f2dbf5` |
 | [nightly-readme-1280x800.png](nightly-readme-1280x800.png) | Nightly mod Details show the pinned repository’s README. | `7dd5ea80f619c52dfadba5c3a9e09c3db4f2dbf5` |
-| [nightly-source-consent-800x600.png](nightly-source-consent-800x600.png) | Consent says Sunrise has not reviewed the code and that building and playing run it. Repository, commit, View source, Cancel and Build remain. | `0f78e6f37d2b4240dca9d49b7adf86dc130a8036` |
-| [nightly-source-consent-1280x800.png](nightly-source-consent-1280x800.png) | Consent says Sunrise has not reviewed the code and that building and playing run it. Repository, commit, View source, Cancel and Build remain. | `0f78e6f37d2b4240dca9d49b7adf86dc130a8036` |
+| [nightly-source-consent-800x600.png](nightly-source-consent-800x600.png) | Source-build consent on published Nightly · Nov 20, with the exact unreviewed-code warning, repository, commit, View source, Cancel and Build. | `0f78e6f37d2b4240dca9d49b7adf86dc130a8036` |
+| [nightly-source-consent-1280x800.png](nightly-source-consent-1280x800.png) | Source-build consent on published Nightly · Nov 20, with the exact unreviewed-code warning, repository, commit, View source, Cancel and Build. | `0f78e6f37d2b4240dca9d49b7adf86dc130a8036` |
 | [nightly-toolchain-progress-800x600.png](nightly-toolchain-progress-800x600.png) | The required Rust toolchain is downloading. | `7dd5ea80f619c52dfadba5c3a9e09c3db4f2dbf5` |
 | [nightly-toolchain-progress-1280x800.png](nightly-toolchain-progress-1280x800.png) | The required Rust toolchain is downloading. | `7dd5ea80f619c52dfadba5c3a9e09c3db4f2dbf5` |
 | [nightly-build-progress-800x600.png](nightly-build-progress-800x600.png) | The source build is in progress. | `7dd5ea80f619c52dfadba5c3a9e09c3db4f2dbf5` |
