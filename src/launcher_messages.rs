@@ -159,7 +159,7 @@ impl Launcher {
                     };
                     if self
                         .selected_instance()
-                        .is_none_or(|i| i.home != home || i.id != intent.instance)
+                        .is_none_or(|i| i.home != home || !intent.matches_profile(i))
                     {
                         continue;
                     }
@@ -627,13 +627,14 @@ impl Launcher {
                         self.settings.owner_notice_seen = true;
                         self.save_settings();
                     }
-                    if let Some(instance) = self.ui.after_sign_in.take().filter(|asked| {
+                    if let Some(mut intent) = self.ui.after_sign_in.take().filter(|asked| {
                         account_chip::plays_after_sign_in(
-                            Some(asked.clone()),
+                            Some(asked.instance.clone()),
                             self.selected_instance().map(|i| i.id.as_str()),
                         )
                     }) {
-                        self.resume_play(launcher_play::PlayIntent::new(instance, Some(account)));
+                        intent.account = Some(account.uuid.clone());
+                        self.resume_play(intent);
                     }
                 }
                 changed = true;

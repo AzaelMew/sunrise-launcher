@@ -115,10 +115,16 @@ pub struct InstallHooks<'a> {
 /// Capture the Install target before it queues. The initial default profile may not have
 /// a game directory until its first operation; never recreate a named profile here.
 pub fn install_target(instance: &Instance) -> Result<Identity, String> {
-    if instance.kind == InstanceKind::Default {
+    if instance.kind == InstanceKind::Default && instance.incarnation.is_none() {
         fs::create_dir_all(&instance.home).map_err(|e| at(&instance.home, e))?;
     }
-    Identity::of(&instance.home)
+    let identity = Identity::of(&instance.home)?;
+    match instance.incarnation {
+        Some(expected) => expected.check(instance, identity)?,
+        None if instance.kind == InstanceKind::Default => (),
+        None => return Err(crate::instances::lifecycle::changed()),
+    }
+    Ok(identity)
 }
 
 /// Profile selection is captured at the click. A saved active/pending build wins over the

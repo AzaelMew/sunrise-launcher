@@ -91,7 +91,7 @@ impl Client<'_> {
         if self.accepted_account.is_none() && !developer_offline::requested() {
             return Err(StartError::Account(NoOwner::default()));
         }
-        if self.instance.kind == instances::Kind::Default {
+        if self.instance.kind == instances::Kind::Default && self.instance.incarnation.is_none() {
             std::fs::create_dir_all(&self.instance.home)
                 .map_err(|error| super::at(&self.instance.home, error))?;
         }

@@ -48,7 +48,7 @@ pub(super) struct State {
     pub last_server: Option<Page>,
     pub after_install: Option<(crate::launcher_play::PlayIntent, String)>,
     /// A Play (including a destination) that explicitly asked for the sign-in now under way.
-    pub after_sign_in: Option<String>,
+    pub after_sign_in: Option<crate::launcher_play::PlayIntent>,
 }
 
 /// The keyboard's ring, in `color`, around a filled control that has no edge of its own to turn
@@ -285,7 +285,7 @@ impl Launcher {
         self.play_registry_notices.clear();
         self.crash = None;
         self.install_error = None;
-        let Some(instance) = self.selected_instance().map(|i| i.id.clone()) else {
+        let Some(instance) = self.selected_instance() else {
             return;
         };
         let intent = launcher_play::PlayIntent::new(instance, self.accounts.selected());
@@ -295,7 +295,7 @@ impl Launcher {
             self.sign_in_to_play();
             self.quick_play = destination;
             self.joining = invite;
-            self.ui.after_sign_in = Some(intent.instance);
+            self.ui.after_sign_in = Some(intent);
             return;
         }
         self.resume_play(intent);
@@ -305,7 +305,7 @@ impl Launcher {
     pub(super) fn resume_play(&mut self, intent: launcher_play::PlayIntent) {
         let Some(instance) = self
             .selected_instance()
-            .filter(|i| i.id == intent.instance)
+            .filter(|i| intent.matches_profile(i))
             .cloned()
         else {
             return;
@@ -340,7 +340,7 @@ impl Launcher {
         }
         let Some(instance) = self
             .selected_instance()
-            .filter(|i| i.id == intent.instance && i.home == home)
+            .filter(|i| intent.matches_profile(i) && i.home == home)
             .cloned()
         else {
             return;

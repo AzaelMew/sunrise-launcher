@@ -4,15 +4,21 @@ use super::*;
 /// Who and what Play was accepted for, before any install, preparation or build.
 pub(crate) struct PlayIntent {
     pub instance: String,
+    pub incarnation: Option<instances::Incarnation>,
     pub account: Option<String>,
 }
 
 impl PlayIntent {
-    pub fn new(instance: String, selected: Option<&account::Account>) -> Self {
+    pub fn new(instance: &instances::Instance, selected: Option<&account::Account>) -> Self {
         Self {
-            instance,
+            instance: instance.id.clone(),
+            incarnation: instance.incarnation,
             account: selected.map(|a| a.uuid.clone()),
         }
+    }
+
+    pub(super) fn matches_profile(&self, current: &instances::Instance) -> bool {
+        current.id == self.instance && current.incarnation == self.incarnation
     }
 }
 
@@ -167,6 +173,12 @@ impl Launcher {
     }
 
     pub(super) fn play(&mut self, intent: PlayIntent) {
+        if !self
+            .selected_instance()
+            .is_some_and(|current| intent.matches_profile(current))
+        {
+            return;
+        }
         // A press that starts nothing says why, where Play's errors show: the button can look
         // ready when it is not (a version prepared elsewhere and since removed, a debug preview).
         let Some(tag) = self.selected().cloned() else {
@@ -594,7 +606,11 @@ mod tests {
             });
         }
         accounts.selected = Some("first".into());
-        let intent = PlayIntent::new("sunrise".into(), accounts.selected());
+        let intent = PlayIntent {
+            instance: "sunrise".into(),
+            incarnation: None,
+            account: accounts.selected().map(|a| a.uuid.clone()),
+        };
         // A sign-out in flight when Play was pressed completes during preparation.
         accounts.accounts.remove(0);
         accounts.selected = Some("second".into());

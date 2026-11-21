@@ -55,7 +55,7 @@ impl Launcher {
                 None => {
                     let Some(instance) = instances::list()
                         .into_iter()
-                        .find(|i| i.id == intent.instance)
+                        .find(|i| intent.matches_profile(i))
                     else {
                         self.client_error = Some(
                             tr("This profile no longer exists. Choose another profile to play.")
