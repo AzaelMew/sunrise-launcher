@@ -660,7 +660,13 @@ fn pinned_source_preflight_refusal_cancel_and_failed_update_keep_the_profile() {
             fs::create_dir_all(&branch).unwrap();
             fs::write(fixtures_repo.join("Lantern.json"), json!({"id": 42, "full_name":"Fixture/Lantern", "default_branch":"main", "private":false}).to_string()).unwrap();
             let put = |version: &str, revision: char, source: &[u8], extra: &str| {
-                let manifest = format!("id='{ID}'\nname='Native Lantern'\nversion='{version}'\napi='0.2'\nside='both'\ncapabilities=[]\n{extra}\n[native]\nsunrise='{}'\nmixins='{}'\ngame='{}'\n", revision.to_string().repeat(40), "c".repeat(40), backend::PINNED_GAME);
+                let manifest = format!("id='{ID}'\nname='Native Lantern'\nversion='{version}'\napi='0.2'\nside='both'\ncapabilities=['registries']\n{extra}\n[native]\nsunrise='{}'\nmixins='{}'\ngame='{}'\n", revision.to_string().repeat(40), "c".repeat(40), backend::PINNED_GAME);
+                assert_eq!(
+                    sunrise_launcher_smod::manifest::Manifest::parse(&manifest)
+                        .unwrap()
+                        .id,
+                    ID
+                );
                 fs::write(repo.join("lantern/sunrise-mod.toml"), &manifest).unwrap();
                 fs::write(
                     repo.join("lantern/Cargo.toml"),
@@ -773,7 +779,17 @@ fn pinned_source_preflight_refusal_cancel_and_failed_update_keep_the_profile() {
             );
             assert!(!recorded.is_release_asset());
             let old_bytes = fs::read(home.join(ARCHIVE)).unwrap();
-            let before = fixture.snapshot(&[ARCHIVE]);
+            let snapshot = || {
+                [
+                    crate::profile_txn::POINTER,
+                    sunrise_launcher_smod::mod_list::FILE,
+                    ARCHIVE,
+                ]
+                .map(|path| fs::read(home.join(path)).unwrap())
+            };
+            let before = snapshot();
+            // A source install does not claim registry ownership.
+            assert!(!home.join(installed::MANIFEST).exists());
             put("1.1.0", 'a', b"compile_error!(\"fixture failure\");", "");
             let update_candidate = || {
                 prepare_source(
@@ -793,7 +809,8 @@ fn pinned_source_preflight_refusal_cancel_and_failed_update_keep_the_profile() {
                 build(&rejected, &cancellation, &|_| Ok(true), &|_| true),
                 Err(SourceError::Build { log: Some(_), .. })
             ));
-            assert_eq!(fixture.snapshot(&[ARCHIVE]), before);
+            assert_eq!(snapshot(), before);
+            assert!(!home.join(installed::MANIFEST).exists());
             assert_eq!(github_mods::origin(home, ID).unwrap(), recorded);
             assert!(mod_list::is_enabled(home, ID));
 

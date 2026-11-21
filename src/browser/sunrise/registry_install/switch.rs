@@ -341,7 +341,16 @@ impl<'a> Originals<'a> {
                 .as_ref()
                 .is_some_and(|origin| origin.source.is_some());
             let source = if let Some(origin) = github {
-                if seen.github_origin(home).as_ref() != Some(&origin) {
+                let matches = if built_from_source {
+                    seen.github_origin(home).as_ref() == Some(&origin)
+                } else {
+                    // Older GitHub receipts can sit beside a flat, local package. They
+                    // identify its bytes for holds but do not grant registry ownership.
+                    origin.id == id
+                        && origin.version == manifest.version
+                        && seen.digest.as_deref() == Some(&origin.sha256)
+                };
+                if !matches {
                     return Err(unproved_switch());
                 }
                 HeldSource::Github {
