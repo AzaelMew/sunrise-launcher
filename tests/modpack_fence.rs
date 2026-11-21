@@ -136,11 +136,7 @@ fn legacy_modpack_writers_refuse_in_cli_and_mcp_without_touching_the_pack() {
             json!({"pack":"cozy","confirm":true}),
             REMOVE,
         ),
-        (
-            "instance_delete",
-            json!({"instance":"pack:cozy","confirm":true}),
-            REMOVE,
-        ),
+        ("instance_delete", json!({"instance":"pack:cozy"}), REMOVE),
     ]
     .into_iter()
     .enumerate()
