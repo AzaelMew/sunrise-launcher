@@ -2,7 +2,7 @@
 use crate::theme::Theme;
 use gpui::{
     div, prelude::*, px, AnyElement, FontStyle, FontWeight, HighlightStyle, SharedString,
-    StyledText,
+    StyledText, UnderlineStyle,
 };
 use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 use std::ops::Range;
@@ -154,6 +154,9 @@ fn render_inner(
             }
             Event::End(TagEnd::Strong | TagEnd::Emphasis | TagEnd::Link) => {
                 if let Some((span, start)) = open.pop() {
+                    if matches!(&span, Span::Link(Some(_))) && start < text.len() {
+                        text.push_str("\u{a0}↗");
+                    }
                     spans.push((start..text.len(), span));
                 }
             }
@@ -222,8 +225,12 @@ fn render_inner(
                         color: Some(t.ink),
                         ..Default::default()
                     },
-                    Span::Link(_) => HighlightStyle {
+                    Span::Link(url) => HighlightStyle {
                         color: Some(t.ink),
+                        underline: url.is_some().then_some(UnderlineStyle {
+                            thickness: px(1.),
+                            ..Default::default()
+                        }),
                         ..Default::default()
                     },
                 };
@@ -234,7 +241,7 @@ fn render_inner(
         let nth = blocks_drawn.get();
         blocks_drawn.set(nth + 1);
         let id = gpui::ElementId::NamedInteger(text.clone(), nth);
-        let text = StyledText::new(text).with_highlights(highlights.collect::<Vec<_>>());
+        let text = StyledText::new(text).with_highlights(gpui::combine_highlights(highlights, []));
         if links.is_empty() {
             crate::selectable::Selectable::styled(id, text).into_any_element()
         } else {
