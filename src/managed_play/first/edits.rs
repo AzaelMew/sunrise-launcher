@@ -206,10 +206,7 @@ impl Edit<'_> {
 
     /// Each resolver trial starts with the exact old inputs, including files and rows the
     /// launcher does not understand. Candidate paths never escape this journal attempt.
-    pub(crate) fn candidate(
-        &self,
-        registry: Option<&sunrise_launcher_smod::index::Index>,
-    ) -> Result<tempfile::TempDir, String> {
+    pub(crate) fn candidate(&self) -> Result<tempfile::TempDir, String> {
         let _manifest = game_lock(&self.home)?;
         let candidate = tempfile::Builder::new()
             .prefix("candidate-")
@@ -238,14 +235,6 @@ impl Edit<'_> {
             || inputs(&self.home, None)? != self.before
         {
             return Err(unsettled());
-        }
-        if let Some(repaired) = super::super::inputs::browser_repair(
-            candidate.path(),
-            &scan_packages(candidate.path())?,
-            registry,
-        )? {
-            fs::write(candidate.path().join(MANIFEST), repaired)
-                .map_err(|e| at(candidate.path(), e))?;
         }
         Ok(candidate)
     }
@@ -293,7 +282,14 @@ impl Edit<'_> {
         restored: &BTreeSet<String>,
         authorize: impl FnOnce() -> Result<G, String>,
     ) -> Result<Active, String> {
-        self.publish_inner(proof, cancellation, (None, restored), authorize, || Ok(()), |_, _| Ok(()))
+        self.publish_inner(
+            proof,
+            cancellation,
+            (None, restored),
+            authorize,
+            || Ok(()),
+            |_, _| Ok(()),
+        )
     }
 
     pub(crate) fn publish_switch(
@@ -320,7 +316,14 @@ impl Edit<'_> {
                 acknowledged: false,
             })
         };
-        self.publish_inner(proof, cancellation, (receipt, &retired), authorize, at_cutoff, |_, _| Ok(()))
+        self.publish_inner(
+            proof,
+            cancellation,
+            (receipt, &retired),
+            authorize,
+            at_cutoff,
+            |_, _| Ok(()),
+        )
     }
 
     fn publish_inner<G>(

@@ -527,7 +527,7 @@ fn write_world(home: &Path, version: i32) -> PathBuf {
 }
 
 #[test]
-fn switch_holds_content_in_place_and_registry_update_restores_only_enabled_holds() {
+fn switch_holds_content_in_place_and_an_override_cannot_replace_it() {
     for initial_enabled in [true, false] {
         let fixture = Fixture::new();
         let (mut registry, archives) = fixture.content_index();
@@ -570,8 +570,7 @@ fn switch_holds_content_in_place_and_registry_update_restores_only_enabled_holds
             }
             fixture.decision_worker("switch-accept");
             assert_eq!(fs::read(&world).unwrap(), bytes);
-            // The rest of this case exercises receipt retirement, not permission to replace
-            // content in a save. Keep the fixture's verified world outside the profile.
+            // Isolate replacement authority from the separate saved-world decision.
             fs::rename(world.parent().unwrap(), fixture.root.join("verified-save")).unwrap();
         } else {
             let switched = fixture
@@ -590,9 +589,7 @@ fn switch_holds_content_in_place_and_registry_update_restores_only_enabled_holds
         let hold = active.holds().next().unwrap();
         assert_eq!(hold.path(), Path::new(mod_list::DIR).join("extra_mod.smod"));
         assert_eq!(hold.enabled_before(), initial_enabled);
-        assert!(
-            matches!(hold.source(), HeldSource::Registry { project, version } if project == "extra_mod" && version == "1.0.0")
-        );
+        assert!(matches!(hold.source(), HeldSource::Local { version } if version == "1.0.0"));
         assert_eq!(fs::read(&package).unwrap(), archives["extra_mod"]);
         assert!(!sunrise_launcher::browser::mod_list::is_enabled(
             &fixture.home,
@@ -616,13 +613,22 @@ fn switch_holds_content_in_place_and_registry_update_restores_only_enabled_holds
             .iter_mut()
             .find(|p| p.id == "extra_mod")
             .unwrap();
-        let (row, replacement) = fixture.new_version(project, "2.0.0", "26.4", None);
+        let (row, _) = fixture.new_version(project, "2.0.0", "26.4", None);
         project.versions.insert(0, row);
         fixture.publish_registry(&registry);
-        fixture.install_mod("extra_mod");
-        let updated = Active::parse(&fixture.pointer()).unwrap();
+        let snapshot = fixture.pointer();
+        let update = fixture
+            .registry_client(&["mods", "install", "extra_mod", "--source", "sunrise"])
+            .output()
+            .unwrap();
+        assert!(
+            !update.status.success(),
+            "a test index cannot authorize replacing held bytes: {update:?}"
+        );
+        assert_eq!(fixture.pointer(), snapshot);
+        let updated = Active::parse(&snapshot).unwrap();
         assert_eq!(updated.base(), OTHER);
-        assert_eq!(updated.holds().count(), 0);
+        assert_eq!(updated.holds().count(), 1);
         if initial_enabled {
             let report = updated.pending_changes().unwrap();
             assert_eq!(report.id, receipt);
@@ -631,11 +637,11 @@ fn switch_holds_content_in_place_and_registry_update_restores_only_enabled_holds
         } else {
             assert!(updated.pending_changes().is_none());
         }
-        assert_eq!(fs::read(&package).unwrap(), replacement);
-        assert_eq!(
-            sunrise_launcher::browser::mod_list::is_enabled(&fixture.home, "extra_mod"),
-            initial_enabled
-        );
+        assert_eq!(fs::read(&package).unwrap(), archives["extra_mod"]);
+        assert!(!sunrise_launcher::browser::mod_list::is_enabled(
+            &fixture.home,
+            "extra_mod"
+        ));
         let shown = fixture
             .launcher(&["--json", "instance", "show"])
             .output()
@@ -685,8 +691,8 @@ fn switch_warns_about_saved_definitions_even_when_its_target_uses_the_same_archi
 }
 
 #[test]
-fn switch_takedowns_require_registry_origin_or_the_exact_archive_digest() {
-    for github in [false, true] {
+fn switch_takedowns_never_delete_old_files_on_the_word_of_an_override() {
+    for (github, restamped) in [(false, false), (true, true)] {
         let fixture = Fixture::new();
         let (mut registry, archives) = fixture.content_index();
         fixture.publish_registry(&registry);
@@ -696,18 +702,20 @@ fn switch_takedowns_require_registry_origin_or_the_exact_archive_digest() {
         let document = fixture.home.join(index::browser_state::MANIFEST);
         let mut rows: Value = serde_json::from_slice(&fs::read(&document).unwrap()).unwrap();
         let entries = rows["entries"].as_array_mut().unwrap();
-        let stale = entries
-            .iter()
-            .find(|row| row["project"] == "root_mod")
-            .unwrap()
-            .clone();
-        // Exact digest takedowns do not require a browser row.
+        // The override quotes the actual digest of an untracked installation below.
         entries.retain(|row| row["project"] != "required_mod");
-        fs::write(&document, serde_json::to_vec(&rows).unwrap()).unwrap();
         let fork = Package::write_files(
             &format!("id='root_mod'\nname='Private Lanterns'\nversion='1.0.0'\napi='{}'\ncapabilities=['registries']\n[dependencies]\nrequired_mod='^1'", manifest::API),
             &[("data/private/function/light.mcfunction", b"say private")],
         ).unwrap();
+        let row = entries
+            .iter_mut()
+            .find(|row| row["project"] == "root_mod")
+            .unwrap();
+        if restamped {
+            row["checksum"] = json!(format!("SHA-256:{}", index::sha256(&fork)));
+        }
+        fs::write(&document, serde_json::to_vec(&rows).unwrap()).unwrap();
         let fork_path = mods.join("root_mod.smod");
         fs::write(&fork_path, &fork).unwrap();
         let untracked = mods.join("extra_mod.smod");
@@ -759,25 +767,28 @@ fn switch_takedowns_require_registry_origin_or_the_exact_archive_digest() {
             String::from_utf8_lossy(&result.stderr)
         );
         let active = Active::parse(&fixture.pointer()).unwrap();
-        assert_eq!(
-            active.pending_changes().unwrap().removed,
-            [("Lantern Core".into(), "Fixture takedown".into())]
-        );
+        assert!(active.pending_changes().unwrap().removed.is_empty());
         let holds = active.holds().collect::<Vec<_>>();
-        assert_eq!(holds.len(), 1);
-        assert_eq!(holds[0].id(), "root_mod");
-        assert!(matches!(holds[0].source(), HeldSource::Local { .. }));
+        assert_eq!(
+            holds.iter().map(|hold| hold.id()).collect::<Vec<_>>(),
+            ["required_mod", "root_mod"]
+        );
+        assert!(holds
+            .iter()
+            .all(|hold| matches!(hold.source(), HeldSource::Local { .. })));
         assert_eq!(fs::read(fork_path).unwrap(), fork);
         assert_eq!(fs::read(untracked).unwrap(), archives["extra_mod"]);
-        assert!(!mods.join("required_mod.smod").exists());
+        assert_eq!(
+            fs::read(mods.join("required_mod.smod")).unwrap(),
+            archives["required_mod"]
+        );
         if let Some((origin, bytes)) = origin {
             assert_eq!(fs::read(origin).unwrap(), bytes);
         }
-        let rows: Value = serde_json::from_slice(&fs::read(document).unwrap()).unwrap();
+        let latest_rows: Value = serde_json::from_slice(&fs::read(document).unwrap()).unwrap();
         assert_eq!(
-            rows["entries"],
-            json!([stale]),
-            "no postimage asserts registry origin for local bytes"
+            latest_rows, rows,
+            "an override neither grants nor rewrites origin"
         );
     }
 }
@@ -785,7 +796,21 @@ fn switch_takedowns_require_registry_origin_or_the_exact_archive_digest() {
 #[test]
 fn switch_uses_short_game_versions_and_refuses_an_unindexed_installed_project() {
     let fixture = Fixture::new();
-    let (mut registry, archives) = fixture.content_index();
+    let (mut registry, _) = fixture.content_index();
+    let core = registry
+        .projects
+        .iter_mut()
+        .find(|p| p.id == "required_mod")
+        .unwrap();
+    let (core_row, core_bytes) = fixture.new_version(core, "2", "26.3", None);
+    core.versions = vec![core_row];
+    let root = registry
+        .projects
+        .iter_mut()
+        .find(|p| p.id == "root_mod")
+        .unwrap();
+    let (root_row, root_bytes) = fixture.new_version(root, "2.1", "26.3", Some("^2"));
+    root.versions = vec![root_row];
     fixture.publish_registry(&registry);
     fixture.other_build();
     fixture.install_mod("root_mod");
@@ -796,13 +821,13 @@ fn switch_uses_short_game_versions_and_refuses_an_unindexed_installed_project() 
             .position(|p| p.id == "required_mod")
             .unwrap(),
     );
-    let root = registry
+    registry
         .projects
         .iter_mut()
         .find(|p| p.id == "root_mod")
-        .unwrap();
-    let (root_row, root_bytes) = fixture.new_version(root, "2.1", "26.4", Some("^2"));
-    root.versions.push(root_row);
+        .unwrap()
+        .versions[0]
+        .game = "26.4".into();
     fixture.publish_registry(&registry);
     let before = fixture.pointer();
     let switch = || {
@@ -821,10 +846,9 @@ fn switch_uses_short_game_versions_and_refuses_an_unindexed_installed_project() 
     assert_eq!(fixture.pointer(), before);
     assert_eq!(
         fs::read(mods.join("required_mod.smod")).unwrap(),
-        archives["required_mod"]
+        core_bytes
     );
-    let (core_row, core_bytes) = fixture.new_version(&core, "2", "26.4", None);
-    core.versions.push(core_row);
+    core.versions[0].game = "26.4".into();
     registry.projects.push(core);
     fixture.publish_registry(&registry);
     let switched = switch();

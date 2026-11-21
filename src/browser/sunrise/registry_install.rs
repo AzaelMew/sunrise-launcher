@@ -8,7 +8,7 @@ use crate::{
     browser::{mod_list, Kind, SourceId},
     i18n::{tr, trf},
     instances::{Instance, Kind as InstanceKind},
-    managed_play::{self, FirstBuild, Held, HeldSource, Profile, ScannedPackage},
+    managed_play::{self, FirstBuild, Held, Profile, ScannedPackage},
     native_mods,
     profile_txn::Identity,
     worlds::switch::{Fence, Question},
@@ -367,7 +367,9 @@ pub fn install_registry(
             }
             mod_list::set_all_enabled(next.path(), &disabled, false)?;
         }
-        if let Some(conflict) = manifest_conflict(next.path(), &catalogue, authority, |id| entries.contains_key(id))? {
+        if let Some(conflict) = manifest_conflict(next.path(), &catalogue, authority, |id| {
+            entries.contains_key(id)
+        })? {
             if conflicts.contains(&conflict) {
                 return Err(InstallError::Unproved(conflict.reason));
             }
@@ -404,19 +406,7 @@ pub fn install_registry(
                             .iter()
                             .map(|p| p.package.manifest.name.clone())
                             .collect(),
-                        reviewed: source == super::INDEX_URL
-                            && newly_named.iter().all(|p| {
-                                p.owned
-                                    && p.digest.as_ref().is_some_and(|hash| {
-                                        catalogue.project(&p.package.manifest.id).is_some_and(
-                                            |project| {
-                                                project.versions.iter().any(|v| {
-                                                    v.file.sha256.eq_ignore_ascii_case(hash)
-                                                })
-                                            },
-                                        )
-                                    })
-                            }),
+                        reviewed: newly_named.iter().all(|p| p.owned),
                         retry,
                     })? {
                         return Err(InstallError::Cancelled);
@@ -500,7 +490,11 @@ pub fn install_registry(
                     &mut doc,
                     failed,
                 )?;
-                if let Some(conflict) = manifest_conflict(next.path(), &catalogue, authority, |id| entries.contains_key(id))? {
+                if let Some(conflict) =
+                    manifest_conflict(next.path(), &catalogue, authority, |id| {
+                        entries.contains_key(id)
+                    })?
+                {
                     return Err(InstallError::Refused(conflict.reason));
                 }
                 let notice = BuildNotice {
@@ -819,7 +813,9 @@ fn manifest_conflict(
             id: id.to_owned(),
             version: package.package.manifest.version.clone(),
             // A freshly checked download names a resolver choice, not replacement authority.
-            sha256: (package.owned || staged(id)).then(|| package.digest.clone()).flatten(),
+            sha256: (package.owned || staged(id))
+                .then(|| package.digest.clone())
+                .flatten(),
         }
     };
     let mut namespaces = BTreeMap::new();
@@ -891,7 +887,11 @@ fn manifest_conflict(
     Ok(None)
 }
 
-fn validate_enabled(home: &Path, catalogue: &index::Index, authority: Option<&OfficialRegistry>) -> Result<(), InstallError> {
+fn validate_enabled(
+    home: &Path,
+    catalogue: &index::Index,
+    authority: Option<&OfficialRegistry>,
+) -> Result<(), InstallError> {
     match manifest_conflict(home, catalogue, authority, |_| false)? {
         Some(conflict) => Err(InstallError::Refused(conflict.reason)),
         None => Ok(()),

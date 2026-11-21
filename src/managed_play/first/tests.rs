@@ -610,7 +610,7 @@ fn home_read_recovers_the_first_switch_receipt_after_a_killed_commit() {
         let edit = profile
             .begin_edit(|| panic!("the build is already committed"), |_| {}, &|_| {})
             .unwrap();
-        let candidate = edit.candidate(None).unwrap();
+        let candidate = edit.candidate().unwrap();
         let replacement = package("2.0");
         fs::write(candidate.path().join(&relative), &replacement).unwrap();
         crate::browser::mod_list::set_enabled(candidate.path(), "fireflies", true).unwrap();

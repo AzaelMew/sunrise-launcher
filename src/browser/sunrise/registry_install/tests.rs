@@ -2,7 +2,13 @@ use super::*;
 use installed::InstallHold;
 use sunrise_launcher_smod::Package;
 
-fn archive(home: &Path, id: &str, name: &str, version: &str, depends: bool) -> installed::Entry {
+pub(super) fn archive(
+    home: &Path,
+    id: &str,
+    name: &str,
+    version: &str,
+    depends: bool,
+) -> installed::Entry {
     let path = format!("{}/{id}.smod", mod_list::MODS_DIR);
     let dependencies = if depends {
         "[dependencies]\nlight_core = '^1'\n"

@@ -374,11 +374,20 @@ fn fetch_index_text(at: &str, local: bool, full: bool) -> Result<String, String>
     if local {
         return fs::read_to_string(at).map_err(|e| format!("{at}: {e}"));
     }
+    let direct = at == INDEX_URL;
+    let slot = if direct {
+        "sunrise-index-direct"
+    } else {
+        "sunrise-index"
+    };
     let spec = crate::proxy::spec_for(at);
-    let agent = crate::net::keep("sunrise-index", spec.as_deref(), |proxy| {
-        let builder = ureq::AgentBuilder::new()
+    let agent = crate::net::keep(slot, spec.as_deref(), |proxy| {
+        let mut builder = ureq::AgentBuilder::new()
             .https_only(true)
             .timeout(Duration::from_secs(10));
+        if direct {
+            builder = builder.redirects(0);
+        }
         match proxy {
             Some(proxy) => builder.proxy(proxy).build(),
             None => builder.build(),
@@ -388,13 +397,9 @@ fn fetch_index_text(at: &str, local: bool, full: bool) -> Result<String, String>
         ureq::Error::Status(code, _) => format!("The mod registry answered {code}."),
         ureq::Error::Transport(t) => format!("The mod registry can't be reached: {t}"),
     })?;
-    if (full || at == INDEX_URL)
-        && (response.status() != 200 || response.header("Content-Range").is_some())
+    if (full || direct) && (response.status() != 200 || response.header("Content-Range").is_some())
     {
         return Err(tr("The mod registry didn't send the full index.").into());
-    }
-    if at == INDEX_URL && response.get_url() != INDEX_URL {
-        return Err("The built-in registry redirected its index to a different URL.".into());
     }
     let mut text = String::new();
     response
@@ -410,7 +415,10 @@ fn fetch_index_text(at: &str, local: bool, full: bool) -> Result<String, String>
 
 /// Unlike Discover, neither an omitted section nor an isolated bad row is allowed
 /// to become evidence that a package has no fit or has been taken down.
-fn complete_index(at: &str, local: bool) -> Result<(Index, String, Option<OfficialRegistry>), String> {
+fn complete_index(
+    at: &str,
+    local: bool,
+) -> Result<(Index, String, Option<OfficialRegistry>), String> {
     #[derive(serde::Deserialize)]
     struct Sections {
         schema: u32,

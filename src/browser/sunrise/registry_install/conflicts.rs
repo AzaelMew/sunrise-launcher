@@ -80,7 +80,7 @@ pub(super) fn question(
     candidate: &Path,
     disabled: &[&str],
 ) -> Result<ResolveQuestion, String> {
-    let packages = inventory(candidate)?;
+    let packages = inventory(candidate, None)?;
     let enabled: BTreeMap<_, _> = packages
         .iter()
         .filter(|(id, _)| mod_list::is_enabled(candidate, id))

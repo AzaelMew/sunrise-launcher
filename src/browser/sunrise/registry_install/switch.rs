@@ -39,15 +39,19 @@ pub fn checked_switch_fit(home: &Path, tag: &str) -> bool {
         if source != super::super::INDEX_URL && !(cfg!(debug_assertions) && local) {
             return None;
         }
-        let (catalogue, _) = super::super::complete_index(&source, local).ok()?;
+        let (catalogue, _, official) = super::super::complete_index(&source, local).ok()?;
         let active = managed_play::display_active(home).ok()??;
         let game = backend::switch_game_version(tag).ok()?;
-        let exact = Originals::read(home, Some(&active), &catalogue).ok()?;
+        let exact = Originals::read(home, Some(&active), &catalogue, official.as_ref()).ok()?;
         if !exact.removed.is_empty() {
             return None;
         }
         for (id, old) in &exact.mods {
-            if old.held || old.seen.package.manifest.native.is_some() || !old.seen.owned {
+            if old.held
+                || old.withheld
+                || old.seen.package.manifest.native.is_some()
+                || !old.seen.registry_claim
+            {
                 return None;
             }
             let digest = old.seen.digest.as_deref()?;
@@ -64,7 +68,7 @@ pub fn checked_switch_fit(home: &Path, tag: &str) -> bool {
             index::check_file_with_facts(&catalogue, project, version, &old.seen.package.path)
                 .ok()?;
         }
-        validate_enabled(home, &catalogue).ok()?;
+        validate_enabled(home, &catalogue, official.as_ref()).ok()?;
         if !active.matches_inputs(home)
             || managed_play::display_active(home).ok()?.as_ref() != Some(&active)
         {
@@ -96,10 +100,9 @@ pub fn switch_build(
     if source != super::super::INDEX_URL && !(cfg!(debug_assertions) && local) {
         return Err(tr("Connect to the Sunrise registry before switching builds.").into());
     }
-    let (catalogue, evidence) = super::super::complete_index(&source, local)?;
-    let registry_proof = (!local).then_some(&catalogue);
-    let old = edit.candidate(registry_proof)?;
-    let original = Originals::read(old.path(), edit.current(), &catalogue)?;
+    let (catalogue, evidence, official) = super::super::complete_index(&source, local)?;
+    let old = edit.candidate()?;
+    let original = Originals::read(old.path(), edit.current(), &catalogue, official.as_ref())?;
     let download = tempfile::Builder::new()
         .prefix("switch-download-")
         .tempdir_in(old.path())
@@ -118,9 +121,9 @@ pub fn switch_build(
         let Some(enabled) = enabled_set(&set, &original.mods) else {
             return Ok(false);
         };
-        let next = edit.candidate(registry_proof)?;
+        let next = edit.candidate()?;
         apply(next.path(), &original, &set, &enabled)?;
-        validate_enabled(next.path(), &catalogue).map_err(|e| e.to_string())?;
+        validate_enabled(next.path(), &catalogue, official.as_ref()).map_err(|e| e.to_string())?;
         let prove = |home: &Path| {
             edit.prove(
                 home,
@@ -145,7 +148,7 @@ pub fn switch_build(
             if !activate(id, &set, &mut activated) || !fits(&set, &activated) {
                 return Ok(false);
             }
-            let trial = edit.candidate(registry_proof)?;
+            let trial = edit.candidate()?;
             apply(trial.path(), &original, &set, &activated)?;
             if exact_image(prove(trial.path()), &set)?.is_none() {
                 return Ok(false);
@@ -231,8 +234,8 @@ pub fn switch_build(
         return Ok(Switched::Stayed);
     }
     let active = edit.publish_switch(proof, hooks.cancellation, holds, original.removed, || {
-        let (_, current) = super::super::complete_index(&source, local)?;
-        if current != evidence {
+        let (_, current, proof) = super::super::complete_index(&source, local)?;
+        if current != evidence || proof.is_some() != official.is_some() {
             return Err(tr("The mod registry changed while the switch was being prepared. Nothing was switched.").into());
         }
         fence.revalidate(&instance.home)
@@ -249,6 +252,7 @@ struct Original {
     source: HeldSource,
     on: bool,
     held: bool,
+    withheld: bool,
 }
 
 struct Originals<'a> {
@@ -262,6 +266,7 @@ impl<'a> Originals<'a> {
         home: &'a Path,
         active: Option<&Active>,
         catalogue: &index::Index,
+        official: Option<&super::super::OfficialRegistry>,
     ) -> Result<Self, String> {
         let selection = home.join(sunrise_launcher_smod::mod_list::FILE);
         match fs::read_to_string(&selection) {
@@ -272,7 +277,7 @@ impl<'a> Originals<'a> {
         let doc = Document::read(home)?;
         let mut mods = BTreeMap::new();
         let mut removed = BTreeMap::new();
-        for (id, seen) in inventory(home)? {
+        for (id, seen) in inventory(home, official)? {
             let manifest = &seen.package.manifest;
             let origin_at = crate::github_mods::origin_path(home, &id);
             let github = match fs::symlink_metadata(&origin_at) {
@@ -286,14 +291,9 @@ impl<'a> Originals<'a> {
             if has_row != seen.registry_claim || (has_row && github.is_some()) {
                 return Err(unproved_switch());
             }
-            // A stale row at this path is kept, but does not assign the new bytes
-            // a source or authorize a registry update or project-wide removal.
-            let source = if seen.owned {
-                HeldSource::Registry {
-                    project: id.clone(),
-                    version: manifest.version.clone(),
-                }
-            } else if let Some(origin) = github {
+            // The registry row selects a checked destination, not its publisher. Only the
+            // actual digest in the official catalogue can authorize destroying old bytes.
+            let source = if let Some(origin) = github {
                 if origin.id != id
                     || origin.version != manifest.version
                     || seen.digest.as_deref() != Some(&origin.sha256)
@@ -306,6 +306,11 @@ impl<'a> Originals<'a> {
                     commit: origin.commit,
                     version: origin.version,
                 }
+            } else if seen.owned {
+                HeldSource::Registry {
+                    project: id.clone(),
+                    version: manifest.version.clone(),
+                }
             } else {
                 HeldSource::Local {
                     version: manifest.version.clone(),
@@ -314,8 +319,16 @@ impl<'a> Originals<'a> {
             let on = mod_list::is_enabled(home, &id);
             let held = active.and_then(|active| active.holds().find(|held| held.id() == id));
             if let Some(hold) = held {
+                // Registry authorization can disappear or arrive on a later request. It
+                // doesn't change the immutable identity of an already held exact archive.
+                let same_source = &source == hold.source()
+                    || matches!(
+                        (&source, hold.source()),
+                        (HeldSource::Registry { version: a, .. }, HeldSource::Local { version: b })
+                            | (HeldSource::Local { version: a }, HeldSource::Registry { version: b, .. }) if a == b
+                    );
                 if on
-                    || &source != hold.source()
+                    || !same_source
                     || home.join(hold.path()) != seen.package.path
                     || seen
                         .digest
@@ -328,15 +341,15 @@ impl<'a> Originals<'a> {
                     return Err(unproved_switch());
                 }
             }
-            if let Some(revoked) = seen.digest.as_ref().and_then(|digest| {
-                catalogue.revoked.iter().find(|revoked| {
-                    revoked.id == id
-                        && match &revoked.sha256 {
-                            Some(hash) => hash.eq_ignore_ascii_case(digest),
-                            None => seen.owned,
-                        }
-                })
-            }) {
+            let revoked = seen.digest.as_deref().and_then(|digest| {
+                let listed = catalogue.revoked(&id, digest)?;
+                let authorized = seen.owned
+                    || (!seen.registry_claim
+                        && official.is_some_and(|proof| proof.proves_archive(&id, digest)));
+                (authorized || seen.registry_claim || listed.sha256.is_some())
+                    .then_some((listed, authorized))
+            });
+            if let Some((revoked, true)) = revoked {
                 removed.insert(id.clone(), (manifest.name.clone(), revoked.reason.clone()));
             }
             mods.insert(
@@ -346,6 +359,7 @@ impl<'a> Originals<'a> {
                     source,
                     on,
                     held: held.is_some(),
+                    withheld: revoked.is_some_and(|(_, authorized)| !authorized),
                 },
             );
         }
@@ -390,11 +404,36 @@ fn choices(
         }
         let old = original.mods.get(&id);
         let mut available = Vec::new();
-        if original.removed.contains_key(&id) || old.is_some_and(|old| old.held) {
-            // Only an explicit Update on the current base can restore a prior hold.
+        if original.removed.contains_key(&id) || old.is_some_and(|old| old.held || old.withheld) {
+            // Preserve unproved takedown bytes, off. Only an explicit Update on the
+            // current base can restore a prior hold.
         } else if let Some(old) = old.filter(|old| !old.seen.owned) {
             let manifest = &old.seen.package.manifest;
-            if manifest.side != Side::Server && manifest.api == sunrise_launcher_smod::manifest::API
+            // An override may prove fit of the unchanged bytes, not their provenance.
+            // A previously claimed registry archive absent from this response isn't a no-fit.
+            let fits_claim = if old.seen.registry_claim {
+                let project = catalogue.project(&id).ok_or_else(unproved_switch)?;
+                if let Some(version) = project.versions.iter().find(|version| {
+                    old.seen.digest.as_deref() == Some(&version.file.sha256)
+                        && version.side != Some(Side::Server)
+                        && (manifest.native.is_some() || version.game == game)
+                }) {
+                    index::check_file_with_facts(
+                        catalogue,
+                        project,
+                        version,
+                        &old.seen.package.path,
+                    )?;
+                    true
+                } else {
+                    false
+                }
+            } else {
+                true
+            };
+            if fits_claim
+                && manifest.side != Side::Server
+                && manifest.api == sunrise_launcher_smod::manifest::API
             {
                 available.push(Package {
                     manifest: manifest.clone(),
@@ -751,4 +790,88 @@ fn unproved_switch() -> String {
 
 fn too_many() -> String {
     tr("Not every compatible mod set could be checked. Nothing was switched.").into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_official_historical_bytes_allow_a_staged_replacement_or_takedown() {
+        let id = "coords_hud";
+        for (takedown, official) in [(false, false), (false, true), (true, false), (true, true)] {
+            let before = tempfile::tempdir().unwrap();
+            let candidate = tempfile::tempdir().unwrap();
+            let download = tempfile::tempdir().unwrap();
+            let row =
+                super::super::tests::archive(before.path(), id, "Coordinates HUD", "0.0.1", false);
+            let archive = before.path().join(&row.file);
+            let old = fs::read(&archive).unwrap();
+            let mut catalogue = super::super::super::tests::sample();
+            let project = catalogue.projects.iter_mut().find(|p| p.id == id).unwrap();
+            let mut historical = project.versions[0].clone();
+            historical.game = "26.2".into();
+            historical.version = "0.0.1".into();
+            historical.file.sha256 = index::sha256(&old);
+            project.versions.push(historical);
+            if takedown {
+                catalogue.revoked.push(index::Revoked {
+                    id: id.into(),
+                    sha256: Some(index::sha256(&old)),
+                    reason: "Fixture withdrawal".into(),
+                    date: "2026-11-20".into(),
+                });
+            }
+            // The claim locates the file; neither its recorded version nor its checksum proves
+            // the archive. An untracked exact takedown is also allowed by the official proof.
+            fs::create_dir_all(candidate.path().join(mod_list::MODS_DIR)).unwrap();
+            fs::write(candidate.path().join(&row.file), &old).unwrap();
+            mod_list::set_enabled(before.path(), id, true).unwrap();
+            mod_list::set_enabled(candidate.path(), id, true).unwrap();
+            if !takedown {
+                let mut stale = row.clone();
+                stale.version = "0.1.0".into();
+                stale.checksum = format!("SHA-256:{}", "0".repeat(64));
+                let mut doc = Document::read(before.path()).unwrap();
+                doc.replace(&stale).unwrap();
+                doc.write(before.path()).unwrap();
+                doc.write(candidate.path()).unwrap();
+            }
+            let authority = official.then(|| OfficialRegistry::fixture(&catalogue));
+            let originals =
+                Originals::read(before.path(), None, &catalogue, authority.as_ref()).unwrap();
+            let options = choices(
+                &originals,
+                &catalogue,
+                true,
+                "26.3",
+                download.path(),
+                &|_| {},
+            )
+            .unwrap();
+            best_survivor_set(&options, &originals.mods, |set| {
+                apply(
+                    candidate.path(),
+                    &originals,
+                    &set,
+                    &enabled_set(&set, &originals.mods).unwrap(),
+                )?;
+                Ok(true)
+            })
+            .unwrap();
+            let changed = candidate.path().join(&row.file);
+            match (takedown, official) {
+                (true, true) => assert!(!changed.exists()),
+                (false, true) => assert_eq!(
+                    index::sha256_file(&changed).unwrap(),
+                    catalogue.project(id).unwrap().versions[0].file.sha256
+                ),
+                (_, false) => {
+                    assert_eq!(fs::read(&changed).unwrap(), old);
+                    assert!(!mod_list::is_enabled(candidate.path(), id));
+                }
+            }
+            assert_eq!(fs::read(archive).unwrap(), old);
+        }
+    }
 }
