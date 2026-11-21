@@ -55,7 +55,7 @@ impl FormError {
 
 enum PickInput {
     Assets(Resolved, Vec<Packed>),
-    Source(SourceTarget, Resolved, Vec<PreparedSource>),
+    Source(Box<SourceTarget>, Resolved, Vec<PreparedSource>),
 }
 
 impl PickInput {
@@ -117,7 +117,7 @@ enum Stage {
 }
 
 enum Resolution {
-    Ready(PickInput),
+    Ready(Box<PickInput>),
     Current,
 }
 
@@ -205,7 +205,11 @@ fn resolve_link(
                 _ => FormError::new(tr("Couldn't check that the mods fit"), detail),
             }
         })?;
-        return Ok(Resolution::Ready(PickInput::Source(target, found, sources)));
+        return Ok(Resolution::Ready(Box::new(PickInput::Source(
+            Box::new(target),
+            found,
+            sources,
+        ))));
     }
     let mut mods = github_mods::fetch_checked(&found).map_err(|error| match error {
         FetchError::NoMods { release, detail } => FormError::new(
@@ -233,7 +237,7 @@ fn resolve_link(
             ));
         }
     }
-    Ok(Resolution::Ready(PickInput::Assets(found, mods)))
+    Ok(Resolution::Ready(Box::new(PickInput::Assets(found, mods))))
 }
 
 impl Launcher {
@@ -340,7 +344,7 @@ impl Launcher {
         };
         match rx.try_recv() {
             Ok(Ok(Resolution::Ready(input))) => {
-                let pick = Pick::new(input);
+                let pick = Pick::new(*input);
                 if pick.selected.len() == 1 {
                     self.github_submit(pick);
                 } else {
@@ -382,7 +386,7 @@ impl Launcher {
             PickInput::Source(target, _, mut mods) => {
                 mods.retain(|mod_| selected.contains(&mod_.origin().id));
                 self.close_sheet();
-                if let Err(error) = self.queue_sources(target, mods) {
+                if let Err(error) = self.queue_sources(*target, mods) {
                     self.mods.message = Some(Err(error));
                 }
                 return;

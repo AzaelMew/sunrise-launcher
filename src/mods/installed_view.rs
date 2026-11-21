@@ -734,7 +734,7 @@ impl Launcher {
             )
             .children(
                 nightly::installed_source(&r)
-                    .and_then(|_| r.update.as_ref())
+                    .and(r.update.as_ref())
                     .map(|version| {
                         muted(trf("Update available: {version}", &[("version", version)]))
                     }),
