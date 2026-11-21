@@ -2,6 +2,12 @@
 use super::Change;
 use crate::i18n::{tr, trf};
 
+impl super::ReviewedMod {
+    fn gui_name<'a>(&'a self, names: &'a std::collections::BTreeMap<String, String>) -> &'a str {
+        names.get(&self.id).unwrap_or(&self.name).as_str()
+    }
+}
+
 impl Change {
     pub(super) fn gui_review(
         &self,
@@ -46,31 +52,21 @@ impl Change {
                 );
                 (trf("Update {name}?", &[("name", &target.name)]), true)
             }
-            Self::Remove { removed, disabled } => {
+            Self::Remove {
+                removed,
+                disabled,
+                gui_names,
+            } => {
                 let heading = match removed.as_slice() {
-                    [archive] => trf("Remove {name}?", &[("name", &archive.target.name)]),
+                    [archive] => trf(
+                        "Remove {name}?",
+                        &[("name", archive.target.gui_name(gui_names))],
+                    ),
                     _ => {
-                        let mut seen = std::collections::BTreeSet::new();
-                        let duplicate_names: std::collections::BTreeSet<_> = removed
+                        let names: Vec<_> = removed
                             .iter()
-                            .map(|archive| archive.target.name.as_str())
-                            .filter(|name| !seen.insert(*name))
+                            .map(|archive| archive.target.gui_name(gui_names))
                             .collect();
-                        let labels: Vec<_> = removed
-                            .iter()
-                            .map(|archive| {
-                                let name = archive.target.name.as_str();
-                                if duplicate_names.contains(name) {
-                                    trf(
-                                        "{name} ({file})",
-                                        &[("name", name), ("file", &archive.file)],
-                                    )
-                                } else {
-                                    name.to_owned()
-                                }
-                            })
-                            .collect();
-                        let names: Vec<_> = labels.iter().map(String::as_str).collect();
                         lines.push(trf("Remove: {mods}.", &[("mods", &joined_names(&names))]));
                         trf(
                             "Remove {count} mods?",
@@ -82,14 +78,14 @@ impl Change {
                     (_, []) => (),
                     (true, [one]) => lines.push(trf(
                         "{name} needs it. It'll be turned off, and its files stay installed.",
-                        &[("name", &one.name)],
+                        &[("name", one.gui_name(gui_names))],
                     )),
                     (false, [one]) => lines.push(trf(
                         "{name} needs one or more of these mods. It'll be turned off, and its files stay installed.",
-                        &[("name", &one.name)],
+                        &[("name", one.gui_name(gui_names))],
                     )),
                     (single_target, many) => {
-                        let names = many.iter().map(|item| item.name.as_str()).collect::<Vec<_>>();
+                        let names = many.iter().map(|item| item.gui_name(gui_names)).collect::<Vec<_>>();
                         let names = joined_names(&names);
                         lines.push(if single_target {
                             trf("{names} need it. They'll be turned off, and their files stay installed.", &[("names", &names)])
@@ -152,6 +148,7 @@ mod tests {
 
     fn remove(targets: &[(&str, &str)], disabled: Vec<ReviewedMod>) -> Change {
         Change::Remove {
+            gui_names: Default::default(),
             removed: targets
                 .iter()
                 .map(|&(name, id)| ReviewedArchive {
@@ -217,33 +214,67 @@ mod tests {
     }
 
     #[test]
-    fn bulk_removal_disambiguates_only_duplicate_display_names() {
+    fn removal_disambiguates_only_duplicate_display_names_without_paths() {
+        let targets = [
+            ("Lanterns", "lanterns"),
+            ("Lanterns", "lanterns_extra"),
+            ("Fireflies", "fireflies"),
+            ("Fireflies", "fireflies_extra"),
+            ("Torches", "torches"),
+        ];
+        let authors = ["Ann", "Bo", "Ann", "Ann", "Ann"].map(|name| [name.to_owned()]);
+        let versions = ["1.0.0", "1.0.0", "1.1.0", "1.2.0", "1.0.0"];
+        let labels = crate::browser::installed::colliding_mod_labels(
+            targets
+                .iter()
+                .zip(&authors)
+                .zip(versions)
+                .map(|((&(name, _), authors), version)| (name, authors.as_slice(), version)),
+        );
+        let names: std::collections::BTreeMap<_, _> = targets
+            .iter()
+            .zip(labels)
+            .filter_map(|(&(_, id), label)| label.map(|label| (id.to_owned(), label)))
+            .collect();
+
+        let mut change = remove(&targets, vec![]);
+        let Change::Remove { gui_names, .. } = &mut change else {
+            unreachable!();
+        };
+        gui_names.clone_from(&names);
         let impact = ChangeImpact {
-            change: remove(
-                &[
-                    ("Lanterns", "lanterns"),
-                    ("Lanterns", "lanterns_extra"),
-                    ("Torches", "torches"),
-                ],
-                vec![],
-            ),
+            change,
             evidence: vec![],
             unchecked_update: false,
         };
         assert_eq!(
             impact.gui_review(),
             (
-                "Remove 3 mods?".into(),
+                "Remove 5 mods?".into(),
                 concat!(
-                    "Remove: Lanterns (sunrise-mods/lanterns.smod), ",
-                    "Lanterns (sunrise-mods/lanterns_extra.smod) and Torches."
+                    "Remove: Lanterns · by Ann, Lanterns · by Bo, ",
+                    "Fireflies · 1.1.0, Fireflies · 1.2.0 and Torches."
                 )
                 .into()
             )
         );
         let detail = impact.detail();
-        assert!(detail.contains("sunrise-mods/torches.smod"));
-        assert!(detail.contains("reviewed digest"));
+        assert!(detail.contains("sunrise-mods/torches.smod\nSHA-256: reviewed digest"));
+
+        // The other namesake is installed and will be disabled, not removed.
+        let mut one = remove(&targets[..1], vec![item("Lanterns", "lanterns_extra")]);
+        let Change::Remove { gui_names, .. } = &mut one else {
+            unreachable!();
+        };
+        *gui_names = names;
+        assert_eq!(
+            one.gui_review(0, false),
+            (
+                "Remove Lanterns · by Ann?".into(),
+                "Lanterns · by Bo needs it. It'll be turned off, and its files stay installed."
+                    .into(),
+            )
+        );
     }
 
     #[test]

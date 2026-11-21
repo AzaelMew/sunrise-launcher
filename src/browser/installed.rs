@@ -7,6 +7,7 @@
 use super::{pick, safe_name, Kind, Project, Source, SourceId, Support, Version};
 use crate::i18n::{tr, trf};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
@@ -247,6 +248,52 @@ impl Installed {
             .iter()
             .find(|e| e.project == name || e.slug == name)
     }
+}
+
+/// Player-facing labels for equal display names, in input order. Use the author if it
+/// identifies one member of the name group, otherwise the installed version. A unique
+/// name needs no replacement label. No filenames or paths are used.
+pub fn colliding_mod_labels<'a>(
+    mods: impl IntoIterator<Item = (&'a str, &'a [String], &'a str)>,
+) -> Vec<Option<String>> {
+    let mods: Vec<_> = mods
+        .into_iter()
+        .map(|(name, authors, version)| {
+            let mut authors: Vec<_> = authors
+                .iter()
+                .map(|author| author.trim())
+                .filter(|author| !author.is_empty())
+                .collect();
+            authors.sort_unstable();
+            authors.dedup();
+            (name, authors, version)
+        })
+        .collect();
+    let mut names = HashMap::new();
+    let mut by_author = HashMap::new();
+    for (name, authors, _) in &mods {
+        *names.entry(*name).or_insert(0) += 1;
+        *by_author.entry((*name, authors.as_slice())).or_insert(0) += 1;
+    }
+    mods.iter()
+        .map(|(name, authors, version)| {
+            if names[name] == 1 {
+                None
+            } else if !authors.is_empty() && by_author[&(*name, authors.as_slice())] == 1 {
+                Some(trf(
+                    "{name} · by {authors}",
+                    &[("name", name), ("authors", &authors.join(", "))],
+                ))
+            } else if !version.is_empty() {
+                Some(trf(
+                    "{name} · {version}",
+                    &[("name", name), ("version", version)],
+                ))
+            } else {
+                None
+            }
+        })
+        .collect()
 }
 
 /// One file to install: the project, the version chosen and why it was pulled in.

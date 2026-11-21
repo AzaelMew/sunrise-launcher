@@ -278,6 +278,7 @@ pub struct Installed {
     pub id: String,
     /// The name its manifest gives it; its ID when the manifest can't be read.
     pub name: String,
+    pub authors: Vec<String>,
     pub version: String,
     pub internals: Vec<String>,
     pub origin: Option<crate::github_mods::Origin>,
@@ -350,6 +351,10 @@ fn untracked_in(
                 file,
                 id,
                 name,
+                authors: package
+                    .as_ref()
+                    .map(|p| p.manifest.authors.clone())
+                    .unwrap_or_default(),
                 version,
                 internals,
                 origin,

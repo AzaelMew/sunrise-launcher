@@ -90,7 +90,7 @@ impl Launcher {
         };
         let refresh_ready = refresh.is_none();
         page = page.children(refresh);
-        let rows = self.rows();
+        let mut rows = self.rows();
         if rows.is_empty() {
             if !refresh_ready {
                 return page.into_any_element();
@@ -118,6 +118,31 @@ impl Launcher {
                 .into_any_element();
         }
 
+        // Use the exact installed package's display name here, as in the Remove review.
+        // Compute collisions before filtering so a row keeps its label when peers are hidden.
+        let archive_names = self.ui.mods.snapshot.as_ref().map(|s| &s.archive_names);
+        let archive_name = |r: &Row| {
+            archive_names
+                .filter(|_| r.selectable_archive())
+                .and_then(|names| names.get(&r.id))
+        };
+        let mut renamed = false;
+        for row in &mut rows {
+            if let Some(archive) = archive_name(row).filter(|archive| row.title != archive.name) {
+                row.title.clone_from(&archive.name);
+                renamed = true;
+            }
+        }
+        if renamed {
+            model::sort(&mut rows);
+        }
+        let labels = installed::colliding_mod_labels(rows.iter().map(|row| {
+            let (authors, version) = archive_name(row).map_or_else(
+                || (std::slice::from_ref(&row.authors), row.version.as_str()),
+                |archive| (archive.authors.as_slice(), archive.version.as_str()),
+            );
+            (row.title.as_str(), authors, version)
+        }));
         let filter = self.ui.mods.row_filter.clone();
         let visible = model::visible(&rows, &filter);
         // Whether this page draws the Build button, and with it a running build's bar: the
@@ -385,7 +410,7 @@ impl Launcher {
             if r.selectable_archive() {
                 position += 1;
             }
-            list = list.child(self.row(n, pos, r, shown_ids.clone(), busy, cx));
+            list = list.child(self.row(n, pos, r, labels[i].clone(), shown_ids.clone(), busy, cx));
         }
         if visible.is_empty() && refresh_ready {
             list = list.child(
@@ -425,6 +450,7 @@ impl Launcher {
         n: usize,
         pos: usize,
         r: Row,
+        label: Option<String>,
         ids: Rc<Vec<String>>,
         busy: bool,
         cx: &mut Context<Self>,
@@ -578,6 +604,7 @@ impl Launcher {
             }
         };
         let title = {
+            let plain_name = label.is_none();
             let d = div()
                 .id(("alt-row-title", n))
                 .reach()
@@ -590,17 +617,17 @@ impl Launcher {
                         .min_w_0()
                         .font_weight(FontWeight::SEMIBOLD)
                         .truncate()
-                        .child(r.title.clone()),
+                        .child(label.unwrap_or_else(|| r.title.clone())),
                 )
-                .child(
+                .children(plain_name.then(|| {
                     div()
                         .flex_1()
                         .min_w_0()
                         .text_size(px(tokens::SMALL))
                         .text_color(c(palette().muted))
                         .truncate()
-                        .child(r.authors.clone()),
-                );
+                        .child(r.authors.clone())
+                }));
             match project {
                 Some(id) => {
                     d.cursor_pointer()

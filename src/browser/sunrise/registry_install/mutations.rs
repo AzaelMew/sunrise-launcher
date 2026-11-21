@@ -137,6 +137,7 @@ pub(super) enum Change {
     Remove {
         removed: Vec<ReviewedArchive>,
         disabled: Vec<ReviewedMod>,
+        gui_names: BTreeMap<String, String>,
     },
 }
 
@@ -258,7 +259,9 @@ impl ChangeImpact {
                     ));
                 }
             }
-            Change::Remove { removed, disabled } => {
+            Change::Remove {
+                removed, disabled, ..
+            } => {
                 let names = removed
                     .iter()
                     .map(|archive| archive.target.label())
@@ -486,9 +489,20 @@ pub fn remove_mods(
         edit.current(),
         unavailable.iter().map(String::as_str),
     )?;
+    // Review against the full installed set, even when only one of the namesakes is selected.
+    let labels = installed::colliding_mod_labels(present.values().map(|item| {
+        let m = &item.package.manifest;
+        (m.name.as_str(), m.authors.as_slice(), m.version.as_str())
+    }));
+    let gui_names = present
+        .keys()
+        .zip(labels)
+        .filter_map(|(id, label)| label.map(|label| (id.clone(), label)))
+        .collect();
     let impact = ChangeImpact::read(
         &instance.home,
         Change::Remove {
+            gui_names,
             removed: archives,
             disabled: disabled
                 .into_iter()

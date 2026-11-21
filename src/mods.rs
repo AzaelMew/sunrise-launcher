@@ -25,7 +25,7 @@ use std::collections::{BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 use sunrise_launcher::browser::{
     installed::{self, Entry},
-    mod_list, sunrise, SourceId,
+    mod_list, sunrise, Kind, SourceId,
 };
 
 mod actions;
@@ -102,9 +102,16 @@ fn enabled_ids(home: &Path, entries: &[Entry], local: &[model::Local]) -> HashSe
     enabled
 }
 
+struct ArchiveName {
+    name: String,
+    authors: Vec<String>,
+    version: String,
+}
+
 #[derive(Default)]
 struct InstalledRows {
     entries: Vec<Entry>,
+    archive_names: HashMap<String, ArchiveName>,
     enabled: HashSet<String>,
     chosen: std::collections::BTreeMap<String, String>,
     local: Vec<model::Local>,
@@ -137,7 +144,26 @@ impl InstalledRows {
         let entries = installed::Installed::read(home)
             .map_err(InstalledReadError::Other)?
             .entries;
-        let local = read_local(home);
+        // Display metadata only; catalogue status and action authority still use their own proofs.
+        let mut archive_names: HashMap<_, _> = entries
+            .iter()
+            .filter(|entry| entry.source == SourceId::Sunrise && entry.kind == Kind::Mod)
+            .filter_map(|entry| {
+                let id = sunrise::mod_id(entry)?;
+                let manifest = sunrise_launcher_smod::manifest::Package::read(&entry.path(home)?)
+                    .ok()?
+                    .manifest;
+                (manifest.id == id).then_some((
+                    manifest.id,
+                    ArchiveName {
+                        name: manifest.name,
+                        authors: manifest.authors,
+                        version: manifest.version,
+                    },
+                ))
+            })
+            .collect();
+        let local = read_local(home, &mut archive_names);
         let enabled = enabled_ids(home, &entries, &local);
         let chosen = sunrise::chosen(home);
         let active = match try_display_active(home) {
@@ -160,6 +186,7 @@ impl InstalledRows {
         Ok(Some((
             Self {
                 entries,
+                archive_names,
                 enabled,
                 chosen,
                 local,
@@ -388,25 +415,33 @@ impl Default for ModsState {
 }
 
 /// The mods placed by hand in `home`: every package is opened and read.
-fn read_local(home: &Path) -> Vec<model::Local> {
-    let local = |native: bool| {
-        move |f: native_status::Installed| model::Local {
-            id: f.id,
-            name: f.name,
-            version: f.version,
-            github: f.origin.is_some(),
-            native,
-            unreadable: f.icon.is_err(),
-        }
-    };
+fn read_local(home: &Path, archive_names: &mut HashMap<String, ArchiveName>) -> Vec<model::Local> {
     native_status::untracked(home)
         .into_iter()
-        .map(local(true))
+        .map(|file| (file, true))
         .chain(
             native_status::untracked_content(home)
                 .into_iter()
-                .map(local(false)),
+                .map(|file| (file, false)),
         )
+        .map(|(file, native)| {
+            let unreadable = file.icon.is_err();
+            if !unreadable {
+                archive_names.entry(file.id.clone()).or_insert(ArchiveName {
+                    name: file.name.clone(),
+                    authors: file.authors,
+                    version: file.version.clone(),
+                });
+            }
+            model::Local {
+                id: file.id,
+                name: file.name,
+                version: file.version,
+                github: file.origin.is_some(),
+                native,
+                unreadable,
+            }
+        })
         .collect()
 }
 
