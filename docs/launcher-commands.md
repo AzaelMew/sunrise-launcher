@@ -818,6 +818,7 @@ Update what the browser installed (or one pack).
 - `PROJECT`
 - `--check`: Only say what is newer
 - `--instance`: The profile (default: the selected one)
+- `--confirm-world-loss`: Allow reviewed mod changes that could remove saved-world content
 
 MCP: `mods_update`.
 

@@ -487,6 +487,9 @@ enum ModsCmd {
         /// The profile (default: the selected one)
         #[arg(long)]
         instance: Option<String>,
+        /// Allow reviewed mod changes that could remove saved-world content
+        #[arg(long)]
+        confirm_world_loss: bool,
     },
     /// Install a native mod from a GitHub link (docs/modding/src/how-to/native-mods.md, "Install from GitHub"):
     /// https://github.com/OWNER/REPO (its latest release, else its default branch),
@@ -2191,6 +2194,17 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
         registry_crates: None,
         continue_after_failure: &|_| false,
     };
+    let approve = |impact: &sunrise::ChangeImpact, confirmed| {
+        eprintln!("{}", impact.detail());
+        let allowed = confirmed || !impact.risks_worlds();
+        if !allowed {
+            eprintln!(
+                "{}",
+                tr("Nothing was changed. Use --confirm-world-loss only if you accept this risk.")
+            );
+        }
+        allowed
+    };
     let on = matches!(action, ModsCmd::Enable { .. });
     match action {
         ModsCmd::List { .. } => {
@@ -2425,7 +2439,12 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                 println!("{} {}: {} ({})", e.title, e.number, e.file, e.checksum);
             }
         }
-        ModsCmd::Update { project, check, .. } => {
+        ModsCmd::Update {
+            project,
+            check,
+            confirm_world_loss,
+            ..
+        } => {
             let identity = sunrise_launcher::profile_txn::Identity::of(&home);
             let list = installed::Installed::load(&home).entries;
             let chosen: Vec<_> = list
@@ -2461,6 +2480,7 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                         Some(ids),
                         || sunrise_launcher::managed_play::headless_first(&instance, None),
                         mutation_hooks(),
+                        &|impact| approve(impact, confirm_world_loss),
                     )
                     .map_err(|e| match e {
                         sunrise::InstallError::Cancelled => tr("Nothing was updated.").into(),

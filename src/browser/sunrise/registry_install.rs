@@ -146,25 +146,26 @@ pub fn update_registry(
     requested: Option<Vec<String>>,
     choose: impl FnOnce() -> Result<FirstBuild, String>,
     hooks: InstallHooks<'_>,
+    approve: &dyn Fn(&ChangeImpact) -> bool,
 ) -> Result<InstalledBatch, InstallError> {
     registry_edit(
         instance,
         identity,
-        || Action::Update(requested),
+        || Action::Update(requested, approve),
         choose,
         hooks,
     )
 }
 
-enum Action {
+enum Action<'a> {
     Install(Vec<String>),
-    Update(Option<Vec<String>>),
+    Update(Option<Vec<String>>, &'a dyn Fn(&ChangeImpact) -> bool),
 }
 
-fn registry_edit(
+fn registry_edit<'a>(
     instance: &Instance,
     identity: Identity,
-    request: impl FnOnce() -> Action,
+    request: impl FnOnce() -> Action<'a>,
     choose: impl FnOnce() -> Result<FirstBuild, String>,
     hooks: InstallHooks<'_>,
 ) -> Result<InstalledBatch, InstallError> {
@@ -207,7 +208,7 @@ fn registry_edit(
     let before = inventory(old.path())?;
     let (ids, above) = match &action {
         Action::Install(ids) => (ids.clone(), BTreeMap::new()),
-        Action::Update(requested) => {
+        Action::Update(requested, _) => {
             let above = mutations::update_floors(&catalogue, &before, &game, requested.as_deref())?;
             if above.is_empty() {
                 return Ok(InstalledBatch::default());
@@ -512,15 +513,50 @@ fn registry_edit(
             }
             Err(error) => return Err(InstallError::Unproved(error.into())),
         };
-        // Until Update has an explicit world decision, refuse the same losses as Install.
-        guard_replacements(&instance.home, next.path(), &before, &entries)?;
+        let impact = match &action {
+            Action::Install(_) => {
+                guard_replacements(&instance.home, next.path(), &before, &entries)?;
+                None
+            }
+            Action::Update(_, approve) => {
+                let affected = mutations::loss_ids(next.path(), &before, &entries);
+                let reviewed = entries
+                    .values()
+                    .map(|entry| {
+                        if let Some(old) = before.get(&entry.project) {
+                            format!(
+                                "{} {} → {}",
+                                entry.title, old.package.manifest.version, entry.version
+                            )
+                        } else {
+                            trf(
+                                "Install {mod} {version}",
+                                &[("mod", &entry.title), ("version", &entry.version)],
+                            )
+                        }
+                    })
+                    .collect();
+                let impact = ChangeImpact::read(
+                    &instance.home,
+                    mutations::Change::Update(reviewed),
+                    &affected,
+                )?;
+                if impact.risks_worlds() && !approve(&impact) {
+                    return Err(InstallError::Cancelled);
+                }
+                Some((impact, affected))
+            }
+        };
         (hooks.progress)(InstallProgress::Publishing);
         edit.publish(proof, &cancelled, || {
             let (_, current) = fetch_index(&source, local)?;
             if source_bytes != current {
                 return Err(tr("The mod registry changed while the install was being prepared. Nothing was installed.").into());
             }
-            guard_replacements(&instance.home, next.path(), &before, &entries)
+            match impact {
+                Some((impact, affected)) => impact.recheck(&instance.home, &affected),
+                None => guard_replacements(&instance.home, next.path(), &before, &entries),
+            }
         })?;
         for (id, entry) in entries {
             if let Some(previous) = before.get(&id) {
@@ -953,3 +989,4 @@ fn at(path: &Path, error: impl std::fmt::Display) -> String {
 mod mutations;
 #[cfg(test)]
 mod tests;
+pub use mutations::ChangeImpact;
