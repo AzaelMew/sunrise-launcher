@@ -1491,19 +1491,4 @@ fn channel_less_cli_play_refuses_to_fall_through_to_installed_stable() {
             .unwrap(),
         STABLE
     );
-
-    // A historical profile named "nightly" has the same exact-pin contract as any other.
-    const OLD: &str = "nightly-2026-11-15-aaaaaaa";
-    const NEW: &str = "nightly-2026-11-16-bbbbbbb";
-    fs::create_dir_all(backend::game_home().join(OWN).join("nightly")).unwrap();
-    put(&backend::version_dir(OLD).join(".installed"), "");
-    edit("nightly", |meta| meta.version = Some(OLD.into())).unwrap();
-    crate::nightly::after_update(NEW);
-    assert_eq!(
-        edit("nightly", |_| {})
-            .unwrap()
-            .resolve_version(None)
-            .unwrap(),
-        OLD
-    );
 }

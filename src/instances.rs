@@ -615,6 +615,19 @@ pub fn list() -> Vec<Instance> {
     list_in(&backend::game_home(), &backend::data_dir())
 }
 
+/// Read the atomic metadata snapshot without housekeeping or taking a profile gate.
+pub(crate) fn list_for_storage() -> Result<Vec<Instance>, String> {
+    let data = backend::data_dir();
+    let store = Store::read(&data)?;
+    Ok(list_snapshot(
+        &backend::game_home(),
+        &data,
+        store,
+        true,
+        false,
+    ))
+}
+
 /// Read the profile directories without the migrations or housekeeping of `list`.
 pub(crate) fn profile_homes_strict(game: &Path) -> Result<Vec<PathBuf>, String> {
     let mut homes = Vec::new();

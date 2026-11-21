@@ -10,8 +10,8 @@ pub enum Msg {
     NightlyReceiptRetried(Arc<NightlyReceiptWarning>, Result<(), String>),
     /// A version's files are gone (or could not be deleted).
     Removed(String, Result<(), String>),
-    /// `prune_old_versions` ended; these versions were deleted.
-    Pruned(Vec<String>),
+    /// Automatic cleanup finished; any failed removal names its build.
+    Pruned(Vec<(String, String)>),
     /// What each installed version takes on disk (`disk_use`).
     DiskUse(Vec<(String, u64)>),
     Line(Job, String),

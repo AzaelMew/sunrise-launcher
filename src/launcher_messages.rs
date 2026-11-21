@@ -268,8 +268,13 @@ impl Launcher {
                             // it has been saved there. A failed save leaves all versions in place.
                             if self.save_settings() {
                                 let tx = self.tx.clone();
+                                let releases = self.game_releases().to_vec();
+                                let installed = tag.clone();
                                 std::thread::spawn(move || {
-                                    let _ = tx.send(Msg::Pruned(backend::prune_old_versions()));
+                                    let errors = backend::version_storage::prune_old_versions(
+                                        &releases, &installed,
+                                    );
+                                    let _ = tx.send(Msg::Pruned(errors));
                                 });
                             }
                         }
@@ -317,9 +322,10 @@ impl Launcher {
                         Err(e) => self.import_error = Some(e),
                     }
                 }
-                Msg::Pruned(gone) => {
-                    if !gone.is_empty() {
-                        self.refresh_installed();
+                Msg::Pruned(errors) => {
+                    self.refresh_installed();
+                    for (tag, error) in errors {
+                        eprintln!("Could not remove old game build {tag}: {error}");
                     }
                 }
                 Msg::Updates(updates) => {
