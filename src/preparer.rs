@@ -335,8 +335,32 @@ pub(crate) fn sounds(
     match status.code() {
         Some(0) => Ok(Some(())),
         Some(2) => Ok(None),
-        _ => Err(errors.join("\n").trim_start_matches("error: ").to_owned()),
+        _ => Err(errors
+            .iter()
+            .map(|error| {
+                let error = error.trim_start_matches("error: ");
+                missing_version_advice(error).unwrap_or_else(|| error.to_owned())
+            })
+            .collect::<Vec<_>>()
+            .join("\n")),
     }
+}
+
+/// Older and current preparers print their own command-line flags in this diagnostic.
+/// Keep the path the child actually tried, but replace its advice with the launcher's.
+fn missing_version_advice(error: &str) -> Option<String> {
+    let (path, _) = error
+        .strip_prefix("Missing ")?
+        .rsplit_once(". Sunrise does not download the game: ")?;
+    let path = Path::new(path);
+    let parent = path.parent()?;
+    if path.extension()? != "json"
+        || path.file_stem()? != parent.file_name()?
+        || parent.parent()?.file_name()? != "versions"
+    {
+        return None;
+    }
+    Some(crate::sources::missing_version_file(path) + &crate::sources::prepare_advice())
 }
 
 fn json_command(binary: &Path, root: &Path, subcommand: &str) -> Command {
@@ -558,6 +582,26 @@ esac"#,
         assert_eq!(needs(&old, &dir, &log, None).unwrap(), None);
         assert_eq!(sounds(&old, &dir, &dir, &log, None).unwrap(), None);
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn preparer_missing_version_file_has_launcher_instructions() {
+        let error = missing_version_advice(
+            "Missing /game with spaces/versions/26.3/26.3.json. Sunrise does not download the game: pass --minecraft-dir or set SUNRISE_MINECRAFT_DIR.",
+        )
+        .unwrap();
+        assert!(error.starts_with(
+            "Minecraft version file not found: /game with spaces/versions/26.3/26.3.json\n"
+        ));
+        assert!(error.contains("--minecraft PATH"));
+        assert!(error.contains("Minecraft folder › Choose…"));
+        assert!(error.contains(
+            "sunrise-launcher account sign-in, then sunrise-launcher prepare --download"
+        ));
+        assert!(!error.contains("--minecraft-dir"));
+        assert!(missing_version_advice(
+            "Missing /game/versions/26.3/26.3.jar. Sunrise does not download the game: pass --minecraft-dir."
+        ).is_none());
     }
 
     #[test]
