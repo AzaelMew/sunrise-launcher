@@ -211,8 +211,11 @@ impl Launcher {
             )
         };
         left = left.children(above);
-        let saved_readme =
-            readme.is_some() && (offline || details.is_some_and(|details| details.error.is_some()));
+        let saved_readme = readme.is_some()
+            && matches!(
+                details.and_then(|details| details.error.as_ref()),
+                Some(sources::Failure::Offline(_) | sources::Failure::RateLimited { .. })
+            );
         left = left.child(muted(if saved_readme {
             tr("README from the repository · saved copy")
         } else {
