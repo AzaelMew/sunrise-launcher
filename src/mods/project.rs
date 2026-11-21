@@ -654,6 +654,16 @@ impl Launcher {
                             .child(v)
                     })),
             );
+        let source_button = match &p.source {
+            Some(model::SourceLink::GitHub(url)) => {
+                let url = url.clone();
+                Some(
+                    crate::frame::button("alt-project-github", tr("Open on GitHub"))
+                        .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.open_url(&url))),
+                )
+            }
+            _ => None,
+        };
         let scroll = crate::frame::scrolls("project");
         let right = div()
             .flex()
@@ -671,6 +681,7 @@ impl Launcher {
                     .child(facts)
                     .children(game_line)
                     .children(changes)
+                    .children(source_button)
                     .child(details_toggle)
                     .children(details),
             )
@@ -691,11 +702,14 @@ impl Launcher {
                     .child(row(tr("Downloads"), p.downloads.to_string()))
                     .child(row(tr("Updated"), p.updated.clone()))
                     .child(row(tr("Licence"), p.license.clone()))
-                    .children((source.starts_with("https://")).then(|| {
-                        about_link("alt-project-source", tr("Source code")).on_click(cx.listener(
-                            move |_, _: &ClickEvent, _, cx| Launcher::open_url(&source, cx),
-                        ))
-                    }))
+                    .children(match source {
+                        Some(model::SourceLink::Other(url)) => Some(
+                            about_link("alt-project-source", tr("Source code")).on_click(
+                                cx.listener(move |_, _: &ClickEvent, _, cx| cx.open_url(&url)),
+                            ),
+                        ),
+                        _ => None,
+                    })
             });
 
         // A narrow window has one column: the action stays near the top. Beside the column, the
