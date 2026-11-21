@@ -67,20 +67,29 @@ enum Catalog {
 
 #[derive(PartialEq, Eq)]
 struct OpenScope {
-    id: String,
+    profile: Option<String>,
     home: PathBuf,
     target: Option<String>,
+    game: String,
 }
 
 struct Open {
     id: String,
     request: u64,
-    scope: Option<OpenScope>,
+    scope: OpenScope,
     /// The screen Back returns to.
     from: Page,
     page: Option<Result<Box<model::Page>, String>>,
     /// The collection's page this mod's was opened from: Back returns to it.
     parent: Option<String>,
+}
+
+impl Open {
+    fn finish(&mut self, request: u64, scope: &OpenScope, page: Result<Box<model::Page>, String>) {
+        if self.request == request && &self.scope == scope && self.page.is_none() {
+            self.page = Some(page);
+        }
+    }
 }
 
 /// The ids switched on among the registry entries and the hand-placed packages.
@@ -690,8 +699,9 @@ impl Launcher {
                     self.enabled_mods(&home, notice, result, allowed_at);
                 }
                 Event::Page(request, page) => {
-                    if let Some(open) = m.open.as_mut().filter(|o| o.request == request) {
-                        open.page = Some(page);
+                    let scope = self.mods_page_scope();
+                    if let Some(open) = self.ui.mods.open.as_mut() {
+                        open.finish(request, &scope, page);
                     }
                 }
                 Event::Progress(line, f) => m.busy = Some((line, f)),
@@ -814,17 +824,19 @@ impl Launcher {
         });
     }
 
-    fn mods_page_scope(&self) -> Option<OpenScope> {
-        let instance = self.selected_instance()?;
-        Some(OpenScope {
-            id: instance.id.clone(),
-            home: instance.home.clone(),
-            target: self.profile_target(instance),
-        })
+    fn mods_page_scope(&self) -> OpenScope {
+        let instance = self.selected_instance();
+        OpenScope {
+            profile: instance.map(|i| i.id.clone()),
+            home: self.mods_home(),
+            target: instance.and_then(|i| self.profile_target(i)),
+            game: self.mods_game(),
+        }
     }
 
     fn mods_load_page(&mut self, id: String, from: Page) {
         let scope = self.mods_page_scope();
+        let game = scope.game.clone();
         self.ui.mods.page_request += 1;
         let request = self.ui.mods.page_request;
         self.ui.mods.open = Some(Open {
@@ -839,7 +851,7 @@ impl Launcher {
         if sunrise::known_index().is_some_and(|index| index.collection(&id).is_some()) {
             return;
         }
-        let (tx, game) = (self.ui.mods.tx.clone(), self.mods_game());
+        let tx = self.ui.mods.tx.clone();
         let instance = self.selected_instance().cloned();
         std::thread::spawn(move || {
             let result = sunrise::index().and_then(|index| {
@@ -1233,6 +1245,45 @@ impl Launcher {
 #[cfg(test)]
 mod enabled_tests {
     use super::*;
+
+    #[test]
+    fn reopening_the_same_mod_discards_previous_detail_replies() {
+        let scope = |profile: &str, target: &str, game: &str| OpenScope {
+            profile: Some(profile.into()),
+            home: PathBuf::from(profile),
+            target: Some(target.into()),
+            game: game.into(),
+        };
+        let current = scope("current", "new-build", "26.3");
+        let mut open = Open {
+            id: "ruby".into(),
+            request: 2,
+            scope: scope("current", "new-build", "26.3"),
+            from: Page::Installed,
+            page: None,
+            parent: None,
+        };
+        open.finish(1, &current, Err("earlier request".into()));
+        open.finish(
+            2,
+            &scope("old", "new-build", "26.3"),
+            Err("old profile".into()),
+        );
+        open.finish(
+            2,
+            &scope("current", "old-build", "26.3"),
+            Err("old build".into()),
+        );
+        open.finish(
+            2,
+            &scope("current", "new-build", "26.2"),
+            Err("old game".into()),
+        );
+        assert!(open.page.is_none());
+        open.finish(2, &current, Err("current reply".into()));
+        open.finish(1, &current, Err("earlier request".into()));
+        assert!(matches!(open.page, Some(Err(why)) if why == "current reply"));
+    }
 
     #[test]
     fn enabled_ids_come_from_the_current_packages_only() {
