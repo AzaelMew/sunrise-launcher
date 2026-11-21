@@ -516,15 +516,7 @@ mod tests {
         #[cfg(unix)]
         std::os::unix::fs::symlink(target, link).unwrap();
         #[cfg(windows)]
-        {
-            let output = std::process::Command::new("cmd.exe")
-                .args(["/d", "/c", "mklink", "/J"])
-                .arg(link.to_string_lossy().replace('/', "\\"))
-                .arg(target.to_string_lossy().replace('/', "\\"))
-                .output()
-                .unwrap();
-            assert!(output.status.success(), "junction setup: {output:?}");
-        }
+        crate::sources::junction(target, link).unwrap();
     }
 
     /// Removes the link `link_dir` made, never what it points to.
