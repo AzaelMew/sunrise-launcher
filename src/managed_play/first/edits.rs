@@ -148,9 +148,11 @@ impl Edit<'_> {
         {
             return Err(unsettled());
         }
+        let registry = crate::browser::sunrise::fetched_index();
         if let Some(repaired) = super::super::inputs::browser_repair(
             candidate.path(),
             &scan_packages(candidate.path())?,
+            registry.as_deref(),
         )? {
             fs::write(candidate.path().join(MANIFEST), repaired)
                 .map_err(|e| at(candidate.path(), e))?;

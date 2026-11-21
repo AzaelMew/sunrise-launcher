@@ -506,17 +506,19 @@ fn inventory(home: &Path) -> Result<Inventory, String> {
             let row: Option<installed::Entry> = doc
                 .row(&id)?
                 .and_then(|row| serde_json::from_value(row.clone()).ok());
-            let owned = row.is_some_and(|row| {
+            let claim = row.as_ref().zip(digest.as_deref()).filter(|(row, _)| {
                 row.source == SourceId::Sunrise
                     && row.kind == Kind::Mod
-                    && row.project == id
-                    && row.version == p.manifest.version
                     && row.path(home).as_ref() == Some(&p.path)
-                    && digest.as_ref().is_some_and(|digest| {
-                        row.checksum
-                            .eq_ignore_ascii_case(&format!("SHA-256:{digest}"))
-                    })
             });
+            let owned = if let Some((row, digest)) = claim {
+                doc.rows
+                    .check_other_claims(home, &id, &row.file)
+                    .map_err(|error| error.render(trf))?;
+                managed_play::registry_row_matches(home, row, &p, digest)
+            } else {
+                false
+            };
             Ok((
                 id,
                 SeenPackage {
