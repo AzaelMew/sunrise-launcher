@@ -89,7 +89,6 @@ fn github_native_from(
             })
             .collect::<Result<Vec<_>, _>>()
     });
-    github_mods::discard(found);
     let done = done?;
     for (updated, o) in &done {
         println!(

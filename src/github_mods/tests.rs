@@ -93,7 +93,7 @@ fn a_repository_resolves_to_its_latest_releases_smod_and_commit() {
         (found.tag.as_deref(), found.commit.as_str()),
         (Some("v1"), SHA)
     );
-    let file = found.asset.unwrap();
+    let file = &found.assets[0];
     assert_eq!(file.name, "zoom-1.smod");
     assert_eq!(file.sha256, Some("ab".repeat(32)));
 }
@@ -108,7 +108,7 @@ fn a_link_in_another_letter_case_still_finds_the_releases_smod() {
         ("repos/Acme/Zoom/commits/v1", json!({ "sha": SHA })),
     ]);
     let found = resolve(&link("https://github.com/Acme/Zoom"), &api).unwrap();
-    let file = found.asset.expect("the release's package is kept");
+    let file = &found.assets[0];
     assert_eq!(
         file.url,
         "https://github.com/acme/zoom/releases/download/v1/zoom-1.smod"
@@ -127,8 +127,8 @@ fn a_link_in_another_letter_case_still_finds_the_releases_smod() {
     ]);
     assert!(resolve(&link("https://github.com/Acme/Zoom"), &other)
         .unwrap()
-        .asset
-        .is_none());
+        .assets
+        .is_empty());
 }
 
 #[test]
@@ -141,7 +141,7 @@ fn a_release_with_no_smod_falls_back_to_its_commit() {
         ("repos/acme/zoom/commits/v1", json!({ "sha": SHA })),
     ]);
     let found = resolve(&link("https://github.com/acme/zoom"), &api).unwrap();
-    assert_eq!(found.asset, None);
+    assert!(found.assets.is_empty());
     assert_eq!(found.commit, SHA);
 }
 
@@ -155,12 +155,10 @@ fn an_asset_from_another_host_is_ignored() {
         ),
         ("repos/acme/zoom/commits/v1", json!({ "sha": SHA })),
     ]);
-    assert_eq!(
-        resolve(&link("https://github.com/acme/zoom"), &api)
-            .unwrap()
-            .asset,
-        None
-    );
+    assert!(resolve(&link("https://github.com/acme/zoom"), &api)
+        .unwrap()
+        .assets
+        .is_empty());
 }
 
 #[test]
@@ -170,15 +168,14 @@ fn release_transfer_refuses_foreign_urls_and_bad_checksums() {
         repo: "zoom".into(),
         tag: Some("v1".into()),
         commit: SHA.into(),
-        asset: Some(Asset {
+        assets: vec![Asset {
             name: "zoom.smod".into(),
             url: "https://github.com/acme/other/releases/download/v1/zoom.smod".into(),
             sha256: Some("0".repeat(64)),
-        }),
+        }],
     };
     assert!(fetch_with(&found, |_| panic!("foreign URL must not be fetched")).is_err());
-    found.asset.as_mut().unwrap().url =
-        "https://github.com/acme/zoom/releases/download/v1/zoom.smod".into();
+    found.assets[0].url = "https://github.com/acme/zoom/releases/download/v1/zoom.smod".into();
     let error = fetch_with(&found, |_| Ok(b"wrong archive".to_vec())).unwrap_err();
     assert!(error.contains("does not match the checksum"), "{error}");
 }
@@ -190,10 +187,8 @@ fn no_release_resolves_the_default_branch_to_a_commit() {
         ("repos/acme/zoom/commits/dev/main", json!({ "sha": SHA })),
     ]);
     let found = resolve(&link("https://github.com/acme/zoom"), &api).unwrap();
-    assert_eq!(
-        (&found.tag, &found.asset, found.commit.as_str()),
-        (&None, &None, SHA)
-    );
+    assert!(found.tag.is_none() && found.assets.is_empty());
+    assert_eq!(found.commit, SHA);
     assert_eq!(found.label(), "acme/zoom @ 0123456");
     assert_eq!(
         found.source_url(),
@@ -218,7 +213,10 @@ fn refs_and_short_commits_become_full_commits_and_unknown_ones_say_so() {
         Ok(SHA2.into())
     );
     let err = commit("https://github.com/acme/zoom/tree/gone").unwrap_err();
-    assert!(err.contains("no commit, tag or branch gone"), "{err}");
+    assert!(
+        err.to_string().contains("no commit, tag or branch gone"),
+        "{err}"
+    );
     // A tag with no release is a commit.
     assert!(commit("https://github.com/acme/zoom/releases/tag/v9").is_err());
 }
@@ -227,6 +225,7 @@ fn refs_and_short_commits_become_full_commits_and_unknown_ones_say_so() {
 fn a_rate_limit_is_said_plainly() {
     let limited = |_: &str| Err(RATE_LIMIT.to_string());
     let err = resolve(&link("https://github.com/acme/zoom"), &limited).unwrap_err();
+    let err = err.to_string();
     assert!(
         err.contains("rate limit") && err.contains("Try again"),
         "{err}"
@@ -359,7 +358,9 @@ fn packed(id: &str) -> Packed {
         version: "0.1.0".into(),
         file: PathBuf::new(),
         sha256: String::new(),
-        release: None,
+        name: id.into(),
+        checked: None,
+        _scratch: None,
     }
 }
 
@@ -386,7 +387,7 @@ fn installing_records_the_origin_and_updates_follow_releases_or_the_head() {
         repo: "zoom".into(),
         tag: None,
         commit: SHA.into(),
-        asset: None,
+        assets: Vec::new(),
     };
     let kept = ready.file.clone();
     let origin = install(&home, &found, &ready).unwrap();

@@ -214,7 +214,6 @@ impl Launcher {
                         }
                         Ok(messages.join("\n"))
                     })();
-                    github_mods::discard(&found);
                     Event::Installed(done)
                 }
                 other => Event::Fetched(other),
