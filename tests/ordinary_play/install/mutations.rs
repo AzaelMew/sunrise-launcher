@@ -112,6 +112,33 @@ fn live_state(fixture: &Fixture) -> [Vec<u8>; 4] {
 }
 
 #[test]
+fn registry_update_and_remove_refuse_foreign_bytes_at_a_recorded_registry_path() {
+    let fixture = Fixture::new();
+    let (mut registry, _) = fixture.content_index();
+    install_root(&fixture, &registry);
+    release(&fixture, &mut registry, "root_mod", "1.1.0", &[]);
+    fixture.publish_registry(&registry);
+    let foreign = Package::write_files(
+        "id='root_mod'\nname='Local Lanterns'\nversion='1.0.0'\napi='0.2'\nside='both'\ncapabilities=['registries']\n[dependencies]\nrequired_mod='^1'\n",
+        &[("data/root_mod/sunrise/block/local_lamp.json", b"{}")],
+    ).unwrap();
+    fs::write(
+        fixture.home.join(mod_list::DIR).join("root_mod.smod"),
+        foreign,
+    )
+    .unwrap();
+    let old = live_state(&fixture);
+    for args in [
+        ["mods", "update", "root_mod", "--confirm-world-loss"],
+        ["mods", "remove", "root_mod", "--confirm-world-loss"],
+    ] {
+        let (ok, text) = run(&fixture, &args);
+        assert!(!ok && text.contains("registry"), "{args:?}: {text}");
+        assert_eq!(live_state(&fixture), old);
+    }
+}
+
+#[test]
 fn updating_a_dependency_warns_for_its_world_but_not_an_independent_mods_world() {
     let fixture = Fixture::new();
     let (mut registry, _) = fixture.content_index();
