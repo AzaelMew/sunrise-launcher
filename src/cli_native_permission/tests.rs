@@ -5,7 +5,7 @@ use sunrise_launcher_nbt::{self as nbt, Limits, NamedTag, Tag};
 use sunrise_launcher_smod::{index, Package};
 
 #[test]
-fn github_update_cli_checks_origin_and_world_approval_before_publishing() {
+fn github_update_cli_checks_origin_but_needs_no_world_loss_flag_for_native() {
     const ACTOR: &str = "SUNRISE_TEST_GITHUB_UPDATE_CLI";
     let root = match std::env::var_os(ACTOR) {
         Some(root) => std::path::PathBuf::from(root),
@@ -15,7 +15,7 @@ fn github_update_cli_checks_origin_and_world_approval_before_publishing() {
             let output = Command::new(std::env::current_exe().unwrap())
                 .args([
                     "--exact",
-                    &format!("{test_module}::github_update_cli_checks_origin_and_world_approval_before_publishing"),
+                    &format!("{test_module}::github_update_cli_checks_origin_but_needs_no_world_loss_flag_for_native"),
                 ])
                 .env(ACTOR, root.path())
                 .env("SUNRISE_HOME", root.path().join("game"))
@@ -79,8 +79,8 @@ fn github_update_cli_checks_origin_and_world_approval_before_publishing() {
     )
     .unwrap();
 
-    // An explicitly off, unheld archive still warns for saved worlds. This fixture proves
-    // the real transaction without asking the libtest executable to run the compiler worker.
+    // A native archive can't prove a dropped definition even with a saved world. An off,
+    // unheld archive exercises the real transaction without starting the compiler worker.
     let dir = home.join(native_mods::INSTALLED);
     fs::create_dir_all(&dir).unwrap();
     let target = dir.join(format!("{ID}.smod"));
@@ -165,13 +165,7 @@ fn github_update_cli_checks_origin_and_world_approval_before_publishing() {
 
     origin["sha256"] = json!(index::sha256(&old));
     fs::write(&sidecar, origin.to_string()).unwrap();
-    let denied = invoke(&[]).unwrap_err();
-    assert_eq!(denied, "Nothing was updated.");
-    assert_eq!(fs::read(&target).unwrap(), old);
-    assert_eq!(fs::read_to_string(&sidecar).unwrap(), origin.to_string());
-    assert!(!pointer.exists());
-
-    invoke(&["--confirm-world-loss"]).unwrap();
+    invoke(&[]).unwrap();
     assert_eq!(fs::read(&target).unwrap(), new);
     let published = github_mods::origin(&home, ID).unwrap();
     assert_eq!(published.asset.as_deref(), Some("lantern-1.1.0.smod"));

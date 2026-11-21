@@ -824,7 +824,7 @@ Update what the browser installed (or one pack).
 - `PROJECT`
 - `--check`: Only say what is newer
 - `--instance`: The profile (default: the selected one)
-- `--confirm-world-loss`: Allow reviewed mod changes that could remove saved-world content
+- `--confirm-world-loss`: Allow an update known to drop registered definitions that saved worlds may use
 
 MCP: `mods_update`.
 
@@ -853,7 +853,7 @@ Check native mods from GitHub, and update those installed from a release with a 
 - `--check`: Only say what is newer
 - `--instance`: The profile (default: the selected one)
 - `--trust-native-code`: Allow native code for this install (remembered; revoke in Settings, Storage)
-- `--confirm-world-loss`: Allow a reviewed update that could remove saved-world content
+- `--confirm-world-loss`: Allow proved loss of registered definitions (not needed for native mods)
 
 Before replacement, Sunrise verifies the installed archive against its recorded GitHub asset and shows its path and SHA-256. A commit install can still be checked with --check; to replace it, remove it explicitly and add the new version.
 

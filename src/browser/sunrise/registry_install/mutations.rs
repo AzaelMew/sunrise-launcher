@@ -91,10 +91,39 @@ pub(super) fn bind_worlds(
     Ok(locks)
 }
 
+/// Inspect only replaced packages on Update. An opaque package warrants a note, not consent;
+/// only a known drop contributes namespaces to the saved-world review and cutoff fence.
+pub(super) fn update_worlds<'a>(
+    new_home: &Path,
+    old: impl IntoIterator<Item = &'a managed_play::ScannedPackage>,
+) -> Result<(worlds::SuspectMods, bool), String> {
+    let new: BTreeMap<_, _> = managed_play::scan_packages(new_home)?
+        .into_iter()
+        .map(|package| (package.manifest.id.clone(), package))
+        .collect();
+    let mut drops = worlds::SuspectMods::new();
+    let mut unchecked = false;
+    for previous in old {
+        let id = &previous.manifest.id;
+        match new
+            .get(id)
+            .and_then(|next| worlds::update_drops(previous, next))
+        {
+            Some(namespaces) if !namespaces.is_empty() => {
+                drops.insert(id.clone(), namespaces);
+            }
+            Some(_) => {}
+            None => unchecked = true,
+        }
+    }
+    Ok((drops, unchecked))
+}
+
 #[derive(Debug)]
 pub struct ChangeImpact {
     change: Change,
     evidence: Vec<worlds::WorldRisk>,
+    unchecked_update: bool,
 }
 
 #[derive(Debug)]
@@ -166,7 +195,13 @@ impl ChangeImpact {
         Ok(Self {
             change,
             evidence: world_evidence(home, suspect)?,
+            unchecked_update: false,
         })
+    }
+
+    pub(super) fn with_unchecked_update(mut self, unchecked: bool) -> Self {
+        self.unchecked_update = unchecked;
+        self
     }
 
     pub(super) fn into_evidence(self) -> Vec<worlds::WorldRisk> {
@@ -187,7 +222,8 @@ impl ChangeImpact {
 
     /// The heading and plain-language warning shown by the GUI, not the archive audit detail.
     pub fn gui_review(&self) -> (String, String) {
-        self.change.gui_review(self.affected().count())
+        self.change
+            .gui_review(self.affected().count(), self.unchecked_update)
     }
 
     pub fn detail(&self) -> String {
@@ -242,6 +278,10 @@ impl ChangeImpact {
             }
         }
         match self.affected().count() {
+            0 if self.unchecked_update => lines.push(
+                tr("Sunrise can't check whether this update removes blocks or items your worlds use.")
+                    .into(),
+            ),
             0 => (),
             1 => lines.push(tr(
                 "You may lose blocks and items from the affected mods when you open 1 saved world without their definitions.",

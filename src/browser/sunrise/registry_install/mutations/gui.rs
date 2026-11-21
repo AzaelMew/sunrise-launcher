@@ -3,7 +3,11 @@ use super::Change;
 use crate::i18n::{tr, trf};
 
 impl Change {
-    pub(super) fn gui_review(&self, world_count: usize) -> (String, String) {
+    pub(super) fn gui_review(
+        &self,
+        world_count: usize,
+        unchecked_update: bool,
+    ) -> (String, String) {
         let mut lines = Vec::new();
         let (heading, one_mod) = match self {
             Self::Update(updates) => {
@@ -98,6 +102,10 @@ impl Change {
             }
         };
         match (world_count, one_mod) {
+            (0, _) if unchecked_update => lines.push(
+                tr("Sunrise can't check whether this update removes blocks or items your worlds use.")
+                    .into(),
+            ),
             (0, _) => (),
             (1, true) => {
                 lines.push(tr("1 saved world may lose blocks and items from this mod.").into())
@@ -161,16 +169,16 @@ mod tests {
         let core = [("Lantern Core", "lantern_core")];
         let bare = remove(&core, vec![]);
         assert_eq!(
-            bare.gui_review(0),
+            bare.gui_review(0, false),
             (String::from("Remove Lantern Core?"), String::new())
         );
         assert_eq!(
-            bare.gui_review(1).1,
+            bare.gui_review(1, false).1,
             "1 saved world may lose blocks and items from this mod."
         );
         let one = remove(&core, vec![item("Fireflies", "fireflies")]);
         assert_eq!(
-            one.gui_review(1).1,
+            one.gui_review(1, false).1,
             concat!(
                 "Fireflies needs it. It'll be turned off, and its files stay installed.\n\n",
                 "1 saved world may lose blocks and items from these mods."
@@ -180,7 +188,7 @@ mod tests {
             &core,
             vec![item("Fireflies", "fireflies"), item("Lanterns", "lanterns")],
         );
-        assert_eq!(two.gui_review(3).1, concat!(
+        assert_eq!(two.gui_review(3, false).1, concat!(
             "Fireflies and Lanterns need it. They'll be turned off, and their files stay installed.\n\n",
             "3 saved worlds may lose blocks and items from these mods."
         ));
@@ -196,7 +204,7 @@ mod tests {
             ],
             vec![item("Fireflies", "fireflies"), item("Lanterns", "lanterns")],
         );
-        let (heading, detail) = change.gui_review(0);
+        let (heading, detail) = change.gui_review(0, false);
         assert_eq!(heading, "Remove 3 mods?");
         assert_eq!(
             detail,
@@ -220,6 +228,7 @@ mod tests {
                 vec![],
             ),
             evidence: vec![],
+            unchecked_update: false,
         };
         assert_eq!(
             impact.gui_review(),
@@ -251,7 +260,7 @@ mod tests {
                 replacement: "1.0.0".into(),
             },
         ]);
-        let (heading, detail) = change.gui_review(2);
+        let (heading, detail) = change.gui_review(2, false);
         assert_eq!(heading, "Update Lanterns?");
         assert_eq!(
             detail,
@@ -281,19 +290,25 @@ mod tests {
                 ],
             },
             evidence: vec![],
+            unchecked_update: true,
         };
         let (heading, warning) = impact.gui_review();
         assert_eq!(heading, "Update Lanterns?");
         assert_eq!(
             warning,
-            "This replaces the installed version with the GitHub release you selected."
+            concat!(
+                "This replaces the installed version with the GitHub release you selected.\n\n",
+                "Sunrise can't check whether this update removes blocks or items your worlds use."
+            )
         );
+        assert!(!impact.risks_worlds());
         assert_eq!(
             impact.detail(),
             concat!(
             "Update: Lanterns (lanterns).\n\n",
             "Installed archive: old release\nsunrise-mods/lanterns.smod\nSHA-256: old digest\n\n",
-            "Replacement archive: new release\nsunrise-mods/lanterns.smod\nSHA-256: new digest"
+            "Replacement archive: new release\nsunrise-mods/lanterns.smod\nSHA-256: new digest\n\n",
+            "Sunrise can't check whether this update removes blocks or items your worlds use."
         )
         );
     }

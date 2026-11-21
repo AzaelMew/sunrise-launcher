@@ -1,6 +1,6 @@
 //! Replacing a GitHub release uses an exact admission, review and same-base publication.
 use super::*;
-use crate::{github_mods, worlds};
+use crate::github_mods;
 use cap_fs_ext::MetadataExt;
 use std::io::ErrorKind;
 
@@ -81,13 +81,7 @@ pub fn update_github(
     };
     check_graph()?;
     let reviewed_inputs = managed_play::inputs(home, None)?;
-    let suspect = worlds::unproved_mod_effects(
-        old.path(),
-        edit.current(),
-        home,
-        edit.current(),
-        [id.as_str()],
-    )?;
+    let (suspect, unchecked_update) = mutations::update_worlds(home, [&previous.package])?;
     let title = &previous.package.manifest.name;
     let impact = ChangeImpact::read(
         &instance.home,
@@ -100,8 +94,9 @@ pub fn update_github(
             releases: [(&predecessor).into(), replacement.into()],
         },
         &suspect,
-    )?;
-    // Approval is required even when the current world roster proves there is no save risk.
+    )?
+    .with_unchecked_update(unchecked_update);
+    // GUI review applies even when no dropped definition is known.
     // Ask before proving the replacement: native builds may run the author's build scripts.
     (hooks.progress)(InstallProgress::Reviewing);
     if !approve(&impact) {

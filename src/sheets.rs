@@ -452,41 +452,46 @@ impl Launcher {
             } else {
                 tr("Update")
             };
-            let body =
-                div()
-                    .flex()
-                    .flex_col()
-                    .child(title(impact.heading.clone()))
-                    .when(!impact.detail.is_empty(), |body| {
-                        body.child(
-                            div()
-                                .id("registry-impact-text")
-                                .max_h(px(310.))
-                                .overflow_y_scroll()
-                                .child(crate::selectable::selectable(impact.detail.clone())),
-                        )
-                    })
-                    .child(
+            let (cancel, approve) = if impact.cancel_default {
+                (
+                    crate::frame::primary("cancel-registry-change", tr("Cancel")),
+                    button("approve-registry-change", action),
+                )
+            } else {
+                (
+                    button("cancel-registry-change", tr("Cancel")),
+                    crate::frame::primary("approve-registry-change", action),
+                )
+            };
+            let body = div()
+                .flex()
+                .flex_col()
+                .child(title(impact.heading.clone()))
+                .when(!impact.detail.is_empty(), |body| {
+                    body.child(
                         div()
-                            .flex()
-                            .justify_end()
-                            .gap(px(8.))
-                            .child(
-                                crate::frame::primary("cancel-registry-change", tr("Cancel"))
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.close_sheet();
-                                        cx.notify();
-                                    })),
-                            )
-                            .child(button("approve-registry-change", action).on_click(
-                                cx.listener(|this, _, _, cx| {
-                                    if let Some((_, answer)) = this.mods.installs.world.take() {
-                                        let _ = answer.send(true);
-                                    }
-                                    cx.notify();
-                                }),
-                            )),
-                    );
+                            .id("registry-impact-text")
+                            .max_h(px(310.))
+                            .overflow_y_scroll()
+                            .child(crate::selectable::selectable(impact.detail.clone())),
+                    )
+                })
+                .child(
+                    div()
+                        .flex()
+                        .justify_end()
+                        .gap(px(8.))
+                        .child(cancel.on_click(cx.listener(|this, _, _, cx| {
+                            this.close_sheet();
+                            cx.notify();
+                        })))
+                        .child(approve.on_click(cx.listener(|this, _, _, cx| {
+                            if let Some((_, answer)) = this.mods.installs.world.take() {
+                                let _ = answer.send(true);
+                            }
+                            cx.notify();
+                        }))),
+                );
             return Some(frame("registry-world-impact", 690., body, cx));
         }
         match self.ui.sheet {

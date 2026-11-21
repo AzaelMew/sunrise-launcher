@@ -53,6 +53,7 @@ struct RequestView {
 
 pub(crate) struct WorldQuestion {
     pub(crate) removal: bool,
+    pub(crate) cancel_default: bool,
     pub(crate) heading: String,
     pub(crate) detail: String,
 }
@@ -62,6 +63,7 @@ impl From<&ChangeImpact> for WorldQuestion {
         let (heading, detail) = impact.gui_review();
         Self {
             removal: impact.is_removal(),
+            cancel_default: impact.is_removal() || impact.risks_worlds(),
             heading,
             detail,
         }

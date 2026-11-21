@@ -486,7 +486,7 @@ enum ModsCmd {
         /// The profile (default: the selected one)
         #[arg(long)]
         instance: Option<String>,
-        /// Allow reviewed mod changes that could remove saved-world content
+        /// Allow an update known to drop registered definitions that saved worlds may use
         #[arg(long)]
         confirm_world_loss: bool,
     },
@@ -528,7 +528,7 @@ enum ModsCmd {
         /// Allow native code for this install (remembered; revoke in Settings, Storage)
         #[arg(long)]
         trust_native_code: bool,
-        /// Allow a reviewed update that could remove saved-world content
+        /// Allow proved loss of registered definitions (not needed for native mods)
         #[arg(long)]
         confirm_world_loss: bool,
     },

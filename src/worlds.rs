@@ -15,6 +15,7 @@ use sunrise_launcher_nbt::{self as nbt, Limits, Tag};
 use sunrise_launcher_smod::{manifest::revision, runtime_leases::linked};
 
 mod effects;
+pub(crate) use effects::update_drops;
 pub use effects::{unproved_mod_effects, SuspectMods};
 
 pub(crate) mod switch;

@@ -216,7 +216,7 @@ fn projects(ids: &[&str]) -> Vec<String> {
 }
 
 fn no_world_question(question: &ChangeImpact) -> bool {
-    panic!("unexpected world warning: {}", question.detail());
+    panic!("unexpected review: {}", question.detail());
 }
 
 fn assert_world_warning(detail: &str, count: usize) {
@@ -271,11 +271,11 @@ fn world(home: &Path, folder: &str, sunrise: Tag) {
 }
 
 #[test]
-fn unchanged_leaf_advances_quietly_but_changed_definition_requires_approval() {
+fn same_registered_ids_have_no_warning_but_a_dropped_id_requires_approval() {
     Fixture::run(
         concat!(
             module_path!(),
-            "::unchanged_leaf_advances_quietly_but_changed_definition_requires_approval"
+            "::same_registered_ids_have_no_warning_but_a_dropped_id_requires_approval"
         ),
         |mut fixture| {
             fixture.project("lantern", "Lanterns", index::Kind::Mod);
@@ -284,13 +284,22 @@ fn unchanged_leaf_advances_quietly_but_changed_definition_requires_approval() {
             world(fixture.home(), "Uses Lanterns", roster("lantern"));
             // Even a valid roster with no match cannot prove historic absence.
             world(fixture.home(), "Other mods", roster("another_mod"));
-            let unchanged = fixture.release("lantern", "1.1.0", "", &[(AMBER, EARLIER_BLOCK)]);
-            let batch = fixture.update(&["lantern"], &no_world_question).unwrap();
+            let same_ids = fixture.release("lantern", "1.0.1", "", &[(AMBER, b"{}")]);
+            let batch = fixture
+                .update(&["lantern"], &|impact| {
+                    assert!(!impact.risks_worlds());
+                    assert_eq!(
+                        impact.gui_review().1,
+                        "Lanterns will go from 1.0.0 to 1.0.1."
+                    );
+                    true
+                })
+                .unwrap();
             assert_eq!(batch.updated.len(), 1);
-            assert_eq!(batch.updated[0].1.version, "1.1.0");
-            assert_eq!(fs::read(fixture.home().join(LANTERN)).unwrap(), unchanged);
+            assert_eq!(batch.updated[0].1.version, "1.0.1");
+            assert_eq!(fs::read(fixture.home().join(LANTERN)).unwrap(), same_ids);
 
-            let changed = fixture.release("lantern", "1.2.0", "", &[(AMBER, b"{}")]);
+            let changed = fixture.release("lantern", "1.1.0", "", &[]);
             let old = fixture.snapshot(&[LANTERN]);
             let questions = std::cell::Cell::new(0);
             let decide = |approved| {
@@ -298,8 +307,9 @@ fn unchanged_leaf_advances_quietly_but_changed_definition_requires_approval() {
                     questions.set(questions.get() + 1);
                     assert!(impact.risks_worlds() && !impact.is_removal());
                     let detail = impact.detail();
-                    assert!(detail.contains("Lanterns 1.1.0 → 1.2.0"), "{detail}");
+                    assert!(detail.contains("Lanterns 1.0.1 → 1.1.0"), "{detail}");
                     assert_world_warning(&detail, 2);
+                    assert!(impact.gui_review().1.contains("2 saved worlds may lose"));
                     approved
                 })
             };

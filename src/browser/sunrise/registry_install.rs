@@ -746,21 +746,22 @@ fn registry_edit<'a>(
         } else {
             None
         };
-        let mut replaced = entries
-            .keys()
-            .filter(|id| before.contains_key(*id))
-            .map(String::as_str)
-            .peekable();
-        let suspect = if replaced.peek().is_some() {
-            crate::worlds::unproved_mod_effects(
-                old.path(),
-                edit.current(),
-                next.path(),
-                edit.current(),
-                replaced,
-            )?
-        } else {
-            crate::worlds::SuspectMods::new()
+        let mut replaced = entries.keys().filter_map(|id| before.get(id)).peekable();
+        let (suspect, unchecked_update) = match &action {
+            Action::Update(..) => {
+                mutations::update_worlds(next.path(), replaced.map(|old| &old.package))?
+            }
+            Action::Install(_) if replaced.peek().is_some() => (
+                crate::worlds::unproved_mod_effects(
+                    old.path(),
+                    edit.current(),
+                    next.path(),
+                    edit.current(),
+                    replaced.map(|old| old.package.manifest.id.as_str()),
+                )?,
+                false,
+            ),
+            Action::Install(_) => (crate::worlds::SuspectMods::new(), false),
         };
         let reviewed_worlds = match &action {
             Action::Install(_) if resolve_fence.is_some() => Vec::new(),
@@ -787,12 +788,11 @@ fn registry_edit<'a>(
                     &instance.home,
                     mutations::Change::Update(reviewed),
                     &suspect,
-                )?;
-                if impact.risks_worlds() {
-                    (hooks.progress)(InstallProgress::Reviewing);
-                    if !approve(&impact) {
-                        return Err(InstallError::Cancelled);
-                    }
+                )?
+                .with_unchecked_update(unchecked_update);
+                (hooks.progress)(InstallProgress::Reviewing);
+                if !approve(&impact) {
+                    return Err(InstallError::Cancelled);
                 }
                 impact.into_evidence()
             }

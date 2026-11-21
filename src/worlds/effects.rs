@@ -12,6 +12,40 @@ use sunrise_launcher_smod::{dependencies, files, manifest, mod_list};
 /// Previously available mod IDs and their namespaces whose effects are not proved unchanged.
 pub type SuspectMods = BTreeMap<String, BTreeSet<String>>;
 
+/// The namespaces in which a flat content replacement drops a registered ID.
+/// An opaque or unreadable side says nothing about which IDs survive.
+pub(crate) fn update_drops(old: &ScannedPackage, new: &ScannedPackage) -> Option<BTreeSet<String>> {
+    let definitions = |package: &ScannedPackage| {
+        if package.directory
+            || package.manifest.native.is_some()
+            || !package.manifest.jar.is_empty()
+        {
+            return None;
+        }
+        let owned: BTreeSet<_> = package.manifest.owned_namespaces().collect();
+        Some(
+            content_bytes(&package.path)?
+                .into_keys()
+                .filter(|path| {
+                    owned.contains(path.split('/').nth(1).expect("definition namespace"))
+                })
+                .collect::<BTreeSet<_>>(),
+        )
+    };
+    let old = definitions(old)?;
+    let new = definitions(new)?;
+    Some(
+        old.difference(&new)
+            .map(|path| {
+                path.split('/')
+                    .nth(1)
+                    .expect("definition namespace")
+                    .to_owned()
+            })
+            .collect(),
+    )
+}
+
 /// Compare admitted bases, the selected package environment, and the old packages explicitly
 /// replaced or removed (which may already be off). A missing base is not evidence of equality.
 /// Failure to prove equivalence leaves the old IDs suspect rather than clearing their warnings.
