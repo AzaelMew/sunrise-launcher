@@ -1,6 +1,6 @@
 # Rollup 7 launcher walkthrough
 
-Checked head: `0f78e6f37d2b4240dca9d49b7adf86dc130a8036`. These are real Linux launcher or terminal captures.
+Checked head: `efffa2122a36db71fd9cc14187dfa821ca189888`. These are real Linux launcher or terminal captures.
 Earlier frames show unchanged screens; the last column gives the exact source head of each capture.
 Home uses a synthetic account. No Minecraft gameplay or third-party mod compilation or execution was needed for the walkthrough.
 At 800×600 the bottom of the disabled Extras note in the Home build menu remains clipped, as on the preceding build.
@@ -98,3 +98,21 @@ At 800×600 the bottom of the disabled Extras note in the Home build menu remain
 | [held-source-unproved-1280x800.png](held-source-unproved-1280x800.png) | After Switch, Native Lantern is off under **Needs you**: “Fit could not be verified.” Registry Lantern stays on. | `6691547f92f9759e42f4cc5f8f7b0427602a8789` |
 | [held-source-details-800x600.png](held-source-details-800x600.png) | The held Native Lantern row opens Details with the same reason, exact source provenance and **Open on GitHub**. | `6691547f92f9759e42f4cc5f8f7b0427602a8789` |
 | [held-source-details-1280x800.png](held-source-details-1280x800.png) | The held Native Lantern row opens Details with the same reason, exact source provenance and **Open on GitHub**. | `6691547f92f9759e42f4cc5f8f7b0427602a8789` |
+
+## Stable discovery and Dev profiles
+
+These captures use local release lists, the game signer’s Dev test fixture, a synthetic account, and an offline source catalogue. The older Dev build is an inert local marker. No game, preparer or mod ran.
+
+| File | What it shows | Source head |
+|---|---|---|
+| [dev-profile-default-800x600.png](dev-profile-default-800x600.png) | Stable is selected before the player opts into Dev. | `efffa2122a36db71fd9cc14187dfa821ca189888` |
+| [dev-profile-default-1280x800.png](dev-profile-default-1280x800.png) | Stable is selected before the player opts into Dev. | `efffa2122a36db71fd9cc14187dfa821ca189888` |
+| [dev-profile-picker-800x600.png](dev-profile-picker-800x600.png) | New profile offers Stable, Nightly and Dev; the player has selected Dev. | `efffa2122a36db71fd9cc14187dfa821ca189888` |
+| [dev-profile-picker-1280x800.png](dev-profile-picker-1280x800.png) | New profile offers Stable, Nightly and Dev; the player has selected Dev. | `efffa2122a36db71fd9cc14187dfa821ca189888` |
+| [dev-home-800x600.png](dev-home-800x600.png) | Home shows the committed Dev build’s date and short commit and offers the newer Dev build. | `efffa2122a36db71fd9cc14187dfa821ca189888` |
+| [dev-home-1280x800.png](dev-home-1280x800.png) | Home shows the committed Dev build’s date and short commit and offers the newer Dev build. | `efffa2122a36db71fd9cc14187dfa821ca189888` |
+| [dev-discover-800x600.png](dev-discover-800x600.png) | Discover on the Dev profile shows Nightly’s source projects and labels the exact profile Dev. | `efffa2122a36db71fd9cc14187dfa821ca189888` |
+| [dev-discover-1280x800.png](dev-discover-1280x800.png) | Discover on the Dev profile shows Nightly’s source projects and labels the exact profile Dev. | `efffa2122a36db71fd9cc14187dfa821ca189888` |
+| [stable-page-two-800x600.png](stable-page-two-800x600.png) | Home finds the not-yet-installed Stable build on release page two instead of choosing the installed Nightly. | `efffa2122a36db71fd9cc14187dfa821ca189888` |
+| [stable-page-two-1280x800.png](stable-page-two-1280x800.png) | Home finds the not-yet-installed Stable build on release page two instead of choosing the installed Nightly. | `efffa2122a36db71fd9cc14187dfa821ca189888` |
+| [dev-exact-tag-cli-1280x800.png](dev-exact-tag-cli-1280x800.png) | The CLI resolves the named Dev release and reports that the offline fixture has no installable package. | `efffa2122a36db71fd9cc14187dfa821ca189888` |
