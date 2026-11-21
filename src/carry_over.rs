@@ -606,20 +606,32 @@ mod tests {
         let _ = fs::remove_dir_all(&base);
     }
 
-    /// The access rules `icacls` lists for `path`, without the path itself.
     #[cfg(windows)]
-    fn access_rules(path: &Path) -> Vec<String> {
-        let shown = path.display().to_string();
-        let output = std::process::Command::new("icacls")
-            .arg(&shown)
+    fn acl_script(path: &Path, script: &str) -> (bool, String) {
+        let output = std::process::Command::new("powershell.exe")
+            .args(["-NoProfile", "-NonInteractive", "-Command"])
+            .arg(format!("$ErrorActionPreference = 'Stop'; {script}"))
+            .env("SUNRISE_CARRY_ACL_PATH", path)
             .output()
             .unwrap();
-        assert!(output.status.success(), "icacls: {output:?}");
-        String::from_utf8_lossy(&output.stdout)
-            .lines()
-            .take_while(|line| !line.trim().is_empty())
-            .map(|line| line.strip_prefix(&shown).unwrap_or(line).trim().to_owned())
-            .collect()
+        assert!(
+            output.status.success(),
+            "ACL fixture for {path:?}: {output:?}"
+        );
+        let sddl = String::from_utf8(output.stdout).unwrap();
+        let sddl = sddl.trim();
+        assert!(sddl.starts_with("D:"), "expected DACL SDDL, got {sddl:?}");
+        // Compare protection and every ACE, but not the auto-inheritance bookkeeping flags.
+        let (flags, rules) = sddl.split_at(sddl.find('(').unwrap_or(sddl.len()));
+        (flags.contains('P'), rules.to_owned())
+    }
+
+    #[cfg(windows)]
+    fn access_rules(path: &Path) -> (bool, String) {
+        acl_script(
+            path,
+            "(Get-Acl -LiteralPath $env:SUNRISE_CARRY_ACL_PATH).GetSecurityDescriptorSddlForm('Access')",
+        )
     }
 
     #[cfg(windows)]
@@ -630,25 +642,42 @@ mod tests {
         };
         let (data, config, base) = scratch("restricted-acl");
         let from_game = data.join(old_game);
-        fs::create_dir_all(data.join(old_launcher)).unwrap();
-        fs::create_dir_all(from_game.join("saves")).unwrap();
+        let default_sibling = data.join(old_launcher);
+        fs::create_dir_all(&default_sibling).unwrap();
+        fs::create_dir(&from_game).unwrap();
+        // Replace the whole DACL: protected, with one inheritable grant to the current SID.
+        let restricted = acl_script(
+            &from_game,
+            "$sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value; \
+             if ($sid -in 'S-1-5-18', 'S-1-5-32-544') { throw 'Run the ACL fixture as a user account'; }; \
+             $sddl = 'D:P(A;OICI;FA;;;' + $sid + ')'; \
+             $acl = Get-Acl -LiteralPath $env:SUNRISE_CARRY_ACL_PATH; \
+             $acl.SetSecurityDescriptorSddlForm($sddl, 'Access'); \
+             Set-Acl -LiteralPath $env:SUNRISE_CARRY_ACL_PATH -AclObject $acl; \
+             [System.Security.AccessControl.RawSecurityDescriptor]::new($sddl).GetSddlForm('Access')",
+        );
+        assert!(restricted.0, "fixture DACL must be protected");
+        assert_eq!(access_rules(&from_game), restricted, "restricted source");
+        assert_ne!(
+            access_rules(&default_sibling).1,
+            restricted.1,
+            "source ACEs must differ from the default ACL"
+        );
+        fs::create_dir(from_game.join("saves")).unwrap();
         fs::write(from_game.join("saves/level.dat"), [1]).unwrap();
-        fs::create_dir_all(from_game.join(".horizon-cache")).unwrap();
-        // Only the current user, nothing inherited from the temporary folder.
-        let user = std::process::Command::new("whoami").output().unwrap();
-        let user = String::from_utf8_lossy(&user.stdout).trim().to_owned();
-        let output = std::process::Command::new("icacls")
-            .arg(&from_game)
-            .args(["/inheritance:r", "/grant:r"])
-            .arg(format!("{user}:(OI)(CI)F"))
-            .output()
-            .unwrap();
-        assert!(output.status.success(), "icacls setup: {output:?}");
-        let restricted = access_rules(&from_game);
+        fs::create_dir(from_game.join(".horizon-cache")).unwrap();
+        let stage = data.join("acl-probe");
+        let mut copied = 0;
+        data_location::copy_tree_except(&from_game, &stage, &[], &GAME_CACHES, &mut |_| {
+            copied += 1;
+            assert_eq!(access_rules(&stage), restricted, "during the copy");
+        })
+        .unwrap();
+        assert_eq!(copied, 1);
 
         assert_eq!(carry_over(&data, &config), Ok(true));
         let game = crate::identity::game_folder_in(&data);
-        assert_eq!(access_rules(&game), restricted);
+        assert_eq!(access_rules(&game), restricted, "after carry-over rename");
         let _ = fs::remove_dir_all(&base);
     }
 }
