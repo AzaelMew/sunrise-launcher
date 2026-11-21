@@ -147,6 +147,10 @@ fn hold_updates(fixture: &mut Fixture, succeeds: HoldCase, refusals: &[HoldCase]
             assert_eq!(fixture.snapshot(&[ARCHIVE]), before, "{case:?}");
             assert_eq!(compiled(fixture), "1.0.0\n", "{case:?}");
             assert!(check_activation(fixture.home(), &[ID]).is_err(), "{case:?}");
+            // Recovery retires the refused stage against its original pointer. Seed the
+            // next independent fixture only after that exact preimage is settled.
+            drop(Profile::open(fixture.home(), None).unwrap());
+            assert_eq!(fixture.snapshot(&[ARCHIVE]), before, "{case:?}");
             continue;
         }
         assert_eq!(result.unwrap().updated.len(), 1);
