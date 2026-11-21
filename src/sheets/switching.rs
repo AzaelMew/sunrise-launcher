@@ -400,15 +400,10 @@ impl Launcher {
                                     let key = u128::from_be_bytes(id);
                                     let file = folder
                                         .join(format!("sunrise-build-changes-{key:032x}.txt"));
-                                    let mut output = std::fs::OpenOptions::new()
-                                        .create_new(true)
-                                        .write(true)
-                                        .open(&file)
-                                        .map_err(|e| e.to_string())?;
-                                    output
-                                        .write_all(report.as_bytes())
-                                        .and_then(|()| output.sync_all())
-                                        .map_err(|e| e.to_string())?;
+                                    publish_report(&folder, &file, |output| {
+                                        output.write_all(report.as_bytes())
+                                    })
+                                    .map_err(|e| e.to_string())?;
                                     Ok::<_, String>(file)
                                 })();
                                 this.ui.sheets.error = Some(match saved {
@@ -476,5 +471,47 @@ impl Launcher {
             Ok(false) => self.ui.sheets.error = Some(tr("These build changes are no longer current. Close this report and open Build changes again.").into()),
             Err(error) => self.ui.sheets.error = Some(error),
         }
+    }
+}
+
+/// A partial write or an interrupted writer must not reserve the final report name.
+fn publish_report(
+    folder: &std::path::Path,
+    file: &std::path::Path,
+    write: impl FnOnce(&mut std::fs::File) -> std::io::Result<()>,
+) -> std::io::Result<()> {
+    let mut temporary = tempfile::NamedTempFile::new_in(folder)?;
+    write(temporary.as_file_mut())?;
+    temporary.as_file().sync_all()?;
+    temporary
+        .persist_noclobber(file)
+        .map_err(|error| error.error)?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::publish_report;
+    use std::io::{self, Write};
+
+    #[test]
+    fn report_save_can_retry_after_a_partial_write_and_never_clobbers() {
+        let folder = tempfile::tempdir().unwrap();
+        let report = folder.path().join("report.txt");
+        let save =
+            |text: &[u8]| publish_report(folder.path(), &report, |file| file.write_all(text));
+        let error = publish_report(folder.path(), &report, |file| {
+            file.write_all(b"partial")?;
+            Err(io::Error::new(io::ErrorKind::StorageFull, "fixture"))
+        })
+        .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::StorageFull);
+        assert!(!report.exists());
+        save(b"complete report\n").unwrap();
+        assert_eq!(
+            save(b"other").unwrap_err().kind(),
+            io::ErrorKind::AlreadyExists
+        );
+        assert_eq!(std::fs::read(&report).unwrap(), b"complete report\n");
     }
 }
