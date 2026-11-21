@@ -554,7 +554,8 @@ impl Launcher {
                     post(Worker::Decide(Decision::Build(notice.clone()), reply)).is_ok()
                         && answer.recv().unwrap_or(false)
                 },
-                resolve: Some(&resolve),
+                resolve: (kind == Kind::Install)
+                    .then_some(&resolve as &dyn Fn(&ResolveQuestion) -> bool),
             };
             let approve = |impact: &ChangeImpact| {
                 let (reply, answer) = std::sync::mpsc::channel();

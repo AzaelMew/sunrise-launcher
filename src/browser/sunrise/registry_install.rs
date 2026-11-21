@@ -439,7 +439,7 @@ fn registry_edit<'a>(
             }) {
                 continue;
             }
-            if !above.contains_key(id) || !crate::native_status::is_native_file(&entry.file) {
+            if !above.contains_key(id) {
                 return Err(held_change_refusal(id));
             }
             if held.enabled_before() {
@@ -875,8 +875,7 @@ struct SeenPackage {
 
 impl SeenPackage {
     fn matches_hold(&self, home: &Path, base: &str, hold: &managed_play::Held) -> bool {
-        if self.package.manifest.native.is_none()
-            || hold.reason().build() != base
+        if hold.reason().build() != base
             || self.package.path != home.join(hold.path())
             || !self.digest.as_ref().is_some_and(|hash| {
                 let digest = sha2::digest::Output::<sha2::Sha256>::from(*hold.digest());
@@ -1332,5 +1331,5 @@ mod tests;
 #[cfg(all(test, debug_assertions, unix))]
 mod update_tests;
 pub use github::update_github;
-pub use mutations::check_activation;
+pub(crate) use mutations::check_activation;
 pub use mutations::{remove_mods, ChangeImpact};
