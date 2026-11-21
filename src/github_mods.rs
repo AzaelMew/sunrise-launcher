@@ -394,8 +394,17 @@ impl Origin {
         source_url(&self.owner, &self.repo, &self.commit)
     }
 
-    pub(crate) fn is_release_asset(&self) -> bool {
+    pub fn is_release_asset(&self) -> bool {
         self.tag.as_deref().is_some_and(ref_ok) && self.asset.as_deref().is_some_and(asset_name)
+    }
+
+    pub(crate) fn matches_archive(&self, id: &str, version: &str, digest: &str) -> bool {
+        self.id == id
+            && self.version == version
+            && plain(&self.owner)
+            && plain(&self.repo)
+            && sunrise_launcher_smod::manifest::revision(&self.commit)
+            && self.sha256.eq_ignore_ascii_case(digest)
     }
 
     /// What its update is read from: the latest release for a mod from a release, the default

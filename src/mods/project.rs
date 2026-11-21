@@ -723,6 +723,29 @@ impl Launcher {
                     cx.notify();
                 }))
             };
+            let github_update = row
+                .local
+                .as_ref()
+                .and_then(|local| local.github.clone())
+                .filter(|origin| origin.is_release_asset())
+                .map(|origin| {
+                    if let Some(progress) = self.registry_card_control(&row.id, |label| {
+                        dim(button("alt-project-github-progress", label)).into_any_element()
+                    }) {
+                        return progress;
+                    }
+                    let button = button("alt-project-github-update", tr("Check for update"));
+                    if busy {
+                        dim(button).into_any_element()
+                    } else {
+                        button
+                            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                this.open_github_add(Some(origin.clone()));
+                                cx.notify();
+                            }))
+                            .into_any_element()
+                    }
+                });
             let remove = row.selectable_archive().then(|| {
                 let b = button("alt-project-remove", tr("Remove")).text_color(c(palette().danger));
                 if busy {
@@ -750,6 +773,7 @@ impl Launcher {
                         tr("Turned off")
                     }))
                     .children(allow)
+                    .children(github_update)
                     .children(remove),
             )
         });

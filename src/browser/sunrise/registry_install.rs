@@ -920,15 +920,9 @@ impl SeenPackage {
             return None;
         }
         crate::github_mods::origin(home, id).filter(|row| {
-            &row.id == id
-                && row.version == self.package.manifest.version
-                && crate::github_mods::plain(&row.owner)
-                && crate::github_mods::plain(&row.repo)
-                && sunrise_launcher_smod::manifest::revision(&row.commit)
-                && self
-                    .digest
-                    .as_ref()
-                    .is_some_and(|hash| row.sha256.eq_ignore_ascii_case(hash))
+            self.digest.as_ref().is_some_and(|digest| {
+                row.matches_archive(id, &self.package.manifest.version, digest)
+            })
         })
     }
 }

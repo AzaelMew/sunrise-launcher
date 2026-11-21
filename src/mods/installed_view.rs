@@ -660,6 +660,19 @@ impl Launcher {
             .flex_col()
             .min_w_0()
             .child(title)
+            .children(
+                r.local
+                    .as_ref()
+                    .and_then(|local| local.github.as_ref())
+                    .map(|origin| {
+                        let origin = origin.label();
+                        div()
+                            .text_size(px(tokens::SMALL))
+                            .text_color(c(palette().muted))
+                            .truncate()
+                            .child(trf("GitHub: {source}", &[("source", &origin)]))
+                    }),
+            )
             .children(hold_label.map(|label| {
                 div()
                     .text_size(px(tokens::SMALL))

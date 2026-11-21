@@ -340,9 +340,14 @@ fn untracked_in(
             let name = package
                 .as_ref()
                 .map_or_else(|_| id.clone(), |p| p.manifest.name.clone());
-            let origin = (native && path.file_stem()?.to_str()? == id)
-                .then(|| crate::github_mods::origin(home, &id))
-                .flatten();
+            let origin =
+                (native && package.is_ok() && path.file_name()?.to_str()? == format!("{id}.smod"))
+                    .then(|| crate::github_mods::origin(home, &id))
+                    .flatten()
+                    .filter(|origin| {
+                        sunrise_launcher_smod::index::sha256_file(&path)
+                            .is_ok_and(|digest| origin.matches_archive(&id, &version, &digest))
+                    });
             let internals = package
                 .as_ref()
                 .map(|p| declared_internals(&p.manifest))
@@ -726,7 +731,10 @@ mod tests {
             tag: None,
             commit: pin,
             asset: None,
-            sha256: "ab".repeat(32),
+            sha256: sunrise_launcher_smod::index::sha256_file(
+                &home.join(native_mods::INSTALLED).join("github.smod"),
+            )
+            .unwrap(),
         };
         fs::write(
             home.join(native_mods::INSTALLED).join("github.origin.json"),
