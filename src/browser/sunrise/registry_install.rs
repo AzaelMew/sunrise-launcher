@@ -171,11 +171,18 @@ pub fn install_registry(
         })
         .collect::<Vec<_>>();
     let mut unfit = BTreeSet::new();
+    let mut conflicts = Vec::new();
     let mut last_sdk_refusal = None;
     for _ in 0..MAX_TRIALS {
-        let plan = resolve::install_whole(&catalogue, &roots, &held, &game, Side::Both, |p, v| {
-            !unfit.contains(&(p.id.clone(), v.version.clone()))
-        });
+        let plan = resolve::install_whole(
+            &catalogue,
+            &roots,
+            &held,
+            &game,
+            Side::Both,
+            &conflicts,
+            |p, v| !unfit.contains(&(p.id.clone(), v.version.clone())),
+        );
         let plan = match plan {
             Ok(plan) => plan,
             Err(resolve::WholeRefusal::Unproved(reason)) => {
@@ -252,7 +259,13 @@ pub fn install_registry(
         if !enabled.is_empty() {
             mod_list::set_all_enabled(next.path(), &enabled, true)?;
         }
-        validate_enabled(next.path(), &catalogue)?;
+        if let Some(conflict) = manifest_conflict(next.path(), &catalogue)? {
+            if conflicts.contains(&conflict) {
+                return Err(InstallError::Unproved(conflict.reason));
+            }
+            conflicts.push(conflict);
+            continue;
+        }
         (hooks.progress)(InstallProgress::Preparing);
         if !need_native.is_empty() {
             if backend::NativeGrant::read()?.is_none()
@@ -360,7 +373,9 @@ pub fn install_registry(
                     failed,
                     &notice,
                 )?;
-                validate_enabled(next.path(), &catalogue)?;
+                if let Some(conflict) = manifest_conflict(next.path(), &catalogue)? {
+                    return Err(InstallError::Refused(conflict.reason));
+                }
                 result.failure = Some(notice);
                 prove().map_err(|e| InstallError::Unproved(e.into()))?
             }
@@ -519,14 +534,25 @@ fn required_satisfied(manifest: &Manifest, enabled: &BTreeMap<&str, &Manifest>) 
     })
 }
 
-fn validate_enabled(home: &Path, catalogue: &index::Index) -> Result<(), InstallError> {
+fn manifest_conflict(
+    home: &Path,
+    catalogue: &index::Index,
+) -> Result<Option<resolve::ManifestConflict>, InstallError> {
     let packages = inventory(home)?;
     let enabled: BTreeMap<_, _> = packages
         .iter()
         .filter(|(id, _)| mod_list::is_enabled(home, id))
         .map(|(id, p)| (id.as_str(), &p.package.manifest))
         .collect();
-    let mut namespaces = BTreeSet::new();
+    let file_for = |id: &str| {
+        let package = &packages[id];
+        resolve::InstalledMod {
+            id: id.to_owned(),
+            version: package.package.manifest.version.clone(),
+            sha256: package.owned.then(|| package.digest.clone()).flatten(),
+        }
+    };
+    let mut namespaces = BTreeMap::new();
     for (&id, &manifest) in &enabled {
         let package = &packages[id];
         let revocation = package.digest.as_ref().and_then(|hash| {
@@ -550,22 +576,49 @@ fn validate_enabled(home: &Path, catalogue: &index::Index) -> Result<(), Install
                 &[("mod", &manifest.name), ("reason", &revocation.reason)],
             )));
         }
-        if !required_satisfied(manifest, &enabled)
-            || !manifest.owned_namespaces().all(|ns| namespaces.insert(ns))
-            || manifest.incompatible.iter().any(|(id, rule)| {
-                enabled.get(id.as_str()).is_some_and(|other| {
-                    semver::Version::parse(&other.version)
-                        .is_ok_and(|v| rule.details().version.matches(&v))
-                })
-            })
-        {
+        if !required_satisfied(manifest, &enabled) {
             return Err(InstallError::Refused(trf(
                 "The proposed mods don't work with {mod}. Nothing was installed.",
                 &[("mod", &manifest.name)],
             )));
         }
+        for namespace in manifest.owned_namespaces() {
+            if let Some(peer) = namespaces.insert(namespace, id) {
+                return Ok(Some(resolve::ManifestConflict {
+                    files: [file_for(peer), file_for(id)],
+                    reason: trf(
+                        "{first} and {second} both own the {namespace} namespace.",
+                        &[
+                            ("first", &enabled[peer].name),
+                            ("second", &manifest.name),
+                            ("namespace", namespace),
+                        ],
+                    ),
+                }));
+            }
+        }
+        for (peer, rule) in &manifest.incompatible {
+            if let Some(other) = enabled.get(peer.as_str()) {
+                let version = sunrise_launcher_smod::dependencies::parse_version(&other.version)
+                    .map_err(|error| InstallError::Unproved(error.to_string()))?;
+                if rule.details().version.matches(&version) {
+                    return Ok(Some(resolve::ManifestConflict {
+                        files: [file_for(id), file_for(peer)],
+                        reason: trf(
+                            "{first} {version} doesn't work with {second} {other_version}.",
+                            &[
+                                ("first", &manifest.name),
+                                ("version", &manifest.version),
+                                ("second", &other.name),
+                                ("other_version", &other.version),
+                            ],
+                        ),
+                    }));
+                }
+            }
+        }
     }
-    Ok(())
+    Ok(None)
 }
 
 fn restore_or_disable(

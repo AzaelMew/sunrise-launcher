@@ -246,6 +246,89 @@ fn registry_change_after_proof_cannot_publish_any_candidate_file_or_pointer() {
 }
 
 #[test]
+fn install_retries_only_the_checked_conflicting_pair() {
+    for (required_range, expected) in [("=2.0.0", "2.0.0"), (">=1.0.0", "1.0.0")] {
+        let fixture = Fixture::new();
+        let (mut registry, _) = fixture.content_index();
+        for (id, peer, range) in [
+            ("root_mod", "extra_mod", required_range),
+            ("extra_mod", "root_mod", required_range),
+        ] {
+            let project = registry
+                .projects
+                .iter_mut()
+                .find(|project| project.id == id)
+                .unwrap();
+            let mut release = project.versions[0].clone();
+            release.version = "2.0.0".into();
+            release.dependencies = Some(Vec::new());
+            let file = fixture.root.join(format!("{id}-2.0.0.smod"));
+            let bytes = Package::write_files(&format!(
+                "id='{id}'\nname='{}'\nversion='2.0.0'\napi='0.2'\nside='both'\ncapabilities=['registries']\n[incompatible]\n{peer}='{range}'\n", project.name
+            ), &[]).unwrap();
+            fs::write(&file, &bytes).unwrap();
+            release.file = index::File {
+                name: file.file_name().unwrap().to_str().unwrap().to_owned(),
+                url: format!("file://{}", file.display()),
+                size: bytes.len() as u64,
+                sha256: index::sha256(&bytes),
+                signature: None,
+            };
+            project.versions.insert(0, release);
+        }
+        fixture.publish_registry(&registry);
+        let mut worker = Command::new(std::env::current_exe().unwrap());
+        for (key, value) in fixture.registry_client(&[]).get_envs() {
+            worker.env(key, value.unwrap());
+        }
+        let out = worker
+            .args(["--exact", "install::conflicting_pair_worker"])
+            .env("FIXTURE_EXPECTED_EXTRA", expected)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        for (id, version) in [("root_mod", "1.0.0"), ("extra_mod", expected)] {
+            assert_eq!(
+                fs::read(fixture.home.join(mod_list::DIR).join(format!("{id}.smod"))).unwrap(),
+                fs::read(fixture.root.join(format!("{id}-{version}.smod"))).unwrap()
+            );
+        }
+    }
+}
+
+#[test]
+fn conflicting_pair_worker() {
+    let Ok(expected) = std::env::var("FIXTURE_EXPECTED_EXTRA") else {
+        return;
+    };
+    use sunrise_launcher::{browser::sunrise::*, instances, managed_play};
+    let instance = instances::selection().unwrap();
+    let done = install_registry(
+        &instance,
+        || vec!["root_mod".into(), "extra_mod".into()],
+        || managed_play::headless_first(&instance, None),
+        InstallHooks {
+            progress: &|_| {},
+            native: &|_| panic!("content-only fixture"),
+            registry_crates: None,
+            continue_after_failure: &|_| panic!("content-only fixture"),
+        },
+    )
+    .unwrap();
+    assert!(
+        done.added
+            .iter()
+            .any(|entry| entry.project == "extra_mod" && entry.version == expected),
+        "{done:?}"
+    );
+}
+
+#[test]
 fn cutoff_worker() {
     if std::env::var_os("FIXTURE_REGISTRY_CUTOFF").is_none() {
         return;

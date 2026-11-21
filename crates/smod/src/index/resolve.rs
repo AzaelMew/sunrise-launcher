@@ -97,7 +97,7 @@ pub fn install(
     side: Side,
     native_fits: impl Fn(&Project, &Version) -> bool,
 ) -> InstallPlan {
-    plan_install(index, requests, installed, game, side, native_fits, false).0
+    plan_install(index, requests, installed, game, side, native_fits, None).0
 }
 
 /// An exact operation cannot use a compatible subset, or report unexamined choices as no fit.
@@ -107,15 +107,31 @@ pub enum WholeRefusal {
     Unproved(String),
 }
 
+/// One incompatible pair established from checked archives, not a rejection of either alone.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ManifestConflict {
+    pub files: [InstalledMod; 2],
+    pub reason: String,
+}
+
 pub fn install_whole(
     index: &Index,
     requests: &[Request],
     installed: &[InstalledMod],
     game: &str,
     side: Side,
+    conflicts: &[ManifestConflict],
     native_fits: impl Fn(&Project, &Version) -> bool,
 ) -> Result<InstallPlan, WholeRefusal> {
-    let (plan, refusal) = plan_install(index, requests, installed, game, side, native_fits, true);
+    let (plan, refusal) = plan_install(
+        index,
+        requests,
+        installed,
+        game,
+        side,
+        native_fits,
+        Some(conflicts),
+    );
     refusal.map_or(Ok(plan), Err)
 }
 
@@ -126,8 +142,9 @@ fn plan_install(
     game: &str,
     side: Side,
     native_fits: impl Fn(&Project, &Version) -> bool,
-    whole: bool,
+    conflicts: Option<&[ManifestConflict]>,
 ) -> (InstallPlan, Option<WholeRefusal>) {
+    let whole = conflicts.is_some();
     let mut plan = InstallPlan::default();
     let mut roots = Roots::new();
     for r in requests {
@@ -156,7 +173,8 @@ fn plan_install(
             return (plan, None);
         }
     }
-    let catalog = Catalog::new(index, game, side, native_fits, &present);
+    let mut catalog = Catalog::new(index, game, side, native_fits, &present);
+    catalog.conflicts = conflicts.unwrap_or_default();
     let installed_choices: Selected<'_> = present
         .keys()
         .filter_map(|&id| Some((id, catalog.mods.get(id)?.iter().find(|c| c.installed)?)))
@@ -314,6 +332,7 @@ struct Range<'a> {
 
 struct Candidate<'a> {
     version: &'a str,
+    sha256: Option<&'a str>,
     installed: bool,
     unindexed: bool,
     number: Option<semver::Version>,
@@ -325,6 +344,7 @@ struct Candidate<'a> {
 struct Catalog<'a> {
     game: &'a str,
     mods: BTreeMap<&'a str, Vec<Candidate<'a>>>,
+    conflicts: &'a [ManifestConflict],
 }
 
 type Roots<'a> = BTreeMap<&'a str, Vec<&'a str>>;
@@ -477,6 +497,7 @@ impl<'a> Catalog<'a> {
                         }
                         Candidate {
                             version: &v.version,
+                            sha256: Some(&v.file.sha256),
                             installed: present.get(p.id.as_str()).is_some_and(|m| m.is_file(v)),
                             unindexed: false,
                             number: parse_version(&v.version).ok(),
@@ -510,6 +531,7 @@ impl<'a> Catalog<'a> {
             if !candidates.iter().any(|c| c.installed) {
                 candidates.push(Candidate {
                     version,
+                    sha256: row.sha256.as_deref(),
                     installed: true,
                     unindexed: true,
                     number: parse_version(version).ok(),
@@ -523,7 +545,11 @@ impl<'a> Catalog<'a> {
                 });
             }
         }
-        Self { game, mods }
+        Self {
+            game,
+            mods,
+            conflicts: &[],
+        }
     }
 
     fn choices(&self, id: &str, need: &Need<'_>) -> Result<Vec<&Candidate<'a>>, String> {
@@ -868,6 +894,25 @@ impl<'a> Catalog<'a> {
                         choices[..=at].rotate_right(1);
                     }
                     return Ok(Some((id, choices.into_iter())));
+                }
+                // A missing selected peer might still be replaced by the closure, so check
+                // these constraints only once every required choice has been made.
+                for conflict in self.conflicts {
+                    if conflict.files.iter().all(|file| {
+                        selected
+                            .get(file.id.as_str())
+                            .or_else(|| installed.get(file.id.as_str()))
+                            .is_some_and(|candidate| {
+                                candidate.version == file.version
+                                    && match (candidate.sha256, file.sha256.as_deref()) {
+                                        (Some(a), Some(b)) => a.eq_ignore_ascii_case(b),
+                                        (None, None) => true,
+                                        _ => false,
+                                    }
+                            })
+                    }) {
+                        return Err(conflict.reason.clone());
+                    }
                 }
                 let nodes: Vec<_> = selected.keys().copied().collect();
                 let edges: Vec<_> = selected
