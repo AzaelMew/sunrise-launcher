@@ -294,6 +294,7 @@ pub fn remove_mods(
     let mut changed_rows = false;
     let mut retired = BTreeSet::new();
     let mut archives = Vec::new();
+    let mut reviewed_leaves = Vec::new();
     let live_rows = Document::read(&instance.home)?;
     for id in &ids {
         let unverified = || {
@@ -333,8 +334,19 @@ pub fn remove_mods(
         }
         if item.github_origin(home).is_some() {
             let origin = item.package.path.with_extension("origin.json");
+            let origin_name = origin.strip_prefix(home).map_err(|_| unverified())?;
+            let origin_name = origin_name
+                .to_str()
+                .ok_or_else(unverified)?
+                .replace(std::path::MAIN_SEPARATOR, "/");
+            live_rows
+                .rows
+                .check_other_claims(&instance.home, id, &origin_name)
+                .map_err(|error| error.render(trf))?;
+            reviewed_leaves.push((id.as_str(), origin_name));
             fs::remove_file(&origin).map_err(|e| at(&origin, e))?;
         }
+        reviewed_leaves.push((id.as_str(), file.clone()));
         fs::remove_file(&item.package.path).map_err(|e| at(&item.package.path, e))?;
         archives.push(ReviewedArchive {
             name: format!("{} ({id})", item.package.manifest.name),
@@ -395,6 +407,7 @@ pub fn remove_mods(
         },
         &suspect,
     )?;
+    let reviewed_image = managed_play::inputs(home, None)?;
     (hooks.progress)(InstallProgress::Reviewing);
     if !approve(&impact) {
         return Err(InstallError::Cancelled);
@@ -405,6 +418,19 @@ pub fn remove_mods(
     (hooks.progress)(InstallProgress::Publishing);
     let reviewed = impact.into_evidence();
     edit.publish(proof, &cancellation, &retired, || {
+        if managed_play::inputs(home, None)? != reviewed_image {
+            return Err(tr(
+                "The files prepared for removal changed. Nothing was removed; try again.",
+            )
+            .into());
+        }
+        // A changed alias can transfer another row's claim without changing any archive bytes.
+        let rows = Document::read(&instance.home)?;
+        for (id, file) in &reviewed_leaves {
+            rows.rows
+                .check_other_claims(&instance.home, id, file)
+                .map_err(|error| error.render(trf))?;
+        }
         bind_worlds(&instance.home, &suspect, &reviewed)
     })?;
     Ok(removed)

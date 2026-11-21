@@ -92,7 +92,7 @@ fn github_update_cli_checks_origin_and_world_approval_before_publishing() {
     let world = home.join("saves/Previous world");
     fs::create_dir_all(&world).unwrap();
     let level = NamedTag {
-        name: String::new(),
+        name: "".into(),
         tag: Tag::compound([(
             "Data",
             Tag::compound([("LevelName", Tag::String("Previous world".into()))]),
