@@ -18,10 +18,10 @@ At 800×600 the bottom of the disabled Extras note in the Home build menu remain
 
 | File | What it shows | Source head |
 |---|---|---|
-| [discover-stable-800x600.png](discover-stable-800x600.png) | The Stable Discover tab shows reviewed registry releases and the Fits my game filter. | `4cd164b7236abde7a7527226397da6d356acf25f` |
-| [discover-stable-1280x800.png](discover-stable-1280x800.png) | The Stable Discover tab shows reviewed registry releases and the Fits my game filter. | `4cd164b7236abde7a7527226397da6d356acf25f` |
-| [discover-nightly-800x600.png](discover-nightly-800x600.png) | Nightly Discover shows source candidates and their fit for the selected build. | `4cd164b7236abde7a7527226397da6d356acf25f` |
-| [discover-nightly-1280x800.png](discover-nightly-1280x800.png) | Nightly Discover shows source candidates and their fit for the selected build. | `4cd164b7236abde7a7527226397da6d356acf25f` |
+| [discover-stable-800x600.png](discover-stable-800x600.png) | Stable Discover shows the registry fixture and Fits my game on a Stable · 0.1.0 profile. | `6691547f92f9759e42f4cc5f8f7b0427602a8789` |
+| [discover-stable-1280x800.png](discover-stable-1280x800.png) | Stable Discover shows the registry fixture and Fits my game on a Stable · 0.1.0 profile. | `6691547f92f9759e42f4cc5f8f7b0427602a8789` |
+| [discover-nightly-800x600.png](discover-nightly-800x600.png) | Nightly Discover lists source projects on a profile pinned to the published Nightly · Nov 20 build. | `6691547f92f9759e42f4cc5f8f7b0427602a8789` |
+| [discover-nightly-1280x800.png](discover-nightly-1280x800.png) | Nightly Discover lists source projects on a profile pinned to the published Nightly · Nov 20 build. | `6691547f92f9759e42f4cc5f8f7b0427602a8789` |
 
 ## Installed
 
@@ -59,8 +59,8 @@ At 800×600 the bottom of the disabled Extras note in the Home build menu remain
 | [nightly-build-failed-1280x800.png](nightly-build-failed-1280x800.png) | The source build failed; Details shows the failure and a link to the attempt log. | `7dd5ea80f619c52dfadba5c3a9e09c3db4f2dbf5` |
 | [nightly-missing-manifest-800x600.png](nightly-missing-manifest-800x600.png) | The candidate has no usable mod manifest at the checked ref. | `7dd5ea80f619c52dfadba5c3a9e09c3db4f2dbf5` |
 | [nightly-missing-manifest-1280x800.png](nightly-missing-manifest-1280x800.png) | The candidate has no usable mod manifest at the checked ref. | `7dd5ea80f619c52dfadba5c3a9e09c3db4f2dbf5` |
-| [nightly-offline-saved-list-800x600.png](nightly-offline-saved-list-800x600.png) | The saved Nightly catalog is browseable offline. | `4cd164b7236abde7a7527226397da6d356acf25f` |
-| [nightly-offline-saved-list-1280x800.png](nightly-offline-saved-list-1280x800.png) | The saved Nightly catalog is browseable offline. | `4cd164b7236abde7a7527226397da6d356acf25f` |
+| [nightly-offline-saved-list-800x600.png](nightly-offline-saved-list-800x600.png) | The saved source catalog remains browseable offline on the same Nightly · Nov 20 profile. | `6691547f92f9759e42f4cc5f8f7b0427602a8789` |
+| [nightly-offline-saved-list-1280x800.png](nightly-offline-saved-list-1280x800.png) | The saved source catalog remains browseable offline on the same Nightly · Nov 20 profile. | `6691547f92f9759e42f4cc5f8f7b0427602a8789` |
 | [nightly-mixed-update-review-800x600.png](nightly-mixed-update-review-800x600.png) | **Update all** reviews Frontier (registry) and Trail Atlas (source) together, with the neutral native-content warning for each. Cancel left both unchanged. | `6691547f92f9759e42f4cc5f8f7b0427602a8789` |
 | [nightly-mixed-update-review-1280x800.png](nightly-mixed-update-review-1280x800.png) | **Update all** reviews Frontier (registry) and Trail Atlas (source) together, with the neutral native-content warning for each. Cancel left both unchanged. | `6691547f92f9759e42f4cc5f8f7b0427602a8789` |
 
