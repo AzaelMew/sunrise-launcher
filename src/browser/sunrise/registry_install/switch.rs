@@ -27,8 +27,20 @@ pub struct SwitchQuestion {
 
 impl SwitchQuestion {
     pub fn hold_lines(&self) -> impl Iterator<Item = String> + '_ {
-        self.held.iter().map(|name| trf("{mod} will be turned off. Needs an update from its author.", &[("mod", name)]))
-            .chain(self.unproved.iter().map(|name| trf("{mod} will be turned off. Fit could not be verified.", &[("mod", name)])))
+        self.held
+            .iter()
+            .map(|name| {
+                trf(
+                    "{mod} will be turned off. Needs an update from its author.",
+                    &[("mod", name)],
+                )
+            })
+            .chain(self.unproved.iter().map(|name| {
+                trf(
+                    "{mod} will be turned off. Fit could not be verified.",
+                    &[("mod", name)],
+                )
+            }))
     }
 }
 
@@ -144,7 +156,14 @@ pub fn switch_build(
                 hooks.registry_crates,
             )
         };
-        let Some(proof) = exact_image(prove(next.path()), &set, &enabled, hooks.cancellation, &mut unproved)? else {
+        let Some(proof) = exact_image(
+            prove(next.path()),
+            &set,
+            &enabled,
+            hooks.cancellation,
+            &mut unproved,
+        )?
+        else {
             return Ok(false);
         };
         // An intentionally off native choice still needs proof for its legitimate activation.
@@ -159,7 +178,15 @@ pub fn switch_build(
             }
             let trial = edit.candidate()?;
             apply(trial.path(), &original, &set, &activated)?;
-            if exact_image(prove(trial.path()), &set, &activated, hooks.cancellation, &mut unproved)?.is_none() {
+            if exact_image(
+                prove(trial.path()),
+                &set,
+                &activated,
+                hooks.cancellation,
+                &mut unproved,
+            )?
+            .is_none()
+            {
                 return Ok(false);
             }
         }
@@ -432,22 +459,31 @@ fn choices(
             let mut pinned = true;
             if old.seen.registry_claim {
                 let project = catalogue.project(&id).ok_or_else(unproved_switch)?;
-                let mut exact = project.versions.iter().filter(|version| {
-                    old.seen.digest.as_deref() == Some(&version.file.sha256)
-                }).peekable();
+                let mut exact = project
+                    .versions
+                    .iter()
+                    .filter(|version| old.seen.digest.as_deref() == Some(&version.file.sha256))
+                    .peekable();
                 pinned = exact.peek().is_none();
                 if !pinned {
                     let release = exact.find(|version| {
-                        version.side != Some(Side::Server) && (manifest.native.is_some() || version.game == game)
+                        version.side != Some(Side::Server)
+                            && (manifest.native.is_some() || version.game == game)
                     });
                     let Some(version) = release else {
                         slots.insert(id, available);
                         continue;
                     };
-                    index::check_file_with_facts(catalogue, project, version, &old.seen.package.path)?;
+                    index::check_file_with_facts(
+                        catalogue,
+                        project,
+                        version,
+                        &old.seen.package.path,
+                    )?;
                 }
             }
-            if manifest.side != Side::Server && manifest.api == sunrise_launcher_smod::manifest::API {
+            if manifest.side != Side::Server && manifest.api == sunrise_launcher_smod::manifest::API
+            {
                 available.push(Package {
                     manifest: manifest.clone(),
                     digest: old.seen.digest.clone(),
@@ -803,7 +839,11 @@ fn exact_image(
             // An unavailable proof does not say a pinned native mod is incompatible.
             // Only attribute a failed native check to local inputs if no listed native
             // is part of the failed trial. An error in a listed build still stops Switch.
-            let native: Vec<_> = enabled.iter().map(|id| set[id]).filter(|p| p.manifest.native.is_some()).collect();
+            let native: Vec<_> = enabled
+                .iter()
+                .map(|id| set[id])
+                .filter(|p| p.manifest.native.is_some())
+                .collect();
             if native.is_empty() || native.iter().any(|p| !p.unlisted) {
                 return Err(error.into());
             }
