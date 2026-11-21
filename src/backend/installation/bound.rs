@@ -469,13 +469,9 @@ mod tests {
                 let InstallOutcome::Installed(Some(warning)) = result else {
                     panic!("expected a published build with a receipt warning: {result:?}");
                 };
-                assert!(
-                    warning.contains(&format!("{ROLLING} is installed")),
-                    "{warning}"
-                );
-                assert!(
-                    warning.contains("The rolling receipt wasn't updated."),
-                    "{warning}"
+                assert_eq!(
+                    warning,
+                    format!("{ROLLING} is installed, but Sunrise couldn't save which Nightly is current. The rolling receipt wasn't updated.")
                 );
                 assert_eq!(
                     fs::read(receipt.join("obstruction")).unwrap(),
