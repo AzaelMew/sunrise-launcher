@@ -14,7 +14,7 @@ const REPAIR: &str = ".repair-";
 
 pub(crate) fn private_stage(name: &std::ffi::OsStr) -> bool {
     name.to_str()
-        .is_some_and(|name| name.starts_with(STAGE_PREFIX))
+        .is_some_and(|name| name.starts_with(STAGE_PREFIX) || name.starts_with(REPAIR))
 }
 
 pub(crate) fn valid_archive_digest(digest: &str) -> bool {
@@ -24,36 +24,49 @@ pub(crate) fn valid_archive_digest(digest: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
-/// The old tree's move to `previous` is the recovery marker. The old tree stays intact until
-/// the target's own completion marker commits its replacement.
+/// The old tree's move to `previous` is the recovery marker. The replacement commits
+/// when the complete, flushed tree becomes visible under its version name.
 fn recover_previous(repair: &Path, target: &Path) -> std::io::Result<()> {
+    use std::io::ErrorKind;
+    let plain = |meta: &fs::Metadata| !crate::native_cache::linked(meta);
     match fs::symlink_metadata(repair) {
-        Ok(meta) if meta.is_dir() => {}
-        Ok(_) => return Err(std::io::ErrorKind::InvalidData.into()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Ok(meta) if meta.is_dir() && plain(&meta) => {}
+        Ok(_) => return Err(ErrorKind::InvalidData.into()),
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(()),
         Err(e) => return Err(e),
     }
+    let complete = |tree: &Path| {
+        fs::symlink_metadata(tree.join(COMPLETE)).is_ok_and(|meta| meta.is_file() && plain(&meta))
+    };
+    let incomplete = match fs::symlink_metadata(target) {
+        Ok(meta) if !meta.is_dir() || !plain(&meta) => return Err(ErrorKind::InvalidData.into()),
+        Ok(_) if complete(target) => return fs::remove_dir_all(repair),
+        Ok(_) => true,
+        Err(e) if e.kind() == ErrorKind::NotFound => false,
+        Err(e) => return Err(e),
+    };
     let previous = repair.join("previous");
-    if !target.join(COMPLETE).is_file() {
-        match fs::symlink_metadata(&previous) {
-            Ok(meta) if meta.is_dir() && previous.join(COMPLETE).is_file() => {
-                if target.try_exists()? {
-                    fs::rename(target, repair.join("incomplete"))?;
-                }
-                fs::rename(&previous, target)?;
-            }
-            Ok(_) => return Err(std::io::ErrorKind::InvalidData.into()),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => return Err(e),
-        }
+    let previous_meta = fs::symlink_metadata(&previous)?;
+    if !previous_meta.is_dir() || !plain(&previous_meta) || !complete(&previous) {
+        return Err(ErrorKind::InvalidData.into());
     }
+    // A repair from an earlier launcher can leave a visible uncommitted tree.
+    if incomplete {
+        durable::move_new_directory(target, &repair.join("incomplete"))?;
+    }
+    durable::move_new_directory(&previous, target)?;
     fs::remove_dir_all(repair)
 }
 
 pub(super) fn recover_replacement(tag: &str) -> Result<(), String> {
+    if Path::new(tag).file_name() != Some(std::ffi::OsStr::new(tag)) {
+        return Err(existing_build(tag));
+    }
     let repair = versions_dir().join(format!("{REPAIR}{tag}"));
-    if !repair.try_exists().map_err(|e| e.to_string())? {
-        return Ok(());
+    match fs::symlink_metadata(&repair) {
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e.to_string()),
     }
     let registry = Registry::with_release(&data_dir(), LockRelease::Close)
         .map_err(|e| crate::native_mods::cache_error(e.into()))?;
@@ -73,9 +86,6 @@ pub fn recover_game_installations() {
         let Some(tag) = name.to_str().and_then(|n| n.strip_prefix(REPAIR)) else {
             continue;
         };
-        if Path::new(tag).file_name() != Some(std::ffi::OsStr::new(tag)) {
-            continue;
-        }
         if let Err(error) = recover_replacement(tag) {
             eprintln!("Could not recover game installation {tag}: {error}");
         }

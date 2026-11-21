@@ -2565,7 +2565,36 @@ mod tests {
             .join("sunrise-resources.json")
             .is_file());
         drop(claim);
+        let client = backend::version_dir(old).join(backend::CLIENT);
+        fs::write(&client, b"different game").unwrap();
+        {
+            use crate::profile_txn::{Admission, Bootstrap};
+            let homes = backend::game_home().join("instances");
+            fs::create_dir_all(&homes).unwrap();
+            let held = tempfile::tempdir_in(homes).unwrap();
+            let mut profile = Admission::open(held.path(), None).unwrap();
+            profile
+                .bind_bootstrap(
+                    || {
+                        Ok(Bootstrap::new(
+                            old.into(),
+                            old.into(),
+                            [1; 16],
+                            [2; 32],
+                            serde_json::json!({}),
+                        ))
+                    },
+                    |_| Ok(()),
+                )
+                .unwrap();
+            assert_eq!(
+                install_release(old, InstallIntent::Repair).unwrap_err(),
+                cache_error(crate::native_cache::Error::ReferencedProfile)
+            );
+            assert_eq!(fs::read(&client).unwrap(), b"different game");
+        }
         install_release(old, InstallIntent::Repair).unwrap();
+        assert_eq!(fs::read(client).unwrap(), b"release game");
         assert!(backend::installed().iter().any(|tag| tag == old));
         prepare(old);
         let base = base_for(None, &backend::installed(), false).unwrap();
