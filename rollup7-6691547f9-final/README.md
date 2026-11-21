@@ -1,6 +1,6 @@
 # Rollup 7 launcher walkthrough
 
-Checked head: `6691547f92f9759e42f4cc5f8f7b0427602a8789`. These are real Linux launcher or terminal captures.
+Checked head: `0f78e6f37d2b4240dca9d49b7adf86dc130a8036`. These are real Linux launcher or terminal captures.
 Earlier frames show unchanged screens; the last column gives the exact source head of each capture.
 Home uses a synthetic account. No Minecraft gameplay or third-party mod compilation or execution was needed for the walkthrough.
 At 800×600 the bottom of the disabled Extras note in the Home build menu remains clipped, as on the preceding build.
@@ -18,10 +18,10 @@ At 800×600 the bottom of the disabled Extras note in the Home build menu remain
 
 | File | What it shows | Source head |
 |---|---|---|
-| [discover-stable-800x600.png](discover-stable-800x600.png) | Stable Discover shows the registry fixture and Fits my game on a Stable · 0.1.0 profile. | `6691547f92f9759e42f4cc5f8f7b0427602a8789` |
-| [discover-stable-1280x800.png](discover-stable-1280x800.png) | Stable Discover shows the registry fixture and Fits my game on a Stable · 0.1.0 profile. | `6691547f92f9759e42f4cc5f8f7b0427602a8789` |
-| [discover-nightly-800x600.png](discover-nightly-800x600.png) | Nightly Discover lists source projects on a profile pinned to the published Nightly · Nov 20 build. | `6691547f92f9759e42f4cc5f8f7b0427602a8789` |
-| [discover-nightly-1280x800.png](discover-nightly-1280x800.png) | Nightly Discover lists source projects on a profile pinned to the published Nightly · Nov 20 build. | `6691547f92f9759e42f4cc5f8f7b0427602a8789` |
+| [discover-stable-800x600.png](discover-stable-800x600.png) | The Stable profile shows only registry mods and keeps the Stable · 0.1.0 build label. | `0f78e6f37d2b4240dca9d49b7adf86dc130a8036` |
+| [discover-stable-1280x800.png](discover-stable-1280x800.png) | The Stable profile shows only registry mods and keeps the Stable · 0.1.0 build label. | `0f78e6f37d2b4240dca9d49b7adf86dc130a8036` |
+| [discover-nightly-800x600.png](discover-nightly-800x600.png) | The published Nightly · Nov 20 profile shows only source projects, the unreviewed-code note, and Also on Stable. | `0f78e6f37d2b4240dca9d49b7adf86dc130a8036` |
+| [discover-nightly-1280x800.png](discover-nightly-1280x800.png) | The published Nightly · Nov 20 profile shows only source projects, the unreviewed-code note, and Also on Stable. | `0f78e6f37d2b4240dca9d49b7adf86dc130a8036` |
 
 ## Installed
 
@@ -49,8 +49,8 @@ At 800×600 the bottom of the disabled Extras note in the Home build menu remain
 |---|---|---|
 | [nightly-readme-800x600.png](nightly-readme-800x600.png) | Nightly mod Details show the pinned repository’s README. | `7dd5ea80f619c52dfadba5c3a9e09c3db4f2dbf5` |
 | [nightly-readme-1280x800.png](nightly-readme-1280x800.png) | Nightly mod Details show the pinned repository’s README. | `7dd5ea80f619c52dfadba5c3a9e09c3db4f2dbf5` |
-| [nightly-source-consent-800x600.png](nightly-source-consent-800x600.png) | Review the repository and source package before allowing its native build. | `7dd5ea80f619c52dfadba5c3a9e09c3db4f2dbf5` |
-| [nightly-source-consent-1280x800.png](nightly-source-consent-1280x800.png) | Review the repository and source package before allowing its native build. | `7dd5ea80f619c52dfadba5c3a9e09c3db4f2dbf5` |
+| [nightly-source-consent-800x600.png](nightly-source-consent-800x600.png) | Consent says Sunrise has not reviewed the code and that building and playing run it. Repository, commit, View source, Cancel and Build remain. | `0f78e6f37d2b4240dca9d49b7adf86dc130a8036` |
+| [nightly-source-consent-1280x800.png](nightly-source-consent-1280x800.png) | Consent says Sunrise has not reviewed the code and that building and playing run it. Repository, commit, View source, Cancel and Build remain. | `0f78e6f37d2b4240dca9d49b7adf86dc130a8036` |
 | [nightly-toolchain-progress-800x600.png](nightly-toolchain-progress-800x600.png) | The required Rust toolchain is downloading. | `7dd5ea80f619c52dfadba5c3a9e09c3db4f2dbf5` |
 | [nightly-toolchain-progress-1280x800.png](nightly-toolchain-progress-1280x800.png) | The required Rust toolchain is downloading. | `7dd5ea80f619c52dfadba5c3a9e09c3db4f2dbf5` |
 | [nightly-build-progress-800x600.png](nightly-build-progress-800x600.png) | The source build is in progress. | `7dd5ea80f619c52dfadba5c3a9e09c3db4f2dbf5` |
@@ -59,8 +59,8 @@ At 800×600 the bottom of the disabled Extras note in the Home build menu remain
 | [nightly-build-failed-1280x800.png](nightly-build-failed-1280x800.png) | The source build failed; Details shows the failure and a link to the attempt log. | `7dd5ea80f619c52dfadba5c3a9e09c3db4f2dbf5` |
 | [nightly-missing-manifest-800x600.png](nightly-missing-manifest-800x600.png) | The candidate has no usable mod manifest at the checked ref. | `7dd5ea80f619c52dfadba5c3a9e09c3db4f2dbf5` |
 | [nightly-missing-manifest-1280x800.png](nightly-missing-manifest-1280x800.png) | The candidate has no usable mod manifest at the checked ref. | `7dd5ea80f619c52dfadba5c3a9e09c3db4f2dbf5` |
-| [nightly-offline-saved-list-800x600.png](nightly-offline-saved-list-800x600.png) | The saved source catalog remains browseable offline on the same Nightly · Nov 20 profile. | `6691547f92f9759e42f4cc5f8f7b0427602a8789` |
-| [nightly-offline-saved-list-1280x800.png](nightly-offline-saved-list-1280x800.png) | The saved source catalog remains browseable offline on the same Nightly · Nov 20 profile. | `6691547f92f9759e42f4cc5f8f7b0427602a8789` |
+| [nightly-offline-saved-list-800x600.png](nightly-offline-saved-list-800x600.png) | The Nightly · Nov 20 profile shows the previously saved source catalog while offline. | `0f78e6f37d2b4240dca9d49b7adf86dc130a8036` |
+| [nightly-offline-saved-list-1280x800.png](nightly-offline-saved-list-1280x800.png) | The Nightly · Nov 20 profile shows the previously saved source catalog while offline. | `0f78e6f37d2b4240dca9d49b7adf86dc130a8036` |
 | [nightly-mixed-update-review-800x600.png](nightly-mixed-update-review-800x600.png) | **Update all** reviews Frontier (registry) and Trail Atlas (source) together, with the neutral native-content warning for each. Cancel left both unchanged. | `6691547f92f9759e42f4cc5f8f7b0427602a8789` |
 | [nightly-mixed-update-review-1280x800.png](nightly-mixed-update-review-1280x800.png) | **Update all** reviews Frontier (registry) and Trail Atlas (source) together, with the neutral native-content warning for each. Cancel left both unchanged. | `6691547f92f9759e42f4cc5f8f7b0427602a8789` |
 
