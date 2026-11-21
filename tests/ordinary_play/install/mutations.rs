@@ -204,7 +204,9 @@ fn a_self_consistent_local_index_cannot_update_but_explicit_remove_can_remove_it
         &fixture,
         &["mods", "update", "root_mod", "--confirm-world-loss"],
     );
-    assert!(!ok && text.contains("registry"), "{text}");
+    let not_owned =
+        "Lanterns can't be updated here because it wasn't installed from the Sunrise registry.";
+    assert!(!ok && text.contains(not_owned), "{text}");
     assert_eq!(live_state(&fixture), old);
 
     let mut mcp = Running(
@@ -226,7 +228,7 @@ fn a_self_consistent_local_index_cannot_update_but_explicit_remove_can_remove_it
         json!({"name":"mods_update", "arguments":{"project":"root_mod","confirm_world_loss":true}}),
     );
     assert_eq!(denied["isError"], true, "{denied}");
-    assert!(denied.to_string().contains("registry"), "{denied}");
+    assert!(denied.to_string().contains(not_owned), "{denied}");
     assert_eq!(live_state(&fixture), old);
 
     let (ok, text) = run(&fixture, &["mods", "remove", "root_mod"]);

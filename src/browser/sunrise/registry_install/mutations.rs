@@ -17,12 +17,21 @@ pub(super) fn update_floors(
         .collect::<BTreeSet<_>>();
     let mut above = BTreeMap::new();
     for id in ids {
-        let old = before.get(id).filter(|p| p.owned).ok_or_else(|| {
-            InstallError::Refused(trf(
-                "{mod} wasn't installed from the Sunrise registry.",
-                &[("mod", id)],
-            ))
-        })?;
+        let installed_package = before.get(id);
+        let Some(old) = installed_package.filter(|p| p.owned) else {
+            let name = installed_package.map_or_else(
+                || {
+                    catalogue
+                        .project(id)
+                        .map_or(tr("This mod"), |p| p.name.as_str())
+                },
+                |p| p.package.manifest.name.as_str(),
+            );
+            return Err(InstallError::Refused(trf(
+                "{mod} can't be updated here because it wasn't installed from the Sunrise registry.",
+                &[("mod", name)],
+            )));
+        };
         let installed =
             parse_version(&old.package.manifest.version).map_err(|_| unproved_mods())?;
         if catalogue.project(id).is_some_and(|p| {
