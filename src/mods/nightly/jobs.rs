@@ -323,9 +323,54 @@ impl Launcher {
         self.ui.mods.nightly.work.updates.as_ref()
     }
 
-    pub(in crate::mods) fn submit_source_update(&mut self, id: Option<&str>) {
-        if !self.nightly_catalogue_current() || !self.guard() {
+    pub(in crate::mods) fn submit_source_update(&mut self, id: &str) {
+        if !self.guard() {
             return;
+        }
+        if let Some((target, sources)) = self.take_source_updates(Some(id)) {
+            if let Err(error) = self.queue_sources(target, sources) {
+                self.ui.mods.notice = Some(Err(error));
+            }
+        }
+    }
+
+    pub(in crate::mods) fn submit_mod_update_all(
+        &mut self,
+        displayed_names: BTreeMap<String, String>,
+    ) {
+        if !self.guard() {
+            return;
+        }
+        let registry: Vec<_> = self
+            .rows()
+            .into_iter()
+            .filter(model::bulk_updatable)
+            .map(|row| row.id)
+            .collect();
+        let Some((target, sources)) = self.take_source_updates(None) else {
+            if !registry.is_empty() {
+                self.ask_update(false);
+            }
+            return;
+        };
+        self.ui.mods.notice = None;
+        self.mods.message = None;
+        let result = if registry.is_empty() {
+            self.queue_sources(target, sources)
+        } else {
+            self.queue_all_mod_updates(target, registry, displayed_names, sources)
+        };
+        if let Err(error) = result {
+            self.ui.mods.notice = Some(Err(error));
+        }
+    }
+
+    fn take_source_updates(
+        &mut self,
+        id: Option<&str>,
+    ) -> Option<(SourceTarget, Vec<PreparedSource>)> {
+        if !self.nightly_catalogue_current() {
+            return None;
         }
         let scope = self.mods_page_scope();
         let installed = self
@@ -336,20 +381,15 @@ impl Launcher {
             .into_iter()
             .flat_map(|snapshot| &snapshot.rows.local)
             .filter_map(|local| local.github.as_ref());
-        let Some(checked) = self
+        let checked = self
             .ui
             .mods
             .nightly
             .work
             .updates
             .as_mut()
-            .filter(|updates| updates.scope == scope)
-        else {
-            return;
-        };
-        let Some(target) = checked.target.clone() else {
-            return;
-        };
+            .filter(|updates| updates.scope == scope)?;
+        let target = checked.target.clone()?;
         let wanted: Vec<_> = installed
             .filter(|origin| id.is_none_or(|id| id == origin.id))
             .filter(|origin| {
@@ -365,11 +405,7 @@ impl Launcher {
             .filter_map(|id| checked.candidates.remove(&id))
             .map(|(_, prepared)| prepared)
             .collect();
-        if !inputs.is_empty() {
-            if let Err(error) = self.queue_sources(target, inputs) {
-                self.ui.mods.notice = Some(Err(error));
-            }
-        }
+        (!inputs.is_empty()).then_some((target, inputs))
     }
 }
 

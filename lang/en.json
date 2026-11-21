@@ -48,8 +48,6 @@
   "The source could not be verified.": "The source could not be verified.",
   "This source listing changed. Open it again from Discover.": "This source listing changed. Open it again from Discover.",
   "Tracked branch/release unavailable": "Tracked branch/release unavailable",
-  "Update all from registry": "Update all from registry",
-  "Update all from source": "Update all from source",
   "Update available: {version}": "Update available: {version}",
   "View build log": "View build log",
   "View source": "View source",
