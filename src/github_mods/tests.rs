@@ -270,6 +270,86 @@ fn a_rate_limit_is_said_plainly() {
     );
 }
 
+fn append_archive_file(archive: &mut tar::Builder<Vec<u8>>, path: &str) {
+    let mut header = tar::Header::new_gnu();
+    header.set_mode(0o644);
+    header.set_size(1);
+    archive.append_data(&mut header, path, &b"a"[..]).unwrap();
+}
+
+#[test]
+fn an_archive_refuses_duplicate_case_aliased_and_invalid_paths() {
+    for path in ["source/file.txt", "source/FILE.txt", "source/NUL.txt"] {
+        let scratch = tempfile::tempdir().unwrap();
+        let mut archive = tar::Builder::new(Vec::new());
+        append_archive_file(&mut archive, "source/file.txt");
+        append_archive_file(&mut archive, path);
+        let bytes = archive.into_inner().unwrap();
+        assert_eq!(
+            unpack_bounded(bytes.as_slice(), scratch.path(), 4096, None).unwrap_err(),
+            tr("The GitHub source archive contains an invalid or duplicate path."),
+            "{path}"
+        );
+    }
+}
+
+#[test]
+fn an_archive_refuses_oversized_entries_and_streams() {
+    let scratch = tempfile::tempdir().unwrap();
+    let mut archive = tar::Builder::new(Vec::new());
+    append_archive_file(&mut archive, "source/file.txt");
+    let mut bytes = archive.into_inner().unwrap();
+    let limit = bytes.len() as u64;
+    let too_large = tr("The GitHub mod download is too large.");
+    assert_eq!(
+        unpack_bounded(bytes.as_slice(), &scratch.path().join("entry"), 512, None).unwrap_err(),
+        too_large
+    );
+    let output = scratch.path().join("fits");
+    assert_eq!(
+        unpack_bounded(bytes.as_slice(), &output, limit, None).unwrap(),
+        output.join("source")
+    );
+    // The same valid entry fits, but the stream still has bytes after tar EOF.
+    bytes.push(0);
+    assert_eq!(
+        unpack_bounded(
+            bytes.as_slice(),
+            &scratch.path().join("stream"),
+            limit,
+            None
+        )
+        .unwrap_err(),
+        too_large
+    );
+}
+
+#[test]
+fn an_archive_skips_symbolic_and_hard_links() {
+    let scratch = tempfile::tempdir().unwrap();
+    let mut archive = tar::Builder::new(Vec::new());
+    append_archive_file(&mut archive, "source/file.txt");
+    for (path, kind, target) in [
+        ("source/symlink", tar::EntryType::Symlink, "file.txt"),
+        ("source/hardlink", tar::EntryType::Link, "source/file.txt"),
+    ] {
+        let mut header = tar::Header::new_gnu();
+        header.set_entry_type(kind);
+        header.set_size(0);
+        archive.append_link(&mut header, path, target).unwrap();
+    }
+    let bytes = archive.into_inner().unwrap();
+    let top = unpack_bounded(bytes.as_slice(), scratch.path(), 4096, None).unwrap();
+    assert_eq!(fs::read(top.join("file.txt")).unwrap(), b"a");
+    for path in ["symlink", "hardlink"] {
+        assert_eq!(
+            fs::symlink_metadata(top.join(path)).unwrap_err().kind(),
+            std::io::ErrorKind::NotFound,
+            "{path}"
+        );
+    }
+}
+
 fn tree(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("gh-mods-{name}-{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
