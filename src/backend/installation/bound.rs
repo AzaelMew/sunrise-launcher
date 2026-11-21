@@ -471,7 +471,7 @@ mod tests {
                 };
                 assert_eq!(
                     warning,
-                    format!("{ROLLING} is installed, but Sunrise couldn't save which Nightly is current. The rolling receipt wasn't updated.")
+                    "Nightly · Nov 20 is installed, but Sunrise couldn't record it as the newest Nightly. Install it again to fix this."
                 );
                 assert_eq!(
                     fs::read(receipt.join("obstruction")).unwrap(),

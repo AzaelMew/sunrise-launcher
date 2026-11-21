@@ -148,9 +148,11 @@ fn save_nightly_receipt(root: &Path, tag: &str) -> Option<String> {
     crate::nightly::record_current(root, tag).err().map(|error| {
         crate::nightly::remember_install_receipt_failure(root, tag);
         eprintln!("Could not save the rolling receipt for {tag}: {error}");
+        let build = crate::nightly::display_name(tag)
+            .unwrap_or_else(|| crate::i18n::tr("Nightly").to_owned());
         crate::i18n::trf(
-            "{build} is installed, but Sunrise couldn't save which Nightly is current. The rolling receipt wasn't updated.",
-            &[("build", tag)],
+            "{build} is installed, but Sunrise couldn't record it as the newest Nightly. Install it again to fix this.",
+            &[("build", &build)],
         )
     })
 }

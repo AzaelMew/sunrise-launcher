@@ -30,6 +30,18 @@ pub fn date_of(version: &str) -> Option<&str> {
     is_date(date).then_some(date)
 }
 
+/// The localized name of a dated Nightly, such as "Nightly · Nov 20".
+pub fn display_name(tag: &str) -> Option<String> {
+    let date = date_of(tag)?;
+    Some(crate::i18n::trf(
+        "{channel} · {version}",
+        &[
+            ("channel", crate::i18n::tr("Nightly")),
+            ("version", &day(date)),
+        ],
+    ))
+}
+
 /// A day as players read it, "Nov 1", from `2026-11-01`; anything else as it is.
 pub fn day(date: &str) -> String {
     use crate::i18n::trf;

@@ -112,16 +112,8 @@ pub(crate) fn build_name(tag: &str) -> String {
             "{channel} · {version}",
             &[("channel", tr("Stable")), ("version", version)],
         )
-    } else if let Some(date) = sunrise_launcher::nightly::date_of(tag) {
-        trf(
-            "{channel} · {version}",
-            &[
-                ("channel", tr("Nightly")),
-                ("version", &sunrise_launcher::nightly::day(date)),
-            ],
-        )
     } else {
-        tag.to_owned()
+        sunrise_launcher::nightly::display_name(tag).unwrap_or_else(|| tag.to_owned())
     }
 }
 
