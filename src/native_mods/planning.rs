@@ -11,17 +11,43 @@ pub fn routes(home: &Path, base: Option<&str>) -> Result<Routes, Failed> {
     classify(&folder, base, &lease, &Cancellation::default())
 }
 
-/// Check a private copy with pinned SDK metadata; does not install Rust or execute mod code.
+pub(crate) enum SourceCheckError {
+    Dependency(String),
+    Fit(Failed),
+}
+
+impl From<String> for SourceCheckError {
+    fn from(error: String) -> Self {
+        Self::Fit(error.into())
+    }
+}
+
+/// Prove the private candidate's graph, then check fit with pinned SDK metadata.
+/// This does not install Rust or execute mod code.
 pub(crate) fn source_routes(
     home: &Path,
     base: &str,
     cancellation: &Cancellation,
-) -> Result<Routes, Failed> {
+) -> Result<Routes, SourceCheckError> {
     cancellation.check()?;
-    let lease = crate::native_cache::Cache::acquire(&backend::build_dir()).map_err(cache_error)?;
     let scratch = tempfile::tempdir().map_err(|error| error.to_string())?;
-    let folder = stage_installed(home, scratch.path().join("mods"))?.ok_or(Failed::Nothing)?;
-    let result = classify(&folder, Some(base), &lease, cancellation)?;
+    let folder = stage_installed(home, scratch.path().join("mods"))?
+        .ok_or(SourceCheckError::Fit(Failed::Nothing))?;
+    let found = scan_bundles(&folder)?;
+    let side = sunrise_launcher_smod::manifest::Side::Client;
+    let declared: Vec<_> = found
+        .iter()
+        .map(|bundle| dependencies::from_manifest(&bundle.manifest.dependencies, side))
+        .collect();
+    let overrides =
+        dependencies::Overrides::read(&home.join(sunrise_launcher_smod::mod_list::DIR))?;
+    resolve_build_dependencies(home, &found, &declared, side, &overrides)
+        .map_err(SourceCheckError::Dependency)?;
+    cancellation.check()?;
+
+    let lease = crate::native_cache::Cache::acquire(&backend::build_dir()).map_err(cache_error)?;
+    let result = classify_bundles(&folder, &found, Some(base), &lease, cancellation)
+        .map_err(SourceCheckError::Fit)?;
     cancellation.check()?;
     Ok(result)
 }
@@ -30,16 +56,22 @@ pub(crate) fn source_routes(
 pub(super) fn classify(
     folder: &Path,
     base: Option<&str>,
+    lease: &crate::native_cache::Cache,
+    cancellation: &Cancellation,
+) -> Result<Routes, Failed> {
+    classify_bundles(folder, &scan_bundles(folder)?, base, lease, cancellation)
+}
+
+fn classify_bundles(
+    folder: &Path,
+    found: &[Bundle],
+    base: Option<&str>,
     // Held while the SDK's index, surface and build data are read and kept.
     _lease: &crate::native_cache::Cache,
     cancellation: &Cancellation,
 ) -> Result<Routes, Failed> {
-    let found: Vec<Bundle> = scan_bundles(folder)?
-        .into_iter()
-        .filter(|bundle| bundle.manifest.native.is_some())
-        .collect();
     let mut result = Routes::default();
-    for bundle in &found {
+    for bundle in found {
         result
             .mods
             .push((bundle.manifest.id.clone(), Route::Prebuilt));
@@ -66,7 +98,7 @@ pub(super) fn classify(
     let revision = build_revision(base, built_on.as_ref())?;
     // A developer install's checkout has no published surface: its mods are made for it exactly.
     if crate::developer_install::is_developer(origin) {
-        if let Some(list) = mismatch(&found, &revision) {
+        if let Some(list) = mismatch(found, &revision) {
             let line = mismatch_error(&list);
             for (bundle, (_, route)) in found.iter().zip(&mut result.mods) {
                 if bundle.native().sunrise != revision {
@@ -101,7 +133,7 @@ pub(super) fn classify(
             *slot = route;
         }
     };
-    match check_projects(folder, &found, &sdk, &sdk_base, cancellation) {
+    match check_projects(folder, found, &sdk, &sdk_base, cancellation) {
         Ok(checks) => {
             for (id, why) in checks.refusals {
                 let reason = refusal_text(&id, &why);

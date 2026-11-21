@@ -25,8 +25,8 @@ pub use bundle::{
     MIXINS_REV, NATIVE_MANIFEST,
 };
 mod planning;
-pub(crate) use planning::source_routes;
 pub use planning::{routes, update_check, UpdateCheck};
+pub(crate) use planning::{source_routes, SourceCheckError};
 mod internals_sync;
 mod tool;
 pub use internals_sync::catalog;
@@ -1250,6 +1250,42 @@ fn retry_check_inputs(
         .transpose()
 }
 
+/// Prove both the applicable dispatch graph and the actual Cargo library order.
+fn resolve_build_dependencies(
+    instance: &Path,
+    mods: &[Bundle],
+    declared: &[Vec<dependencies::Dependency>],
+    side: sunrise_launcher_smod::manifest::Side,
+    overrides: &dependencies::Overrides,
+) -> Result<dependencies::Resolution, String> {
+    let settings = sunrise_launcher_smod::mod_list::ModList::load(instance);
+    let content: Vec<_> =
+        sunrise_launcher_smod::selection::content_packages(instance, &settings.enabled, &[])
+            .collect();
+    let applicable: Vec<_> = mods
+        .iter()
+        .map(|bundle| &bundle.manifest)
+        .chain(content.iter().map(|source| &source.package.manifest))
+        .collect();
+    dependencies::resolve_manifests(&applicable, side, overrides)
+        .map_err(|error| error.to_string())?;
+
+    // Dispatch overrides cannot make an incomplete or reversed Cargo library graph link.
+    let inputs: Vec<_> = mods
+        .iter()
+        .zip(declared)
+        .map(|(bundle, deps)| dependencies::Mod {
+            id: &bundle.manifest.id,
+            version: &bundle.manifest.version,
+            has_api: true,
+            code: true,
+            dependencies: deps,
+        })
+        .collect();
+    dependencies::resolve_links(&inputs)
+        .map_err(|error| format!("code link requirements refused: {error}"))
+}
+
 /// The pipeline both targets build with ([`build`], [`build_server`]): `folder`'s mods on the
 /// Sunrise revision they pin (else `base`'s, the installed version whose game files the build
 /// reuses: a native build's own revision when it is one, [`base_for`]), compiled as `target`
@@ -1332,38 +1368,13 @@ fn pipeline(
     if mods.is_empty() {
         return Err(Failed::Nothing);
     }
-    let inputs: Vec<_> = mods
-        .iter()
-        .zip(&declared)
-        .map(|(bundle, deps)| dependencies::Mod {
-            id: &bundle.manifest.id,
-            version: &bundle.manifest.version,
-            has_api: true,
-            code: true,
-            dependencies: deps,
-        })
-        .collect();
-    // Native sources live beside the instance's sunrise-mods directory. Read
-    // its policy before compiling, but never use dispatch overrides to stage
-    // an incomplete or reversed Cargo library graph.
+    // Native sources live beside the instance's sunrise-mods directory.
     let instance = options
         .exact_home
         .unwrap_or_else(|| folder.parent().unwrap_or_else(|| Path::new(".")));
     let overrides =
         dependencies::Overrides::read(&instance.join(sunrise_launcher_smod::mod_list::DIR))?;
-    let settings = sunrise_launcher_smod::mod_list::ModList::load(instance);
-    let content: Vec<_> =
-        sunrise_launcher_smod::selection::content_packages(instance, &settings.enabled, &[])
-            .collect();
-    let applicable: Vec<_> = mods
-        .iter()
-        .map(|bundle| &bundle.manifest)
-        .chain(content.iter().map(|source| &source.package.manifest))
-        .collect();
-    dependencies::resolve_manifests(&applicable, side, &overrides)
-        .map_err(|error| error.to_string())?;
-    let resolution = dependencies::resolve_links(&inputs)
-        .map_err(|error| format!("code link requirements refused: {error}"))?;
+    let resolution = resolve_build_dependencies(instance, &mods, &declared, side, &overrides)?;
     let ordered: Vec<Bundle> = resolution.order.iter().map(|&i| mods[i].clone()).collect();
     let ids: Vec<&str> = mods.iter().map(|b| b.manifest.id.as_str()).collect();
     for bundle in &ordered {

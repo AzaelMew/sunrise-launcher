@@ -8,6 +8,8 @@ use crate::{
     github_mods::{self, Origin, Packed},
 };
 
+#[cfg(test)]
+mod graph_tests;
 mod mixed;
 pub(super) use mixed::MixedSources;
 pub use mixed::{update_registry_and_sources, CombinedUpdate};
@@ -393,8 +395,14 @@ pub(super) fn check_source_set(
         }
         let routes =
             native_mods::source_routes(home, base, cancellation).map_err(|why| match why {
-                native_mods::Failed::Mods { error, .. } => SourceError::DoesNotFit(error),
-                why => SourceError::Unproved(why.to_string()),
+                native_mods::SourceCheckError::Dependency(detail) => SourceError::Dependency {
+                    required: None,
+                    detail,
+                },
+                native_mods::SourceCheckError::Fit(native_mods::Failed::Mods { error, .. }) => {
+                    SourceError::DoesNotFit(error)
+                }
+                native_mods::SourceCheckError::Fit(why) => SourceError::Unproved(why.to_string()),
             })?;
         for (_, route) in routes.mods {
             match route {
