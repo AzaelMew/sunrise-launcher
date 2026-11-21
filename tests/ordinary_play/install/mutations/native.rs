@@ -128,8 +128,15 @@ fn native_client(fixture: &Fixture, args: &[&str]) -> (bool, String) {
 }
 
 #[test]
-fn only_the_exact_enabled_before_hold_can_restore_after_native_proof() {
-    for case in ["exact", "digest", "location", "source", "already-off"] {
+fn an_exact_hold_can_advance_after_native_proof_without_losing_the_off_choice() {
+    for case in [
+        "exact",
+        "digest",
+        "location",
+        "source",
+        "base",
+        "already-off",
+    ] {
         let (fixture, mut index, old) = configured();
         let (ok, text) = run(&fixture, &["mods", "disable", ID]);
         assert!(ok, "{text}");
@@ -165,7 +172,7 @@ fn only_the_exact_enabled_before_hold_can_restore_after_native_proof() {
             },
             case != "already-off",
             HeldReason::NoFit {
-                build: BUILD.into(),
+                build: if case == "base" { "v0.1.8" } else { BUILD }.into(),
             },
         )
         .unwrap();
@@ -183,7 +190,31 @@ fn only_the_exact_enabled_before_hold_can_restore_after_native_proof() {
             b"#[no_mangle]\npub extern \"C\" fn fixture_version() -> u32 { 2 }\n",
         );
         fixture.publish_registry(&index);
+        let pointer = fixture.pointer();
+        let rows = fs::read(fixture.home.join(index::browser_state::MANIFEST)).unwrap();
+        let list = fs::read(fixture.home.join(mod_list::FILE)).unwrap();
         let (ok, text) = native_client(&fixture, &["mods", "update", ID]);
+        if !matches!(case, "exact" | "already-off") {
+            assert!(!ok && text.contains("installed hold"), "{case}: {text}");
+            let (ok, text) =
+                native_client(&fixture, &["mods", "remove", ID, "--confirm-world-loss"]);
+            assert!(!ok && text.contains("installed hold"), "{case}: {text}");
+            assert_eq!(fixture.pointer(), pointer, "{case}");
+            assert_eq!(
+                fs::read(fixture.home.join(index::browser_state::MANIFEST)).unwrap(),
+                rows,
+                "{case}"
+            );
+            assert_eq!(
+                fs::read(fixture.home.join(mod_list::FILE)).unwrap(),
+                list,
+                "{case}"
+            );
+            assert_eq!(fs::read(fixture.home.join(ARCHIVE)).unwrap(), old, "{case}");
+            let (ok, text) = run(&fixture, &["mods", "enable", ID]);
+            assert!(!ok, "{case}: {text}");
+            continue;
+        }
         assert!(
             ok,
             "{case}: {text}\n{}",
@@ -193,26 +224,21 @@ fn only_the_exact_enabled_before_hold_can_restore_after_native_proof() {
         let restored = case == "exact";
         assert_eq!(selection::is_enabled(&fixture.home, ID), restored, "{case}");
         assert_eq!(active.executable() != BUILD, restored, "{case}");
-        assert_eq!(
-            active.holds().next(),
-            (!restored).then_some(&hold),
-            "{case}"
-        );
+        assert_eq!(active.holds().next(), None, "{case}");
         assert_eq!(
             fs::read(fixture.home.join(ARCHIVE)).unwrap(),
             next,
             "{case}"
         );
         let built = fs::read_to_string(fixture.root.join("compiled")).unwrap();
-        assert_eq!(
-            built,
-            if restored {
-                "1.0.0\n1.1.0\n"
-            } else {
-                "1.0.0\n"
-            },
-            "{case}"
-        );
+        assert_eq!(built, "1.0.0\n1.1.0\n", "{case}");
+        if !restored {
+            let (ok, text) = run(&fixture, &["mods", "enable", ID]);
+            assert!(
+                ok && selection::is_enabled(&fixture.home, ID),
+                "{case}: {text}"
+            );
+        }
     }
 }
 

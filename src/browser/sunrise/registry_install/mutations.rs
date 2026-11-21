@@ -257,10 +257,10 @@ pub fn remove_mods(
                 &[("mod", id)],
             )
         })?;
-        if edit
-            .held(id)
-            .is_some_and(|hold| item.matches_hold(home, hold))
-        {
+        if let Some(hold) = edit.held(id) {
+            if !item.matches_hold(home, edit.base(), hold) {
+                return Err(held_change_refusal(id));
+            }
             retired.insert(id.clone());
         }
         if item.owned {

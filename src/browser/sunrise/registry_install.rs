@@ -260,7 +260,7 @@ fn registry_edit<'a>(
     let mut conflicts = Vec::new();
     let mut last_sdk_refusal = None;
     let mut named_native: Option<BTreeSet<String>> = None;
-    for _ in 0..MAX_TRIALS {
+    'trials: for _ in 0..MAX_TRIALS {
         let options = resolve::WholeOptions {
             conflicts: &conflicts,
             native_fits: |p: &index::Project, v: &index::Version| {
@@ -333,19 +333,31 @@ fn registry_edit<'a>(
         }
         doc.write(next.path())?;
         let mut restored_holds = BTreeSet::new();
-        for id in above.keys().filter(|id| entries.contains_key(*id)) {
-            if let Some(held) = edit.held(id) {
-                let kept = &before[id];
-                if held.enabled_before()
-                    && kept.matches_hold(old.path(), held)
-                    && !kept.digest.as_ref().is_some_and(|digest| {
-                        entries[id]
-                            .checksum
-                            .eq_ignore_ascii_case(&format!("SHA-256:{digest}"))
-                    })
-                {
-                    restored_holds.insert(id.clone());
-                }
+        let mut retired_off = BTreeSet::new();
+        for (id, entry) in &entries {
+            let Some(held) = edit.held(id) else { continue };
+            // Only an explicit Update may consume an exact predecessor. An implicit
+            // dependency or Install cannot replace bytes while the hold still names them.
+            let Some(previous) = before
+                .get(id)
+                .filter(|p| p.matches_hold(old.path(), edit.base(), held))
+            else {
+                return Err(held_change_refusal(id));
+            };
+            if previous.digest.as_ref().is_some_and(|digest| {
+                entry
+                    .checksum
+                    .eq_ignore_ascii_case(&format!("SHA-256:{digest}"))
+            }) {
+                continue;
+            }
+            if !above.contains_key(id) || !crate::native_status::is_native_file(&entry.file) {
+                return Err(held_change_refusal(id));
+            }
+            if held.enabled_before() {
+                restored_holds.insert(id.clone());
+            } else {
+                retired_off.insert(id.clone());
             }
         }
         let staged = inventory(next.path())?;
@@ -420,7 +432,8 @@ fn registry_edit<'a>(
             .values()
             .filter(|p| {
                 p.package.manifest.native.is_some()
-                    && mod_list::is_enabled(next.path(), &p.package.manifest.id)
+                    && (mod_list::is_enabled(next.path(), &p.package.manifest.id)
+                        || retired_off.contains(&p.package.manifest.id))
             })
             .collect();
         if !build_packages.is_empty() {
@@ -470,6 +483,49 @@ fn registry_edit<'a>(
             cancelled
                 .admit_native_work()
                 .map_err(|e| InstallError::Unproved(e.into()))?;
+        }
+        for id in &retired_off {
+            // Prove a deliberately off replacement in the private candidate, without
+            // making activation or this build visible in the actual postimage.
+            let list = next.path().join(sunrise_launcher_smod::mod_list::FILE);
+            let selection = match fs::read(&list) {
+                Ok(selection) => Some(selection),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+                Err(e) => return Err(at(&list, e).into()),
+            };
+            mod_list::set_enabled(next.path(), id, true)?;
+            let trial = prove_edit(&edit, next.path(), instance, &cancelled, &hooks);
+            match selection {
+                Some(selection) => fs::write(&list, selection),
+                None => fs::remove_file(&list),
+            }
+            .map_err(|e| at(&list, e))?;
+            match trial {
+                Ok(_) => (),
+                Err(native_mods::Failed::Mods {
+                    left,
+                    error,
+                    compiling: false,
+                    ..
+                }) if left.iter().any(|f| {
+                    &f.id == id
+                        && f.version == entries[id].version
+                        && matches!(f.why, native_mods::Why::Unfit(_))
+                }) && left.iter().all(|f| {
+                    matches!(
+                        f.why,
+                        native_mods::Why::Unfit(_) | native_mods::Why::Needs(_)
+                    )
+                }) =>
+                {
+                    if !unfit.insert((id.clone(), entries[id].version.clone())) {
+                        return Err(InstallError::Unproved(error));
+                    }
+                    last_sdk_refusal = Some(error);
+                    continue 'trials;
+                }
+                Err(error) => return Err(InstallError::Unproved(error.into())),
+            }
         }
         let prove = || prove_edit(&edit, next.path(), instance, &cancelled, &hooks);
         let mut result = InstalledBatch::default();
@@ -590,9 +646,18 @@ fn registry_edit<'a>(
                 Some((impact, affected))
             }
         };
-        restored_holds.retain(|id| entries.contains_key(id));
+        for id in restored_holds.iter().filter(|id| entries.contains_key(*id)) {
+            if !mod_list::is_enabled(next.path(), id) {
+                return Err(held_change_refusal(id));
+            }
+        }
+        let retired_holds = restored_holds
+            .into_iter()
+            .chain(retired_off)
+            .filter(|id| entries.contains_key(id))
+            .collect();
         (hooks.progress)(InstallProgress::Publishing);
-        edit.publish(proof, &cancelled, &restored_holds, || {
+        edit.publish(proof, &cancelled, &retired_holds, || {
             let (_, current) = fetch_index(&source, local)?;
             if source_bytes != current {
                 return Err(tr("The mod registry changed while the install was being prepared. Nothing was installed.").into());
@@ -658,8 +723,10 @@ struct SeenPackage {
 }
 
 impl SeenPackage {
-    fn matches_hold(&self, home: &Path, hold: &managed_play::Held) -> bool {
-        if self.package.manifest.native.is_none()
+    fn matches_hold(&self, home: &Path, base: &str, hold: &managed_play::Held) -> bool {
+        let managed_play::HeldReason::NoFit { build } = hold.reason();
+        if build != base
+            || self.package.manifest.native.is_none()
             || self.package.path != home.join(hold.path())
             || !self.digest.as_ref().is_some_and(|hash| {
                 let digest = sha2::digest::Output::<sha2::Sha256>::from(*hold.digest());
@@ -1078,6 +1145,13 @@ impl Document {
         let path = home.join(installed::MANIFEST);
         fs::write(&path, bytes).map_err(|e| at(&path, e))
     }
+}
+
+fn held_change_refusal(id: &str) -> InstallError {
+    InstallError::Refused(trf(
+        "Couldn't verify a usable replacement for the installed hold on {mod}. Nothing was changed.",
+        &[("mod", id)],
+    ))
 }
 
 fn unproved_mods() -> String {
