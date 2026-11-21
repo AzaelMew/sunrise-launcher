@@ -71,6 +71,7 @@ fn scenario(mode: &str) {
     let root_path = root.path().canonicalize().unwrap();
     let home = root_path.join("game");
     fs::create_dir(&home).unwrap();
+    println!("checking {mode} managed Play");
     let process = |role| {
         let mut cmd = Command::new(std::env::current_exe().unwrap());
         cmd.env(ROLE, role)
@@ -96,7 +97,12 @@ fn scenario(mode: &str) {
     let contender = Guard(process("contender").spawn().unwrap());
     await_event(|| home.join("contender-ready").is_file());
     let mut owner = Guard(process("owner").spawn().unwrap());
-    await_event(|| home.join("game-ready").is_file() && home.join("game-spawned").is_file());
+    await_event(|| {
+        if let Some(status) = owner.0.try_wait().unwrap() {
+            panic!("{mode} owner exited before the game was ready: {status}");
+        }
+        home.join("game-ready").is_file() && home.join("game-spawned").is_file()
+    });
     owner.0.kill().unwrap();
     assert!(!owner.0.wait().unwrap().success());
     fs::write(home.join("try-while-live"), []).unwrap();
@@ -203,7 +209,10 @@ fn ordinary_cli() {
 }
 
 fn owner() {
+    let mode = std::env::var(MODE).unwrap();
+    let phase = |step| eprintln!("{mode} owner: {step}");
     let home = backend::game_home();
+    phase("copying game image");
     let executable = backend::version_dir(BUILD).join(if cfg!(windows) {
         "sunrise-client.exe"
     } else {
@@ -214,14 +223,17 @@ fn owner() {
     fs::copy(std::env::current_exe().unwrap(), &executable).unwrap();
     fs::write(executable.with_file_name(".installed"), []).unwrap();
     fs::write(resources.join("sunrise-resources.json"), b"{}").unwrap();
+    phase("opening profile and binding game");
     let mut profile = Profile::open(&home, None).unwrap();
     let cancellation = Cancellation::default();
     let first = profile
         .begin_first(|| FirstBuild::installed(BUILD), |_| {})
         .unwrap();
+    phase("proving bound image");
     let image = first
         .exact_image(BuildMode::Optimized, &cancellation, |_| {}, None)
         .unwrap();
+    phase("committing profile");
     let active = first.commit(&image, &cancellation).unwrap();
     let command = || {
         let mut cmd = Command::new(&executable);
@@ -235,7 +247,7 @@ fn owner() {
     };
     let outside = home.with_file_name("other");
     fs::create_dir(&outside).unwrap();
-    let mode = std::env::var(MODE).unwrap();
+    phase("rejecting invalid command arguments");
     for flag in [
         "--home",
         "--gameDir",
@@ -372,6 +384,7 @@ fn owner() {
         println!("wrapper exit revoked an unused token; its late relay could not start a game");
         return;
     }
+    phase("launching game");
     let (_child, _runtime) = if mode == "wrapped" {
         use std::io::Read as _;
         let (mut child, runtime) = profile
@@ -388,6 +401,7 @@ fn owner() {
             .spawn_direct(&active, &cancellation, command(), false)
             .unwrap()
     };
+    phase("game spawned");
     drop(profile);
     fs::write(home.join("game-spawned"), []).unwrap();
     await_event(|| false);

@@ -106,10 +106,13 @@ fn same_effects(
         {
             return Some(false);
         }
-        if enabled.contains(&a.manifest.id) {
-            old.push(&a.manifest);
-            new.push(&b.manifest);
+        // A currently off predecessor has no admitted dependency environment to compare
+        // against the earlier one in which its definitions could have been saved.
+        if !enabled.contains(&a.manifest.id) {
+            return Some(false);
         }
+        old.push(&a.manifest);
+        new.push(&b.manifest);
     }
     for (a, b) in old.iter().zip(&new) {
         // Updating a dependency changes its consumer's environment, even if the two
@@ -196,4 +199,73 @@ fn definition_bytes(path: &Path) -> Option<BTreeMap<String, [u8; 32]>> {
         }
     }
     Some(contents)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn same_paths_and_compatible_ranges_do_not_prove_the_same_definitions() {
+        let before = tempfile::tempdir().unwrap();
+        let after = tempfile::tempdir().unwrap();
+        let root = "root_mod";
+        let dep = "required_mod";
+        let defs = [(
+            "data/root_mod/blocks/lamp.json",
+            br#"{"properties":{"lit":[true,false]}}"#.as_slice(),
+        )];
+        let write = |home: &Path, id: &str, version: &str, data: &[(&str, &[u8])]| {
+            let rule = if id == root {
+                "[dependencies]\nrequired_mod='^1'\n"
+            } else {
+                ""
+            };
+            let bytes = manifest::Package::write_files(
+                &format!("id='{id}'\nname='Test'\nversion='{version}'\napi='{}'\nside='both'\ncapabilities=['registries']\n{rule}", manifest::API),
+                data,
+            ).unwrap();
+            fs::write(home.join(mod_list::DIR).join(format!("{id}.smod")), bytes).unwrap();
+        };
+        for home in [before.path(), after.path()] {
+            fs::create_dir(home.join(mod_list::DIR)).unwrap();
+            crate::browser::mod_list::set_all_enabled(home, &[root, dep], true).unwrap();
+            write(home, root, "1.0.0", &defs);
+            write(home, dep, "1.0.0", &[]);
+        }
+        let ids = BTreeSet::from([dep.to_owned(), root.to_owned()]);
+        let watched = ids
+            .iter()
+            .map(|id| (id.clone(), BTreeSet::from([id.clone()])))
+            .collect();
+        let compare = || {
+            same_effects(
+                before.path(),
+                after.path(),
+                &ids,
+                &watched,
+                &managed_play::scan_packages(before.path()).unwrap(),
+                &managed_play::scan_packages(after.path()).unwrap(),
+            )
+        };
+        write(after.path(), root, "1.1.0", &defs);
+        assert_eq!(compare(), Some(true));
+        write(after.path(), dep, "1.1.0", &[]);
+        assert_eq!(compare(), Some(false));
+        write(after.path(), dep, "1.0.0", &[]);
+        let overrides = after
+            .path()
+            .join(mod_list::DIR)
+            .join(dependencies::OVERRIDES);
+        fs::write(&overrides, "[root_mod]\nrequired_mod='drop'\n").unwrap();
+        assert_eq!(compare(), Some(false));
+        fs::remove_file(overrides).unwrap();
+        write(after.path(), root, "1.1.0", &[(defs[0].0, b"{}")]);
+        assert_eq!(compare(), Some(false));
+        // Byte-equal archives still cannot testify to equivalence on an unproved base.
+        assert_eq!(
+            unproved_mod_effects(before.path(), None, before.path(), None, []).unwrap(),
+            watched
+        );
+    }
 }
