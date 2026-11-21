@@ -176,7 +176,7 @@ impl Profile {
     ) -> Result<Self, super::client::StartError> {
         let changed = || {
             crate::i18n::tr(
-                "This profile was replaced while Install was waiting. Nothing was installed.",
+                "This profile was replaced while the request was waiting. Nothing was changed.",
             )
             .to_owned()
         };
