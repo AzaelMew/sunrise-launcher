@@ -184,6 +184,10 @@ pub type Api<'a> = &'a dyn Fn(&str) -> Result<Option<serde_json::Value>, String>
 
 /// The real API, unauthenticated (`SUNRISE_GITHUB_TOKEN` is used when set, for CI).
 pub fn api(path: &str) -> Result<Option<serde_json::Value>, String> {
+    #[cfg(debug_assertions)]
+    if let Some(result) = crate::browser::sunrise::sources::fixture_link_api(path) {
+        return result;
+    }
     let url = format!("https://api.github.com/{path}");
     match backend::get_unless_missing(&url) {
         Ok(Some(response)) => response.into_json().map(Some).map_err(|e| e.to_string()),

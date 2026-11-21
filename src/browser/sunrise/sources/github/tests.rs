@@ -188,6 +188,54 @@ fn a_rate_limit_names_reset_time_and_pauses_the_next_repository_lookup() {
 }
 
 #[test]
+fn an_archive_rate_limit_pauses_archive_and_metadata_requests_until_reset() {
+    const NEXT_REPO: &str = "Driftwood/next-mod";
+    let wait = Duration::from_secs(500);
+    let reset = (SystemTime::now() + wait)
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    for (status, exact_reset) in [
+        ("429\nRetry-After: 500\n".to_owned(), None),
+        (
+            format!("403\nX-RateLimit-Remaining: 0\nX-RateLimit-Reset: {reset}\n"),
+            Some(SystemTime::UNIX_EPOCH + Duration::from_secs(reset)),
+        ),
+    ] {
+        let s = Sandbox::new();
+        s.put(&format!("codeload/{REPO}/{SHA}.status"), status);
+        let start = test_requests();
+        let before = SystemTime::now();
+        let failure = s.github.archive(REPO, SHA).err().unwrap();
+        let Failure::RateLimited {
+            retry_at: Some(retry),
+        } = failure
+        else {
+            panic!("{failure:?}");
+        };
+        if let Some(exact_reset) = exact_reset {
+            assert_eq!(retry, exact_reset);
+        } else {
+            assert!((before + wait..=SystemTime::now() + wait).contains(&retry));
+        }
+        assert_eq!(
+            s.github.archive(NEXT_REPO, SHA).err(),
+            Some(failure.clone())
+        );
+        assert_eq!(
+            resolve_checked(&s.github, &Sandbox::source(42), None).unwrap_err(),
+            failure
+        );
+        assert_eq!(test_requests() - start, 1);
+
+        // Move the readiness check to the reset instant without making the fixture sleep.
+        s.github.ready(&mut STATE.lock().unwrap(), retry).unwrap();
+        assert!(resolve_checked(&s.github, &Sandbox::source(42), None).is_ok());
+        assert_eq!(test_requests() - start, 4, "repo, ref and manifest resume");
+    }
+}
+
+#[test]
 fn active_cooldown_preserves_cached_details_but_does_not_authorize_builds() {
     let s = Sandbox::new();
     s.put(

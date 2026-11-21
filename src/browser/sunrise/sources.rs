@@ -14,7 +14,9 @@ use sunrise_launcher_smod::{index, manifest};
 
 mod github;
 mod readme;
-pub(crate) use github::{branch_ahead, github_ready, pasted_source};
+#[cfg(debug_assertions)]
+pub(crate) use github::fixture_link_api;
+pub(crate) use github::{branch_ahead, github_archive, pasted_source};
 pub use github::{details, resolve, resolve_batch, Details, Failure, SourceCommit};
 pub use readme::{readme_image, Readme, ReadmeImage};
 

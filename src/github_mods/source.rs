@@ -86,22 +86,9 @@ fn archive_at(
         }
         top
     } else {
-        let url = format!("https://codeload.github.com/{owner}/{repo}/tar.gz/{commit}");
-        sources::github_ready()?;
-        let response = crate::net::anonymous_get_no_redirect(&url)
-            .timeout(std::time::Duration::from_secs(30))
-            .call()
-            .map_err(|e| match e {
-                ureq::Error::Status(404, _) => Failure::RefUnavailable,
-                ureq::Error::Status(429, _) => Failure::RateLimited { retry_at: None },
-                ureq::Error::Status(code, _) => Failure::Other(trf(
-                    "GitHub answered {status}.",
-                    &[("status", &code.to_string())],
-                )),
-                ureq::Error::Transport(error) => Failure::Offline(error.to_string()),
-            })?;
+        let body = sources::github_archive(&format!("{owner}/{repo}"), commit)?;
         unpack_bounded(
-            cancellation.reader(flate2::read::GzDecoder::new(response.into_reader())),
+            cancellation.reader(flate2::read::GzDecoder::new(body)),
             &directory,
             MAX_ARCHIVE,
             Some(cancellation),

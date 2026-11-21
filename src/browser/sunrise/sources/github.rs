@@ -1,4 +1,4 @@
-//! Explicit GitHub inspections. No code here fetches archives or runs mod code.
+//! Anonymous GitHub inspection and pinned source transfer. No code here runs mod code.
 use super::{bounded, digest, readme, safe_path, safe_ref, Source, Tracker, FRESH};
 use crate::i18n::tr;
 
@@ -199,8 +199,30 @@ impl Github {
         fixture: &Path,
         max: u64,
     ) -> Result<Option<Vec<u8>>, Failure> {
-        let now = SystemTime::now();
-        self.ready(state, now)?;
+        self.request(
+            state,
+            url,
+            fixture,
+            REQUEST_TIMEOUT,
+            |status| match status {
+                // GitHub redirects moved repositories. Do not follow a different identity.
+                301 | 302 | 307 | 308 | 403 | 410 | 451 => Failure::RepositoryUnavailable,
+                _ => unexpected_status(status),
+            },
+        )?
+        .map(|body| bounded(body, max).map_err(other))
+        .transpose()
+    }
+
+    fn request(
+        &self,
+        state: &mut State,
+        url: &str,
+        fixture: &Path,
+        timeout: Duration,
+        unexpected: impl FnOnce(u16) -> Failure,
+    ) -> Result<Option<Box<dyn io::Read>>, Failure> {
+        self.ready(state, SystemTime::now())?;
         #[cfg(test)]
         REQUESTS.set(REQUESTS.get() + 1);
         if let Some(root) = &self.fixture {
@@ -221,14 +243,14 @@ impl Github {
                             let status = code.parse().map_err(|_| {
                                 Failure::Other(tr("Invalid GitHub test response.").into())
                             })?;
-                            self.status(state, status, get, now)
+                            self.status(state, status, get, unexpected).map(|()| None)
                         }
                         None => Err(Failure::Other(tr("Invalid GitHub test response.").into())),
                     }
                 }
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {
                     match fs::File::open(root.join(fixture)) {
-                        Ok(file) => bounded(file, max).map(Some).map_err(other),
+                        Ok(file) => Ok(Some(Box::new(file))),
                         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
                         Err(error) => Err(other(error)),
                     }
@@ -237,19 +259,39 @@ impl Github {
             };
         }
         let response = match crate::net::anonymous_get_no_redirect(url)
-            .timeout(REQUEST_TIMEOUT)
+            .timeout(timeout)
             .call()
         {
             Ok(response) | Err(ureq::Error::Status(_, response)) => response,
             Err(error) => return Err(Failure::Offline(error.to_string())),
         };
         if response.status() == 200 {
-            bounded(response.into_reader(), max)
-                .map(Some)
-                .map_err(other)
+            Ok(Some(response.into_reader()))
         } else {
-            self.status(state, response.status(), |name| response.header(name), now)
+            self.status(
+                state,
+                response.status(),
+                |name| response.header(name),
+                unexpected,
+            )
+            .map(|()| None)
         }
+    }
+
+    fn archive(&self, repo: &str, sha: &str) -> Result<impl io::Read, Failure> {
+        let url = format!("https://codeload.github.com/{repo}/tar.gz/{sha}");
+        let fixture = PathBuf::from(format!("codeload/{repo}/{sha}.tgz"));
+        // Serialize only the request through its response status, not the archive stream.
+        // Another GitHub request must see a cooldown before making its own call.
+        let mut state = STATE.lock().unwrap_or_else(|e| e.into_inner());
+        self.request(
+            &mut state,
+            &url,
+            &fixture,
+            Duration::from_secs(30),
+            unexpected_status,
+        )?
+        .ok_or(Failure::RefUnavailable)
     }
 
     fn status<'a>(
@@ -257,15 +299,16 @@ impl Github {
         state: &mut State,
         status: u16,
         header: impl Fn(&str) -> Option<&'a str>,
-        now: SystemTime,
-    ) -> Result<Option<Vec<u8>>, Failure> {
+        unexpected: impl FnOnce(u16) -> Failure,
+    ) -> Result<(), Failure> {
         match status {
-            404 => Ok(None),
+            404 => Ok(()),
             429 | 403
                 if status == 429
                     || header("Retry-After").is_some()
                     || header("X-RateLimit-Remaining") == Some("0") =>
             {
+                let now = SystemTime::now();
                 let retry_at = retry_time(now, header("Retry-After"), header("X-RateLimit-Reset"));
                 state.backoff.insert(
                     self.cache.clone(),
@@ -278,12 +321,7 @@ impl Github {
                 );
                 Err(Failure::RateLimited { retry_at })
             }
-            // GitHub redirects moved repositories. Do not follow a different identity.
-            301 | 302 | 307 | 308 | 403 | 410 | 451 => Err(Failure::RepositoryUnavailable),
-            _ => Err(Failure::Other(crate::i18n::trf(
-                "GitHub answered {status}.",
-                &[("status", &status.to_string())],
-            ))),
+            _ => Err(unexpected(status)),
         }
     }
 
@@ -552,6 +590,13 @@ fn other(error: impl std::fmt::Display) -> Failure {
     Failure::Other(error.to_string())
 }
 
+fn unexpected_status(status: u16) -> Failure {
+    Failure::Other(crate::i18n::trf(
+        "GitHub answered {status}.",
+        &[("status", &status.to_string())],
+    ))
+}
+
 fn retry_time(now: SystemTime, retry: Option<&str>, reset: Option<&str>) -> Option<SystemTime> {
     let unix = |s| SystemTime::UNIX_EPOCH.checked_add(Duration::from_secs(s));
     let retry = retry.and_then(|value| {
@@ -628,11 +673,31 @@ fn inspect(
     }
 }
 
-/// Share the anonymous cooldown with source transfers outside this metadata API.
-pub(crate) fn github_ready() -> Result<(), Failure> {
-    Github::current().ready(
-        &mut STATE.lock().unwrap_or_else(|e| e.into_inner()),
-        SystemTime::now(),
+/// Stream a pinned source archive under the same cooldown as metadata and raw fetches.
+pub(crate) fn github_archive(repo: &str, sha: &str) -> Result<impl io::Read, Failure> {
+    Github::current().archive(repo, sha)
+}
+
+/// The unsigned launcher can drive the ordinary paste form from the same local snapshot
+/// fixture as Nightly Discover. Releases still use the ordinary GitHub API.
+#[cfg(debug_assertions)]
+pub(crate) fn fixture_link_api(path: &str) -> Option<Result<Option<serde_json::Value>, String>> {
+    let github = Github::current();
+    github.fixture.as_ref()?;
+    if !path.starts_with("repos/") || !safe_path(path) {
+        return Some(Err(tr("This GitHub link could not be found.").into()));
+    }
+    let fixture = PathBuf::from(format!("api/{path}.json"));
+    let mut state = STATE.lock().unwrap_or_else(|e| e.into_inner());
+    Some(
+        github
+            .fetch(&mut state, "", &fixture, MAX_API)
+            .and_then(|value| {
+                value
+                    .map(|bytes| serde_json::from_slice(&bytes).map_err(other))
+                    .transpose()
+            })
+            .map_err(|error| format!("{error:?}")),
     )
 }
 
