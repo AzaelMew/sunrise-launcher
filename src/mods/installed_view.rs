@@ -204,6 +204,20 @@ impl Launcher {
         let busy = !refresh_ready || self.mods_busy();
         let with_update = selected.iter().filter(|r| model::bulk_updatable(r)).count();
         let any_update = rows.iter().any(model::bulk_updatable);
+        let source_update = rows
+            .iter()
+            .any(|row| nightly::installed_source(row).is_some() && row.update.is_some());
+        let has_tracked_sources = rows
+            .iter()
+            .filter_map(nightly::installed_source)
+            .any(|origin| {
+                origin.source.as_ref().is_some_and(|source| {
+                    !matches!(
+                        source.track,
+                        sunrise_launcher::github_mods::SourceTrack::Pinned
+                    )
+                })
+            });
         let bulk = |id: &'static str, label: String, enabled: bool, danger: bool| {
             let b = crate::frame::button(id, label);
             let b = if danger {
@@ -240,15 +254,72 @@ impl Launcher {
                 .gap(px(10.))
                 .px(px(14.))
                 .min_h(px(48.))
-                .when(n_sel > 0, |bar| bar.flex_wrap().py(px(7.)).gap_y(px(6.)))
+                .when(n_sel > 0 || has_tracked_sources, |bar| {
+                    bar.flex_wrap().py(px(7.)).gap_y(px(6.))
+                })
                 .border_b_1()
                 .border_color(c(palette().divider))
                 .child(select_all);
             if n_sel == 0 {
-                bar = bar.child(muted(model::visible_count(&rows, &visible)));
+                bar = bar
+                    .child(muted(model::visible_count(&rows, &visible)))
+                    .child(div().flex_1());
+                if has_tracked_sources {
+                    let checking = self.source_updates_checking();
+                    let check = bulk(
+                        "nightly-check-source-updates",
+                        if checking {
+                            tr("Checking source updates…")
+                        } else {
+                            tr("Check for source updates")
+                        }
+                        .into(),
+                        !checking,
+                        false,
+                    );
+                    bar = bar.child(if checking || busy {
+                        check
+                    } else {
+                        check.on_click(cx.listener(|this, _, _, cx| {
+                            this.check_source_updates();
+                            cx.notify();
+                        }))
+                    });
+                }
+                if source_update {
+                    let update = bulk(
+                        "nightly-source-update-all",
+                        if any_update {
+                            tr("Update all from source")
+                        } else {
+                            tr("Update all")
+                        }
+                        .into(),
+                        true,
+                        false,
+                    );
+                    bar = bar.child(if busy {
+                        update
+                    } else {
+                        update.on_click(cx.listener(|this, _, _, cx| {
+                            this.submit_source_update(None);
+                            cx.notify();
+                        }))
+                    });
+                }
                 if any_update {
-                    let update_all = bulk("alt-update-all", tr("Update all").into(), true, false);
-                    bar = bar.child(div().flex_1()).child(if busy {
+                    let update_all = bulk(
+                        "alt-update-all",
+                        if source_update {
+                            tr("Update all from registry")
+                        } else {
+                            tr("Update all")
+                        }
+                        .into(),
+                        true,
+                        false,
+                    );
+                    bar = bar.child(if busy {
                         update_all
                     } else {
                         update_all.on_click(cx.listener(|this, _, _, cx| {
@@ -352,7 +423,10 @@ impl Launcher {
         };
 
         // ---- rows, in three groups
-        let mut list = div().flex().flex_col();
+        let mut list = div().flex().flex_col().children(
+            self.source_update_notice()
+                .map(|notice| note(notice.to_owned()).p(px(10.))),
+        );
         let mut last: Option<Group> = None;
         let mut position = 0;
         let group_counts = |g: Group| visible.iter().filter(|&&i| rows[i].group() == g).count();
@@ -438,6 +512,12 @@ impl Launcher {
         };
         let mut renamed = false;
         for row in &mut rows {
+            if let Some(version) =
+                nightly::installed_source(row).and_then(|origin| self.source_update_version(origin))
+            {
+                row.update = Some(version.to_owned());
+                renamed = true; // The new offer may move the row to the Updates group.
+            }
             if let Some(archive) = archive_name(row).filter(|archive| row.title != archive.name) {
                 row.title.clone_from(&archive.name);
                 renamed = true;
@@ -606,6 +686,9 @@ impl Launcher {
                 cx.stop_propagation();
                 match action {
                     model::RowAction::Allow => this.allow(),
+                    model::RowAction::Update if nightly::installed_source(&row).is_some() => {
+                        this.submit_source_update(Some(&row.id));
+                    }
                     model::RowAction::Update => this.update_one(&row),
                 }
                 cx.notify();
@@ -665,12 +748,25 @@ impl Launcher {
                     .as_ref()
                     .and_then(|local| local.github.as_ref())
                     .map(|origin| {
-                        let origin = origin.label();
+                        let label = if origin.source.is_some() {
+                            nightly::source_provenance(origin)
+                        } else {
+                            trf("GitHub: {source}", &[("source", &origin.label())])
+                        };
                         div()
+                            .id(("installed-origin", n))
                             .text_size(px(tokens::SMALL))
                             .text_color(c(palette().muted))
                             .truncate()
-                            .child(trf("GitHub: {source}", &[("source", &origin)]))
+                            .tooltip(crate::glass_ui::tip(label.clone()))
+                            .child(label)
+                    }),
+            )
+            .children(
+                nightly::installed_source(&r)
+                    .and_then(|_| r.update.as_ref())
+                    .map(|version| {
+                        muted(trf("Update available: {version}", &[("version", version)]))
                     }),
             )
             .children(hold_label.map(|label| {
@@ -679,6 +775,24 @@ impl Launcher {
                     .text_color(c(palette().warning))
                     .child(label)
             }))
+            .children(
+                nightly::installed_source(&r)
+                    .and_then(|_| {
+                        self.source_outcome(&r.id)
+                            .and_then(|result| result.as_ref().err())
+                            .or_else(|| self.source_update_issue(&r.id))
+                            .and_then(|error| nightly::source_error(error, None))
+                    })
+                    .map(|line| {
+                        div()
+                            .id(("installed-source-issue", n))
+                            .text_color(c(palette().warning))
+                            .text_size(px(tokens::SMALL))
+                            .truncate()
+                            .tooltip(crate::glass_ui::tip(line.clone()))
+                            .child(line)
+                    }),
+            )
             .when(r.registry_unchecked, |d| {
                 d.child(
                     div()
@@ -896,7 +1010,11 @@ impl Launcher {
                     let row = r.clone();
                     Some(b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                         this.ui.mods.unfit_open = None;
-                        this.update_one(&row);
+                        if nightly::installed_source(&row).is_some() {
+                            this.submit_source_update(Some(&row.id));
+                        } else {
+                            this.update_one(&row);
+                        }
                         cx.stop_propagation();
                         cx.notify();
                     })))
@@ -918,7 +1036,11 @@ impl Launcher {
                     let id = r.id.clone();
                     Some(button("alt-unfit-check", tr("Check for update")).on_click(
                         cx.listener(move |this, _: &ClickEvent, _, cx| {
-                            this.check_mod_update(&id);
+                            if this.rows().iter().find(|row| row.id == id).and_then(nightly::installed_source).is_some() {
+                                this.check_source_updates();
+                            } else {
+                                this.check_mod_update(&id);
+                            }
                             cx.stop_propagation();
                             cx.notify();
                         }),

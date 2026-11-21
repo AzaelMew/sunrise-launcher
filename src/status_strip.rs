@@ -45,6 +45,48 @@ impl Launcher {
 
     /// The strip, for the frame to place above the page: one row, as wide as it is given.
     pub(crate) fn status_strip(&mut self, cx: &mut Context<Self>) -> Option<Div> {
+        if let Some(activity) = self.source_activity() {
+            use crate::mods_page::install::{stage_fraction, stage_label};
+            use sunrise_launcher::browser::sunrise::InstallProgress;
+            let step = activity.progress;
+            let label = match step {
+                InstallProgress::Publishing => tr("Finishing…").into(),
+                _ if activity.stopping => tr("Stopping…").into(),
+                InstallProgress::Tools { done, total } if total > 0 => trf(
+                    "Getting build tools · {done} of {total}",
+                    &[
+                        ("done", &sunrise_launcher::storage::format_bytes(done)),
+                        ("total", &sunrise_launcher::storage::format_bytes(total)),
+                    ],
+                ),
+                InstallProgress::Building(_) => trf(
+                    "Building {mods}…",
+                    &[("mods", &crate::mods::names(activity.names))],
+                ),
+                _ => stage_label(step),
+            };
+            let stop = (step != InstallProgress::Publishing && !activity.stopping).then(|| {
+                button("nightly-source-stop", tr("Stop")).on_click(cx.listener(|this, _, _, cx| {
+                    this.stop_source();
+                    cx.notify();
+                }))
+            });
+            let fraction = stage_fraction(step).map(|f| (f, f));
+            return Some(
+                strip()
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .gap(px(4.))
+                            .child(div().truncate().child(label))
+                            .child(crate::widgets::progress_bar(fraction, &self.theme)),
+                    )
+                    .children(stop),
+            );
+        }
         let home = self.ui.page == crate::frame::Page::Home;
         if home {
             if self.ui.home.play_in_view() {

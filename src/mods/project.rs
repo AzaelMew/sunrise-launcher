@@ -419,7 +419,11 @@ impl Launcher {
                     } else {
                         let row = row.clone();
                         b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                            this.update_one(&row);
+                            if nightly::installed_source(&row).is_some() {
+                                this.submit_source_update(Some(&row.id));
+                            } else {
+                                this.update_one(&row);
+                            }
                             cx.notify();
                         }))
                         .into_any_element()
@@ -686,6 +690,22 @@ impl Launcher {
             );
         let installed_controls = installed_row.zip(cells.as_ref()).map(|(row, cells)| {
             use crate::frame::button;
+            use sunrise_launcher::browser::sunrise::SourceError;
+            let origin = nightly::installed_source(row);
+            let problem = origin.and_then(|_| {
+                self.source_outcome(&row.id)
+                    .and_then(|status| status.as_ref().err())
+                    .or_else(|| self.source_update_issue(&row.id))
+            });
+            let problem_line = problem.and_then(|error| nightly::source_error(error, None));
+            let problem_log = match problem {
+                Some(SourceError::Build { log: Some(log), .. }) => Some(log.clone()),
+                _ => None,
+            };
+            let provenance = origin.map(nightly::source_provenance);
+            let release = origin
+                .and_then(|origin| origin.tag.as_deref())
+                .map(|tag| trf("Release: {tag}", &[("tag", tag)]));
             let hold = self
                 .ui
                 .mods
@@ -760,22 +780,31 @@ impl Launcher {
                     }))
                 }
             });
-            div().flex().flex_col().gap(px(8.)).children(status).child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .items_center()
-                    .gap(px(8.))
-                    .child(toggle)
-                    .child(note(if row.on {
-                        tr("Turned on")
-                    } else {
-                        tr("Turned off")
-                    }))
-                    .children(allow)
-                    .children(github_update)
-                    .children(remove),
-            )
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(8.))
+                .children(provenance.map(note))
+                .children(release.map(note))
+                .children(problem_line.map(note))
+                .children(problem_log.map(|log| self.nightly_log_button(&row.title, log, cx)))
+                .children(status)
+                .child(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .items_center()
+                        .gap(px(8.))
+                        .child(toggle)
+                        .child(note(if row.on {
+                            tr("Turned on")
+                        } else {
+                            tr("Turned off")
+                        }))
+                        .children(allow)
+                        .children(github_update)
+                        .children(remove),
+                )
         });
         let source_button = match &p.source {
             Some(model::SourceLink::GitHub(url)) => {

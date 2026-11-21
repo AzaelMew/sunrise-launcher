@@ -43,6 +43,7 @@ pub(crate) enum Sheet {
     /// Play was accepted while the registry worker is proving the new generation.
     RegistryPlay,
     GithubAdd,
+    NightlySourceLog,
 }
 
 /// The way out of a problem the play bar raised, as the Notice sheet's one action.
@@ -264,6 +265,7 @@ impl Launcher {
     pub(crate) fn blocking_dialog(&self) -> bool {
         self.ui.sheets.registry.is_some()
             || self.pending_consent.is_some()
+            || self.source_question().is_some()
             || self.mods.installs.question.is_some()
             || self.mods.installs.world.is_some()
             || self.owner_screen_open
@@ -315,6 +317,8 @@ impl Launcher {
             let _ = reply.send(false);
         } else if self.pending_consent.is_some() {
             self.cancel_native_consent();
+        } else if self.source_question().is_some() {
+            self.answer_source_question(Ok(false));
         } else if let Some(reply) = self
             .mods
             .installs
@@ -334,6 +338,7 @@ impl Launcher {
     pub(crate) fn sheet_escape(&mut self) -> bool {
         let open = self.ui.sheets.registry.is_some()
             || self.pending_consent.is_some()
+            || self.source_question().is_some()
             || self.mods.installs.question.is_some()
             || self.mods.installs.world.is_some()
             || self.ui.sheet.is_some();
@@ -439,6 +444,9 @@ impl Launcher {
         if self.pending_consent.is_some() {
             return Some(self.consent_sheet(cx));
         }
+        if let Some(body) = self.source_consent_body(cx) {
+            return Some(frame("nightly-source-consent", 660., body, cx));
+        }
         use crate::mods_page::install::Decision;
         if let Some((decision, _)) = &self.mods.installs.question {
             return Some(match decision {
@@ -498,6 +506,9 @@ impl Launcher {
             Some(Sheet::Build) => Some(self.build_sheet(cx)),
             Some(Sheet::Notice) => Some(self.notice_sheet(cx)),
             Some(Sheet::GithubAdd) => Some(self.github_add_sheet(window, cx)),
+            Some(Sheet::NightlySourceLog) => self
+                .source_log_body(cx)
+                .map(|body| frame("nightly-source-log", 690., body, cx)),
             Some(Sheet::Versions) => Some(self.versions_sheet(cx)),
             Some(Sheet::Switching) => Some(self.switch_sheet(cx)),
             Some(Sheet::BuildChanges) => self.switch_receipt_sheet(cx),
