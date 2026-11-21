@@ -1050,7 +1050,7 @@ impl Launcher {
                             choose,
                             hooks,
                         )
-                        .map(|()| InstalledBatch::default()),
+                        .map(|_| InstalledBatch::default()),
                     }
                 }
                 Kind::Source => sunrise::apply_sources(

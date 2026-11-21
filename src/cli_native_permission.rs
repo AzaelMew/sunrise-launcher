@@ -44,64 +44,68 @@ fn github_native_from(
     eprintln!("{}", github_mods::WARNING);
     native_permission(trust)?;
     let mods = fetch(found)?;
-    let done = github_mods::choose(&mods, only, all).and_then(|chosen| {
-        chosen
-            .into_iter()
-            .map(|p| {
-                let target = instance
-                    .home
-                    .join(native_mods::INSTALLED)
-                    .join(format!("{}.smod", p.id));
-                let replace = update
-                    || match std::fs::symlink_metadata(&target) {
-                        Ok(_) => true,
-                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
-                        Err(error) => return Err(format!("{}: {error}", target.display())),
-                    };
-                if !replace {
-                    return github_mods::install(&instance.home, found, p)
-                        .map(|origin| (false, origin));
+    let mut fresh = Vec::new();
+    let mut replacements = Vec::new();
+    for package in github_mods::choose(&mods, only, all)? {
+        let target = instance
+            .home
+            .join(native_mods::INSTALLED)
+            .join(format!("{}.smod", package.id));
+        if update {
+            replacements.push(package);
+        } else {
+            match std::fs::symlink_metadata(&target) {
+                Ok(_) => replacements.push(package),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    fresh.push(package.clone());
                 }
-                sunrise::update_github(
-                    instance,
-                    identity,
-                    found,
-                    p,
-                    || sunrise_launcher::managed_play::headless_first(instance),
-                    sunrise::InstallHooks {
-                        progress: &|_| {},
-                        native: &|_| {
-                            native_mods::require_consent()
-                                .map(|_| true)
-                                .map_err(String::from)
-                        },
-                        registry_crates: Some(&registry_consent),
-                        continue_after_failure: &|_| false,
-                        resolve: None,
-                    },
-                    &|impact| approve_mod_change(impact, confirm_world_loss),
-                )
-                .map(|origin| (true, origin))
-                .map_err(|error| match error {
-                    sunrise::InstallError::Cancelled => tr("Nothing was updated.").into(),
-                    e => e.to_string(),
-                })
-            })
-            .collect::<Result<Vec<_>, _>>()
-    });
-    let done = done?;
-    for (updated, o) in &done {
-        println!(
-            "{} {} {} from GitHub ({}), sha256 {}.",
-            if *updated { "Updated" } else { "Installed" },
-            o.id,
-            o.version,
-            o.label(),
-            o.sha256
-        );
+                Err(error) => return Err(format!("{}: {error}", target.display())),
+            }
+        }
     }
-    if done.iter().any(|(updated, _)| !*updated) {
-        println!("Build it next: sunrise-launcher native-build --trust-native-code");
+    let choose = || sunrise_launcher::managed_play::headless_first(instance);
+    let hooks = sunrise::InstallHooks {
+        progress: &|_| {},
+        native: &|_| {
+            native_mods::require_consent()
+                .map(|_| true)
+                .map_err(String::from)
+        },
+        registry_crates: Some(&registry_consent),
+        continue_after_failure: &|_| false,
+        resolve: None,
+    };
+    let report = |action, origin: github_mods::Origin| {
+        println!(
+            "{action} {} {} from GitHub ({}), sha256 {}.",
+            origin.id,
+            origin.version,
+            origin.label(),
+            origin.sha256
+        );
+    };
+    if !fresh.is_empty() {
+        let installed = sunrise::add_github(instance, identity, found, &fresh, choose, hooks)
+            .map_err(|error| error.to_string())?;
+        for origin in installed {
+            report("Installed", origin);
+        }
+    }
+    for package in replacements {
+        let origin = sunrise::update_github(
+            instance,
+            identity,
+            found,
+            package,
+            choose,
+            hooks,
+            &|impact| approve_mod_change(impact, confirm_world_loss),
+        )
+        .map_err(|error| match error {
+            sunrise::InstallError::Cancelled => tr("Nothing was updated.").into(),
+            e => e.to_string(),
+        })?;
+        report("Updated", origin);
     }
     Ok(())
 }

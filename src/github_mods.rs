@@ -11,7 +11,6 @@
 //! content fence is not run here either: the game runs it when it loads the mod.
 //! Callers show [`WARNING`] and ask first (`--trust-native-code`).
 use crate::backend;
-use crate::browser::mod_list;
 use crate::i18n::{tr, trf};
 use crate::native_mods::{self, Bundle, INSTALLED};
 use serde::{Deserialize, Serialize};
@@ -872,91 +871,6 @@ pub fn origins(home: &Path) -> Vec<Origin> {
         .unwrap_or_default();
     found.sort_by(|a: &Origin, b| a.id.cmp(&b.id));
     found
-}
-
-/// Adds a fresh mod and turns it on. Replacing an installed archive requires the profile's
-/// staged GitHub Update; this path never clobbers a file, even an orphaned origin sidecar.
-pub fn install(home: &Path, found: &Resolved, packed: &Packed) -> Result<Origin, String> {
-    use sunrise_launcher_smod::index::{browser_state, valid_id};
-    let id = &packed.id;
-    if !valid_id(id) {
-        return Err(tr("Couldn't verify the GitHub package ID.").into());
-    }
-    let _lock = crate::browser::lock_home(home).map_err(|e| e.to_string())?;
-    let relative = format!("{INSTALLED}/{id}.smod");
-    let target = home.join(&relative);
-    let sidecar = origin_path(home, id);
-    let collision = || {
-        trf(
-        "{mod} already has an installed file or origin. Use Update for a GitHub release or remove the existing mod first.",
-        &[("mod", id)],
-    )
-    };
-    for path in [&target, &sidecar] {
-        match fs::symlink_metadata(path) {
-            Ok(_) => return Err(collision()),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
-            Err(e) => return Err(format!("{}: {e}", path.display())),
-        }
-    }
-    let claims = browser_state::Installed::read(home).map_err(|e| e.details(trf))?;
-    if claims.single(id).map_err(|e| e.render(trf))?.is_some()
-        || crate::managed_play::scan_packages(home)?
-            .iter()
-            .any(|p| p.manifest.id == *id)
-    {
-        return Err(collision());
-    }
-    claims
-        .check_other_claims(home, id, &relative)
-        .map_err(|e| e.render(trf))?;
-    let root = home.join(INSTALLED);
-    fs::create_dir_all(&root).map_err(|e| e.to_string())?;
-    let archive = tempfile::NamedTempFile::new_in(&root).map_err(|e| e.to_string())?;
-    packed.copy_verified(archive.path())?;
-    let record = if !found.assets.is_empty() {
-        packed
-            .release_origin(found)
-            .cloned()
-            .ok_or_else(|| tr("Couldn't verify the GitHub release asset.").to_owned())?
-    } else {
-        packed.origin(found, None)
-    };
-    let mut receipt = tempfile::NamedTempFile::new_in(&root).map_err(|e| e.to_string())?;
-    serde_json::to_writer_pretty(receipt.as_file_mut(), &record).map_err(|e| e.to_string())?;
-    archive
-        .persist_noclobber(&target)
-        .map_err(|e| e.error.to_string())?;
-    receipt.persist_noclobber(&sidecar).map_err(|e| {
-        trf(
-            "The new archive was kept, but its GitHub origin could not be recorded: {error}",
-            &[("error", &e.error.to_string())],
-        )
-    })?;
-    mod_list::set_enabled(home, id, true)?;
-    let _ = fs::remove_file(&packed.file);
-    Ok(record)
-}
-
-/// Tests of the legacy import format; production removals use the profile journal.
-#[cfg(test)]
-fn remove(home: &Path, id: &str) -> Result<bool, String> {
-    let _lock = crate::browser::lock_home(home).map_err(|e| e.to_string())?;
-    if origin(home, id).is_none() {
-        return Ok(false);
-    }
-    for path in [
-        origin_path(home, id),
-        home.join(INSTALLED).join(format!("{id}.smod")),
-    ] {
-        if let Err(e) = fs::remove_file(&path) {
-            if e.kind() != std::io::ErrorKind::NotFound {
-                return Err(format!("{}: {e}", path.display()));
-            }
-        }
-    }
-    mod_list::set_enabled(home, id, false)?;
-    Ok(true)
 }
 
 #[cfg(test)]

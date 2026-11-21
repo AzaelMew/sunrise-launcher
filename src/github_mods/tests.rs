@@ -414,8 +414,7 @@ fn several_mods_list_and_ask_which() {
 }
 
 #[test]
-fn installing_records_the_origin_and_updates_follow_releases_or_the_head() {
-    let home = tree("install");
+fn origins_follow_releases_or_the_head() {
     let source = tree("install-src");
     project(&source, "zoom", SHA);
     let bytes = pack(&find_mods(&source).unwrap()[0]).unwrap();
@@ -427,14 +426,9 @@ fn installing_records_the_origin_and_updates_follow_releases_or_the_head() {
         commit: SHA.into(),
         assets: Vec::new(),
     };
-    let kept = ready.file.clone();
-    let origin = install(&home, &found, &ready).unwrap();
-    assert!(!kept.exists());
+    let origin = ready.origin(&found, None);
     assert_eq!(origin.label(), "acme/zoom @ 0123456");
     assert_eq!(origin.sha256, sha256(&bytes));
-    assert_eq!(self::origin(&home, "zoom"), Some(origin.clone()));
-    assert_eq!(origins(&home), vec![origin.clone()]);
-    assert!(mod_list::is_enabled(&home, "zoom"));
     // A commit's mod follows the default branch's head.
     assert_eq!(origin.follows().target, Target::Head);
     let newer = Resolved {
@@ -463,44 +457,5 @@ fn installing_records_the_origin_and_updates_follow_releases_or_the_head() {
             ..found
         }
     ));
-    // A GitHub origin is not authorization for raw overwrite or for adding a duplicate
-    // under the canonical filename when the same ID is already installed under an alias.
-    let target = home.join(INSTALLED).join("zoom.smod");
-    let replacement = checked(&bytes, &source.join("out"), None).unwrap();
-    assert!(install(&home, &newer, &replacement).is_err());
-    assert_eq!(fs::read(&target).unwrap(), bytes);
-    assert_eq!(self::origin(&home, "zoom"), Some(origin));
-    let alias = home.join(INSTALLED).join("renamed.smod");
-    fs::rename(&target, &alias).unwrap();
-    let receipt = origin_path(&home, "zoom");
-    let receipt_bytes = fs::read(&receipt).unwrap();
-    assert!(
-        install(&home, &newer, &replacement).is_err(),
-        "orphan origin"
-    );
-    fs::remove_file(&receipt).unwrap();
-    assert!(
-        install(&home, &newer, &replacement).is_err(),
-        "same ID, other file"
-    );
-    assert!(!target.exists());
-    assert_eq!(fs::read(&alias).unwrap(), bytes);
-    fs::rename(&alias, &target).unwrap();
-    fs::write(receipt, receipt_bytes).unwrap();
-
-    // A file that isn't from GitHub is never replaced either.
-    write(&home.join(INSTALLED).join("keys.smod"), "x");
-    let other = Packed {
-        id: "keys".into(),
-        ..packed("keys")
-    };
-    assert!(install(&home, &newer, &other)
-        .unwrap_err()
-        .contains("already has an installed file"));
-    assert!(remove(&home, "zoom").unwrap());
-    assert!(!remove(&home, "zoom").unwrap());
-    assert!(!home.join(INSTALLED).join("zoom.smod").exists());
-    assert!(!mod_list::is_enabled(&home, "zoom"));
-    let _ = fs::remove_dir_all(home);
     let _ = fs::remove_dir_all(source);
 }

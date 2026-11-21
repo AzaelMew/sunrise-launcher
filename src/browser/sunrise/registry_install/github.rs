@@ -43,7 +43,7 @@ pub fn add_github(
     selected: &[github_mods::Packed],
     choose: impl FnOnce() -> Result<FirstBuild, String>,
     hooks: InstallHooks<'_>,
-) -> Result<(), InstallError> {
+) -> Result<Vec<github_mods::Origin>, InstallError> {
     let packages = selected
         .iter()
         .map(|package| {
@@ -57,7 +57,11 @@ pub fn add_github(
             })
         })
         .collect::<Result<Vec<_>, InstallError>>()?;
-    edit_github(instance, identity, &packages, choose, hooks, None, None)
+    edit_github(instance, identity, &packages, choose, hooks, None, None)?;
+    Ok(packages
+        .into_iter()
+        .map(|entry| entry.origin.clone())
+        .collect())
 }
 
 /// A single checked package and the precise reason it may occupy the live path.

@@ -4,48 +4,28 @@ use std::{fs, os::unix::fs::PermissionsExt, process::Command};
 use sunrise_launcher_nbt::{self as nbt, Limits, NamedTag, Tag};
 use sunrise_launcher_smod::{index, Package};
 
-#[test]
-fn github_update_cli_checks_origin_but_needs_no_world_loss_flag_for_native() {
-    const ACTOR: &str = "SUNRISE_TEST_GITHUB_UPDATE_CLI";
-    let root = match std::env::var_os(ACTOR) {
-        Some(root) => std::path::PathBuf::from(root),
-        None => {
-            let root = tempfile::tempdir().unwrap();
-            let test_module = module_path!().split_once("::").unwrap().1;
-            let output = Command::new(std::env::current_exe().unwrap())
-                .args([
-                    "--exact",
-                    &format!("{test_module}::github_update_cli_checks_origin_but_needs_no_world_loss_flag_for_native"),
-                ])
-                .env(ACTOR, root.path())
-                .env("SUNRISE_HOME", root.path().join("game"))
-                .env("SUNRISE_LAUNCHER_HOME", root.path().join("launcher"))
-                .env("SUNRISE_LAUNCHER_DEVELOPER_OFFLINE", "1")
-                .output()
-                .unwrap();
-            assert!(output.status.success(), "{output:?}");
-            return;
-        }
-    };
-    const ID: &str = "github_lantern";
-    const TAG: &str = "developer-local";
-    let archive = |version: &str| {
-        let manifest = format!(
-            "id='{ID}'\nname='GitHub Lantern'\nversion='{version}'\napi='0.2'\nside='both'\ncapabilities=['registries']\n[native]\nsunrise='{}'\nmixins='{}'\ngame='26.3'\n",
-            "a".repeat(40),
-            "c".repeat(40),
-        );
-        let cargo = format!("[package]\nname='{ID}'\nversion='{version}'\n");
-        Package::write_files(
-            &manifest,
-            &[("Cargo.toml", cargo.as_bytes()), ("src/lib.rs", b"")],
-        )
-        .unwrap()
-    };
-    let old = archive("1.0.0");
-    let new = archive("1.1.0");
-    let home = root.join("game");
-    let data = root.join("launcher");
+fn github_cli_fixture(name: &str) -> Option<std::path::PathBuf> {
+    const ACTOR: &str = "SUNRISE_TEST_GITHUB_CLI";
+    if let Some(root) = std::env::var_os(ACTOR) {
+        return Some(root.into());
+    }
+    let root = tempfile::tempdir().unwrap();
+    let test_module = module_path!().split_once("::").unwrap().1;
+    let output = Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", &format!("{test_module}::{name}")])
+        .env(ACTOR, root.path())
+        .env("SUNRISE_HOME", root.path().join("game"))
+        .env("SUNRISE_LAUNCHER_HOME", root.path().join("launcher"))
+        .env("SUNRISE_LAUNCHER_DEVELOPER_OFFLINE", "1")
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    None
+}
+
+const TAG: &str = "developer-local";
+
+fn developer_build(data: &std::path::Path) {
     let build = data.join("versions").join(TAG);
     let resources = build.join(".local/sunrise-client/26.3");
     fs::create_dir_all(&resources).unwrap();
@@ -78,6 +58,34 @@ fn github_update_cli_checks_origin_but_needs_no_world_loss_flag_for_native() {
         r#"{"native_mods_allowed_at":123,"native_consent_revision":1}"#,
     )
     .unwrap();
+}
+
+#[test]
+fn github_update_cli_checks_origin_but_needs_no_world_loss_flag_for_native() {
+    let Some(root) = github_cli_fixture(
+        "github_update_cli_checks_origin_but_needs_no_world_loss_flag_for_native",
+    ) else {
+        return;
+    };
+    const ID: &str = "github_lantern";
+    let archive = |version: &str| {
+        let manifest = format!(
+            "id='{ID}'\nname='GitHub Lantern'\nversion='{version}'\napi='0.2'\nside='both'\ncapabilities=['registries']\n[native]\nsunrise='{}'\nmixins='{}'\ngame='26.3'\n",
+            "a".repeat(40),
+            "c".repeat(40),
+        );
+        let cargo = format!("[package]\nname='{ID}'\nversion='{version}'\n");
+        Package::write_files(
+            &manifest,
+            &[("Cargo.toml", cargo.as_bytes()), ("src/lib.rs", b"")],
+        )
+        .unwrap()
+    };
+    let old = archive("1.0.0");
+    let new = archive("1.1.0");
+    let home = root.join("game");
+    let data = root.join("launcher");
+    developer_build(&data);
 
     // A native archive can't prove a dropped definition even with a saved world. An off,
     // unheld archive exercises the real transaction without starting the compiler worker.
@@ -172,4 +180,108 @@ fn github_update_cli_checks_origin_but_needs_no_world_loss_flag_for_native() {
     assert_eq!(published.sha256, index::sha256(&new));
     assert!(pointer.is_file());
     assert!(!sunrise_launcher::browser::mod_list::is_enabled(&home, ID));
+}
+
+#[test]
+fn github_add_cli_refuses_the_entire_fresh_batch() {
+    let Some(root) = github_cli_fixture("github_add_cli_refuses_the_entire_fresh_batch") else {
+        return;
+    };
+    let home = root.join("game");
+    developer_build(&root.join("launcher"));
+    let archive = |id: &str, name: &str, extra: &str| {
+        let manifest = format!(
+            "id='{id}'\nname='{name}'\nversion='1.0.0'\napi='0.2'\nside='both'\ncapabilities=['registries']\n[native]\nsunrise='{}'\nmixins='{}'\ngame='26.3'\n{extra}",
+            "a".repeat(40),
+            "c".repeat(40),
+        );
+        let cargo = format!("[package]\nname='{id}'\nversion='1.0.0'\n");
+        Package::write_files(
+            &manifest,
+            &[("Cargo.toml", cargo.as_bytes()), ("src/lib.rs", b"")],
+        )
+        .unwrap()
+    };
+    let packages = [
+        ("a_lantern", archive("a_lantern", "Lantern", "")),
+        (
+            "b_refused",
+            archive(
+                "b_refused",
+                "Refused Mod",
+                "[dependencies]\nnever_installed='^1'\n",
+            ),
+        ),
+    ];
+    let found = github_mods::Resolved {
+        owner: "fixture".into(),
+        repo: "lantern".into(),
+        tag: Some("v1.0.0".into()),
+        commit: "b".repeat(40),
+        assets: packages
+            .iter()
+            .map(|(id, bytes)| github_mods::Asset {
+                name: format!("{id}.smod"),
+                url: format!(
+                    "https://github.com/fixture/lantern/releases/download/v1.0.0/{id}.smod"
+                ),
+                sha256: Some(index::sha256(bytes)),
+            })
+            .collect(),
+    };
+    let cli = Cli::try_parse_from([
+        "sunrise-launcher",
+        "mods",
+        "add-github",
+        "https://github.com/fixture/lantern",
+        "--all",
+    ])
+    .unwrap();
+    let Some(Cmd::Mods {
+        action:
+            Some(ModsCmd::AddGithub {
+                mod_id,
+                all,
+                trust_native_code,
+                confirm_world_loss,
+                ..
+            }),
+    }) = cli.command
+    else {
+        panic!("expected the Add GitHub mod command");
+    };
+    let instance = instances::selection().unwrap();
+    let error = github_native_from(
+        GithubInstall {
+            instance: &instance,
+            found: &found,
+            only: mod_id.as_deref(),
+            all,
+            update: false,
+            trust: trust_native_code,
+            confirm_world_loss,
+        },
+        |found| {
+            github_mods::fetch_with(found, |url| {
+                let index = found
+                    .assets
+                    .iter()
+                    .position(|asset| asset.url == url)
+                    .unwrap();
+                Ok(packages[index].1.clone())
+            })
+        },
+    )
+    .unwrap_err();
+    assert!(
+        error.contains("Refused Mod") && error.contains("Nothing was installed"),
+        "{error}"
+    );
+    for (id, _) in packages {
+        let target = home.join(native_mods::INSTALLED).join(format!("{id}.smod"));
+        assert!(!target.exists());
+        assert!(!target.with_extension("origin.json").exists());
+        assert!(!sunrise_launcher::browser::mod_list::is_enabled(&home, id));
+    }
+    assert!(!home.join("mod-browser/active-build.json").exists());
 }
