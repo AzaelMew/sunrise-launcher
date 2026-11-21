@@ -183,7 +183,7 @@ fn switch_proves_native_against_the_exact_target_even_with_an_unlike_catalogue_g
         verdict: None,
         install_hold: None,
     };
-    let rows = fixture.home.join(installed::MANIFEST);
+    let rows = fixture.home.join(index::browser_state::MANIFEST);
     fs::create_dir_all(rows.parent().unwrap()).unwrap();
     fs::write(rows, json!({"entries": [row]}).to_string()).unwrap();
     fixture.decision_worker("switch-native-catalogue-mismatch");

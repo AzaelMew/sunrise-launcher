@@ -47,15 +47,8 @@ fn resolve_attributes_incompatibility_to_the_games_short_version() {
     ))
     .unwrap();
     let before = inventory(old.path()).unwrap();
-    let (question, _) = conflicts::question(
-        &catalogue,
-        &[],
-        &before,
-        candidate.path(),
-        &BTreeMap::new(),
-        &["lanterns"],
-    )
-    .unwrap();
+    let question =
+        conflicts::question(&catalogue, &[], &before, candidate.path(), &["lanterns"]).unwrap();
     assert_eq!(
         question.blockers,
         [("Lanterns".into(), "Doesn't work with Light Core 2.".into())]

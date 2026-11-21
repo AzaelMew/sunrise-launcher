@@ -522,7 +522,7 @@ fn home_read_recovers_the_first_switch_receipt_after_a_killed_commit() {
     let home = backend::game_home();
     let ready = home.join("marker-ready");
     if role == "publish" {
-        let profile = Profile::open(&home, None).unwrap();
+        let mut profile = Profile::open(&home, None).unwrap();
         let _references = ReferencePublication::begin(&home).unwrap();
         let stage = profile
             .0
