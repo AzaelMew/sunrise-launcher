@@ -169,26 +169,15 @@ fn preserved_mods<'a>(
                     .filter(|(name, _)| !old_files.contains_key(*name)),
             )
         {
-            // `content_bytes` validated every path as assets|data/<namespace>/<file>.
-            let (root, path) = name.split_once('/').expect("content root");
-            let (namespace, path) = path.split_once('/').expect("content namespace");
-            let kind = path.split_once('/').map(|(kind, _)| kind);
-            if root == "data" && matches!(kind, Some("tags" | "worldgen")) {
-                continue;
-            }
-            let definition = matches!(
-                (root, kind),
-                ("data", Some("sunrise")) | ("assets", Some("blockstates" | "models"))
-            );
-            same_definitions &= !definition;
+            // `content_bytes` keeps only registered paths; never use a visual layer as
+            // evidence that a package can change another namespace's saved definitions.
+            let namespace = name.split('/').nth(1).expect("content namespace");
+            same_definitions = false;
             if matches!(namespace, "minecraft" | "c") {
-                // Shared registrations can change any mod's definitions.
-                if definition {
-                    return None;
-                }
-            } else {
-                shadows.entry(namespace.into()).or_default().insert(id);
+                // A shared registration can change any mod's saved definitions.
+                return None;
             }
+            shadows.entry(namespace.into()).or_default().insert(id);
         }
         if same_definitions {
             preserved.insert(id);
@@ -274,21 +263,41 @@ fn content_bytes(path: &Path) -> Option<BTreeMap<String, [u8; 32]>> {
             continue;
         }
         let name = entry.name().ok()?.into_owned();
-        if matches!(name.as_str(), manifest::MANIFEST | "icon.png") {
+        if matches!(
+            name.as_str(),
+            manifest::MANIFEST | "icon.png" | sunrise_launcher_smod::layouts::FILE
+        ) {
             continue;
         }
-        // Unknown package payloads may affect the game. Only compare the bounded flat inputs.
+        // Unknown package payloads may affect the game; the remainder must be bounded
+        // flat content. Compare only entries that the game saves by registry ID.
         files::check_path(&name).ok()?;
-        if entry.size() > files::MAX_FILE || contents.len() >= files::MAX_FILES {
+        if entry.size() > files::MAX_FILE || i >= files::MAX_FILES {
             return None;
+        }
+        total = total.checked_add(entry.size())?;
+        if total > files::MAX_TOTAL {
+            return None;
+        }
+        // SMOD declares registry entries as data/<namespace>/sunrise/<kind>/<id>.json
+        // (see the kind list in browser::sunrise::auto). Menus and creative tabs are not
+        // saved. Models, blockstate maps, textures, tags and feature placement do not
+        // change the serialized definition (e.g. the chunk block state palette).
+        let mut parts = name.splitn(5, '/');
+        if !matches!(
+            (parts.next(), parts.nth(1), parts.next(), parts.next()),
+            (
+                Some("data"),
+                Some("sunrise"),
+                Some("block" | "item" | "entity_type" | "block_entity_type" | "mob_effect"),
+                Some(file),
+            ) if file.ends_with(".json")
+        ) {
+            continue;
         }
         let mut digest = Sha256::new();
         let n = io::copy(&mut entry.by_ref().take(files::MAX_FILE + 1), &mut digest).ok()?;
-        total = total.checked_add(n)?;
-        if n != entry.size()
-            || total > files::MAX_TOTAL
-            || contents.insert(name, digest.finalize().into()).is_some()
-        {
+        if n != entry.size() || contents.insert(name, digest.finalize().into()).is_some() {
             return None;
         }
     }
@@ -373,7 +382,7 @@ mod tests {
                 home.path(),
                 "lamp",
                 "'lighting'",
-                &[("assets/lighting/blockstates/lamp.json", b"{}")],
+                &[("data/lighting/sunrise/block/lamp.json", b"{}")],
             );
             content(home.path(), "unrelated", "", &[]);
             home
@@ -383,7 +392,7 @@ mod tests {
     #[test]
     fn a_foreign_definition_taints_its_namespace_owners_only() {
         let [before, after] = shadow_profiles();
-        let path = "assets/lighting/blockstates/lamp.json";
+        let path = "data/lighting/sunrise/block/lamp.json";
         let preserved = || compare(before.path(), after.path());
         let independent = Some(BTreeSet::from(["unrelated".into()]));
         content(after.path(), "overlay", "'lighting'", &[(path, b"new")]);
@@ -397,7 +406,7 @@ mod tests {
     #[test]
     fn a_leaf_changing_only_tags_worldgen_or_an_atlas_preserves_every_mod() {
         let [before, after] = shadow_profiles();
-        let definition = ("assets/lighting/blockstates/lamp.json", b"same".as_slice());
+        let definition = ("data/lighting/sunrise/block/lamp.json", b"same".as_slice());
         content(before.path(), "overlay", "'lighting'", &[definition]);
         content(
             after.path(),
@@ -425,11 +434,30 @@ mod tests {
     }
 
     #[test]
+    fn changing_models_textures_and_blockstate_maps_leaves_no_mod_suspect() {
+        let [before, after] = shadow_profiles();
+        let files: &[(&str, &[u8])] = &[
+            ("assets/lighting/models/block/lamp.json", b"{}"),
+            ("assets/lighting/textures/block/lamp.png", b"pix"),
+            ("assets/lighting/blockstates/lamp.json", b"{}"),
+        ];
+        content(before.path(), "overlay", "'lighting'", &[]);
+        content(after.path(), "overlay", "'lighting'", files);
+        assert_eq!(
+            compare(before.path(), after.path()),
+            Some(BTreeSet::from([
+                "lamp".into(),
+                "overlay".into(),
+                "unrelated".into()
+            ]))
+        );
+    }
+
+    #[test]
     fn shared_definition_paths_have_no_single_mod_owner() {
         let [before, after] = shadow_profiles();
         for path in [
-            "assets/minecraft/blockstates/lantern.json",
-            "assets/minecraft/models/block/lantern.json",
+            "data/minecraft/sunrise/block/lantern.json",
             "data/c/sunrise/item/lantern.json",
         ] {
             content(after.path(), "overlay", "", &[(path, b"{}")]);
