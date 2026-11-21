@@ -36,6 +36,7 @@ mod data_packs;
 mod discover;
 mod installed_view;
 mod model;
+mod nightly;
 mod pack_discover;
 mod pack_project;
 mod packs;
@@ -283,6 +284,7 @@ enum Event {
     ),
     Catalog(String, Result<(Vec<Card>, Vec<String>), String>),
     Page(u64, Result<Box<model::Page>, String>),
+    Nightly(nightly::Event),
     Progress(String, f32),
     /// A pack search's answer, by the number of the search that asked.
     Packs(u64, Result<Vec<sunrise_launcher::browser::Project>, String>),
@@ -342,6 +344,7 @@ pub(crate) struct ModsState {
     snapshot: Option<Snapshot>,
     open: Option<Open>,
     page_request: u64,
+    nightly: nightly::State,
     /// The collection whose page is open and the members ticked on it.
     picks: Option<collection::Picks>,
     /// My own batch (update or remove): its line and fraction.
@@ -410,6 +413,7 @@ impl Default for ModsState {
             snapshot: None,
             open: None,
             page_request: 0,
+            nightly: Default::default(),
             picks: None,
             busy: None,
             notice: None,
@@ -467,6 +471,7 @@ impl Launcher {
     pub(crate) fn mods(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         self.mods_drain();
         self.mods_refresh();
+        self.refresh_nightly_scope();
         if self.ui.page == Page::Packs {
             return self.pack_page(window, cx);
         }
@@ -480,6 +485,7 @@ impl Launcher {
             .get_or_insert_with(|| cx.focus_handle().tab_index(0).tab_stop(true))
             .clone();
         match self.ui.page {
+            Page::Project if self.ui.mods.nightly.open.is_some() => self.nightly_project(cx),
             Page::Project => {
                 let scope = self.mods_page_scope();
                 if self
@@ -507,12 +513,14 @@ impl Launcher {
             Page::Installed => self.installed(window, &have_focus, cx),
             Page::PackFind => self.pack_find(window, &find_focus, cx),
             Page::PackProject => self.pack_project(cx),
+            _ if self.nightly_selected() => self.nightly_discover(window, &find_focus, cx),
             _ => self.discover(window, &find_focus, cx),
         }
     }
 
     /// Opens a mod's page, from Home or anywhere else. Its details are read in a worker.
     pub(crate) fn mods_show_project(&mut self, id: String) {
+        self.ui.mods.nightly.open = None;
         let from = match self.ui.page {
             Page::Project => self
                 .ui
@@ -542,6 +550,7 @@ impl Launcher {
     }
 
     fn mods_show_installed_project(&mut self, row: &Row) {
+        self.ui.mods.nightly.open = None;
         let (id, installed) = match &row.local {
             Some(local) => (row.id.clone(), InstalledProject::Local(local.file.clone())),
             None => (
@@ -658,6 +667,7 @@ impl Launcher {
     /// Discover or Installed, chosen on the header's switch: remembered for the session.
     fn choose_view(&mut self, page: Page) {
         let m = &mut self.ui.mods;
+        m.nightly.open = None;
         match page {
             Page::Discover | Page::Installed => m.last_mods = Some(page),
             _ => m.last_packs = Some(page),
@@ -737,6 +747,7 @@ impl Launcher {
                         open.finish(request, &scope, page);
                     }
                 }
+                Event::Nightly(event) => self.nightly_event(event),
                 Event::Progress(line, f) => m.busy = Some((line, f)),
                 Event::Packs(seq, result) => self.pack_answer(seq, result),
                 Event::PackPage(key, page) => self.pack_page_answer(key, page),
@@ -1150,6 +1161,7 @@ impl Launcher {
         let focused = focus.is_focused(window);
         let packs = matches!(self.ui.page, Page::Packs | Page::PackFind);
         let placeholder: SharedString = match (packs, installed) {
+            (false, false) if self.nightly_selected() => tr("Search Nightly mods"),
             (false, false) => tr("Search mods"),
             (false, true) => tr("Search your mods"),
             (true, false) => match self.ui.mods.packs.scope {
@@ -1218,6 +1230,7 @@ impl Launcher {
                             m.anchor = None;
                         } else {
                             m.filters.text = text;
+                            m.nightly.limit = 0;
                         }
                     }
                     _ => {}

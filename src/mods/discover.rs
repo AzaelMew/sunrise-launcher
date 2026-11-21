@@ -29,6 +29,7 @@ impl Launcher {
             .p(px(24.))
             .text_color(c(palette().text))
             .child(header)
+            .child(self.source_catalogue_bar(cx))
             .children(self.strip(cx));
         let (cards, categories): (Vec<Card>, Vec<String>) = match &self.ui.mods.catalog {
             Catalog::Ready(cards, cats) => (cards.clone(), cats.clone()),
