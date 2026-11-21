@@ -302,6 +302,11 @@ impl Active {
     pub fn base(&self) -> &str {
         &self.base.tag
     }
+
+    pub(crate) fn same_base(&self, other: &Self) -> bool {
+        self.base == other.base && self.variant == other.variant
+    }
+
     pub fn executable(&self) -> &str {
         &self.executable.tag
     }
