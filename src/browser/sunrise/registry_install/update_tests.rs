@@ -215,10 +215,6 @@ fn projects(ids: &[&str]) -> Vec<String> {
     ids.iter().map(|id| (*id).into()).collect()
 }
 
-fn no_world_question(question: &ChangeImpact) -> bool {
-    panic!("unexpected review: {}", question.detail());
-}
-
 fn assert_world_warning(detail: &str, count: usize) {
     let warning = format!(
         concat!(

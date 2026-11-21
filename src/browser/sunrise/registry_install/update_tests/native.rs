@@ -9,6 +9,10 @@ const ARCHIVE: &str = "sunrise-native-mods/native_lantern.smod";
 const EXTRA: &str = "sunrise-mods/extra_mod.smod";
 const SOURCE: &[u8] = b"#[no_mangle]\npub extern \"C\" fn fixture_version() -> u32 { 1 }\n";
 
+fn no_world_question(question: &ChangeImpact) -> bool {
+    panic!("unexpected review: {}", question.detail());
+}
+
 fn release(fixture: &mut Fixture, version: &str, pin: char, source: &[u8]) -> Vec<u8> {
     let tables = format!(
         "[native]\nsunrise='{}'\nmixins='{}'\ngame='{}'\n",
