@@ -155,8 +155,13 @@ impl GameDownload {
         if release.nightly.is_some()
             && crate::signed::title_version(source, &release.name).as_deref() != Some(tag.as_str())
         {
+            let message = if Channel::of(source) == Some(Channel::Dev) {
+                "This Dev build's title ({title}) doesn't name its date and commit as Sunrise signs them, so it can't be checked: it was not installed."
+            } else {
+                "This Nightly's title ({title}) doesn't name its date and commit as Sunrise signs them, so it can't be checked: it was not installed."
+            };
             return Err(crate::i18n::trf(
-                "This Nightly's title ({title}) doesn't name its date and commit as Sunrise signs them, so it can't be checked: it was not installed.",
+                message,
                 &[("title", &format!("{:?}", release.name))],
             ));
         }
@@ -179,7 +184,7 @@ impl GameDownload {
             |channel| {
                 is_build(channel, tag)
                     && match channel {
-                        Channel::Snapshot => self.source == tag,
+                        Channel::Dev => self.source == tag,
                         Channel::Nightly => {
                             self.source == channel.tag()
                                 || tag.get(..channel.tag().len() + 11) == Some(self.source.as_str())
@@ -423,6 +428,34 @@ mod tests {
     use super::*;
 
     const TAG: &str = "26.3-0.1.7";
+
+    #[test]
+    fn a_dev_download_binds_only_to_its_full_tag() {
+        const DEV: &str = "dev-2026-11-21-0c02067";
+        let requested = cfg!(windows).then_some(GameArchitecture::X64);
+        let Some((asset, _)) = game_assets_for(
+            std::env::consts::OS,
+            native_windows_architecture(),
+            std::env::consts::ARCH,
+            requested.unwrap_or_default(),
+        ) else {
+            return;
+        };
+        let mut download = GameDownload {
+            source: DEV.into(),
+            file: asset.into(),
+            size: 1,
+            requested,
+            time: String::new(),
+        };
+        assert!(download.validate(DEV).is_ok());
+        assert!(download.validate("dev-2026-11-21-0c02068").is_err());
+        for source in ["dev", "dev-2026-11-21", "nightly-2026-11-21-0c02067"] {
+            download.source = source.into();
+            assert!(download.validate(DEV).is_err(), "{source}");
+            assert!(download.validate(source).is_err(), "{source}");
+        }
+    }
 
     fn isolated_case(test: &str, run: impl FnOnce()) {
         const ACTOR: &str = "SUNRISE_TEST_ARCHIVE_REPAIR";

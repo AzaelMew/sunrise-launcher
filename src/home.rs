@@ -693,7 +693,18 @@ impl Launcher {
             .and_then(|t| crate::glass_instance::native_base(t));
         let build = version.as_ref().map_or_else(
             || tr("Sunrise").into(),
-            |tag| self.version_label(made_from.as_ref().unwrap_or(tag)),
+            |tag| {
+                let base = made_from.as_ref().unwrap_or(tag);
+                if let Some(date) = backend::dev_date(base) {
+                    let (_, commit) = base.rsplit_once('-').expect("validated Dev tag");
+                    trf(
+                        "Dev {date} · {short}",
+                        &[("date", date), ("short", &commit[..7])],
+                    )
+                } else {
+                    self.version_label(base)
+                }
+            },
         );
         let at = self.ui.home.picker.clone();
         div()

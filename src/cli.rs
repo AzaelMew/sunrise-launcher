@@ -601,8 +601,11 @@ enum Cmd {
         #[arg(long)]
         installed: bool,
     },
-    /// Download and install a release (a tag such as v2026.10.13, or "latest")
-    Install { tag: String },
+    /// Download and install a Sunrise build
+    Install {
+        /// A build tag (e.g. 26.3-0.1.0, nightly, or dev-2026-11-21-0c02067), or "latest" for the profile's channel
+        tag: String,
+    },
     /// Install a local unsigned developer build from a trusted checkout
     #[command(about = tr("Install a local unsigned developer build from a trusted checkout"), after_help = tr("Example: sunrise-launcher developer-install CHECKOUT --program CHECKOUT/target/debug/sunrise-client --trust-unsigned\nThis executes the checkout's build code and an unsigned game with your rights. Trust both before continuing."), long_about = tr("Install a local unsigned developer build. This runs the checkout's build code through cargo run -p xtask -- package. Commit tracked changes and rebuild first. Build sunrise-ctl, sunrise-prepare and sunrise-server beside the game, and compile exporters into the checkout's exporters folder. Native builds use the saved local source commit, including unpublished commits. Select this base explicitly; automatic updates never replace it."))]
     DeveloperInstall(developer_builds::DeveloperInstall),

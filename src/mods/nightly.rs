@@ -92,7 +92,7 @@ impl Launcher {
             .children(self.strip(cx));
         let Some(catalogue) = &self.ui.mods.nightly.catalogue else {
             return page
-                .child(muted(tr("Loading the Nightly list…")))
+                .child(muted(tr("Loading source projects…")))
                 .into_any_element();
         };
         if catalogue.error.is_some() {
@@ -113,7 +113,7 @@ impl Launcher {
                     ),
                     true,
                 ),
-                None => (tr("Nightly list unavailable offline").to_owned(), false),
+                None => (tr("Source list unavailable offline").to_owned(), false),
             };
             page = page.child(
                 card()

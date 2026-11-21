@@ -467,11 +467,22 @@ fn read_local(home: &Path, archive_names: &mut HashMap<String, ArchiveName>) -> 
         .collect()
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum DiscoverCatalogue {
+    Registry,
+    Sources,
+}
+
 impl crate::instances_page::Instances {
-    fn discover_channel(&self, selected: Option<&str>) -> Channel {
-        self.selected(selected)
+    fn discover_catalogue(&self, selected: Option<&str>) -> DiscoverCatalogue {
+        match self
+            .selected(selected)
             .map(|profile| profile.channel)
             .unwrap_or_default()
+        {
+            Channel::Stable => DiscoverCatalogue::Registry,
+            Channel::Nightly | Channel::Dev => DiscoverCatalogue::Sources,
+        }
     }
 }
 
@@ -524,10 +535,10 @@ impl Launcher {
             Page::PackProject => self.pack_project(cx),
             _ => match self
                 .instances
-                .discover_channel(self.settings.instance.as_deref())
+                .discover_catalogue(self.settings.instance.as_deref())
             {
-                Channel::Stable => self.discover(window, &find_focus, cx),
-                Channel::Nightly => self.nightly_discover(window, &find_focus, cx),
+                DiscoverCatalogue::Registry => self.discover(window, &find_focus, cx),
+                DiscoverCatalogue::Sources => self.nightly_discover(window, &find_focus, cx),
             },
         }
     }
@@ -1171,10 +1182,10 @@ impl Launcher {
         let placeholder: SharedString = match (packs, installed) {
             (false, false) => match self
                 .instances
-                .discover_channel(self.settings.instance.as_deref())
+                .discover_catalogue(self.settings.instance.as_deref())
             {
-                Channel::Stable => tr("Search mods"),
-                Channel::Nightly => tr("Search source projects"),
+                DiscoverCatalogue::Registry => tr("Search mods"),
+                DiscoverCatalogue::Sources => tr("Search source projects"),
             },
             (false, true) => tr("Search your mods"),
             (true, false) => match self.ui.mods.packs.scope {
@@ -1337,19 +1348,35 @@ mod enabled_tests {
             channel: Channel::Nightly,
             ..stable.clone()
         };
+        let dev = instances::Instance {
+            id: "testing".into(),
+            channel: Channel::Dev,
+            version: Some("dev-2026-11-21-aaaaaaa".into()),
+            ..nightly.clone()
+        };
         let profiles = crate::instances_page::Instances {
-            list: vec![stable, nightly],
+            list: vec![stable, nightly, dev],
             ..Default::default()
         };
-        assert_eq!(profiles.discover_channel(None), Channel::Stable);
         assert_eq!(
-            profiles.discover_channel(Some("workshop")),
-            Channel::Nightly
+            profiles.discover_catalogue(None),
+            DiscoverCatalogue::Registry
         );
-        assert_eq!(profiles.discover_channel(None), Channel::Stable);
         assert_eq!(
-            crate::instances_page::Instances::default().discover_channel(None),
-            Channel::Nightly,
+            profiles.discover_catalogue(Some("workshop")),
+            DiscoverCatalogue::Sources
+        );
+        assert_eq!(
+            profiles.discover_catalogue(Some("testing")),
+            DiscoverCatalogue::Sources
+        );
+        assert_eq!(
+            profiles.discover_catalogue(None),
+            DiscoverCatalogue::Registry
+        );
+        assert_eq!(
+            crate::instances_page::Instances::default().discover_catalogue(None),
+            DiscoverCatalogue::Sources,
         );
     }
 

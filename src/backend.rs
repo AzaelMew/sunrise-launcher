@@ -10,7 +10,7 @@ use std::process::{Command, Stdio};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 
-/// Where the game's releases, Nightlies, snapshots and mod SDKs are published, and its bugs reported.
+/// Where the game's releases, Nightlies, Dev builds and mod SDKs are published, and its bugs reported.
 pub const GAME_REPO: &str = "sunrise-org/sunrise";
 /// This launcher's own repository: its releases (what it updates itself from) and links.json.
 pub const LAUNCHER_REPO: &str = sunrise_launcher_release_verify::LAUNCHER_REPOSITORY;
@@ -42,11 +42,11 @@ pub struct Release {
     /// When it was published, `HH:MM` UTC (empty if GitHub didn't say).
     pub time: String,
     pub asset: Option<(String, u64)>,
-    /// Listed and installed by hand, never as an update: a GitHub pre-release of the old Alpha
-    /// channel (v0.2.1 on), or a Nightly older than the current one.
+    /// Published on GitHub as a pre-release. The rolling Nightly is normalized separately;
+    /// updates are chosen by the profile's channel, not by this flag alone.
     pub prerelease: bool,
-    /// A Nightly's GitHub tag (`nightly`, or `nightly-<date>` for the last week's): its files and
-    /// signature are there, while `tag` is the version it installs as (`nightly-2026-10-28-0c02067`).
+    /// The GitHub tag for signed pre-release builds: a Nightly's may differ from the installed
+    /// `tag`; a Dev build uses the same exact tag for both.
     /// None for a release.
     pub nightly: Option<String>,
 }
@@ -574,7 +574,7 @@ pub(crate) fn get_unless_missing(url: &str) -> Result<Option<ureq::Response>, St
 }
 
 mod game_tags;
-pub use game_tags::{compare_game_versions, is_game_tag, stable_version};
+pub use game_tags::{compare_game_versions, dev_date, is_game_tag, stable_version};
 
 /// The launcher version in a `vX.Y.Z` tag of [`LAUNCHER_REPO`], or None for any other tag: the verifier's own grammar, so discovery never takes a tag it would refuse.
 pub fn launcher_version(tag: &str) -> Option<&str> {
@@ -705,8 +705,18 @@ pub(crate) fn parse_releases(
     keep: fn(&str) -> bool,
 ) -> Vec<Release> {
     let mut out = parse_releases_from(list, asset, keep, crate::signed::asset_url);
-    out.sort_by(|a, b| compare_game_versions(&b.tag, &a.tag));
-    out
+    out.sort_by(|(a, a_published), (b, b_published)| {
+        compare_game_versions(&b.tag, &a.tag).then_with(|| {
+            // More than one Dev build can be published on a build day. The abbreviated
+            // commit disambiguates them, but does not order them.
+            if dev_date(&a.tag).is_some() {
+                b_published.cmp(a_published)
+            } else {
+                std::cmp::Ordering::Equal
+            }
+        })
+    });
+    out.into_iter().map(|(release, _)| release).collect()
 }
 
 /// This launcher's releases in `list` (from [`LAUNCHER_REPO`]), newest first, with the asset named `asset`, downloaded from there.
@@ -720,16 +730,16 @@ pub(crate) fn parse_launcher_releases(
         is_launcher_tag,
         crate::signed::launcher_asset_url,
     );
-    out.sort_by(|a, b| compare_versions(&b.tag, &a.tag));
-    out
+    out.sort_by(|(a, _), (b, _)| compare_versions(&b.tag, &a.tag));
+    out.into_iter().map(|(release, _)| release).collect()
 }
 
-fn parse_releases_from(
-    list: &serde_json::Value,
+fn parse_releases_from<'a>(
+    list: &'a serde_json::Value,
     asset: Option<&str>,
     keep: fn(&str) -> bool,
     url: fn(&str, &str) -> String,
-) -> Vec<Release> {
+) -> Vec<(Release, &'a str)> {
     let mut out = Vec::new();
     for r in list.as_array().into_iter().flatten() {
         let tag = r["tag_name"].as_str().unwrap_or_default();
@@ -740,25 +750,20 @@ fn parse_releases_from(
             let name = a["name"].as_str()?;
             (Some(name) == asset).then(|| Some((url(tag, name), a["size"].as_u64()?)))?
         });
-        out.push(Release {
-            tag: tag.into(),
-            name: r["name"].as_str().unwrap_or_default().into(),
-            body: r["body"].as_str().unwrap_or_default().replace("\r\n", "\n"),
-            date: r["published_at"]
-                .as_str()
-                .unwrap_or_default()
-                .chars()
-                .take(10)
-                .collect(),
-            time: r["published_at"]
-                .as_str()
-                .and_then(|d| d.get(11..16))
-                .unwrap_or_default()
-                .into(),
-            asset: found,
-            prerelease: r["prerelease"].as_bool().unwrap_or(false),
-            nightly: None,
-        });
+        let published = r["published_at"].as_str().unwrap_or_default();
+        out.push((
+            Release {
+                tag: tag.into(),
+                name: r["name"].as_str().unwrap_or_default().into(),
+                body: r["body"].as_str().unwrap_or_default().replace("\r\n", "\n"),
+                date: published.chars().take(10).collect(),
+                time: published.get(11..16).unwrap_or_default().into(),
+                asset: found,
+                prerelease: r["prerelease"].as_bool().unwrap_or(false),
+                nightly: None,
+            },
+            published,
+        ));
     }
     out
 }
@@ -767,8 +772,8 @@ fn is_launcher_tag(tag: &str) -> bool {
     launcher_version(tag).is_some()
 }
 
-/// Published Sunrise builds: the current Nightly, then Stable builds newest first.
-/// No dated Nightly release, game prerelease or launcher release is offered here.
+/// Published Sunrise builds: the current Nightly, then Dev and Stable builds, newest first
+/// within each channel. Dated Nightlies and launcher releases aren't offered here.
 pub fn releases() -> Result<Vec<Release>, String> {
     Ok(game_releases(&release_list()?))
 }
@@ -796,8 +801,8 @@ fn game_releases_with(
     asset: Option<&str>,
     fallback: Option<&str>,
 ) -> Vec<Release> {
-    use sunrise_launcher_release_verify::NIGHTLY;
-    let keep = |tag: &str| tag == NIGHTLY || is_game_tag(tag);
+    use sunrise_launcher_release_verify::{build_title_version, Channel, NIGHTLY};
+    let keep = |tag: &str| tag == NIGHTLY || dev_date(tag).is_some() || is_game_tag(tag);
     let mut out = parse_releases(list, asset, keep);
     if fallback.is_some() {
         // The same releases in the same order: only the asset looked for differs.
@@ -807,15 +812,24 @@ fn game_releases_with(
             }
         }
     }
-    out.retain(|r| r.tag == NIGHTLY || !r.prerelease);
-    for r in &mut out {
-        if r.tag == NIGHTLY {
+    out.retain_mut(|r| match Channel::of(&r.tag) {
+        Some(Channel::Nightly) => {
             let version = crate::nightly::version_of(r);
             let tag = std::mem::replace(&mut r.tag, version);
             r.prerelease = false;
             r.nightly = Some(tag);
+            true
         }
-    }
+        Some(Channel::Dev) => {
+            if !r.prerelease || build_title_version(Channel::Dev, &r.name).as_ref() != Some(&r.tag)
+            {
+                return false;
+            }
+            r.nightly = Some(r.tag.clone());
+            true
+        }
+        None => !r.prerelease,
+    });
     out
 }
 
@@ -1214,17 +1228,25 @@ pub fn note_play_catalogue(releases: &[Release]) -> Result<(), String> {
 }
 
 fn installed_in(versions: &Path) -> Vec<String> {
-    let mut tags: Vec<String> = fs::read_dir(versions)
+    let mut tags: Vec<_> = fs::read_dir(versions)
         .into_iter()
         .flatten()
         .flatten()
-        .filter(|e| e.path().join(COMPLETE).exists())
-        .filter_map(|e| e.file_name().into_string().ok())
+        .filter_map(|e| {
+            let marker = e.path().join(COMPLETE).metadata().ok()?;
+            let tag = e.file_name().into_string().ok()?;
+            let dev_installed_at = dev_date(&tag).and_then(|_| marker.modified().ok());
+            Some((tag, dev_installed_at))
+        })
         .collect();
-    // Keep the display and inventory order deterministic. Play uses the rolling receipt instead
-    // of comparing same-day hashes.
-    tags.sort_by(|a, b| compare_game_versions(b, a).then_with(|| b.cmp(a)));
-    tags
+    // Without the catalogue, same-day Dev builds follow the last local install, not the largest
+    // commit hash. Rolling Nightly Play uses its receipt independently of the display order.
+    tags.sort_by(|(a, a_installed), (b, b_installed)| {
+        compare_game_versions(b, a)
+            .then_with(|| b_installed.cmp(a_installed))
+            .then_with(|| b.cmp(a))
+    });
+    tags.into_iter().map(|(tag, _)| tag).collect()
 }
 
 /// A small release file (its checksums or their signature), whole; None when it has none.
@@ -3323,7 +3345,10 @@ pub fn release_notes(tag: Option<&str>) -> Result<Release, String> {
             .ok_or_else(|| format!("No Sunrise release is tagged {tag}.")),
         None => releases
             .into_iter()
-            .next()
+            .find(|release| {
+                crate::instances::Channel::of_release(release)
+                    != Some(crate::instances::Channel::Dev)
+            })
             .ok_or_else(|| "No release is published yet.".into()),
     }
 }
@@ -3439,7 +3464,7 @@ pub struct Updates {
 }
 
 /// An update stays on the profile's followed channel. Installed builds on another channel
-/// do not suppress it. A new rolling Nightly built the same day is still an update.
+/// do not suppress it. Another build published on the same day can still be an update.
 pub fn sunrise_update<'a>(
     releases: &'a [Release],
     installed: &[String],
@@ -3451,7 +3476,9 @@ pub fn sunrise_update<'a>(
             let order = compare_game_versions(&newest.tag, tag);
             match channel {
                 crate::instances::Channel::Stable => order.is_gt(),
-                crate::instances::Channel::Nightly => order.is_ge(),
+                crate::instances::Channel::Nightly | crate::instances::Channel::Dev => {
+                    order.is_ge()
+                }
             }
         });
     newer.then_some(newest)
@@ -3523,10 +3550,12 @@ pub use update_selection::select_after_update;
 /// Installs `tag` (or with "latest", the profile's latest release), then updates the selection as
 /// `select_after_update` says when `as_update`, or always selects it otherwise.
 pub fn install_tag(tag: &str, as_update: bool, progress: impl Fn(f32)) -> Result<String, String> {
-    let releases = [releases()?, release_selection::snapshot(tag)?].concat();
-    install_offered_tag(&releases, tag, as_update, |release| {
-        install(release, progress)
-    })
+    let download = |release: &Release| install(release, progress);
+    if let Some(dev) = release_selection::dev(tag)? {
+        // The exact tag is sufficient to install, but not to decide which builds other profiles use.
+        return install_selected_release(&dev, None, as_update, download);
+    }
+    install_offered_tag(&releases()?, tag, as_update, download)
 }
 
 fn install_offered_tag(
@@ -3546,6 +3575,15 @@ fn install_offered_tag(
         release_selection::by_tag(releases, tag)
             .ok_or_else(|| format!("No Sunrise release is tagged {tag}."))?
     };
+    install_selected_release(release, Some(releases), as_update, install)
+}
+
+fn install_selected_release(
+    release: &Release,
+    catalog: Option<&[Release]>,
+    as_update: bool,
+    install: impl FnOnce(&Release) -> Result<InstallOutcome, String>,
+) -> Result<String, String> {
     if release.asset.is_none() {
         return Err(format!("{} has no build for this platform.", release.tag));
     }
@@ -3564,8 +3602,10 @@ fn install_offered_tag(
         settings.selected = Some(release.tag.clone());
         settings.save()?;
     }
-    for (tag, error) in version_storage::prune_old_versions(releases, &release.tag) {
-        eprintln!("Could not remove old game build {tag}: {error}");
+    if let Some(releases) = catalog {
+        for (tag, error) in version_storage::prune_old_versions(releases, &release.tag) {
+            eprintln!("Could not remove old game build {tag}: {error}");
+        }
     }
     Ok(release.tag.clone())
 }
@@ -5599,42 +5639,56 @@ pub fn {f}("
         assert_eq!(game_fallback_for("macos", "aarch64"), None);
     }
 
-    /// A snapshot is never listed, so no update or version list offers it, even once one is
-    /// installed (`release_selection::snapshot` finds one by its tag alone).
     #[test]
-    fn a_snapshot_is_never_offered_or_picked_as_an_update() {
-        const SNAPSHOT: &str = "snapshot-2026-11-13-bbbbbbb";
+    fn dev_catalogue_updates_only_dev_and_orders_same_day_builds_by_publication() {
+        use crate::instances::Channel::{Dev, Nightly, Stable};
+        const OLDER: &str = "dev-2026-11-13-bbbbbbb";
+        const NEWEST: &str = "dev-2026-11-13-aaaaaaa";
+        const NIGHTLY: &str = "nightly-2026-11-12-aaaaaaa";
+        const STABLE: &str = "26.3-0.1.81";
         let zip = "sunrise-windows-x64.zip";
-        let asset = |tag: &str| serde_json::json!([{"name": zip, "browser_download_url": format!("https://example.test/{tag}/{zip}"), "size": 1}]);
+        let files = serde_json::json!([{"name": zip, "size": 1}]);
         let list = serde_json::json!([
-            {"tag_name": SNAPSHOT, "name": "Snapshot 2026-11-13 · bbbbbbb", "prerelease": true,
-             "published_at": "2026-11-13T10:00:00Z", "assets": asset(SNAPSHOT)},
-            {"tag_name": "nightly", "name": "Nightly 2026-11-12 · aaaaaaa", "prerelease": true,
-             "published_at": "2026-11-12T10:00:00Z", "assets": asset("nightly")},
-            {"tag_name": "26.3-0.1.81", "name": "26.3-0.1.81", "published_at": "2026-10-01T10:00:00Z",
-             "assets": asset("26.3-0.1.81")},
+            {"tag_name": OLDER, "name": "Dev 2026-11-13 · bbbbbbb", "prerelease": true,
+             "published_at": "2026-11-13T10:00:01Z", "assets": files},
+            {"tag_name": NEWEST, "name": "Dev 2026-11-13 · aaaaaaa", "prerelease": true,
+             "published_at": "2026-11-13T10:00:02Z", "assets": files},
+            {"tag_name": "dev-2026-11-18-ccccccc", "name": "Dev 2026-11-18 · ccccccc", "assets": files},
+            {"tag_name": "dev-2026-11-19", "name": "Dev 2026-11-19", "prerelease": true, "assets": files},
+            {"tag_name": "dev-2026-11-20-ddddddd", "name": "Dev 2026-11-20 · eeeeeee", "prerelease": true, "assets": files},
+            {"tag_name": "dev-2026-11-21-eeeeeee", "name": "Dev 2026-11-21 · eeeeeee", "prerelease": true, "draft": true, "assets": files},
+            {"tag_name": "dev-2026-11-22-fffffff", "name": "Dev 2026-11-22 · fffffff", "prerelease": true},
+            {"tag_name": "nightly", "name": "Nightly 2026-11-12 · aaaaaaa", "prerelease": true, "assets": files},
+            {"tag_name": STABLE, "assets": files}
         ]);
         let releases = game_releases_with(&list, Some(zip), None);
         assert_eq!(
             releases.iter().map(|r| r.tag.as_str()).collect::<Vec<_>>(),
-            ["nightly-2026-11-12-aaaaaaa", "26.3-0.1.81"]
+            [NIGHTLY, "dev-2026-11-22-fffffff", NEWEST, OLDER, STABLE]
         );
-        for installed in [vec![], vec![SNAPSHOT.to_owned()]] {
-            let update =
-                sunrise_update(&releases, &installed, crate::instances::Channel::Nightly).unwrap();
-            assert_eq!(update.tag, "nightly-2026-11-12-aaaaaaa", "{installed:?}");
-        }
-        // A snapshot the developer selected stays selected when that Nightly installs as an
-        // update, whether it is the only version installed or beside a release.
-        for installed in [
-            vec![SNAPSHOT.to_owned()],
-            vec![SNAPSHOT.to_owned(), "26.3-0.1.81".into()],
-        ] {
-            assert!(
-                !select_after_update(Some(SNAPSHOT), &installed, "nightly-2026-11-12-aaaaaaa"),
-                "{installed:?}"
-            );
-        }
+        let dev = Dev.builds(&releases).next().unwrap();
+        assert_eq!(dev.nightly.as_deref(), Some(NEWEST));
+        assert_eq!(
+            dev.asset.as_ref().unwrap().0,
+            format!("https://github.com/sunrise-org/sunrise/releases/download/{NEWEST}/{zip}")
+        );
+        let installed = [OLDER.to_owned()];
+        assert_eq!(
+            sunrise_update(&releases, &installed, Dev).unwrap().tag,
+            NEWEST
+        );
+        assert_eq!(
+            sunrise_update(&releases, &installed, Nightly).unwrap().tag,
+            NIGHTLY
+        );
+        assert_eq!(
+            sunrise_update(&releases, &installed, Stable).unwrap().tag,
+            STABLE
+        );
+        assert!(sunrise_update(&releases, &[NEWEST.into()], Dev).is_none());
+        assert!(select_after_update(Some(OLDER), &installed, NEWEST));
+        assert!(!select_after_update(Some(OLDER), &installed, NIGHTLY));
+        assert!(!select_after_update(Some(STABLE), &[STABLE.into()], NEWEST));
     }
 
     /// The ARM64 Windows launcher installs the ARM64 build where a release has one, and the x64

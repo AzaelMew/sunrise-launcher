@@ -306,8 +306,7 @@ macOS keeps its native traffic-light controls.
 
 ## Updates
 
-The launcher looks for a newer Nightly when it starts and every 30 minutes while it is open, and
-shows a small "available, Install" line on Play.
+The launcher checks for updates when it starts and every 30 minutes while it is open.
 
 Release lists and commits come from GitHub's API, which allows 60 anonymous calls an hour per
 address: players behind a shared one (a school, a dorm, a carrier's NAT) spend them together.
@@ -319,8 +318,14 @@ pagination links, a full page prompts a request for the next page. When both fai
 answer is used, else the error names both. Release files themselves come from their download
 links, which that limit doesn't cover.
 
-It also updates itself from GitHub releases tagged `launcher@X.Y.Z` (the game's are `nightly`, and
-`vX.Y.Z` before 2026-10-28; neither is ever taken for the other). Before 0.2 they were `launcher-vX.Y.Z` and `vYYYY.MM.DD`:
+Profiles start on Stable. Choose **Dev** in a profile to follow signed Dev builds; the launcher
+can still play a build already installed after the release is pruned. To install a specific Dev
+build, use `sunrise-launcher install dev-<date>-<commit>`. Its title and signature must both name
+the exact build. Dev is distinct from a local unsigned `developer-install`.
+
+The launcher updates itself from `vX.Y.Z` releases in its own repository, separate from the game's
+Stable, Nightly and Dev tags. Older launcher builds used `launcher@X.Y.Z`; before 0.2 they used
+`launcher-vX.Y.Z` and `vYYYY.MM.DD`:
 every 0.2 tag counts as newer than all of those (docs/versioning.md). It downloads the new build, checks it
 against the release's signed `SHA256SUMS`, and says "A new version is available" in the sidebar with
 **Update**: the window closes, the launcher's own file runs again as the installer (`apply-update`,

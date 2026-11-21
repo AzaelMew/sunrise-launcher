@@ -1,12 +1,13 @@
 //! Game releases have their own tags. The launcher's `vX.Y.Z` feed is separate.
 use crate::nightly;
 use std::cmp::Ordering;
-use sunrise_launcher_release_verify::NIGHTLY;
+use sunrise_launcher_release_verify::{is_build, Channel, DEV, NIGHTLY};
 
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
 enum GameOrder<'a> {
     Other,
     Stable(Vec<u64>, [u64; 3]),
+    Dev(&'a str),
     Nightly(&'a str),
     CurrentNightly,
 }
@@ -41,6 +42,11 @@ pub fn is_game_tag(tag: &str) -> bool {
     stable(tag).is_some()
 }
 
+/// The UTC build day from a valid `dev-<date>-<commit>` tag.
+pub fn dev_date(tag: &str) -> Option<&str> {
+    is_build(Channel::Dev, tag).then(|| &tag[DEV.len() + 1..DEV.len() + 11])
+}
+
 /// Catalogue / installed display order, not an update policy. Old installed builds remain
 /// visible but are not interpreted as historical dates or semver.
 pub fn compare_game_versions(a: &str, b: &str) -> Ordering {
@@ -49,6 +55,8 @@ pub fn compare_game_versions(a: &str, b: &str) -> Ordering {
             GameOrder::CurrentNightly
         } else if let Some(date) = nightly::date_of(tag) {
             GameOrder::Nightly(date)
+        } else if let Some(date) = dev_date(tag) {
+            GameOrder::Dev(date)
         } else {
             stable(tag).map_or(GameOrder::Other, |(order, _)| order)
         }

@@ -192,7 +192,7 @@ fn megabytes(bytes: u64) -> String {
 
 /// A build as people read it: using the Nightly’s update name ("the Nov 13 update"),
 /// found from an installed version when the index has no name, else "your Sunrise version"
-/// (an imported build or a snapshot), never a commit. Anything but a build id (a mod's manifest
+/// (an imported build or a Dev build), never a commit. Anything but a build id (a mod's manifest
 /// may say anything) is shown as it is, cut where a character ends.
 pub fn shown(commit: &str, nightly: Option<&str>) -> String {
     let name = |name: &str| crate::nightly::update_name(name).unwrap_or_else(|| name.to_owned());
@@ -941,9 +941,9 @@ fn fetch_into(
 }
 
 /// The build id the game release `version` was made from, as its copy of its SDK's index names
-/// it (signed with the release): kept once read, so it is known offline after that. A Nightly
-/// (`nightly-<date>-<commit>`) is read from its dated release, signed for its own version, and
-/// its index must name a commit its version's starts; a release (`v…`) from its own.
+/// it (signed with the release): kept once read, so it is known offline after that. A Nightly or
+/// Dev index must be signed for the exact build version, and its full commit must match that
+/// version's commit prefix. A stable release's index is signed for its own tag.
 pub(super) fn build_of(version: &str, base: &Base, keys: &[PublicKey]) -> Result<String, Refusal> {
     build_of_in(&root().join("versions"), version, base, keys)
 }
@@ -981,13 +981,12 @@ fn build_of_in(
         }
         _ => {}
     }
-    // A build of a channel (a Nightly, or a snapshot installed by its tag) is read from its
-    // channel only: the version's own prefix, checked whole, names it, never a release's title.
+    // Only the full build version, never the release title, identifies a Nightly or Dev index.
     let channel = sunrise_launcher_release_verify::Channel::of(version)
         .filter(|channel| sunrise_launcher_release_verify::is_build(*channel, version));
     // The Nightly being served is published as `nightly` and renamed `nightly-<date>` when the
     // next one goes out: the current tag is tried first. Its v2 signature binds the exact
-    // version, so whichever tag serves it, only that version's index is accepted. A snapshot is
+    // version, so whichever tag serves it, only that version's index is accepted. A Dev build is
     // served under its version alone.
     let tags: Vec<String> = match (
         channel,
@@ -1037,7 +1036,7 @@ fn build_of_in(
 }
 
 /// The game release `tag`'s copy of its SDK index, checked against the release's signed sums:
-/// for a build of `channel` (a Nightly or a snapshot), signed for exactly `version` on that
+/// for a build of `channel` (a Nightly or a Dev build), signed for exactly `version` on that
 /// channel (`SHA256SUMS.v2.sig`); for a release, for `tag`.
 fn signed_game_index(
     base: &Base,
