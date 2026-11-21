@@ -129,10 +129,9 @@ impl ChangeImpact {
 
     pub fn detail(&self) -> String {
         let mut lines = Vec::new();
-        let action = match &self.change {
+        match &self.change {
             Change::Update(mods) => {
                 lines.push(trf("Update: {mods}.", &[("mods", &mods.join(", "))]));
-                tr("update")
             }
             Change::Remove { removed, disabled } => {
                 lines.push(trf("Remove: {mods}.", &[("mods", &removed.join(", "))]));
@@ -142,18 +141,16 @@ impl ChangeImpact {
                         &[("mods", &disabled.join(", "))],
                     ));
                 }
-                tr("removal")
             }
-        };
+        }
         match self.affected().count() {
             0 => (),
-            1 => lines.push(trf(
-                "This {action} may remove modded content from 1 saved world.",
-                &[("action", action)],
-            )),
+            1 => lines.push(tr(
+                "Blocks and items from the affected mods will be lost when you open 1 saved world without their definitions.",
+            ).into()),
             n => lines.push(trf(
-                "This {action} may remove modded content from {count} saved worlds.",
-                &[("action", action), ("count", &n.to_string())],
+                "Blocks and items from the affected mods will be lost when you open {count} saved worlds without their definitions.",
+                &[("count", &n.to_string())],
             )),
         }
         if self.affected().any(|world| !world.known) {

@@ -384,7 +384,7 @@ fn update_all_asks_once_only_for_destructive_or_unproved_definitions_and_preserv
         "{text}"
     );
     assert_eq!(
-        text.matches("may remove modded content").count(),
+        text.matches("Blocks and items from the affected mods will be lost when you open 3 saved worlds without their definitions.").count(),
         1,
         "{text}"
     );
