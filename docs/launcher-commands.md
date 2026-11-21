@@ -839,7 +839,7 @@ MCP: none: the player's switch.
 
 ## `sunrise-launcher mods update-github`
 
-Check native mods from GitHub, and update those installed from a release with a matching record. Before replacement, Sunrise verifies the installed archive against its recorded GitHub asset and shows its path and SHA-256. A commit install can still be checked with `--check`; to replace it, remove it explicitly and add the new version.
+Check native mods from GitHub, and update those installed from a release with a matching record.
 
     sunrise-launcher mods update-github [ID]
 
@@ -849,17 +849,21 @@ Check native mods from GitHub, and update those installed from a release with a 
 - `--trust-native-code`: Allow native code for this install (remembered; revoke in Settings, Storage)
 - `--confirm-world-loss`: Allow a reviewed update that could remove saved-world content
 
+Before replacement, Sunrise verifies the installed archive against its recorded GitHub asset and shows its path and SHA-256. A commit install can still be checked with --check; to replace it, remove it explicitly and add the new version.
+
 MCP: none: the player's switch.
 
 ## `sunrise-launcher mods remove`
 
-Remove an installed mod archive or a pack the browser installed. For a mod archive, the review names its exact file and SHA-256 before removal, and any mods that need it are turned off rather than deleted.
+Remove an installed mod archive or a pack the browser installed.
 
     sunrise-launcher mods remove <PROJECT>
 
 - `PROJECT`: An installed mod ID or a project the browser installed
 - `--instance`: The profile (default: the selected one)
 - `--confirm-world-loss`: Allow removal even if it could remove content from a saved world
+
+For a mod archive, the review names its exact file and SHA-256 before removal, and any mods that need it are turned off rather than deleted.
 
 MCP: `mods_remove`, needs `confirm: true`.
 

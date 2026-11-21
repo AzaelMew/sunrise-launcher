@@ -509,11 +509,14 @@ enum ModsCmd {
         /// Allow native code for this install (remembered; revoke in Settings, Storage)
         #[arg(long)]
         trust_native_code: bool,
-        /// Allow reviewed mod changes that could remove saved-world content
+        /// Allow a replacement that could remove saved-world content when adding an already installed mod
         #[arg(long)]
         confirm_world_loss: bool,
     },
     /// Check native mods from GitHub, and update those installed from a release with a matching record
+    #[command(
+        after_help = "Before replacement, Sunrise verifies the installed archive against its recorded GitHub asset and shows its path and SHA-256. A commit install can still be checked with --check; to replace it, remove it explicitly and add the new version."
+    )]
     UpdateGithub {
         /// One mod (default: all of them)
         id: Option<String>,
@@ -526,12 +529,16 @@ enum ModsCmd {
         /// Allow native code for this install (remembered; revoke in Settings, Storage)
         #[arg(long)]
         trust_native_code: bool,
-        /// Allow reviewed mod changes that could remove saved-world content
+        /// Allow a reviewed update that could remove saved-world content
         #[arg(long)]
         confirm_world_loss: bool,
     },
     /// Remove an installed mod archive or a pack the browser installed
+    #[command(
+        after_help = "For a mod archive, the review names its exact file and SHA-256 before removal, and any mods that need it are turned off rather than deleted."
+    )]
     Remove {
+        /// An installed mod ID or a project the browser installed
         project: String,
         /// The profile (default: the selected one)
         #[arg(long)]
