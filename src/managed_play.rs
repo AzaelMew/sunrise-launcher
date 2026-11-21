@@ -276,14 +276,33 @@ pub enum HeldSource {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum HeldReason {
-    NoFit { build: String },
-    Unproved { build: String },
+    NoFit {
+        build: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        detail: Option<String>,
+    },
+    Unproved {
+        build: String,
+    },
+    BuildFailed {
+        build: String,
+    },
 }
 
 impl HeldReason {
     pub(crate) fn build(&self) -> &str {
         match self {
-            Self::NoFit { build } | Self::Unproved { build } => build,
+            Self::NoFit { build, .. } | Self::Unproved { build } | Self::BuildFailed { build } => {
+                build
+            }
+        }
+    }
+
+    pub fn detail(&self) -> Option<&str> {
+        match self {
+            Self::NoFit { detail, .. } => detail.as_deref(),
+            Self::BuildFailed { .. } => Some(crate::i18n::tr("Couldn't build on this computer.")),
+            Self::Unproved { .. } => None,
         }
     }
 

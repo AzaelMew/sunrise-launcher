@@ -379,6 +379,7 @@ fn receipt_acknowledgement_recovers_the_exact_pointer_across_all_durable_cuts() 
         },
         true,
         HeldReason::NoFit {
+            detail: None,
             build: BUILD.into(),
         },
     )
@@ -561,6 +562,7 @@ fn home_read_recovers_the_first_switch_receipt_after_a_killed_commit() {
             },
             true,
             HeldReason::NoFit {
+                detail: None,
                 build: BUILD.into(),
             },
         )
@@ -616,6 +618,7 @@ fn home_read_recovers_the_first_switch_receipt_after_a_killed_commit() {
             [(
                 "fireflies",
                 HeldReason::NoFit {
+                    detail: None,
                     build: BUILD.into()
                 }
             )]

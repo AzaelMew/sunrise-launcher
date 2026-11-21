@@ -22,7 +22,8 @@ elif command == "native-build":
         print(version, file=seen)
     library = Path(plan["work"]) / "libnative_lantern.so"
     library.parent.mkdir(parents=True, exist_ok=True)
-    result = subprocess.run(["rustc", "--crate-type=cdylib", "--crate-name=native_lantern",
+    cfg = ["--cfg", "fixture_switch_target"] if (root / "fixture-switch-target").exists() else []
+    result = subprocess.run(["rustc", "--crate-type=cdylib", "--crate-name=native_lantern", *cfg,
                              str(source / "src/lib.rs"), "-o", str(library)], check=False)
     if result.returncode:
         print(json.dumps({"event": "failed", "error": "Could not compile Native Lantern.",

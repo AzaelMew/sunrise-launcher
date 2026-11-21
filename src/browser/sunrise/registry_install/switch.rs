@@ -136,7 +136,7 @@ pub fn switch_build(
         hooks.progress,
     )?;
     let mut selected = None;
-    let mut unproved = BTreeSet::new();
+    let mut omissions = Omissions::default();
     best_survivor_set(&choices, &original.mods, |set| {
         (hooks.progress)(InstallProgress::Preparing);
         let Some(enabled) = enabled_set(&set, &original.mods) else {
@@ -161,7 +161,7 @@ pub fn switch_build(
             &set,
             &enabled,
             hooks.cancellation,
-            &mut unproved,
+            &mut omissions,
         )?
         else {
             return Ok(false);
@@ -183,7 +183,7 @@ pub fn switch_build(
                 &set,
                 &activated,
                 hooks.cancellation,
-                &mut unproved,
+                &mut omissions,
             )?
             .is_none()
             {
@@ -220,13 +220,25 @@ pub fn switch_build(
                     &[("mod", &manifest.name)],
                 )
             })?;
-            let reason = if unproved.contains(id) {
+            let reason = match omissions.known.remove(id) {
+                Some(KnownFailure::NoFit(detail)) => HeldReason::NoFit {
+                    build: tag.into(),
+                    detail: Some(detail),
+                },
+                Some(KnownFailure::BuildFailed) => HeldReason::BuildFailed { build: tag.into() },
+                None if omissions.unproved.contains(id) => {
+                    HeldReason::Unproved { build: tag.into() }
+                }
+                None => HeldReason::NoFit {
+                    build: tag.into(),
+                    detail: None,
+                },
+            };
+            if reason.unproved() {
                 unknown.push(manifest.name.clone());
-                HeldReason::Unproved { build: tag.into() }
             } else {
                 held.push(manifest.name.clone());
-                HeldReason::NoFit { build: tag.into() }
-            };
+            }
             holds.push(Held::new(
                 id.clone(),
                 manifest.name.replace(char::is_control, " "),
@@ -294,6 +306,7 @@ pub fn switch_build(
 struct Original {
     seen: SeenPackage,
     source: HeldSource,
+    built_from_source: bool,
     on: bool,
     held: bool,
     withheld: bool,
@@ -411,6 +424,7 @@ impl<'a> Originals<'a> {
                 Original {
                     seen,
                     source,
+                    built_from_source,
                     on,
                     held: held.is_some(),
                     withheld: revoked.is_some_and(|(_, authorized)| !authorized),
@@ -433,6 +447,7 @@ struct Package {
     digest: Option<String>,
     replacement: Option<(PathBuf, installed::Entry)>,
     unlisted: bool,
+    built_from_source: bool,
 }
 
 type Choices = BTreeMap<String, Vec<Package>>;
@@ -499,6 +514,7 @@ fn choices(
                     digest: old.seen.digest.clone(),
                     replacement: None,
                     unlisted: pinned,
+                    built_from_source: old.built_from_source,
                 });
             }
         } else if let Some(project) = catalogue.project(&id) {
@@ -593,6 +609,7 @@ fn choices(
                     digest: Some(version.file.sha256.clone()),
                     replacement,
                     unlisted: false,
+                    built_from_source: false,
                 });
             }
         } else if old.is_some() {
@@ -817,36 +834,64 @@ fn apply(
     Ok(())
 }
 
+/// Evidence accumulated while searching. A specific result about exact source bytes
+/// takes precedence over an earlier trial that could not prove them.
+#[derive(Default)]
+struct Omissions {
+    known: BTreeMap<String, KnownFailure>,
+    unproved: BTreeSet<String>,
+}
+
+enum KnownFailure {
+    NoFit(String),
+    BuildFailed,
+}
+
 fn exact_image(
     result: Result<CandidateImage, native_mods::Failed>,
     set: &Set<'_>,
     enabled: &BTreeSet<&str>,
     cancellation: &native_mods::Cancellation,
-    unproved: &mut BTreeSet<String>,
+    omissions: &mut Omissions,
 ) -> Result<Option<CandidateImage>, String> {
+    use native_mods::{Failed, Why};
     match result {
         Ok(image) => Ok(Some(image)),
-        Err(native_mods::Failed::Mods {
-            left,
-            compiling: false,
-            ..
+        Err(Failed::Mods {
+            left, compiling, ..
         }) => {
             cancellation.check()?;
             let mut unfit = BTreeSet::new();
             let mut unknown = BTreeSet::new();
-            for omission in &left {
-                let (id, _) = set
+            for omission in left {
+                let (&id, package) = set
                     .get_key_value(omission.id.as_str())
                     .filter(|(id, p)| {
                         enabled.contains(*id) && p.manifest.version == omission.version
                     })
                     .ok_or_else(unproved_switch)?;
-                match &omission.why {
-                    native_mods::Why::Unfit(_) => unfit.insert(*id),
-                    native_mods::Why::Unproved(_) => unknown.insert(*id),
-                    native_mods::Why::Needs(_) => continue,
+                match omission.why {
+                    Why::Unfit(detail) if !compiling => {
+                        unfit.insert(id);
+                        if package.built_from_source {
+                            omissions
+                                .known
+                                .insert(id.into(), KnownFailure::NoFit(detail));
+                        }
+                    }
+                    Why::Unproved(_) if !compiling => {
+                        unknown.insert(id);
+                    }
+                    Why::DidNotBuild if compiling && package.built_from_source => {
+                        unfit.insert(id);
+                        omissions
+                            .known
+                            .entry(id.into())
+                            .or_insert(KnownFailure::BuildFailed);
+                    }
+                    Why::Needs(_) => (),
                     _ => return Err(unproved_switch()),
-                };
+                }
             }
             if unfit.is_empty() && unknown.is_empty() {
                 return Err(unproved_switch());
@@ -856,18 +901,27 @@ fn exact_image(
             // and all of its causes. A known incompatibility alone defeats that trial.
             spread_to_dependents(set, &mut unfit);
             spread_to_dependents(set, &mut unknown);
-            unproved.extend(unknown.difference(&unfit).map(|&id| id.to_owned()));
+            omissions
+                .unproved
+                .extend(unknown.difference(&unfit).map(|&id| id.to_owned()));
             Ok(None)
         }
-        Err(native_mods::Failed::NoConsent) => {
+        Err(error @ (Failed::NoConsent | Failed::Sdk(_))) => {
             cancellation.check()?;
-            // The trial could not check any native input. Only a wholly pinned local
-            // input set can be left off without attempting a listed mod's exact build.
+            // A global refusal proves no native input. As with lost native consent,
+            // do not omit a listed mod without trying its exact build. Only source
+            // receipts get the SDK fallback; other native paths keep their old rules.
+            let no_consent = matches!(error, Failed::NoConsent);
             let mut unknown = BTreeSet::new();
             for (&id, p) in set {
                 if enabled.contains(id) && p.manifest.native.is_some() {
-                    if !p.unlisted {
-                        return Err(native_mods::Failed::NoConsent.into());
+                    let may_hold = if no_consent {
+                        p.unlisted
+                    } else {
+                        p.built_from_source
+                    };
+                    if !may_hold {
+                        return Err(error.into());
                     }
                     unknown.insert(id);
                 }
@@ -876,7 +930,9 @@ fn exact_image(
                 return Err(unproved_switch());
             }
             spread_to_dependents(set, &mut unknown);
-            unproved.extend(unknown.into_iter().map(str::to_owned));
+            omissions
+                .unproved
+                .extend(unknown.into_iter().map(str::to_owned));
             Ok(None)
         }
         Err(error) => Err(error.into()),

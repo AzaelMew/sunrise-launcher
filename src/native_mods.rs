@@ -497,8 +497,11 @@ fn mismatch(mods: &[Bundle], revision: &str) -> Option<String> {
     })
 }
 
-fn build_revision(base: &str, built_on: Option<&About>) -> Result<String, String> {
-    built_on.map_or_else(|| revision_of(base), |about| Ok(about.sunrise.clone()))
+fn build_revision(base: &str, built_on: Option<&About>) -> Result<String, Failed> {
+    built_on.map_or_else(
+        || revision_evidence(base),
+        |about| Ok(about.sunrise.clone()),
+    )
 }
 
 fn mismatch_error(list: &str) -> String {
@@ -509,15 +512,18 @@ fn mismatch_error(list: &str) -> String {
 /// a developer install's checkout, else what the release's signed copy of its SDK's index names
 /// ([`sdk_cache::build_of`]).
 pub fn revision_of(version: &str) -> Result<String, String> {
+    revision_evidence(version).map_err(String::from)
+}
+
+fn revision_evidence(version: &str) -> Result<String, Failed> {
     if crate::developer_install::is_developer(version) {
-        return crate::developer_install::revision(version);
+        return Ok(crate::developer_install::revision(version)?);
     }
-    sdk_cache::build_of(
+    Ok(sdk_cache::build_of(
         version,
         &sdk_cache::Base::from_env(),
         &sunrise_launcher_release_verify::sdk_keys_for(backend::GAME_REPO),
-    )
-    .map_err(|refusal| refusal.to_string())
+    )?)
 }
 
 /// What a native build was made from: its `native-mods.json`.
@@ -983,7 +989,21 @@ pub enum Failed {
     Worlds(Box<AtStake>),
     /// Transfer or preparation of the pinned compiler failed before mod code ran.
     Tools(String),
+    /// The SDK evidence isn't available or was refused, not a local cache I/O error.
+    Sdk(sdk_cache::Refusal),
     Other(String),
+}
+
+impl From<sdk_cache::Refusal> for Failed {
+    fn from(refusal: sdk_cache::Refusal) -> Self {
+        match refusal {
+            refusal @ sdk_cache::Refusal::Cache(_) => Self::Other(refusal.to_string()),
+            refusal => {
+                log_sdk_refusal(&refusal);
+                Self::Sdk(refusal)
+            }
+        }
+    }
 }
 
 impl From<String> for Failed {
@@ -996,6 +1016,7 @@ impl std::fmt::Display for Failed {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Mods { error, .. } | Self::Tools(error) | Self::Other(error) => f.write_str(error),
+            Self::Sdk(refusal) => std::fmt::Display::fmt(refusal, f),
             Self::Worlds(stake) => f.write_str(&stake.text),
             Self::Nothing => f.write_str(no_mods_to_build()),
             Self::NoConsent => f.write_str(tr("Native mods run inside your game with your rights; mixins compile code into the game. Allow native mods in Settings, Storage, or pass --trust-native-code.")),
@@ -1088,7 +1109,10 @@ fn check_all(
             cancellation,
             staging.map(crate::profile_txn::Staging::handoff),
         )
-        .map_err(refused)?;
+        .map_err(|failure| match failure {
+            tool::CheckFailure::Local(error) => sdk_cache::Refusal::Cache(error),
+            tool::CheckFailure::Refused(error) => refused(error),
+        })?;
         let (checks, needed) = checks_from(checked, ids, &supplied).map_err(refused)?;
         if needed.is_empty() {
             return Ok(checks);
@@ -1159,13 +1183,17 @@ fn checks_from(
 /// A build's refusal of the mod tools, as the player reads it. A refused signature is short on
 /// screen, so its reason goes to the build log, where a report can quote it.
 fn refused(refusal: sdk_cache::Refusal) -> String {
-    if let sdk_cache::Refusal::Unsigned { build, why } = &refusal {
+    log_sdk_refusal(&refusal);
+    refusal.to_string()
+}
+
+fn log_sdk_refusal(refusal: &sdk_cache::Refusal) {
+    if let sdk_cache::Refusal::Unsigned { build, why } = refusal {
         let _ = append_log(&trf(
             "The mod tools for {build} were refused: {why}",
             &[("build", build), ("why", why)],
         ));
     }
-    refusal.to_string()
 }
 
 /// Never switch a mod off silently in a game folder with worlds (SDK design §10.1, "Worlds"):
@@ -1435,7 +1463,7 @@ fn pipeline(
         }
         None
     } else {
-        Some(sdk_cache::index(&sdk_base, &revision, &keys).map_err(refused)?)
+        Some(sdk_cache::index(&sdk_base, &revision, &keys)?)
     };
     let mixins_pins = mixins::pins(&mods, sdk.as_ref(), &sdk_base, local_sdk.as_deref())?;
     // Give older SDK tools the exact pin they require, and hash the same inputs we build.
@@ -1458,8 +1486,7 @@ fn pipeline(
             &sdk_base,
             cancellation,
             options.staging,
-        )
-        .map_err(|r| r.to_string())?;
+        )?;
         if let Some((id, why)) = checks.refusals.first() {
             return Err(refusal_text(id, why).into());
         }
@@ -1636,7 +1663,7 @@ fn pipeline(
                 let sdk = match sdk {
                     Some(sdk) => sdk,
                     None => {
-                        fetched = sdk_cache::index(&sdk_base, &revision, &keys).map_err(refused)?;
+                        fetched = sdk_cache::index(&sdk_base, &revision, &keys)?;
                         &fetched
                     }
                 };
@@ -1655,7 +1682,7 @@ fn pipeline(
                         },
                     })
                 };
-                let program = sdk_cache::tool(sdk, &sdk_base, &fetched).map_err(refused)?;
+                let program = sdk_cache::tool(sdk, &sdk_base, &fetched)?;
                 // A developer base using its commit's SDK release asks its route here: no fit was checked.
                 let route = match route {
                     Some(route) => route,
@@ -1667,8 +1694,7 @@ fn pipeline(
                             &sdk_base,
                             cancellation,
                             options.staging,
-                        )
-                        .map_err(refused)?;
+                        )?;
                         if let Some((id, why)) = checks.refusals.first() {
                             return Err(refusal_text(id, why).into());
                         }
@@ -1682,8 +1708,7 @@ fn pipeline(
                     )
                 })?;
                 let slices =
-                    sdk_cache::slices(lease, sdk, &sdk_base, route.name(), target, &fetched)
-                        .map_err(refused)?;
+                    sdk_cache::slices(lease, sdk, &sdk_base, route.name(), target, &fetched)?;
                 (slices, program, Some(route))
             }
         };
@@ -1938,6 +1963,7 @@ fn isolated(
             }
             Err(Failed::NoConsent) => return Err(Failed::NoConsent),
             Err(Failed::Tools(error)) => return Err(Failed::Tools(error)),
+            Err(Failed::Sdk(refusal)) => return Err(said(&skip, refusal.to_string())),
             Err(Failed::Worlds(stake)) => return Err(Failed::Worlds(stake)),
             Err(Failed::Other(error)) if error == CANCELLED => return Err(Failed::Other(error)),
             Err(Failed::Other(error)) => return Err(said(&skip, error)),

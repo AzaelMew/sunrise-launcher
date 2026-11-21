@@ -996,7 +996,10 @@ impl Launcher {
                 .as_ref()
                 .and_then(|managed| managed.active.holds().find(|held| held.id() == row.id));
             if let Some(held) = held {
-                if let sunrise_launcher::managed_play::HeldReason::NoFit { build } = held.reason() {
+                if let sunrise_launcher::managed_play::HeldReason::NoFit { build, .. }
+                | sunrise_launcher::managed_play::HeldReason::BuildFailed { build } =
+                    held.reason()
+                {
                     row.held_for = Some(crate::sheets::build_name(build));
                 }
                 row.on = false;
@@ -1391,6 +1394,7 @@ mod installed_refresh_tests {
                 switch_held: std::collections::HashMap::from([(
                     "ruby".into(),
                     sunrise_launcher::managed_play::HeldReason::NoFit {
+                        detail: None,
                         build: "fixture".into(),
                     },
                 )]),

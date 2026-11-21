@@ -1264,7 +1264,22 @@ pub(crate) fn download(
         n => n,
     };
     let name = url.rsplit('/').next().unwrap_or(url);
-    save_checked(response.into_reader(), size, name, sha256, to, progress)
+    save_checked(response.into_reader(), size, name, sha256, to, progress).map_err(String::from)
+}
+
+#[derive(Debug)]
+pub(crate) enum SaveCheckedError {
+    Local(std::io::Error),
+    Download(String),
+}
+
+impl From<SaveCheckedError> for String {
+    fn from(error: SaveCheckedError) -> Self {
+        match error {
+            SaveCheckedError::Local(error) => error.to_string(),
+            SaveCheckedError::Download(error) => error,
+        }
+    }
 }
 
 /// Saves `reader` as `to` once all of it has arrived and its SHA-256 is `sha256`: until then it
@@ -1276,12 +1291,12 @@ pub(crate) fn save_checked(
     sha256: &str,
     to: &Path,
     progress: &impl Fn(f32),
-) -> Result<(), String> {
+) -> Result<(), SaveCheckedError> {
     let mut temp = to.as_os_str().to_owned();
     temp.push(format!(".part-{}", std::process::id()));
     let temp = PathBuf::from(temp);
     let saved = write_checked(reader, size, name, sha256, &temp, progress)
-        .and_then(|()| fs::rename(&temp, to).map_err(|e| e.to_string()));
+        .and_then(|()| fs::rename(&temp, to).map_err(SaveCheckedError::Local));
     if saved.is_err() {
         let _ = fs::remove_file(&temp);
     }
@@ -1295,23 +1310,24 @@ fn write_checked(
     sha256: &str,
     to: &Path,
     progress: &impl Fn(f32),
-) -> Result<(), String> {
-    let mut file = fs::File::create(to).map_err(|e| e.to_string())?;
+) -> Result<(), SaveCheckedError> {
+    let mut file = fs::File::create(to).map_err(SaveCheckedError::Local)?;
     let mut hash = sunrise_launcher_release_verify::Sha256::default();
     let (mut done, mut buf) = (0u64, vec![0u8; 1 << 16]);
     loop {
         let n = reader
             .read(&mut buf)
-            .map_err(|e| format!("Download interrupted: {e}"))?;
+            .map_err(|e| SaveCheckedError::Download(format!("Download interrupted: {e}")))?;
         if n == 0 {
             break;
         }
         hash.update(&buf[..n]);
-        file.write_all(&buf[..n]).map_err(|e| e.to_string())?;
+        file.write_all(&buf[..n]).map_err(SaveCheckedError::Local)?;
         done += n as u64;
         progress((done as f32 / size.max(1) as f32).min(1.0) * 0.9);
     }
     sunrise_launcher_release_verify::check(name, sha256, &hash.hex())
+        .map_err(SaveCheckedError::Download)
 }
 
 fn unpack(archive: &Path, url: &str, to: &Path) -> Result<(), String> {

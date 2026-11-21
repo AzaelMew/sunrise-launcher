@@ -5,6 +5,7 @@ use sha2::{Digest, Sha256};
 use std::os::unix::fs::PermissionsExt;
 
 mod mixed;
+mod switch;
 
 const ID: &str = "native_lantern";
 const ARCHIVE: &str = "sunrise-native-mods/native_lantern.smod";
@@ -138,6 +139,7 @@ fn hold_updates(fixture: &mut Fixture, succeeds: HoldCase, refusals: &[HoldCase]
             },
             case != HoldCase::PriorOff,
             HeldReason::NoFit {
+                detail: None,
                 build: if case == HoldCase::Base {
                     "v0.1.8"
                 } else {
@@ -267,6 +269,7 @@ fn a_proved_unfit_prior_off_update_leaves_the_hold_and_hides_only_that_offer() {
                 },
                 false,
                 HeldReason::NoFit {
+                    detail: None,
                     build: BUILD.into(),
                 },
             )
@@ -295,7 +298,7 @@ fn a_proved_unfit_prior_off_update_leaves_the_hold_and_hides_only_that_offer() {
 
 const SIGNED_BUILD: &str = "26.3-0.1.7";
 
-fn no_list_sdk(fixture: &Fixture) -> PathBuf {
+fn sdk_check_fixture(fixture: &Fixture, pin: char, verdict: Value) -> PathBuf {
     use sunrise_launcher_release_verify::{sha256_hex, sums_file, SigningKey, SIGNATURE, SUMS};
     use sunrise_launcher_sdk::{self as sdk, Asset, Kind, Side};
 
@@ -303,7 +306,7 @@ fn no_list_sdk(fixture: &Fixture) -> PathBuf {
         include_bytes!("../../../../../tests/ordinary_play/install/native-check-tool.tar.xz");
     let target = crate::rust_toolchain::host().unwrap().target;
     let asset = Asset::name(Kind::Tool, target, Side::Client);
-    let commit = "a".repeat(40);
+    let commit = pin.to_string().repeat(40);
     let sdk_tag = format!("sdk-{commit}");
     let base = fixture.root.join("signed-sdk");
     let index = json!({
@@ -335,7 +338,10 @@ fn no_list_sdk(fixture: &Fixture) -> PathBuf {
     std::env::set_var("SUNRISE_SDK_BASE", base);
     std::env::set_var("SUNRISE_SDK_TRUSTED_KEY", signer.public_base64());
     std::env::set_var("FIXTURE_NATIVE_CHECK_REQUEST", &request);
-    std::env::set_var("FIXTURE_NATIVE_CHECK_REPLY", json!({"contract": 2, "route": null, "mods": [{"id": ID, "verdict": {"kind": "no-list", "made_for": "b".repeat(40), "why": "newer-schema"}}]}).to_string());
+    std::env::set_var(
+        "FIXTURE_NATIVE_CHECK_REPLY",
+        json!({"contract": 2, "route": null, "mods": [{"id": ID, "verdict": verdict}]}).to_string(),
+    );
     request
 }
 
@@ -378,7 +384,11 @@ fn bulk_update_refuses_no_list_without_excluding_that_offer() {
             release(&mut fixture, "1.1.0", 'b', SOURCE);
             fixture.release("extra_mod", "1.2.0", "", &[]);
 
-            let request = no_list_sdk(&fixture);
+            let request = sdk_check_fixture(
+                &fixture,
+                'a',
+                json!({"kind": "no-list", "made_for": "b".repeat(40), "why": "newer-schema"}),
+            );
             let before = fixture.snapshot(&[ARCHIVE, EXTRA]);
             let unknown = fixture
                 .apply_on(
@@ -836,6 +846,7 @@ fn pinned_source_preflight_refusal_cancel_and_failed_update_keep_the_profile() {
                     },
                     true,
                     HeldReason::NoFit {
+                        detail: None,
                         build: BUILD.into(),
                     },
                 )

@@ -696,13 +696,20 @@ pub(super) struct CheckedMod {
     pub needs: Option<Need>,
 }
 
+/// Separate protocol refusals from local process or profile-handoff failures.
+#[derive(Debug)]
+pub(super) enum CheckFailure {
+    Local(String),
+    Refused(String),
+}
+
 /// Asks the tool at `program` how the mods `plan` names stand against its build (`native-check`).
 pub(super) fn check(
     program: &Path,
     plan: &Value,
     cancellation: &Cancellation,
     profile: Option<ProfileHandoff<'_>>,
-) -> Result<Checked, String> {
+) -> Result<Checked, CheckFailure> {
     let value = ask_fenced(
         crate::process::command(program),
         "native-check",
@@ -711,10 +718,10 @@ pub(super) fn check(
         profile,
     )?;
     serde_json::from_value(value).map_err(|e| {
-        trf(
+        CheckFailure::Refused(trf(
             "The native build tool's answer couldn't be read: {error}. Update the launcher.",
             &[("error", &e.to_string())],
-        )
+        ))
     })
 }
 
@@ -725,7 +732,9 @@ pub(super) fn ask(
     plan: &Value,
     cancellation: &Cancellation,
 ) -> Result<Value, String> {
-    ask_fenced(command, name, plan, cancellation, None)
+    ask_fenced(command, name, plan, cancellation, None).map_err(|error| match error {
+        CheckFailure::Local(text) | CheckFailure::Refused(text) => text,
+    })
 }
 
 fn ask_fenced(
@@ -734,22 +743,24 @@ fn ask_fenced(
     plan: &Value,
     cancellation: &Cancellation,
     profile: Option<ProfileHandoff<'_>>,
-) -> Result<Value, String> {
+) -> Result<Value, CheckFailure> {
     let mut plan = plan.clone();
     plan["contract"] = CONTRACT.into();
     command
         .arg(name)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped());
-    let (mut child, errors) = start(command, cancellation, false, profile)?;
+    let (mut child, errors) =
+        start(command, cancellation, false, profile).map_err(CheckFailure::Local)?;
+    let local = |error| CheckFailure::Local(unrun(error));
     let mut input = child.child().stdin.take().expect("piped");
-    let sent = writeln!(input, "{plan}").map_err(unrun);
+    let sent = writeln!(input, "{plan}").map_err(local);
     drop(input);
     let mut output = Output::new(child.child().stdout.take().expect("piped"));
-    let reply_line = (|| -> Result<Option<String>, String> {
+    let reply_line = (|| {
         let mut first = None;
         let mut extra = false;
-        while let Some(line) = output.line(&mut child, cancellation).map_err(unrun)? {
+        while let Some(line) = output.line(&mut child, cancellation).map_err(local)? {
             if !line.trim().is_empty() {
                 if first.is_some() {
                     extra = true;
@@ -759,13 +770,13 @@ fn ask_fenced(
             }
         }
         if extra {
-            return Err(invalid_check_reply());
+            return Err(CheckFailure::Refused(invalid_check_reply()));
         }
         Ok(first)
     })();
-    let status = child.wait().map_err(unrun);
+    let status = child.wait().map_err(local);
     let errors = finish(cancellation, errors);
-    cancellation.check()?;
+    cancellation.check().map_err(CheckFailure::Local)?;
     sent?;
     let result = reply_line.and_then(|line| {
         let status = status?;
@@ -775,6 +786,7 @@ fn ask_fenced(
             (None, code) => Err(ended(code)),
             (Some(_), _) => Err(invalid_check_reply()),
         }
+        .map_err(CheckFailure::Refused)
     });
     if result.is_err() {
         log_errors(&errors);

@@ -840,10 +840,16 @@ fn a_check_by_a_tool_on_another_contract_or_from_before_the_command_says_which_t
     let plan = serde_json::json!({"contract": CONTRACT});
     fake(&dir, &["ERRORS", "EXIT3"]);
     let newer = check(&dir.join("tool"), &plan, &Cancellation::default(), None).unwrap_err();
-    assert!(newer.contains("update the launcher"), "{newer}");
+    assert!(
+        matches!(&newer, CheckFailure::Refused(text) if text.contains("update the launcher")),
+        "{newer:?}"
+    );
     fake(&dir, &["ERRORS"]);
     let older = check(&dir.join("tool"), &plan, &Cancellation::default(), None).unwrap_err();
-    assert!(older.contains("install a newer version"), "{older}");
+    assert!(
+        matches!(&older, CheckFailure::Refused(text) if text.contains("install a newer version")),
+        "{older:?}"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 

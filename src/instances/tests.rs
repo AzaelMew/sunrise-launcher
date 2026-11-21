@@ -1012,6 +1012,7 @@ fn a_kill_after_copy_visibility_keeps_the_exact_copy_and_recovers_its_choices() 
                 },
                 true,
                 HeldReason::NoFit {
+                    detail: None,
                     build: BUILD.into(),
                 },
             )

@@ -176,7 +176,10 @@ fn check_projects(
             build: sdk.shown(),
             why,
         };
-        let pins = mixins::pins(mods, Some(sdk), base, None).map_err(refused)?;
+        let pins = mixins::pins(mods, Some(sdk), base, None).map_err(|error| match error {
+            Failed::Sdk(refusal) => refusal,
+            other => refused(other.to_string()),
+        })?;
         scratch = mixins::check_inputs(mods, &pins).map_err(refused)?;
         scratch.path()
     } else {

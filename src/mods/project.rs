@@ -712,9 +712,9 @@ impl Launcher {
                 .snapshot
                 .as_ref()
                 .and_then(|snapshot| snapshot.switch_held.get(&row.id))
-                .map(|hold| hold.label());
-            let status = if let Some(label) = hold {
-                Some(note(label))
+                .cloned();
+            let status = if let Some(hold) = &hold {
+                Some(note(hold.label()))
             } else if cells.popover {
                 row.unfit
                     .clone()
@@ -789,6 +789,11 @@ impl Launcher {
                 .children(problem_line.map(note))
                 .children(problem_log.map(|log| self.nightly_log_button(&row.title, log, cx)))
                 .children(status)
+                .children(
+                    hold.as_ref()
+                        .and_then(|reason| reason.detail())
+                        .map(|detail| note(detail.to_owned())),
+                )
                 .child(
                     div()
                         .flex()
