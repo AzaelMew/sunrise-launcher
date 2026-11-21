@@ -8,12 +8,11 @@ pub enum Msg {
     Progress(String, f32),
     Installed(String, Result<InstallOutcome, String>),
     NightlyReceiptRetried(Arc<NightlyReceiptWarning>, Result<(), String>),
-    /// A version's files are gone (or could not be deleted).
-    Removed(String, Result<(), String>),
+    /// A Storage removal finished; any failed removal names its build.
+    Removed(Vec<(String, String)>),
     /// Automatic cleanup finished; any failed removal names its build.
     Pruned(Vec<(String, String)>),
-    /// What each installed version takes on disk (`disk_use`).
-    DiskUse(Vec<(String, u64)>),
+    BuildInventory(u64, Vec<version_storage::Build>),
     Line(Job, String),
     Exit(Job, Result<(), String>),
     /// A relayed game acknowledged creation, but its actual exit was not observed.
@@ -84,6 +83,6 @@ pub enum Msg {
     NativeRegistryConsent(crate::native_mods::Consent, std::sync::mpsc::Sender<bool>),
     /// The native-mods build ended: the version built, or why not.
     Native(Result<String, crate::native_mods::Failed>),
-    /// An imported game build is installed (`build_import::import`): its version, or why not.
+    /// An imported game build is installed (`build_import::install`): its version, or why not.
     Imported(Result<String, String>),
 }

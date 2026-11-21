@@ -81,6 +81,7 @@ mod shell;
 mod slider;
 mod status_strip;
 mod sticky;
+mod storage_builds;
 mod switch_page;
 mod theme;
 mod themes_page;
@@ -201,8 +202,6 @@ struct Launcher {
     mods_sticky: sticky::Sticky,
     /// Settings' categories, kept in view beside the section.
     settings_sticky: sticky::Sticky,
-    /// The rows of the page's long list (Versions) last drawn.
-    long_list: cull::Cull,
     updates: Updates,
     checked: Option<Instant>,
     checking_updates: bool,
@@ -210,7 +209,7 @@ struct Launcher {
     /// Home's launcher-update notice was dismissed: it stays away until the launcher restarts.
     launcher_notice_hidden: bool,
     self_update: SelfUpdate,
-    /// An explicit same-build repair in Versions must not select or prune a build.
+    /// An explicit same-build repair must not select or prune a build.
     architecture_reinstall: Option<String>,
     /// The Sunrise version being installed because an instance was made or saved to play it: it
     /// becomes the launcher's version only when the launcher has none.
@@ -223,13 +222,9 @@ struct Launcher {
     installed: Vec<String>,
     known_nightly: Option<String>,
     installing: Option<(String, f32)>,
-    /// The versions being deleted on background threads. Each is already out of `installed`, so
-    /// nothing can launch, select or prepare it, and its row can't install or remove it again.
-    /// More than one may run at once: a row's Remove stays usable while another version goes.
+    /// The confirmed builds whose removal is in progress.
     removing: Vec<String>,
-    /// What each installed version takes on disk, measured on a thread for the Versions page, and
-    /// the installed list it was measured for.
-    disk: Vec<(String, u64)>,
+    storage_builds: storage_builds::View,
     storage_report: Option<storage::Report>,
     storage_pending: bool,
     /// A Clear the player still has to confirm: `Some(None)` is Clear all.
@@ -248,10 +243,8 @@ struct Launcher {
     /// Allow resumes it, not a plain build.
     native_consent_build: Option<(Option<String>, bool)>,
     install_error: Option<(String, String)>,
-    /// Import a game build (`build_import`, on the Versions page): whether one is being copied in,
-    /// and why the last one failed.
+    /// Storage is copying in a local game build.
     importing_build: bool,
-    import_error: Option<String>,
     /// Native mods (`native_mods`, on the Mods page): the build's step while it runs, why it
     /// failed, and the warning before a build while it is open, with the mods it names.
     native_step: Option<String>,
@@ -534,20 +527,6 @@ mod tests {
         assert!(hit.iter().any(|b| b.action().partial_eq(&Quit)));
         let (hit, _) = keymap.bindings_for_input(&key("cmd-w"), &[]);
         assert!(hit.iter().any(|b| b.action().partial_eq(&CloseWindow)));
-    }
-
-    #[test]
-    fn the_selection_survives_a_removal_or_moves_to_the_newest_left() {
-        let left = ["v0.2.49".to_string(), "v0.2.48".to_string()];
-        let pick =
-            |saved: Option<&str>| super::selection_after_removal(&left, saved.map(String::from));
-        assert_eq!(pick(Some("v0.2.48")).as_deref(), Some("v0.2.48"));
-        assert_eq!(pick(Some("v0.2.47")).as_deref(), Some("v0.2.49"));
-        assert_eq!(pick(None).as_deref(), Some("v0.2.49"));
-        assert_eq!(
-            super::selection_after_removal(&[], Some("v0.2.47".into())),
-            None
-        );
     }
 
     /// An owner's Play works on a version not prepared yet: it prepares it (downloading

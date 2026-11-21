@@ -12,10 +12,7 @@ use std::{
     rc::Rc,
     sync::{Arc, OnceLock},
 };
-use sunrise_launcher::{
-    backend::{NightlyReceiptWarning, Release},
-    instances::Channel,
-};
+use sunrise_launcher::{backend::Release, instances::Channel};
 
 /// The height of every line of the list, headings included.
 const LINE_H: f32 = 40.;
@@ -24,11 +21,6 @@ struct FitPreview {
     home: PathBuf,
     tag: String,
     checked: Arc<OnceLock<bool>>,
-}
-
-struct ReceiptNotice {
-    warning: Arc<NightlyReceiptWarning>,
-    retrying: bool,
 }
 
 #[derive(Default)]
@@ -40,7 +32,6 @@ pub(crate) struct State {
     /// The build chosen in the list, before it is kept.
     pick: Option<String>,
     preview: Option<FitPreview>,
-    receipt: Option<ReceiptNotice>,
     /// The list's scroll, which the arrow keys move to the row they land on.
     scroll: gpui::UniformListScrollHandle,
     /// The keyboard focus of each row, by line: a row that is not drawn has no element, so the
@@ -238,24 +229,13 @@ impl Launcher {
     }
 
     pub(super) fn versions_sheet(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
-        let body = self.versions_content(true, cx);
+        let body = self.versions_content(cx);
         frame("alt-versions", 560., body, cx)
     }
 
     pub(crate) fn open_update_picker(&mut self, tag: String) {
         self.open_versions();
         self.ui.sheets.versions.pick = Some(tag);
-    }
-
-    pub(crate) fn versions_page(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
-        self.versions_content(false, cx)
-            .id("versions-page")
-            .flex_1()
-            .min_h_0()
-            .p(px(24.))
-            .gap(px(12.))
-            .overflow_y_scroll()
-            .track_scroll(&crate::frame::scrolls("versions-page"))
     }
 
     fn architecture_repair(&self, tag: &str) -> Option<&Release> {
@@ -265,105 +245,11 @@ impl Launcher {
         backend::architecture_reinstall(releases, tag, self.settings.game_architecture)
     }
 
-    fn can_repair_now(&self, tag: &str) -> bool {
+    pub(crate) fn can_repair_now(&self, tag: &str) -> bool {
         !self.launch_busy() && self.client.is_none() && !self.removing.iter().any(|t| t == tag)
     }
 
-    pub(crate) fn record_nightly_receipt_outcome(
-        &mut self,
-        tag: &str,
-        result: &Result<backend::InstallOutcome, String>,
-    ) -> Option<String> {
-        let outcome = result.as_ref().ok()?;
-        let receipt = &mut self.ui.sheets.versions.receipt;
-        if let Some(warning) = outcome.receipt_warning() {
-            eprintln!("{}", warning.detail());
-            *receipt = Some(ReceiptNotice {
-                warning: Arc::clone(warning),
-                retrying: false,
-            });
-            Some(warning.message())
-        } else {
-            receipt.take_if(|notice| notice.warning.tag() == tag);
-            None
-        }
-    }
-
-    pub(crate) fn finish_nightly_receipt_retry(
-        &mut self,
-        warning: &Arc<NightlyReceiptWarning>,
-        result: Result<(), String>,
-    ) {
-        let receipt = &mut self.ui.sheets.versions.receipt;
-        let Some(notice) = receipt
-            .as_mut()
-            .filter(|notice| Arc::ptr_eq(&notice.warning, warning))
-        else {
-            return;
-        };
-        if let Err(error) = result {
-            eprintln!(
-                "Could not retry the rolling receipt for {}: {error}",
-                warning.tag()
-            );
-            notice.retrying = false;
-        } else {
-            *receipt = None;
-        }
-    }
-
-    fn nightly_receipt_notice(&self, cx: &mut Context<Self>) -> Option<Div> {
-        let notice = self.ui.sheets.versions.receipt.as_ref()?;
-        let warning = Arc::clone(&notice.warning);
-        let retry = button(
-            "retry-nightly-receipt",
-            if notice.retrying {
-                tr("Trying again…")
-            } else {
-                tr("Try again")
-            },
-        )
-        .flex_none();
-        let retry =
-            if !notice.retrying && self.can_repair_now(warning.tag()) {
-                retry.on_click(cx.listener(move |this, _, _, cx| {
-                    if !this.can_repair_now(warning.tag()) {
-                        return;
-                    }
-                    let Some(notice) = this.ui.sheets.versions.receipt.as_mut().filter(|notice| {
-                        !notice.retrying && Arc::ptr_eq(&notice.warning, &warning)
-                    }) else {
-                        return;
-                    };
-                    notice.retrying = true;
-                    let (tx, warning) = (this.tx.clone(), Arc::clone(&warning));
-                    std::thread::spawn(move || {
-                        let result = warning.retry();
-                        let _ = tx.send(Msg::NightlyReceiptRetried(warning, result));
-                    });
-                    cx.notify();
-                }))
-            } else {
-                retry.opacity(0.45).cursor_default().tab_stop(false)
-            };
-        Some(
-            div()
-                .flex()
-                .flex_wrap()
-                .items_center()
-                .gap(px(8.))
-                .child(
-                    div()
-                        .min_w_0()
-                        .text_color(rgb(palette().danger))
-                        .text_size(px(tokens::SMALL))
-                        .child(notice.warning.message()),
-                )
-                .child(retry),
-        )
-    }
-
-    fn versions_content(&mut self, sheet: bool, cx: &mut Context<Self>) -> Div {
+    fn versions_content(&mut self, cx: &mut Context<Self>) -> Div {
         let Some(instance) = self.selected_instance() else {
             return div().child(tr("No profile selected."));
         };
@@ -564,7 +450,7 @@ impl Launcher {
             .border_color(rgb(palette().text))
             .text_color(rgb(palette().background))
             .hover(|s| s.bg(rgb(palette().accent_on)));
-        let idle = !is_pack && !self.launch_busy() && self.client.is_none();
+        let idle = !self.launch_busy() && self.client.is_none();
         let mut cache_action = None;
         let mut plan = None;
         let mut keep_tag = None;
@@ -572,7 +458,7 @@ impl Launcher {
             match version_action(
                 self.installed.contains(tag),
                 || backend::is_prepared(tag),
-                sheet && !is_pack && Some(tag.as_str()) != current,
+                !is_pack && Some(tag.as_str()) != current,
             ) {
                 Some(VersionAction::Keep) => {
                     if idle {
@@ -703,7 +589,6 @@ impl Launcher {
                             .child(e)
                     }),
             )
-            .children(self.nightly_receipt_notice(cx))
             .child(
                 div()
                     .flex()
@@ -711,9 +596,9 @@ impl Launcher {
                     .gap(px(8.))
                     .flex_wrap()
                     .children(reinstall)
-                    .children(sheet.then_some(cancel))
+                    .child(cancel)
                     .children(cache_action)
-                    .children(sheet.then_some(keep)),
+                    .child(keep),
             );
         body
     }

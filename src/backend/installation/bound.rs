@@ -572,7 +572,7 @@ mod tests {
                         warning.failure.error
                     ),
                 );
-                // The Versions action retries only the record; another failure still leaves it installed.
+                // The Storage action retries only the record; another failure still leaves it installed.
                 assert!(warning.retry().is_err());
                 assert_eq!(
                     fs::read(receipt.join("obstruction")).unwrap(),
@@ -606,7 +606,7 @@ mod tests {
                 );
                 assert_eq!(fs::read_to_string(&receipt).unwrap(), ROLLING);
                 assert!(!crate::nightly::failed_install_receipt(&versions, ROLLING));
-                // Exercise the Versions action with no release lookup.
+                // Exercise the Storage action with no release lookup.
                 fs::remove_file(&receipt).unwrap();
                 warning.retry().unwrap();
                 assert!(crate::nightly::has_current_receipt(&versions, ROLLING));
@@ -633,9 +633,9 @@ mod tests {
     }
 
     #[test]
-    fn install_nightly_selects_the_current_build_cached_by_versions() {
+    fn install_nightly_selects_the_current_build_cached_by_the_picker() {
         isolated_case(
-            "install_nightly_selects_the_current_build_cached_by_versions",
+            "install_nightly_selects_the_current_build_cached_by_the_picker",
             || {
                 const ROLLING: &str = "nightly-2026-11-20-aaaaaaa";
                 let (mut download, proof, url, server) = serve_windows_archive(
@@ -647,11 +647,16 @@ mod tests {
                 let stable = version_dir(TAG);
                 fs::create_dir_all(&stable).unwrap();
                 fs::write(stable.join(COMPLETE), []).unwrap();
+                let old = version_dir("26.3-0.1.6");
+                fs::create_dir_all(&old).unwrap();
+                fs::write(old.join(COMPLETE), []).unwrap();
+                version_storage::Download::Automatic.mark(&old).unwrap();
                 let mut settings = Settings::load();
                 settings.selected = Some(TAG.into());
+                settings.keep_versions = Some(1);
                 settings.save().unwrap();
 
-                // Versions publishes through the same worker without changing selection.
+                // The picker publishes through the same worker without changing selection or pruning.
                 let cached = download
                     .publish(
                         ROLLING,
@@ -664,6 +669,7 @@ mod tests {
                 server.join().unwrap();
                 assert!(matches!(cached, InstallOutcome::Installed(None)));
                 assert_eq!(Settings::load().selected.as_deref(), Some(TAG));
+                assert!(old.join(COMPLETE).is_file());
                 let versions = versions_dir();
                 assert!(crate::nightly::has_current_receipt(&versions, ROLLING));
                 let target = version_dir(ROLLING);
@@ -705,6 +711,10 @@ mod tests {
                     assert!(crate::nightly::has_current_receipt(&versions, ROLLING));
                     assert_eq!(crate::profile_txn::Identity::of(&target).unwrap(), identity);
                 }
+                assert!(
+                    !old.exists(),
+                    "a regular install prunes the old automatic build"
+                );
             },
         );
     }

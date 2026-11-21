@@ -133,7 +133,7 @@ fn profile_target<'a>(
 
 /// The current Nightly if published for this platform, then the installed
 /// versions that list lacks (older Nightlies, imported builds). Picking one not installed installs
-/// it on Create. Never a build made with mods (as on Versions): that is one profile's, made from
+/// it on Create. Never a build made with mods: that is one profile's, made from
 /// its mods with the player's permission, not a game to start another profile on.
 pub(super) fn sunrise_choices(releases: &[Release], installed: &[String]) -> Vec<String> {
     let published = Channel::Nightly.builds(releases).map(|r| &r.tag);
