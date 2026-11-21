@@ -906,7 +906,27 @@ fn exact_image(
                 .extend(unknown.difference(&unfit).map(|&id| id.to_owned()));
             Ok(None)
         }
-        Err(error @ (Failed::NoConsent | Failed::Sdk(_))) => {
+        Err(Failed::Sdk {
+            refusal,
+            mod_id: Some(id),
+        }) => {
+            cancellation.check()?;
+            let Some((&id, _)) = set
+                .get_key_value(id.as_str())
+                .filter(|(id, package)| enabled.contains(*id) && package.built_from_source)
+            else {
+                return Err(refusal.to_string());
+            };
+            // Only this source's original SDK is missing. Keep trying the remaining
+            // packages against the target SDK, including listed native mods.
+            let mut unknown = BTreeSet::from([id]);
+            spread_to_dependents(set, &mut unknown);
+            omissions
+                .unproved
+                .extend(unknown.into_iter().map(str::to_owned));
+            Ok(None)
+        }
+        Err(error @ (Failed::NoConsent | Failed::Sdk { mod_id: None, .. })) => {
             cancellation.check()?;
             // A global refusal proves no native input. As with lost native consent,
             // do not omit a listed mod without trying its exact build. Only source

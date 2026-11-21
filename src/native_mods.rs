@@ -989,8 +989,12 @@ pub enum Failed {
     Worlds(Box<AtStake>),
     /// Transfer or preparation of the pinned compiler failed before mod code ran.
     Tools(String),
-    /// The SDK evidence isn't available or was refused, not a local cache I/O error.
-    Sdk(sdk_cache::Refusal),
+    /// SDK evidence was unavailable or refused, not a local cache I/O error. A mod id
+    /// means the failure belongs to that mod's inherited pin, not the target build.
+    Sdk {
+        refusal: sdk_cache::Refusal,
+        mod_id: Option<String>,
+    },
     Other(String),
 }
 
@@ -1000,7 +1004,10 @@ impl From<sdk_cache::Refusal> for Failed {
             refusal @ sdk_cache::Refusal::Cache(_) => Self::Other(refusal.to_string()),
             refusal => {
                 log_sdk_refusal(&refusal);
-                Self::Sdk(refusal)
+                Self::Sdk {
+                    refusal,
+                    mod_id: None,
+                }
             }
         }
     }
@@ -1016,7 +1023,7 @@ impl std::fmt::Display for Failed {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Mods { error, .. } | Self::Tools(error) | Self::Other(error) => f.write_str(error),
-            Self::Sdk(refusal) => std::fmt::Display::fmt(refusal, f),
+            Self::Sdk { refusal, .. } => std::fmt::Display::fmt(refusal, f),
             Self::Worlds(stake) => f.write_str(&stake.text),
             Self::Nothing => f.write_str(no_mods_to_build()),
             Self::NoConsent => f.write_str(tr("Native mods run inside your game with your rights; mixins compile code into the game. Allow native mods in Settings, Storage, or pass --trust-native-code.")),
@@ -1963,7 +1970,7 @@ fn isolated(
             }
             Err(Failed::NoConsent) => return Err(Failed::NoConsent),
             Err(Failed::Tools(error)) => return Err(Failed::Tools(error)),
-            Err(Failed::Sdk(refusal)) => return Err(said(&skip, refusal.to_string())),
+            Err(Failed::Sdk { refusal, .. }) => return Err(said(&skip, refusal.to_string())),
             Err(Failed::Worlds(stake)) => return Err(Failed::Worlds(stake)),
             Err(Failed::Other(error)) if error == CANCELLED => return Err(Failed::Other(error)),
             Err(Failed::Other(error)) => return Err(said(&skip, error)),

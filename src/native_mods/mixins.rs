@@ -56,7 +56,10 @@ fn resolve(
                             }
                         })
                         .map_err(|e| match e {
-                            evidence @ Failed::Sdk(_) => evidence,
+                            Failed::Sdk { refusal, .. } => Failed::Sdk {
+                                refusal,
+                                mod_id: Some(bundle.manifest.id.clone()),
+                            },
                             other => format!("{}: could not resolve [native] mixins: {other}", bundle.manifest.id).into(),
                         })?;
                     Ok(entry.insert(pin).clone())

@@ -5,6 +5,7 @@ use crate::github_mods::{self, Origin, SourceOrigin, SourceTrack};
 const OTHER: &str = "developer-other";
 const ORIGIN_COMMIT: &str = "dddddddddddddddddddddddddddddddddddddddd";
 const TITLE: &str = "Native Lantern";
+const MIXINS: &str = "cccccccccccccccccccccccccccccccccccccccc";
 
 struct Pinned {
     archive: Vec<u8>,
@@ -13,7 +14,7 @@ struct Pinned {
 }
 
 impl Pinned {
-    fn install(fixture: &mut Fixture, source: &[u8]) -> Self {
+    fn install(fixture: &mut Fixture, source: &[u8], mixins: Option<&str>) -> Self {
         configure_tool(fixture);
         fixture.project("extra_mod", "Fireflies", index::Kind::Mod);
         fixture.release("extra_mod", "1.0.0", "", &[]);
@@ -21,11 +22,11 @@ impl Pinned {
         let home = fixture.home();
         let archive = Package::write_files(
             &format!(
-                "id='{ID}'\nname='{TITLE}'\nversion='1.0.0'\napi='{}'\nside='both'\ncapabilities=['registries']\n[native]\nsunrise='{}'\nmixins='{}'\ngame='{}'\n",
+                "id='{ID}'\nname='{TITLE}'\nversion='1.0.0'\napi='{}'\nside='both'\ncapabilities=['registries']\n[native]\nsunrise='{}'\ngame='{}'\n{}",
                 sunrise_launcher_smod::manifest::API,
                 "a".repeat(40),
-                "c".repeat(40),
                 backend::PINNED_GAME,
+                mixins.map_or_else(String::new, |rev| format!("mixins='{rev}'\n")),
             ),
             &[
                 ("Cargo.toml", b"[package]\nname='native_lantern'\nversion='1.0.0'\n"),
@@ -80,7 +81,6 @@ impl Pinned {
     fn assert_kept_off(&self, fixture: &Fixture, target: &str, active: &Active) -> HeldReason {
         let home = fixture.home();
         assert_eq!(active.base(), target);
-        assert_eq!(active.executable(), target);
         assert_eq!(Active::read_pointer(home).unwrap().as_ref(), Some(active));
         let holds: Vec<_> = active.holds().collect();
         let [hold] = holds.as_slice() else {
@@ -161,7 +161,7 @@ fn switch_holds_exact_source_when_sdk_is_missing_but_not_on_local_io_failure() {
             "::switch_holds_exact_source_when_sdk_is_missing_but_not_on_local_io_failure"
         ),
         |mut fixture| {
-            let pinned = Pinned::install(&mut fixture, SOURCE);
+            let pinned = Pinned::install(&mut fixture, SOURCE, Some(MIXINS));
             target(SIGNED_BUILD, 'a');
             // Keep the valid signed game descriptor, but refuse the separate SDK release.
             let checked = sdk_check_fixture(&fixture, 'a', Value::Null);
@@ -205,6 +205,7 @@ fn switch_holds_exact_source_when_sdk_is_missing_but_not_on_local_io_failure() {
             .unwrap() else {
                 panic!("expected a switch with a held source")
             };
+            assert_eq!(active.executable(), SIGNED_BUILD);
             assert_eq!(
                 pinned.assert_kept_off(&fixture, SIGNED_BUILD, &active),
                 HeldReason::Unproved {
@@ -216,6 +217,143 @@ fn switch_holds_exact_source_when_sdk_is_missing_but_not_on_local_io_failure() {
                 "refused or missing SDK must not run the tool"
             );
             assert_eq!(compiled(&fixture), "1.0.0\n");
+        },
+    );
+}
+
+#[test]
+#[ignore = "daily; build the launcher binary first"]
+fn switch_keeps_the_registry_mod_when_only_a_sources_original_sdk_is_missing() {
+    use crate::browser::{Kind, SourceId};
+    use sunrise_launcher_sdk::{Kind as Slice, INDEX};
+
+    Fixture::run(
+        concat!(
+            module_path!(),
+            "::switch_keeps_the_registry_mod_when_only_a_sources_original_sdk_is_missing"
+        ),
+        |mut fixture| {
+            // The source's omitted pin was resolved by its original developer SDK at install.
+            signed_sdk_fixture(&fixture, 'a', &[]);
+            let original_sdk = fixture
+                .root
+                .join("signed-sdk")
+                .join(format!("sdk-{}", "a".repeat(40)));
+            let local_sdk = fixture.root.join("sdk");
+            fs::create_dir(&local_sdk).unwrap();
+            fs::copy(original_sdk.join(INDEX), local_sdk.join(INDEX)).unwrap();
+            let pinned = Pinned::install(&mut fixture, SOURCE, None);
+            fs::remove_dir_all(&original_sdk).unwrap();
+
+            const REGISTRY: &str = "registry_lantern";
+            const FILE: &str = "sunrise-native-mods/registry_lantern.smod";
+            fixture.project(REGISTRY, "Registry Lantern", index::Kind::NativeMod);
+            let registry = fixture.release(
+                REGISTRY,
+                "2.0.0",
+                &format!(
+                    "[native]\nsunrise='{}'\nmixins='{MIXINS}'\ngame='{}'\n",
+                    "b".repeat(40),
+                    backend::PINNED_GAME
+                ),
+                &[
+                    (
+                        "Cargo.toml",
+                        b"[package]\nname='registry_lantern'\nversion='2.0.0'\n",
+                    ),
+                    ("src/lib.rs", SOURCE),
+                ],
+            );
+            let home = fixture.home();
+            fs::write(home.join(FILE), &registry).unwrap();
+            let mut installed = installed::Installed::read(home).unwrap();
+            installed.entries.push(installed::Entry {
+                source: SourceId::Sunrise,
+                project: REGISTRY.into(),
+                slug: REGISTRY.into(),
+                title: "Registry Lantern".into(),
+                kind: Kind::Mod,
+                version: "2.0.0".into(),
+                number: "2.0.0".into(),
+                file: FILE.into(),
+                checksum: format!("SHA-256:{}", index::sha256(&registry)),
+                page: String::new(),
+                dependency: false,
+                verdict: None,
+                install_hold: None,
+            });
+            installed.save(home).unwrap();
+            mod_list::set_enabled(home, REGISTRY, true).unwrap();
+
+            // The target SDK and tools are available; only the source's original index is gone.
+            // The tool builds a tiny inert library, never runs any game, and records the check.
+            target(SIGNED_BUILD, 'b');
+            let pack = |name: &str, from: &Path, file: &str| {
+                let tar = fixture.root.join(name);
+                assert!(Command::new("tar")
+                    .arg("-cJf")
+                    .arg(&tar)
+                    .arg("-C")
+                    .arg(from)
+                    .arg(file)
+                    .status()
+                    .unwrap()
+                    .success());
+                fs::read(tar).unwrap()
+            };
+            let tool = fixture.root.join("cargo-sunrise-mod");
+            fs::copy(fixture.root.join("sdk-tool"), &tool).unwrap();
+            let tool = pack("tool.tar.xz", &fixture.root, "cargo-sunrise-mod");
+            let runtime = pack(
+                "runtime.tar.xz",
+                &local_sdk.join("runtime"),
+                "bin/sunrise-client",
+            );
+            let api = include_bytes!("../../../../../../crates/sdk/src/sdk/fixture.tar.xz");
+            signed_sdk_fixture(
+                &fixture,
+                'b',
+                &[
+                    (Slice::Tool, &tool),
+                    (Slice::Runtime, &runtime),
+                    (Slice::Api, api),
+                ],
+            );
+
+            let before = fixture.snapshot(&[ARCHIVE, FILE, EXTRA]);
+            // Local I/O must still abort even though the error belongs to this source pin.
+            fs::create_dir_all(original_sdk.join(INDEX)).unwrap();
+            let error = run_switch(&fixture, SIGNED_BUILD, &|_| {
+                panic!("local I/O reached review")
+            })
+            .err()
+            .unwrap();
+            assert!(error.contains("Could not keep the mod tools"), "{error}");
+            assert_eq!(fixture.snapshot(&[ARCHIVE, FILE, EXTRA]), before);
+            fs::remove_dir_all(&original_sdk).unwrap();
+
+            let Switched::Changed(active) = run_switch(&fixture, SIGNED_BUILD, &|q| {
+                assert_eq!(q.unproved, [TITLE]);
+                assert!(q.held.is_empty());
+                true
+            })
+            .unwrap() else {
+                panic!("expected the registry mod and a held source")
+            };
+            assert_ne!(active.executable(), SIGNED_BUILD);
+            assert_eq!(
+                pinned.assert_kept_off(&fixture, SIGNED_BUILD, &active),
+                HeldReason::Unproved {
+                    build: SIGNED_BUILD.into()
+                }
+            );
+            assert!(mod_list::is_enabled(home, REGISTRY));
+            assert_eq!(fs::read(home.join(FILE)).unwrap(), registry);
+            assert_eq!(
+                fs::read_to_string(fixture.root.join("checked-mods.json")).unwrap(),
+                r#"["registry_lantern"]"#
+            );
+            assert_eq!(compiled(&fixture), "1.0.0\n2.0.0\n");
         },
     );
 }
@@ -234,7 +372,7 @@ fn switch_holds_exact_source_when_its_rebuild_fails() {
                 b"#[cfg(fixture_switch_target)]\ncompile_error!(\"fixture rebuild fails\");\n",
             ]
             .concat();
-            let pinned = Pinned::install(&mut fixture, &source);
+            let pinned = Pinned::install(&mut fixture, &source, Some(MIXINS));
             target(OTHER, 'a');
             fs::write(fixture.root.join("fixture-switch-target"), []).unwrap();
             let Switched::Changed(active) = run_switch(&fixture, OTHER, &|q| {
@@ -245,6 +383,7 @@ fn switch_holds_exact_source_when_its_rebuild_fails() {
             .unwrap() else {
                 panic!("expected a switch with a held source")
             };
+            assert_eq!(active.executable(), OTHER);
             assert_eq!(
                 pinned.assert_kept_off(&fixture, OTHER, &active),
                 HeldReason::BuildFailed {
@@ -269,7 +408,7 @@ fn switch_keeps_the_specific_no_fit_reason_for_a_pinned_source() {
             "::switch_keeps_the_specific_no_fit_reason_for_a_pinned_source"
         ),
         |mut fixture| {
-            let pinned = Pinned::install(&mut fixture, SOURCE);
+            let pinned = Pinned::install(&mut fixture, SOURCE, Some(MIXINS));
             target(SIGNED_BUILD, 'b');
             let checked = sdk_check_fixture(
                 &fixture,
@@ -287,6 +426,7 @@ fn switch_keeps_the_specific_no_fit_reason_for_a_pinned_source() {
             .unwrap() else {
                 panic!("expected a switch with a held source")
             };
+            assert_eq!(active.executable(), SIGNED_BUILD);
             let reason = pinned.assert_kept_off(&fixture, SIGNED_BUILD, &active);
             assert!(matches!(&reason, HeldReason::NoFit { build, .. } if build == SIGNED_BUILD));
             let detail = reason.detail().unwrap();

@@ -298,14 +298,31 @@ fn a_proved_unfit_prior_off_update_leaves_the_hold_and_hides_only_that_offer() {
 
 const SIGNED_BUILD: &str = "26.3-0.1.7";
 
-fn sdk_check_fixture(fixture: &Fixture, pin: char, verdict: Value) -> PathBuf {
+fn signed_sdk_fixture(fixture: &Fixture, pin: char, files: &[(sunrise_launcher_sdk::Kind, &[u8])]) {
     use sunrise_launcher_release_verify::{sha256_hex, sums_file, SigningKey, SIGNATURE, SUMS};
-    use sunrise_launcher_sdk::{self as sdk, Asset, Kind, Side};
+    use sunrise_launcher_sdk::{self as sdk, Asset, Side};
 
-    let tool =
-        include_bytes!("../../../../../tests/ordinary_play/install/native-check-tool.tar.xz");
     let target = crate::rust_toolchain::host().unwrap().target;
-    let asset = Asset::name(Kind::Tool, target, Side::Client);
+    let files: Vec<_> = files
+        .iter()
+        .map(|&(kind, bytes)| (Asset::name(kind, target, Side::Client), kind, bytes))
+        .collect();
+    let assets: BTreeMap<_, _> = files
+        .iter()
+        .map(|(name, kind, bytes)| {
+            (
+                name,
+                Asset {
+                    sha256: sha256_hex(bytes),
+                    size: bytes.len() as u64,
+                    kind: *kind,
+                    codec: sdk::Codec::Xz,
+                    target: Some(target.into()),
+                    side: kind.per_side().then_some(Side::Client),
+                },
+            )
+        })
+        .collect();
     let commit = pin.to_string().repeat(40);
     let sdk_tag = format!("sdk-{commit}");
     let base = fixture.root.join("signed-sdk");
@@ -318,13 +335,16 @@ fn sdk_check_fixture(fixture: &Fixture, pin: char, verdict: Value) -> PathBuf {
         "surface": {"hash": "ab".repeat(16)},
         "mixins": {"rev": "c".repeat(40), "patch": "0".repeat(64)},
         "inputs": serde_json::from_str::<Value>(include_str!("../../../../../crates/sdk/src/sdk/inputs.json")).unwrap(),
-        "assets": {&asset: {"sha256": sha256_hex(tool), "size": tool.len(), "kind": "tool", "codec": "xz", "target": target}},
+        "assets": assets,
     }).to_string();
     let signer = SigningKey::generate().unwrap().0;
-    let sums = sums_file(&[
-        (sdk::INDEX.into(), sha256_hex(index.as_bytes())),
-        (asset.clone(), sha256_hex(tool)),
-    ]);
+    let mut checksums = vec![(sdk::INDEX.into(), sha256_hex(index.as_bytes()))];
+    checksums.extend(
+        files
+            .iter()
+            .map(|(name, _, bytes)| (name.clone(), sha256_hex(bytes))),
+    );
+    let sums = sums_file(&checksums);
     for tag in [SIGNED_BUILD, &sdk_tag] {
         let dir = base.join(tag);
         fs::create_dir_all(&dir).unwrap();
@@ -332,11 +352,19 @@ fn sdk_check_fixture(fixture: &Fixture, pin: char, verdict: Value) -> PathBuf {
         fs::write(dir.join(SUMS), &sums).unwrap();
         fs::write(dir.join(SIGNATURE), signer.sign(tag, sums.as_bytes())).unwrap();
     }
-    fs::write(base.join(&sdk_tag).join(asset), tool).unwrap();
-    let request = fixture.root.join("native-check-request");
+    for (name, _, bytes) in files {
+        fs::write(base.join(&sdk_tag).join(name), bytes).unwrap();
+    }
     // Fixture::run gives this scenario its own test process and private SDK/cache.
     std::env::set_var("SUNRISE_SDK_BASE", base);
     std::env::set_var("SUNRISE_SDK_TRUSTED_KEY", signer.public_base64());
+}
+
+fn sdk_check_fixture(fixture: &Fixture, pin: char, verdict: Value) -> PathBuf {
+    let tool =
+        include_bytes!("../../../../../tests/ordinary_play/install/native-check-tool.tar.xz");
+    signed_sdk_fixture(fixture, pin, &[(sunrise_launcher_sdk::Kind::Tool, tool)]);
+    let request = fixture.root.join("native-check-request");
     std::env::set_var("FIXTURE_NATIVE_CHECK_REQUEST", &request);
     std::env::set_var(
         "FIXTURE_NATIVE_CHECK_REPLY",
