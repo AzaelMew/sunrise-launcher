@@ -119,7 +119,6 @@ use theme::Theme;
 #[derive(Clone, Copy, PartialEq)]
 enum Page {
     Play,
-    Versions,
     /// Mods, resource packs and modpacks (imported ones and the browser's).
     Mods,
     Servers,
@@ -138,11 +137,10 @@ impl Page {
 
     /// Every page, with its name and icon: the top bar shows all but Settings, which has its
     /// own button.
-    const ALL: [(Page, &'static str, &'static str); 5] = [
+    const ALL: [(Page, &'static str, &'static str); 4] = [
         (Page::Play, "Home", "home"),
         (Page::Mods, "Mods", "package"),
         (Page::Servers, "Servers", "server"),
-        (Page::Versions, "Versions", "archive"),
         (Page::Settings, "Settings", "sliders"),
     ];
 }
@@ -212,9 +210,6 @@ struct Launcher {
     /// Home's launcher-update notice was dismissed: it stays away until the launcher restarts.
     launcher_notice_hidden: bool,
     self_update: SelfUpdate,
-    /// The Sunrise version being installed as an update: whether it becomes the selected one is
-    /// judged when it finishes.
-    update_install: Option<String>,
     /// An explicit same-build repair in Versions must not select or prune a build.
     architecture_reinstall: Option<String>,
     /// The Sunrise version being installed because an instance was made or saved to play it: it

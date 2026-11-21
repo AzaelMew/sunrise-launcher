@@ -192,7 +192,7 @@ impl Launcher {
         let all_on = selected_here > 0 && selected_here == shown_ids.len();
         let n_sel = selected.len();
         let registry_selected = selected.iter().filter(|row| row.local.is_none()).count();
-        let busy = self.mods_busy();
+        let busy = !refresh_ready || self.mods_busy();
         let with_update = selected.iter().filter(|r| model::bulk_updatable(r)).count();
         let any_update = rows.iter().any(model::bulk_updatable);
         let bulk = |id: &'static str, label: String, enabled: bool, danger: bool| {
@@ -488,7 +488,17 @@ impl Launcher {
             .as_ref()
             .and_then(|entry| entry.install_hold.as_ref())
             .filter(|_| !r.on);
-        let status_cell: AnyElement = if let Some(hold) = install_hold {
+        let hold_label = self
+            .ui
+            .mods
+            .snapshot
+            .as_ref()
+            .and_then(|snapshot| snapshot.rows.switch_held.get(&r.id))
+            .map(|hold| hold.label());
+        let switch_held = hold_label.is_some();
+        let status_cell: AnyElement = if switch_held {
+            div().into_any_element()
+        } else if let Some(hold) = install_hold {
             let detail = hold.detail();
             status("warning", hold.label(), palette().warning)
                 .id(("alt-row-install-hold", n))
@@ -556,7 +566,7 @@ impl Launcher {
                     "Enabled for this profile, but not included in the build.",
                 )))
             });
-            if cells.switch {
+            if cells.switch && !switch_held && !busy {
                 let row = r.clone();
                 s.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     this.toggle(&row);
@@ -601,20 +611,25 @@ impl Launcher {
                 None => d,
             }
         };
-        let title =
-            div()
-                .flex()
-                .flex_col()
-                .min_w_0()
-                .child(title)
-                .when(r.registry_unchecked, |d| {
-                    d.child(
-                        div()
-                            .text_size(px(tokens::SMALL))
-                            .text_color(c(palette().muted))
-                            .child(tr("Registry not checked")),
-                    )
-                });
+        let title = div()
+            .flex()
+            .flex_col()
+            .min_w_0()
+            .child(title)
+            .children(hold_label.map(|label| {
+                div()
+                    .text_size(px(tokens::SMALL))
+                    .text_color(c(palette().warning))
+                    .child(label)
+            }))
+            .when(r.registry_unchecked, |d| {
+                d.child(
+                    div()
+                        .text_size(px(tokens::SMALL))
+                        .text_color(c(palette().muted))
+                        .child(tr("Registry not checked")),
+                )
+            });
         use model::column;
         let kind = |width: f32| {
             div()

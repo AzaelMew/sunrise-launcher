@@ -11,6 +11,7 @@ use crate::{
     managed_play::{self, FirstBuild, Profile, ScannedPackage},
     native_mods,
     profile_txn::Identity,
+    worlds::switch::{Fence, Question},
 };
 use serde_json::{Map, Value};
 use std::{
@@ -25,6 +26,10 @@ use sunrise_launcher_smod::{
 };
 
 const MAX_TRIALS: usize = 64;
+mod conflicts;
+mod switch;
+pub use conflicts::ResolveQuestion;
+pub use switch::{checked_switch_fit, switch_build, SwitchHooks, SwitchQuestion, Switched};
 
 // Advisory only. Never use these in place of a fresh, admitted worker proof. Key by the
 // base build and verified archive hash, not the Minecraft version or catalogue version number.
@@ -124,6 +129,8 @@ pub struct InstallHooks<'a> {
     pub native: &'a dyn Fn(&NativeQuestion) -> Result<bool, String>,
     pub registry_crates: Option<&'a dyn Fn(&native_mods::Consent) -> bool>,
     pub continue_after_failure: &'a dyn Fn(&BuildNotice) -> bool,
+    /// Interactive approval of a fully prepared same-base conflict plan; absent in automation.
+    pub resolve: Option<&'a dyn Fn(&ResolveQuestion) -> bool>,
 }
 
 /// Capture the Install target before it queues. The initial default profile may not have
@@ -334,17 +341,32 @@ fn registry_edit<'a>(
                 options,
             )
         };
-        let plan = match plan {
-            Ok(plan) => plan,
+        let (plan, disabled) = match plan {
+            Ok(plan) => (plan, Vec::new()),
             Err(resolve::WholeRefusal::Unproved(reason)) => {
                 return Err(InstallError::Unproved(reason))
             }
             Err(resolve::WholeRefusal::Inconsistent(reason)) => {
-                return Err(InstallError::Refused(if retain_unfit {
-                    reason
-                } else {
-                    last_sdk_refusal.unwrap_or(reason)
-                }))
+                if !matches!(action, Action::Install(_))
+                    || hooks.resolve.is_none()
+                    || edit.current().is_none()
+                {
+                    return Err(InstallError::Refused(if retain_unfit {
+                        reason
+                    } else {
+                        last_sdk_refusal.unwrap_or(reason)
+                    }));
+                }
+                // Negative evidence must come from a complete index, not Discover or cached rows.
+                let (_, complete, proof) = super::complete_index(&source, local)?;
+                if complete != source_bytes || proof.is_some() != authority.is_some() {
+                    return Err(registry_changed().into());
+                }
+                validate_enabled(old.path(), &catalogue, authority)?;
+                conflicts::minimal(&catalogue, &roots, &held, &game, &conflicts, |p, v| {
+                    !unfit.contains(&(p.id.clone(), v.version.clone()))
+                })?
+                .ok_or_else(|| InstallError::Refused(last_sdk_refusal.take().unwrap_or(reason)))?
             }
         };
         let versions = plan
@@ -389,6 +411,22 @@ fn registry_edit<'a>(
         }
         let mut doc = Document::read(next.path())?;
         for entry in entries.values_mut() {
+            if let Some(hold) = edit.held(&entry.project) {
+                let previous = before.get(&entry.project).ok_or_else(unproved_mods)?;
+                let digest = previous
+                    .digest
+                    .as_deref()
+                    .map(switch::sha256_bytes)
+                    .transpose()?;
+                if !previous.owned
+                    || digest.as_ref() != Some(hold.digest())
+                    || old.path().join(hold.path()) != previous.package.path
+                    || next.path().join(hold.path()) != next.path().join(&entry.file)
+                    || mod_list::is_enabled(old.path(), hold.id())
+                {
+                    return Err(unproved_mods().into());
+                }
+            }
             entry.dependency = !ids.contains(&entry.project);
             if let Some(old) = doc.row(&entry.project)? {
                 let dependency = old["dependency"].as_bool().unwrap_or(false);
@@ -485,7 +523,15 @@ fn registry_edit<'a>(
         if !keep_off.is_empty() {
             mod_list::set_all_enabled(next.path(), &keep_off, false)?;
         }
-        if let Some(conflict) = manifest_conflict(next.path(), Some(&catalogue), authority)? {
+        if !disabled.is_empty() {
+            if disabled.iter().any(|id| entries.contains_key(*id)) {
+                return Err(unproved_mods().into());
+            }
+            mod_list::set_all_enabled(next.path(), &disabled, false)?;
+        }
+        if let Some(conflict) = manifest_conflict(next.path(), Some(&catalogue), authority, |id| {
+            entries.contains_key(id)
+        })? {
             if conflicts.contains(&conflict) {
                 return Err(InstallError::Unproved(conflict.reason));
             }
@@ -523,19 +569,7 @@ fn registry_edit<'a>(
                             .iter()
                             .map(|p| p.package.manifest.name.clone())
                             .collect(),
-                        reviewed: source == super::INDEX_URL
-                            && newly_named.iter().all(|p| {
-                                p.owned
-                                    && p.digest.as_ref().is_some_and(|hash| {
-                                        catalogue.project(&p.package.manifest.id).is_some_and(
-                                            |project| {
-                                                project.versions.iter().any(|v| {
-                                                    v.file.sha256.eq_ignore_ascii_case(hash)
-                                                })
-                                            },
-                                        )
-                                    })
-                            }),
+                        reviewed: newly_named.iter().all(|p| p.owned),
                         retry,
                     })? {
                         return Err(InstallError::Cancelled);
@@ -665,7 +699,10 @@ fn registry_edit<'a>(
                     &mut doc,
                     failed,
                 )?;
-                if let Some(conflict) = manifest_conflict(next.path(), Some(&catalogue), authority)?
+                if let Some(conflict) =
+                    manifest_conflict(next.path(), Some(&catalogue), authority, |id| {
+                        entries.contains_key(id)
+                    })?
                 {
                     return Err(InstallError::Refused(conflict.reason));
                 }
@@ -674,7 +711,7 @@ fn registry_edit<'a>(
                     detail: error,
                     log,
                 };
-                if !(hooks.continue_after_failure)(&notice) {
+                if !disabled.is_empty() || !(hooks.continue_after_failure)(&notice) {
                     return Err(InstallError::Compile(notice));
                 }
                 result.failure = Some(notice);
@@ -687,6 +724,32 @@ fn registry_edit<'a>(
             }
             Err(error) => return Err(InstallError::Unproved(error.into())),
         };
+        let resolve_fence = if let Some(approve) = hooks.resolve.filter(|_| !disabled.is_empty()) {
+            let question =
+                conflicts::question(&catalogue, &roots, &before, next.path(), &disabled)?;
+            let affected = crate::worlds::unproved_mod_effects(
+                old.path(),
+                edit.current(),
+                next.path(),
+                edit.current(),
+                disabled
+                    .iter()
+                    .copied()
+                    .chain(entries.keys().map(String::as_str)),
+            )?;
+            let (fence, worlds) = Fence::hold(
+                &instance.home,
+                affected,
+                |id| &before[id].package.manifest.name,
+                None,
+            )?;
+            if !approve(&ResolveQuestion { worlds, ..question }) {
+                return Err(InstallError::Cancelled);
+            }
+            Some(fence)
+        } else {
+            None
+        };
         let mut replaced = entries
             .keys()
             .filter(|id| before.contains_key(*id))
@@ -695,15 +758,16 @@ fn registry_edit<'a>(
         let suspect = if replaced.peek().is_some() {
             crate::worlds::unproved_mod_effects(
                 old.path(),
-                edit.active_basis(),
+                edit.current(),
                 next.path(),
-                edit.active_basis(),
+                edit.current(),
                 replaced,
             )?
         } else {
             crate::worlds::SuspectMods::new()
         };
         let reviewed_worlds = match &action {
+            Action::Install(_) if resolve_fence.is_some() => Vec::new(),
             Action::Install(_) => guard_replacements(
                 &instance.home,
                 &suspect,
@@ -754,12 +818,21 @@ fn registry_edit<'a>(
             .filter(|id| entries.contains_key(id))
             .collect();
         (hooks.progress)(InstallProgress::Publishing);
-        edit.publish(proof, &cancelled, &retired_holds, || {
-            let (_, current, current_authority) = fetch_registry(&source, local)?;
+        edit.publish_install(proof, &cancelled, &retired_holds, || {
+            let (_, current, current_authority) = if resolve_fence.is_some() {
+                super::complete_index(&source, local)?
+            } else {
+                fetch_registry(&source, local)?
+            };
             if source_bytes != current || current_authority.is_some() != authority.is_some() {
-                return Err(tr("The mod registry changed while the install was being prepared. Nothing was installed.").into());
+                return Err(registry_changed());
             }
-            mutations::bind_worlds(&instance.home, &suspect, &reviewed_worlds)
+            if let Some(fence) = &resolve_fence {
+                fence.revalidate(&instance.home)?;
+                Ok(None)
+            } else {
+                mutations::bind_worlds(&instance.home, &suspect, &reviewed_worlds).map(Some)
+            }
         })?;
         for (id, entry) in entries {
             if let Some(previous) = before.get(&id) {
@@ -788,39 +861,38 @@ fn prove_edit(
         candidate,
         instance.native_profile,
         cancellation,
-        |step| {
-            let event = match step {
-                native_mods::Step::Tools { done, total, .. } => {
-                    InstallProgress::Tools { done, total }
-                }
-                native_mods::Step::Install | native_mods::Step::Done { .. } => {
-                    InstallProgress::Building(Some(1.))
-                }
-                _ => match step.progress() {
-                    native_mods::Progress {
-                        stage: native_mods::Stage::Compile,
-                        fraction,
-                    } => InstallProgress::Building(fraction),
-                    _ => InstallProgress::Preparing,
-                },
-            };
-            (hooks.progress)(event);
-        },
+        |step| build_progress(step, hooks.progress),
         hooks.registry_crates,
     )
+}
+
+fn build_progress(step: native_mods::Step, progress: &dyn Fn(InstallProgress)) {
+    progress(match step {
+        native_mods::Step::Tools { done, total, .. } => InstallProgress::Tools { done, total },
+        native_mods::Step::Install | native_mods::Step::Done { .. } => {
+            InstallProgress::Building(Some(1.))
+        }
+        _ => match step.progress() {
+            native_mods::Progress {
+                stage: native_mods::Stage::Compile,
+                fraction,
+            } => InstallProgress::Building(fraction),
+            _ => InstallProgress::Preparing,
+        },
+    });
 }
 
 struct SeenPackage {
     package: ScannedPackage,
     digest: Option<String>,
+    registry_claim: bool,
     owned: bool,
 }
 
 impl SeenPackage {
     fn matches_hold(&self, home: &Path, base: &str, hold: &managed_play::Held) -> bool {
-        let managed_play::HeldReason::NoFit { build } = hold.reason();
-        if build != base
-            || self.package.manifest.native.is_none()
+        if self.package.manifest.native.is_none()
+            || hold.reason().build() != base
             || self.package.path != home.join(hold.path())
             || !self.digest.as_ref().is_some_and(|hash| {
                 let digest = sha2::digest::Output::<sha2::Sha256>::from(*hold.digest());
@@ -887,6 +959,7 @@ fn inventory(home: &Path, authority: Option<&OfficialRegistry>) -> Result<Invent
                     && row.kind == Kind::Mod
                     && row.path(home).as_ref() == Some(&p.path)
             });
+            let registry_claim = claim.is_some();
             let owned = if let Some((row, digest)) = claim {
                 doc.rows
                     .check_other_claims(home, &id, &row.file)
@@ -900,6 +973,7 @@ fn inventory(home: &Path, authority: Option<&OfficialRegistry>) -> Result<Invent
                 SeenPackage {
                     package: p,
                     digest,
+                    registry_claim,
                     owned,
                 },
             ))
@@ -988,6 +1062,7 @@ fn missing_required<'a>(
     manifest.dependencies.iter().find_map(|(id, dependency)| {
         let need = dependency.details();
         (!need.optional
+            && need.side != Side::Server
             && !enabled.get(id.as_str()).is_some_and(|other| {
                 sunrise_launcher_smod::dependencies::parse_version(&other.version)
                     .is_ok_and(|v| need.version.matches(&v))
@@ -1000,6 +1075,7 @@ fn manifest_conflict(
     home: &Path,
     catalogue: Option<&index::Index>,
     authority: Option<&OfficialRegistry>,
+    staged: impl Fn(&str) -> bool,
 ) -> Result<Option<resolve::ManifestConflict>, InstallError> {
     let packages = inventory(home, authority)?;
     let enabled: BTreeMap<_, _> = packages
@@ -1012,7 +1088,10 @@ fn manifest_conflict(
         resolve::InstalledMod {
             id: id.to_owned(),
             version: package.package.manifest.version.clone(),
-            sha256: package.owned.then(|| package.digest.clone()).flatten(),
+            // A freshly checked download names a resolver choice, not replacement authority.
+            sha256: (package.owned || staged(id))
+                .then(|| package.digest.clone())
+                .flatten(),
         }
     };
     let mut namespaces = BTreeMap::new();
@@ -1084,6 +1163,17 @@ fn manifest_conflict(
         }
     }
     Ok(None)
+}
+
+fn validate_enabled(
+    home: &Path,
+    catalogue: &index::Index,
+    authority: Option<&OfficialRegistry>,
+) -> Result<(), InstallError> {
+    match manifest_conflict(home, Some(catalogue), authority, |_| false)? {
+        Some(conflict) => Err(InstallError::Refused(conflict.reason)),
+        None => Ok(()),
+    }
 }
 
 fn restore_or_disable(
@@ -1203,8 +1293,9 @@ impl Document {
         Ok(())
     }
     fn remove(&mut self, id: &str) -> Result<(), String> {
-        let i = self.position(id)?.ok_or_else(unproved_mods)?;
-        self.rows.entries.remove(i);
+        if let Some(i) = self.position(id)? {
+            self.rows.entries.remove(i);
+        }
         Ok(())
     }
     fn replace(&mut self, entry: &installed::Entry) -> Result<(), String> {
@@ -1238,6 +1329,11 @@ fn held_change_refusal(id: &str) -> InstallError {
     ))
 }
 
+fn registry_changed() -> String {
+    tr("The mod registry changed while the install was being prepared. Nothing was installed.")
+        .into()
+}
+
 fn unproved_mods() -> String {
     tr("Sunrise couldn't verify the installed mod set. Nothing was installed.").into()
 }
@@ -1252,4 +1348,5 @@ mod tests;
 #[cfg(all(test, debug_assertions, unix))]
 mod update_tests;
 pub use github::update_github;
-pub use mutations::{check_activation, remove_mods, ChangeImpact};
+pub use mutations::check_activation;
+pub use mutations::{remove_mods, ChangeImpact};

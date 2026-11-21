@@ -453,11 +453,22 @@ impl Launcher {
                     .truncate()
                     .child(played),
             );
+        let receipt =
+            instance.kind != instances::Kind::Pack && self.check_build_changes(&instance.home, cx);
         div()
             .flex()
             .flex_col()
             .child(self.ui.home.shade_behind(labels, scenery))
             .child(self.play_row(instance, window, cx).mt(px(18.)))
+            .children(receipt.then(|| {
+                crate::frame::button("home-build-changes", tr("Build changes"))
+                    .self_start()
+                    .mt(px(10.))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.open_build_changes(cx);
+                        cx.notify();
+                    }))
+            }))
     }
 
     /// Play, the build picker and profile shortcuts, then Play's status and the cat's lane.
@@ -677,18 +688,17 @@ impl Launcher {
         // A game built with mods reads as the build it was made from; the tooltip names
         // the actual tag, including when a pin isn't installed yet.
         let made_from = version
+            .as_ref()
             .filter(|t| native_mods::is_native(t))
             .and_then(|t| crate::glass_instance::native_base(t));
-        let build = version.map_or_else(
+        let build = version.as_ref().map_or_else(
             || tr("Sunrise").into(),
             |tag| self.version_label(made_from.as_ref().unwrap_or(tag)),
         );
         let at = self.ui.home.picker.clone();
         div()
             .id("alt-build")
-            .when_some(version.cloned(), |d, tag| {
-                d.tooltip(crate::glass_ui::tip(tag))
-            })
+            .when_some(version, |d, tag| d.tooltip(crate::glass_ui::tip(tag)))
             .min_w_0()
             .max_w(px(340.))
             .rounded(crate::tokens::r(crate::tokens::R_CONTROL))

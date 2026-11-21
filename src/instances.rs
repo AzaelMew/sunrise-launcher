@@ -512,6 +512,7 @@ fn initialize_default_in(game_home: &Path, data: &Path) -> Result<(), String> {
                     ..Meta::default()
                 },
             )]),
+            ..Store::default()
         };
         let bytes = serde_json::to_vec_pretty(&store).map_err(|e| format!("{FILE}: {e}"))?;
         let write = || -> std::io::Result<()> {
@@ -572,10 +573,9 @@ impl Instance {
     pub fn resolve_version(&self, requested: Option<&str>) -> Result<String, String> {
         match (requested, &self.version) {
             (None, Some(pinned)) => backend::resolve_version(Some(pinned)).map_err(|_| {
-                format!(
-                    "{} plays {pinned}, which is not installed: install it, or sunrise-launcher \
-                     instance version \"{}\" latest",
-                    self.name, self.name
+                crate::i18n::trf(
+                    "{profile} uses {build}, which is not installed. Install it, or use Switch to choose another build.",
+                    &[("profile", &self.name), ("build", pinned)],
                 )
             }),
             (Some(tag), _) => backend::resolve_version(Some(tag)),
@@ -967,6 +967,14 @@ pub fn retired_selection_message(id: &str) -> String {
 
 /// The instance a command without `--instance` acts on: [`selected`], except that a retired
 /// selection is an error naming it, so nothing is written to Sunrise's setup in its place.
+pub fn read_profile(query: Option<&str>) -> Result<Instance, String> {
+    let all = list_with_snapshot(&backend::game_home(), &backend::data_dir(), false, || {});
+    match query {
+        Some(name) => find_in(&all, name),
+        None => selection_in(&all, backend::Settings::load().instance.as_deref()),
+    }
+}
+
 pub fn selection() -> Result<Instance, String> {
     selection_in(&list(), backend::Settings::load().instance.as_deref())
 }

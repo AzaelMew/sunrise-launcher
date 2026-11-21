@@ -87,7 +87,6 @@ impl Launcher {
             // The installer the last Update started could not put the new launcher in place.
             self_update: sunrise_launcher::update_handoff::take_failure()
                 .map_or(SelfUpdate::Idle, |e| SelfUpdate::Stuck(Some(e))),
-            update_install: None,
             architecture_reinstall: None,
             instance_install: None,
             install_next: None,
@@ -453,16 +452,6 @@ impl Launcher {
             Ok(false) => self.self_update = SelfUpdate::Failed(backend::restart()),
             Err(e) => self.self_update = SelfUpdate::Failed(e),
         }
-    }
-
-    /// Installs the Sunrise version the last check found, keeping the player's choice of
-    /// version unless they were on the newest one.
-    pub(crate) fn install_update(&mut self, release: Release) {
-        if self.installing.is_some() || self.removing.contains(&release.tag) {
-            return;
-        }
-        self.update_install = Some(release.tag.clone());
-        self.install(&release);
     }
 
     /// What installed native build `version` was made from (`native_status::Build`), read once.

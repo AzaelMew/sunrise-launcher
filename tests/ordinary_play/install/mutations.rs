@@ -349,12 +349,13 @@ fn remove_cutoff_worker() {
         native: &|_| panic!("content-only"),
         registry_crates: None,
         continue_after_failure: &|_| panic!("content-only"),
+        resolve: None,
     };
     let error = remove_mods(
         &instance,
         identity,
         &["required_mod".into()],
-        || managed_play::headless_first(&instance, None),
+        || managed_play::headless_first(&instance),
         hooks,
         &decide,
     )

@@ -844,7 +844,7 @@ fn a_creation_that_fails_leaves_no_instance_and_the_name_free() {
 
 #[test]
 fn a_kill_after_copy_visibility_keeps_the_exact_copy_and_recovers_its_choices() {
-    use crate::managed_play::{Active, FirstBuild, Held, HeldReason, HeldSource};
+    use crate::managed_play::{Active, FirstBuild, Held, HeldReason, HeldRoot, HeldSource};
     use sha2::{Digest as _, Sha256};
     use std::{process::Command, time::Instant};
     use sunrise_launcher_smod::{manifest, mod_list};
@@ -973,8 +973,9 @@ fn a_kill_after_copy_visibility_keeps_the_exact_copy_and_recovers_its_choices() 
             fs::write(source.home.join(&kept), &package).unwrap();
             let held = Held::new(
                 "example".into(),
+                "Example".into(),
                 Sha256::digest(&package).into(),
-                kept,
+                (HeldRoot::Native, "example.smod".into()),
                 HeldSource::Local {
                     version: "1.0.0".into(),
                 },

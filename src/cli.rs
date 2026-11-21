@@ -1,6 +1,7 @@
 //! `sunrise-launcher <subcommand>`: the same steps as the window, from a terminal. Every
 //! command goes through `backend`; this file only parses arguments and prints.
 mod progress;
+mod switch;
 use progress::{native_progress, progress};
 
 use clap::{Parser, Subcommand};
@@ -190,8 +191,6 @@ enum ModpackCmd {
         /// Allow missing original Java asset/data jars to be downloaded from Modrinth
         #[arg(long)]
         allow_jar_downloads: bool,
-        #[arg(long)]
-        version: Option<String>,
     },
     /// Removing Sunrise modpacks is temporarily unavailable
     Remove { pack: String },
@@ -201,6 +200,8 @@ enum ModpackCmd {
 enum InstanceCmd {
     /// The profiles, each with its game folder (* = the one Play starts)
     List,
+    /// Show a profile's committed game build (defaults to the selected profile)
+    Show { profile: Option<String> },
     /// Make a profile: empty but for your options and name, or a copy of another one's
     /// worlds, options and packs
     Create {
@@ -224,8 +225,6 @@ enum InstanceCmd {
     },
     /// Make Play start this profile
     Select { instance: String },
-    /// Keep a profile on one installed Sunrise version, or "latest" to follow updates again
-    Version { instance: String, version: String },
     /// Export a profile to share as a zip: its settings, packs, Sunrise mods and the worlds
     /// named. Never logs, screenshots or account data; worlds go without their per-player files
     Export {
@@ -646,8 +645,6 @@ enum Cmd {
         /// Allow missing original Java asset/data jars to be downloaded from Modrinth
         #[arg(long)]
         allow_jar_downloads: bool,
-        #[arg(long, help = "Installed version to play (default: profile version)")]
-        version: Option<String>,
         /// The profile to play (its name or id; default: the selected one)
         #[arg(long)]
         instance: Option<String>,
@@ -671,6 +668,14 @@ enum Cmd {
         /// the one `account select` picked: several games can play as several accounts at once
         #[arg(long, value_name = "WHO")]
         account: Option<String>,
+    },
+    /// Switch a profile to an exact installed and prepared game build
+    Switch {
+        /// The target build tag
+        tag: String,
+        /// The profile to switch (name or id; defaults to the selected profile)
+        #[arg(long)]
+        profile: Option<String>,
     },
     /// Run a dedicated server here; type commands into its console
     Server {
@@ -713,9 +718,9 @@ enum Cmd {
     NativeBuild {
         /// Discover internal uses through compiler diagnostics. Prints resolved declarations
         /// as JSON for cargo sunrise-mod internals sync; never installs or selects a game
-        #[arg(long, conflicts_with_all = ["server_output", "instance", "version", "update", "profile"], requires = "folder")]
+        #[arg(long, conflicts_with_all = ["server_output", "instance", "version", "profile"], requires = "folder")]
         sync_internals: bool,
-        #[arg(long, requires = "folder", conflicts_with_all = ["sync_internals", "server_output", "instance", "version", "update", "profile"])]
+        #[arg(long, requires = "folder", conflicts_with_all = ["sync_internals", "server_output", "instance", "version", "profile"])]
         catalog: bool,
         /// Copy discovery catalogs into this caller-owned empty directory
         #[arg(long, requires = "catalog")]
@@ -741,15 +746,10 @@ enum Cmd {
         /// (default: the selected one)
         #[arg(long)]
         instance: Option<String>,
-        /// The installed version whose game files the build reuses, and whose commit it builds on
-        /// when no mod pins one (default: the one the profile plays, so a rebuild stays on its
-        /// Sunrise)
+        /// For a profile, assert its current base. In server-export mode, select the installed
+        /// game build to use (defaults to the newest installed release or Nightly)
         #[arg(long)]
         version: Option<String>,
-        /// Move to the newest installed release or Nightly instead of the Sunrise the profile
-        /// plays (rebuilds the mods for that pinned SDK)
-        #[arg(long, conflicts_with = "version")]
-        update: bool,
         /// Allow native code for this install (remembered; revoke in Settings, Storage)
         #[arg(long)]
         trust_native_code: bool,
@@ -761,12 +761,6 @@ enum Cmd {
         /// prebuilt one: for CI, which keeps that path proven
         #[arg(long, hide = true)]
         mixins_from_source: bool,
-        /// When a mod this build can't use was saved into the profile's worlds, build without
-        /// it anyway: what the mod added to those worlds is lost when they are next opened
-        /// (back them up in the game first). Without this the build stops and names the
-        /// worlds, leaving the profile as it is
-        #[arg(long, conflicts_with = "server_output")]
-        leave_out_mods: bool,
     },
     /// Show a release's patch notes (default: the newest)
     Notes { tag: Option<String> },
@@ -1251,15 +1245,13 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
             allow_jar_downloads,
             instance,
             version,
-            update,
             trust_native_code,
             profile,
             mixins_from_source,
-            leave_out_mods,
         } => {
-            native_permission(trust_native_code)?;
             native_mods::mixins_from_source(mixins_from_source);
             if catalog {
+                native_permission(trust_native_code)?;
                 let destination = catalog_output.ok_or("--catalog requires --catalog-output")?;
                 let destination =
                     native_mods::catalog(&folder.expect("required by clap"), &destination)?;
@@ -1267,6 +1259,7 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
                 return Ok(0);
             }
             if sync_internals {
+                native_permission(trust_native_code)?;
                 let entries = native_mods::sync_internals(&folder.expect("required by clap"))?;
                 println!(
                     "{}",
@@ -1281,14 +1274,15 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
                 }
             };
             if let Some(output) = server_output {
+                native_permission(trust_native_code)?;
                 // Export mode: a standalone server engine in `output`. No instance is read
                 // or changed, and no launcher config is written; `folder` is required (clap).
                 let folder = folder.unwrap();
                 let base = match &version {
                     Some(v) => backend::resolve_version(Some(v))?,
                     // The instance's version is never looked at here: the newest installed
-                    // release or Nightly, or that one with `--update` (never a native build).
-                    None => native_mods::base_for(None, &backend::installed(), update)
+                    // release or Nightly, never a native build.
+                    None => native_mods::base_for(None, &backend::installed(), false)
                         .ok_or_else(backend::no_version_installed)?,
                 };
                 let built = native_mods::build_server(
@@ -1319,19 +1313,39 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
                 Some(name) => instances::find(name)?,
                 None => instances::selection()?,
             };
+            let owner = if target.kind != instances::Kind::Pack
+                && target.home.try_exists().map_err(|e| e.to_string())?
+            {
+                Some(sunrise_launcher::managed_play::Profile::open(
+                    &target.home,
+                    None,
+                )?)
+            } else {
+                None
+            };
+            let active = owner
+                .as_ref()
+                .map(|owner| owner.active())
+                .transpose()?
+                .flatten();
+            let base = match active {
+                Some(active) => active.base().to_owned(),
+                None => {
+                    let plays = target.resolve_version(None)?;
+                    let tag = native_mods::about(&plays).map_or(plays, |build| build.base);
+                    native_mods::base_for(Some(&tag), &backend::installed(), false)
+                        .ok_or_else(backend::no_version_installed)?
+                }
+            };
+            if let Some(requested) = version.as_deref().filter(|tag| *tag != base) {
+                return Err(trf("This profile uses {build}, not {requested}. Use Switch to change its game build.", &[("build", &base), ("requested", requested)]));
+            }
+            native_permission(trust_native_code)?;
             let target = match profile {
                 Some(profile) => {
                     instances::edit(&target.id, |meta| meta.native_profile = Some(profile))?
                 }
                 None => target,
-            };
-            let base = match version {
-                Some(v) => backend::resolve_version(Some(&v))?,
-                None => {
-                    let plays = target.resolve_version(None).ok();
-                    native_mods::base_for(plays.as_deref(), &backend::installed(), update)
-                        .ok_or_else(backend::no_version_installed)?
-                }
             };
             let explicit = folder.is_some() || profile.is_some();
             let folder = match folder {
@@ -1340,7 +1354,7 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
             };
             let profile = explicit.then_some(target.native_profile);
             let built =
-                match native_mods::build(&base, &folder, &target, profile, leave_out_mods, &native_mods::Cancellation::default(), steps, registry_consent, || backend::releases().ok()) {
+                match native_mods::build(&base, &folder, &target, profile, false, &native_mods::Cancellation::default(), steps, registry_consent, || backend::releases().ok()) {
                     // A content mod needs no build: the instance stays as it is.
                     Err(nothing @ native_mods::Failed::Nothing) => {
                         println!("{nothing}");
@@ -1351,7 +1365,7 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
                 .map_err(|error| {
                     if let native_mods::Failed::Worlds(stake) = &error {
                         return trf(
-                            "{error}\n{stay}: nothing changed. Or run again with --leave-out-mods to build without the mods named.",
+                            "{error}\n{stay}: nothing changed.",
                             &[
                                 ("error", &stake.text),
                                 ("stay", &native_mods::fit::stay(&stake.stay)),
@@ -1409,7 +1423,6 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
         }
         Cmd::Play {
             allow_jar_downloads,
-            version,
             instance,
             world,
             creative,
@@ -1455,11 +1468,10 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
                     instance: &instance,
                     accepted_account: selected.map(|a| a.uuid.as_str()),
                     explicit_account: account.is_some(),
-                    requested_build: version.as_deref(),
                     piped: false,
                 }
                 .start(
-                    || managed_play::headless_first(&instance, version.as_deref()),
+                    || managed_play::headless_first(&instance),
                     |cmd| {
                         backend::append_game_args(cmd);
                         add_arguments(cmd)
@@ -1505,6 +1517,10 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
                 );
             }
             return played;
+        }
+        Cmd::Switch { tag, profile } => {
+            let instance = instances::read_profile(profile.as_deref())?;
+            switch::run(&instance, &tag, as_json)?;
         }
         Cmd::Server {
             dir,
@@ -2220,6 +2236,7 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
         },
         registry_crates: None,
         continue_after_failure: &|_| false,
+        resolve: None,
     };
     let on = matches!(action, ModsCmd::Enable { .. });
     match action {
@@ -2383,7 +2400,7 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                     &instance,
                     sunrise::install_target(&instance)?,
                     || vec![p.id],
-                    || sunrise_launcher::managed_play::headless_first(&instance, None),
+                    || sunrise_launcher::managed_play::headless_first(&instance),
                     sunrise::InstallHooks {
                         progress: &|step| {
                             if let sunrise::InstallProgress::Downloading(f) = step {
@@ -2418,6 +2435,7 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                             trust_native_code
                         }),
                         continue_after_failure: &|_| false,
+                        resolve: None,
                     },
                 )
                 .map_err(|error| error.to_string())?;
@@ -2500,7 +2518,7 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                         &instance,
                         identity?,
                         requested,
-                        || sunrise_launcher::managed_play::headless_first(&instance, None),
+                        || sunrise_launcher::managed_play::headless_first(&instance),
                         mutation_hooks(),
                         &|impact| approve_mod_change(impact, confirm_world_loss),
                     )
@@ -2623,7 +2641,7 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                     &instance,
                     identity?,
                     &[id],
-                    || sunrise_launcher::managed_play::headless_first(&instance, None),
+                    || sunrise_launcher::managed_play::headless_first(&instance),
                     mutation_hooks(),
                     &|impact| approve_mod_change(impact, confirm_world_loss),
                 )
@@ -2641,6 +2659,15 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
             }
         }
         ModsCmd::Enable { project, .. } | ModsCmd::Disable { project, .. } => {
+            let profile = if on {
+                let identity = sunrise_launcher::profile_txn::Identity::of(&home)?;
+                Some(
+                    sunrise_launcher::managed_play::Profile::open_for(&home, None, Some(identity))
+                        .map_err(String::from)?,
+                )
+            } else {
+                None
+            };
             let e = installed::Installed::load(&home)
                 .lookup(&project)
                 .cloned()
@@ -2660,12 +2687,13 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                     return Err(format!("{} was taken down: {}", e.title, r.reason));
                 }
             }
-            let _manifest =
-                sunrise_launcher::browser::lock_home(&home).map_err(|e| e.to_string())?;
-            if on && e.source == SourceId::Sunrise && instance.kind != instances::Kind::Pack {
-                sunrise::check_activation(&home, &[id])?;
+            if let Some(profile) = profile {
+                if let Some((_, reason)) = profile.enable_unheld(&[id])?.into_iter().next() {
+                    return Err(format!("{}: {}.", e.title, reason.label()));
+                }
+            } else {
+                sunrise_launcher::browser::mod_list::set_enabled(&home, id, false)?;
             }
-            sunrise_launcher::browser::mod_list::set_enabled(&home, id, on)?;
             println!("{} is {}.", e.title, if on { "on" } else { "off" });
         }
     }
@@ -2737,6 +2765,30 @@ fn instance(action: InstanceCmd, as_json: bool) -> Result<(), String> {
                 all.iter().for_each(|i| line(i, i.id == selected));
             }
         }
+        InstanceCmd::Show { profile } => {
+            use sunrise_launcher::managed_play::Profile;
+            let instance = instances::read_profile(profile.as_deref())?;
+            let active = match instance.home.try_exists().map_err(|e| e.to_string())? {
+                true => Profile::open(&instance.home, None)?.active()?,
+                false => None,
+            };
+            if as_json {
+                json(serde_json::json!({
+                    "profile": instance.id,
+                    "build": active.as_ref().map(|a| a.base()),
+                    "image": active.as_ref().map(|a| a.executable()),
+                    "generation": active.as_ref().map(|a| a.generation()),
+                }));
+            } else {
+                let build = active
+                    .as_ref()
+                    .map_or_else(|| tr("Not initialized"), |a| a.base());
+                println!(
+                    "{}",
+                    trf("Profile game build: {build}", &[("build", build)])
+                );
+            }
+        }
         InstanceCmd::Create { name, copy } => changed(instances::create(&name, copy.as_deref())?),
         InstanceCmd::Delete { instance } => {
             let gone = instances::delete(&instance)?;
@@ -2756,17 +2808,6 @@ fn instance(action: InstanceCmd, as_json: bool) -> Result<(), String> {
             changed(instances::edit(&instance, |m| m.group = group)?)
         }
         InstanceCmd::Select { instance } => changed(instances::select(&instance)?),
-        InstanceCmd::Version { instance, version } => {
-            let pin = match version.as_str() {
-                "latest" => None,
-                tag => Some(backend::resolve_version(Some(tag))?),
-            };
-            let profile = instances::find(&instance)?;
-            let _lock = sunrise_launcher::browser::lock_home(&profile.home)
-                .map_err(|error| error.to_string())?;
-            sunrise_launcher::browser::installed::recover_game_install(&profile.home)?;
-            changed(instances::edit(&profile.id, |m| m.version = pin)?)
-        }
         InstanceCmd::Launch {
             instance,
             pre_launch,
@@ -3682,7 +3723,6 @@ mod tests {
                 server_output,
                 instance,
                 version,
-                update,
                 profile,
                 ..
             }) => {
@@ -3690,7 +3730,6 @@ mod tests {
                 assert_eq!(server_output.as_deref(), Some(Path::new("engine-out")));
                 assert_eq!(instance, None);
                 assert_eq!(version, None);
-                assert!(!update);
                 assert_eq!(profile, None);
             }
             _ => panic!("expected native-build"),
@@ -3710,21 +3749,11 @@ mod tests {
             })
         ));
         assert!(parse(&["mods", "--allow-jar-downloads"]).is_err());
-        // Leaving mods out is for an instance's build; a server export switches nothing off.
-        assert!(matches!(
-            parse(&["--leave-out-mods"]).unwrap().command,
-            Some(Cmd::NativeBuild {
-                leave_out_mods: true,
-                ..
-            })
-        ));
-        assert!(parse(&["mods", "--server-output", "engine-out", "--leave-out-mods"]).is_err());
         // The mod folder is explicit in export mode: no default from an instance.
         assert!(parse(&["--server-output", "engine-out"]).is_err());
         // Export mode never touches an instance.
         assert!(parse(&["mods", "--server-output", "engine-out", "--instance", "A"]).is_err());
-        // Export mode accepts an explicit version and profile; a version
-        // and --update refuse each other, as in the game mode.
+        // Export mode accepts an explicit version and compilation profile.
         match parse(&[
             "mods",
             "--server-output",
@@ -3738,35 +3767,13 @@ mod tests {
         .command
         {
             Some(Cmd::NativeBuild {
-                version,
-                update,
-                profile,
-                ..
+                version, profile, ..
             }) => {
                 assert_eq!(version.as_deref(), Some("v2026.10.13"));
-                assert!(!update);
                 assert_eq!(profile, Some(native_mods::Profile::Optimized));
             }
             _ => panic!("expected native-build"),
         }
-        // --update on its own: the newest installed release or Nightly, never a native build.
-        match parse(&["mods", "--server-output", "engine-out", "--update"])
-            .unwrap()
-            .command
-        {
-            Some(Cmd::NativeBuild { update, .. }) => assert!(update),
-            _ => panic!("expected native-build"),
-        }
-        // A version refuses --update, as in the game mode.
-        assert!(parse(&[
-            "mods",
-            "--server-output",
-            "engine-out",
-            "--version",
-            "v2026.10.13",
-            "--update"
-        ])
-        .is_err());
         assert!(parse(&["mods", "--allow-version-mismatch"]).is_err());
         // The game mode is unchanged: an instance build without --server-output.
         assert!(matches!(

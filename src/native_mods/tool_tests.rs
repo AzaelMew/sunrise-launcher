@@ -146,6 +146,7 @@ fn crates_that_run_nothing_while_building_are_not_asked_about() {
         &|_, _, _| {},
         &Cancellation::default(),
         None,
+        None,
     )
     .unwrap();
     assert_eq!(
@@ -167,6 +168,7 @@ fn crates_that_run_nothing_while_building_are_not_asked_about() {
         }),
         &|_, _, _| {},
         &Cancellation::default(),
+        None,
         None,
     )
     .unwrap();
@@ -206,6 +208,7 @@ fn a_regrant_refuses_the_yes_given_without_asking() {
             settings.borrow_mut().allow_native_mods().unwrap();
         },
         &current,
+        None,
         None,
     )
     .unwrap_err();

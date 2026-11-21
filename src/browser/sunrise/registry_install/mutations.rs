@@ -219,6 +219,15 @@ impl ChangeImpact {
 /// The ordinary enable switch must not reactivate an exact hold or a mod missing a required
 /// dependency. Call under the game's manifest lock and write the list under the same lock.
 pub fn check_activation(home: &Path, activate: &[&str]) -> Result<(), String> {
+    let active = managed_play::Active::read_pointer(home)?;
+    check_admitted_activation(home, active.as_ref(), activate)
+}
+
+pub(super) fn check_admitted_activation(
+    home: &Path,
+    active: Option<&managed_play::Active>,
+    activate: &[&str],
+) -> Result<(), String> {
     let packages = inventory(home, None)?;
     let mut enabled = enabled(home)?;
     enabled.extend(activate.iter().map(|&id| id.to_owned()));
@@ -227,17 +236,13 @@ pub fn check_activation(home: &Path, activate: &[&str]) -> Result<(), String> {
         .filter(|(id, _)| enabled.contains(*id))
         .map(|(id, p)| (id.as_str(), &p.package.manifest))
         .collect::<BTreeMap<_, _>>();
-    let active = managed_play::Active::read_pointer(home)?;
     let mut visited = BTreeSet::new();
     let mut remaining = activate.to_vec();
     while let Some(id) = remaining.pop() {
         if !visited.insert(id) {
             continue;
         }
-        if active
-            .as_ref()
-            .is_some_and(|active| active.holds().any(|hold| hold.id() == id))
-        {
+        if active.is_some_and(|active| active.holds().any(|hold| hold.id() == id)) {
             return Err(trf(
                 "{mod} needs an update from its author before it can be turned on.",
                 &[("mod", id)],
@@ -384,7 +389,7 @@ pub fn remove_mods(
     }
     let disabled_ids = unavailable.iter().map(String::as_str).collect::<Vec<_>>();
     mod_list::set_all_enabled(home, &disabled_ids, false)?;
-    if let Some(conflict) = manifest_conflict(home, None, None)? {
+    if let Some(conflict) = manifest_conflict(home, None, None, |_| false)? {
         return Err(InstallError::Refused(conflict.reason));
     }
     let named = |id: &String| format!("{} ({id})", present[id].package.manifest.name);
@@ -394,9 +399,9 @@ pub fn remove_mods(
         .collect::<Vec<_>>();
     let suspect = worlds::unproved_mod_effects(
         old.path(),
-        edit.active_basis(),
+        edit.current(),
         home,
-        edit.active_basis(),
+        edit.current(),
         unavailable.iter().map(String::as_str),
     )?;
     let impact = ChangeImpact::read(
@@ -417,7 +422,7 @@ pub fn remove_mods(
         .map_err(|e| InstallError::Unproved(e.into()))?;
     (hooks.progress)(InstallProgress::Publishing);
     let reviewed = impact.into_evidence();
-    edit.publish(proof, &cancellation, &retired, || {
+    edit.publish_install(proof, &cancellation, &retired, || {
         if managed_play::inputs(home, None)? != reviewed_image {
             return Err(tr(
                 "The files prepared for removal changed. Nothing was removed; try again.",

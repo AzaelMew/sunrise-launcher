@@ -109,10 +109,13 @@ pub fn fetch_with_official(
     local: bool,
 ) -> Result<(Index, String, Option<OfficialRegistry>), String> {
     let (index, text) = fetch_index(source, local)?;
-    let authority = (!local
-        && official_endpoint(source, std::env::var_os("SUNRISE_MOD_INDEX").is_some()))
-    .then(|| OfficialRegistry(Arc::new(index.clone())));
+    let authority = response_authority(source, local, &index);
     Ok((index, text, authority))
+}
+
+fn response_authority(source: &str, local: bool, index: &Index) -> Option<OfficialRegistry> {
+    (!local && official_endpoint(source, std::env::var_os("SUNRISE_MOD_INDEX").is_some()))
+        .then(|| OfficialRegistry(Arc::new(index.clone())))
 }
 
 /// The index, asked for again now whatever was read last: "Check for update".
@@ -375,6 +378,16 @@ fn load(
 }
 
 fn fetch_index(at: &str, local: bool) -> Result<(Index, String), String> {
+    let text = fetch_index_text(at, local, false)?;
+    let index = if local {
+        Index::parse_local(&text)?
+    } else {
+        Index::parse(&text)?
+    };
+    Ok((index, text))
+}
+
+fn fetch_index_text(at: &str, local: bool, full: bool) -> Result<String, String> {
     use std::io::Read;
     // The process fixture can count requests without a public server or signing key.
     // Never allow this transport in a release, through a proxy, or across a redirect.
@@ -388,9 +401,9 @@ fn fetch_index(at: &str, local: bool) -> Result<(Index, String), String> {
                 && url.password().is_none()
         });
     if local && !loopback {
-        let text = fs::read_to_string(at).map_err(|e| format!("{at}: {e}"))?;
-        return Ok((Index::parse_local(&text)?, text));
+        return fs::read_to_string(at).map_err(|e| format!("{at}: {e}"));
     }
+    let direct = !local && at == INDEX_URL;
     let agent = if loopback {
         ureq::AgentBuilder::new()
             .try_proxy_from_env(false)
@@ -399,10 +412,18 @@ fn fetch_index(at: &str, local: bool) -> Result<(Index, String), String> {
             .build()
     } else {
         let spec = crate::proxy::spec_for(at);
-        crate::net::keep("sunrise-index", spec.as_deref(), |proxy| {
-            let builder = ureq::AgentBuilder::new()
+        let slot = if direct {
+            "sunrise-index-direct"
+        } else {
+            "sunrise-index"
+        };
+        crate::net::keep(slot, spec.as_deref(), |proxy| {
+            let mut builder = ureq::AgentBuilder::new()
                 .https_only(true)
                 .timeout(Duration::from_secs(10));
+            if direct {
+                builder = builder.redirects(0);
+            }
             match proxy {
                 Some(proxy) => builder.proxy(proxy).build(),
                 None => builder.build(),
@@ -413,8 +434,9 @@ fn fetch_index(at: &str, local: bool) -> Result<(Index, String), String> {
         ureq::Error::Status(code, _) => format!("The mod registry answered {code}."),
         ureq::Error::Transport(t) => format!("The mod registry can't be reached: {t}"),
     })?;
-    if at == INDEX_URL && response.get_url() != INDEX_URL {
-        return Err("The built-in registry redirected its index to a different URL.".into());
+    if (full || direct) && (response.status() != 200 || response.header("Content-Range").is_some())
+    {
+        return Err(tr("The mod registry didn't send the full index.").into());
     }
     let mut text = String::new();
     response
@@ -425,12 +447,36 @@ fn fetch_index(at: &str, local: bool) -> Result<(Index, String), String> {
     if text.len() as u64 > MAX_INDEX {
         return Err("The mod registry index is too large.".into());
     }
-    let index = if local {
-        Index::parse_local(&text)?
+    Ok(text)
+}
+
+/// Unlike Discover, neither an omitted section nor an isolated bad row is allowed
+/// to become evidence that a package has no fit or has been taken down.
+fn complete_index(
+    at: &str,
+    local: bool,
+) -> Result<(Index, String, Option<OfficialRegistry>), String> {
+    #[derive(serde::Deserialize)]
+    struct Sections {
+        schema: u32,
+        #[serde(rename = "projects")]
+        _projects: Vec<serde::de::IgnoredAny>,
+        #[serde(rename = "revoked")]
+        _revoked: Vec<serde::de::IgnoredAny>,
+    }
+    let text = fetch_index_text(at, local, true)?;
+    let sections: Sections = serde_json::from_str(&text).map_err(|error| error.to_string())?;
+    if sections.schema != index::SCHEMA {
+        return Err(tr("The mod registry didn't send the full index.").into());
+    }
+    let index: Index = serde_json::from_str(&text).map_err(|error| error.to_string())?;
+    if local {
+        index.check_local()?;
     } else {
-        Index::parse(&text)?
-    };
-    Ok((index, text))
+        index.check()?;
+    }
+    let authority = response_authority(at, local, &index);
+    Ok((index, text, authority))
 }
 
 /// A project's ratings: 1 to 5 stars, their mean and how many.
@@ -1700,10 +1746,12 @@ pub mod auto;
 mod dependencies;
 pub mod pack;
 mod registry_install;
+pub use registry_install::check_activation;
 pub use registry_install::{
-    check_activation, install_registry, install_target, known_unfit_updates, remove_mods,
-    update_github, update_registry, BuildNotice, ChangeImpact, InstallError, InstallHooks,
-    InstallProgress, InstalledBatch, NativeQuestion, UpdateRequest,
+    checked_switch_fit, install_registry, install_target, known_unfit_updates, remove_mods,
+    switch_build, update_github, update_registry, BuildNotice, ChangeImpact, InstallError,
+    InstallHooks, InstallProgress, InstalledBatch, NativeQuestion, ResolveQuestion, SwitchHooks,
+    SwitchQuestion, Switched, UpdateRequest,
 };
 #[cfg(test)]
 mod tests;

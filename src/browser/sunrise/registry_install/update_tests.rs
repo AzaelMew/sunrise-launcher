@@ -165,6 +165,7 @@ impl Fixture {
                 native: &|question| panic!("unexpected native consent question: {question:?}"),
                 registry_crates: None,
                 continue_after_failure: &|_| false,
+                resolve: None,
             },
             |source, local| {
                 let (catalogue, bytes, authority) = fetch_with_official(source, local)?;

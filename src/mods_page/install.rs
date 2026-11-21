@@ -4,7 +4,7 @@ use std::{collections::VecDeque, path::Path, sync::Mutex};
 use sunrise_launcher::{
     browser::sunrise::{
         BuildNotice, ChangeImpact, InstallError, InstallHooks, InstallProgress, InstalledBatch,
-        NativeQuestion,
+        NativeQuestion, ResolveQuestion,
     },
     managed_play::FirstBuild,
     profile_txn::Identity,
@@ -14,7 +14,7 @@ use sunrise_launcher::{
 pub(crate) struct Installs {
     running: Option<Running>,
     waiting: VecDeque<Request>,
-    pub(crate) question: Option<(BuildNotice, Sender<bool>)>,
+    pub(crate) question: Option<(Decision, Sender<bool>)>,
     pub(crate) world: Option<(WorldQuestion, Sender<bool>)>,
     outcomes: HashMap<(PathBuf, String), Outcome>,
     play: Option<(PathBuf, launcher_play::PlayIntent)>,
@@ -56,10 +56,15 @@ pub(crate) struct WorldQuestion {
     pub(crate) detail: String,
 }
 
+pub(crate) enum Decision {
+    Build(BuildNotice),
+    Resolve(Arc<ResolveQuestion>),
+}
+
 pub(crate) enum Worker {
     Progress(InstallProgress),
     Native(NativeQuestion, Sender<Result<bool, String>>),
-    Build(BuildNotice, Sender<bool>),
+    Decide(Decision, Sender<bool>),
     World(WorldQuestion, Sender<bool>),
     Done(Result<InstalledBatch, InstallError>),
 }
@@ -161,7 +166,7 @@ impl Installs {
                     run.stage = step;
                 }
             }
-            Worker::Build(notice, reply) => {
+            Worker::Decide(notice, reply) => {
                 if let Some((_, old)) = self.question.replace((notice, reply)) {
                     let _ = old.send(false);
                 }
@@ -460,7 +465,7 @@ impl Launcher {
         if instance.kind == instances::Kind::Pack {
             return Err(tr("This pack controls which mods it installs.").into());
         }
-        let target = self.profile_target(&instance).cloned();
+        let target = self.profile_target(&instance);
         let release = target
             .as_deref()
             .and_then(|tag| self.release_to_install(tag));
@@ -517,6 +522,15 @@ impl Launcher {
                     Err(backend::no_version_installed())
                 }
             };
+            let resolve = |question: &ResolveQuestion| {
+                let (reply, answer) = std::sync::mpsc::channel();
+                post(Worker::Decide(
+                    Decision::Resolve(Arc::new(question.clone())),
+                    reply,
+                ))
+                .is_ok()
+                    && answer.recv().unwrap_or(false)
+            };
             let hooks = InstallHooks {
                 progress: &|step| {
                     let _ = post(Worker::Progress(step));
@@ -537,9 +551,10 @@ impl Launcher {
                 }),
                 continue_after_failure: &|notice| {
                     let (reply, answer) = std::sync::mpsc::channel();
-                    post(Worker::Build(notice.clone(), reply)).is_ok()
+                    post(Worker::Decide(Decision::Build(notice.clone()), reply)).is_ok()
                         && answer.recv().unwrap_or(false)
                 },
+                resolve: Some(&resolve),
             };
             let approve = |impact: &ChangeImpact| {
                 let (reply, answer) = std::sync::mpsc::channel();
@@ -751,7 +766,7 @@ mod tests {
             Err(error) => String::from(error),
         };
         assert!(
-            error.contains("profile was replaced while Install was waiting"),
+            error.contains("profile was replaced while the request was waiting"),
             "{error}"
         );
         assert!(!b.join(".install-txn.lock").exists());

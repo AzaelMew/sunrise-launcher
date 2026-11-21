@@ -67,7 +67,7 @@ fn github_native_from(
                     identity,
                     found,
                     p,
-                    || sunrise_launcher::managed_play::headless_first(instance, None),
+                    || sunrise_launcher::managed_play::headless_first(instance),
                     sunrise::InstallHooks {
                         progress: &|_| {},
                         native: &|_| {
@@ -77,6 +77,7 @@ fn github_native_from(
                         },
                         registry_crates: Some(&registry_consent),
                         continue_after_failure: &|_| false,
+                        resolve: None,
                     },
                     &|impact| approve_mod_change(impact, confirm_world_loss),
                 )

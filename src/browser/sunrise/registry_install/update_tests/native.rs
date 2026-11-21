@@ -1,6 +1,6 @@
 //! Native Update through the existing developer SDK fixture and compiler-worker protocol.
 use super::*;
-use crate::managed_play::{Active, Held, HeldReason, HeldSource};
+use crate::managed_play::{Active, Held, HeldReason, HeldRoot, HeldSource};
 use sha2::{Digest, Sha256};
 use std::os::unix::fs::PermissionsExt;
 
@@ -91,17 +91,21 @@ fn hold_updates(fixture: &mut Fixture, succeeds: HoldCase, refusals: &[HoldCase]
     for case in refusals.iter().copied().chain([succeeds]) {
         let hold = Held::new(
             ID.into(),
+            "Native Lantern".into(),
             if case == HoldCase::Digest {
                 [7; 32]
             } else {
                 Sha256::digest(&predecessor).into()
             },
-            if case == HoldCase::Location {
-                "sunrise-native-mods/other.smod"
-            } else {
-                ARCHIVE
-            }
-            .into(),
+            (
+                HeldRoot::Native,
+                if case == HoldCase::Location {
+                    "other.smod"
+                } else {
+                    "native_lantern.smod"
+                }
+                .into(),
+            ),
             if case == HoldCase::Source {
                 HeldSource::Local {
                     version: "1.0.0".into(),
@@ -146,7 +150,15 @@ fn hold_updates(fixture: &mut Fixture, succeeds: HoldCase, refusals: &[HoldCase]
             );
             assert_eq!(fixture.snapshot(&[ARCHIVE]), before, "{case:?}");
             assert_eq!(compiled(fixture), "1.0.0\n", "{case:?}");
-            assert!(check_activation(fixture.home(), &[ID]).is_err(), "{case:?}");
+            assert!(
+                mutations::check_admitted_activation(
+                    fixture.home(),
+                    Active::read_pointer(fixture.home()).unwrap().as_ref(),
+                    &[ID]
+                )
+                .is_err(),
+                "{case:?}"
+            );
             // Recovery retires the refused stage against its original pointer. Seed the
             // next independent fixture only after that exact preimage is settled.
             drop(Profile::open(fixture.home(), None).unwrap());
@@ -159,7 +171,12 @@ fn hold_updates(fixture: &mut Fixture, succeeds: HoldCase, refusals: &[HoldCase]
         assert_eq!(mod_list::is_enabled(fixture.home(), ID), reenables);
         assert_eq!(after.executable() != BUILD, reenables);
         assert_eq!(after.holds().count(), 0);
-        check_activation(fixture.home(), &[ID]).unwrap();
+        mutations::check_admitted_activation(
+            fixture.home(),
+            Active::read_pointer(fixture.home()).unwrap().as_ref(),
+            &[ID],
+        )
+        .unwrap();
         assert_eq!(fs::read(fixture.home().join(ARCHIVE)).unwrap(), next);
         assert_eq!(compiled(fixture), "1.0.0\n1.1.0\n");
     }

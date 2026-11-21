@@ -75,7 +75,7 @@ pub fn update_github(
         mod_list::set_enabled(home, id, enabled)?;
     }
     let catalogue = super::super::fetched_index();
-    let check_graph = || match manifest_conflict(home, catalogue.as_deref(), None)? {
+    let check_graph = || match manifest_conflict(home, catalogue.as_deref(), None, |_| false)? {
         Some(conflict) => Err(InstallError::Refused(conflict.reason)),
         None => Ok(()),
     };
@@ -83,9 +83,9 @@ pub fn update_github(
     let reviewed_inputs = managed_play::inputs(home, None)?;
     let suspect = worlds::unproved_mod_effects(
         old.path(),
-        edit.active_basis(),
+        edit.current(),
         home,
-        edit.active_basis(),
+        edit.current(),
         [id.as_str()],
     )?;
     let title = &previous.package.manifest.name;
@@ -154,7 +154,7 @@ pub fn update_github(
     let retired = held.into_iter().map(|_| id.clone()).collect();
     let reviewed = impact.into_evidence();
     (hooks.progress)(InstallProgress::Publishing);
-    edit.publish(proof, &cancellation, &retired, || {
+    edit.publish_install(proof, &cancellation, &retired, || {
         unchanged_candidate()?;
         // The journal checks both input digests and holds the home lock. Also recheck claims
         // and aliases here: they can change without changing any bytes in the copied mod tree.

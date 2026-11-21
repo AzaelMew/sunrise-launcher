@@ -467,7 +467,7 @@ mod tests {
                 assert!(references.pointer.is_none());
 
                 let mut admission =
-                    Admission::open_fenced(&home, None, || ReferencePublication::begin(&home))
+                    Admission::open_fenced(&home, None, |_| ReferencePublication::begin(&home))
                         .unwrap();
                 let resumed = admission
                     .bind_bootstrap::<ReferencePublication>(

@@ -116,7 +116,7 @@ impl Launcher {
                 return;
             }
         };
-        let target = self.profile_target(&instance).cloned();
+        let target = self.profile_target(&instance);
         let release = target
             .as_deref()
             .and_then(|tag| self.release_to_install(tag));
@@ -179,6 +179,7 @@ impl Launcher {
                                             && answer.recv().unwrap_or(false)
                                     }),
                                     continue_after_failure: &|_| false,
+                                    resolve: None,
                                 },
                                 &|impact| {
                                     let (reply, answer) = std::sync::mpsc::channel();
