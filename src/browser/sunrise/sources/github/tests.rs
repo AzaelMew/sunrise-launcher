@@ -186,3 +186,156 @@ fn a_rate_limit_names_reset_time_and_pauses_the_next_repository_lookup() {
     );
     assert_eq!(test_requests() - start, 1);
 }
+
+#[test]
+fn active_cooldown_preserves_cached_details_but_does_not_authorize_builds() {
+    let s = Sandbox::new();
+    s.put(
+        &format!("api/repos/{REPO}/readme/{SHA}.json"),
+        br#"{"path":"README.md","size":24,"type":"file"}"#,
+    );
+    s.put(&format!("raw/{REPO}/{SHA}/README.md"), "# Trail Atlas");
+    let source = Sandbox::source(42);
+    assert!(inspect(&s.github, &source, None, true).error.is_none());
+    s.put(
+        &format!("api/repos/{REPO}.status"),
+        "429\nRetry-After: 500\n",
+    );
+    let limited = resolve_checked(&s.github, &Sandbox::source(43), None).unwrap_err();
+    let start = test_requests();
+    let details = inspect(&s.github, &source, None, true);
+    assert_eq!(details.error, Some(limited.clone()));
+    assert_eq!(details.commit.unwrap().sha(), SHA);
+    assert_eq!(details.readme.unwrap().markdown(), "# Trail Atlas");
+    assert_eq!(
+        resolve_checked(&s.github, &source, None).unwrap_err(),
+        limited
+    );
+    assert_eq!(test_requests(), start);
+}
+
+#[test]
+fn a_pasted_branch_preserves_canonical_identity_and_cannot_retarget_or_guess() {
+    use crate::github_mods::{parse, Resolved, SourceTrack};
+    let s = Sandbox::new();
+    s.put("api/repos/driftwood/trail-atlas.json", br#"{"id":42,"full_name":"Driftwood/trail-atlas","private":false,"default_branch":"topic/camps"}"#);
+    let link = parse("https://github.com/driftwood/trail-atlas/tree/topic/camps").unwrap();
+    let mut found = Resolved {
+        owner: link.owner.clone(),
+        repo: link.repo.clone(),
+        tag: None,
+        commit: SHA.into(),
+        assets: vec![],
+    };
+    let mut state = State::default();
+    let pin = pasted::prove_pasted(&s.github, &mut state, &link, &found)
+        .ok()
+        .unwrap();
+    assert_eq!(pin.repo, REPO);
+    assert_eq!(pin.repo_id, 42);
+    assert!(matches!(pin.track, SourceTrack::Branch(ref name) if name == "topic/camps"));
+    assert!(pin.published_at.is_none());
+    let default = parse("https://github.com/driftwood/trail-atlas").unwrap();
+    assert!(
+        matches!(pasted::prove_pasted(&s.github, &mut state, &default, &found).ok().unwrap().track, SourceTrack::Branch(ref name) if name == "topic/camps")
+    );
+    s.put(
+        &format!("api/repos/{REPO}/git/ref/tags/topic/camps.json"),
+        format!(r#"{{"ref":"refs/tags/topic/camps","object":{{"sha":"{SHA}","type":"commit"}}}}"#),
+    );
+    assert_eq!(
+        pasted::prove_pasted(&s.github, &mut state, &link, &found).err(),
+        Some(Failure::RefUnavailable)
+    );
+    let explicit =
+        parse("https://github.com/driftwood/trail-atlas/tree/refs/heads/topic/camps").unwrap();
+    assert!(pasted::prove_pasted(&s.github, &mut state, &explicit, &found).is_ok());
+    found.commit = "b".repeat(40);
+    assert_eq!(
+        pasted::prove_pasted(&s.github, &mut state, &explicit, &found).err(),
+        Some(Failure::RefUnavailable)
+    );
+}
+
+#[test]
+fn a_pasted_release_uses_its_peeled_tag_and_non_release_links_stay_pinned() {
+    use crate::github_mods::{parse, Resolved, SourceTrack};
+    let s = Sandbox::new();
+    let mut found = Resolved {
+        owner: "Driftwood".into(),
+        repo: "trail-atlas".into(),
+        tag: Some("v0.1.0".into()),
+        commit: SHA.into(),
+        assets: vec![],
+    };
+    let link = parse(&format!("https://github.com/{REPO}/releases/tag/v0.1.0")).unwrap();
+    let tag = "b".repeat(40);
+    s.put(&format!("api/repos/{REPO}/releases/tags/v0.1.0.json"), br#"{"tag_name":"v0.1.0","published_at":"2026-11-21T04:00:00Z","draft":false,"prerelease":false}"#);
+    s.put(
+        &format!("api/repos/{REPO}/git/ref/tags/v0.1.0.json"),
+        format!(r#"{{"ref":"refs/tags/v0.1.0","object":{{"sha":"{tag}","type":"tag"}}}}"#),
+    );
+    s.put(
+        &format!("api/repos/{REPO}/git/tags/{tag}.json"),
+        format!(r#"{{"object":{{"sha":"{SHA}","type":"commit"}}}}"#),
+    );
+    let mut state = State::default();
+    let pin = pasted::prove_pasted(&s.github, &mut state, &link, &found)
+        .ok()
+        .unwrap();
+    assert!(matches!(pin.track, SourceTrack::Release));
+    assert_eq!(pin.tag.as_deref(), Some("v0.1.0"));
+    assert_eq!(pin.published_at.as_deref(), Some("2026-11-21T04:00:00Z"));
+    found.tag = None;
+    s.put(
+        &format!("api/repos/{REPO}/releases/tags/v0.1.0.status"),
+        "404\n",
+    );
+    let pin = pasted::prove_pasted(&s.github, &mut state, &link, &found)
+        .ok()
+        .unwrap();
+    assert!(matches!(pin.track, SourceTrack::Pinned));
+    assert!(pin.tag.is_none());
+    let explicit = parse(&format!("https://github.com/{REPO}/commit/{}", &SHA[..7])).unwrap();
+    s.put(
+        &format!("api/repos/{REPO}/git/commits/{SHA}.json"),
+        format!(r#"{{"sha":"{SHA}"}}"#),
+    );
+    let pin = pasted::prove_pasted(&s.github, &mut state, &explicit, &found)
+        .ok()
+        .unwrap();
+    assert!(matches!(pin.track, SourceTrack::Pinned));
+}
+
+#[test]
+fn compare_requires_ahead_and_the_exact_installed_commit_as_merge_base() {
+    let s = Sandbox::new();
+    let new = "b".repeat(40);
+    let path = format!("api/repos/{REPO}/compare/{SHA}...{new}.json");
+    let mut state = State::default();
+    for (status, base, expected) in [
+        ("ahead", SHA, true),
+        ("ahead", new.as_str(), false),
+        ("behind", SHA, false),
+        ("diverged", SHA, false),
+    ] {
+        s.put(
+            &path,
+            format!(r#"{{"status":"{status}","merge_base_commit":{{"sha":"{base}"}}}}"#),
+        );
+        assert_eq!(
+            pasted::compare(&s.github, &mut state, REPO, SHA, &new),
+            Ok(expected)
+        );
+    }
+    let start = test_requests();
+    assert_eq!(
+        pasted::compare(&s.github, &mut state, REPO, SHA, SHA),
+        Ok(false)
+    );
+    assert_eq!(
+        pasted::compare(&s.github, &mut state, REPO, "main", &new),
+        Err(Failure::RefUnavailable)
+    );
+    assert_eq!(test_requests(), start);
+}
