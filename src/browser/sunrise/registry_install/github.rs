@@ -241,7 +241,7 @@ mod tests {
         let receipt = github_mods::origin_path(home, "zoom");
         let commit = "a".repeat(40);
         let bytes = sunrise_launcher_smod::Package::write_files(
-            &format!("id = 'zoom'\nname = 'Zoom'\nversion = '1.2.0'\napi = '0.2'\n[native]\ngame = '26.3'\nsunrise = '{commit}'\nmixins = '{commit}'\n"),
+            &format!("id = 'zoom'\nname = 'Zoom'\nversion = '1.2.0'\napi = '0.2'\ncapabilities = ['registries']\n[native]\ngame = '26.3'\nsunrise = '{commit}'\nmixins = '{commit}'\n"),
             &[("Cargo.toml", b"[package]\nname = 'zoom'\nversion = '1.2.0'\n"), ("src/lib.rs", b"pub fn mod_hooks() {}")],
         ).unwrap();
         fs::create_dir_all(package.parent().unwrap()).unwrap();
