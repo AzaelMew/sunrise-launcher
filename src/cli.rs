@@ -2138,13 +2138,7 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
             project,
             source: SourceArg::Sunrise,
             ..
-        } => {
-            let found = sunrise::install_project(project)?;
-            if found.kind == Kind::Modpack {
-                return Err(sunrise::pack::install_unavailable());
-            }
-            Some(found)
-        }
+        } => Some(sunrise::install_project(project)?),
         _ => None,
     };
     // What the browser installs goes into an instance's game folder.

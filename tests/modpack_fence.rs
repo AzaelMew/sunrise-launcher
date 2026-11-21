@@ -165,6 +165,152 @@ fn legacy_modpack_writers_refuse_in_cli_and_mcp_without_touching_the_pack() {
     assert!(mcp.wait().unwrap().success());
 }
 
+#[cfg(debug_assertions)]
+#[test]
+fn ordinary_pack_installs_reuse_the_only_successful_registry_reply() {
+    use std::{
+        net::TcpListener,
+        sync::atomic::{AtomicBool, Ordering},
+        thread,
+        time::Duration,
+    };
+    use sunrise_launcher_smod::index;
+
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let mut catalogue: index::Index =
+        serde_json::from_str(include_str!("../crates/smod/tests/index/index-v1.json")).unwrap();
+    let mut shader = catalogue.project("glow").unwrap().clone();
+    let shader_file = root.join(&shader.versions[0].file.name);
+    fs::write(
+        &shader_file,
+        include_bytes!("../crates/smod/tests/index/glow-1.0.0.sshader"),
+    )
+    .unwrap();
+    shader.versions[0].file.url = format!("file://{}", shader_file.display());
+    catalogue.projects = vec![shader.clone()];
+    for (id, kind, namespace) in [
+        (
+            "textures",
+            index::Kind::ResourcePack,
+            "assets/lanterns/fixture.json",
+        ),
+        (
+            "lanterns",
+            index::Kind::DataPack,
+            "data/lanterns/function/light.mcfunction",
+        ),
+    ] {
+        let name = format!("{id}-1.0.0.zip");
+        let path = root.join(&name);
+        let mut zip = zip::ZipWriter::new(fs::File::create(&path).unwrap());
+        for (name, bytes) in [
+            (
+                "pack.mcmeta",
+                br#"{"pack":{"pack_format":94,"description":"Lanterns"}}"#.as_slice(),
+            ),
+            (namespace, b"say lit"),
+        ] {
+            zip.start_file(name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zip.write_all(bytes).unwrap();
+        }
+        zip.finish().unwrap();
+        let mut project = shader.clone();
+        project.id = id.into();
+        project.kind = kind;
+        project.name = id.into();
+        project.versions[0].api = "94".into();
+        project.versions[0].file = index::File {
+            name,
+            url: format!("file://{}", path.display()),
+            size: fs::metadata(&path).unwrap().len(),
+            sha256: index::sha256_file(&path).unwrap(),
+            signature: None,
+        };
+        catalogue.projects.push(project);
+    }
+    let body = serde_json::to_vec(&catalogue).unwrap();
+    for (id, folder, file) in [
+        ("textures", "resourcepacks", "textures-1.0.0.zip"),
+        ("glow", "shaderpacks", "glow-1.0.0.sshader"),
+        ("lanterns", "saves/World/datapacks", "lanterns-1.0.0.zip"),
+    ] {
+        let game = root.join(id).join("game");
+        let save = game.join("saves/World");
+        fs::create_dir_all(&save).unwrap();
+        fs::write(save.join("level.dat"), b"fixture world").unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let address = listener.local_addr().unwrap();
+        let finished = AtomicBool::new(false);
+        let (out, requests) = thread::scope(|scope| {
+            let server = scope.spawn(|| {
+                let mut requests = 0;
+                while !finished.load(Ordering::Relaxed) {
+                    match listener.accept() {
+                        Ok((mut stream, _)) => {
+                            stream.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+                            let mut headers = BufReader::new(&stream);
+                            let mut line = String::new();
+                            headers.read_line(&mut line).unwrap();
+                            assert!(line.starts_with("GET /registry.json HTTP/"), "{line:?}");
+                            loop {
+                                line.clear();
+                                if headers.read_line(&mut line).unwrap() == 0 || line == "\r\n" { break }
+                            }
+                            requests += 1;
+                            if requests == 1 {
+                                write!(stream, "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).unwrap();
+                                stream.write_all(&body).unwrap();
+                            } else {
+                                stream.write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
+                            }
+                        }
+                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => thread::sleep(Duration::from_millis(5)),
+                        Err(e) => panic!("{e}"),
+                    }
+                }
+                requests
+            });
+            let mut cmd = Command::new(env!("CARGO_BIN_EXE_sunrise-launcher"));
+            cmd.args(["mods", "install", id, "--source", "sunrise"])
+                .env("SUNRISE_HOME", &game)
+                .env("SUNRISE_LAUNCHER_HOME", root.join(id).join("launcher"))
+                .env(
+                    "SUNRISE_LAUNCHER_LOCATION_FILE",
+                    root.join(id).join("location.json"),
+                )
+                .env(
+                    "SUNRISE_MOD_INDEX",
+                    format!("http://{address}/registry.json"),
+                )
+                .env("SUNRISE_LAUNCHER_NO_SELF_UPDATE", "1")
+                .env("SUNRISE_NO_KEYCHAIN", "1")
+                .env("SUNRISE_TELEMETRY_URL", "off");
+            if id == "lanterns" {
+                cmd.args(["--world", "World"]);
+            }
+            let out = cmd.output();
+            finished.store(true, Ordering::Relaxed);
+            (out.unwrap(), server.join().unwrap())
+        });
+        assert!(
+            out.status.success(),
+            "{id}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(
+            requests, 1,
+            "{id} must use the one accepted registry response"
+        );
+        assert_eq!(
+            fs::read(game.join(folder).join(file)).unwrap(),
+            fs::read(root.join(file)).unwrap()
+        );
+    }
+}
+
 fn bytes_in(dir: &Path) -> BTreeMap<PathBuf, Option<Vec<u8>>> {
     fs::read_dir(dir)
         .unwrap()
