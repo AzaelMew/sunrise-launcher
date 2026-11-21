@@ -24,15 +24,15 @@ const BOOTSTRAP_VERSION: u64 = 1;
 
 /// Moving a managed profile can change its path but never the filesystem identity of a
 /// directory referenced by an in-flight transaction.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Identity {
+pub struct Identity {
     volume: u64,
     inode: u64,
 }
 
 impl Identity {
-    fn of(path: &Path) -> Result<Self, String> {
+    pub fn of(path: &Path) -> Result<Self, String> {
         if !fs::symlink_metadata(path).is_ok_and(|m| regular(&m) && m.is_dir()) {
             return Err(at(path, unsettled()));
         }
@@ -111,17 +111,40 @@ impl Admission {
         external_owner: Option<&Path>,
         fence: impl FnOnce() -> Result<G, String>,
     ) -> Result<Self, String> {
-        let lease = Self::claim(home, external_owner)?;
+        Self::open_fenced_for(home, external_owner, None, fence)
+    }
+
+    pub(crate) fn open_fenced_for<G>(
+        home: &Path,
+        external_owner: Option<&Path>,
+        expected: Option<Identity>,
+        fence: impl FnOnce() -> Result<G, String>,
+    ) -> Result<Self, String> {
+        let lease = Self::claim(home, external_owner, expected)?;
         let _fence = fence()?;
         lease.recover()?;
         Ok(lease)
     }
 
-    fn claim(home: &Path, external_owner: Option<&Path>) -> Result<Self, String> {
+    fn claim(
+        home: &Path,
+        external_owner: Option<&Path>,
+        expected: Option<Identity>,
+    ) -> Result<Self, String> {
         let gate = external_owner
             .map(Path::to_path_buf)
             .unwrap_or_else(|| home.join(".install-txn.lock"));
-        let identity = Identity::of(home)?;
+        let changed = || {
+            crate::i18n::tr(
+                "This profile was replaced while Install was waiting. Nothing was installed.",
+            )
+            .to_owned()
+        };
+        let identity = match expected {
+            Some(expected) if Identity::of(home).ok() == Some(expected) => expected,
+            Some(_) => return Err(changed()),
+            None => Identity::of(home)?,
+        };
         match fs::symlink_metadata(&gate) {
             Ok(meta) if regular(&meta) && meta.is_file() => (),
             Err(e) if e.kind() == io::ErrorKind::NotFound => (),
@@ -152,8 +175,12 @@ impl Admission {
             Err(fs::TryLockError::WouldBlock) => return Err(busy()),
             Err(fs::TryLockError::Error(e)) => return Err(at(&gate, e)),
         }
-        if Identity::of(home)? != identity {
-            return Err(unsettled());
+        if Identity::of(home).ok() != Some(identity) {
+            return Err(if expected.is_some() {
+                changed()
+            } else {
+                unsettled()
+            });
         }
         Ok(Self {
             home: home.into(),

@@ -310,6 +310,7 @@ fn conflicting_pair_worker() {
     let instance = instances::selection().unwrap();
     let done = install_registry(
         &instance,
+        install_target(&instance).unwrap(),
         || vec!["root_mod".into(), "extra_mod".into()],
         || managed_play::headless_first(&instance, None),
         InstallHooks {
@@ -338,6 +339,7 @@ fn cutoff_worker() {
     let instance = instances::selection().unwrap();
     let result = install_registry(
         &instance,
+        install_target(&instance).unwrap(),
         || vec!["extra_mod".into()],
         || managed_play::headless_first(&instance, None),
         InstallHooks {

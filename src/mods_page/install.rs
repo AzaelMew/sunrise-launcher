@@ -6,6 +6,7 @@ use sunrise_launcher::{
         BuildNotice, InstallError, InstallHooks, InstallProgress, InstalledBatch, NativeQuestion,
     },
     managed_play::FirstBuild,
+    profile_txn::Identity,
 };
 
 #[derive(Default)]
@@ -19,6 +20,7 @@ pub(crate) struct Installs {
 
 struct Running {
     profile: instances::Instance,
+    identity: Identity,
     target: Option<String>,
     batch: Arc<Mutex<Option<Vec<String>>>>,
     requests: Vec<RequestView>,
@@ -27,6 +29,7 @@ struct Running {
 
 struct Request {
     profile: instances::Instance,
+    identity: Identity,
     target: Option<String>,
     release: Option<backend::Release>,
     view: RequestView,
@@ -87,6 +90,7 @@ impl Installs {
         if let Some(run) = &mut self.running {
             if run.profile.id == request.profile.id
                 && run.profile.home == request.profile.home
+                && run.identity == request.identity
                 && run.target == request.target
                 && run.profile.native_profile == request.profile.native_profile
             {
@@ -108,6 +112,7 @@ impl Installs {
         if !self.waiting.iter().any(|q| {
             q.profile.id == request.profile.id
                 && q.profile.home == request.profile.home
+                && q.identity == request.identity
                 && q.target == request.target
                 && q.profile.native_profile == request.profile.native_profile
                 && q.view.card == request.view.card
@@ -387,6 +392,7 @@ impl Launcher {
             .as_deref()
             .and_then(|tag| self.release_to_install(tag));
         self.mods.installs.submit(Request {
+            identity: sunrise::install_target(&instance)?,
             profile: instance,
             target,
             release,
@@ -410,6 +416,7 @@ impl Launcher {
         let batch = Arc::new(Mutex::new(Some(request.view.ids.clone())));
         self.mods.installs.running = Some(Running {
             profile: request.profile.clone(),
+            identity: request.identity,
             target: request.target.clone(),
             batch: batch.clone(),
             requests: vec![request.view],
@@ -421,6 +428,7 @@ impl Launcher {
             let post = |event| tx.send(Event::Registry(event));
             let result = sunrise::install_registry(
                 &request.profile,
+                request.identity,
                 || {
                     batch
                         .lock()
@@ -512,14 +520,16 @@ fn failure_line(error: &InstallError) -> &'static str {
 mod tests {
     use super::*;
 
-    fn request(home: &str, id: &str, target: &str) -> Request {
+    fn request(home: &Path, id: &str, target: &str) -> Request {
+        let slug = home.file_name().unwrap().to_str().unwrap();
         Request {
+            identity: Identity::of(home).unwrap(),
             profile: instances::Instance {
-                id: home.into(),
-                name: home.into(),
+                id: slug.into(),
+                name: slug.into(),
                 kind: instances::Kind::Own,
-                home: PathBuf::from(home),
-                work: PathBuf::from(home),
+                home: home.into(),
+                work: home.into(),
                 icon: None,
                 group: None,
                 version: None,
@@ -538,11 +548,12 @@ mod tests {
         }
     }
 
-    fn with_running() -> Installs {
-        let first = request("A", "one", "nightly");
+    fn with_running(root: &Path) -> Installs {
+        let first = request(&root.join("A"), "one", "nightly");
         Installs {
             running: Some(Running {
                 profile: first.profile,
+                identity: first.identity,
                 target: first.target,
                 batch: Arc::new(Mutex::new(Some(first.view.ids.clone()))),
                 requests: vec![first.view],
@@ -554,10 +565,13 @@ mod tests {
 
     #[test]
     fn visible_matching_batch_joins_before_sealing_only_and_later_clicks_wait_fifo() {
-        let mut installs = with_running();
-        installs.submit(request("B", "two", "nightly"));
-        installs.submit(request("A", "three", "nightly"));
-        installs.submit(request("A", "four", "stable"));
+        let root = homes();
+        let a = root.path().join("A");
+        let b = root.path().join("B");
+        let mut installs = with_running(root.path());
+        installs.submit(request(&b, "two", "nightly"));
+        installs.submit(request(&a, "three", "nightly"));
+        installs.submit(request(&a, "four", "stable"));
         let joined = installs
             .running
             .as_ref()
@@ -569,16 +583,13 @@ mod tests {
             .unwrap();
         assert_eq!(joined, ["one", "three"]);
         installs.handle(Worker::Progress(InstallProgress::Building(Some(0.5))));
-        installs.submit(request("A", "five", "nightly"));
-        installs.submit(request("A", "five", "nightly"));
+        installs.submit(request(&a, "five", "nightly"));
+        installs.submit(request(&a, "five", "nightly"));
         assert!(matches!(
-            installs.card(Path::new("A"), "three"),
+            installs.card(&a, "three"),
             Some(Card::Progress(InstallProgress::Building(Some(0.5))))
         ));
-        assert!(matches!(
-            installs.card(Path::new("A"), "five"),
-            Some(Card::Waiting)
-        ));
+        assert!(matches!(installs.card(&a, "five"), Some(Card::Waiting)));
         assert_eq!(
             installs
                 .waiting
@@ -589,12 +600,72 @@ mod tests {
         );
     }
 
+    fn homes() -> tempfile::TempDir {
+        let root = tempfile::tempdir().unwrap();
+        for id in ["A", "B"] {
+            std::fs::create_dir(root.path().join(id)).unwrap();
+        }
+        root
+    }
+
+    #[test]
+    fn queued_target_cannot_open_the_replacement_home() {
+        let root = homes();
+        let a = root.path().join("A");
+        let b = root.path().join("B");
+        let mut installs = with_running(root.path());
+        installs.submit(request(&b, "two", "nightly"));
+        installs.submit(request(&a, "three", "stable"));
+        assert!(matches!(installs.card(&b, "two"), Some(Card::Waiting)));
+
+        let out = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "mods_page::install::tests::replace_home_worker"])
+            .env("FIXTURE_REPLACE_QUEUED_HOME", &b)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{out:?}");
+        assert_eq!(std::fs::read(b.join("replacement")).unwrap(), b"new owner");
+        installs.handle(Worker::Done(Ok(InstalledBatch::default())));
+        let queued = installs.waiting.pop_front().unwrap();
+        let error = match sunrise_launcher::managed_play::Profile::open_for(
+            &queued.profile.home,
+            None,
+            Some(queued.identity),
+        ) {
+            Ok(_) => panic!("admitted a replacement"),
+            Err(error) => String::from(error),
+        };
+        assert!(
+            error.contains("profile was replaced while Install was waiting"),
+            "{error}"
+        );
+        assert!(!b.join(".install-txn.lock").exists());
+        assert!(!b.join("mod-browser").exists());
+        let next = installs.waiting.pop_front().unwrap();
+        assert_eq!(next.view.card, "three");
+        assert_eq!(next.identity, Identity::of(&next.profile.home).unwrap());
+    }
+
+    #[test]
+    fn replace_home_worker() {
+        let Some(home) = std::env::var_os("FIXTURE_REPLACE_QUEUED_HOME").map(PathBuf::from) else {
+            return;
+        };
+        let owner = home.with_extension("owner.lock");
+        let _admitted =
+            sunrise_launcher::profile_txn::Admission::open(&home, Some(&owner)).unwrap();
+        std::fs::rename(&home, home.with_extension("detached")).unwrap();
+        std::fs::create_dir(&home).unwrap();
+        std::fs::write(home.join("replacement"), b"new owner").unwrap();
+    }
+
     #[test]
     fn deferred_play_is_kept_only_for_success_and_failure_is_scoped_to_its_profile() {
+        let root = homes();
         for (home, pass, kept) in [("A", true, true), ("A", false, false), ("B", false, true)] {
-            let mut installs = with_running();
+            let mut installs = with_running(root.path());
             installs.play = Some((
-                home.into(),
+                root.path().join(home),
                 launcher_play::PlayIntent {
                     instance: home.into(),
                     account: Some("accepted".into()),

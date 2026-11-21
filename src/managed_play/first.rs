@@ -153,7 +153,15 @@ impl Profile {
         home: &Path,
         external_owner: Option<&Path>,
     ) -> Result<Self, super::client::StartError> {
-        let profile = Admission::open_fenced(home, external_owner, || {
+        Self::open_for(home, external_owner, None)
+    }
+
+    pub fn open_for(
+        home: &Path,
+        external_owner: Option<&Path>,
+        identity: Option<profile_txn::Identity>,
+    ) -> Result<Self, super::client::StartError> {
+        let profile = Admission::open_fenced_for(home, external_owner, identity, || {
             let manifest = game_lock(home)?;
             let references = ReferencePublication::begin(home)?;
             Ok((manifest, references))

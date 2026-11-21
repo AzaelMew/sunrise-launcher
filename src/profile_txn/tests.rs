@@ -535,7 +535,7 @@ fn journal_actor() {
         }
         _ => {}
     }
-    let mut owner = Admission::claim(&home, None).unwrap();
+    let mut owner = Admission::claim(&home, None, None).unwrap();
     match action.as_str() {
         "launcher-with-staged-worker" => {
             use crate::process::{leases::StagedChild, owned::Owned};

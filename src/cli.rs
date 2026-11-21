@@ -2348,6 +2348,7 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                 let progress_line = progress(p.title.clone());
                 let installed = sunrise::install_registry(
                     &instance,
+                    sunrise::install_target(&instance)?,
                     || vec![p.id],
                     || sunrise_launcher::managed_play::headless_first(&instance, None),
                     sunrise::InstallHooks {

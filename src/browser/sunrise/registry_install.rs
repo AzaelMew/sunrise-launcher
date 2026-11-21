@@ -9,6 +9,7 @@ use crate::{
     instances::{Instance, Kind as InstanceKind},
     managed_play::{self, FirstBuild, Profile, ScannedPackage},
     native_mods,
+    profile_txn::Identity,
 };
 use serde_json::{Map, Value};
 use std::{
@@ -85,10 +86,20 @@ pub struct InstallHooks<'a> {
     pub continue_after_failure: &'a dyn Fn(&BuildNotice) -> bool,
 }
 
+/// Capture the Install target before it queues. The initial default profile may not have
+/// a game directory until its first operation; never recreate a named profile here.
+pub fn install_target(instance: &Instance) -> Result<Identity, String> {
+    if instance.kind == InstanceKind::Default {
+        fs::create_dir_all(&instance.home).map_err(|e| at(&instance.home, e))?;
+    }
+    Identity::of(&instance.home)
+}
+
 /// Profile selection is captured at the click. A saved active/pending build wins over the
 /// candidate in `choose`, just as in Play. This callback is never called again at cutoff.
 pub fn install_registry(
     instance: &Instance,
+    identity: Identity,
     request: impl FnOnce() -> Vec<String>,
     choose: impl FnOnce() -> Result<FirstBuild, String>,
     hooks: InstallHooks<'_>,
@@ -118,11 +129,9 @@ pub fn install_registry(
     if ids.is_empty() {
         return Err(InstallError::Cancelled);
     }
-    // Keep the settings/profile choice stable through download, consent, compile and publish.
-    if instance.kind == InstanceKind::Default {
-        fs::create_dir_all(&instance.home).map_err(|e| at(&instance.home, e))?;
-    }
-    let mut profile = Profile::open(&instance.home, None)?;
+    // Reject a replaced home before recovery or any live edit.
+    let mut profile =
+        Profile::open_for(&instance.home, None, Some(identity)).map_err(String::from)?;
     let edit = profile.begin_edit(
         choose,
         |f| (hooks.progress)(InstallProgress::Downloading(f)),
