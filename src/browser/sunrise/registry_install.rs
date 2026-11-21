@@ -44,6 +44,15 @@ pub fn known_unfit_updates(base: &str) -> BTreeSet<String> {
         .unwrap_or_default()
 }
 
+fn remember_unfit(base: &str, release: &index::Version) {
+    UNFIT_UPDATES
+        .lock()
+        .unwrap()
+        .entry(base.into())
+        .or_default()
+        .insert(release.file.sha256.to_ascii_lowercase());
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum InstallProgress {
     Checking,
@@ -602,7 +611,15 @@ fn registry_edit<'a>(
                     )
                 }) =>
                 {
-                    if !unfit.insert((id.clone(), entries[id].version.clone())) {
+                    let candidate = &entries[id].version;
+                    let (_, release) = versions
+                        .iter()
+                        .find(|(project, release)| {
+                            &project.id == id && &release.version == candidate
+                        })
+                        .expect("the prior-off trial proved a checked staged release");
+                    remember_unfit(edit.base(), release);
+                    if !unfit.insert((id.clone(), candidate.clone())) {
                         return Err(InstallError::Unproved(error));
                     }
                     last_sdk_refusal = Some(error);
@@ -638,12 +655,7 @@ fn registry_edit<'a>(
                         .iter()
                         .find(|(p, v)| p.id == failed.id && v.version == failed.version)
                         .expect("the no-fit names a checked staged release");
-                    UNFIT_UPDATES
-                        .lock()
-                        .unwrap()
-                        .entry(edit.base().into())
-                        .or_default()
-                        .insert(version.file.sha256.to_ascii_lowercase());
+                    remember_unfit(edit.base(), version);
                     unfit.insert((failed.id, failed.version));
                 }
                 if first == unfit.len() {

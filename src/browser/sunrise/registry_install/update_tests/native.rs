@@ -70,8 +70,7 @@ enum HoldCase {
     Base,
 }
 
-fn hold_updates(fixture: &mut Fixture, succeeds: HoldCase, refusals: &[HoldCase]) {
-    let predecessor = configured(fixture);
+fn disabled_pointer(fixture: &Fixture) -> PathBuf {
     mod_list::set_enabled(fixture.home(), ID, false).unwrap();
     let active = Profile::open(fixture.home(), None)
         .unwrap()
@@ -85,7 +84,18 @@ fn hold_updates(fixture: &mut Fixture, succeeds: HoldCase, refusals: &[HoldCase]
         .unwrap()
         .unwrap();
     assert_eq!(active.executable(), BUILD);
-    let pointer = fixture.home().join(crate::profile_txn::POINTER);
+    fixture.home().join(crate::profile_txn::POINTER)
+}
+
+fn stamp_hold(pointer: &Path, mut image: Value, hold: Held) {
+    let receipt_id = [8_u8; 16];
+    image["receipts"] = json!([{"id": receipt_id, "waiting_for_update": [hold], "removed": [], "acknowledged": true}]);
+    fs::write(pointer, serde_json::to_vec(&image).unwrap()).unwrap();
+}
+
+fn hold_updates(fixture: &mut Fixture, succeeds: HoldCase, refusals: &[HoldCase]) {
+    let predecessor = configured(fixture);
+    let pointer = disabled_pointer(fixture);
     let base: Value = serde_json::from_slice(&fs::read(&pointer).unwrap()).unwrap();
     let next = release(fixture, "1.1.0", 'a', SOURCE);
     for case in refusals.iter().copied().chain([succeeds]) {
@@ -128,10 +138,7 @@ fn hold_updates(fixture: &mut Fixture, succeeds: HoldCase, refusals: &[HoldCase]
         )
         .unwrap();
         // Switch publishes these typed receipts. Seed one on the real disabled generation.
-        let mut with_hold = base.clone();
-        let receipt_id = [8_u8; 16];
-        with_hold["receipts"] = json!([{"id": receipt_id, "waiting_for_update": [hold], "removed": [], "acknowledged": true}]);
-        fs::write(&pointer, serde_json::to_vec(&with_hold).unwrap()).unwrap();
+        stamp_hold(&pointer, base.clone(), hold);
         assert_eq!(
             Active::read_pointer(fixture.home())
                 .unwrap()
@@ -221,6 +228,99 @@ fn mismatched_holds_refuse_and_exact_prior_off_retires_without_activation() {
 
 #[test]
 #[ignore = "daily; build the launcher binary first"]
+fn a_proved_unfit_prior_off_update_leaves_the_hold_and_hides_only_that_offer() {
+    Fixture::run(
+        concat!(
+            module_path!(),
+            "::a_proved_unfit_prior_off_update_leaves_the_hold_and_hides_only_that_offer"
+        ),
+        |mut fixture| {
+            let predecessor = configured(&mut fixture);
+            let pointer = disabled_pointer(&fixture);
+            let image = serde_json::from_slice(&fs::read(&pointer).unwrap()).unwrap();
+            let hold = Held::new(
+                ID.into(),
+                "Native Lantern".into(),
+                Sha256::digest(&predecessor).into(),
+                (HeldRoot::Native, "native_lantern.smod".into()),
+                HeldSource::Registry {
+                    project: ID.into(),
+                    version: "1.0.0".into(),
+                },
+                false,
+                HeldReason::NoFit {
+                    build: BUILD.into(),
+                },
+            )
+            .unwrap();
+            stamp_hold(&pointer, image, hold);
+
+            let candidate = release(&mut fixture, "1.1.0", 'b', SOURCE);
+            let before = fixture.snapshot(&[ARCHIVE]);
+            let error = fixture.update(&[ID], &no_world_question).unwrap_err();
+            assert!(
+                matches!(error, InstallError::Refused(ref detail) if detail.contains("Made for other Sunrise versions")),
+                "{error}"
+            );
+            assert_eq!(fixture.snapshot(&[ARCHIVE]), before);
+            assert!(!mod_list::is_enabled(fixture.home(), ID));
+            // Installed filters offers by this exact hash for the committed base only.
+            assert_eq!(
+                known_unfit_updates(BUILD),
+                BTreeSet::from([index::sha256(&candidate)])
+            );
+            assert!(known_unfit_updates("other-base").is_empty());
+            assert_eq!(compiled(&fixture), "1.0.0\n");
+        },
+    );
+}
+
+fn no_list_sdk(fixture: &Fixture) -> PathBuf {
+    use sunrise_launcher_release_verify::{sha256_hex, sums_file, SigningKey, SIGNATURE, SUMS};
+    use sunrise_launcher_sdk::{self as sdk, Asset, Kind, Side};
+
+    let tool =
+        include_bytes!("../../../../../tests/ordinary_play/install/native-check-tool.tar.xz");
+    let target = crate::rust_toolchain::host().unwrap().target;
+    let asset = Asset::name(Kind::Tool, target, Side::Client);
+    let commit = "a".repeat(40);
+    let sdk_tag = format!("sdk-{commit}");
+    let base = fixture.root.join("signed-sdk");
+    let index = json!({
+        "schema": sdk::SCHEMA,
+        "package_format": sdk::PACKAGE_FORMAT,
+        "build": {"commit": commit, "game": backend::PINNED_GAME, "date": "2026-11-21"},
+        "toolchain": {"rust": crate::rust_toolchain::VERSION},
+        "content_api": sunrise_launcher_smod::manifest::API,
+        "surface": {"hash": "ab".repeat(16)},
+        "mixins": {"rev": "c".repeat(40), "patch": "0".repeat(64)},
+        "inputs": serde_json::from_str::<Value>(include_str!("../../../../../crates/sdk/src/sdk/inputs.json")).unwrap(),
+        "assets": {&asset: {"sha256": sha256_hex(tool), "size": tool.len(), "kind": "tool", "codec": "xz", "target": target}},
+    }).to_string();
+    let signer = SigningKey::generate().unwrap().0;
+    let sums = sums_file(&[
+        (sdk::INDEX.into(), sha256_hex(index.as_bytes())),
+        (asset.clone(), sha256_hex(tool)),
+    ]);
+    for tag in [BUILD, &sdk_tag] {
+        let dir = base.join(tag);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join(sdk::INDEX), &index).unwrap();
+        fs::write(dir.join(SUMS), &sums).unwrap();
+        fs::write(dir.join(SIGNATURE), signer.sign(tag, sums.as_bytes())).unwrap();
+    }
+    fs::write(base.join(&sdk_tag).join(asset), tool).unwrap();
+    let request = fixture.root.join("native-check-request");
+    // Fixture::run gives this scenario its own test process and private SDK/cache.
+    std::env::set_var("SUNRISE_SDK_BASE", base);
+    std::env::set_var("SUNRISE_SDK_TRUSTED_KEY", signer.public_base64());
+    std::env::set_var("FIXTURE_NATIVE_CHECK_REQUEST", &request);
+    std::env::set_var("FIXTURE_NATIVE_CHECK_REPLY", json!({"contract": 2, "route": null, "mods": [{"id": ID, "verdict": {"kind": "no-list", "made_for": "b".repeat(40), "why": "newer-schema"}}]}).to_string());
+    request
+}
+
+#[test]
+#[ignore = "daily; build the launcher binary first"]
 fn bulk_update_can_keep_a_proved_unfit_root_and_advance_an_independent_sibling() {
     Fixture::run(
         concat!(
@@ -242,16 +342,37 @@ fn bulk_update_can_keep_a_proved_unfit_root_and_advance_an_independent_sibling()
                 ))
             };
 
+            let next = fixture.release("extra_mod", "1.2.0", "", &[]);
+            let request = no_list_sdk(&fixture);
+            let developer = backend::version_dir(BUILD).join("developer.json");
+            let developer_facts = fs::read(&developer).unwrap();
+            fs::remove_file(&developer).unwrap();
+            let unknown = bulk(&fixture).unwrap_err();
+            assert!(
+                matches!(unknown, InstallError::Unproved(ref detail) if detail.contains("newer tool")),
+                "{unknown}"
+            );
+            let checked: Value = serde_json::from_slice(&fs::read(request).unwrap()).unwrap();
+            assert_eq!(checked["build"], "a".repeat(40));
+            assert_eq!(fixture.snapshot(&[ARCHIVE, EXTRA]), before);
+            assert!(known_unfit_updates(BUILD).is_empty());
+            fs::write(developer, developer_facts).unwrap();
+
             let strict = fixture.update(&[ID], &no_world_question).unwrap_err();
             assert!(
                 matches!(strict, InstallError::Refused(ref detail) if detail.contains("Made for other Sunrise versions")),
                 "{strict}"
             );
             assert_eq!(fixture.snapshot(&[ARCHIVE, EXTRA]), before);
-            assert!(bulk(&fixture).unwrap().updated.is_empty());
+            assert!(fixture
+                .apply(Action::Update(
+                    UpdateRequest::Bulk(projects(&[ID])),
+                    &no_world_question
+                ))
+                .unwrap()
+                .updated
+                .is_empty());
             assert_eq!(fixture.snapshot(&[ARCHIVE, EXTRA]), before);
-
-            let next = fixture.release("extra_mod", "1.2.0", "", &[]);
             assert!(matches!(
                 fixture.update(ids, &no_world_question),
                 Err(InstallError::Refused(_))
@@ -262,8 +383,10 @@ fn bulk_update_can_keep_a_proved_unfit_root_and_advance_an_independent_sibling()
             assert!(matches!(bulk(&fixture), Err(InstallError::Download(_))));
             assert_eq!(fixture.snapshot(&[ARCHIVE, EXTRA]), before);
 
+            let unfit_digest = index::sha256(&unfit);
             fs::write(archive, unfit).unwrap();
             let batch = bulk(&fixture).unwrap();
+            assert_eq!(known_unfit_updates(BUILD), BTreeSet::from([unfit_digest]));
             assert_eq!(batch.updated.len(), 1);
             let (previous, entry) = &batch.updated[0];
             assert_eq!(previous, "1.0.0");
