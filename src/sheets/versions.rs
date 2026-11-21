@@ -73,6 +73,27 @@ struct Build {
     installed: bool,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum VersionAction {
+    Download,
+    Prepare,
+    Keep,
+}
+
+fn version_action(
+    installed: bool,
+    prepared: impl FnOnce() -> bool,
+    can_switch: bool,
+) -> Option<VersionAction> {
+    if !installed {
+        Some(VersionAction::Download)
+    } else if !prepared() {
+        Some(VersionAction::Prepare)
+    } else {
+        can_switch.then_some(VersionAction::Keep)
+    }
+}
+
 /// "November 2026" for `2026-11`.
 fn month(year_month: &str) -> String {
     let (year, month) = year_month.split_once('-').unwrap_or((year_month, ""));
@@ -404,46 +425,50 @@ impl Launcher {
             .border_color(rgb(palette().text))
             .text_color(rgb(palette().background))
             .hover(|s| s.bg(rgb(palette().accent_on)));
-        let pick = pick.filter(|tag| Some(tag.as_str()) != current);
         let idle = !is_pack && !self.launch_busy() && self.client.is_none();
         let mut cache_action = None;
         let mut plan = None;
+        let mut keep_tag = None;
         if let Some(tag) = pick.as_ref() {
-            if self.installed.contains(tag) {
-                if backend::is_prepared(tag) {
-                    if sheet && !is_pack {
-                        let request = &mut self.ui.sheets.versions.preview;
-                        if request
-                            .as_ref()
-                            .is_none_or(|preview| preview.home != home || preview.tag != *tag)
-                        {
-                            let checked = Arc::new(OnceLock::new());
-                            *request = Some(FitPreview {
-                                home: home.clone(),
-                                tag: tag.clone(),
-                                checked: checked.clone(),
-                            });
-                            let target = tag.clone();
-                            let work = cx.background_executor().spawn(async move {
-                                sunrise_launcher::browser::sunrise::checked_switch_fit(
-                                    &home, &target,
-                                )
-                            });
-                            cx.spawn(async move |this, cx| {
-                                let _ = checked.set(work.await);
-                                let _ = this.update(cx, |_, cx| cx.notify());
-                            })
-                            .detach();
-                        }
-                        plan = Some(
-                            if request.as_ref().and_then(|p| p.checked.get()) == Some(&true) {
-                                tr("The installed mod files fit this build.")
-                            } else {
-                                tr("The mod changes aren't known until Sunrise checks this build.")
-                            },
-                        );
+            match version_action(
+                self.installed.contains(tag),
+                || backend::is_prepared(tag),
+                sheet && !is_pack && Some(tag.as_str()) != current,
+            ) {
+                Some(VersionAction::Keep) => {
+                    if idle {
+                        keep_tag = Some(tag.clone());
                     }
-                } else {
+                    let request = &mut self.ui.sheets.versions.preview;
+                    if request
+                        .as_ref()
+                        .is_none_or(|preview| preview.home != home || preview.tag != *tag)
+                    {
+                        let checked = Arc::new(OnceLock::new());
+                        *request = Some(FitPreview {
+                            home: home.clone(),
+                            tag: tag.clone(),
+                            checked: checked.clone(),
+                        });
+                        let target = tag.clone();
+                        let work = cx.background_executor().spawn(async move {
+                            sunrise_launcher::browser::sunrise::checked_switch_fit(&home, &target)
+                        });
+                        cx.spawn(async move |this, cx| {
+                            let _ = checked.set(work.await);
+                            let _ = this.update(cx, |_, cx| cx.notify());
+                        })
+                        .detach();
+                    }
+                    plan = Some(
+                        if request.as_ref().and_then(|p| p.checked.get()) == Some(&true) {
+                            tr("The installed mod files fit this build.")
+                        } else {
+                            tr("The mod changes aren't known until Sunrise checks this build.")
+                        },
+                    );
+                }
+                Some(VersionAction::Prepare) => {
                     plan = Some(tr("Prepare this build before switching. Your profile stays on its current build."));
                     let target = tag.clone();
                     let b = button("alt-versions-prepare", tr("Prepare"));
@@ -456,29 +481,32 @@ impl Launcher {
                         b.opacity(0.45).tab_stop(false)
                     });
                 }
-            } else if let Some(release) = self.release_to_install(tag) {
-                plan = Some(tr(
-                    "Download this build first. Your profile stays on its current build.",
-                ));
-                let b = button("alt-versions-download", tr("Download"));
-                cache_action = Some(if idle {
-                    b.on_click(cx.listener(move |this, _, _, cx| {
-                        this.download_for_switch(&release);
-                        cx.notify();
-                    }))
-                } else {
-                    b.opacity(0.45).tab_stop(false)
-                });
+                Some(VersionAction::Download) => {
+                    if let Some(release) = self.release_to_install(tag) {
+                        plan = Some(tr(
+                            "Download this build first. Your profile stays on its current build.",
+                        ));
+                        let b = button("alt-versions-download", tr("Download"));
+                        cache_action = Some(if idle {
+                            b.on_click(cx.listener(move |this, _, _, cx| {
+                                this.download_for_switch(&release);
+                                cx.notify();
+                            }))
+                        } else {
+                            b.opacity(0.45).tab_stop(false)
+                        });
+                    }
+                }
+                None => (),
             }
         }
-        let keep =
-            match pick.filter(|p| idle && self.installed.contains(p) && backend::is_prepared(p)) {
-                Some(tag) => keep.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    this.begin_switch(tag.clone());
-                    cx.notify();
-                })),
-                None => keep.opacity(0.45).cursor_default().tab_stop(false),
-            };
+        let keep = match keep_tag {
+            Some(tag) => keep.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                this.begin_switch(tag.clone());
+                cx.notify();
+            })),
+            None => keep.opacity(0.45).cursor_default().tab_stop(false),
+        };
         let all = Rc::clone(&list);
         let body = div()
             .flex()
@@ -542,6 +570,23 @@ impl Launcher {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_current_unready_build_can_be_downloaded_or_prepared_but_never_kept() {
+        assert_eq!(
+            version_action(false, || unreachable!(), false),
+            Some(VersionAction::Download)
+        );
+        assert_eq!(
+            version_action(true, || false, false),
+            Some(VersionAction::Prepare)
+        );
+        assert_eq!(version_action(true, || true, false), None);
+        assert_eq!(
+            version_action(true, || true, true),
+            Some(VersionAction::Keep)
+        );
+    }
 
     fn release(tag: &str, date: &str, nightly: bool) -> Release {
         Release {
