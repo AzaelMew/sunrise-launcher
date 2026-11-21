@@ -1,0 +1,10 @@
+{
+  "suite": "legacy Sunrise modpack fence",
+  "source_head": "159b013156a514e71026a776625a668e410dc051",
+  "binary_sha256": "d07256615e24011e2b357b98cbfeb1f0057726a436f1079eea99fe5292c048b2",
+  "size": [
+    "1280x800",
+    "800x600"
+  ],
+  "status": "captured"
+}
