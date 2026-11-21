@@ -217,11 +217,12 @@ impl Launcher {
         {
             match Identity::of(&home) {
                 Ok(identity) => {
-                    self.pending_consent = Some(PendingConsent::Toggle(native_consent::Toggle {
-                        entry: e.clone(),
-                        home,
-                        identity,
-                    }));
+                    self.pending_consent =
+                        Some(PendingConsent::Toggle(Box::new(native_consent::Toggle {
+                            entry: e.clone(),
+                            home,
+                            identity,
+                        })));
                 }
                 Err(error) => self.mods.message = Some(Err(error)),
             }

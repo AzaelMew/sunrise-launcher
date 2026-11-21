@@ -20,7 +20,7 @@ pub(super) enum PendingConsent {
     ReadingBuild(Arc<PathBuf>),
     /// A build of these packages, named when the question opened from the files it takes in.
     Build(Vec<BuildInput>),
-    Toggle(Toggle),
+    Toggle(Box<Toggle>),
     /// The exact batch's native inputs, including required native dependencies.
     Registry(
         NativeQuestion,
