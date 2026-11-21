@@ -75,21 +75,20 @@ pub fn launcher_digest(
 }
 
 /// The version the title of the build published under `tag` names, on `tag`'s channel only
-/// ([`build_digest`]): a snapshot's title under a Nightly's tag is None, and the reverse.
+/// ([`build_digest`]): a Dev title under a Nightly tag is None, and the reverse.
 pub fn title_version(tag: &str, title: &str) -> Option<String> {
     sunrise_launcher_release_verify::build_title_version(Channel::of(tag)?, title)
 }
 
-/// The signed SHA-256 of `asset` in the Nightly or snapshot published under `tag` (`nightly`, a
-/// dated `nightly-<date>`, or `snapshot-<date>-<commit>`) that installs as `version`
+/// The signed SHA-256 of `asset` in the Nightly or Dev build published under `tag` (`nightly`, a
+/// dated `nightly-<date>`, or `dev-<date>-<commit>`) that installs as `version`
 /// (`<channel>-<date>-<commit>`, parsed strictly from its title by
 /// `sunrise_launcher_release_verify::build_title_version`): its SHA256SUMS.v2.sig must sign the checksums for
-/// exactly that version, so an older Nightly can't be served as a newer one, nor a snapshot as a
-/// Nightly. The channel's SHA256SUMS.sig is for launchers from before and is not read.
+/// exactly that version, so a build cannot be served as another build or on another channel.
+/// The channel's SHA256SUMS.sig is not read.
 ///
 /// The channel checked is the one `tag` is on ([`Channel::of`]): the launcher's choice, never the
-/// release's title. `tag` is a Nightly's tag the release list kept (`is_nightly` only) or the
-/// snapshot tag a developer named (`release_selection::snapshot`).
+/// release's title. Dev builds live at their exact version tag.
 pub fn build_digest(
     tag: &str,
     version: &str,
@@ -202,10 +201,10 @@ mod tests {
     }
 
     /// The release channel never installs what was signed for a Nightly, whatever tag it is served
-    /// under; a Nightly installs only with its own version's signature (SHA256SUMS.v2.sig), never the
-    /// channel's, another Nightly's or a release's.
+    /// under; each pre-release installs only with its exact build signature (SHA256SUMS.v2.sig),
+    /// never the channel's, another build's, or a stable release's.
     #[test]
-    fn the_release_channel_refuses_nightly_signatures() {
+    fn stable_nightly_and_dev_signatures_are_not_interchangeable() {
         const VERSION: &str = "nightly-2026-10-28-0c02067";
         let (key, _) = SigningKey::generate().unwrap();
         let keys = [key.public()];
@@ -263,37 +262,27 @@ mod tests {
         let release = serving("v0.2.81", "v0.2.81");
         assert!(digest("v0.2.81", "sunrise.zip", &keys, &release).is_ok());
         assert!(build_digest("nightly", VERSION, "sunrise.zip", &keys, &release).is_err());
-        // A snapshot installs with its own version's signature; it never passes for a Nightly, nor a
-        // Nightly for it, nor a snapshot for a release.
-        const SNAPSHOT: &str = "snapshot-2026-10-28-0c02067";
-        let snapshot = serving(sunrise_launcher_release_verify::SNAPSHOT, SNAPSHOT);
+        // Dev installs with its own version's signature; it never passes for a Nightly or Stable.
+        const DEV: &str = "dev-2026-10-28-0c02067";
+        let dev = serving(sunrise_launcher_release_verify::DEV, DEV);
         assert_eq!(
-            build_digest(SNAPSHOT, SNAPSHOT, "sunrise.zip", &keys, &snapshot),
+            build_digest(DEV, DEV, "sunrise.zip", &keys, &dev),
             Ok(sha256_hex(b"game"))
         );
-        assert!(build_digest("nightly", VERSION, "sunrise.zip", &keys, &snapshot).is_err());
-        assert!(build_digest(SNAPSHOT, SNAPSHOT, "sunrise.zip", &keys, &nightly).is_err());
-        // A genuine snapshot served under the Nightly's tag: its title is no Nightly's, and its
+        assert!(build_digest("nightly", VERSION, "sunrise.zip", &keys, &dev).is_err());
+        assert!(build_digest(DEV, DEV, "sunrise.zip", &keys, &nightly).is_err());
+        // A genuine Dev build served under the Nightly's tag: its title is no Nightly's, and its
         // version is refused on the Nightly channel before its (valid) signature is read.
+        assert_eq!(title_version("nightly", "Dev 2026-10-28 · 0c02067"), None);
+        assert_eq!(title_version(DEV, "Nightly 2026-10-28 · 0c02067"), None);
         assert_eq!(
-            title_version("nightly", "Snapshot 2026-10-28 · 0c02067"),
-            None
+            title_version(DEV, "Dev 2026-10-28 · 0c02067").as_deref(),
+            Some(DEV)
         );
-        assert_eq!(
-            title_version(SNAPSHOT, "Nightly 2026-10-28 · 0c02067"),
-            None
-        );
-        assert_eq!(
-            title_version(SNAPSHOT, "Snapshot 2026-10-28 · 0c02067").as_deref(),
-            Some(SNAPSHOT)
-        );
-        assert!(build_digest("nightly", SNAPSHOT, "sunrise.zip", &keys, &snapshot).is_err());
-        assert!(build_digest(SNAPSHOT, VERSION, "sunrise.zip", &keys, &nightly).is_err());
-        for tag in [SNAPSHOT, "snapshot"] {
-            assert!(
-                digest(tag, "sunrise.zip", &keys, &snapshot).is_err(),
-                "{tag}"
-            );
+        assert!(build_digest("nightly", DEV, "sunrise.zip", &keys, &dev).is_err());
+        assert!(build_digest(DEV, VERSION, "sunrise.zip", &keys, &nightly).is_err());
+        for tag in [DEV, "dev"] {
+            assert!(digest(tag, "sunrise.zip", &keys, &dev).is_err(), "{tag}");
         }
     }
 }

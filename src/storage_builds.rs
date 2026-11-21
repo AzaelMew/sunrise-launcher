@@ -391,6 +391,7 @@ impl Launcher {
                 None if sunrise_launcher::nightly::date_of(&build.tag).is_some() => {
                     tr("Nightly").into()
                 }
+                None if backend::dev_date(&build.tag).is_some() => tr("Dev").into(),
                 None => String::new(),
             };
             let subtitle = if detail.is_empty() {

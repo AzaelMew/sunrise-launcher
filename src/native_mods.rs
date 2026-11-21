@@ -2177,7 +2177,7 @@ fn finish_profile_build(
 }
 
 /// Clear the pin only if the checked base will play both in the window and from the CLI.
-/// Without the Stable catalogue we cannot predict its ordinary Nightly fallback.
+/// The catalogue affects Stable fallback and the choice between same-day Dev builds.
 fn plain_pin(
     channel: instances::Channel,
     plain: &str,
@@ -2197,7 +2197,9 @@ fn plain_pin(
     let follows = target(&[])
         && match channel {
             instances::Channel::Nightly => true,
-            instances::Channel::Stable => catalogue().is_some_and(|releases| target(&releases)),
+            instances::Channel::Stable | instances::Channel::Dev => {
+                catalogue().is_some_and(|releases| target(&releases))
+            }
         };
     cancelled()?;
     Ok((!follows).then(|| plain.to_owned()))
@@ -3025,6 +3027,36 @@ mod tests {
             || Ok(()),
         );
         assert_eq!(pin, Ok(Some("26.3-0.1.0".to_owned())));
+    }
+
+    #[test]
+    fn a_dev_plain_fallback_keeps_the_checked_build_if_the_feed_would_pick_another() {
+        let checked = "dev-2026-11-21-aaaaaaa";
+        let published = "dev-2026-11-21-bbbbbbb";
+        let installed = [checked.to_owned(), published.to_owned()];
+        let offered = backend::Release {
+            tag: published.into(),
+            name: String::new(),
+            body: String::new(),
+            date: String::new(),
+            time: String::new(),
+            asset: Some((String::new(), 1)),
+            prerelease: true,
+            nightly: Some(published.into()),
+        };
+        let pin = |releases| {
+            plain_pin(
+                instances::Channel::Dev,
+                checked,
+                Some(checked),
+                &installed,
+                None,
+                || Some(releases),
+                || Ok(()),
+            )
+        };
+        assert_eq!(pin(vec![]), Ok(None));
+        assert_eq!(pin(vec![offered]), Ok(Some(checked.to_owned())));
     }
 
     #[test]

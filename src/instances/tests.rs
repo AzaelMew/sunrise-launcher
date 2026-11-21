@@ -728,6 +728,9 @@ fn an_instance_without_a_channel_is_nightly_and_an_unknown_one_too() {
     assert_eq!(meta.channel.unwrap_or_default(), Channel::Nightly);
     let meta: Meta = serde_json::from_str(r#"{"channel":"stable","group":"g"}"#).unwrap();
     assert_eq!(meta.channel, Some(Channel::Stable));
+    let dev: Meta = serde_json::from_str(r#"{"channel":"dev"}"#).unwrap();
+    assert_eq!(dev.channel, Some(Channel::Dev));
+    assert_eq!(serde_json::to_value(dev).unwrap()["channel"], "dev");
     let meta: Meta = serde_json::from_str(r#"{"channel":"beta","group":"g"}"#).unwrap();
     assert_eq!((meta.channel, meta.group.as_deref()), (None, Some("g")));
 }
@@ -1286,6 +1289,12 @@ fn first_profile_is_stable_without_migrating_old_players() {
     fs::write(fresh.join("settings.json"), "{}").unwrap();
     initialize_default_in(&home, &fresh).unwrap();
     assert_eq!(list_in(&home, &fresh)[0].channel, Channel::Stable);
+    assert_eq!(
+        create_whole_in(&home, &fresh, "Another profile", None, None, |_| {})
+            .unwrap()
+            .channel,
+        Channel::Stable
+    );
 
     let existing = tmp.path().join("existing");
     fs::create_dir_all(&existing).unwrap();

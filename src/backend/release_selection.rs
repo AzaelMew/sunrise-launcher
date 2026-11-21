@@ -4,25 +4,25 @@ use chrono::NaiveDate;
 use std::{cmp::Ordering, collections::BTreeMap};
 use sunrise_launcher_release_verify::Channel;
 
-/// The snapshot tagged `tag` (`snapshot-<date>-<commit>`, docs/release-flow.md "Snapshot"), looked
-/// up by its tag alone, or nothing for any other tag. No list or update ever offers a snapshot, so a
-/// developer names it (`sunrise-launcher install <tag>`); it installs as its tag, which its title
-/// must name and its SHA256SUMS.v2.sig must be signed for (`backend::install`).
-pub(super) fn snapshot(tag: &str) -> Result<Vec<Release>, String> {
-    if Channel::of(tag) != Some(Channel::Snapshot) {
-        return Ok(Vec::new());
+/// Look up an explicit Dev build by its exact tag, independently of the catalog, or return None
+/// for a different channel. Its title and SHA256SUMS.v2.sig must both name that exact build.
+pub(super) fn dev(tag: &str) -> Result<Option<Release>, String> {
+    if Channel::of(tag) != Some(Channel::Dev) {
+        return Ok(None);
     }
-    if !sunrise_launcher_release_verify::is_build(Channel::Snapshot, tag) {
-        return Err(format!(
-            "{tag} is not a snapshot's snapshot-<date>-<commit>."
+    if !sunrise_launcher_release_verify::is_build(Channel::Dev, tag) {
+        return Err(crate::i18n::trf(
+            "{tag} is not a full Dev tag (dev-<date>-<commit>).",
+            &[("tag", tag)],
         ));
     }
+    let missing = || crate::i18n::trf("No Sunrise Dev build is tagged {tag}.", &[("tag", tag)]);
     let release = crate::github::json_optional(&format!(
         "{}/repos/{}/releases/tags/{tag}",
         crate::github::API,
         super::GAME_REPO
     ))?
-    .ok_or_else(|| format!("No Sunrise snapshot is tagged {tag}."))?;
+    .ok_or_else(missing)?;
     let settings = super::Settings::load();
     let assets = super::game_assets_for(
         std::env::consts::OS,
@@ -34,33 +34,30 @@ pub(super) fn snapshot(tag: &str) -> Result<Vec<Release>, String> {
         .map_or((super::ASSET, super::GAME_FALLBACK), |(asset, fallback)| {
             (Some(asset), fallback)
         });
-    Ok(
-        snapshot_in(&serde_json::json!([release]), tag, asset, fallback)
-            .into_iter()
-            .collect(),
-    )
+    dev_in(&serde_json::json!([release]), tag, asset, fallback)
+        .map(Some)
+        .ok_or_else(missing)
 }
 
-/// The snapshot tagged `tag` in `list` (GitHub's answer for it) with `asset`, else `fallback`.
-fn snapshot_in(
+/// The Dev build tagged `tag` in `list` (GitHub's answer for it) with `asset`, else `fallback`.
+fn dev_in(
     list: &serde_json::Value,
     tag: &str,
     asset: Option<&str>,
     fallback: Option<&str>,
 ) -> Option<Release> {
-    let keep = |tag: &str| Channel::of(tag) == Some(Channel::Snapshot);
+    let keep = |tag: &str| Channel::of(tag) == Some(Channel::Dev);
     let mut found = super::parse_releases(list, asset, keep)
         .into_iter()
         .chain(super::parse_releases(list, fallback, keep))
-        .filter(|r| r.tag == tag);
-    let mut snapshot = found.next()?;
-    if snapshot.asset.is_none() {
-        snapshot.asset = found.find_map(|r| r.asset);
+        .filter(|r| r.tag == tag && r.prerelease);
+    let mut dev = found.next()?;
+    if dev.asset.is_none() {
+        dev.asset = found.find_map(|r| r.asset);
     }
     // Its GitHub tag is its version: its files are there, and it installs and verifies as that.
-    snapshot.prerelease = true;
-    snapshot.nightly = Some(snapshot.tag.clone());
-    Some(snapshot)
+    dev.nightly = Some(dev.tag.clone());
+    Some(dev)
 }
 
 pub(super) fn by_tag<'a>(releases: &'a [Release], tag: &str) -> Option<&'a Release> {
@@ -148,8 +145,8 @@ impl WorldBuildOrder {
         let mut releases = super::release_list()
             .map(|list| world_order_releases(&list))
             .unwrap_or_default();
-        if Channel::of(tag) == Some(Channel::Snapshot) && !releases.iter().any(|r| r.tag == tag) {
-            releases.extend(snapshot(tag).unwrap_or_default());
+        if !releases.iter().any(|r| r.tag == tag) {
+            releases.extend(dev(tag).unwrap_or_default());
         }
         let target = releases
             .iter()
@@ -202,16 +199,16 @@ impl WorldBuildOrder {
 
 fn world_order_releases(list: &serde_json::Value) -> Vec<Release> {
     let mut releases = super::game_releases(list);
-    // Snapshots are excluded from the picker and update feed. Their signed metadata
-    // still proves which game last saved a world, including against a Nightly target.
+    // Use each Dev source once for provenance, independent of the picker and update filters.
+    releases.retain(|r| Channel::of(&r.tag) != Some(Channel::Dev));
     releases.extend(
         super::parse_releases(list, None, |tag| {
-            sunrise_launcher_release_verify::is_build(Channel::Snapshot, tag)
+            sunrise_launcher_release_verify::is_build(Channel::Dev, tag)
         })
         .into_iter()
-        .map(|mut snapshot| {
-            snapshot.nightly = Some(snapshot.tag.clone());
-            snapshot
+        .map(|mut dev| {
+            dev.nightly = Some(dev.tag.clone());
+            dev
         }),
     );
     releases
@@ -223,23 +220,24 @@ mod tests {
     use crate::backend::game_releases_with;
 
     #[test]
-    fn a_saved_snapshot_gets_signed_order_against_a_nightly_target() {
+    fn a_world_saved_by_dev_gets_signed_order_against_a_nightly_target() {
         let saved = "b".repeat(40);
-        let tag = "snapshot-2026-11-19-bbbbbbb";
+        let tag = "dev-2026-11-19-bbbbbbb";
         let raw = serde_json::json!([{
             "tag_name": tag,
-            "name": "Snapshot",
+            "name": "Dev 2026-11-19 · bbbbbbb",
             "published_at": "2026-11-19T00:00:00Z",
             "prerelease": true,
             "assets": []
         }]);
-        assert!(super::super::game_releases(&raw).is_empty());
+        let releases = world_order_releases(&raw);
+        assert_eq!(releases.len(), 1);
         let mut order = WorldBuildOrder {
             target: Some(SignedIdentity {
                 commit: "a".repeat(40),
                 day: NaiveDate::from_ymd_opt(2026, 11, 18).unwrap(),
             }),
-            releases: world_order_releases(&raw),
+            releases,
             comparisons: BTreeMap::new(),
         };
         assert_eq!(
@@ -266,13 +264,14 @@ mod tests {
         let a = &"a".repeat(40);
         let b = &"b".repeat(40);
         let first = decode("nightly-2026-11-18-aaaaaaa", a).unwrap();
-        let same_day = decode("snapshot-2026-11-18-bbbbbbb", b).unwrap();
+        let same_day = decode("dev-2026-11-18-bbbbbbb", b).unwrap();
         let newer = decode("nightly-2026-11-19-bbbbbbb", b).unwrap();
         assert_eq!(first.compare(&same_day), None);
         assert_eq!(first.compare(&newer), Some(Ordering::Less));
         assert_eq!(newer.compare(&same_day), Some(Ordering::Equal));
         assert!(decode("nightly-2026-11-18-aaaaaaa", "aaaaaaa").is_none());
         assert!(decode("nightly-2026-11-18-aaaaaaa", b).is_none());
+        assert!(decode("snapshot-2026-11-18-bbbbbbb", b).is_none());
     }
 
     fn published(channel: &str) -> Vec<Release> {
@@ -305,38 +304,45 @@ mod tests {
     }
 
     #[test]
-    fn a_snapshot_is_found_by_its_tag_and_installs_as_it() {
-        const SNAPSHOT: &str = "snapshot-2026-11-13-bbbbbbb";
+    fn a_dev_build_is_found_by_its_tag_and_installs_as_it() {
+        const DEV: &str = "dev-2026-11-13-bbbbbbb";
         let (arm, x64) = ("sunrise-windows-arm64.zip", "sunrise-windows-x64.zip");
         let list = serde_json::json!([{
-            "tag_name": SNAPSHOT,
-            "name": "Snapshot 2026-11-13 · bbbbbbb",
+            "tag_name": DEV,
+            "name": "Dev 2026-11-13 · bbbbbbb",
             "published_at": "2026-11-13T10:00:00Z",
             "prerelease": true,
             "assets": [{"name": x64, "size": 1}]
         }]);
-        let found = snapshot_in(&list, SNAPSHOT, Some(arm), Some(x64)).unwrap();
-        assert_eq!(found.tag, SNAPSHOT);
-        assert_eq!(found.nightly.as_deref(), Some(SNAPSHOT));
+        let found = dev_in(&list, DEV, Some(arm), Some(x64)).unwrap();
+        assert_eq!(found.tag, DEV);
+        assert_eq!(found.nightly.as_deref(), Some(DEV));
         assert!(found.prerelease);
-        assert!(found
-            .asset
-            .unwrap()
-            .0
-            .ends_with(&format!("/{SNAPSHOT}/{x64}")));
+        assert!(found.asset.unwrap().0.ends_with(&format!("/{DEV}/{x64}")));
         assert_eq!(
-            crate::signed::title_version(SNAPSHOT, &found.name).as_deref(),
-            Some(SNAPSHOT),
+            crate::signed::title_version(DEV, &found.name).as_deref(),
+            Some(DEV),
             "what install() checks before verifying"
         );
-        assert!(snapshot_in(&list, "snapshot-2026-11-12-aaaaaaa", Some(x64), None).is_none());
+        assert!(dev_in(&list, "dev-2026-11-12-aaaaaaa", Some(x64), None).is_none());
+        let mut full_release = list;
+        full_release[0]["prerelease"] = serde_json::Value::Bool(false);
+        assert!(dev_in(&full_release, DEV, Some(x64), None).is_none());
         let nightly = serde_json::json!([{"tag_name": "nightly", "name": "Nightly 2026-11-13 · bbbbbbb",
                                            "assets": [{"name": x64, "size": 1}]}]);
-        assert!(snapshot_in(&nightly, "nightly", Some(x64), None).is_none());
-        // Any other tag is not looked up; a malformed snapshot tag is refused before any request.
-        assert_eq!(snapshot("nightly").unwrap().len(), 0);
-        assert_eq!(snapshot("v0.2.81").unwrap().len(), 0);
-        assert!(snapshot("snapshot-../../x").is_err());
+        assert!(dev_in(&nightly, "nightly", Some(x64), None).is_none());
+        // Other tags are not looked up here; only a full Dev tag may go to GitHub.
+        for tag in [
+            "nightly",
+            "26.3-0.1.0",
+            "snapshot",
+            "snapshot-2026-11-13-bbbbbbb",
+        ] {
+            assert!(dev(tag).unwrap().is_none(), "{tag}");
+        }
+        for tag in ["dev", "dev-2026-11-13", "dev-../../x"] {
+            assert!(dev(tag).is_err(), "{tag}");
+        }
     }
 
     #[test]
