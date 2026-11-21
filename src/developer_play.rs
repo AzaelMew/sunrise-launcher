@@ -45,13 +45,11 @@ impl Launcher {
                 sunrise_launcher::developer_offline::mark(&mut cmd);
                 self.client_error = Some(tr(sunrise_launcher::developer_offline::NOTICE).into());
             }
-            // A pack's Play button plays that pack; Play plays the selected instance.
             let (profile, run) = match self.starting_pack.take() {
-                Some(work) => {
-                    let instance = instances::list().into_iter().find(|i| i.work == work);
-                    let applied = sunrise_launcher::browser::sunrise::pack::apply(&mut cmd, &work);
-                    (applied, instance)
-                }
+                Some(_) => (
+                    Err(sunrise_launcher::browser::sunrise::pack::play_unavailable()),
+                    None,
+                ),
                 None => {
                     let Some(instance) = instances::list()
                         .into_iter()
