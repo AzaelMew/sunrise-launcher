@@ -37,13 +37,14 @@ impl Launcher {
         }
     }
 
-    /// Resolve against the profile selected now, not one captured by a background release check.
+    /// Compare the selected profile's settled base, not its executable or another cached build.
     pub(crate) fn game_update(&self) -> Option<&Release> {
         let profile = self.selected_instance()?;
-        if profile.version.is_some() {
+        if profile.kind == instances::Kind::Pack || profile.version.is_some() {
             return None;
         }
-        backend::sunrise_update(self.game_releases(), &self.installed, profile.channel)
+        let base = self.profile_target(profile)?;
+        profile_update(self.game_releases(), &base, profile.channel)
     }
 
     /// Stable can follow an installed build even when its release feed is unavailable.
@@ -86,6 +87,23 @@ impl Launcher {
             .flatten()
             .cloned()
     }
+}
+
+fn profile_update<'a>(
+    releases: &'a [Release],
+    base: &str,
+    channel: Channel,
+) -> Option<&'a Release> {
+    let release = channel.builds(releases).next()?;
+    if release.tag == base || Channel::of_build(base) != Some(channel) {
+        return None;
+    }
+    let newer = backend::compare_game_versions(&release.tag, base);
+    match channel {
+        Channel::Stable => newer.is_gt(),
+        Channel::Nightly => newer.is_ge(),
+    }
+    .then_some(release)
 }
 
 /// Pick one tag for both the Home picker and Play. A pin is never replaced by another
@@ -155,6 +173,24 @@ pub(crate) fn native_base(tag: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_cached_stable_update_still_differs_from_the_profiles_committed_base() {
+        let old = "26.3-0.1.0";
+        let new = "26.3-0.1.1";
+        let nightly = "nightly-2026-11-20-aaaaaaa";
+        let releases = [
+            release(nightly, true, true),
+            release(new, false, true),
+            release(old, false, true),
+        ];
+        assert_eq!(
+            profile_update(&releases, old, Channel::Stable).unwrap().tag,
+            new
+        );
+        assert!(profile_update(&releases, new, Channel::Stable).is_none());
+        assert!(profile_update(&releases, nightly, Channel::Stable).is_none());
+    }
 
     #[test]
     fn creation_download_uses_the_saved_copy_pin_instead_of_follow_latest() {
