@@ -1,4 +1,4 @@
-use super::{inputs::browser_repair, registry_row_matches, scan_packages};
+use super::scan_packages;
 use crate::{
     browser::{installed::Installed, mod_list, Kind, SourceId},
     i18n::{tr, trf},
@@ -30,20 +30,16 @@ pub(super) fn inspect(
             tr("Mods were not checked for registry takedowns.").into()
         ]);
     };
-    let rows = match browser_repair(home, &packages, Some(&index))? {
-        Some(postimage) => serde_json::from_slice(&postimage).map_err(|e| e.to_string())?,
-        None => rows,
-    };
+    let registry = crate::browser::sunrise::fetched_official_index(&index);
     for package in &packages {
         let id = &package.manifest.id;
         if package.directory || !mod_list::is_enabled(home, id) {
             continue;
         }
         let hash = index::sha256_file(&package.path)?;
-        let owned = rows
-            .entries
-            .iter()
-            .any(|row| registry_row_matches(home, row, package, &hash));
+        let owned = registry
+            .as_ref()
+            .is_some_and(|registry| registry.proves_archive(id, &hash));
         let revoked = if owned {
             index.revoked(id, &hash)
         } else {

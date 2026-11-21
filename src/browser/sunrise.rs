@@ -57,6 +57,7 @@ struct Loaded {
     at: Instant,
     index: Arc<Index>,
     fetched: bool,
+    official: bool,
 }
 
 impl Loaded {
@@ -67,6 +68,55 @@ impl Loaded {
 }
 
 static LOADED: Mutex<Option<Loaded>> = Mutex::new(None);
+
+/// Archive authority from the built-in registry only. Neither a browser row, a cache file,
+/// nor an HTTPS developer override is a source of this authority.
+#[derive(Clone)]
+pub struct OfficialRegistry(Arc<Index>);
+
+impl OfficialRegistry {
+    #[cfg(test)]
+    pub(crate) fn fixture(index: &Index) -> Self {
+        Self(Arc::new(index.clone()))
+    }
+
+    pub fn proves_archive(&self, id: &str, actual_sha256: &str) -> bool {
+        self.0.project(id).is_some_and(|project| {
+            matches!(project.kind, index::Kind::Mod | index::Kind::NativeMod)
+                && project
+                    .versions
+                    .iter()
+                    .any(|release| release.file.sha256.eq_ignore_ascii_case(actual_sha256))
+        })
+    }
+}
+
+fn official_endpoint(source: &str, override_set: bool) -> bool {
+    source == INDEX_URL && !override_set
+}
+
+/// Provenance belongs to this exact live response, not another caller's index.
+pub(crate) fn fetched_official_index(index: &Arc<Index>) -> Option<OfficialRegistry> {
+    LOADED.lock().unwrap().as_ref().and_then(|loaded| {
+        (loaded.official && Arc::ptr_eq(index, &loaded.index))
+            .then(|| OfficialRegistry(index.clone()))
+    })
+}
+
+/// Freeze the index and its provenance at the response boundary for staged mutation decisions.
+pub fn fetch_with_official(
+    source: &str,
+    local: bool,
+) -> Result<(Index, String, Option<OfficialRegistry>), String> {
+    let (index, text) = fetch_index(source, local)?;
+    let authority = response_authority(source, local, &index);
+    Ok((index, text, authority))
+}
+
+fn response_authority(source: &str, local: bool, index: &Index) -> Option<OfficialRegistry> {
+    (!local && official_endpoint(source, std::env::var_os("SUNRISE_MOD_INDEX").is_some()))
+        .then(|| OfficialRegistry(Arc::new(index.clone())))
+}
 
 /// The index, asked for again now whatever was read last: "Check for update".
 pub fn refreshed_index() -> Result<Arc<Index>, String> {
@@ -268,7 +318,9 @@ pub fn index() -> Result<Arc<Index>, String> {
     }
     let cache = crate::backend::game_home().join(CACHE);
     let local = !at.starts_with("https://");
-    let loaded = load(fetch_index(&at, local), &cache, local)?;
+    let mut loaded = load(fetch_index(&at, local), &cache, local)?;
+    loaded.official =
+        loaded.fetched && official_endpoint(&at, std::env::var_os("SUNRISE_MOD_INDEX").is_some());
     let index = loaded.index.clone();
     *LOADED.lock().unwrap() = Some(loaded);
     Ok(index)
@@ -303,6 +355,7 @@ fn load(
         at: Instant::now(),
         index: Arc::new(index),
         fetched,
+        official: false,
     })
 }
 
@@ -335,8 +388,13 @@ fn fetch_index_text(at: &str, local: bool, full: bool) -> Result<String, String>
         ureq::Error::Status(code, _) => format!("The mod registry answered {code}."),
         ureq::Error::Transport(t) => format!("The mod registry can't be reached: {t}"),
     })?;
-    if full && (response.status() != 200 || response.header("Content-Range").is_some()) {
+    if (full || at == INDEX_URL)
+        && (response.status() != 200 || response.header("Content-Range").is_some())
+    {
         return Err(tr("The mod registry didn't send the full index.").into());
+    }
+    if at == INDEX_URL && response.get_url() != INDEX_URL {
+        return Err("The built-in registry redirected its index to a different URL.".into());
     }
     let mut text = String::new();
     response
@@ -352,7 +410,7 @@ fn fetch_index_text(at: &str, local: bool, full: bool) -> Result<String, String>
 
 /// Unlike Discover, neither an omitted section nor an isolated bad row is allowed
 /// to become evidence that a package has no fit or has been taken down.
-fn complete_index(at: &str, local: bool) -> Result<(Index, String), String> {
+fn complete_index(at: &str, local: bool) -> Result<(Index, String, Option<OfficialRegistry>), String> {
     #[derive(serde::Deserialize)]
     struct Sections {
         schema: u32,
@@ -372,7 +430,8 @@ fn complete_index(at: &str, local: bool) -> Result<(Index, String), String> {
     } else {
         index.check()?;
     }
-    Ok((index, text))
+    let authority = response_authority(at, local, &index);
+    Ok((index, text, authority))
 }
 
 /// A project's ratings: 1 to 5 stars, their mean and how many.

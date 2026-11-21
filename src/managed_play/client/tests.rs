@@ -53,7 +53,8 @@ fn play_checks_hash_only_takedowns_after_proving_the_actual_package() {
     )
     .unwrap();
     fs::write(home.join(mod_list::FILE), b"mod.lantern:true\n").unwrap();
-    let next = write_package("2.0.0");
+    let recorded = fs::read_to_string(&row_path).unwrap();
+    write_package("2.0.0");
     let instance = instances::selection().unwrap();
     let client = Client {
         instance: &instance,
@@ -88,8 +89,9 @@ fn play_checks_hash_only_takedowns_after_proving_the_actual_package() {
             },
         )
         .unwrap();
-    let row = fs::read_to_string(&row_path).unwrap();
-    assert!(row.contains(&next), "{row}");
+    // The old hash-only takedown does not deny the current input. Neither it nor
+    // the current archive's ID and path can turn those new bytes into registry origin.
+    assert_eq!(fs::read_to_string(&row_path).unwrap(), recorded);
 
     let replaced = write_package("3.0.0");
     let error = client
@@ -104,7 +106,7 @@ fn play_checks_hash_only_takedowns_after_proving_the_actual_package() {
         .expect_err("actual archive was taken down");
     assert!(String::from(error).contains("hash-only takedown fixture"));
     assert_eq!(profile.active().unwrap(), Some(active.clone()));
-    assert_eq!(fs::read_to_string(&row_path).unwrap(), row);
+    assert_eq!(fs::read_to_string(&row_path).unwrap(), recorded);
 
     // A package with no browser row can still be a taken-down compiler input.
     let native = home.join(mod_list::NATIVE_DIR).join("native_lantern.smod");

@@ -1,6 +1,7 @@
 //! Registry and collection requests produce one admitted, fully proved same-base generation.
 use super::{
-    fetch, fetch_index, fits_game, index, installed, location, project_of, trust_label, version_of,
+    fetch, fetch_with_official, fits_game, index, installed, location, project_of, trust_label,
+    version_of, OfficialRegistry,
 };
 use crate::{
     backend,
@@ -150,7 +151,8 @@ pub fn install_registry(
                 .into(),
         ));
     }
-    let (catalogue, source_bytes) = fetch_index(&source, local)?;
+    let (catalogue, source_bytes, authority) = fetch_with_official(&source, local)?;
+    let authority = authority.as_ref();
     if !catalogue.left_out.is_empty() {
         return Err(InstallError::Unproved(
             tr("The mod registry didn't send a complete index. Nothing was installed.").into(),
@@ -189,9 +191,8 @@ pub fn install_registry(
             )));
         }
     }
-    let registry_proof = (!local).then_some(&catalogue);
-    let old = edit.candidate(registry_proof)?;
-    let before = inventory(old.path())?;
+    let old = edit.candidate()?;
+    let before = inventory(old.path(), authority)?;
     for root in &roots {
         if let Some(package) = before.get(&root.id).filter(|package| !package.owned) {
             return Err(InstallError::Refused(trf(
@@ -265,11 +266,11 @@ pub fn install_registry(
                     return Err(InstallError::Refused(last_sdk_refusal.unwrap_or(reason)));
                 }
                 // Negative evidence must come from a complete index, not Discover or cached rows.
-                let (_, complete) = super::complete_index(&source, local)?;
-                if complete != source_bytes {
+                let (_, complete, proof) = super::complete_index(&source, local)?;
+                if complete != source_bytes || proof.is_some() != authority.is_some() {
                     return Err(registry_changed().into());
                 }
-                validate_enabled(old.path(), &catalogue)?;
+                validate_enabled(old.path(), &catalogue, authority)?;
                 conflicts::minimal(
                     &planning,
                     &roots,
@@ -303,7 +304,7 @@ pub fn install_registry(
         if versions.is_empty() {
             return Ok(InstalledBatch::default());
         }
-        let next = edit.candidate(registry_proof)?;
+        let next = edit.candidate()?;
         let mut entries = BTreeMap::new();
         for (n, (project, version)) in versions.iter().enumerate() {
             let entry = stage_package(
@@ -333,8 +334,6 @@ pub fn install_registry(
                     .transpose()?;
                 if !previous.owned
                     || digest.as_ref() != Some(hold.digest())
-                    || !matches!(hold.source(), HeldSource::Registry { project, version }
-                        if project == &entry.project && version == &previous.package.manifest.version)
                     || old.path().join(hold.path()) != previous.package.path
                     || next.path().join(hold.path()) != next.path().join(&entry.file)
                     || mod_list::is_enabled(old.path(), hold.id())
@@ -368,7 +367,7 @@ pub fn install_registry(
             }
             mod_list::set_all_enabled(next.path(), &disabled, false)?;
         }
-        if let Some(conflict) = manifest_conflict(next.path(), &catalogue)? {
+        if let Some(conflict) = manifest_conflict(next.path(), &catalogue, authority, |id| entries.contains_key(id))? {
             if conflicts.contains(&conflict) {
                 return Err(InstallError::Unproved(conflict.reason));
             }
@@ -376,7 +375,7 @@ pub fn install_registry(
             continue;
         }
         (hooks.progress)(InstallProgress::Preparing);
-        let staged = inventory(next.path())?;
+        let staged = inventory(next.path(), authority)?;
         let build_packages: Vec<_> = staged
             .values()
             .filter(|p| {
@@ -501,7 +500,7 @@ pub fn install_registry(
                     &mut doc,
                     failed,
                 )?;
-                if let Some(conflict) = manifest_conflict(next.path(), &catalogue)? {
+                if let Some(conflict) = manifest_conflict(next.path(), &catalogue, authority, |id| entries.contains_key(id))? {
                     return Err(InstallError::Refused(conflict.reason));
                 }
                 let notice = BuildNotice {
@@ -525,7 +524,7 @@ pub fn install_registry(
         for id in restores.keys().filter(|id| entries.contains_key(*id)) {
             let package = &before[id].package;
             if package.manifest.native.is_some() && !mod_list::is_enabled(next.path(), id) {
-                let activation = edit.candidate(registry_proof)?;
+                let activation = edit.candidate()?;
                 Document::read(next.path())?.write(activation.path())?;
                 // Copy all staged package changes and exact selection before testing activation.
                 for other in entries.values() {
@@ -545,7 +544,7 @@ pub fn install_registry(
                     Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
                     Err(e) => return Err(at(&selection, e).into()),
                 }
-                prove_activation_inputs(activation.path(), id, &catalogue)?;
+                prove_activation_inputs(activation.path(), id, &catalogue, authority)?;
                 edit.prove(
                     activation.path(),
                     instance.native_profile,
@@ -608,12 +607,12 @@ pub fn install_registry(
             .collect();
         (hooks.progress)(InstallProgress::Publishing);
         edit.publish_install(proof, &cancelled, &restored, || {
-            let (_, current) = if fence.is_some() {
+            let (_, current, proof) = if fence.is_some() {
                 super::complete_index(&source, local)?
             } else {
-                fetch_index(&source, local)?
+                fetch_with_official(&source, local)?
             };
-            if source_bytes != current {
+            if source_bytes != current || proof.is_some() != authority.is_some() {
                 return Err(registry_changed());
             }
             if let Some(fence) = &fence {
@@ -673,7 +672,7 @@ struct SeenPackage {
 
 type Inventory = BTreeMap<String, SeenPackage>;
 
-fn inventory(home: &Path) -> Result<Inventory, String> {
+fn inventory(home: &Path, authority: Option<&OfficialRegistry>) -> Result<Inventory, String> {
     let doc = Document::read(home)?;
     managed_play::scan_packages(home)?
         .into_iter()
@@ -695,7 +694,7 @@ fn inventory(home: &Path) -> Result<Inventory, String> {
                 doc.rows
                     .check_other_claims(home, &id, &row.file)
                     .map_err(|error| error.render(trf))?;
-                managed_play::registry_row_matches(home, row, &p, digest)
+                authority.is_some_and(|proof| proof.proves_archive(&id, digest))
             } else {
                 false
             };
@@ -805,8 +804,10 @@ fn missing_required<'a>(
 fn manifest_conflict(
     home: &Path,
     catalogue: &index::Index,
+    authority: Option<&OfficialRegistry>,
+    staged: impl Fn(&str) -> bool,
 ) -> Result<Option<resolve::ManifestConflict>, InstallError> {
-    let packages = inventory(home)?;
+    let packages = inventory(home, authority)?;
     let enabled: BTreeMap<_, _> = packages
         .iter()
         .filter(|(id, _)| mod_list::is_enabled(home, id))
@@ -817,7 +818,8 @@ fn manifest_conflict(
         resolve::InstalledMod {
             id: id.to_owned(),
             version: package.package.manifest.version.clone(),
-            sha256: package.owned.then(|| package.digest.clone()).flatten(),
+            // A freshly checked download names a resolver choice, not replacement authority.
+            sha256: (package.owned || staged(id)).then(|| package.digest.clone()).flatten(),
         }
     };
     let mut namespaces = BTreeMap::new();
@@ -889,8 +891,8 @@ fn manifest_conflict(
     Ok(None)
 }
 
-fn validate_enabled(home: &Path, catalogue: &index::Index) -> Result<(), InstallError> {
-    match manifest_conflict(home, catalogue)? {
+fn validate_enabled(home: &Path, catalogue: &index::Index, authority: Option<&OfficialRegistry>) -> Result<(), InstallError> {
+    match manifest_conflict(home, catalogue, authority, |_| false)? {
         Some(conflict) => Err(InstallError::Refused(conflict.reason)),
         None => Ok(()),
     }
@@ -929,7 +931,7 @@ fn restore_or_disable(
                 predecessor,
             });
         }
-        let packages = inventory(candidate)?;
+        let packages = inventory(candidate, None)?;
         let enabled: BTreeMap<_, _> = packages
             .iter()
             .filter(|(id, _)| mod_list::is_enabled(candidate, id))
@@ -1053,8 +1055,9 @@ fn prove_activation_inputs(
     home: &Path,
     root: &str,
     catalogue: &index::Index,
+    authority: Option<&OfficialRegistry>,
 ) -> Result<(), InstallError> {
-    let packages = inventory(home)?;
+    let packages = inventory(home, authority)?;
     let mut extra = BTreeSet::new();
     let mut todo = vec![root];
     while let Some(id) = todo.pop() {
@@ -1076,7 +1079,7 @@ fn prove_activation_inputs(
         }
     }
     mod_list::set_all_enabled(home, &extra.into_iter().collect::<Vec<_>>(), true)?;
-    validate_enabled(home, catalogue)
+    validate_enabled(home, catalogue, authority)
 }
 
 #[cfg(test)]

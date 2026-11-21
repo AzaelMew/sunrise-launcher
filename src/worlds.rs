@@ -301,8 +301,7 @@ pub fn at_risk(home: &Path, ids: &[String]) -> Result<Vec<(World, Vec<String>, b
 pub struct WorldRisk {
     pub path: PathBuf,
     pub name: String,
-    /// IDs to warn about for a same-base edit: positive hits and, if the saved evidence is
-    /// incomplete, all suspects. Empty with complete evidence and no hits.
+    /// All suspect IDs, in ID order. A last-loaded list cannot rule out historical use.
     pub mods: Vec<String>,
     /// Suspects positively identified in either level file, in ID order.
     pub confirmed_mods: Vec<String>,
@@ -340,11 +339,10 @@ impl DirectoryIdentity {
 }
 
 /// Read a path-ordered world roster under the caller's profile admission. `sources` maps suspect
-/// mod IDs to namespaces claimed by their definitions. Positive records in `level.dat_old` can
-/// supplement the primary; they never prove a suspect absent. Unmatched suspects stay in `mods`
-/// if primary evidence is incomplete or the fallback is present but invalid. A valid primary
-/// list only says what was last loaded: callers considering loss from historic chunks must not
-/// use it to clear unmatched suspects. A directory with neither level file isn't a discovered world.
+/// mod IDs to namespaces claimed by their definitions. Both level files can confirm use, but
+/// neither can rule it out: chunks can retain blocks and items from mods no longer loaded. Every
+/// identified world therefore carries all suspects, with positive matches tracked separately.
+/// A directory with neither level file isn't a discovered world.
 ///
 /// Fails on traversal or read I/O errors, redirected directories and aliased evidence files. A
 /// file whose bytes could be read and hashed but not parsed sets [`WorldRisk::malformed`] without
@@ -429,19 +427,14 @@ pub fn review_risk(
             })
             .map(|(id, _)| id.clone())
             .collect();
-        let mods = if primary_complete && !malformed {
-            confirmed_mods.clone()
-        } else {
-            sources.keys().cloned().collect()
-        };
         worlds.push(WorldRisk {
             path,
             name: primary_records
                 .and_then(|r| r.name.clone())
                 .or_else(|| fallback_records.and_then(|r| r.name.clone()))
                 .unwrap_or_else(|| folder.to_string_lossy().into_owned()),
-            known: confirmed_mods.len() == mods.len(),
-            mods,
+            known: confirmed_mods.len() == sources.len(),
+            mods: sources.keys().cloned().collect(),
             confirmed_mods,
             primary_complete,
             malformed,

@@ -483,7 +483,37 @@ mod tests {
         drop(incidental);
     }
 
-    /// A preparer that runs `script` (a shell `case` on its first argument).
+    #[test]
+    fn a_handed_off_preparation_stays_locked_until_the_preparer_exits() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(".preparing.lock");
+        let file = fs::File::create(&path).unwrap();
+        file.try_lock().unwrap();
+        let preparation = Preparation::new(file);
+        let binary = fake(
+            dir.path(),
+            "printf 'ready\\n'\nif IFS= read -r line; then exit 1; fi",
+        );
+        let mut child = preparation
+            .handoff(None)
+            .spawn(Command::new(binary), true)
+            .unwrap();
+        drop(preparation);
+
+        let mut ready = String::new();
+        BufReader::new(child.stdout.take().unwrap())
+            .read_line(&mut ready)
+            .unwrap();
+        let next = fs::OpenOptions::new().write(true).open(&path).unwrap();
+        let while_running = next.try_lock();
+        // wait closes the stdin pipe, letting the mock leave its blocking read and exit.
+        assert!(child.wait().unwrap().success());
+        assert_eq!(ready, "ready\n");
+        assert!(matches!(while_running, Err(fs::TryLockError::WouldBlock)));
+        next.try_lock().unwrap();
+    }
+
+    /// A preparer that runs `script`.
     fn fake(dir: &Path, script: &str) -> PathBuf {
         use std::os::unix::fs::PermissionsExt;
         fs::create_dir_all(dir).unwrap();
