@@ -157,7 +157,7 @@ fn hold_updates(fixture: &mut Fixture, succeeds: HoldCase, refusals: &[HoldCase]
         let result = fixture.update(&[ID], &|impact| {
             assert_eq!(case, succeeds, "refused hold must not reach review");
             assert!(!impact.risks_worlds());
-            let detail = impact.gui_review().1;
+            let detail = impact.gui_review(&Default::default()).1;
             assert!(detail.contains("Sunrise can't check whether this update removes blocks or items your worlds use."), "{detail}");
             assert!(!detail.contains("may lose"), "{detail}");
             true
@@ -417,7 +417,7 @@ fn bulk_update_can_keep_a_proved_unfit_root_and_advance_an_independent_sibling()
                     &|impact| {
                         assert!(!impact.risks_worlds());
                         assert_eq!(
-                            impact.gui_review().1,
+                            impact.gui_review(&Default::default()).1,
                             "Fireflies will go from 1.0.0 to 1.2.0."
                         );
                         true

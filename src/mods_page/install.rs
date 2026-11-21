@@ -1,6 +1,10 @@
 //! One visible registry install batch, and requests that arrived after it was sealed.
 use super::*;
-use std::{collections::VecDeque, path::Path, sync::Mutex};
+use std::{
+    collections::{BTreeMap, VecDeque},
+    path::Path,
+    sync::Mutex,
+};
 use sunrise_launcher::{
     browser::sunrise::{
         BuildNotice, ChangeImpact, InstallError, InstallHooks, InstallProgress, InstalledBatch,
@@ -34,6 +38,7 @@ struct Request {
     identity: Identity,
     target: Option<String>,
     release: Option<backend::Release>,
+    displayed_names: BTreeMap<String, String>,
     view: RequestView,
 }
 
@@ -58,9 +63,9 @@ pub(crate) struct WorldQuestion {
     pub(crate) detail: String,
 }
 
-impl From<&ChangeImpact> for WorldQuestion {
-    fn from(impact: &ChangeImpact) -> Self {
-        let (heading, detail) = impact.gui_review();
+impl WorldQuestion {
+    pub(crate) fn new(impact: &ChangeImpact, displayed_names: &BTreeMap<String, String>) -> Self {
+        let (heading, detail) = impact.gui_review(displayed_names);
         Self {
             removal: impact.is_removal(),
             cancel_default: impact.is_removal() || impact.risks_worlds(),
@@ -451,7 +456,7 @@ impl Launcher {
         card: String,
         ids: Vec<String>,
     ) -> Result<(), String> {
-        self.queue_registry_change(Kind::Install, card, ids)
+        self.queue_registry_change(Kind::Install, card, ids, BTreeMap::new())
     }
 
     pub(crate) fn queue_registry_change(
@@ -459,6 +464,7 @@ impl Launcher {
         kind: Kind,
         card: String,
         ids: Vec<String>,
+        displayed_names: BTreeMap<String, String>,
     ) -> Result<(), String> {
         if ids.is_empty() {
             return Ok(());
@@ -488,6 +494,7 @@ impl Launcher {
             profile: instance,
             target,
             release,
+            displayed_names,
             view: RequestView { kind, card, ids },
         });
         self.start_registry_queue();
@@ -573,7 +580,12 @@ impl Launcher {
             };
             let approve = |impact: &ChangeImpact| {
                 let (reply, answer) = std::sync::mpsc::channel();
-                post(Worker::World(impact.into(), reply)).is_ok() && answer.recv().unwrap_or(false)
+                post(Worker::World(
+                    WorldQuestion::new(impact, &request.displayed_names),
+                    reply,
+                ))
+                .is_ok()
+                    && answer.recv().unwrap_or(false)
             };
             let result = match kind {
                 Kind::Install => sunrise::install_registry(
@@ -681,6 +693,7 @@ mod tests {
             },
             target: Some(target.into()),
             release: None,
+            displayed_names: BTreeMap::new(),
             view: RequestView {
                 kind: Kind::Install,
                 card: id.into(),

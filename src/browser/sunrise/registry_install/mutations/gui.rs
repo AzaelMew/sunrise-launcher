@@ -1,9 +1,10 @@
 //! Player-facing copy, separate from the exact archive details shown by command-line clients.
 use super::Change;
 use crate::i18n::{tr, trf};
+use std::collections::BTreeMap;
 
 impl super::ReviewedMod {
-    fn gui_name<'a>(&'a self, names: &'a std::collections::BTreeMap<String, String>) -> &'a str {
+    fn gui_name<'a>(&'a self, names: &'a BTreeMap<String, String>) -> &'a str {
         names.get(&self.id).unwrap_or(&self.name).as_str()
     }
 }
@@ -13,6 +14,7 @@ impl Change {
         &self,
         world_count: usize,
         unchecked_update: bool,
+        displayed_names: &BTreeMap<String, String>,
     ) -> (String, String) {
         let mut lines = Vec::new();
         let (heading, one_mod) = match self {
@@ -52,20 +54,16 @@ impl Change {
                 );
                 (trf("Update {name}?", &[("name", &target.name)]), true)
             }
-            Self::Remove {
-                removed,
-                disabled,
-                gui_names,
-            } => {
+            Self::Remove { removed, disabled } => {
                 let heading = match removed.as_slice() {
                     [archive] => trf(
                         "Remove {name}?",
-                        &[("name", archive.target.gui_name(gui_names))],
+                        &[("name", archive.target.gui_name(displayed_names))],
                     ),
                     _ => {
                         let names: Vec<_> = removed
                             .iter()
-                            .map(|archive| archive.target.gui_name(gui_names))
+                            .map(|archive| archive.target.gui_name(displayed_names))
                             .collect();
                         lines.push(trf("Remove: {mods}.", &[("mods", &joined_names(&names))]));
                         trf(
@@ -78,14 +76,14 @@ impl Change {
                     (_, []) => (),
                     (true, [one]) => lines.push(trf(
                         "{name} needs it. It'll be turned off, and its files stay installed.",
-                        &[("name", one.gui_name(gui_names))],
+                        &[("name", one.gui_name(displayed_names))],
                     )),
                     (false, [one]) => lines.push(trf(
                         "{name} needs one or more of these mods. It'll be turned off, and its files stay installed.",
-                        &[("name", one.gui_name(gui_names))],
+                        &[("name", one.gui_name(displayed_names))],
                     )),
                     (single_target, many) => {
-                        let names = many.iter().map(|item| item.gui_name(gui_names)).collect::<Vec<_>>();
+                        let names = many.iter().map(|item| item.gui_name(displayed_names)).collect::<Vec<_>>();
                         let names = joined_names(&names);
                         lines.push(if single_target {
                             trf("{names} need it. They'll be turned off, and their files stay installed.", &[("names", &names)])
@@ -149,7 +147,6 @@ mod tests {
 
     fn remove(targets: &[(&str, &str)], disabled: Vec<ReviewedMod>) -> Change {
         Change::Remove {
-            gui_names: Default::default(),
             removed: targets
                 .iter()
                 .map(|&(name, id)| ReviewedArchive {
@@ -167,16 +164,16 @@ mod tests {
         let core = [("Lantern Core", "lantern_core")];
         let bare = remove(&core, vec![]);
         assert_eq!(
-            bare.gui_review(0, false),
+            bare.gui_review(0, false, &BTreeMap::new()),
             (String::from("Remove Lantern Core?"), String::new())
         );
         assert_eq!(
-            bare.gui_review(1, false).1,
+            bare.gui_review(1, false, &BTreeMap::new()).1,
             "1 saved world may lose blocks and items from this mod."
         );
         let one = remove(&core, vec![item("Fireflies", "fireflies")]);
         assert_eq!(
-            one.gui_review(1, false).1,
+            one.gui_review(1, false, &BTreeMap::new()).1,
             concat!(
                 "Fireflies needs it. It'll be turned off, and its files stay installed.\n\n",
                 "1 saved world may lose blocks and items from these mods."
@@ -186,7 +183,7 @@ mod tests {
             &core,
             vec![item("Fireflies", "fireflies"), item("Lanterns", "lanterns")],
         );
-        assert_eq!(two.gui_review(3, false).1, concat!(
+        assert_eq!(two.gui_review(3, false, &BTreeMap::new()).1, concat!(
             "Fireflies and Lanterns need it. They'll be turned off, and their files stay installed.\n\n",
             "3 saved worlds may lose blocks and items from these mods."
         ));
@@ -202,7 +199,7 @@ mod tests {
             ],
             vec![item("Fireflies", "fireflies"), item("Lanterns", "lanterns")],
         );
-        let (heading, detail) = change.gui_review(0, false);
+        let (heading, detail) = change.gui_review(0, false, &BTreeMap::new());
         assert_eq!(heading, "Remove 3 mods?");
         assert_eq!(
             detail,
@@ -240,18 +237,13 @@ mod tests {
             .filter_map(|(&(_, id), label)| label.map(|label| (id.to_owned(), label)))
             .collect();
 
-        let mut change = remove(&targets, vec![]);
-        let Change::Remove { gui_names, .. } = &mut change else {
-            unreachable!();
-        };
-        gui_names.clone_from(&names);
         let impact = ChangeImpact {
-            change,
+            change: remove(&targets, vec![]),
             evidence: vec![],
             unchecked_update: false,
         };
         assert_eq!(
-            impact.gui_review(),
+            impact.gui_review(&names),
             (
                 "Remove 5 mods?".into(),
                 concat!(
@@ -265,13 +257,9 @@ mod tests {
         assert!(detail.contains("sunrise-mods/torches.smod\nSHA-256: reviewed digest"));
 
         // The other namesake is installed and will be disabled, not removed.
-        let mut one = remove(&targets[..1], vec![item("Lanterns", "lanterns_extra")]);
-        let Change::Remove { gui_names, .. } = &mut one else {
-            unreachable!();
-        };
-        *gui_names = names;
+        let one = remove(&targets[..1], vec![item("Lanterns", "lanterns_extra")]);
         assert_eq!(
-            one.gui_review(0, false),
+            one.gui_review(0, false, &names),
             (
                 "Remove Lanterns · by Ann?".into(),
                 "Lanterns · by Bo needs it. It'll be turned off, and its files stay installed."
@@ -317,10 +305,7 @@ mod tests {
         );
 
         let mut change = remove(&targets, vec![]);
-        let Change::Remove {
-            removed, gui_names, ..
-        } = &mut change
-        else {
+        let Change::Remove { removed, .. } = &mut change else {
             unreachable!();
         };
         // The exact files/digests are distinct and need not sort like manifest IDs.
@@ -334,19 +319,18 @@ mod tests {
                 .map(|target| label(target, ModLabelSource::Local)),
         );
         assert!(labels.iter().eq(installed.iter().rev()));
-        gui_names.extend(
-            targets
-                .into_iter()
-                .zip(labels)
-                .filter_map(|((_, id), label)| label.map(|label| (id.to_owned(), label))),
-        );
+        let names = targets
+            .into_iter()
+            .zip(labels)
+            .filter_map(|((_, id), label)| label.map(|label| (id.to_owned(), label)))
+            .collect();
         let impact = ChangeImpact {
             change,
             evidence: vec![],
             unchecked_update: false,
         };
         assert_eq!(
-            impact.gui_review(),
+            impact.gui_review(&names),
             (
                 "Remove 2 mods?".into(),
                 "Remove: Lanterns · 1 and Lanterns · 2.".into()
@@ -420,123 +404,56 @@ mod tests {
     }
 
     #[test]
-    fn canonical_archive_sources_match_the_installed_roster() {
-        use super::super::{inventory, removal_gui_names};
-        use crate::{
-            browser::{installed, Kind, SourceId},
-            github_mods, native_mods, native_status,
-        };
-        use std::{collections::BTreeMap, fs};
-        use sunrise_launcher_smod::{index::sha256_file, Package};
+    fn hidden_unpacked_namesake_does_not_renumber_the_reviewed_archive() {
+        use super::super::inventory;
+        use crate::native_status;
+        use std::fs;
+        use sunrise_launcher_smod::{manifest, mod_list, Package};
 
         let scratch = tempfile::tempdir().unwrap();
         let home = scratch.path().canonicalize().unwrap();
-        let folder = home.join(native_mods::INSTALLED);
-        fs::create_dir_all(&folder).unwrap();
-        let pin = "a".repeat(40);
-        for id in ["registry", "github"] {
-            let manifest = format!(
-                "id='{id}'\nname='Lanterns'\nauthors=['Ann']\nversion='1.0.0'\napi='0.2'\ncapabilities=['registries']\n[native]\ngame='26.3'\nsunrise='{pin}'\nmixins='{pin}'\n"
-            );
-            let files: &[(&str, &[u8])] = &[
-                (
-                    "Cargo.toml",
-                    b"[package]\nname='fixture'\nversion='1.0.0'\n",
-                ),
-                ("src/lib.rs", b"fn hook() {}"),
-            ];
+        let mods = home.join(mod_list::DIR);
+        let manifest = |id| {
+            format!(
+            "id='{id}'\nname='Lanterns'\nauthors=['Ann']\nversion='1.0.0'\napi='0.2'\ncapabilities=['registries']\n"
+        )
+        };
+        fs::create_dir_all(mods.join("a")).unwrap();
+        fs::write(mods.join("a").join(manifest::MANIFEST), manifest("a")).unwrap();
+        for id in ["b", "c"] {
             fs::write(
-                folder.join(format!("{id}.smod")),
-                Package::write_files(&manifest, files).unwrap(),
+                mods.join(format!("{id}.smod")),
+                Package::write_files(&manifest(id), &[]).unwrap(),
             )
             .unwrap();
         }
-        let content = home.join(sunrise_launcher_smod::mod_list::DIR);
-        fs::create_dir_all(&content).unwrap();
-        let manifest = "id='local'\nname='Lanterns'\nauthors=['Ann']\nversion='1.0.0'\napi='0.2'\ncapabilities=['registries']\n";
-        fs::write(
-            content.join("local.smod"),
-            Package::write_files(manifest, &[]).unwrap(),
-        )
-        .unwrap();
-        installed::Installed {
-            entries: vec![installed::Entry {
-                source: SourceId::Sunrise,
-                project: "registry".into(),
-                slug: "registry".into(),
-                title: "Lanterns".into(),
-                kind: Kind::Mod,
-                version: "1.0.0".into(),
-                number: "1.0.0".into(),
-                file: format!("{}/registry.smod", native_mods::INSTALLED),
-                checksum: format!(
-                    "SHA-256:{}",
-                    sha256_file(&folder.join("registry.smod")).unwrap()
-                ),
-                page: String::new(),
-                dependency: false,
-                verdict: None,
-                install_hold: None,
-            }],
-        }
-        .save(&home)
-        .unwrap();
-        let record = github_mods::Origin {
-            id: "github".into(),
-            version: "1.0.0".into(),
-            owner: "example".into(),
-            repo: "mods".into(),
-            tag: None,
-            commit: pin,
-            asset: None,
-            sha256: sha256_file(&folder.join("github.smod")).unwrap(),
-        };
-        fs::write(
-            folder.join("github.origin.json"),
-            serde_json::to_vec(&record).unwrap(),
-        )
-        .unwrap();
-
-        // The Installed snapshot takes registry rows plus untracked native/content archives.
-        let registry = installed::Installed::read(&home).unwrap().entries;
-        let local: Vec<_> = native_status::untracked(&home)
-            .into_iter()
-            .chain(native_status::untracked_content(&home))
-            .collect();
-        let rows = registry
-            .iter()
-            .map(|row| (row.project.as_str(), ModLabelSource::Registry))
-            .chain(local.iter().filter(|file| file.icon.is_ok()).map(|file| {
-                (
-                    file.id.as_str(),
-                    if file.origin.is_some() {
-                        ModLabelSource::Github
-                    } else {
-                        ModLabelSource::Local
-                    },
-                )
-            }))
-            .collect::<Vec<_>>();
-        let present = inventory(&home, None).unwrap();
-        assert_eq!(rows.len(), 3);
-        assert_eq!(rows.len(), present.len());
-        let authors = ["Ann".to_owned()];
-        let labels = colliding_mod_labels(rows.iter().map(|&(id, source)| ModLabel {
-            id,
-            name: "Lanterns",
-            authors: &authors,
-            version: "1.0.0",
-            source,
+        let scanned = inventory(&home, None).unwrap();
+        assert_eq!(scanned.len(), 3);
+        assert!(scanned["a"].package.directory);
+        // Installed lists regular archives only, even when an unpacked namesake is valid.
+        let visible = native_status::untracked_content(&home);
+        assert_eq!(visible.len(), 2);
+        let labels = colliding_mod_labels(visible.iter().map(|file| ModLabel {
+            id: &file.id,
+            name: &file.name,
+            authors: &file.authors,
+            version: &file.version,
+            source: ModLabelSource::Local,
         }));
-        let expected = rows
+        let names: BTreeMap<_, _> = visible
             .into_iter()
             .zip(labels)
-            .map(|((id, _), label)| (id.to_owned(), label.unwrap()))
-            .collect::<BTreeMap<_, _>>();
-        assert_eq!(removal_gui_names(&home, &present), expected);
-        assert_eq!(expected["registry"], "Lanterns · Sunrise registry");
-        assert_eq!(expected["github"], "Lanterns · GitHub");
-        assert_eq!(expected["local"], "Lanterns · Local file");
+            .map(|(file, label)| (file.id, label.unwrap()))
+            .collect();
+        assert!(!names.contains_key("a"));
+        assert_eq!(names["b"], "Lanterns · 1");
+        assert_eq!(names["c"], "Lanterns · 2");
+        let impact = ChangeImpact {
+            change: remove(&[("Lanterns", "b")], vec![]),
+            evidence: vec![],
+            unchecked_update: false,
+        };
+        assert_eq!(impact.gui_review(&names).0, "Remove Lanterns · 1?");
     }
 
     #[test]
@@ -553,7 +470,7 @@ mod tests {
                 replacement: "1.0.0".into(),
             },
         ]);
-        let (heading, detail) = change.gui_review(2, false);
+        let (heading, detail) = change.gui_review(2, false, &BTreeMap::new());
         assert_eq!(heading, "Update Lanterns?");
         assert_eq!(
             detail,
@@ -585,7 +502,7 @@ mod tests {
             evidence: vec![],
             unchecked_update: true,
         };
-        let (heading, warning) = impact.gui_review();
+        let (heading, warning) = impact.gui_review(&BTreeMap::new());
         assert_eq!(heading, "Update Lanterns?");
         assert_eq!(
             warning,

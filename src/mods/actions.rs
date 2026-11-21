@@ -4,6 +4,7 @@
 use super::model::{self, Row};
 use super::*;
 use crate::mods_page::install::Kind;
+use std::collections::BTreeMap;
 
 use sunrise_launcher::{
     managed_play::{HeldReason, Profile},
@@ -330,17 +331,20 @@ impl Launcher {
 
     /// Submit the approved scope, not old catalogue dependents. The worker reads the exact
     /// installed package manifests and offers one combined Remove decision.
-    pub(super) fn ask_remove(&mut self) {
+    pub(super) fn ask_remove(
+        &mut self,
+        home: &Path,
+        chosen: Vec<String>,
+        displayed_names: BTreeMap<String, String>,
+    ) {
         if !self.guard() {
             return;
         }
-        let chosen = self
-            .rows()
-            .into_iter()
-            .filter(|row| row.selectable_archive() && self.ui.mods.selection.contains(&row.id))
-            .map(|row| row.id)
-            .collect();
-        self.submit_registry_change(Kind::Remove, "remove", chosen);
+        if self.mods_home().as_path() != home {
+            self.ui.mods.notice = Some(Err(tr("The selected profile changed. Try again.").into()));
+            return;
+        }
+        self.submit_registry_change(Kind::Remove, "remove", chosen, displayed_names);
     }
 
     pub(super) fn ask_update(&mut self, only_selected: bool) {
@@ -356,19 +360,30 @@ impl Launcher {
             })
             .map(|row| row.id)
             .collect();
-        self.submit_registry_change(Kind::UpdateAll, "update-all", ids);
+        self.submit_registry_change(Kind::UpdateAll, "update-all", ids, BTreeMap::new());
     }
 
     pub(super) fn update_one(&mut self, row: &Row) {
         if row.local.is_none() && row.update.is_some() && self.guard() {
-            self.submit_registry_change(Kind::Update, &row.id, vec![row.id.clone()]);
+            self.submit_registry_change(
+                Kind::Update,
+                &row.id,
+                vec![row.id.clone()],
+                BTreeMap::new(),
+            );
         }
     }
 
-    fn submit_registry_change(&mut self, kind: Kind, card: &str, ids: Vec<String>) {
+    fn submit_registry_change(
+        &mut self,
+        kind: Kind,
+        card: &str,
+        ids: Vec<String>,
+        displayed_names: BTreeMap<String, String>,
+    ) {
         self.ui.mods.notice = None;
         self.mods.message = None;
-        if let Err(why) = self.queue_registry_change(kind, card.to_owned(), ids) {
+        if let Err(why) = self.queue_registry_change(kind, card.to_owned(), ids, displayed_names) {
             self.ui.mods.notice = Some(Err(why));
         }
     }

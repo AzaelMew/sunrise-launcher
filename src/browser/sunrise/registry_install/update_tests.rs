@@ -285,7 +285,7 @@ fn same_registered_ids_have_no_warning_but_a_dropped_id_requires_approval() {
                 .update(&["lantern"], &|impact| {
                     assert!(!impact.risks_worlds());
                     assert_eq!(
-                        impact.gui_review().1,
+                        impact.gui_review(&Default::default()).1,
                         "Lanterns will go from 1.0.0 to 1.0.1."
                     );
                     true
@@ -305,7 +305,10 @@ fn same_registered_ids_have_no_warning_but_a_dropped_id_requires_approval() {
                     let detail = impact.detail();
                     assert!(detail.contains("Lanterns 1.0.1 → 1.1.0"), "{detail}");
                     assert_world_warning(&detail, 2);
-                    assert!(impact.gui_review().1.contains("2 saved worlds may lose"));
+                    assert!(impact
+                        .gui_review(&Default::default())
+                        .1
+                        .contains("2 saved worlds may lose"));
                     approved
                 })
             };

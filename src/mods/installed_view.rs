@@ -4,7 +4,7 @@ use super::model::{self, Group, Make, Row, Show};
 use super::ui::*;
 use super::*;
 use crate::paint::palette;
-use std::rc::Rc;
+use std::{collections::BTreeMap, rc::Rc};
 use sunrise_launcher::browser::images;
 
 impl Launcher {
@@ -323,6 +323,27 @@ impl Launcher {
                     true,
                 )
                 .whitespace_nowrap();
+                let remove = if busy {
+                    rm
+                } else {
+                    // Freeze the labels actually painted in Installed, before filtering. The
+                    // transaction discovers exact archives and dependents independently; it
+                    // does not make up another roster to number for its GUI review.
+                    let names: BTreeMap<_, _> = rows
+                        .iter()
+                        .zip(&labels)
+                        .filter(|(row, _)| row.selectable_archive())
+                        .map(|(row, label)| {
+                            (row.id.clone(), label.as_ref().unwrap_or(&row.title).clone())
+                        })
+                        .collect();
+                    let chosen: Vec<_> = selected.iter().map(|row| row.id.clone()).collect();
+                    let home = self.mods_home();
+                    rm.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        this.ask_remove(&home, chosen.clone(), names.clone());
+                        cx.notify();
+                    }))
+                };
                 bar =
                     bar.child(div().text_size(px(tokens::LABEL)).child(
                         crate::selectable::selectable(trf(
@@ -357,14 +378,7 @@ impl Launcher {
                     } else {
                         upd
                     })
-                    .child(if !busy {
-                        rm.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                            this.ask_remove();
-                            cx.notify();
-                        }))
-                    } else {
-                        rm
-                    })
+                    .child(remove)
                     .child(div().flex_1())
                     .child(
                         muted(tr("Clear"))

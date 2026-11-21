@@ -183,7 +183,11 @@ impl Launcher {
                                 },
                                 &|impact| {
                                     let (reply, answer) = std::sync::mpsc::channel();
-                                    tx.send(Event::Review(impact.into(), reply)).is_ok()
+                                    tx.send(Event::Review(
+                                        WorldQuestion::new(impact, &Default::default()),
+                                        reply,
+                                    ))
+                                    .is_ok()
                                         && answer.recv().unwrap_or(false)
                                 },
                             )
