@@ -286,6 +286,46 @@ pub(super) struct VersionLine {
     pub(super) size: u64,
 }
 
+/// A browser destination checked at the registry or installed-origin boundary.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) enum SourceLink {
+    GitHub(String),
+    Other(String),
+}
+
+impl SourceLink {
+    pub(super) fn read(text: &str) -> Option<Self> {
+        let (scheme, rest) = text.split_once("://")?;
+        let authority = rest.split(['/', '?', '#']).next()?;
+        if !scheme.eq_ignore_ascii_case("https")
+            || authority.is_empty()
+            || authority.contains('@')
+            || text.bytes().any(|b| b.is_ascii_control() || b == b'\\')
+        {
+            return None;
+        }
+        let url = url::Url::parse(text).ok()?;
+        if url.host_str()? != "github.com" {
+            return Some(Self::Other(url.into()));
+        }
+        // Take owner/repo before the URL parser can normalize any dot segments.
+        let path = rest.strip_prefix(authority)?.strip_prefix('/')?;
+        let mut parts = path.split(['?', '#']).next()?.split('/');
+        let owner = parts.next()?;
+        let repo = parts.next()?;
+        let repo = repo.strip_suffix(".git").unwrap_or(repo);
+        let repo_part = |part: &str| {
+            !part.is_empty()
+                && !matches!(part, "." | "..")
+                && part
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_'))
+        };
+        (repo_part(owner) && repo_part(repo))
+            .then(|| Self::GitHub(format!("https://github.com/{owner}/{repo}")))
+    }
+}
+
 /// Everything the project page shows, read from the index in one go.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct Page {
@@ -294,7 +334,7 @@ pub(super) struct Page {
     pub(super) authors: Vec<String>,
     pub(super) description: String,
     pub(super) license: String,
-    pub(super) source: String,
+    pub(super) source: Option<SourceLink>,
     pub(super) downloads: u64,
     pub(super) updated: String,
     pub(super) categories: Vec<String>,
@@ -352,7 +392,7 @@ pub(super) fn page(
         authors: p.authors.clone(),
         description: p.description.clone(),
         license: p.license.clone(),
-        source: p.source.clone(),
+        source: SourceLink::read(&p.source),
         downloads: p.downloads,
         updated: lines
             .iter()
