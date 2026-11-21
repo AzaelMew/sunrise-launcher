@@ -2175,6 +2175,22 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
     let game = backend::played_version_id_by(instance.version.as_deref());
     let entry_json = |e: &installed::Entry| serde_json::to_value(e).unwrap_or_default();
     let line = |label: &str, f: f32| progress(label.to_string())(f);
+    let mutation_progress = |step| {
+        if let sunrise::InstallProgress::Downloading(f) = step {
+            line(tr("Downloading"), f);
+        }
+    };
+    let mutation_hooks = || sunrise::InstallHooks {
+        progress: &mutation_progress,
+        native: &|q| {
+            Err(trf(
+                "Allow native code for {mods} in Settings before updating.",
+                &[("mods", &q.names.join(", "))],
+            ))
+        },
+        registry_crates: None,
+        continue_after_failure: &|_| false,
+    };
     let on = matches!(action, ModsCmd::Enable { .. });
     match action {
         ModsCmd::List { .. } => {
@@ -2410,6 +2426,7 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
             }
         }
         ModsCmd::Update { project, check, .. } => {
+            let identity = sunrise_launcher::profile_txn::Identity::of(&home);
             let list = installed::Installed::load(&home).entries;
             let chosen: Vec<_> = list
                 .iter()
@@ -2425,7 +2442,42 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                     None => "Nothing installed from the browser yet.".into(),
                 });
             }
-            for e in chosen {
+            let registry = |e: &installed::Entry| {
+                instance.kind != instances::Kind::Pack
+                    && e.source == SourceId::Sunrise
+                    && e.kind == Kind::Mod
+            };
+            if !check {
+                let ids = chosen
+                    .iter()
+                    .copied()
+                    .filter(|e| registry(e))
+                    .map(|e| e.project.clone())
+                    .collect::<Vec<_>>();
+                if !ids.is_empty() {
+                    let result = sunrise::update_registry(
+                        &instance,
+                        identity?,
+                        Some(ids),
+                        || sunrise_launcher::managed_play::headless_first(&instance, None),
+                        mutation_hooks(),
+                    )
+                    .map_err(|e| match e {
+                        sunrise::InstallError::Cancelled => tr("Nothing was updated.").into(),
+                        e => e.to_string(),
+                    })?;
+                    if as_json {
+                        json(result.updated.iter().map(|(_, e)| entry_json(e)).collect());
+                    } else if result.updated.is_empty() && result.added.is_empty() {
+                        println!("{}", tr("No registry updates available."));
+                    } else {
+                        for e in result.updated.iter().map(|(_, e)| e).chain(&result.added) {
+                            println!("{} {}: {}", e.title, e.number, e.file);
+                        }
+                    }
+                }
+            }
+            for e in chosen.into_iter().filter(|e| check || !registry(e)) {
                 let source = sunrise_launcher::browser::source(e.source);
                 let newer = installed::update_for(&*source, e, &game)?;
                 match newer {

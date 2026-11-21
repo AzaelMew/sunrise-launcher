@@ -129,6 +129,45 @@ pub fn install_registry(
     choose: impl FnOnce() -> Result<FirstBuild, String>,
     hooks: InstallHooks<'_>,
 ) -> Result<InstalledBatch, InstallError> {
+    registry_edit(
+        instance,
+        identity,
+        || Action::Install(request()),
+        choose,
+        hooks,
+    )
+}
+
+/// Explicit update uses the same candidate and proof as Install, but never opts a world in.
+/// `None` requests all owned installed registry mods; `Some` identifies the reviewed rows.
+pub fn update_registry(
+    instance: &Instance,
+    identity: Identity,
+    requested: Option<Vec<String>>,
+    choose: impl FnOnce() -> Result<FirstBuild, String>,
+    hooks: InstallHooks<'_>,
+) -> Result<InstalledBatch, InstallError> {
+    registry_edit(
+        instance,
+        identity,
+        || Action::Update(requested),
+        choose,
+        hooks,
+    )
+}
+
+enum Action {
+    Install(Vec<String>),
+    Update(Option<Vec<String>>),
+}
+
+fn registry_edit(
+    instance: &Instance,
+    identity: Identity,
+    request: impl FnOnce() -> Action,
+    choose: impl FnOnce() -> Result<FirstBuild, String>,
+    hooks: InstallHooks<'_>,
+) -> Result<InstalledBatch, InstallError> {
     if instance.kind == InstanceKind::Pack {
         return Err(InstallError::Refused(
             tr("No registry mods to install in this profile.").into(),
@@ -150,8 +189,8 @@ pub fn install_registry(
         ));
     }
     // Freeze the visible batch before starting any private planning. A later click must queue.
-    let ids = request();
-    if ids.is_empty() {
+    let action = request();
+    if matches!(&action, Action::Install(ids) if ids.is_empty()) {
         return Err(InstallError::Cancelled);
     }
     // Reject a replaced home before recovery or any live edit.
@@ -164,6 +203,18 @@ pub fn install_registry(
     )?;
     let game = backend::game_version(edit.base());
     let cancelled = native_mods::Cancellation::default();
+    let old = edit.candidate()?;
+    let before = inventory(old.path())?;
+    let (ids, above) = match &action {
+        Action::Install(ids) => (ids.clone(), BTreeMap::new()),
+        Action::Update(requested) => {
+            let above = mutations::update_floors(&catalogue, &before, &game, requested.as_deref())?;
+            if above.is_empty() {
+                return Ok(InstalledBatch::default());
+            }
+            (above.keys().cloned().collect(), above)
+        }
+    };
     let roots: Vec<_> = ids
         .iter()
         .cloned()
@@ -182,8 +233,6 @@ pub fn install_registry(
             )));
         }
     }
-    let old = edit.candidate()?;
-    let before = inventory(old.path())?;
     for root in &roots {
         if let Some(package) = before.get(&root.id).filter(|package| !package.owned) {
             return Err(InstallError::Refused(trf(
@@ -192,9 +241,10 @@ pub fn install_registry(
             )));
         }
     }
+    let was_enabled = mutations::enabled(old.path())?;
     let held = before
         .iter()
-        .filter(|(id, _)| mod_list::is_enabled(old.path(), id))
+        .filter(|(id, _)| was_enabled.contains(*id))
         .map(|(id, p)| {
             let managed = p.owned.then(|| p.digest.clone()).flatten();
             resolve::InstalledMod {
@@ -209,20 +259,18 @@ pub fn install_registry(
     let mut last_sdk_refusal = None;
     let mut named_native: Option<BTreeSet<String>> = None;
     for _ in 0..MAX_TRIALS {
-        let plan = resolve::install_whole(
-            &catalogue,
-            &roots,
-            &held,
-            &game,
-            Side::Both,
-            resolve::WholeOptions {
-                conflicts: &conflicts,
-                native_fits: |p: &index::Project, v: &index::Version| {
-                    !unfit.contains(&(p.id.clone(), v.version.clone()))
-                },
-                messages: trf,
+        let options = resolve::WholeOptions {
+            conflicts: &conflicts,
+            native_fits: |p: &index::Project, v: &index::Version| {
+                !unfit.contains(&(p.id.clone(), v.version.clone()))
             },
-        );
+            messages: trf,
+        };
+        let plan = if above.is_empty() {
+            resolve::install_whole(&catalogue, &roots, &held, &game, Side::Both, options)
+        } else {
+            resolve::update_whole(&catalogue, &above, &held, &game, Side::Both, options)
+        };
         let plan = match plan {
             Ok(plan) => plan,
             Err(resolve::WholeRefusal::Unproved(reason)) => {
@@ -276,18 +324,47 @@ pub fn install_registry(
         for entry in entries.values_mut() {
             entry.dependency = !ids.contains(&entry.project);
             if let Some(old) = doc.row(&entry.project)? {
-                entry.dependency &= old["dependency"].as_bool().unwrap_or(false);
+                let dependency = old["dependency"].as_bool().unwrap_or(false);
+                entry.dependency = (entry.dependency || !above.is_empty()) && dependency;
             }
             doc.replace(entry)?;
         }
         doc.write(next.path())?;
-        let enabled: Vec<_> = entries
-            .keys()
-            .filter(|id| !before.contains_key(*id) || mod_list::is_enabled(old.path(), id))
-            .map(String::as_str)
-            .collect();
-        if !enabled.is_empty() {
-            mod_list::set_all_enabled(next.path(), &enabled, true)?;
+        let staged = inventory(next.path())?;
+        let activate: Vec<_> =
+            if matches!(action, Action::Install(_)) {
+                entries
+                    .keys()
+                    .filter(|id| !before.contains_key(*id) || was_enabled.contains(*id))
+                    .map(String::as_str)
+                    .collect()
+            } else {
+                // Updating an off row does not turn it (or its new dependencies) on. Walk only
+                // the intended enabled closure; an existing off dependency remains explicitly off.
+                let mut activate = BTreeSet::new();
+                let mut visited = BTreeSet::new();
+                let mut needed: Vec<_> = was_enabled.iter().map(String::as_str).collect();
+                while let Some(id) = needed.pop() {
+                    if !visited.insert(id) {
+                        continue;
+                    }
+                    let Some(package) = staged.get(id) else {
+                        continue;
+                    };
+                    if !was_enabled.contains(id) && before.contains_key(id) {
+                        continue;
+                    }
+                    if !was_enabled.contains(id) {
+                        activate.insert(id);
+                    }
+                    needed.extend(package.package.manifest.dependencies.iter().filter_map(
+                        |(id, rule)| (!rule.details().optional).then_some(id.as_str()),
+                    ));
+                }
+                activate.into_iter().collect()
+            };
+        if !activate.is_empty() {
+            mod_list::set_all_enabled(next.path(), &activate, true)?;
         }
         if let Some(conflict) = manifest_conflict(next.path(), &catalogue)? {
             if conflicts.contains(&conflict) {
@@ -353,32 +430,7 @@ pub fn install_registry(
                 .admit_native_work()
                 .map_err(|e| InstallError::Unproved(e.into()))?;
         }
-        let prove = || {
-            edit.prove(
-                next.path(),
-                instance.native_profile,
-                &cancelled,
-                |step| {
-                    let event = match step {
-                        native_mods::Step::Tools { done, total, .. } => {
-                            InstallProgress::Tools { done, total }
-                        }
-                        native_mods::Step::Install | native_mods::Step::Done { .. } => {
-                            InstallProgress::Building(Some(1.))
-                        }
-                        _ => match step.progress() {
-                            native_mods::Progress {
-                                stage: native_mods::Stage::Compile,
-                                fraction,
-                            } => InstallProgress::Building(fraction),
-                            _ => InstallProgress::Preparing,
-                        },
-                    };
-                    (hooks.progress)(event);
-                },
-                hooks.registry_crates,
-            )
-        };
+        let prove = || prove_edit(&edit, next.path(), instance, &cancelled, &hooks);
         let mut result = InstalledBatch::default();
         let proof = match prove() {
             Ok(proof) => proof,
@@ -460,7 +512,7 @@ pub fn install_registry(
             }
             Err(error) => return Err(InstallError::Unproved(error.into())),
         };
-        // Refuse definition loss until the shared Update/Remove world approval is present.
+        // Until Update has an explicit world decision, refuse the same losses as Install.
         guard_replacements(&instance.home, next.path(), &before, &entries)?;
         (hooks.progress)(InstallProgress::Publishing);
         edit.publish(proof, &cancelled, || {
@@ -484,6 +536,39 @@ pub fn install_registry(
     Err(InstallError::Unproved(
         tr("Not every compatible version could be checked. Nothing was installed.").into(),
     ))
+}
+
+fn prove_edit(
+    edit: &managed_play::Edit<'_>,
+    candidate: &Path,
+    instance: &Instance,
+    cancellation: &native_mods::Cancellation,
+    hooks: &InstallHooks<'_>,
+) -> Result<managed_play::CandidateImage, native_mods::Failed> {
+    edit.prove(
+        candidate,
+        instance.native_profile,
+        cancellation,
+        |step| {
+            let event = match step {
+                native_mods::Step::Tools { done, total, .. } => {
+                    InstallProgress::Tools { done, total }
+                }
+                native_mods::Step::Install | native_mods::Step::Done { .. } => {
+                    InstallProgress::Building(Some(1.))
+                }
+                _ => match step.progress() {
+                    native_mods::Progress {
+                        stage: native_mods::Stage::Compile,
+                        fraction,
+                    } => InstallProgress::Building(fraction),
+                    _ => InstallProgress::Preparing,
+                },
+            };
+            (hooks.progress)(event);
+        },
+        hooks.registry_crates,
+    )
 }
 
 struct SeenPackage {
@@ -723,6 +808,7 @@ fn restore_or_disable(
                 let target = candidate.join(&entry.file);
                 fs::copy(&previous.package.path, &target).map_err(|e| at(&target, e))?;
                 doc.set(&id, old.row(&id)?.ok_or_else(unproved_mods)?.clone())?;
+                mod_list::set_enabled(candidate, &id, mod_list::is_enabled(original, &id))?;
                 entries.remove(&id);
                 Some(previous.package.manifest.version.clone())
             } else {
@@ -864,5 +950,6 @@ fn at(path: &Path, error: impl std::fmt::Display) -> String {
     format!("{}: {error}", path.display())
 }
 
+mod mutations;
 #[cfg(test)]
 mod tests;

@@ -9,6 +9,7 @@ mod inputs;
 mod resources;
 mod roots;
 pub use client::{headless_first, Client, Progress, StartError, Started};
+pub(crate) use first::{CandidateImage, Edit};
 pub use first::{FirstAttempt, FirstBuild, Profile};
 use inputs::inputs;
 pub use inputs::{scan_packages, ScannedPackage};

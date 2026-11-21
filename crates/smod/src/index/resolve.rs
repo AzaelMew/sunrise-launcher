@@ -166,10 +166,42 @@ pub fn install_whole(
         game,
         side,
         options.native_fits,
-        (options.messages, Some(options.conflicts)),
+        (options.messages, Some((options.conflicts, None))),
     );
     refusal.map_or(Ok(plan), Err)
 }
+
+/// The exact batch must replace each requested root with a strictly newer eligible version.
+/// Dependencies still use the normal resolver ranking and the current enabled set.
+pub fn update_whole(
+    index: &Index,
+    above: &BTreeMap<String, semver::Version>,
+    installed: &[InstalledMod],
+    game: &str,
+    side: Side,
+    options: WholeOptions<'_, impl Fn(&Project, &Version) -> bool>,
+) -> Result<InstallPlan, WholeRefusal> {
+    let requests = above
+        .keys()
+        .map(|id| Request {
+            id: id.clone(),
+            version: None,
+        })
+        .collect::<Vec<_>>();
+    let (plan, refusal) = plan_install(
+        index,
+        &requests,
+        installed,
+        game,
+        side,
+        options.native_fits,
+        (options.messages, Some((options.conflicts, Some(above)))),
+    );
+    refusal.map_or(Ok(plan), Err)
+}
+
+type UpdateFloors = BTreeMap<String, semver::Version>;
+type WholeConstraints<'a> = (&'a [ManifestConflict], Option<&'a UpdateFloors>);
 
 fn plan_install(
     index: &Index,
@@ -178,7 +210,7 @@ fn plan_install(
     game: &str,
     side: Side,
     native_fits: impl Fn(&Project, &Version) -> bool,
-    (message, conflicts): (Messages, Option<&[ManifestConflict]>),
+    (message, conflicts): (Messages, Option<WholeConstraints<'_>>),
 ) -> (InstallPlan, Option<WholeRefusal>) {
     let whole = conflicts.is_some();
     let mut plan = InstallPlan::default();
@@ -214,7 +246,10 @@ fn plan_install(
         }
     }
     let mut catalog = Catalog::new(index, game, side, native_fits, &present);
-    catalog.conflicts = conflicts.unwrap_or_default();
+    if let Some((blocked, above)) = conflicts {
+        catalog.conflicts = blocked;
+        catalog.above = above;
+    }
     catalog.message = message;
     let installed_choices: Selected<'_> = present
         .keys()
@@ -387,6 +422,7 @@ struct Catalog<'a> {
     mods: BTreeMap<&'a str, Vec<Candidate<'a>>>,
     conflicts: &'a [ManifestConflict],
     message: Messages,
+    above: Option<&'a UpdateFloors>,
 }
 
 type Roots<'a> = BTreeMap<&'a str, Vec<&'a str>>;
@@ -593,6 +629,7 @@ impl<'a> Catalog<'a> {
             mods,
             conflicts: &[],
             message: english,
+            above: None,
         }
     }
 
@@ -615,7 +652,19 @@ impl<'a> Catalog<'a> {
                 &[("mod", &describe())],
             ));
         };
-        let mut matches = versions.iter().filter(|c| need.accepts(c)).peekable();
+        let newer_than = self.above.and_then(|above| above.get(id));
+        let mut matches = versions
+            .iter()
+            .filter(|c| {
+                need.accepts(c)
+                    && newer_than.is_none_or(|old| {
+                        !c.installed
+                            && c.number
+                                .as_ref()
+                                .is_some_and(|new| new.cmp_precedence(old).is_gt())
+                    })
+            })
+            .peekable();
         if matches.peek().is_none() {
             if need.pins.is_empty()
                 && !need.ranges.is_empty()
