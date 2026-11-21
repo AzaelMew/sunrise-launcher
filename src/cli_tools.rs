@@ -158,7 +158,7 @@ impl Tool {
         let mut tool = json!({
             "name": self.name,
             "description": format!("{about}. CLI: sunrise-launcher {}", self.words()),
-            "inputSchema": { "type": "object", "properties": props, "required": required },
+            "inputSchema": { "type": "object", "properties": props, "required": required, "additionalProperties": false },
         });
         if self.destructive() {
             tool["annotations"] = json!({ "destructiveHint": true });
@@ -170,6 +170,17 @@ impl Tool {
 
     /// The CLI words for a call's arguments.
     pub fn argv(&self, args: &Value) -> Result<Vec<String>, String> {
+        let args = args
+            .as_object()
+            .ok_or_else(|| "Tool arguments must be an object".to_owned())?;
+        let fields = || self.command.get_arguments().filter(|arg| shown(arg));
+        for key in args.keys() {
+            if !(fields().any(|arg| arg.get_id().as_str() == key)
+                || self.destructive() && key == "confirm")
+            {
+                return Err(format!("Unknown argument: {key}"));
+            }
+        }
         if self.destructive() && args.get("confirm").and_then(Value::as_bool) != Some(true) {
             return Err(format!(
                 "{} cannot be undone: ask the player, then call it with confirm: true",
@@ -185,7 +196,7 @@ impl Tool {
         let mut words = self.path.clone();
         let mut positional = Vec::new();
         let mut last = Vec::new();
-        for arg in self.command.get_arguments().filter(|a| shown(a)) {
+        for arg in fields() {
             let id = arg.get_id().as_str();
             let Some(value) = args.get(id).filter(|v| !v.is_null()) else {
                 if arg.is_required_set() {
@@ -423,15 +434,26 @@ mod tests {
     }
 
     #[test]
-    fn modpack_play_has_no_version_argument() {
+    fn generated_tools_reject_unknown_fields_before_spawning() {
+        for tool in all() {
+            assert_eq!(
+                tool.describe()["inputSchema"]["additionalProperties"],
+                false
+            );
+            assert_eq!(
+                tool.call(&json!({"unknown_fixture_field": null}))
+                    .unwrap_err(),
+                "Unknown argument: unknown_fixture_field"
+            );
+        }
         let play = tool("modpack_play");
         assert!(play.describe()["inputSchema"]["properties"]
             .get("version")
             .is_none());
         assert_eq!(
-            play.argv(&json!({"pack": "Lanterns", "version": "other"}))
-                .unwrap(),
-            ["modpack", "play", "Lanterns"],
+            play.call(&json!({"pack": "Lanterns", "version": "other"}))
+                .unwrap_err(),
+            "Unknown argument: version"
         );
     }
 
