@@ -994,7 +994,7 @@ impl Launcher {
     /// Whether a mod change is in progress (mine or the shared install's), for the shared Play
     /// and setup gates. Reads only the Mods busy flags, never the launch state.
     pub(super) fn mutating(&self) -> bool {
-        self.ui.mods.busy.is_some() || self.registry_stage().is_some() || self.github.busy()
+        self.ui.mods.busy.is_some() || self.registry_stage().is_some()
     }
 
     /// Build… on a row: the one native build path, which asks for permission first. The player
@@ -1214,7 +1214,19 @@ impl Launcher {
                 Launcher::choose_view,
                 cx,
             ))
-            .child(field)
+            .child(if installed && !packs {
+                div()
+                    .flex()
+                    .flex_1()
+                    .flex_wrap()
+                    .items_center()
+                    .gap(px(8.))
+                    .child(field)
+                    .child(self.github_add_button(cx))
+                    .into_any_element()
+            } else {
+                field.into_any_element()
+            })
     }
 }
 

@@ -4,7 +4,6 @@ use std::sync::Arc;
 use sunrise_launcher::{
     backend::Settings,
     browser::{installed::Entry, mod_list, sunrise::NativeQuestion},
-    github_mods::Resolved,
     native_status::{BuildInput, Registry},
     profile_txn::Identity,
 };
@@ -27,7 +26,6 @@ pub(super) enum PendingConsent {
         NativeQuestion,
         std::sync::mpsc::Sender<Result<bool, String>>,
     ),
-    Github(Resolved, Option<String>),
 }
 
 impl PendingConsent {
@@ -49,7 +47,6 @@ impl PendingConsent {
             },
             Self::Toggle(toggle) => toggle.entry.title.clone(),
             Self::Registry(question, _) => crate::mods::names(&question.names),
-            Self::Github(found, _) => found.label(),
         }
     }
 
@@ -138,9 +135,7 @@ pub(super) fn resolve(
                 let _ = reply.send(Ok(false));
             }
             // Toggle was only a request to turn an off row on; there is nothing to undo.
-            PendingConsent::Toggle(_)
-            | PendingConsent::ReadingBuild(_)
-            | PendingConsent::Github(..) => {}
+            PendingConsent::Toggle(_) | PendingConsent::ReadingBuild(_) => {}
         }
     }
     Ok(None)

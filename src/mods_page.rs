@@ -130,6 +130,7 @@ impl Launcher {
     pub(super) fn mods_tick(&mut self) -> bool {
         let mut changed = false;
         let mut loaded = Vec::new();
+        let mut github_feedback = None;
         let mut done = false;
         while let Ok(event) = self.mods.rx.try_recv() {
             changed = true;
@@ -140,6 +141,9 @@ impl Launcher {
                     self.pending_consent = Some(PendingConsent::Registry(question, reply));
                 }
                 Event::Registry(event) => {
+                    if let Some(feedback) = m.installs.github_feedback(&event) {
+                        github_feedback = Some(feedback);
+                    }
                     if let Some(error) = m.installs.mutation_failure(&event) {
                         m.message = Some(Err(error));
                     }
@@ -176,6 +180,9 @@ impl Launcher {
                     self.resume_play(intent);
                 }
             }
+        }
+        if let Some(feedback) = github_feedback {
+            self.show_github_result(feedback);
         }
         self.start_registry_queue() || changed
     }

@@ -42,6 +42,7 @@ pub(crate) enum Sheet {
     ModBuild,
     /// Play was accepted while the registry worker is proving the new generation.
     RegistryPlay,
+    GithubAdd,
 }
 
 /// The way out of a problem the play bar raised, as the Notice sheet's one action.
@@ -304,6 +305,9 @@ impl Launcher {
     /// built or changed by it: a pending permission is declined, a pending library question is
     /// answered no, a held update stays held.
     pub(crate) fn close_sheet(&mut self) {
+        if self.ui.sheet == Some(Sheet::GithubAdd) {
+            self.github.close();
+        }
         if self.ui.sheet == Some(Sheet::Switching) {
             self.cancel_switch();
         }
@@ -424,7 +428,11 @@ impl Launcher {
 
     /// The sheet on screen, if any: a pending library question, a pending permission, then the
     /// sheet asked for.
-    pub(crate) fn live_sheet(&mut self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+    pub(crate) fn live_sheet(
+        &mut self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Stateful<Div>> {
         if self.ui.sheets.registry.is_some() {
             return Some(self.libraries_sheet(cx));
         }
@@ -489,6 +497,7 @@ impl Launcher {
         match self.ui.sheet {
             Some(Sheet::Build) => Some(self.build_sheet(cx)),
             Some(Sheet::Notice) => Some(self.notice_sheet(cx)),
+            Some(Sheet::GithubAdd) => Some(self.github_add_sheet(window, cx)),
             Some(Sheet::Versions) => Some(self.versions_sheet(cx)),
             Some(Sheet::Switching) => Some(self.switch_sheet(cx)),
             Some(Sheet::BuildChanges) => self.switch_receipt_sheet(cx),
@@ -1229,7 +1238,6 @@ impl Launcher {
                     PendingConsent::Registry(_, reply) => {
                         let _ = reply.send(Ok(true));
                     }
-                    PendingConsent::Github(found, only) => self.github_install(found, only),
                 }
             }
         }

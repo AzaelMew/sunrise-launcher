@@ -1,224 +1,546 @@
-//! "Add from GitHub" on the Mods page: a link to a repository, release, tag, branch or commit,
-//! resolved to an exact release file or commit (`sunrise_launcher::github_mods`), shown with the
-//! plain warning and a link to the exact source, and installed only after the player says they
-//! trust it. Mods installed that way list where they came from, with "Check for updates".
-use super::line_edit::LineEdit;
+//! Installed's link form. Fetching only reads packages; the normal install worker owns mutation.
 use super::*;
-use crate::mods_page::install::WorldQuestion;
-use std::path::{Path, PathBuf};
-use sunrise_launcher::github_mods::{self, Packed, Resolved};
-use sunrise_launcher::native_mods;
-use sunrise_launcher::{browser::sunrise, managed_play::FirstBuild};
+use crate::frame::{button, input, primary, Page, Reach as _};
+use crate::mods_page::install::GithubTarget;
+use crate::paint::palette;
+use crate::sheets::{self, Sheet};
+use gpui::rgb;
+use std::collections::BTreeSet;
+use sunrise_launcher::github_mods::{self, FetchError, Origin, Packed, ResolveError, Resolved};
 
-enum Event {
-    /// The mods of a source, fetched and checked, when there is a choice to make.
-    Fetched(Result<Vec<Packed>, String>),
-    Review(WorldQuestion, Sender<bool>),
-    Installed(Result<String, String>),
+pub(crate) struct GithubInput {
+    pub(crate) link: String,
+    pub(crate) source: Resolved,
+    pub(crate) selection: GithubSelection,
 }
 
+pub(crate) enum GithubSelection {
+    Add(Vec<Packed>),
+    Update(Packed),
+}
+
+pub(crate) struct Feedback {
+    pub(crate) profile: instances::Instance,
+    pub(crate) link: String,
+    pub(crate) result: Result<String, (String, String)>,
+}
+
+struct FormError {
+    line: String,
+    detail: String,
+    retry: bool,
+}
+
+impl FormError {
+    fn new(line: &str, detail: String) -> Self {
+        Self {
+            line: line.into(),
+            detail,
+            retry: false,
+        }
+    }
+
+    fn transport(detail: String) -> Self {
+        Self {
+            line: tr("Could not reach GitHub. Try again.").into(),
+            detail,
+            retry: true,
+        }
+    }
+}
+
+struct Pick {
+    source: Resolved,
+    mods: Vec<Packed>,
+    selected: BTreeSet<String>,
+}
+
+impl Pick {
+    fn new(source: Resolved, mods: Vec<Packed>) -> Self {
+        let selected = mods.iter().map(|m| m.id.clone()).collect();
+        Self {
+            source,
+            mods,
+            selected,
+        }
+    }
+
+    fn toggle(&mut self, id: &str) {
+        if !self.selected.remove(id) {
+            self.selected.insert(id.to_owned());
+        }
+    }
+}
+
+#[derive(Default)]
 enum Stage {
-    Idle,
-    Working,
-    /// The source holds several mods and nothing was asked for by name.
-    Pick,
+    #[default]
+    Link,
+    Resolving(Receiver<Result<Resolution, FormError>>),
+    Pick(Pick),
+    Failed(FormError, bool),
 }
 
+enum Resolution {
+    Ready(Resolved, Vec<Packed>),
+    Current,
+}
+
+#[derive(Default)]
 pub(super) struct Github {
-    text: LineEdit,
+    text: line_edit::LineEdit,
     stage: Stage,
-    message: Option<Result<String, String>>,
-    /// The mods installed from GitHub in `home`, and what the last update check found for each.
-    home: Option<PathBuf>,
-    newer: std::collections::HashMap<String, Resolved>,
-    tx: Sender<Event>,
-    rx: Receiver<Event>,
+    focus: Option<FocusHandle>,
+    target: Option<GithubTarget>,
+    update: Option<Origin>,
 }
 
 impl Github {
-    pub(super) fn busy(&self) -> bool {
-        matches!(self.stage, Stage::Working)
-    }
-
     pub(super) fn new() -> Self {
-        let (tx, rx) = crate::wake::channel();
-        Self {
-            text: LineEdit::new(String::new(), 300, 40),
-            stage: Stage::Idle,
-            message: None,
-            home: None,
-            newer: Default::default(),
-            tx,
-            rx,
-        }
+        Self::default()
     }
 
-    fn reread(&mut self, home: &Path) {
-        self.home = Some(home.to_owned());
+    pub(super) fn close(&mut self) {
+        // Dropping a pending lookup's receiver releases its packages even if it finishes later.
+        self.stage = Stage::Link;
+        self.target = None;
+        self.update = None;
+        self.text.set(String::new());
+    }
+
+    fn resolving(&self) -> bool {
+        matches!(self.stage, Stage::Resolving(_))
+    }
+
+    fn can_resolve(&self) -> bool {
+        !self.text.text().trim().is_empty()
+            && match &self.stage {
+                Stage::Link => true,
+                Stage::Failed(error, _) => error.retry,
+                _ => false,
+            }
     }
 }
 
+fn resolve_link(
+    link: &github_mods::Link,
+    update: Option<&Origin>,
+) -> Result<Resolution, FormError> {
+    let found = github_mods::resolve(link, &github_mods::api).map_err(|error| match error {
+        error @ ResolveError::NoRelease(_) => {
+            FormError::new(tr("This release wasn’t found."), error.into())
+        }
+        ResolveError::Lookup(why) => {
+            FormError::new(tr("This GitHub link could not be found."), why)
+        }
+        ResolveError::Transfer(why) => FormError::transport(why),
+    })?;
+    if update.is_some_and(|old| !github_mods::is_update(old, &found)) {
+        return Ok(Resolution::Current);
+    }
+    let mut mods = github_mods::fetch_checked(&found).map_err(|error| match error {
+        FetchError::NoMods { release, detail } => FormError::new(
+            if release {
+                tr("No Sunrise mods were found in this release.")
+            } else {
+                tr("No Sunrise mods were found at this link.")
+            },
+            detail,
+        ),
+        FetchError::Package(why) => {
+            FormError::new(tr("The GitHub mod package was not valid."), why)
+        }
+        FetchError::Transfer(why) => FormError::transport(why),
+    })?;
+    if let Some(old) = update {
+        mods.retain(|package| package.id == old.id);
+        if mods.is_empty() || found.assets.is_empty() {
+            return Err(FormError::new(
+                tr("The new release does not contain this mod."),
+                trf(
+                    "No release package was found for {mod}. The installed mod is unchanged.",
+                    &[("mod", &old.id)],
+                ),
+            ));
+        }
+    }
+    Ok(Resolution::Ready(found, mods))
+}
+
 impl Launcher {
-    pub(super) fn github_tick(&mut self) -> bool {
-        let mut changed = false;
-        while let Ok(event) = self.github.rx.try_recv() {
-            changed = true;
-            match event {
-                Event::Fetched(Ok(_)) => self.github.stage = Stage::Pick,
-                Event::Fetched(Err(e)) => {
-                    self.github.stage = Stage::Idle;
-                    self.github.message = Some(Err(e));
-                }
-                Event::Review(question, reply) => {
-                    if let Some((_, old)) = self.mods.installs.world.replace((question, reply)) {
-                        let _ = old.send(false);
-                    }
-                }
-                Event::Installed(result) => {
-                    self.github.stage = Stage::Idle;
-                    if result.is_ok() {
-                        self.github.text.set(String::new());
-                        self.github.newer.clear();
-                    }
-                    self.instance_mods_changed();
-                    self.github.message = Some(result);
-                    let home = self.mods.home();
-                    self.github.reread(&home);
+    pub(super) fn github_add_button(&self, cx: &mut Context<Self>) -> Stateful<Div> {
+        button("github-add", tr("Add from GitHub")).on_click(cx.listener(
+            |this, _: &ClickEvent, window, cx| {
+                this.open_github_add(None);
+                let focus = this
+                    .github
+                    .focus
+                    .get_or_insert_with(|| cx.focus_handle().tab_index(0).tab_stop(true));
+                window.focus(focus, cx);
+                cx.notify();
+            },
+        ))
+    }
+
+    pub(super) fn open_github_add(&mut self, update: Option<Origin>) {
+        self.github.close();
+        self.open_sheet(Sheet::GithubAdd);
+        match self.github_target() {
+            Ok(target) => self.github.target = Some(target),
+            Err(error) => {
+                self.github.stage =
+                    Stage::Failed(FormError::new(tr("Can't start the install"), error), false);
+                return;
+            }
+        }
+        if let Some(update) = update {
+            self.github.text.set(update.source_url());
+            self.github.update = Some(update);
+            self.github_resolve();
+        }
+    }
+
+    pub(crate) fn show_github_result(&mut self, feedback: Feedback) {
+        let Feedback {
+            profile,
+            link,
+            result,
+        } = feedback;
+        if !self.selected_instance().is_some_and(|current| {
+            current.home == profile.home
+                && current.id == profile.id
+                && current.incarnation == profile.incarnation
+        }) {
+            return;
+        }
+        match result {
+            Ok(message) => self.mods.message = Some(Ok(message)),
+            Err((line, detail)) => {
+                if self.ui.page == Page::Installed
+                    && self.ui.sheet.is_none()
+                    && !self.blocking_dialog()
+                {
+                    self.open_github_add(None);
+                    self.github.text.set(link);
+                    self.github.stage = Stage::Failed(FormError::new(&line, detail), false);
+                    self.mods.message = None;
+                } else {
+                    self.mods.message = Some(Err(format!("{line}\n{detail}")));
                 }
             }
         }
-        changed
     }
 
-    /// Downloads and checks what the player agreed to; installs it unless there is a choice.
-    pub(super) fn github_install(&mut self, found: Resolved, only: Option<String>) {
-        if self.settings.native_mods_allowed_at.is_none() {
-            self.pending_consent = Some(PendingConsent::Github(found, only));
+    fn github_resolve(&mut self) {
+        if !self.github.can_resolve() || self.github.target.is_none() {
             return;
         }
-        if self.mutating() || self.mods_locked().is_some() {
-            self.github.message = Some(Err(tr("Wait for the current operation to finish.").into()));
-            return;
-        }
-        let Some(instance) = self.selected_instance().cloned() else {
-            self.github.message = Some(Err(backend::no_version_installed()));
-            return;
-        };
-        if instance.kind == instances::Kind::Pack {
-            self.github.message =
-                Some(Err(tr("This pack controls which mods it installs.").into()));
-            return;
-        }
-        let identity = match sunrise::install_target(&instance) {
-            Ok(identity) => identity,
-            Err(error) => {
-                self.github.message = Some(Err(error));
+        let update = self.github.update.clone();
+        let link = update
+            .as_ref()
+            .map(|old| Ok(old.follows()))
+            .unwrap_or_else(|| github_mods::parse(self.github.text.text()));
+        let link = match link {
+            Ok(link) => link,
+            Err(why) => {
+                self.github.stage =
+                    Stage::Failed(FormError::new(tr("Enter a GitHub link."), why), false);
                 return;
             }
         };
-        let target = self.profile_target(&instance);
-        let release = target
-            .as_deref()
-            .and_then(|tag| self.release_to_install(tag));
-        self.github.stage = Stage::Working;
-        let tx = self.github.tx.clone();
-        let launcher = self.tx.clone();
+        let (tx, rx) = crate::wake::channel();
+        self.github.stage = Stage::Resolving(rx);
         std::thread::spawn(move || {
-            let fetched = github_mods::fetch(&found);
-            let result = match fetched {
-                Ok(mods) if mods.len() == 1 || only.is_some() => {
-                    let done = (|| {
-                        let mut installed = Vec::new();
-                        let mut updated = Vec::new();
-                        for pack in github_mods::choose(&mods, only.as_deref(), false)? {
-                            let path = instance
-                                .home
-                                .join(native_mods::INSTALLED)
-                                .join(format!("{}.smod", pack.id));
-                            let replace = match std::fs::symlink_metadata(&path) {
-                                Ok(_) => true,
-                                Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
-                                Err(error) => return Err(format!("{}: {error}", path.display())),
-                            };
-                            if !replace {
-                                let origin = github_mods::install(&instance.home, &found, pack)?;
-                                installed.push(format!("{} {}", origin.id, origin.version));
-                                continue;
-                            }
-                            let origin = sunrise::update_github(
-                                &instance,
-                                identity,
-                                &found,
-                                pack,
-                                || {
-                                    if let Some(tag) = target.as_deref().filter(|tag| {
-                                        backend::installed().iter().any(|local| local == tag)
-                                    }) {
-                                        FirstBuild::installed(tag)
-                                    } else if let Some(release) = &release {
-                                        FirstBuild::download(release)
-                                    } else {
-                                        Err(backend::no_version_installed())
-                                    }
-                                },
-                                sunrise::InstallHooks {
-                                    progress: &|_| {},
-                                    native: &|_| {
-                                        native_mods::require_consent()
-                                            .map(|_| true)
-                                            .map_err(String::from)
-                                    },
-                                    registry_crates: Some(&|consent| {
-                                        let (reply, answer) = std::sync::mpsc::channel();
-                                        launcher
-                                            .send(Msg::NativeRegistryConsent(
-                                                consent.clone(),
-                                                reply,
-                                            ))
-                                            .is_ok()
-                                            && answer.recv().unwrap_or(false)
-                                    }),
-                                    continue_after_failure: &|_| false,
-                                    resolve: None,
-                                },
-                                &|impact| {
-                                    let (reply, answer) = std::sync::mpsc::channel();
-                                    tx.send(Event::Review(
-                                        WorldQuestion::new(impact, &Default::default()),
-                                        reply,
-                                    ))
-                                    .is_ok()
-                                        && answer.recv().unwrap_or(false)
-                                },
-                            )
-                            .map_err(|error| match error {
-                                sunrise::InstallError::Cancelled => {
-                                    tr("Nothing was updated.").into()
-                                }
-                                e => e.to_string(),
-                            })?;
-                            updated.push(format!("{} {}", origin.id, origin.version));
-                        }
-                        let mut messages = Vec::new();
-                        if !installed.is_empty() {
-                            messages.push(trf(
-                                "Installed {mods} from GitHub ({source}). Build it on the Mods page.",
-                                &[("mods", &installed.join(", ")), ("source", &found.label())],
-                            ));
-                        }
-                        if !updated.is_empty() {
-                            messages.push(trf(
-                                "Updated {mods} from GitHub ({source}).",
-                                &[("mods", &updated.join(", ")), ("source", &found.label())],
-                            ));
-                        }
-                        Ok(messages.join("\n"))
-                    })();
-                    Event::Installed(done)
-                }
-                other => Event::Fetched(other),
-            };
-            let _ = tx.send(result);
+            let _ = tx.send(resolve_link(&link, update.as_ref()));
         });
+    }
+
+    pub(super) fn github_tick(&mut self) -> bool {
+        if self.ui.sheet != Some(Sheet::GithubAdd) {
+            if self.github.target.is_some() {
+                self.github.close();
+            }
+            return false;
+        }
+        let Stage::Resolving(rx) = &self.github.stage else {
+            return false;
+        };
+        match rx.try_recv() {
+            Ok(Ok(Resolution::Ready(source, mods))) if mods.len() == 1 => {
+                self.github_submit(source, mods)
+            }
+            Ok(Ok(Resolution::Ready(source, mods))) => {
+                self.github.stage = Stage::Pick(Pick::new(source, mods))
+            }
+            Ok(Ok(Resolution::Current)) => {
+                self.close_sheet();
+                self.mods.message = Some(Ok(tr("This GitHub mod is up to date.").into()));
+            }
+            Ok(Err(error)) => self.github.stage = Stage::Failed(error, false),
+            Err(std::sync::mpsc::TryRecvError::Empty) => return false,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.github.stage = Stage::Failed(
+                    FormError::transport(tr("GitHub lookup stopped.").into()),
+                    false,
+                )
+            }
+        }
+        true
+    }
+
+    fn github_pick(&mut self) {
+        if !matches!(&self.github.stage, Stage::Pick(pick) if !pick.selected.is_empty()) {
+            return;
+        }
+        if let Stage::Pick(mut pick) = std::mem::take(&mut self.github.stage) {
+            pick.mods.retain(|m| pick.selected.contains(&m.id));
+            self.github_submit(pick.source, pick.mods);
+        }
+    }
+
+    fn github_submit(&mut self, source: Resolved, mut mods: Vec<Packed>) {
+        let Some(target) = self.github.target.take() else {
+            return;
+        };
+        let selection = if self.github.update.is_some() {
+            GithubSelection::Update(mods.pop().expect("the update names one package"))
+        } else {
+            GithubSelection::Add(mods)
+        };
+        let input = GithubInput {
+            link: self.github.text.text().to_owned(),
+            source,
+            selection,
+        };
+        self.close_sheet();
+        self.queue_github(target, input);
+    }
+
+    pub(crate) fn github_add_sheet(
+        &mut self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let focus = self
+            .github
+            .focus
+            .get_or_insert_with(|| cx.focus_handle().tab_index(0).tab_stop(true))
+            .clone();
+        let muted = |text: &str| {
+            div()
+                .text_size(px(tokens::LABEL))
+                .text_color(rgb(palette().muted))
+                .child(text.to_owned())
+        };
+        let body = div().flex().flex_col();
+        let (body, action) = if let Stage::Pick(pick) = &self.github.stage {
+            let rows = div()
+                .id("github-add-list")
+                .max_h(px(184.))
+                .overflow_y_scroll()
+                .rounded(crate::tokens::r(tokens::R_CARD))
+                .border_1()
+                .border_color(rgb(palette().divider))
+                .children(pick.mods.iter().enumerate().map(|(i, m)| {
+                    let id = m.id.clone();
+                    div()
+                        .id(("github-add-choice", i))
+                        .reach()
+                        .flex()
+                        .items_center()
+                        .gap(px(10.))
+                        .px(px(12.))
+                        .h(px(48.))
+                        .cursor_pointer()
+                        .when(i > 0, |r| {
+                            r.border_t_1().border_color(rgb(palette().divider))
+                        })
+                        .hover(|s| s.bg(rgb(palette().hover)))
+                        .child(
+                            crate::mods::checkbox(
+                                ("github-add-check", i),
+                                pick.selected.contains(&m.id),
+                            )
+                            .tab_stop(false),
+                        )
+                        .child(crate::mod_icons::tile(
+                            None::<gpui::ImageSource>,
+                            &m.id,
+                            &m.name,
+                            26.,
+                        ))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .truncate()
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .child(m.name.clone()),
+                        )
+                        .child(muted(&m.version).flex_none())
+                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            if let Stage::Pick(pick) = &mut this.github.stage {
+                                pick.toggle(&id);
+                            }
+                            cx.notify();
+                        }))
+                }));
+            let button = primary("github-add-install", tr("Install"));
+            let button = if pick.selected.is_empty() {
+                widgets::disabled(button)
+            } else {
+                button.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                    this.github_pick();
+                    cx.notify();
+                }))
+            };
+            (
+                body.child(sheets::title(tr("Choose mods to install").into()))
+                    .child(muted(&pick.source.label()).truncate())
+                    .child(muted(tr(github_mods::WARNING)))
+                    .child(rows),
+                button,
+            )
+        } else {
+            let resolving = self.github.resolving();
+            let focused = !resolving && focus.is_focused(window);
+            let mut field_theme = crate::mods::field_theme(self.theme);
+            field_theme.glass = true;
+            let field = input(focused)
+                .id("github-add-field")
+                .h(px(tokens::ACTION))
+                .px(px(12.))
+                .text_size(px(tokens::BODY))
+                .child(line_edit::content_with(
+                    &self.github.text,
+                    &field_theme,
+                    focused,
+                    false,
+                    false,
+                    "https://github.com/owner/repo".into(),
+                ));
+            let field = if resolving {
+                field.opacity(0.55)
+            } else {
+                let field = field
+                    .track_focus(&focus)
+                    .seen()
+                    .cursor_text()
+                    .on_click(cx.listener(move |_, _: &ClickEvent, window, cx| {
+                        window.focus(&focus, cx);
+                        cx.notify();
+                    }))
+                    .on_key_down(cx.listener(|this, e: &KeyDownEvent, _, cx| {
+                        match line_edit::handle(&mut this.github.text, e, cx) {
+                            line_edit::Key::Pass | line_edit::Key::Escape => return,
+                            line_edit::Key::Enter => this.github_resolve(),
+                            line_edit::Key::Edited
+                            | line_edit::Key::Paste
+                            | line_edit::Key::Cut(_) => {
+                                this.github.stage = Stage::Link;
+                                this.github.update = None;
+                            }
+                            _ => {}
+                        }
+                        cx.stop_propagation();
+                        cx.notify();
+                    }));
+                line_edit::mouse(field, cx, |this| &mut this.github.text)
+            };
+            let mut body = body
+                .child(sheets::title(tr("Add from GitHub").into()))
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(8.))
+                        .child(muted(tr(
+                            "Paste a link to a repository, release, tag, branch or commit.",
+                        )))
+                        .child(field)
+                        .child(muted(tr(github_mods::WARNING))),
+                );
+            if resolving {
+                body = body.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(8.))
+                        .child(muted(tr("Checking GitHub…")))
+                        .child(widgets::progress_bar(None, &self.theme).flex_none()),
+                );
+            }
+            if let Stage::Failed(error, expanded) = &self.github.stage {
+                body =
+                    body.child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .gap(px(8.))
+                            .child(
+                                div()
+                                    .text_size(px(tokens::LABEL))
+                                    .text_color(rgb(palette().danger))
+                                    .child(error.line.clone()),
+                            )
+                            .child(button("github-add-details", tr("Details")).on_click(
+                                cx.listener(|this, _: &ClickEvent, _, cx| {
+                                    if let Stage::Failed(_, expanded) = &mut this.github.stage {
+                                        *expanded ^= true;
+                                    }
+                                    cx.notify();
+                                }),
+                            )),
+                    );
+                if *expanded {
+                    body = body.child(
+                        div()
+                            .id("github-add-error-detail")
+                            .max_h(px(120.))
+                            .overflow_y_scroll()
+                            .p(px(10.))
+                            .rounded(crate::tokens::r(tokens::R_SMALL))
+                            .bg(rgb(palette().background))
+                            .text_size(px(tokens::LABEL))
+                            .text_color(rgb(palette().muted))
+                            .child(crate::selectable::selectable(error.detail.clone())),
+                    );
+                }
+            }
+            let next = primary(
+                "github-add-continue",
+                if matches!(&self.github.stage, Stage::Failed(error, _) if error.retry) {
+                    tr("Try again")
+                } else {
+                    tr("Continue")
+                },
+            );
+            let next = if self.github.target.is_some() && self.github.can_resolve() {
+                next.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                    this.github_resolve();
+                    cx.notify();
+                }))
+            } else {
+                widgets::disabled(next)
+            };
+            (body, next)
+        };
+        let body = body.child(
+            div()
+                .flex()
+                .justify_end()
+                .gap(px(8.))
+                .child(
+                    button("github-add-cancel", tr("Cancel")).on_click(cx.listener(
+                        |this, _: &ClickEvent, _, cx| {
+                            this.close_sheet();
+                            cx.notify();
+                        },
+                    )),
+                )
+                .child(action),
+        );
+        sheets::frame("github-add-sheet", 500., body, cx)
     }
 }

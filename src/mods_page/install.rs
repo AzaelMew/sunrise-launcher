@@ -1,5 +1,6 @@
 //! One visible registry install batch, and requests that arrived after it was sealed.
 use super::*;
+use crate::github_mods_page::{Feedback, GithubInput, GithubSelection};
 use std::{
     collections::{BTreeMap, VecDeque},
     path::Path,
@@ -31,6 +32,7 @@ struct Running {
     batch: Arc<Mutex<Option<Vec<String>>>>,
     requests: Vec<RequestView>,
     stage: InstallProgress,
+    github: Option<(String, bool)>,
 }
 
 struct Request {
@@ -40,11 +42,22 @@ struct Request {
     release: Option<backend::Release>,
     displayed_names: BTreeMap<String, String>,
     view: RequestView,
+    github: Option<GithubInput>,
+}
+
+/// Bound before the link can start a network lookup, not when its answer comes back.
+#[derive(Clone)]
+pub(crate) struct GithubTarget {
+    profile: instances::Instance,
+    identity: Identity,
+    target: Option<String>,
+    release: Option<backend::Release>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Kind {
     Install,
+    Github,
     Update,
     UpdateAll,
     Remove,
@@ -166,8 +179,34 @@ impl Installs {
         }
     }
 
+    pub(super) fn github_feedback(&self, event: &Worker) -> Option<Feedback> {
+        let run = self.running.as_ref()?;
+        let (link, update) = run.github.as_ref()?;
+        let Worker::Done(result) = event else {
+            return None;
+        };
+        let result = match result {
+            Ok(_) => Ok(if *update {
+                tr("Updated the GitHub mod.")
+            } else {
+                tr("Installed the selected GitHub mods.")
+            }
+            .into()),
+            Err(InstallError::Cancelled) => return None,
+            Err(error) => Err((failure_line(error).into(), error.to_string())),
+        };
+        Some(Feedback {
+            profile: run.profile.clone(),
+            link: link.clone(),
+            result,
+        })
+    }
+
     pub(super) fn mutation_failure(&self, event: &Worker) -> Option<String> {
-        if self.running.as_ref()?.requests[0].kind == Kind::Install {
+        if matches!(
+            self.running.as_ref()?.requests[0].kind,
+            Kind::Install | Kind::Github
+        ) {
             return None;
         }
         match event {
@@ -459,6 +498,53 @@ impl Launcher {
         self.queue_registry_change(Kind::Install, card, ids, BTreeMap::new())
     }
 
+    pub(crate) fn github_target(&self) -> Result<GithubTarget, String> {
+        if self.accounts.selected().is_none() && !sunrise_launcher::developer_offline::selected() {
+            return Err(tr("Installs after you sign in").into());
+        }
+        if let Some(why) = self.mods_locked() {
+            return Err(why.into());
+        }
+        let profile = self
+            .selected_instance()
+            .cloned()
+            .ok_or_else(backend::no_version_installed)?;
+        if profile.kind == instances::Kind::Pack {
+            return Err(tr("This pack controls which mods it installs.").into());
+        }
+        let target = self.profile_target(&profile);
+        let release = target
+            .as_deref()
+            .and_then(|tag| self.release_to_install(tag));
+        Ok(GithubTarget {
+            identity: sunrise::install_target(&profile)?,
+            profile,
+            target,
+            release,
+        })
+    }
+
+    pub(crate) fn queue_github(&mut self, target: GithubTarget, input: GithubInput) {
+        let ids = match &input.selection {
+            GithubSelection::Add(packages) => packages.iter().map(|p| p.id.clone()).collect(),
+            GithubSelection::Update(package) => vec![package.id.clone()],
+        };
+        self.mods.installs.submit(Request {
+            identity: target.identity,
+            profile: target.profile,
+            target: target.target,
+            release: target.release,
+            displayed_names: BTreeMap::new(),
+            view: RequestView {
+                kind: Kind::Github,
+                card: input.link.clone(),
+                ids,
+            },
+            github: Some(input),
+        });
+        self.start_registry_queue();
+    }
+
     pub(crate) fn queue_registry_change(
         &mut self,
         kind: Kind,
@@ -496,6 +582,7 @@ impl Launcher {
             release,
             displayed_names,
             view: RequestView { kind, card, ids },
+            github: None,
         });
         self.start_registry_queue();
         Ok(())
@@ -525,6 +612,12 @@ impl Launcher {
             batch: batch.clone(),
             requests: vec![request.view],
             stage: InstallProgress::Checking,
+            github: request.github.as_ref().map(|input| {
+                (
+                    input.link.clone(),
+                    matches!(input.selection, GithubSelection::Update(_)),
+                )
+            }),
         });
         let tx = self.mods.tx.clone();
         let launcher = self.tx.clone();
@@ -601,6 +694,30 @@ impl Launcher {
                     choose,
                     hooks,
                 ),
+                Kind::Github => {
+                    let input = request.github.expect("a checked GitHub request");
+                    match input.selection {
+                        GithubSelection::Update(package) => sunrise::update_github(
+                            &request.profile,
+                            request.identity,
+                            &input.source,
+                            &package,
+                            choose,
+                            hooks,
+                            &approve,
+                        )
+                        .map(|_| InstalledBatch::default()),
+                        GithubSelection::Add(packages) => sunrise::add_github(
+                            &request.profile,
+                            request.identity,
+                            &input.source,
+                            &packages,
+                            choose,
+                            hooks,
+                        )
+                        .map(|()| InstalledBatch::default()),
+                    }
+                }
                 Kind::Update | Kind::UpdateAll => sunrise::update_registry(
                     &request.profile,
                     request.identity,
@@ -696,6 +813,7 @@ mod tests {
             target: Some(target.into()),
             release: None,
             displayed_names: BTreeMap::new(),
+            github: None,
             view: RequestView {
                 kind: Kind::Install,
                 card: id.into(),
@@ -714,6 +832,7 @@ mod tests {
                 batch: Arc::new(Mutex::new(Some(first.view.ids.clone()))),
                 requests: vec![first.view],
                 stage: InstallProgress::Checking,
+                github: None,
             }),
             ..Installs::default()
         }
