@@ -108,7 +108,7 @@ impl Github {
         self.text.set(String::new());
     }
 
-    fn resolving(&self) -> bool {
+    pub(super) fn busy(&self) -> bool {
         matches!(self.stage, Stage::Resolving(_))
     }
 
@@ -402,7 +402,7 @@ impl Launcher {
                 button,
             )
         } else {
-            let resolving = self.github.resolving();
+            let resolving = self.github.busy();
             let focused = !resolving && focus.is_focused(window);
             let mut field_theme = crate::mods::field_theme(self.theme);
             field_theme.glass = true;
