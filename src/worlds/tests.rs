@@ -460,7 +460,7 @@ fn review_unknown_evidence_cannot_clear_a_suspect() {
 }
 
 #[test]
-fn complete_primary_clears_unrelated_last_loaded_suspects_but_checks_fallback() {
+fn complete_last_loaded_lists_cannot_clear_historical_risk() {
     let home = tempfile::tempdir().unwrap();
     let dat = home.path().join("saves/basin/level.dat");
     let old = dat.with_file_name("level.dat_old");
@@ -468,15 +468,29 @@ fn complete_primary_clears_unrelated_last_loaded_suspects_but_checks_fallback() 
         ("ModId", name("other")),
         ("ModVersion", name("custom-version")),
     ]);
-    write_evidence(
-        &dat,
-        Some(("sunrise", "ContentModList", Tag::List(vec![unrelated]))),
-    );
+    for path in [&dat, &old] {
+        write_evidence(
+            path,
+            Some((
+                "sunrise",
+                "ContentModList",
+                Tag::List(vec![unrelated.clone()]),
+            )),
+        );
+    }
+    let fallback_only = home.path().join("saves/creek/level.dat_old");
+    write_evidence(&fallback_only, None);
     let sources = BTreeMap::from([("bricks".into(), BTreeSet::from(["construction".into()]))]);
     let risk = review_risk(home.path(), &sources).unwrap();
+    assert_eq!(risk.len(), 2);
     assert!(risk[0].primary_complete);
-    assert!(risk[0].known);
-    assert!(risk[0].mods.is_empty());
+    assert!(!risk[1].primary_complete);
+    for world in &risk {
+        assert_eq!(world.mods, ["bricks"]);
+        assert!(world.confirmed_mods.is_empty());
+        assert!(!world.known);
+        assert!(!world.malformed);
+    }
     write_evidence(
         &old,
         Some((

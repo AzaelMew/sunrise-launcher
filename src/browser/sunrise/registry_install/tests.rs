@@ -30,6 +30,27 @@ fn archive(home: &Path, id: &str, name: &str, version: &str, depends: bool) -> i
 }
 
 #[test]
+fn a_self_consistent_row_never_authorizes_an_unpublished_predecessor() {
+    let home = tempfile::tempdir().unwrap();
+    let row = archive(home.path(), "coords_hud", "Foreign copy", "1.0.0", false);
+    let mut doc = Document::read(home.path()).unwrap();
+    doc.replace(&row).unwrap();
+    doc.write(home.path()).unwrap();
+    let mut catalogue = super::super::tests::sample();
+    let foreign = inventory(home.path(), Some(&OfficialRegistry::fixture(&catalogue))).unwrap();
+    assert!(!foreign["coords_hud"].owned);
+    let published = catalogue
+        .projects
+        .iter_mut()
+        .find(|p| p.id == "coords_hud")
+        .unwrap();
+    published.versions[0].file.sha256 = row.checksum.strip_prefix("SHA-256:").unwrap().to_owned();
+    let official = OfficialRegistry::fixture(&catalogue);
+    assert!(inventory(home.path(), Some(&official)).unwrap()["coords_hud"].owned);
+    assert!(!inventory(home.path(), None).unwrap()["coords_hud"].owned);
+}
+
+#[test]
 fn continue_proposal_discloses_off_dependents_and_preserves_the_working_predecessor() {
     let old = tempfile::tempdir().unwrap();
     let candidate = tempfile::tempdir().unwrap();
@@ -65,7 +86,7 @@ fn continue_proposal_discloses_off_dependents_and_preserves_the_working_predeces
     let changes = restore_or_disable(
         old.path(),
         candidate.path(),
-        &inventory(old.path()).unwrap(),
+        &inventory(old.path(), None).unwrap(),
         &mut entries,
         &mut doc,
         BTreeMap::from([("light_core".into(), InstallHold::Compile)]),

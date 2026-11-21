@@ -159,7 +159,7 @@ impl ChangeImpact {
 /// The ordinary enable switch must not reactivate an exact hold or a mod missing a required
 /// dependency. Call under the game's manifest lock and write the list under the same lock.
 pub fn check_activation(home: &Path, activate: &[&str]) -> Result<(), String> {
-    let packages = inventory(home)?;
+    let packages = inventory(home, None)?;
     let mut enabled = enabled(home)?;
     enabled.extend(activate.iter().map(|&id| id.to_owned()));
     let manifests = packages
@@ -226,7 +226,7 @@ pub fn remove_mods(
     let old = edit.candidate()?;
     let next = edit.candidate()?;
     let home = next.path();
-    let present = inventory(home)?;
+    let present = inventory(home, None)?;
     let ids = ids.iter().cloned().collect::<BTreeSet<_>>();
     let mut rows = Document::read(home)?;
     let enabled = enabled(home)?;
@@ -289,7 +289,7 @@ pub fn remove_mods(
     }
     let disabled_ids = unavailable.iter().map(String::as_str).collect::<Vec<_>>();
     mod_list::set_all_enabled(home, &disabled_ids, false)?;
-    if let Some(conflict) = manifest_conflict(home, None)? {
+    if let Some(conflict) = manifest_conflict(home, None, None)? {
         return Err(InstallError::Refused(conflict.reason));
     }
     let named = |id: &String| format!("{} ({id})", present[id].package.manifest.name);

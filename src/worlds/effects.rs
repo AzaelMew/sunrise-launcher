@@ -81,42 +81,12 @@ fn preserved_mods<'a>(
     let overrides = dependencies::Overrides::read(&before_mods).ok()?;
     let old: Vec<_> = previous.iter().map(|p| &p.manifest).collect();
     let new: Vec<_> = next.iter().map(|p| &p.manifest).collect();
-    let old_ids: BTreeSet<_> = old.iter().map(|m| m.id.as_str()).collect();
-    let new_packages: BTreeMap<_, _> = next.iter().map(|p| (p.manifest.id.as_str(), *p)).collect();
-    let mut preserved = BTreeSet::new();
-    let mut changed: BTreeSet<_> = new_packages
-        .keys()
-        .copied()
-        .filter(|id| !old_ids.contains(id))
+    let old_packages: BTreeMap<_, _> = previous
+        .iter()
+        .map(|p| (p.manifest.id.as_str(), *p))
         .collect();
-    for a in previous {
-        let id = a.manifest.id.as_str();
-        let Some(b) = new_packages.get(id) else {
-            changed.insert(id);
-            continue;
-        };
-        let flat = |p: &ScannedPackage| {
-            !p.directory && p.manifest.native.is_none() && p.manifest.jar.is_empty()
-        };
-        if flat(a)
-            && flat(b)
-            && a.path
-                .strip_prefix(before)
-                .ok()
-                .zip(b.path.strip_prefix(after).ok())
-                .is_some_and(|(a, b)| a == b)
-            && equivalent_manifest(&a.manifest, &b.manifest)
-            && definition_bytes(&a.path)
-                .zip(definition_bytes(&b.path))
-                .is_some_and(|(a, b)| a == b)
-        {
-            preserved.insert(id);
-        }
-        // A leaf can have a display-only new release. Its consumers still see a new version.
-        if !preserved.contains(id) || a.manifest.version != b.manifest.version {
-            changed.insert(id);
-        }
-    }
+    let new_packages: BTreeMap<_, _> = next.iter().map(|p| (p.manifest.id.as_str(), *p)).collect();
+    let mut reordered = BTreeSet::new();
     for side in [manifest::Side::Client, manifest::Side::Server] {
         let a = dependencies::resolve_manifests(&old, side, &overrides).ok()?;
         let b = dependencies::resolve_manifests(&new, side, &overrides).ok()?;
@@ -124,7 +94,7 @@ fn preserved_mods<'a>(
             .order
             .into_iter()
             .map(|i| new[i].id.as_str())
-            .filter(|id| old_ids.contains(id))
+            .filter(|id| old_packages.contains_key(id))
             .enumerate()
             .map(|(i, id)| (id, i))
             .collect();
@@ -140,14 +110,100 @@ fn preserved_mods<'a>(
             // Ignore the positions of added/removed mods, but require the same set of
             // surviving predecessors; an equal numeric rank alone doesn't prove that.
             if rank != index || prefix_max.is_some_and(|previous| previous > rank) {
-                preserved.remove(id);
-                changed.insert(id);
+                reordered.insert(id);
             }
             prefix_max = Some(prefix_max.map_or(rank, |previous| previous.max(rank)));
         }
     }
+    let mut preserved = BTreeSet::new();
+    let mut changed = BTreeSet::new();
+    let mut shadowed = BTreeSet::new();
+    let definitions = |p: Option<&ScannedPackage>| match p {
+        None => Some(BTreeMap::new()),
+        Some(p) if !p.directory && p.manifest.native.is_none() && p.manifest.jar.is_empty() => {
+            definition_bytes(&p.path)
+        }
+        Some(_) => None,
+    };
+    for &id in old_packages.keys().chain(
+        new_packages
+            .keys()
+            .filter(|id| !old_packages.contains_key(*id)),
+    ) {
+        let a = old_packages.get(id).copied();
+        let b = new_packages.get(id).copied();
+        let pair = a.zip(b);
+        let same_position = !reordered.contains(id)
+            && pair.is_some_and(|(a, b)| {
+                a.path
+                    .strip_prefix(before)
+                    .ok()
+                    .zip(b.path.strip_prefix(after).ok())
+                    .is_some_and(|(a, b)| a == b)
+            });
+        let (Some(old_files), Some(new_files)) = (definitions(a), definitions(b)) else {
+            // An opaque layer can supply definitions in any namespace. Exact equality
+            // limits this uncertainty to the layer itself; it does not clear that layer.
+            let digest = |p: &Path| opaque_digest(p, 0, &mut (files::MAX_FILES, files::MAX_TOTAL));
+            if !same_position
+                || !pair.is_some_and(|(a, b)| {
+                    digest(&a.path)
+                        .zip(digest(&b.path))
+                        .is_some_and(|(a, b)| a == b)
+                })
+            {
+                return None;
+            }
+            continue;
+        };
+        let comparable = same_position
+            && pair.is_some_and(|(a, b)| equivalent_manifest(&a.manifest, &b.manifest));
+        if comparable && old_files == new_files {
+            preserved.insert(id);
+        }
+        // A leaf can have a display-only new release. Its consumers still see a new version.
+        if !preserved.contains(id)
+            || pair.is_some_and(|(a, b)| a.manifest.version != b.manifest.version)
+        {
+            changed.insert(id);
+        }
+        // If placement or declarations changed, even unchanged paths may become visible.
+        for (name, _) in old_files
+            .iter()
+            .filter(|(name, digest)| !comparable || new_files.get(*name) != Some(*digest))
+            .chain(
+                new_files
+                    .iter()
+                    .filter(|(name, _)| !old_files.contains_key(*name)),
+            )
+        {
+            // `definition_bytes` validated every path as assets|data/<namespace>/<file>.
+            let (root, path) = name.split_once('/').expect("content root");
+            let (namespace, path) = path.split_once('/').expect("content namespace");
+            let kind = path.split_once('/').map(|(kind, _)| kind);
+            if root == "data" && matches!(kind, Some("tags" | "worldgen")) {
+                continue;
+            }
+            if matches!(namespace, "minecraft" | "c") {
+                // Shared registrations can change any mod's definitions. Atlases and other
+                // vanilla assets are not saved definitions; blockstates and models can be.
+                if matches!(
+                    (root, kind),
+                    ("data", Some("sunrise")) | ("assets", Some("blockstates" | "models"))
+                ) {
+                    return None;
+                }
+            } else {
+                shadowed.insert(namespace.to_owned());
+            }
+        }
+    }
     let mut consumers: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
     for m in old.into_iter().chain(new) {
+        if m.owned_namespaces().any(|ns| shadowed.contains(ns)) {
+            preserved.remove(m.id.as_str());
+            changed.insert(m.id.as_str());
+        }
         for target in m
             .dependencies
             .keys()
@@ -233,9 +289,207 @@ fn definition_bytes(path: &Path) -> Option<BTreeMap<String, [u8; 32]>> {
     Some(contents)
 }
 
+// Bound raw archive and directory proofs as well as the decompressed flat proof. Tree
+// entries commit to names and types as well as bytes, and never follow a linked node.
+fn opaque_digest(path: &Path, depth: usize, budget: &mut (usize, u64)) -> Option<[u8; 32]> {
+    if depth > 64 {
+        return None;
+    }
+    let meta = fs::symlink_metadata(path).ok()?;
+    if crate::native_cache::linked(&meta) {
+        return None;
+    }
+    let (entries_left, bytes_left) = budget;
+    let mut hash = Sha256::new();
+    if meta.is_file() {
+        hash.update(b"file");
+        let len = meta.len();
+        *bytes_left = bytes_left.checked_sub(len)?;
+        if io::copy(&mut fs::File::open(path).ok()?.take(len + 1), &mut hash).ok()? != len {
+            return None;
+        }
+    } else if meta.is_dir() {
+        hash.update(b"dir");
+        let mut entries = fs::read_dir(path)
+            .ok()?
+            .take(*entries_left + 1)
+            .collect::<io::Result<Vec<_>>>()
+            .ok()?;
+        *entries_left = entries_left.checked_sub(entries.len())?;
+        entries.sort_unstable_by_key(fs::DirEntry::file_name);
+        for entry in entries {
+            let name = entry.file_name();
+            let name = name.as_encoded_bytes();
+            hash.update((name.len() as u64).to_le_bytes());
+            hash.update(name);
+            hash.update(opaque_digest(&entry.path(), depth + 1, budget)?);
+        }
+    } else {
+        return None;
+    }
+    Some(hash.finalize().into())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn header(id: &str) -> String {
+        format!("id='{id}'\nname='Test'\nversion='1.0.0'\napi='{}'\nside='both'\ncapabilities=['registries']\n", manifest::API)
+    }
+
+    fn content(home: &Path, id: &str, namespaces: &str, files: &[(&str, &[u8])]) {
+        let bytes = manifest::Package::write_files(
+            &format!("{}namespaces=[{namespaces}]\n", header(id)),
+            files,
+        )
+        .unwrap();
+        fs::write(home.join(mod_list::DIR).join(format!("{id}.smod")), bytes).unwrap();
+    }
+
+    fn compare(before: &Path, after: &Path) -> Option<BTreeSet<String>> {
+        let old = managed_play::scan_packages(before).unwrap();
+        let new = managed_play::scan_packages(after).unwrap();
+        preserved_mods(
+            before,
+            after,
+            &old.iter().collect::<Vec<_>>(),
+            &new.iter().collect::<Vec<_>>(),
+        )
+        .map(|ids| ids.into_iter().map(str::to_owned).collect())
+    }
+
+    fn shadow_profiles() -> [tempfile::TempDir; 2] {
+        std::array::from_fn(|_| {
+            let home = tempfile::tempdir().unwrap();
+            fs::create_dir(home.path().join(mod_list::DIR)).unwrap();
+            content(
+                home.path(),
+                "lamp",
+                "'lighting'",
+                &[("assets/lighting/blockstates/lamp.json", b"{}")],
+            );
+            content(home.path(), "unrelated", "", &[]);
+            home
+        })
+    }
+
+    #[test]
+    fn a_foreign_definition_taints_its_namespace_owners_only() {
+        let [before, after] = shadow_profiles();
+        let path = "assets/lighting/blockstates/lamp.json";
+        let preserved = || compare(before.path(), after.path());
+        let independent = Some(BTreeSet::from(["unrelated".into()]));
+        content(after.path(), "overlay", "'lighting'", &[(path, b"new")]);
+        assert_eq!(preserved(), independent, "added overlay");
+        content(before.path(), "overlay", "'lighting'", &[(path, b"old")]);
+        assert_eq!(preserved(), independent, "changed overlay");
+        fs::remove_file(after.path().join(mod_list::DIR).join("overlay.smod")).unwrap();
+        assert_eq!(preserved(), independent, "removed overlay");
+    }
+
+    #[test]
+    fn shared_tags_and_worldgen_do_not_taint_the_owners_of_unchanged_definitions() {
+        let [before, after] = shadow_profiles();
+        let definition = ("assets/lighting/blockstates/lamp.json", b"same".as_slice());
+        content(before.path(), "overlay", "'lighting'", &[definition]);
+        content(
+            after.path(),
+            "overlay",
+            "'lighting'",
+            &[
+                definition,
+                ("data/minecraft/tags/block/mineable/pickaxe.json", b"{}"),
+                ("data/c/tags/block/lights.json", b"{}"),
+                (
+                    "data/lighting/worldgen/configured_feature/lamps.json",
+                    b"{}",
+                ),
+                ("assets/minecraft/atlases/blocks.json", b"{}"),
+            ],
+        );
+        assert_eq!(
+            compare(before.path(), after.path()),
+            Some(BTreeSet::from(["lamp".into(), "unrelated".into()]))
+        );
+    }
+
+    #[test]
+    fn shared_definition_paths_have_no_single_mod_owner() {
+        let [before, after] = shadow_profiles();
+        for path in [
+            "assets/minecraft/blockstates/lantern.json",
+            "assets/minecraft/models/block/lantern.json",
+            "data/c/sunrise/item/lantern.json",
+        ] {
+            content(after.path(), "overlay", "", &[(path, b"{}")]);
+            assert_eq!(compare(before.path(), after.path()), None, "{path}");
+        }
+    }
+
+    #[test]
+    fn stable_opaque_layers_stay_suspect_without_tainting_peers() {
+        for kind in ["native", "jar", "directory"] {
+            let [before, after] = shadow_profiles();
+            let root = if kind == "native" {
+                mod_list::NATIVE_DIR
+            } else {
+                mod_list::DIR
+            };
+            let manifest = header("opaque");
+            let fixture = |home: &Path, payload: &'static [u8]| {
+                let root = home.join(root);
+                fs::create_dir_all(&root).unwrap();
+                let archive = match kind {
+                    "native" => manifest::Package::write_files(
+                        &format!(
+                            "{manifest}[native]\nsunrise='{}'\ngame='26.3'\n",
+                            "a".repeat(40)
+                        ),
+                        &[
+                            ("Cargo.toml", b"[package]\nname='opaque'\nversion='1.0.0'"),
+                            ("src/lib.rs", payload),
+                        ],
+                    ),
+                    "jar" => manifest::Package::write_files(
+                        &format!(
+                            "{manifest}[[jar]]\nid='other_mod'\nversion='1'\nsha512='{}'\n",
+                            "a".repeat(128)
+                        ),
+                        &[("data/opaque/tags/block/test.json", payload)],
+                    ),
+                    _ => {
+                        let folder = root.join("opaque");
+                        let data = folder.join("data/opaque/sunrise/block");
+                        fs::create_dir_all(&data).unwrap();
+                        fs::write(folder.join(manifest::MANIFEST), &manifest).unwrap();
+                        fs::write(data.join("lamp.json"), payload).unwrap();
+                        return;
+                    }
+                };
+                fs::write(root.join("opaque.smod"), archive.unwrap()).unwrap();
+            };
+            fixture(before.path(), b"old");
+            assert_eq!(compare(before.path(), after.path()), None, "removed {kind}");
+            if kind == "directory" {
+                fixture(after.path(), b"old");
+            } else {
+                fs::create_dir_all(after.path().join(root)).unwrap();
+                fs::copy(
+                    before.path().join(root).join("opaque.smod"),
+                    after.path().join(root).join("opaque.smod"),
+                )
+                .unwrap();
+            }
+            assert_eq!(
+                compare(before.path(), after.path()),
+                Some(BTreeSet::from(["lamp".into(), "unrelated".into()])),
+                "unchanged {kind} stays suspect but its peers don't"
+            );
+            fixture(after.path(), b"new");
+            assert_eq!(compare(before.path(), after.path()), None, "changed {kind}");
+        }
+    }
 
     #[test]
     fn same_paths_and_compatible_ranges_do_not_prove_the_same_definitions() {
@@ -270,31 +524,21 @@ mod tests {
             .iter()
             .map(|id| (id.clone(), BTreeSet::from([id.clone()])))
             .collect();
-        let compare = || {
-            let old = managed_play::scan_packages(before.path()).unwrap();
-            let new = managed_play::scan_packages(after.path()).unwrap();
-            preserved_mods(
-                before.path(),
-                after.path(),
-                &old.iter().collect::<Vec<_>>(),
-                &new.iter().collect::<Vec<_>>(),
-            )
-            .map(|ids| ids.into_iter().map(str::to_owned).collect::<BTreeSet<_>>())
-        };
+        let preserved = || compare(before.path(), after.path());
         write(after.path(), root, "1.1.0", &defs);
-        assert_eq!(compare(), Some(ids));
+        assert_eq!(preserved(), Some(ids));
         write(after.path(), dep, "1.1.0", &[]);
-        assert_eq!(compare(), Some(BTreeSet::from([dep.into()])));
+        assert_eq!(preserved(), Some(BTreeSet::from([dep.into()])));
         write(after.path(), dep, "1.0.0", &[]);
         let overrides = after
             .path()
             .join(mod_list::DIR)
             .join(dependencies::OVERRIDES);
         fs::write(&overrides, "[root_mod]\nrequired_mod='drop'\n").unwrap();
-        assert_eq!(compare(), None);
+        assert_eq!(preserved(), None);
         fs::remove_file(overrides).unwrap();
         write(after.path(), root, "1.1.0", &[(defs[0].0, b"{}")]);
-        assert_eq!(compare(), Some(BTreeSet::from([dep.into()])));
+        assert_eq!(preserved(), Some(BTreeSet::from([dep.into()])));
         // Byte-equal archives still cannot testify to equivalence on an unproved base.
         assert_eq!(
             unproved_mod_effects(before.path(), None, before.path(), None, []).unwrap(),
