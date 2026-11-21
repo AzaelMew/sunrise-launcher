@@ -321,7 +321,9 @@ mod tests {
         assert!(replacement.is_err());
         assert!(!in_use_in(&source, &root.join("run")));
         drop(prepare_in(&cmd, &root.join("run")).unwrap());
-        fs::remove_dir_all(root).unwrap();
+        // Windows can keep the killed child's image mapped for a moment after `wait`; the
+        // temporary folder is only cleanup, not part of what this test checks.
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
