@@ -237,10 +237,10 @@ pub(crate) fn check_activation(
         if !visited.insert(id) {
             continue;
         }
-        if active.is_some_and(|active| active.holds().any(|hold| hold.id() == id)) {
+        if let Some(hold) = active.and_then(|active| active.holds().find(|hold| hold.id() == id)) {
             return Err(trf(
-                "{mod} needs an update from its author before it can be turned on.",
-                &[("mod", id)],
+                "{mod}: {reason}.",
+                &[("mod", id), ("reason", hold.reason().label())],
             ));
         }
         let target = manifests.get(id).ok_or_else(unproved_mods)?;
