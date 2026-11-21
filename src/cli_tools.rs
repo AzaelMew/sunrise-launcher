@@ -398,6 +398,7 @@ mod tests {
             "mods_search",
             "mods_install",
             "modpack_play",
+            "instance_show",
             "servers_create",
             "servers_run",
             "data_status",
@@ -411,12 +412,27 @@ mod tests {
             "mcp",
             "no_ai",
             "play",
+            "switch",
+            "instance_version",
             "server",
             "account_sign_in",
             "account_session",
         ] {
             assert!(!names.iter().any(|n| n == not), "{not}");
         }
+    }
+
+    #[test]
+    fn modpack_play_has_no_version_argument() {
+        let play = tool("modpack_play");
+        assert!(play.describe()["inputSchema"]["properties"]
+            .get("version")
+            .is_none());
+        assert_eq!(
+            play.argv(&json!({"pack": "Lanterns", "version": "other"}))
+                .unwrap(),
+            ["modpack", "play", "Lanterns"],
+        );
     }
 
     #[test]

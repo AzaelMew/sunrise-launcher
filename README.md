@@ -416,7 +416,6 @@ and don't set `%ERRORLEVEL%` / `$LASTEXITCODE`. Scripts that need the exit code 
     sunrise-launcher instance rename|icon|group <instance> <value>  icon: a block or item name, #rrggbb or none
     sunrise-launcher instance select <instance>     make Play start it
     sunrise-launcher instance show [profile]        show the committed build
-    sunrise-launcher instance version <instance> <tag|latest>   change the old selection for an uninitialized profile
     sunrise-launcher worlds [list] [--instance <name>]        an instance's worlds
     sunrise-launcher worlds backup|copy|delete <world> [--instance <name>]   delete moves it to the trash
     sunrise-launcher packs [list] [--kind resource|shader] [--instance <name>]   resource and shader packs, on or off
@@ -428,7 +427,7 @@ and don't set `%ERRORLEVEL%` / `$LASTEXITCODE`. Scripts that need the exit code 
     sunrise-launcher multiplayer [list] [--instance <name>]   the servers in an instance's Multiplayer list
     sunrise-launcher multiplayer add <address> [--name <name>] | remove <server>
     sunrise-launcher modpack [list]                 the installed Sunrise modpacks
-    sunrise-launcher modpack play <pack> [--version <tag>]                 play it as its own profile
+    sunrise-launcher modpack play <pack>                 play it as its own profile
     sunrise-launcher modpack remove <pack>
     sunrise-launcher mods [list]                    what the mod browser installed (docs/mod-browser.md)
     sunrise-launcher mods search <text> [--kind resource|shader|datapack|mod|modpack] [--everything] [--source modrinth]

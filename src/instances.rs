@@ -366,10 +366,9 @@ impl Instance {
     pub fn resolve_version(&self, requested: Option<&str>) -> Result<String, String> {
         match (requested, &self.version) {
             (None, Some(pinned)) => backend::resolve_version(Some(pinned)).map_err(|_| {
-                format!(
-                    "{} plays {pinned}, which is not installed: install it, or sunrise-launcher \
-                     instance version \"{}\" latest",
-                    self.name, self.name
+                crate::i18n::trf(
+                    "{profile} uses {build}, which is not installed. Install it, or use Switch to choose another build.",
+                    &[("profile", &self.name), ("build", pinned)],
                 )
             }),
             _ => backend::resolve_version(requested),

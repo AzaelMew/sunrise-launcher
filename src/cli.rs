@@ -191,8 +191,6 @@ enum ModpackCmd {
         /// Allow missing original Java asset/data jars to be downloaded from Modrinth
         #[arg(long)]
         allow_jar_downloads: bool,
-        #[arg(long)]
-        version: Option<String>,
     },
     /// Remove a Sunrise modpack and the profile's saves
     Remove { pack: String },
@@ -227,8 +225,6 @@ enum InstanceCmd {
     },
     /// Make Play start this profile
     Select { instance: String },
-    /// Keep a profile on one installed Sunrise version, or "latest" to follow updates again
-    Version { instance: String, version: String },
     /// Export a profile to share as a zip: its settings, packs, Sunrise mods and the worlds
     /// named. Never logs, screenshots or account data; worlds go without their per-player files
     Export {
@@ -2649,17 +2645,6 @@ fn instance(action: InstanceCmd, as_json: bool) -> Result<(), String> {
             changed(instances::edit(&instance, |m| m.group = group)?)
         }
         InstanceCmd::Select { instance } => changed(instances::select(&instance)?),
-        InstanceCmd::Version { instance, version } => {
-            let pin = match version.as_str() {
-                "latest" => None,
-                tag => Some(backend::resolve_version(Some(tag))?),
-            };
-            let profile = instances::find(&instance)?;
-            let _lock = sunrise_launcher::browser::lock_home(&profile.home)
-                .map_err(|error| error.to_string())?;
-            sunrise_launcher::browser::installed::recover_game_install(&profile.home)?;
-            changed(instances::edit(&profile.id, |m| m.version = pin)?)
-        }
         InstanceCmd::Launch {
             instance,
             pre_launch,
@@ -3184,10 +3169,9 @@ fn modpack(action: ModpackCmd, as_json: bool) -> Result<i32, String> {
         }
         ModpackCmd::Play {
             pack,
-            version,
             allow_jar_downloads,
         } => {
-            let tag = backend::resolve_version(version.as_deref())?;
+            let tag = backend::resolve_version(None)?;
             let mut cmd = backend::client(&tag)?;
             sunrise::pack::apply(&mut cmd, &work(&pack)?)?;
             let launch = Default::default();

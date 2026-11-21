@@ -488,17 +488,6 @@ Make Play start this profile.
 
 MCP: `instance_select`.
 
-## `sunrise-launcher instance version`
-
-Keep a profile on one installed Sunrise version, or "latest" to follow updates again.
-
-    sunrise-launcher instance version <INSTANCE> <VERSION>
-
-- `INSTANCE`
-- `VERSION`
-
-MCP: `instance_version`.
-
 ## `sunrise-launcher instance export`
 
 Export a profile to share as a zip: its settings, packs, Sunrise mods and the worlds named. Never logs, screenshots or account data; worlds go without their per-player files.
@@ -774,7 +763,6 @@ Play a Sunrise modpack as its own profile.
 
 - `PACK`
 - `--allow-jar-downloads`: Allow missing original Java asset/data jars to be downloaded from Modrinth
-- `--version`
 
 MCP: `modpack_play`.
 
