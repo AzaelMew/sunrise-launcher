@@ -228,7 +228,7 @@ fn game_replacements_repair_only_owned_row_fields_and_advance_the_same_base() {
 #[test]
 fn receipt_acknowledgement_recovers_the_exact_pointer_across_all_durable_cuts() {
     use crate::profile_txn::Boundary;
-    use sunrise_launcher_smod::{manifest, mod_list};
+    use sunrise_launcher_smod::manifest;
     const CASE: &str = "managed_play::first::tests::receipt_acknowledgement_recovers_the_exact_pointer_across_all_durable_cuts";
     const ID: [u8; 16] = [7; 16];
     let actor = |role| {
@@ -295,13 +295,33 @@ fn receipt_acknowledgement_recovers_the_exact_pointer_across_all_durable_cuts() 
     let build = backend::version_dir(BUILD);
     fs::write(build.join(".installed"), []).unwrap();
     fs::write(build.join(backend::CLIENT), b"local executable fixture").unwrap();
-    let kept = format!("{}/lantern.smod", mod_list::NATIVE_DIR);
-    fs::create_dir_all(home.join(mod_list::NATIVE_DIR)).unwrap();
-    let mod_path = home.join(&kept);
-    let package = manifest::Package::write_files(
-        &format!("id='lantern'\nname='Lantern'\nversion='1.0.0'\napi='{}'\ncapabilities=['registries']\n[native]\nsunrise='{}'\ngame='26.3'\n", manifest::API, "a".repeat(40)),
-        &[("Cargo.toml", b"[package]\nname='lantern'\nversion='1.0.0'"), ("src/lib.rs", b"")],
-    ).unwrap();
+    let root = if cut == "marker-after" {
+        HeldRoot::Content
+    } else {
+        HeldRoot::Native
+    };
+    fs::create_dir_all(home.join(root.directory())).unwrap();
+    let mod_path = home.join(root.directory()).join("lantern.smod");
+    let spec = format!(
+        "id='lantern'\nname='Lantern'\nversion='1.0.0'\napi='{}'\ncapabilities=['registries']\n",
+        manifest::API
+    );
+    let package = match root {
+        HeldRoot::Native => manifest::Package::write_files(
+            &format!(
+                "{spec}[native]\nsunrise='{}'\ngame='26.3'\n",
+                "a".repeat(40)
+            ),
+            &[
+                ("Cargo.toml", b"[package]\nname='lantern'\nversion='1.0.0'"),
+                ("src/lib.rs", b""),
+            ],
+        ),
+        HeldRoot::Content => {
+            manifest::Package::write_files(&spec, &[("data/lantern/fixture.json", b"{}")])
+        }
+    }
+    .unwrap();
     fs::write(&mod_path, &package).unwrap();
     let mut profile = Profile::open(&home, None).unwrap();
     let mut shown = profile
@@ -309,12 +329,12 @@ fn receipt_acknowledgement_recovers_the_exact_pointer_across_all_durable_cuts() 
         .unwrap()
         .commit(BUILD, &native_mods::Cancellation::default())
         .unwrap();
-    use crate::managed_play::{Held, HeldReason, HeldSource, Receipt};
+    use crate::managed_play::{Held, HeldReason, HeldRoot, HeldSource, Receipt};
     use sha2::{Digest, Sha256};
     let hold = Held::new(
         "lantern".into(),
         Sha256::digest(&package).into(),
-        kept,
+        (root, "lantern.smod".into()),
         HeldSource::Local {
             version: "1.0.0".into(),
         },
@@ -324,15 +344,19 @@ fn receipt_acknowledgement_recovers_the_exact_pointer_across_all_durable_cuts() 
         },
     )
     .unwrap();
-    assert!(Held::new(
-        hold.id().into(),
-        *hold.digest(),
-        "sunrise-native-mods/CON.smod".into(),
-        hold.source().clone(),
-        hold.enabled_before(),
-        hold.reason().clone(),
-    )
-    .is_err());
+    assert_eq!(home.join(hold.path()), mod_path);
+    assert_eq!(hold.root(), root);
+    for root in [HeldRoot::Native, HeldRoot::Content] {
+        assert!(Held::new(
+            hold.id().into(),
+            *hold.digest(),
+            (root, "CON.smod".into()),
+            hold.source().clone(),
+            hold.enabled_before(),
+            hold.reason().clone(),
+        )
+        .is_err());
+    }
     shown.receipts = vec![
         Receipt {
             id: ID,
@@ -352,15 +376,10 @@ fn receipt_acknowledgement_recovers_the_exact_pointer_across_all_durable_cuts() 
     let seed: serde_json::Value = serde_json::from_slice(&before).unwrap();
     for (field, invalid) in [
         ("digest", serde_json::json!(vec![0; 16])),
-        (
-            "path",
-            serde_json::json!("sunrise-native-mods/../lantern.smod"),
-        ),
-        ("path", serde_json::json!("sunrise-native-mods/CON.smod")),
-        (
-            "path",
-            serde_json::json!("sunrise-native-mods/LANTER~1.smod"),
-        ),
+        ("root", serde_json::json!("another_root")),
+        ("leaf", serde_json::json!("../lantern.smod")),
+        ("leaf", serde_json::json!("CON.smod")),
+        ("leaf", serde_json::json!("LANTER~1.smod")),
         (
             "source",
             serde_json::json!({"kind":"other", "version":"1.0.0"}),
@@ -385,8 +404,12 @@ fn receipt_acknowledgement_recovers_the_exact_pointer_across_all_durable_cuts() 
     let second = &mut ambiguous["receipts"][1]["waiting_for_update"][0];
     second["id"] = serde_json::json!("different");
     assert!(Active::parse(&serde_json::to_vec(&ambiguous).unwrap()).is_err());
-    ambiguous["receipts"][1]["waiting_for_update"][0]["path"] =
-        serde_json::json!("sunrise-native-mods/Lantern.smod");
+    let second = &mut ambiguous["receipts"][1]["waiting_for_update"][0];
+    second["root"] = serde_json::json!(match root {
+        HeldRoot::Native => HeldRoot::Content,
+        HeldRoot::Content => HeldRoot::Native,
+    });
+    second["leaf"] = serde_json::json!("Lantern.smod");
     assert!(Active::parse(&serde_json::to_vec(&ambiguous).unwrap()).is_err());
     before.push(b'\n');
     fs::write(&pointer, &before).unwrap();

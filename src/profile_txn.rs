@@ -877,7 +877,8 @@ fn valid_destination(path: &Path) -> bool {
     }
 }
 
-fn valid_smod_leaf(name: &str) -> bool {
+/// The portable `.smod` leaf shared by the journal and typed receipts in both mod roots.
+pub(crate) fn valid_smod_leaf(name: &str) -> bool {
     // Before either leaf exists, neither native identity nor a Unicode fold
     // can rule out filesystem-specific aliases.
     sunrise_launcher_smod::index::browser_state::portable_ascii_component(name)
@@ -885,13 +886,6 @@ fn valid_smod_leaf(name: &str) -> bool {
         && !name.starts_with('.')
         && name.len() <= 200
         && !name.contains('\x7f')
-}
-
-/// A receipt claims the same portable file a later transaction could replace.
-pub(crate) fn native_package_key(path: &str) -> Option<String> {
-    let (root, name) = path.split_once('/')?;
-    (root == sunrise_launcher_smod::mod_list::NATIVE_DIR && valid_smod_leaf(name))
-        .then(|| destination_key(Path::new(path)))
 }
 
 fn destination_key(path: &Path) -> String {

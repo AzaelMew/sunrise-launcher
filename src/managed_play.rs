@@ -51,7 +51,10 @@ pub(crate) use artifact::Artifact;
 use resources::Resources;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::{fs, io, path::Path};
+use std::{
+    fs, io,
+    path::{Path, PathBuf},
+};
 
 fn unsettled() -> String {
     crate::i18n::tr("Sunrise couldn't verify the profile's saved game build.").into()
@@ -145,17 +148,35 @@ struct Receipt {
     acknowledged: bool,
 }
 
-/// An exact native package left installed but held off by a proved no-fit on Switch.
+/// An exact package left installed but held off by a proved no-fit on Switch.
 /// This is update authority, not the notice's display text.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Held {
     id: String,
     digest: [u8; 32],
-    path: String,
+    root: HeldRoot,
+    leaf: String,
     source: HeldSource,
     enabled_before: bool,
     reason: HeldReason,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HeldRoot {
+    Native,
+    Content,
+}
+
+impl HeldRoot {
+    pub fn directory(self) -> &'static str {
+        use sunrise_launcher_smod::mod_list::{DIR, NATIVE_DIR};
+        match self {
+            Self::Native => NATIVE_DIR,
+            Self::Content => DIR,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -186,7 +207,7 @@ impl Held {
     pub fn new(
         id: String,
         digest: [u8; 32],
-        path: String,
+        (root, leaf): (HeldRoot, String),
         source: HeldSource,
         enabled_before: bool,
         reason: HeldReason,
@@ -194,7 +215,8 @@ impl Held {
         let held = Self {
             id,
             digest,
-            path,
+            root,
+            leaf,
             source,
             enabled_before,
             reason,
@@ -205,7 +227,11 @@ impl Held {
 
     fn validate(&self) -> Result<String, String> {
         use sunrise_launcher_smod::{index::valid_id, manifest::revision};
-        let key = crate::profile_txn::native_package_key(&self.path).ok_or_else(unsettled)?;
+        if !crate::profile_txn::valid_smod_leaf(&self.leaf) {
+            return Err(unsettled());
+        }
+        // The journal's portable key is the folded leaf, even across the two roots.
+        let key = self.leaf.to_ascii_lowercase();
         if !valid_id(&self.id) {
             return Err(unsettled());
         }
@@ -239,8 +265,11 @@ impl Held {
     pub fn digest(&self) -> &[u8; 32] {
         &self.digest
     }
-    pub fn path(&self) -> &str {
-        &self.path
+    pub fn root(&self) -> HeldRoot {
+        self.root
+    }
+    pub fn path(&self) -> PathBuf {
+        Path::new(self.root.directory()).join(&self.leaf)
     }
     pub fn source(&self) -> &HeldSource {
         &self.source
