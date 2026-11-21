@@ -7,7 +7,7 @@ use crate::sheets::{self, Sheet};
 use gpui::rgb;
 use std::{collections::BTreeSet, sync::Arc};
 use sunrise_launcher::{
-    browser::sunrise::{self, sources::Failure, PreparedSource, SourceError},
+    browser::sunrise::{self, sources::Failure, PastedSource, PreparedSource, SourceError},
     github_mods::{self, FetchError, Origin, Packed, ResolveError, Resolved},
     native_mods::Cancellation,
 };
@@ -58,7 +58,7 @@ impl FormError {
 
 enum PickInput {
     Assets(Resolved, Vec<Packed>),
-    Source(Resolved, Vec<PreparedSource>),
+    Source(Resolved, Vec<PastedSource>),
 }
 
 impl PickInput {
@@ -91,6 +91,7 @@ impl PickInput {
 struct Pick {
     input: PickInput,
     selected: BTreeSet<String>,
+    error: Option<FormError>,
 }
 
 impl Pick {
@@ -100,11 +101,17 @@ impl Pick {
             .into_iter()
             .map(|(id, _, _)| id.into())
             .collect();
-        Self { input, selected }
+        Self {
+            input,
+            selected,
+            error: None,
+        }
     }
 
     fn checked(self, target: GithubTarget, link: String, update: bool) -> GithubInput {
-        let Self { input, selected } = self;
+        let Self {
+            input, selected, ..
+        } = self;
         let (source, selection) = match input {
             PickInput::Assets(source, mut mods) => {
                 mods.retain(|package| selected.contains(&package.id));
@@ -117,10 +124,7 @@ impl Pick {
                 };
                 (source, selection)
             }
-            PickInput::Source(source, mut mods) => {
-                mods.retain(|package| selected.contains(&package.origin().id));
-                (source, GithubSelection::Source(mods))
-            }
+            PickInput::Source(..) => unreachable!("sources need a selected-set fit proof"),
         };
         GithubInput {
             target,
@@ -131,6 +135,7 @@ impl Pick {
     }
 
     fn toggle(&mut self, id: &str) {
+        self.error = None;
         if !self.selected.remove(id) {
             self.selected.insert(id.to_owned());
         }
@@ -142,9 +147,16 @@ enum Stage {
     #[default]
     Link,
     Resolving(Receiver<Result<Resolution, FormError>>, Cancellation),
+    Checking(Box<SourceCheck>),
     Pick(Box<Pick>),
     Failed(FormError, bool),
     InstallFailed(Box<CheckedFailure>, bool),
+}
+
+struct SourceCheck {
+    pick: Box<Pick>,
+    rx: Receiver<Result<Vec<PreparedSource>, FormError>>,
+    cancellation: Cancellation,
 }
 
 struct CheckedFailure {
@@ -174,8 +186,10 @@ impl Github {
 
     pub(super) fn close(&mut self) {
         // Dropping a pending lookup's receiver releases its packages even if it finishes later.
-        if let Stage::Resolving(_, cancellation) = &self.stage {
-            cancellation.stop();
+        match &self.stage {
+            Stage::Resolving(_, cancellation) => cancellation.stop(),
+            Stage::Checking(check) => check.cancellation.stop(),
+            _ => (),
         }
         self.stage = Stage::Link;
         self.target = None;
@@ -184,7 +198,7 @@ impl Github {
     }
 
     pub(super) fn busy(&self) -> bool {
-        matches!(self.stage, Stage::Resolving(..))
+        matches!(self.stage, Stage::Resolving(..) | Stage::Checking(_))
     }
 
     fn can_resolve(&self) -> bool {
@@ -200,7 +214,6 @@ impl Github {
 fn resolve_link(
     link: &github_mods::Link,
     update: Option<&Origin>,
-    target: &GithubTarget,
     cancellation: &Cancellation,
 ) -> Result<Resolution, FormError> {
     let found = github_mods::resolve(link, &github_mods::api).map_err(|error| match error {
@@ -216,32 +229,8 @@ fn resolve_link(
         return Ok(Resolution::Current);
     }
     if update.is_none() && found.assets.is_empty() {
-        let target = target
-            .source()
-            .map_err(|error| FormError::new(tr("Not available for your version"), error))?;
-        let sources = sunrise::prepare_pasted_sources(
-            target.instance(),
-            target.identity(),
-            target.base(),
-            link,
-            &found,
-            cancellation,
-        )
-        .map_err(|error| {
-            let detail = error.to_string();
-            match error {
-                SourceError::DoesNotFit(_) => {
-                    FormError::new(tr("Not available for your version"), detail)
-                }
-                SourceError::Github(Failure::NoManifest) => {
-                    FormError::new(tr("No Sunrise mod at this commit."), detail)
-                }
-                SourceError::Github(Failure::Offline(_) | Failure::RateLimited { .. }) => {
-                    FormError::transport(detail)
-                }
-                _ => FormError::new(tr("Couldn't check that the mods fit"), detail),
-            }
-        })?;
+        let sources = sunrise::read_pasted_sources(link, &found, cancellation)
+            .map_err(pasted_source_error)?;
         return Ok(Resolution::Ready(Box::new(PickInput::Source(
             found, sources,
         ))));
@@ -273,6 +262,20 @@ fn resolve_link(
         }
     }
     Ok(Resolution::Ready(Box::new(PickInput::Assets(found, mods))))
+}
+
+fn pasted_source_error(error: SourceError) -> FormError {
+    let detail = error.to_string();
+    match error {
+        SourceError::DoesNotFit(_) => FormError::new(tr("Not available for your version"), detail),
+        SourceError::Github(Failure::NoManifest) => {
+            FormError::new(tr("No Sunrise mod at this commit."), detail)
+        }
+        SourceError::Github(Failure::Offline(_) | Failure::RateLimited { .. }) => {
+            FormError::transport(detail)
+        }
+        _ => FormError::new(tr("Couldn't check that the mods fit"), detail),
+    }
 }
 
 impl Launcher {
@@ -395,13 +398,10 @@ impl Launcher {
             }
         };
         let (tx, rx) = crate::wake::channel();
-        let Some(target) = self.github.target.clone() else {
-            return;
-        };
         let cancellation = Cancellation::default();
         self.github.stage = Stage::Resolving(rx, cancellation.clone());
         std::thread::spawn(move || {
-            let _ = tx.send(resolve_link(&link, update.as_ref(), &target, &cancellation));
+            let _ = tx.send(resolve_link(&link, update.as_ref(), &cancellation));
         });
     }
 
@@ -411,6 +411,36 @@ impl Launcher {
                 self.github.close();
             }
             return false;
+        }
+        if let Stage::Checking(check) = &self.github.stage {
+            let result = match check.rx.try_recv() {
+                Ok(result) => result,
+                Err(std::sync::mpsc::TryRecvError::Empty) => return false,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => Err(FormError::new(
+                    tr("Couldn't check that the mods fit"),
+                    tr("GitHub lookup stopped.").into(),
+                )),
+            };
+            if let Stage::Checking(mut check) = std::mem::take(&mut self.github.stage) {
+                match result {
+                    Ok(sources) => {
+                        if let Some(target) = self.github.target.take() {
+                            let input = GithubInput {
+                                target,
+                                link: self.github.text.text().to_owned(),
+                                source: check.pick.input.resolved().clone(),
+                                selection: GithubSelection::Source(sources),
+                            };
+                            self.submit_checked_github(input);
+                        }
+                    }
+                    Err(error) => {
+                        check.pick.error = Some(error);
+                        self.github.stage = Stage::Pick(check.pick);
+                    }
+                }
+            }
+            return true;
         }
         let Stage::Resolving(rx, _) = &self.github.stage else {
             return false;
@@ -441,7 +471,8 @@ impl Launcher {
     }
 
     fn github_pick(&mut self) {
-        if !matches!(&self.github.stage, Stage::Pick(pick) if !pick.selected.is_empty()) {
+        if !matches!(&self.github.stage, Stage::Pick(pick) if !pick.selected.is_empty() && pick.error.is_none())
+        {
             return;
         }
         if let Stage::Pick(pick) = std::mem::take(&mut self.github.stage) {
@@ -449,17 +480,55 @@ impl Launcher {
         }
     }
 
-    fn github_submit(&mut self, pick: Pick) {
-        let Some(target) = self.github.target.take() else {
-            return;
-        };
-        let input = Arc::new(pick.checked(
-            target,
-            self.github.text.text().to_owned(),
-            self.github.update.is_some(),
-        ));
+    fn github_submit(&mut self, mut pick: Pick) {
+        if let PickInput::Source(_, choices) = &pick.input {
+            let Some(target) = self.github.target.as_ref() else {
+                return;
+            };
+            let target = match target.source() {
+                Ok(target) => target,
+                Err(error) => {
+                    pick.error = Some(FormError::new(tr("Not available for your version"), error));
+                    self.github.stage = Stage::Pick(Box::new(pick));
+                    return;
+                }
+            };
+            let selected = choices
+                .iter()
+                .filter(|package| pick.selected.contains(&package.origin().id))
+                .cloned()
+                .collect();
+            let cancellation = Cancellation::default();
+            let (tx, rx) = crate::wake::channel();
+            self.github.stage = Stage::Checking(Box::new(SourceCheck {
+                pick: Box::new(pick),
+                rx,
+                cancellation: cancellation.clone(),
+            }));
+            std::thread::spawn(move || {
+                let result = sunrise::prepare_pasted_sources(
+                    target.instance(),
+                    target.identity(),
+                    target.base(),
+                    selected,
+                    &cancellation,
+                )
+                .map_err(pasted_source_error);
+                let _ = tx.send(result);
+            });
+        } else if let Some(target) = self.github.target.take() {
+            let input = pick.checked(
+                target,
+                self.github.text.text().to_owned(),
+                self.github.update.is_some(),
+            );
+            self.submit_checked_github(input);
+        }
+    }
+
+    fn submit_checked_github(&mut self, input: GithubInput) {
         self.close_sheet();
-        if let Err(error) = self.queue_github(input) {
+        if let Err(error) = self.queue_github(Arc::new(input)) {
             self.mods.message = Some(Err(error));
         }
     }
@@ -492,7 +561,12 @@ impl Launcher {
                 .child(text.to_owned())
         };
         let body = div().flex().flex_col();
-        let (body, action) = if let Stage::Pick(pick) = &self.github.stage {
+        let picker = match &self.github.stage {
+            Stage::Pick(pick) => Some((pick.as_ref(), false)),
+            Stage::Checking(check) => Some((check.pick.as_ref(), true)),
+            _ => None,
+        };
+        let (body, action) = if let Some((pick, checking)) = picker {
             let rows = div()
                 .id("github-add-list")
                 .max_h(px(184.))
@@ -546,8 +620,15 @@ impl Launcher {
                             }))
                     },
                 ));
-            let button = primary("github-add-install", tr("Install"));
-            let button = if pick.selected.is_empty() {
+            let button = primary(
+                "github-add-install",
+                if checking {
+                    tr("Checking fit…")
+                } else {
+                    tr("Install")
+                },
+            );
+            let button = if checking || pick.error.is_some() || pick.selected.is_empty() {
                 widgets::disabled(button)
             } else {
                 button.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
@@ -559,7 +640,13 @@ impl Launcher {
                 body.child(sheets::title(tr("Choose mods to install").into()))
                     .child(muted(&pick.input.resolved().label()).truncate())
                     .child(muted(tr(github_mods::WARNING)))
-                    .child(rows),
+                    .child(rows)
+                    .children(pick.error.as_ref().map(|error| {
+                        div()
+                            .text_size(px(tokens::LABEL))
+                            .text_color(rgb(palette().danger))
+                            .child(error.line.clone())
+                    })),
                 button,
             )
         } else {

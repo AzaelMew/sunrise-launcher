@@ -25,7 +25,7 @@ pub struct PreparedSource {
     base: String,
     active: Option<managed_play::Active>,
     before: [u8; 32],
-    checked_base: FirstBuild,
+    checked_base: Arc<FirstBuild>,
     package: Packed,
     origin: Origin,
     predecessor: Option<Origin>,
@@ -145,14 +145,14 @@ pub fn prepare_source(
                 ));
             }
         }
-        prepare_package(
+        prepare_packages(
             instance,
             identity,
             base,
-            (package, origin),
-            predecessor,
+            vec![(PastedSource { package, origin }, predecessor)],
             cancellation,
         )
+        .map(|mut prepared| prepared.pop().expect("one source was checked"))
     })();
     if cancellation.is_stopped() {
         Err(SourceError::Cancelled)
@@ -161,23 +161,62 @@ pub fn prepare_source(
     }
 }
 
-/// Read and check all eligible native bundles in a pasted link's exact snapshot.
+/// Uncompiled, exact bytes from a single pasted GitHub snapshot. Being listed is not a fit proof.
+#[derive(Clone)]
+pub struct PastedSource {
+    package: Packed,
+    origin: Origin,
+}
+
+impl PastedSource {
+    pub fn origin(&self) -> &Origin {
+        &self.origin
+    }
+
+    pub fn name(&self) -> &str {
+        &self.package.name
+    }
+}
+
+pub fn read_pasted_sources(
+    link: &github_mods::Link,
+    found: &github_mods::Resolved,
+    cancellation: &native_mods::Cancellation,
+) -> Result<Vec<PastedSource>, SourceError> {
+    let result = github_mods::pack_pasted(link, found, cancellation)
+        .map(|choices| {
+            choices
+                .into_iter()
+                .map(|(package, origin)| PastedSource { package, origin })
+                .collect()
+        })
+        .map_err(SourceError::Github);
+    if cancellation.is_stopped() {
+        Err(SourceError::Cancelled)
+    } else {
+        result
+    }
+}
+
+/// Check once against the same staged graph: dependencies can be supplied by another
+/// selected package, and nothing outside this selection is offered for native consent.
 pub fn prepare_pasted_sources(
     instance: &Instance,
     identity: Identity,
     base: &str,
-    link: &github_mods::Link,
-    found: &github_mods::Resolved,
+    selected: Vec<PastedSource>,
     cancellation: &native_mods::Cancellation,
 ) -> Result<Vec<PreparedSource>, SourceError> {
-    let result = (|| {
-        let packages =
-            github_mods::pack_pasted(link, found, cancellation).map_err(SourceError::Github)?;
-        packages
+    let result = prepare_packages(
+        instance,
+        identity,
+        base,
+        selected
             .into_iter()
-            .map(|package| prepare_package(instance, identity, base, package, None, cancellation))
-            .collect()
-    })();
+            .map(|package| (package, None))
+            .collect(),
+        cancellation,
+    );
     if cancellation.is_stopped() {
         Err(SourceError::Cancelled)
     } else {
@@ -185,26 +224,28 @@ pub fn prepare_pasted_sources(
     }
 }
 
-fn prepare_package(
+fn prepare_packages(
     instance: &Instance,
     identity: Identity,
     base: &str,
-    (package, origin): (Packed, Origin),
-    predecessor: Option<Origin>,
+    packages: Vec<(PastedSource, Option<Origin>)>,
     cancellation: &native_mods::Cancellation,
-) -> Result<PreparedSource, SourceError> {
+) -> Result<Vec<PreparedSource>, SourceError> {
+    if packages.is_empty() {
+        return Err(SourceError::Cancelled);
+    }
     if instance.kind == InstanceKind::Pack {
         return Err(SourceError::Changed(
             tr("This pack controls which mods it installs.").into(),
         ));
     }
     cancellation.check()?;
-    let checked_base = FirstBuild::installed(base)?;
+    let checked_base = Arc::new(FirstBuild::installed(base)?);
     if checked_base.base_tag() != base {
         return Err(changed_source_target());
     }
     let stage = tempfile::tempdir().map_err(|e| e.to_string())?;
-    let (before, active, origins) = {
+    let (result, origins) = {
         let _lock = crate::browser::lock_home(&instance.home).map_err(|e| e.to_string())?;
         let active = managed_play::display_active(&instance.home)?;
         if Identity::of(&instance.home)? != identity
@@ -215,40 +256,41 @@ fn prepare_package(
             return Err(changed_source_target());
         }
         let before = managed_play::inputs(&instance.home, None)?;
-        let entry = Entry {
-            package: &package,
-            origin: &origin,
-            prior: predecessor
-                .as_ref()
-                .map_or(github::Prior::Fresh, github::Prior::Source),
-        };
-        let origins = github::predecessors(&instance.home, &[entry])?;
+        let selected = packages
+            .into_iter()
+            .map(|(pasted, predecessor)| PreparedSource {
+                identity,
+                base: base.into(),
+                active: active.clone(),
+                before,
+                checked_base: checked_base.clone(),
+                package: pasted.package,
+                origin: pasted.origin,
+                predecessor,
+            })
+            .collect::<Vec<_>>();
+        let entries = selected
+            .iter()
+            .map(PreparedSource::entry)
+            .collect::<Vec<_>>();
+        let origins = github::predecessors(&instance.home, &entries)?;
         managed_play::copy_install_inputs(&instance.home, stage.path())?;
         if managed_play::inputs(stage.path(), None)? != before
             || managed_play::inputs(&instance.home, None)? != before
         {
             return Err(changed_source_target());
         }
-        (before, active, origins)
+        (selected, origins)
     };
-    let result = PreparedSource {
-        identity,
-        base: base.into(),
-        active,
-        before,
-        checked_base,
-        package,
-        origin,
-        predecessor,
-    };
+    let entries = result.iter().map(PreparedSource::entry).collect::<Vec<_>>();
     let trial = github::stage_entries(
         stage.path(),
-        &[result.entry()],
+        &entries,
         &origins,
-        result.active.as_ref(),
+        result[0].active.as_ref(),
         base,
     )?;
-    check_source_set(stage.path(), &trial.off, &result.base, cancellation)?;
+    check_source_set(stage.path(), &trial.off, base, cancellation)?;
     Ok(result)
 }
 

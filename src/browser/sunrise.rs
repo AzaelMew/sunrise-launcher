@@ -1750,11 +1750,11 @@ pub mod sources;
 pub(crate) use registry_install::check_activation;
 pub use registry_install::{
     add_github, apply_sources, checked_switch_fit, install_registry, install_target,
-    known_unfit_updates, prepare_pasted_sources, prepare_source, remove_mods, switch_build,
-    update_github, update_registry, update_registry_and_sources, BuildNotice, ChangeImpact,
-    CombinedUpdate, InstallError, InstallHooks, InstallProgress, InstalledBatch, NativeQuestion,
-    PreparedSource, ResolveQuestion, SourceError, SourceHooks, SourceRequest, SwitchHooks,
-    SwitchQuestion, Switched, UpdateRequest,
+    known_unfit_updates, prepare_pasted_sources, prepare_source, read_pasted_sources, remove_mods,
+    switch_build, update_github, update_registry, update_registry_and_sources, BuildNotice,
+    ChangeImpact, CombinedUpdate, InstallError, InstallHooks, InstallProgress, InstalledBatch,
+    NativeQuestion, PastedSource, PreparedSource, ResolveQuestion, SourceError, SourceHooks,
+    SourceRequest, SwitchHooks, SwitchQuestion, Switched, UpdateRequest,
 };
 #[cfg(test)]
 mod tests;
