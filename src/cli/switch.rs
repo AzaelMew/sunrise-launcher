@@ -4,7 +4,7 @@ use std::{
     io::{self, BufRead, Write},
     sync::atomic::{AtomicBool, Ordering},
 };
-use sunrise_launcher::browser::sunrise::{switch_build, SwitchHooks, Switched};
+use sunrise_launcher::browser::sunrise::{install_target, switch_build, SwitchHooks, Switched};
 
 static BEFORE_CUTOFF: AtomicBool = AtomicBool::new(true);
 
@@ -60,10 +60,12 @@ fn catch_interrupt() -> io::Result<()> {
 }
 
 pub(super) fn run(instance: &instances::Instance, tag: &str, as_json: bool) -> Result<(), String> {
+    let identity = install_target(instance)?;
     catch_interrupt().map_err(|error| error.to_string())?;
     let tty = io::stdin().is_terminal() && io::stderr().is_terminal();
     let result = switch_build(
         instance,
+        identity,
         tag,
         SwitchHooks {
             cancellation: &native_mods::Cancellation::default(),

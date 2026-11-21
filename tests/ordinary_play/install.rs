@@ -710,11 +710,38 @@ fn resolve_default_and_stale_approval_keep_exact_bytes_then_only_proved_blocker_
 }
 
 #[test]
+fn queued_switch_refuses_a_replaced_profile_before_recovery() {
+    let fixture = Fixture::new();
+    fixture.decision_worker("switch-replaced-profile");
+    assert!(!fixture.home.join(".install-txn.lock").exists());
+    assert!(!fixture.home.join("mod-browser/active-build.json").exists());
+}
+
+#[test]
 fn profile_decision_worker() {
     let Ok(mode) = std::env::var("FIXTURE_PROFILE_DECISION") else {
         return;
     };
     let instance = instances::selection().unwrap();
+    let identity = install_target(&instance).unwrap();
+    if mode == "switch-replaced-profile" {
+        fs::rename(&instance.home, instance.home.with_extension("old")).unwrap();
+        fs::create_dir(&instance.home).unwrap();
+        let result = switch_build(
+            &instance,
+            identity,
+            OTHER,
+            SwitchHooks {
+                cancellation: &Cancellation::default(),
+                progress: &|_| {},
+                registry_crates: None,
+                approve: &|_| panic!("replacement was admitted"),
+                at_cutoff: &|| panic!("replacement reached publication"),
+            },
+        );
+        assert!(result.err().unwrap().contains("profile was replaced"));
+        return;
+    }
     let path = PathBuf::from(std::env::var_os("SUNRISE_MOD_INDEX").unwrap());
     let approved = std::cell::Cell::new(0);
     let decide = || {
@@ -747,6 +774,7 @@ fn profile_decision_worker() {
         let cutoff = std::cell::Cell::new(0);
         let result = switch_build(
             &instance,
+            identity,
             OTHER,
             SwitchHooks {
                 cancellation: &Cancellation::default(),

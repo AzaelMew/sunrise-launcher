@@ -77,6 +77,7 @@ pub fn checked_switch_fit(home: &Path, tag: &str) -> bool {
 
 pub fn switch_build(
     instance: &Instance,
+    identity: Identity,
     tag: &str,
     hooks: SwitchHooks<'_>,
 ) -> Result<Switched, String> {
@@ -84,10 +85,8 @@ pub fn switch_build(
         return Err(tr("Choose an ordinary profile to switch builds.").into());
     }
     (hooks.progress)(InstallProgress::Checking);
-    if instance.kind == InstanceKind::Default {
-        fs::create_dir_all(&instance.home).map_err(|error| at(&instance.home, error))?;
-    }
-    let mut profile = Profile::open(&instance.home, None)?;
+    let mut profile =
+        Profile::open_for(&instance.home, None, Some(identity)).map_err(String::from)?;
     let Some(edit) = profile.begin_switch(tag)? else {
         return Ok(Switched::AlreadySelected);
     };

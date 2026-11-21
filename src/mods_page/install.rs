@@ -674,7 +674,7 @@ mod tests {
             Err(error) => String::from(error),
         };
         assert!(
-            error.contains("profile was replaced while Install was waiting"),
+            error.contains("profile was replaced while the request was waiting"),
             "{error}"
         );
         assert!(!b.join(".install-txn.lock").exists());

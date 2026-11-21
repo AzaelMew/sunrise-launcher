@@ -1,6 +1,8 @@
 use super::*;
 use sunrise_launcher::{
-    browser::sunrise::{switch_build, InstallProgress, SwitchHooks, SwitchQuestion, Switched},
+    browser::sunrise::{
+        install_target, switch_build, InstallProgress, SwitchHooks, SwitchQuestion, Switched,
+    },
     managed_play::{self, Profile},
 };
 
@@ -63,6 +65,13 @@ impl Launcher {
         let Some(instance) = self.selected_instance().cloned() else {
             return;
         };
+        let identity = match install_target(&instance) {
+            Ok(identity) => identity,
+            Err(error) => {
+                self.open_notice(error, Some(WayOut::ProfileFolder(instance.home)));
+                return;
+            }
+        };
         let stop = native_mods::Cancellation::default();
         self.ui.sheets.switching.running = Some(Running {
             tag: tag.clone(),
@@ -75,6 +84,7 @@ impl Launcher {
         std::thread::spawn(move || {
             let outcome = switch_build(
                 &instance,
+                identity,
                 &tag,
                 SwitchHooks {
                     cancellation: &stop,

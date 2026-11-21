@@ -136,7 +136,7 @@ impl Admission {
             .unwrap_or_else(|| home.join(".install-txn.lock"));
         let changed = || {
             crate::i18n::tr(
-                "This profile was replaced while Install was waiting. Nothing was installed.",
+                "This profile was replaced while the request was waiting. Nothing was changed.",
             )
             .to_owned()
         };
