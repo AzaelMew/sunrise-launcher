@@ -83,13 +83,18 @@ fn at(path: &Path, error: impl std::fmt::Display) -> String {
 pub struct Admission {
     home: PathBuf,
     identity: Identity,
+    gate: NameGate,
+}
+
+/// An exclusive claim on a stable name, including before its first directory is visible.
+pub(crate) struct NameGate {
     file: fs::File,
     #[cfg(unix)]
     handed_off: std::sync::atomic::AtomicBool,
 }
 
 #[cfg(unix)]
-impl Drop for Admission {
+impl Drop for NameGate {
     fn drop(&mut self) {
         if !*self.handed_off.get_mut() {
             // An unrelated concurrent fork may temporarily hold a copy until exec.
@@ -98,57 +103,12 @@ impl Drop for Admission {
         }
     }
 }
-impl Admission {
-    /// Recovery can retire or restore references. Managed callers fence cache deletion
-    /// around admission; no cache guard is held by this lease while a worker runs.
-    pub fn open(home: &Path, external_owner: Option<&Path>) -> Result<Self, String> {
-        Self::open_fenced(home, external_owner, || Ok(()))
-    }
-
-    /// Acquire the caller's reference guards after the profile, never the reverse.
-    pub(crate) fn open_fenced<G>(
-        home: &Path,
-        external_owner: Option<&Path>,
-        fence: impl FnOnce() -> Result<G, String>,
-    ) -> Result<Self, String> {
-        Self::open_fenced_for(home, external_owner, None, fence)
-    }
-
-    pub(crate) fn open_fenced_for<G>(
-        home: &Path,
-        external_owner: Option<&Path>,
-        expected: Option<Identity>,
-        fence: impl FnOnce() -> Result<G, String>,
-    ) -> Result<Self, String> {
-        let lease = Self::claim(home, external_owner, expected)?;
-        let _fence = fence()?;
-        lease.recover()?;
-        Ok(lease)
-    }
-
-    fn claim(
-        home: &Path,
-        external_owner: Option<&Path>,
-        expected: Option<Identity>,
-    ) -> Result<Self, String> {
-        let gate = external_owner
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| home.join(".install-txn.lock"));
-        let changed = || {
-            crate::i18n::tr(
-                "This profile was replaced while Install was waiting. Nothing was installed.",
-            )
-            .to_owned()
-        };
-        let identity = match expected {
-            Some(expected) if Identity::of(home).ok() == Some(expected) => expected,
-            Some(_) => return Err(changed()),
-            None => Identity::of(home)?,
-        };
-        match fs::symlink_metadata(&gate) {
+impl NameGate {
+    pub(crate) fn open(gate: &Path) -> Result<Self, String> {
+        match fs::symlink_metadata(gate) {
             Ok(meta) if regular(&meta) && meta.is_file() => (),
             Err(e) if e.kind() == io::ErrorKind::NotFound => (),
-            _ => return Err(at(&gate, unsettled())),
+            _ => return Err(at(gate, unsettled())),
         }
         let busy = || {
             crate::i18n::tr(
@@ -163,31 +123,58 @@ impl Admission {
             use std::os::windows::fs::OpenOptionsExt;
             open.share_mode(0); // The Windows share exclusion follows inherited handles.
         }
-        let file = match open.open(&gate) {
+        let file = match open.open(gate) {
             Ok(file) => file,
             #[cfg(windows)]
             Err(error) if matches!(error.raw_os_error(), Some(32 | 33)) => return Err(busy()),
-            Err(error) => return Err(at(&gate, error)),
+            Err(error) => return Err(at(gate, error)),
         };
         #[cfg(unix)]
         match file.try_lock() {
             Ok(()) => (),
             Err(fs::TryLockError::WouldBlock) => return Err(busy()),
-            Err(fs::TryLockError::Error(e)) => return Err(at(&gate, e)),
+            Err(fs::TryLockError::Error(e)) => return Err(at(gate, e)),
         }
-        if Identity::of(home).ok() != Some(identity) {
-            return Err(if expected.is_some() {
-                changed()
-            } else {
-                unsettled()
-            });
+        Ok(Self {
+            file,
+            #[cfg(unix)]
+            handed_off: std::sync::atomic::AtomicBool::new(false),
+        })
+    }
+}
+
+impl Admission {
+    /// Recovery can retire or restore references. Managed callers fence cache deletion
+    /// around admission; no cache guard is held by this lease while a worker runs.
+    pub fn open(home: &Path, external_owner: Option<&Path>) -> Result<Self, String> {
+        Self::open_fenced(home, external_owner, |_| Ok(()))
+    }
+
+    /// Acquire the caller's reference guards after the profile, never the reverse.
+    pub(crate) fn open_fenced<G>(
+        home: &Path,
+        external_owner: Option<&Path>,
+        fence: impl FnOnce(Identity) -> Result<G, String>,
+    ) -> Result<Self, String> {
+        let lease = Self::claim(home, external_owner)?;
+        let _fence = fence(lease.identity)?;
+        lease.recover()?;
+        Ok(lease)
+    }
+
+    pub(crate) fn claim(home: &Path, external_owner: Option<&Path>) -> Result<Self, String> {
+        let identity = Identity::of(home)?;
+        let gate = match external_owner {
+            Some(path) => NameGate::open(path)?,
+            None => NameGate::open(&home.join(".install-txn.lock"))?,
+        };
+        if Identity::of(home)? != identity {
+            return Err(unsettled());
         }
         Ok(Self {
             home: home.into(),
             identity,
-            file,
-            #[cfg(unix)]
-            handed_off: std::sync::atomic::AtomicBool::new(false),
+            gate,
         })
     }
 
@@ -195,14 +182,18 @@ impl Admission {
     /// must carry its cache claims and this profile gate in the same handoff.
     pub fn handoff(&self) -> crate::process::leases::ProfileHandoff<'_> {
         crate::process::leases::ProfileHandoff {
-            file: &self.file,
+            file: &self.gate.file,
             #[cfg(unix)]
-            handed_off: &self.handed_off,
+            handed_off: &self.gate.handed_off,
         }
     }
 
     pub fn home(&self) -> &Path {
         &self.home
+    }
+
+    pub(crate) fn identity(&self) -> Identity {
+        self.identity
     }
 
     /// Reserve the candidate artifacts before exposing them. Hold the reference guard
@@ -623,6 +614,13 @@ pub fn references(home: &Path) -> Result<References, String> {
         }
     }
     Ok(refs)
+}
+
+/// The copy is still private and has never had a transaction or a live generation.
+pub(crate) fn write_copy_pointer(home: &Path, bytes: &[u8]) -> Result<(), String> {
+    record_dir(home)?;
+    let path = home.join(POINTER);
+    durable::replace(home, &path, bytes).map_err(|e| at(&path, e))
 }
 
 fn pointer_bytes(home: &Path) -> Result<Option<Vec<u8>>, String> {

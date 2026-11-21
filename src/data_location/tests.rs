@@ -352,6 +352,22 @@ fn shared_lock_blocks_migration_until_all_readers_release() {
     f.migrated(&roots);
 }
 
+#[test]
+fn move_refuses_a_writer_already_registered_inside_a_source_root() {
+    let f = Fixture::new("build");
+    let game = f.source.game.join("another-launcher-home");
+    let registry = root_leases::Registry::open().unwrap();
+    let writer = registry.acquire(&[&game], false).unwrap();
+    assert!(f
+        .refuse(&f.target())
+        .contains("another launcher is using or moving this data"));
+    assert!(!f.target().exists());
+    assert!(!game.exists(), "a claim must not create the data root");
+    drop(writer);
+    let moved = migrate(&f.source, &f.target(), &f.bootstrap, |_| {}).unwrap();
+    f.migrated(&moved);
+}
+
 #[cfg(windows)]
 #[test]
 fn pointer_commit_failure_keeps_old_pointer_and_retries() {
@@ -542,24 +558,18 @@ fn copy_tree_except_skips_only_root_entries_and_keeps_the_root_private_while_cop
         fs::set_permissions(&source, fs::Permissions::from_mode(0o755)).unwrap();
     }
     let mut copied = 0;
-    copy_tree_except(
-        &source,
-        &dest,
-        &temp.0.join("location.json"),
-        &["cache"],
-        &mut |_| {
-            copied += 1;
-            // No one else can enter the root before its contents are all in place.
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                assert_eq!(
-                    fs::metadata(&dest).unwrap().permissions().mode() & 0o777,
-                    0o700
-                );
-            }
-        },
-    )
+    copy_tree_except(&source, &dest, &[], &["cache"], &mut |_| {
+        copied += 1;
+        // No one else can enter the root before its contents are all in place.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(&dest).unwrap().permissions().mode() & 0o777,
+                0o700
+            );
+        }
+    })
     .unwrap();
     assert_eq!(copied, 1);
     assert!(!dest.join("cache").exists());

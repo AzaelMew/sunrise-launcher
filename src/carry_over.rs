@@ -90,22 +90,14 @@ pub fn carry_over(data: &Path, config: &Path) -> Result<bool, String> {
         build: stage.join("launcher"),
     };
     fs::create_dir_all(&staged.launcher).map_err(|e| format!("{}: {e}", stage.display()))?;
-    // Nothing to skip: the copy never runs inside this launcher's own location folder.
-    let bootstrap = stage.join("location.json");
     let mut quiet = |_: &str| {};
     for name in LAUNCHER_STATE {
         let from = source.launcher.join(name);
         if from.exists() {
-            data_location::copy_tree(&from, &staged.launcher.join(name), &bootstrap, &mut quiet)?;
+            data_location::copy_tree(&from, &staged.launcher.join(name), &[], &mut quiet)?;
         }
     }
-    data_location::copy_tree_except(
-        &source.game,
-        &staged.game,
-        &bootstrap,
-        &GAME_CACHES,
-        &mut quiet,
-    )?;
+    data_location::copy_tree_except(&source.game, &staged.game, &[], &GAME_CACHES, &mut quiet)?;
     let target = Roots {
         launcher: launcher.clone(),
         game: game.clone(),

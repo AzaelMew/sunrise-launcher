@@ -555,6 +555,7 @@ mod tests {
                 kind: instances::Kind::Own,
                 home: home.into(),
                 work: home.into(),
+                incarnation: None,
                 icon: None,
                 group: None,
                 version: None,
@@ -693,6 +694,7 @@ mod tests {
                 root.path().join(home),
                 launcher_play::PlayIntent {
                     instance: home.into(),
+                    incarnation: None,
                     account: Some("accepted".into()),
                 },
             ));

@@ -8,10 +8,10 @@ use super::*;
 use sunrise_launcher::instances::Channel;
 
 impl Launcher {
-    /// The Sunrise version an instance plays: the one it keeps, else the one it follows.
-    pub(super) fn draft_sunrise(&self) -> Option<String> {
-        let d = self.instances.dialog.as_ref()?;
-        self.target_version(d.pin.as_ref(), d.channel).cloned()
+    /// Queue the saved profile's Play target, not the former dialog draft.
+    pub(super) fn profile_creation_download(&self, saved: &instances::Instance) -> Option<Release> {
+        let tag = self.target_version(saved.version.as_ref(), saved.channel)?;
+        self.release_to_install(tag)
     }
 
     /// The exact build the profile will play, including an explicit pin.
@@ -155,6 +155,17 @@ pub(crate) fn native_base(tag: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn creation_download_uses_the_saved_copy_pin_instead_of_follow_latest() {
+        let saved = "nightly-2026-11-16-aaaaaaa".to_owned();
+        let newest = "nightly-2026-11-20-bbbbbbb";
+        let releases = [release(newest, true, true), release(&saved, true, true)];
+        let target = |pin| profile_target(pin, Channel::Nightly, &releases, &[], None, None);
+        assert_eq!(target(Some(&saved)), Some(&saved));
+        // With no installed build, an unbound copy or empty creation can follow the newest.
+        assert_eq!(target(None).map(String::as_str), Some(newest));
+    }
 
     #[test]
     fn play_keeps_the_installed_nightly_until_an_explicit_update() {

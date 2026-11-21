@@ -624,6 +624,7 @@ mod tests {
         assert_eq!(run.headline(), "Getting ready to play");
         let press_play = || PlayIntent {
             instance: "autumn".into(),
+            incarnation: None,
             account: Some("original-account".into()),
         };
         let built = Ok("native-abc".to_owned());
