@@ -128,6 +128,72 @@ fn a_different_native_dependency_needs_a_new_answer_after_no_fit() {
 }
 
 #[test]
+fn switch_proves_native_against_the_exact_target_even_with_an_unlike_catalogue_game() {
+    use sunrise_launcher::browser::{installed, Kind, SourceId};
+    let fixture = Fixture::new();
+    fixture.other_build();
+    let mut registry = fixture.registry();
+    let template = registry.project("coords_hud").unwrap().clone();
+    let kind = index::Kind::NativeMod;
+    let bytes = Package::write_files(
+        &format!("id='night_light'\nname='Night Light'\nversion='1'\napi='{}'\nside='both'\n[native]\nsunrise='{}'\nmixins='{}'\ngame='26.3'", manifest::API, "a".repeat(40), "c".repeat(40)),
+        &[("Cargo.toml", b"[package]\nname='night_light'\nversion='1.0.0'\n"), ("src/lib.rs", b"")],
+    ).unwrap();
+    let file = format!("{}/night_light.smod", mod_list::NATIVE_DIR);
+    let path = fixture.home.join(&file);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(&path, &bytes).unwrap();
+    let hash = index::sha256(&bytes);
+    let facts = index::inspect(&kind, &path).unwrap();
+    let mut version = template.versions[0].clone();
+    version.version = "1".into();
+    version.game = "26.3".into();
+    version.api = facts.api;
+    version.side = facts.side;
+    version.capabilities = serde_json::from_value(json!(facts.capabilities)).unwrap();
+    version.dependencies = Some(Vec::new());
+    version.file = index::File {
+        name: "night_light.smod".into(),
+        url: format!("file://{}", path.display()),
+        size: bytes.len() as u64,
+        sha256: hash.clone(),
+        signature: None,
+    };
+    registry.projects = vec![index::Project {
+        id: "night_light".into(),
+        name: "Night Light".into(),
+        key: None,
+        kind,
+        versions: vec![version],
+        ..template
+    }];
+    fixture.publish_registry(&registry);
+    let row = installed::Entry {
+        source: SourceId::Sunrise,
+        project: "night_light".into(),
+        slug: "night_light".into(),
+        title: "Night Light".into(),
+        kind: Kind::Mod,
+        version: "1".into(),
+        number: "1".into(),
+        file,
+        checksum: format!("SHA-256:{hash}"),
+        page: String::new(),
+        dependency: false,
+        verdict: None,
+        install_hold: None,
+    };
+    let rows = fixture.home.join(installed::MANIFEST);
+    fs::create_dir_all(rows.parent().unwrap()).unwrap();
+    fs::write(rows, json!({"entries": [row]}).to_string()).unwrap();
+    fixture.decision_worker("switch-native-catalogue-mismatch");
+    let active = Active::parse(&fixture.pointer()).unwrap();
+    assert_eq!(active.base(), OTHER);
+    assert_eq!(active.holds().next().unwrap().id(), "night_light");
+    assert_eq!(fs::read(path).unwrap(), bytes);
+}
+
+#[test]
 fn retry_worker() {
     if std::env::var_os("FIXTURE_UNEXPECTED_WORK").is_none() {
         return;

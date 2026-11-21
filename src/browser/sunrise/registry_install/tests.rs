@@ -30,6 +30,39 @@ fn archive(home: &Path, id: &str, name: &str, version: &str, depends: bool) -> i
 }
 
 #[test]
+fn resolve_attributes_incompatibility_to_the_games_short_version() {
+    let old = tempfile::tempdir().unwrap();
+    let candidate = tempfile::tempdir().unwrap();
+    let blocker = archive(old.path(), "lanterns", "Lanterns", "1.0.0", false);
+    let manifest = "id='lanterns'\nname='Lanterns'\nversion='1.0.0'\napi='0.2'\n[incompatible]\nlight_core='^2'\n";
+    fs::write(
+        old.path().join(blocker.file),
+        Package::write_files(manifest, &[]).unwrap(),
+    )
+    .unwrap();
+    archive(candidate.path(), "light_core", "Light Core", "2", false);
+    mod_list::set_enabled(candidate.path(), "light_core", true).unwrap();
+    let catalogue = index::Index::parse(include_str!(
+        "../../../../crates/smod/tests/index/index-v1.json"
+    ))
+    .unwrap();
+    let before = inventory(old.path()).unwrap();
+    let (question, _) = conflicts::question(
+        &catalogue,
+        &[],
+        &before,
+        candidate.path(),
+        &BTreeMap::new(),
+        &["lanterns"],
+    )
+    .unwrap();
+    assert_eq!(
+        question.blockers,
+        [("Lanterns".into(), "Doesn't work with Light Core 2.".into())]
+    );
+}
+
+#[test]
 fn continue_proposal_discloses_off_dependents_and_preserves_the_working_predecessor() {
     let old = tempfile::tempdir().unwrap();
     let candidate = tempfile::tempdir().unwrap();

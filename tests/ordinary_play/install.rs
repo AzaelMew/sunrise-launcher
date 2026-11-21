@@ -629,6 +629,67 @@ fn switch_holds_content_in_place_and_registry_update_restores_only_enabled_holds
 }
 
 #[test]
+fn switch_uses_short_game_versions_and_refuses_an_unindexed_installed_project() {
+    let fixture = Fixture::new();
+    let (mut registry, archives) = fixture.content_index();
+    fixture.publish_registry(&registry);
+    fixture.other_build();
+    fixture.install_mod("root_mod");
+    let mut core = registry.projects.remove(
+        registry
+            .projects
+            .iter()
+            .position(|p| p.id == "required_mod")
+            .unwrap(),
+    );
+    let root = registry
+        .projects
+        .iter_mut()
+        .find(|p| p.id == "root_mod")
+        .unwrap();
+    let (root_row, root_bytes) = fixture.new_version(root, "2.1", "26.4", Some("^2"));
+    root.versions.push(root_row);
+    fixture.publish_registry(&registry);
+    let before = fixture.pointer();
+    let switch = || {
+        fixture
+            .registry_client(&["--json", "switch", OTHER])
+            .output()
+            .unwrap()
+    };
+    let refused = switch();
+    assert!(!refused.status.success(), "{refused:?}");
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("couldn't verify the full mod set"),
+        "{refused:?}"
+    );
+    let mods = fixture.home.join(mod_list::DIR);
+    assert_eq!(fixture.pointer(), before);
+    assert_eq!(
+        fs::read(mods.join("required_mod.smod")).unwrap(),
+        archives["required_mod"]
+    );
+    let (core_row, core_bytes) = fixture.new_version(&core, "2", "26.4", None);
+    core.versions.push(core_row);
+    registry.projects.push(core);
+    fixture.publish_registry(&registry);
+    let switched = switch();
+    assert!(
+        switched.status.success(),
+        "{}",
+        String::from_utf8_lossy(&switched.stderr)
+    );
+    let active = Active::parse(&fixture.pointer()).unwrap();
+    assert_eq!(active.base(), OTHER);
+    assert_eq!(active.holds().count(), 0);
+    assert_eq!(
+        fs::read(mods.join("required_mod.smod")).unwrap(),
+        core_bytes
+    );
+    assert_eq!(fs::read(mods.join("root_mod.smod")).unwrap(), root_bytes);
+}
+
+#[test]
 fn resolve_default_and_stale_approval_keep_exact_bytes_then_only_proved_blocker_turns_off() {
     let fixture = Fixture::new();
     let (mut registry, archives) = fixture.content_index();
@@ -639,7 +700,7 @@ fn resolve_default_and_stale_approval_keep_exact_bytes_then_only_proved_blocker_
         .iter_mut()
         .find(|p| p.id == "required_mod")
         .unwrap();
-    let (row, new_core) = fixture.new_version(project, "2.0.0", "26.3", None);
+    let (row, new_core) = fixture.new_version(project, "2", "26.3", None);
     project.versions.insert(0, row);
     let project = registry
         .projects
@@ -740,6 +801,31 @@ fn profile_decision_worker() {
             },
         );
         assert!(result.err().unwrap().contains("profile was replaced"));
+        return;
+    }
+    if mode == "switch-native-catalogue-mismatch" {
+        sunrise_launcher::backend::Settings::load()
+            .allow_native_mods()
+            .unwrap();
+        let trials = std::cell::Cell::new(0);
+        let result = switch_build(
+            &instance,
+            identity,
+            OTHER,
+            SwitchHooks {
+                cancellation: &Cancellation::default(),
+                progress: &|step| {
+                    if matches!(step, InstallProgress::Preparing) {
+                        trials.set(trials.get() + 1);
+                    }
+                },
+                registry_crates: None,
+                approve: &|_| panic!("no worlds in the fixture"),
+                at_cutoff: &|| Ok(()),
+            },
+        );
+        assert!(matches!(result.unwrap(), Switched::Changed(_)));
+        assert_eq!(trials.get(), 2, "try native against the exact target, then keep the archive off only after a proved revision mismatch");
         return;
     }
     let path = PathBuf::from(std::env::var_os("SUNRISE_MOD_INDEX").unwrap());

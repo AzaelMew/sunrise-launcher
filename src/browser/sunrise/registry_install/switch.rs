@@ -4,8 +4,8 @@ use crate::{
     managed_play::{Active, CandidateImage, Held, HeldReason, HeldRoot, HeldSource},
     worlds::switch::{Changed, Fence, Question, TargetAge},
 };
-use semver::Version;
 use std::{io, path::PathBuf};
+use sunrise_launcher_smod::dependencies::parse_version;
 
 pub struct SwitchHooks<'a> {
     pub cancellation: &'a native_mods::Cancellation,
@@ -503,11 +503,20 @@ fn choices(
                     replacement,
                 });
             }
+        } else if old.is_some()
+            && !catalogue
+                .revoked
+                .iter()
+                .any(|revoked| revoked.id == id && revoked.sha256.is_none())
+        {
+            // A complete response can still omit a project. Omission doesn't prove
+            // an installed archive incompatible (and must not turn it off).
+            return Err(unproved_switch());
         }
         available.sort_by(|a, b| {
-            Version::parse(&b.manifest.version)
+            parse_version(&b.manifest.version)
                 .ok()
-                .cmp(&Version::parse(&a.manifest.version).ok())
+                .cmp(&parse_version(&a.manifest.version).ok())
                 .then_with(|| a.digest.cmp(&b.digest))
         });
         for choice in &available {
@@ -629,7 +638,7 @@ fn activate<'a>(id: &'a str, set: &Set<'a>, selected: &mut BTreeSet<&'a str>) ->
     }
     required(&set[id].manifest).all(|(dep, need)| {
         set.get_key_value(dep.as_str()).is_some_and(|(&key, pkg)| {
-            Version::parse(&pkg.manifest.version).is_ok_and(|v| need.details().version.matches(&v))
+            parse_version(&pkg.manifest.version).is_ok_and(|v| need.details().version.matches(&v))
                 && activate(key, set, selected)
         })
     })
@@ -659,7 +668,7 @@ fn fits(set: &Set<'_>, enabled: &BTreeSet<&str>) -> bool {
         manifest.owned_namespaces().all(|ns| namespaces.insert(ns))
             && manifest.incompatible.iter().all(|(other, rule)| {
                 !enabled.contains(other.as_str())
-                    || !Version::parse(&set[other.as_str()].manifest.version)
+                    || !parse_version(&set[other.as_str()].manifest.version)
                         .is_ok_and(|v| rule.details().version.matches(&v))
             })
     })

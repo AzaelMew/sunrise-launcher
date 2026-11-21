@@ -1,5 +1,6 @@
 //! Propose the smallest provable same-base change. Turning off is not deleting an archive.
 use super::*;
+use sunrise_launcher_smod::dependencies::parse_version;
 
 #[derive(Clone, Debug)]
 pub struct ResolveQuestion {
@@ -99,8 +100,7 @@ pub(super) fn question<'a>(
             }
             match enabled.get(id.as_str()) {
                 Some(other)
-                    if semver::Version::parse(&other.version)
-                        .is_ok_and(|v| need.version.matches(&v)) =>
+                    if parse_version(&other.version).is_ok_and(|v| need.version.matches(&v)) =>
                 {
                     None
                 }
@@ -121,7 +121,7 @@ pub(super) fn question<'a>(
         });
         let incompatible = |a: &Manifest, b: &Manifest| {
             let conflict = a.incompatible.get(&b.id).is_some_and(|rule| {
-                semver::Version::parse(&b.version).is_ok_and(|v| rule.details().version.matches(&v))
+                parse_version(&b.version).is_ok_and(|v| rule.details().version.matches(&v))
             });
             conflict
                 || a.owned_namespaces()
