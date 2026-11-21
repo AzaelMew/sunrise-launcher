@@ -33,6 +33,7 @@ pub enum InstallProgress {
     Tools { done: u64, total: u64 },
     Building(Option<f32>),
     Publishing,
+    Reviewing,
 }
 
 #[derive(Debug)]
@@ -580,8 +581,11 @@ fn registry_edit<'a>(
                     mutations::Change::Update(reviewed),
                     &affected,
                 )?;
-                if impact.risks_worlds() && !approve(&impact) {
-                    return Err(InstallError::Cancelled);
+                if impact.risks_worlds() {
+                    (hooks.progress)(InstallProgress::Reviewing);
+                    if !approve(&impact) {
+                        return Err(InstallError::Cancelled);
+                    }
                 }
                 Some((impact, affected))
             }

@@ -140,11 +140,14 @@ impl Launcher {
                     self.pending_consent = Some(PendingConsent::Registry(question, reply));
                 }
                 Event::Registry(event) => {
+                    if let Some(error) = m.installs.mutation_failure(&event) {
+                        m.message = Some(Err(error));
+                    }
                     if m.installs.handle(event) {
                         done = true;
                         m.reload_installed();
                         m.installed_list.reset();
-                    } else if m.installs.question.is_some() {
+                    } else if m.installs.question.is_some() || m.installs.world.is_some() {
                         self.reset_install_question_sheet();
                     }
                 }
@@ -193,6 +196,16 @@ impl Launcher {
             return;
         };
         let on = !mod_list::is_enabled(&home, id);
+        if on
+            && self
+                .selected_instance()
+                .is_some_and(|i| i.kind != instances::Kind::Pack)
+        {
+            if let Err(reason) = sunrise::check_activation(&home, &[id]) {
+                self.mods.message = Some(Err(reason));
+                return;
+            }
+        }
         if on
             && native_status::is_native_file(&e.file)
             && self.settings.native_mods_allowed_at.is_none()

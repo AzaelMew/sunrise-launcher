@@ -321,6 +321,7 @@ pub fn remove_mods(
         },
         &affected,
     )?;
+    (hooks.progress)(InstallProgress::Reviewing);
     if !approve(&impact) {
         return Err(InstallError::Cancelled);
     }
