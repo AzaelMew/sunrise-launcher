@@ -1327,14 +1327,22 @@ fn unpack(archive: &Path, url: &str, to: &Path) -> Result<(), String> {
     }
 }
 
+pub use installation::InstallOutcome;
+
 /// Downloads one release, checks it against its signed checksums and unpacks it; `progress` gets
-/// the fraction done.
-pub fn install(release: &Release, progress: impl Fn(f32)) -> Result<(), String> {
+/// the fraction done. A retry of a verified rolling build only saves its receipt.
+pub fn install(release: &Release, progress: impl Fn(f32)) -> Result<InstallOutcome, String> {
     let tag = &release.tag;
     installation::recover_replacement(tag)?;
     let download = installation::GameDownload::select(release)?;
     let proof = download.prove(tag)?;
-    download.repair(tag, &proof, progress)
+    let outcome = download.repair(tag, &proof, progress)?;
+    if matches!(outcome, InstallOutcome::Installed(_)) {
+        // Preparation has its own admission. Never hold the cache publication lock here;
+        // managed First Play instead prepares through its profile-owned staged handoff.
+        reuse_prepared_for(tag);
+    }
+    Ok(outcome)
 }
 
 /// The build's facts a launcher reads first (docs/api/release-file.md), signed beside its archives.
@@ -3633,7 +3641,13 @@ pub fn install_tag(tag: &str, as_update: bool, progress: impl Fn(f32)) -> Result
         return Err(format!("{} has no build for this platform.", release.tag));
     }
     let before = installed();
-    install(release, progress)?;
+    let outcome = install(release, progress)?;
+    if let Some(warning) = outcome.receipt_warning() {
+        eprintln!("{warning}");
+    }
+    if matches!(outcome, InstallOutcome::ReceiptOnly(_)) {
+        return Ok(release.tag.clone());
+    }
     if as_update && release.nightly.is_some() {
         if let Err(e) = mark_auto_installed(&release.tag) {
             eprintln!("Could not mark updated Nightly {}: {e}", release.tag);

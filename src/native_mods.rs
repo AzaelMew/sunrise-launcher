@@ -2550,7 +2550,7 @@ mod tests {
             if intent == InstallIntent::Repair {
                 let result = install_as(&release, tag, &sha256, None, None, intent, |_| {});
                 server.join().unwrap();
-                return result;
+                return result.map(|_| ());
             }
             let inventoried = std::cell::Cell::new(false);
             install_as(&release, tag, &sha256, None, None, intent, |fraction| {

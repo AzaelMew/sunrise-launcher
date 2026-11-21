@@ -6,7 +6,7 @@ pub enum Msg {
     Releases(Result<Vec<Release>, String>),
     Links(Links),
     Progress(String, f32),
-    Installed(String, Result<(), String>),
+    Installed(String, Result<InstallOutcome, String>),
     /// A version's files are gone (or could not be deleted).
     Removed(String, Result<(), String>),
     /// `prune_old_versions` ended; these versions were deleted.

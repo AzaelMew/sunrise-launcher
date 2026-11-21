@@ -239,6 +239,14 @@ impl Launcher {
                         }
                         continue;
                     }
+                    let warning = result
+                        .as_ref()
+                        .ok()
+                        .and_then(backend::InstallOutcome::receipt_warning)
+                        .map(str::to_owned);
+                    let receipt_only =
+                        matches!(&result, Ok(backend::InstallOutcome::ReceiptOnly(_)));
+                    let result = result.map(|_| ());
                     let repair = self.architecture_reinstall.take().is_some_and(|t| t == tag);
                     let for_instance = self.instance_install.take_if(|t| *t == tag).is_some();
                     if let (Ok(()), Some(started)) = (&result, self.install_started.take()) {
@@ -250,7 +258,7 @@ impl Launcher {
                         .take()
                         .filter(|(_, wanted)| result.is_ok() && *wanted == tag);
                     match result {
-                        Ok(()) if repair => {}
+                        Ok(()) if repair || receipt_only => {}
                         Ok(()) => {
                             if self.updates.sunrise.as_ref().is_some_and(|r| r.tag == tag) {
                                 self.updates.sunrise = None;
@@ -270,6 +278,9 @@ impl Launcher {
                             }
                         }
                         Err(e) => self.install_error = Some((tag, e)),
+                    }
+                    if let Some(warning) = warning {
+                        self.open_notice(warning, None);
                     }
                     if let Some((intent, _)) =
                         resume.filter(|(_, wanted)| self.selected() == Some(wanted))

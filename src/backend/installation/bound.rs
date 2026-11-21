@@ -1,7 +1,7 @@
 //! The archive a deferred first Play resolved before any full download.
-use super::{super::*, InstallIntent};
+use super::{super::*, InstallIntent, InstallOutcome, LockMode, LockRelease, Registry};
 use crate::managed_play::Artifact;
-use sunrise_launcher_release_verify::{is_build, Channel, SIGNATURE, SIGNATURE_V2, SUMS};
+use sunrise_launcher_release_verify::{is_build, Channel, NIGHTLY, SIGNATURE, SIGNATURE_V2, SUMS};
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -181,13 +181,17 @@ impl GameDownload {
         proof: &GameProof,
         progress: impl Fn(f32),
     ) -> Result<(), String> {
-        self.publish(
+        let outcome = self.publish(
             tag,
             proof,
             InstallIntent::Exact,
             progress,
             crate::signed::asset_url,
-        )
+        )?;
+        if let Some(warning) = outcome.receipt_warning() {
+            eprintln!("{warning}");
+        }
+        Ok(())
     }
 
     pub(in crate::backend) fn repair(
@@ -195,7 +199,7 @@ impl GameDownload {
         tag: &str,
         proof: &GameProof,
         progress: impl Fn(f32),
-    ) -> Result<(), String> {
+    ) -> Result<InstallOutcome, String> {
         self.publish(
             tag,
             proof,
@@ -212,12 +216,30 @@ impl GameDownload {
         intent: InstallIntent,
         progress: impl Fn(f32),
         asset_url: impl Fn(&str, &str) -> String,
-    ) -> Result<(), String> {
+    ) -> Result<InstallOutcome, String> {
         // A saved binding can reuse an archive regardless of which preference previously
-        // installed it. Repair is explicit: it must also publish the new request marker.
+        // installed it. Repair is explicit: it must also prove the new request marker.
         if intent == InstallIntent::Exact && self.is_installed(tag, proof) {
             progress(1.0);
-            return Ok(());
+            return Ok(InstallOutcome::Installed(None));
+        }
+        let home = version_dir(tag);
+        if intent == InstallIntent::Repair
+            && self.source == NIGHTLY
+            && super::completion_marker(&home).is_ok_and(|complete| complete)
+        {
+            let registry = Registry::with_release(&data_dir(), LockRelease::Close)
+                .map_err(|e| crate::native_mods::cache_error(e.into()))?;
+            let _publication = registry
+                .publication(LockMode::Exclusive)
+                .map_err(|e| crate::native_mods::cache_error(e.into()))?;
+            // Retrying the rolling receipt needs neither the archive nor a new image. An
+            // architecture or signed-proof mismatch still takes the existing Repair route.
+            if self.installed_at(&home, tag, proof, intent).is_ok() {
+                let warning = super::save_nightly_receipt(&versions_dir(), tag);
+                progress(1.0);
+                return Ok(InstallOutcome::ReceiptOnly(warning));
+            }
         }
         let release = Release {
             tag: tag.into(),
@@ -236,7 +258,7 @@ impl GameDownload {
         } else {
             None
         };
-        super::install_as(
+        let warning = super::install_as(
             &release,
             tag,
             &proof.archive,
@@ -245,8 +267,8 @@ impl GameDownload {
             intent,
             progress,
         )?;
-        self.installed_at(&version_dir(tag), tag, proof, intent)
-            .map(|_| ())
+        self.installed_at(&home, tag, proof, intent)?;
+        Ok(InstallOutcome::Installed(warning))
     }
 
     pub(crate) fn is_installed(&self, tag: &str, proof: &GameProof) -> bool {
@@ -397,6 +419,90 @@ mod tests {
                 assert_eq!((repaired.requested, repaired.binary), (Arm64, X64));
                 assert!(check_game_architecture(TAG, None, Arm64).is_none());
                 server.join().unwrap();
+            },
+        );
+    }
+
+    #[test]
+    fn a_committed_nightly_survives_receipt_failure_and_retries_only_the_receipt() {
+        isolated_case(
+            "a_committed_nightly_survives_receipt_failure_and_retries_only_the_receipt",
+            || {
+                const ROLLING: &str = "nightly-2026-11-20-aaaaaaa";
+                let (mut download, proof, url, server) = serve_windows_archive(
+                    GameArchitecture::X64,
+                    "sunrise-windows-x64.zip",
+                    b"new signed Nightly image",
+                );
+                download.source = NIGHTLY.into();
+                let versions = versions_dir();
+                let target = version_dir(ROLLING);
+                let receipt = versions.join(".nightly-current");
+                fs::create_dir_all(&target).unwrap();
+                fs::write(target.join(COMPLETE), "").unwrap();
+                fs::write(target.join(CLIENT), b"previous image").unwrap();
+                // Force just the atomic receipt replacement to fail on each platform.
+                fs::create_dir(&receipt).unwrap();
+                fs::write(receipt.join("obstruction"), "leave this alone").unwrap();
+                let result = download
+                    .publish(
+                        ROLLING,
+                        &proof,
+                        InstallIntent::Repair,
+                        |_| {},
+                        |_, _| url.clone(),
+                    )
+                    .unwrap();
+                server.join().unwrap();
+                let InstallOutcome::Installed(Some(warning)) = result else {
+                    panic!("expected a published build with a receipt warning: {result:?}");
+                };
+                assert!(
+                    warning.contains(&format!("{ROLLING} is installed")),
+                    "{warning}"
+                );
+                assert!(
+                    warning.contains("The rolling receipt wasn't updated."),
+                    "{warning}"
+                );
+                assert_eq!(
+                    fs::read(receipt.join("obstruction")).unwrap(),
+                    b"leave this alone"
+                );
+                assert_eq!(installed(), [ROLLING]);
+                assert_eq!(
+                    fs::read(target.join(CLIENT)).unwrap(),
+                    b"new signed Nightly image"
+                );
+                let identity = crate::profile_txn::Identity::of(&target).unwrap();
+                let image = download
+                    .installed_at(&target, ROLLING, &proof, InstallIntent::Repair)
+                    .unwrap();
+                assert!(!versions.join(format!(".repair-{ROLLING}")).exists());
+
+                fs::remove_dir_all(&receipt).unwrap();
+                fs::write(&receipt, "nightly-2026-11-20-bbbbbbb").unwrap();
+                let retry = download
+                    .publish(
+                        ROLLING,
+                        &proof,
+                        InstallIntent::Repair,
+                        |_| {},
+                        |_, _| panic!("receipt retry must not request any assets"),
+                    )
+                    .unwrap();
+                assert!(
+                    matches!(retry, InstallOutcome::ReceiptOnly(None)),
+                    "{retry:?}"
+                );
+                assert_eq!(fs::read_to_string(receipt).unwrap(), ROLLING);
+                assert_eq!(crate::profile_txn::Identity::of(&target).unwrap(), identity);
+                assert_eq!(
+                    download
+                        .installed_at(&target, ROLLING, &proof, InstallIntent::Repair)
+                        .unwrap(),
+                    image
+                );
             },
         );
     }

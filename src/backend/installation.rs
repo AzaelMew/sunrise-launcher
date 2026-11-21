@@ -126,6 +126,30 @@ pub(crate) enum InstallIntent {
     Repair,
 }
 
+/// Success means the image is usable, even when the separate rolling Nightly receipt failed.
+#[derive(Debug)]
+pub enum InstallOutcome {
+    Installed(Option<String>),
+    ReceiptOnly(Option<String>),
+}
+
+impl InstallOutcome {
+    pub fn receipt_warning(&self) -> Option<&str> {
+        match self {
+            Self::Installed(warning) | Self::ReceiptOnly(warning) => warning.as_deref(),
+        }
+    }
+}
+
+fn save_nightly_receipt(root: &Path, tag: &str) -> Option<String> {
+    crate::nightly::record_current(root, tag).err().map(|error| {
+        crate::i18n::trf(
+            "{build} is installed, but Sunrise couldn't save which Nightly is current. The rolling receipt wasn't updated.\n{reason}",
+            &[("build", tag), ("reason", &error.to_string())],
+        )
+    })
+}
+
 pub(crate) fn install_as(
     release: &Release,
     tag: &str,
@@ -134,7 +158,7 @@ pub(crate) fn install_as(
     release_facts: Option<(&[u8], &str)>,
     intent: InstallIntent,
     progress: impl Fn(f32),
-) -> Result<(), String> {
+) -> Result<Option<String>, String> {
     let (url, size) = release
         .asset
         .clone()
@@ -146,7 +170,7 @@ pub(crate) fn install_as(
         match fs::symlink_metadata(&target) {
             Ok(_) if matches_archive() => {
                 progress(1.0);
-                return Ok(());
+                return Ok(None);
             }
             Ok(_) => return Err(existing_build(tag)),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
@@ -235,18 +259,20 @@ pub(crate) fn install_as(
                     return Err(existing_build(tag));
                 }
                 progress(1.0);
-                return Ok(());
+                return Ok(None);
             }
             Err(e) => return Err(crate::native_mods::cache_error(e)),
         }
     }
-    if release.nightly.as_deref() == Some(sunrise_launcher_release_verify::NIGHTLY) {
-        crate::nightly::record_current(&root, tag).map_err(|e| e.to_string())?;
-    }
-    // First Play prepares through the profile's staged handoff, not the cache-only
-    // import hook (whose detached preparer could otherwise outlive that admission).
+    // The tree is already committed. Failure of this independent receipt must not
+    // undo it, stop someone from playing it, or turn success into an install error.
+    let warning = if release.nightly.as_deref() == Some(sunrise_launcher_release_verify::NIGHTLY) {
+        save_nightly_receipt(&root, tag)
+    } else {
+        None
+    };
     progress(1.0);
-    Ok(())
+    Ok(warning)
 }
 
 /// Reconcile an explicit release install with a plain existing version, even if it never

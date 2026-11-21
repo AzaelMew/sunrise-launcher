@@ -49,7 +49,7 @@ impl Launcher {
     pub(crate) fn finish_switch_download(
         &mut self,
         tag: &str,
-        result: &Result<(), String>,
+        result: &Result<backend::InstallOutcome, String>,
     ) -> bool {
         if self
             .ui
@@ -61,9 +61,11 @@ impl Launcher {
         {
             return false;
         }
-        if let Err(error) = result {
-            self.ui.sheets.error = Some(error.clone());
-        }
+        let warning = match result {
+            Ok(outcome) => outcome.receipt_warning(),
+            Err(error) => Some(error.as_str()),
+        };
+        self.ui.sheets.error = warning.map(str::to_owned);
         true
     }
 
