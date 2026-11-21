@@ -249,7 +249,7 @@ pub fn same_day_time(version: &str) -> Option<String> {
         .map(|(_, time)| time.clone())
 }
 
-/// A Nightly as the Versions page names it, "the Nov 13 update" for `nightly-2026-11-13` (with
+/// A Nightly described as an update, "the Nov 13 update" for `nightly-2026-11-13` (with
 /// or without its commit), with its time when another came out that day ("the Nov 13, 07:22 UTC
 /// update"); None for anything that is not one.
 pub fn update_name(version: &str) -> Option<String> {

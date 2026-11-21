@@ -408,7 +408,7 @@ pub fn game_architecture_launch_error(tag: &str) -> Option<String> {
     game_architecture_launch_error_with_catalogue(tag, &[])
 }
 
-/// The window can recommend a Versions reinstall only when it offers that exact repair.
+/// The window can recommend a reinstall from the version picker only when it offers that exact repair.
 pub fn game_architecture_launch_error_with_catalogue(
     tag: &str,
     releases: &[Release],
@@ -477,7 +477,7 @@ fn architecture_mismatch_for(
         .unwrap_or_else(|| crate::i18n::tr("Unknown").to_string());
     Some(crate::i18n::trf(
         if available {
-            "This version has a {installed} game build, but Settings selects {selected}. Install the selected build from Versions before launching."
+            "This version has a {installed} game build, but Settings selects {selected}. Reinstall it from the version picker beside Play before launching."
         } else {
             "This version has a {installed} game build, but Settings selects {selected}. Switch back to the installed architecture or Automatic, or choose another available build."
         },
@@ -1408,23 +1408,6 @@ pub(crate) fn remove_observed(tag: &str, selected: impl FnOnce()) -> Result<(), 
     crate::cache_cleanup::delete_version(&dir, idle).map_err(crate::native_mods::cache_error)?;
     forget_prepared();
     Ok(())
-}
-
-/// The bytes an installed version takes on disk.
-pub fn disk_use(tag: &str) -> u64 {
-    fn size(dir: &Path) -> u64 {
-        fs::read_dir(dir)
-            .into_iter()
-            .flatten()
-            .flatten()
-            .map(|e| match e.metadata() {
-                Ok(m) if m.is_dir() => size(&e.path()),
-                Ok(m) => m.len(),
-                Err(_) => 0,
-            })
-            .sum()
-    }
-    size(&version_dir(tag))
 }
 
 /// The Minecraft version a Sunrise build targets, from its research-lock.json.
@@ -5930,19 +5913,19 @@ pub fn {f}("
         for tag in ["v2026.10.13", "nightly-2026-11-19-bbbbbbb"] {
             let help =
                 architecture_mismatch_for(tag, &catalogue, Arm64, "x86_64", installed).unwrap();
-            assert!(!help.contains("Versions"), "{help}");
+            assert!(!help.contains("version picker"), "{help}");
             assert!(help.contains("Switch back to the installed architecture or Automatic, or choose another available build."), "{help}");
         }
         for tag in [stable, nightly] {
             assert!(
                 architecture_mismatch_for(tag, &catalogue, Arm64, "x86_64", installed)
                     .unwrap()
-                    .contains("Install the selected build from Versions")
+                    .contains("Reinstall it from the version picker beside Play")
             );
             assert!(
                 !architecture_mismatch_for(tag, &[], Arm64, "x86_64", installed)
                     .unwrap()
-                    .contains("Versions")
+                    .contains("version picker")
             );
         }
         assert!(architecture_mismatch_for(stable, &catalogue, X64, "x86_64", installed).is_none());

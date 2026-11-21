@@ -6,8 +6,8 @@
 //! research-lock.json, preparer sources and prepared resources) with the picked program in
 //! place of that version's own, as a native build is (`native_mods::install`).
 //!
-//! Nothing signed it: the Versions page says so. Its tag (`imported-<date>-<sha>`) is no
-//! release's, so no update replaces it, prunes it or moves the selection off it.
+//! Nothing signed it: Storage says so. Its tag (`imported-<date>-<sha>`) is not a
+//! release's, so an update neither replaces nor prunes it.
 
 use crate::backend::{self, CLIENT};
 use crate::i18n::{tr, trf};
@@ -95,10 +95,22 @@ fn base_for(
     }
 }
 
-/// Installs the game program at `path` (or the one inside an archive there) as a new version on
-/// the game files of `requested` (default: [`base_for`]), prepared from another version where it
-/// can be, and selects it. Importing the same program again selects the version it made before.
+pub fn can_import(installed: &[String], selected: Option<&str>) -> bool {
+    base_for(installed, None, selected).is_ok()
+}
+
+/// An explicit CLI import selects the resulting build, including when it was already installed.
 pub fn import(path: &Path, requested: Option<&str>) -> Result<String, String> {
+    let tag = install(path, requested)?;
+    // Read again: other settings may have changed during the copy.
+    let mut settings = backend::Settings::load();
+    settings.selected = Some(tag.clone());
+    settings.save()?;
+    Ok(tag)
+}
+
+/// Installs the game program at `path` (or in the archive there) without changing any selection.
+pub fn install(path: &Path, requested: Option<&str>) -> Result<String, String> {
     let file = path.file_name().map_or_else(
         || path.display().to_string(),
         |n| n.to_string_lossy().into_owned(),
@@ -119,10 +131,6 @@ pub fn import(path: &Path, requested: Option<&str>) -> Result<String, String> {
         ));
     }
     backend::reuse_prepared_for(&tag);
-    // Read again: the window may have saved other settings during the copy.
-    let mut settings = backend::Settings::load();
-    settings.selected = Some(tag.clone());
-    settings.save()?;
     Ok(tag)
 }
 
@@ -486,6 +494,47 @@ mod tests {
             legacy
         );
         fs::remove_dir_all(versions).unwrap();
+    }
+
+    #[test]
+    fn storage_import_does_not_change_the_selected_build() {
+        const ACTOR: &str = "SUNRISE_TEST_STORAGE_IMPORT";
+        let scratch = tempfile::tempdir().unwrap();
+        if std::env::var_os(ACTOR).is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "build_import::tests::storage_import_does_not_change_the_selected_build",
+                ])
+                .env(ACTOR, "1")
+                .env("SUNRISE_LAUNCHER_HOME", scratch.path().join("launcher"))
+                .env("SUNRISE_HOME", scratch.path().join("game"))
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+            return;
+        }
+        let tag = "26.3-0.1.0";
+        let base = backend::version_dir(tag);
+        fs::create_dir_all(&base).unwrap();
+        fs::write(base.join(CLIENT), program(b"signed base")).unwrap();
+        fs::write(base.join(".installed"), "").unwrap();
+        backend::Settings {
+            selected: Some(tag.into()),
+            ..Default::default()
+        }
+        .save()
+        .unwrap();
+        let path = scratch.path().join(CLIENT);
+        fs::write(&path, program(b"another build")).unwrap();
+        let new = install(&path, None).unwrap();
+        assert!(is_imported(&new));
+        assert_eq!(backend::Settings::load().selected.as_deref(), Some(tag));
+        assert!(backend::installed().contains(&new));
     }
 
     #[test]

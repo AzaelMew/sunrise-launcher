@@ -78,7 +78,6 @@ impl Launcher {
             settings_nav_open: false,
             mods_sticky: sticky::Sticky::default(),
             settings_sticky: sticky::Sticky::default(),
-            long_list: cull::Cull::default(),
             updates: Updates::default(),
             checked: None,
             checking_updates: false,
@@ -96,7 +95,7 @@ impl Launcher {
             known_nightly,
             installing: None,
             removing: Vec::new(),
-            disk: Vec::new(),
+            storage_builds: Default::default(),
             storage_report: None,
             storage_pending: false,
             storage_confirm: None,
@@ -108,7 +107,6 @@ impl Launcher {
             native_consent_build: None,
             install_error: None,
             importing_build: false,
-            import_error: None,
             native_step: None,
             native_progress: None,
             native_cancellation: None,
@@ -350,7 +348,6 @@ impl Launcher {
             self.page = page;
             self.switches += 1;
             self.content_scroll = Scrollbar::default();
-            self.long_list = cull::Cull::default();
             self.mods_sticky.reset();
             self.settings_sticky.reset();
             if page == Page::Mods {

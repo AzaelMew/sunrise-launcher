@@ -5,6 +5,7 @@ impl Launcher {
     pub(super) fn refresh_installed(&mut self) {
         (self.installed, self.known_nightly) =
             backend::play_installations(self.settings.selected.as_deref());
+        self.refresh_open_storage_builds();
     }
 
     pub(crate) fn drain(&mut self, window: gpui::AnyWindowHandle, cx: &mut Context<Self>) {
@@ -39,10 +40,13 @@ impl Launcher {
                     if let (Ok(_), Some(checked)) = (&r, self.checked) {
                         self.perf.record_since("launcher.release_list_ms", checked);
                     }
-                    if r.is_ok() {
-                        self.refresh_installed();
-                    }
+                    let loaded = r.is_ok();
                     self.releases = r.map_or_else(Load::Failed, Load::Ready);
+                    if loaded {
+                        self.refresh_installed();
+                    } else {
+                        self.refresh_open_storage_builds();
+                    }
                 }
                 Msg::Links(links) => self.links = links,
                 // The page reads is_prepared when drawn; `changed` redraws it.
@@ -232,7 +236,12 @@ impl Launcher {
                     self.installing = None;
                     self.bar = (0., 0.);
                     self.refresh_installed();
-                    let warning = self.record_nightly_receipt_outcome(&tag, &result);
+                    if let Some(warning) = self.record_nightly_receipt_outcome(&tag, &result) {
+                        glass_toast::say(trf(
+                            "{warning} Try again in Settings → Storage.",
+                            &[("warning", &warning)],
+                        ));
+                    }
                     if self.finish_switch_download(&tag, &result) {
                         self.install_started = None;
                         if let Some(next) = self.install_next.take() {
@@ -266,7 +275,7 @@ impl Launcher {
                             }
                             // Pruning reads settings from disk: protect the selection only once
                             // it has been saved there. A failed save leaves all versions in place.
-                            if self.save_settings() {
+                            if self.save_settings() && self.settings.auto_prune() {
                                 let tx = self.tx.clone();
                                 let releases = self.game_releases().to_vec();
                                 let installed = tag.clone();
@@ -279,9 +288,6 @@ impl Launcher {
                             }
                         }
                         Err(e) => self.install_error = Some((tag, e)),
-                    }
-                    if let Some(warning) = warning {
-                        self.open_notice(warning, None);
                     }
                     if let Some((intent, _)) =
                         resume.filter(|(_, wanted)| self.selected() == Some(wanted))
@@ -298,36 +304,13 @@ impl Launcher {
                     }
                     self.finish_nightly_receipt_retry(&warning, result);
                 }
-                Msg::Removed(tag, result) => {
-                    self.removing.retain(|t| *t != tag);
-                    self.refresh_installed();
-                    let selected = if self.settings_save_error.is_some() {
-                        self.settings.selected.take()
-                    } else {
-                        Settings::load().selected
-                    };
-                    self.settings.selected = selection_after_removal(&self.installed, selected);
-                    if let Err(e) = result {
-                        self.install_error = Some((tag, e));
-                    }
+                Msg::Removed(errors) => self.storage_builds_removed(errors),
+                Msg::BuildInventory(generation, rows) => {
+                    self.storage_builds_arrived(generation, rows)
                 }
-                Msg::DiskUse(disk) => self.disk = disk,
                 Msg::Storage(result) => self.storage_arrived(result),
-                Msg::Imported(result) => {
-                    self.importing_build = false;
-                    self.refresh_installed();
-                    match result {
-                        // `build_import::import` saved the selection; this keeps the window's copy.
-                        Ok(tag) => self.settings.selected = Some(tag),
-                        Err(e) => self.import_error = Some(e),
-                    }
-                }
-                Msg::Pruned(errors) => {
-                    self.refresh_installed();
-                    for (tag, error) in errors {
-                        eprintln!("Could not remove old game build {tag}: {error}");
-                    }
-                }
+                Msg::Imported(result) => self.storage_build_imported(result),
+                Msg::Pruned(errors) => self.storage_builds_pruned(errors),
                 Msg::Updates(updates) => {
                     self.checking_updates = false;
                     self.launcher_checked_now = None;
@@ -492,6 +475,7 @@ impl Launcher {
                     match job {
                         Job::Prepare => {
                             self.preparing = false;
+                            self.refresh_open_storage_builds();
                             // Play pressed before the version was prepared plays now.
                             if let Some((tag, intent)) = self.play_when_prepared.take() {
                                 if error.is_none()
@@ -518,6 +502,7 @@ impl Launcher {
                         }
                         Job::Client => {
                             self.client = None;
+                            self.refresh_open_storage_builds();
                             // Any session file the game didn't read (it crashed first).
                             account::discard_unread_sessions();
                             self.come_back(cx);

@@ -51,6 +51,7 @@ impl Launcher {
         self.instances
             .icons
             .retain(|(key, _), _| !key.starts_with("picture:"));
+        self.refresh_open_storage_builds();
     }
 
     /// The instance Play starts.
