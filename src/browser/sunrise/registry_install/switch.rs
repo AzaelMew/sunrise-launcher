@@ -337,11 +337,11 @@ impl<'a> Originals<'a> {
             }
             // The registry row selects a checked destination, not its publisher. Only the
             // actual digest in the official catalogue can authorize destroying old bytes.
+            let built_from_source = github
+                .as_ref()
+                .is_some_and(|origin| origin.source.is_some());
             let source = if let Some(origin) = github {
-                if origin.id != id
-                    || origin.version != manifest.version
-                    || seen.digest.as_deref() != Some(&origin.sha256)
-                {
+                if seen.github_origin(home).as_ref() != Some(&origin) {
                     return Err(unproved_switch());
                 }
                 HeldSource::Github {
@@ -387,9 +387,10 @@ impl<'a> Originals<'a> {
             }
             let revoked = seen.digest.as_deref().and_then(|digest| {
                 let listed = catalogue.revoked(&id, digest)?;
-                let authorized = seen.owned
-                    || (!seen.registry_claim
-                        && official.is_some_and(|proof| proof.proves_archive(&id, digest)));
+                let authorized = !built_from_source
+                    && (seen.owned
+                        || (!seen.registry_claim
+                            && official.is_some_and(|proof| proof.proves_archive(&id, digest))));
                 (authorized || seen.registry_claim || listed.sha256.is_some())
                     .then_some((listed, authorized))
             });

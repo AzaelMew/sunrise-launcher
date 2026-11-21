@@ -140,6 +140,9 @@ impl Launcher {
                     self.reset_install_question_sheet();
                     self.pending_consent = Some(PendingConsent::Registry(question, reply));
                 }
+                Event::Registry(install::Worker::Source(question, reply)) => {
+                    self.receive_source_question(question, reply);
+                }
                 Event::Registry(event) => {
                     if let Some(feedback) = m.installs.github_feedback(&event) {
                         github_feedback = Some(feedback);

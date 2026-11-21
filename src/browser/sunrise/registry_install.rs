@@ -27,8 +27,14 @@ use sunrise_launcher_smod::{
 
 const MAX_TRIALS: usize = 64;
 mod conflicts;
+mod source;
 mod switch;
 pub use conflicts::ResolveQuestion;
+use source::MixedSources;
+pub use source::{
+    apply_sources, prepare_pasted_sources, prepare_source, update_registry_and_sources,
+    CombinedUpdate, PreparedSource, SourceError, SourceRequest,
+};
 pub use switch::{checked_switch_fit, switch_build, SwitchHooks, SwitchQuestion, Switched};
 
 // Advisory only. Never use these in place of a fresh, admitted worker proof. Key by the
@@ -59,6 +65,7 @@ pub enum InstallProgress {
     Downloading(f32),
     Preparing,
     Tools { done: u64, total: u64 },
+    Rust(f32),
     Building(Option<f32>),
     Publishing,
     Reviewing,
@@ -72,6 +79,7 @@ pub enum InstallError {
     Download(String),
     NotForVersion(String),
     GithubBuild(String),
+    Source(SourceError),
     Compile(BuildNotice),
     Cancelled,
 }
@@ -86,6 +94,7 @@ impl std::fmt::Display for InstallError {
             | Self::GithubBuild(text)
             | Self::Download(text) => f.write_str(text),
             Self::Compile(failure) => f.write_str(&failure.detail),
+            Self::Source(error) => error.fmt(f),
             Self::Cancelled => f.write_str(tr("Install cancelled.")),
         }
     }
@@ -137,6 +146,7 @@ pub struct InstalledBatch {
     pub failure: Option<BuildNotice>,
 }
 
+#[derive(Clone, Copy)]
 pub struct InstallHooks<'a> {
     pub progress: &'a dyn Fn(InstallProgress),
     pub native: &'a dyn Fn(&NativeQuestion) -> Result<bool, String>,
@@ -177,6 +187,7 @@ pub fn install_registry(
         choose,
         hooks,
         fetch_with_official,
+        None,
     )
 }
 
@@ -203,6 +214,7 @@ pub fn update_registry(
         choose,
         hooks,
         fetch_with_official,
+        None,
     )
 }
 
@@ -221,6 +233,7 @@ fn registry_edit<'a>(
         &str,
         bool,
     ) -> Result<(index::Index, String, Option<OfficialRegistry>), String>,
+    mut mixed: Option<&mut MixedSources<'_>>,
 ) -> Result<InstalledBatch, InstallError> {
     if instance.kind == InstanceKind::Pack {
         return Err(InstallError::Refused(
@@ -795,7 +808,12 @@ fn registry_edit<'a>(
                 )?
                 .with_unchecked_update(unchecked_update);
                 (hooks.progress)(InstallProgress::Reviewing);
-                if !approve(&impact) {
+                let allowed = if let Some(mixed) = &mut mixed {
+                    mixed.combine(&impact, instance, identity, &edit, old.path())
+                } else {
+                    approve(&impact)
+                };
+                if !allowed {
                     return Err(InstallError::Cancelled);
                 }
                 impact.into_evidence()
@@ -811,8 +829,12 @@ fn registry_edit<'a>(
             .chain(retired_off)
             .filter(|id| entries.contains_key(id))
             .collect();
+        let committed_inputs = mixed
+            .as_ref()
+            .map(|_| managed_play::inputs(next.path(), None))
+            .transpose()?;
         (hooks.progress)(InstallProgress::Publishing);
-        edit.publish_install(proof, &cancelled, &retired_holds, || {
+        let published = edit.publish_install(proof, &cancelled, &retired_holds, || {
             let (_, current, current_authority) = if resolve_fence.is_some() {
                 super::complete_index(&source, local)?
             } else {
@@ -828,6 +850,9 @@ fn registry_edit<'a>(
                 mutations::bind_worlds(&instance.home, &suspect, &reviewed_worlds).map(Some)
             }
         })?;
+        if let (Some(mixed), Some(inputs)) = (&mut mixed, committed_inputs) {
+            mixed.published(published, inputs);
+        }
         for (id, entry) in entries {
             if let Some(previous) = before.get(&id) {
                 result
@@ -862,6 +887,7 @@ fn prove_edit(
 
 fn build_progress(step: native_mods::Step, progress: &dyn Fn(InstallProgress)) {
     progress(match step {
+        native_mods::Step::Rust(fraction) => InstallProgress::Rust(fraction),
         native_mods::Step::Tools { done, total, .. } => InstallProgress::Tools { done, total },
         native_mods::Step::Install | native_mods::Step::Done { .. } => {
             InstallProgress::Building(Some(1.))

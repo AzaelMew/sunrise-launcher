@@ -180,6 +180,7 @@ impl Fixture {
                 let authority = OfficialRegistry::fixture(&catalogue);
                 Ok((catalogue, bytes, Some(authority)))
             },
+            None,
         )
     }
 

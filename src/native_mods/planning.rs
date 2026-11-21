@@ -11,6 +11,22 @@ pub fn routes(home: &Path, base: Option<&str>) -> Result<Routes, Failed> {
     classify(&folder, base, &lease, &Cancellation::default())
 }
 
+/// Check a private copy with pinned SDK metadata; does not install Rust or execute mod code.
+pub(crate) fn source_routes(
+    home: &Path,
+    base: &str,
+    cancellation: &Cancellation,
+) -> Result<Routes, Failed> {
+    cancellation.check()?;
+    let lease = crate::native_cache::Cache::acquire(&backend::build_dir()).map_err(cache_error)?;
+    let scratch = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let folder =
+        stage_installed(home, scratch.path().join("mods"))?.ok_or_else(no_mods_to_build)?;
+    let result = classify(&folder, Some(base), &lease, cancellation)?;
+    cancellation.check()?;
+    Ok(result)
+}
+
 /// Share classification with an actual build under its existing cache lease.
 pub(super) fn classify(
     folder: &Path,
@@ -52,7 +68,16 @@ pub(super) fn classify(
     // A developer install's checkout has no published surface: its mods are made for it exactly.
     if crate::developer_install::is_developer(origin) {
         if let Some(list) = mismatch(&found, &revision) {
-            return Err(mismatch_error(&list).into());
+            let line = mismatch_error(&list);
+            for (bundle, (_, route)) in found.iter().zip(&mut result.mods) {
+                if bundle.native().sunrise != revision {
+                    *route = Route::Unfit {
+                        headline: tr("Not available for your version").into(),
+                        line: line.clone(),
+                        actions: fit::actions(&bundle.manifest.id),
+                    };
+                }
+            }
         }
         return Ok(result);
     }

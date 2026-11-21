@@ -8,10 +8,12 @@ use std::{
 };
 use sunrise_launcher::{
     browser::sunrise::{
-        BuildNotice, ChangeImpact, InstallError, InstallHooks, InstallProgress, InstalledBatch,
-        NativeQuestion, ResolveQuestion,
+        BuildNotice, ChangeImpact, CombinedUpdate, InstallError, InstallHooks, InstallProgress,
+        InstalledBatch, NativeQuestion, PreparedSource, ResolveQuestion, SourceError,
     },
+    github_mods::Origin,
     managed_play::FirstBuild,
+    native_mods::Cancellation,
     profile_txn::Identity,
 };
 
@@ -21,6 +23,8 @@ pub(crate) struct Installs {
     waiting: VecDeque<Request>,
     pub(crate) question: Option<(Decision, Sender<bool>)>,
     pub(crate) world: Option<(WorldQuestion, Sender<bool>)>,
+    source_question: Option<(SourceQuestion, Sender<Result<bool, String>>)>,
+    source_outcomes: BTreeMap<(Identity, String), Result<(), SourceError>>,
     outcomes: HashMap<(PathBuf, String), Outcome>,
     play: Option<(PathBuf, launcher_play::PlayIntent)>,
 }
@@ -33,6 +37,8 @@ struct Running {
     requests: Vec<RequestView>,
     stage: InstallProgress,
     github: Option<(String, bool)>,
+    source: Option<RunningSource>,
+    mixed: bool,
 }
 
 struct Request {
@@ -43,6 +49,8 @@ struct Request {
     displayed_names: BTreeMap<String, String>,
     view: RequestView,
     github: Option<GithubInput>,
+    sources: Vec<PreparedSource>,
+    mixed_registry: Vec<String>,
 }
 
 /// Bound before the link can start a network lookup, not when its answer comes back.
@@ -54,10 +62,64 @@ pub(crate) struct GithubTarget {
     release: Option<backend::Release>,
 }
 
+impl GithubTarget {
+    pub(crate) fn source(&self) -> Result<SourceTarget, String> {
+        Ok(SourceTarget {
+            profile: self.profile.clone(),
+            identity: self.identity,
+            base: self
+                .target
+                .clone()
+                .ok_or_else(backend::no_version_installed)?,
+        })
+    }
+}
+
+/// The exact installed base and profile that a read-only source fit check covers.
+#[derive(Clone)]
+pub(crate) struct SourceTarget {
+    profile: instances::Instance,
+    identity: Identity,
+    base: String,
+}
+
+impl SourceTarget {
+    pub(crate) fn instance(&self) -> &instances::Instance {
+        &self.profile
+    }
+    pub(crate) fn identity(&self) -> Identity {
+        self.identity
+    }
+    pub(crate) fn base(&self) -> &str {
+        &self.base
+    }
+}
+
+pub(crate) struct SourceQuestion {
+    pub(crate) base: String,
+    pub(crate) mods: Vec<(String, Origin)>,
+}
+
+pub(crate) struct SourceActivity<'a> {
+    pub(crate) ids: &'a [String],
+    pub(crate) names: &'a [String],
+    pub(crate) progress: InstallProgress,
+    pub(crate) stopping: bool,
+}
+
+struct RunningSource {
+    ids: Vec<String>,
+    visible: bool,
+    names: Vec<String>,
+    cancellation: Cancellation,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Kind {
     Install,
     Github,
+    Source,
+    Mixed,
     Update,
     UpdateAll,
     Remove,
@@ -94,8 +156,11 @@ pub(crate) enum Decision {
 }
 
 pub(crate) enum Worker {
+    SourcePhase,
+    Mixed(Box<CombinedUpdate>),
     Progress(InstallProgress),
     Native(NativeQuestion, Sender<Result<bool, String>>),
+    Source(SourceQuestion, Sender<Result<bool, String>>),
     Decide(Decision, Sender<bool>),
     World(WorldQuestion, Sender<bool>),
     Done(Result<InstalledBatch, InstallError>),
@@ -203,9 +268,33 @@ impl Installs {
     }
 
     pub(super) fn mutation_failure(&self, event: &Worker) -> Option<String> {
+        let run = self.running.as_ref()?;
+        if let Worker::Mixed(done) = event {
+            let mut failures = Vec::new();
+            match &done.registry {
+                Ok(batch) => {
+                    if let Some(notice) = &batch.failure {
+                        failures.extend(notice.changes.iter().map(|change| change.title.clone()));
+                    }
+                }
+                Err(InstallError::Cancelled) => (),
+                Err(_) => failures.extend(run.requests[0].ids.iter().cloned()),
+            }
+            if let Err(error) = &done.sources {
+                if !matches!(error, SourceError::Cancelled) || done.registry.is_ok() {
+                    failures.extend(run.source.as_ref()?.names.iter().cloned());
+                }
+            }
+            return (!failures.is_empty()).then(|| {
+                trf(
+                    "These mods didn't update: {mods}",
+                    &[("mods", &crate::mods::names(&failures))],
+                )
+            });
+        }
         if matches!(
-            self.running.as_ref()?.requests[0].kind,
-            Kind::Install | Kind::Github
+            run.requests[0].kind,
+            Kind::Install | Kind::Github | Kind::Source | Kind::Mixed
         ) {
             return None;
         }
@@ -219,6 +308,36 @@ impl Installs {
 
     pub(super) fn handle(&mut self, event: Worker) -> bool {
         match event {
+            Worker::SourcePhase => {
+                if let Some(run) = &mut self.running {
+                    if let Some(source) = &mut run.source {
+                        source.visible = true;
+                    }
+                    run.stage = InstallProgress::Checking;
+                }
+            }
+            Worker::Mixed(done) => {
+                let Some(run) = &mut self.running else {
+                    return false;
+                };
+                let Some(source) = run.source.take() else {
+                    return false;
+                };
+                self.source_question.take();
+                for id in source.ids {
+                    self.source_outcomes
+                        .insert((run.identity, id), done.sources.clone());
+                }
+                if done.sources.is_err()
+                    && self.play.as_ref().is_some_and(|(home, intent)| {
+                        *home == run.profile.home && intent.instance == run.profile.id
+                    })
+                {
+                    self.play = None;
+                }
+                run.requests.truncate(1);
+                return self.handle(Worker::Done(done.registry));
+            }
             Worker::Progress(step) => {
                 if let Some(run) = &mut self.running {
                     run.stage = step;
@@ -230,99 +349,120 @@ impl Installs {
                 }
             }
             Worker::World(impact, reply) => {
+                if self
+                    .running
+                    .as_ref()
+                    .and_then(|run| run.source.as_ref())
+                    .is_some_and(|source| source.cancellation.is_stopped())
+                {
+                    let _ = reply.send(false);
+                    return false;
+                }
                 if let Some((_, old)) = self.world.replace((impact, reply)) {
                     let _ = old.send(false);
                 }
             }
-            Worker::Native(..) => unreachable!("native questions use the native consent sheet"),
+            Worker::Native(..) | Worker::Source(..) => {
+                unreachable!("handled at the launcher consent boundary")
+            }
             Worker::Done(result) => {
                 let Some(run) = self.running.take() else {
                     return false;
                 };
                 let ready = result.is_ok();
-                for request in run.requests {
-                    let outcome = match &result {
-                        Ok(done) => Outcome {
-                            added: done
-                                .added
-                                .iter()
-                                .filter(|entry| {
-                                    !request.ids.contains(&entry.project)
-                                        && entry.install_hold.is_none()
-                                })
-                                .map(|entry| entry.title.clone())
-                                .collect(),
-                            updated: done
-                                .updated
-                                .iter()
-                                .filter(|(_, entry)| !request.ids.contains(&entry.project))
-                                .map(|(old, entry)| {
-                                    (entry.title.clone(), old.clone(), entry.version.clone())
-                                })
-                                .collect(),
-                            failure: done.failure.as_ref().map(|notice| {
-                                let this = notice
-                                    .changes
+                if run.source.is_some() {
+                    self.source_question.take();
+                    let outcome = result.map(|_| ()).map_err(SourceError::from);
+                    for id in &run.requests[0].ids {
+                        self.source_outcomes
+                            .insert((run.identity, id.clone()), outcome.clone());
+                    }
+                } else {
+                    for request in run.requests {
+                        let outcome = match &result {
+                            Ok(done) => Outcome {
+                                added: done
+                                    .added
                                     .iter()
-                                    .find(|change| change.project == request.card);
-                                let label = match this {
-                                    Some(change) if change.predecessor.is_some() => {
-                                        tr("Kept the working version").into()
-                                    }
-                                    Some(change) => change.reason.label(),
-                                    None => {
-                                        tr("Some mods stayed off or kept their old version").into()
-                                    }
-                                };
-                                let detail = notice
-                                    .changes
-                                    .iter()
-                                    .map(|change| {
-                                        trf(
-                                            "{mod}: {disposition}. {reason}",
-                                            &[
-                                                ("mod", &change.title),
-                                                ("disposition", &change.disposition()),
-                                                ("reason", &change.reason.detail()),
-                                            ],
-                                        )
+                                    .filter(|entry| {
+                                        !request.ids.contains(&entry.project)
+                                            && entry.install_hold.is_none()
                                     })
-                                    .collect::<Vec<_>>()
-                                    .join("\n\n");
-                                (label, detail)
-                            }),
-                        },
-                        Err(InstallError::Compile(notice)) => Outcome {
-                            failure: Some((
-                                tr("Stayed. No mods changed.").into(),
-                                notice
-                                    .changes
+                                    .map(|entry| entry.title.clone())
+                                    .collect(),
+                                updated: done
+                                    .updated
                                     .iter()
-                                    .map(|change| {
-                                        trf(
-                                            "{mod}: {reason}",
-                                            &[
-                                                ("mod", &change.title),
-                                                ("reason", &change.reason.detail()),
-                                            ],
-                                        )
+                                    .filter(|(_, entry)| !request.ids.contains(&entry.project))
+                                    .map(|(old, entry)| {
+                                        (entry.title.clone(), old.clone(), entry.version.clone())
                                     })
-                                    .collect::<Vec<_>>()
-                                    .join("\n\n"),
-                            )),
-                            ..Outcome::default()
-                        },
-                        Err(InstallError::Cancelled) => Outcome::default(),
-                        Err(error) => Outcome {
-                            failure: Some((failure_line(error).into(), error.to_string())),
-                            ..Outcome::default()
-                        },
-                    };
-                    self.outcomes
-                        .insert((run.profile.home.clone(), request.card), outcome.clone());
-                    for id in request.ids {
+                                    .collect(),
+                                failure: done.failure.as_ref().map(|notice| {
+                                    let this = notice
+                                        .changes
+                                        .iter()
+                                        .find(|change| change.project == request.card);
+                                    let label = match this {
+                                        Some(change) if change.predecessor.is_some() => {
+                                            tr("Kept the working version").into()
+                                        }
+                                        Some(change) => change.reason.label(),
+                                        None => {
+                                            tr("Some mods stayed off or kept their old version")
+                                                .into()
+                                        }
+                                    };
+                                    let detail = notice
+                                        .changes
+                                        .iter()
+                                        .map(|change| {
+                                            trf(
+                                                "{mod}: {disposition}. {reason}",
+                                                &[
+                                                    ("mod", &change.title),
+                                                    ("disposition", &change.disposition()),
+                                                    ("reason", &change.reason.detail()),
+                                                ],
+                                            )
+                                        })
+                                        .collect::<Vec<_>>()
+                                        .join("\n\n");
+                                    (label, detail)
+                                }),
+                            },
+                            Err(InstallError::Compile(notice)) => Outcome {
+                                failure: Some((
+                                    tr("Stayed. No mods changed.").into(),
+                                    notice
+                                        .changes
+                                        .iter()
+                                        .map(|change| {
+                                            trf(
+                                                "{mod}: {reason}",
+                                                &[
+                                                    ("mod", &change.title),
+                                                    ("reason", &change.reason.detail()),
+                                                ],
+                                            )
+                                        })
+                                        .collect::<Vec<_>>()
+                                        .join("\n\n"),
+                                )),
+                                ..Outcome::default()
+                            },
+                            Err(InstallError::Cancelled) => Outcome::default(),
+                            Err(error) => Outcome {
+                                failure: Some((failure_line(error).into(), error.to_string())),
+                                ..Outcome::default()
+                            },
+                        };
                         self.outcomes
-                            .insert((run.profile.home.clone(), id), outcome.clone());
+                            .insert((run.profile.home.clone(), request.card), outcome.clone());
+                        for id in request.ids {
+                            self.outcomes
+                                .insert((run.profile.home.clone(), id), outcome.clone());
+                        }
                     }
                 }
                 if !ready
@@ -350,6 +490,149 @@ impl Installs {
 }
 
 impl Launcher {
+    pub(crate) fn source_target(&self) -> Result<SourceTarget, String> {
+        self.github_target()?.source()
+    }
+
+    pub(crate) fn queue_sources(
+        &mut self,
+        target: SourceTarget,
+        inputs: Vec<PreparedSource>,
+    ) -> Result<(), String> {
+        self.queue_all_mod_updates(target, Vec::new(), BTreeMap::new(), inputs)
+    }
+
+    pub(crate) fn queue_all_mod_updates(
+        &mut self,
+        target: SourceTarget,
+        registry: Vec<String>,
+        displayed_names: BTreeMap<String, String>,
+        inputs: Vec<PreparedSource>,
+    ) -> Result<(), String> {
+        if inputs.is_empty() {
+            return Ok(());
+        }
+        let current = self.source_target()?;
+        if current.identity != target.identity
+            || current.base != target.base
+            || current.profile.home != target.profile.home
+        {
+            return Err(tr(
+                "The profile or game build changed. Check the source again; nothing was changed.",
+            )
+            .into());
+        }
+        let ids = inputs
+            .iter()
+            .map(|source| source.origin().id.clone())
+            .collect::<Vec<_>>();
+        for id in &ids {
+            self.mods
+                .installs
+                .source_outcomes
+                .remove(&(target.identity, id.clone()));
+        }
+        self.mods.installs.submit(Request {
+            profile: target.profile,
+            identity: target.identity,
+            target: Some(target.base),
+            release: None,
+            displayed_names,
+            view: RequestView {
+                kind: if registry.is_empty() {
+                    Kind::Source
+                } else {
+                    Kind::Mixed
+                },
+                card: ids[0].clone(),
+                ids,
+            },
+            github: None,
+            sources: inputs,
+            mixed_registry: registry,
+        });
+        self.start_registry_queue();
+        Ok(())
+    }
+
+    pub(crate) fn mixed_update_active(&self) -> bool {
+        self.mods
+            .installs
+            .running
+            .as_ref()
+            .is_some_and(|run| run.mixed)
+    }
+
+    pub(crate) fn source_activity(&self) -> Option<SourceActivity<'_>> {
+        let run = self.mods.installs.running.as_ref()?;
+        let source = run.source.as_ref().filter(|source| source.visible)?;
+        Some(SourceActivity {
+            ids: &source.ids,
+            names: &source.names,
+            progress: run.stage,
+            stopping: source.cancellation.is_stopped(),
+        })
+    }
+
+    pub(crate) fn stop_source(&mut self) {
+        let Some(source) = self
+            .mods
+            .installs
+            .running
+            .as_ref()
+            .and_then(|run| run.source.as_ref())
+        else {
+            return;
+        };
+        source.cancellation.stop();
+        if source.cancellation.is_stopped() {
+            self.answer_source_question(Ok(false));
+            if let Some((_, reply)) = self.mods.installs.world.take() {
+                let _ = reply.send(false);
+            }
+        }
+    }
+
+    pub(crate) fn source_outcome(&self, id: &str) -> Option<&Result<(), SourceError>> {
+        let home = &self.selected_instance()?.home;
+        self.mods
+            .installs
+            .source_outcomes
+            .get(&(Identity::of(home).ok()?, id.to_owned()))
+    }
+
+    pub(crate) fn source_question(&self) -> Option<&SourceQuestion> {
+        self.mods
+            .installs
+            .source_question
+            .as_ref()
+            .map(|(question, _)| question)
+    }
+
+    pub(crate) fn answer_source_question(&mut self, allow: Result<bool, String>) {
+        if let Some((_, reply)) = self.mods.installs.source_question.take() {
+            let _ = reply.send(allow);
+        }
+    }
+
+    pub(super) fn receive_source_question(
+        &mut self,
+        question: SourceQuestion,
+        reply: Sender<Result<bool, String>>,
+    ) {
+        if self
+            .source_activity()
+            .is_none_or(|activity| activity.stopping)
+        {
+            let _ = reply.send(Ok(false));
+        } else if self.source_already_allowed(&question) {
+            let _ = reply.send(Ok(true));
+        } else {
+            self.reset_install_question_sheet();
+            self.mods.installs.source_question = Some((question, reply));
+        }
+    }
+
     pub(crate) fn registry_card(&self, id: &str) -> Option<Card<'_>> {
         self.mods.installs.card(&self.mods_home(), id)
     }
@@ -541,6 +824,8 @@ impl Launcher {
                 ids,
             },
             github: Some(input),
+            sources: Vec::new(),
+            mixed_registry: Vec::new(),
         });
         self.start_registry_queue();
     }
@@ -583,6 +868,8 @@ impl Launcher {
             displayed_names,
             view: RequestView { kind, card, ids },
             github: None,
+            sources: Vec::new(),
+            mixed_registry: Vec::new(),
         });
         self.start_registry_queue();
         Ok(())
@@ -597,7 +884,7 @@ impl Launcher {
         {
             return false;
         }
-        let Some(request) = self.mods.installs.waiting.pop_front() else {
+        let Some(mut request) = self.mods.installs.waiting.pop_front() else {
             return false;
         };
         let batch = Arc::new(Mutex::new(
@@ -605,13 +892,35 @@ impl Launcher {
         ));
         let kind = request.view.kind;
         let ids = request.view.ids.clone();
+        let cancellation = Cancellation::default();
+        let mixed = kind == Kind::Mixed;
+        let mut views = Vec::new();
+        if mixed {
+            views.push(RequestView {
+                kind: Kind::Mixed,
+                card: "mixed-registry".into(),
+                ids: request.mixed_registry.clone(),
+            });
+        }
+        views.push(request.view);
         self.mods.installs.running = Some(Running {
             profile: request.profile.clone(),
             identity: request.identity,
             target: request.target.clone(),
             batch: batch.clone(),
-            requests: vec![request.view],
+            requests: views,
+            mixed,
             stage: InstallProgress::Checking,
+            source: matches!(kind, Kind::Source | Kind::Mixed).then(|| RunningSource {
+                ids: ids.clone(),
+                visible: !mixed,
+                names: request
+                    .sources
+                    .iter()
+                    .map(|source| source.name().into())
+                    .collect(),
+                cancellation: cancellation.clone(),
+            }),
             github: request.github.as_ref().map(|input| {
                 (
                     input.link.clone(),
@@ -630,8 +939,8 @@ impl Launcher {
                     .filter(|tag| backend::installed().iter().any(|local| local == tag))
                 {
                     FirstBuild::installed(tag)
-                } else if let Some(release) = request.release {
-                    FirstBuild::download(&release)
+                } else if let Some(release) = &request.release {
+                    FirstBuild::download(release)
                 } else {
                     Err(backend::no_version_installed())
                 }
@@ -671,14 +980,40 @@ impl Launcher {
                 resolve: (kind == Kind::Install)
                     .then_some(&resolve as &dyn Fn(&ResolveQuestion) -> bool),
             };
-            let approve = |impact: &ChangeImpact| {
+            let review = |impact: &ChangeImpact, sources: Option<&ChangeImpact>| {
+                if cancellation.is_stopped() {
+                    return false;
+                }
                 let (reply, answer) = std::sync::mpsc::channel();
-                post(Worker::World(
-                    WorldQuestion::new(impact, &request.displayed_names),
-                    reply,
-                ))
-                .is_ok()
-                    && answer.recv().unwrap_or(false)
+                let mut question = WorldQuestion::new(impact, &request.displayed_names);
+                if let Some(sources) = sources {
+                    let next = WorldQuestion::new(sources, &request.displayed_names);
+                    question.heading = tr("Review mod updates").into();
+                    question.detail = format!(
+                        "{}\n{}\n\n{}\n{}",
+                        tr("Registry mods"),
+                        question.detail,
+                        tr("Source mods"),
+                        next.detail
+                    );
+                    question.cancel_default |= next.cancel_default;
+                }
+                post(Worker::World(question, reply)).is_ok() && answer.recv().unwrap_or(false)
+            };
+            let approve = |impact: &ChangeImpact| review(impact, None);
+            let authorize = |prepared: &[PreparedSource]| {
+                let question = SourceQuestion {
+                    base: prepared[0].base().into(),
+                    mods: prepared
+                        .iter()
+                        .map(|item| (item.name().into(), item.origin().clone()))
+                        .collect(),
+                };
+                let (reply, answer) = std::sync::mpsc::channel();
+                if post(Worker::Source(question, reply)).is_err() {
+                    return Ok(false);
+                }
+                answer.recv().unwrap_or(Ok(false))
             };
             let result = match kind {
                 Kind::Install => sunrise::install_registry(
@@ -718,6 +1053,37 @@ impl Launcher {
                         .map(|()| InstalledBatch::default()),
                     }
                 }
+                Kind::Source => sunrise::apply_sources(
+                    &request.profile,
+                    request.identity,
+                    &request.sources,
+                    choose,
+                    &cancellation,
+                    hooks,
+                    &authorize,
+                    &approve,
+                )
+                .map(|()| InstalledBatch::default())
+                .map_err(InstallError::Source),
+                Kind::Mixed => {
+                    let done = sunrise::update_registry_and_sources(
+                        &request.profile,
+                        request.identity,
+                        request.mixed_registry,
+                        &mut request.sources,
+                        choose,
+                        hooks,
+                        hooks,
+                        &cancellation,
+                        &authorize,
+                        &review,
+                        || {
+                            let _ = post(Worker::SourcePhase);
+                        },
+                    );
+                    let _ = post(Worker::Mixed(Box::new(done)));
+                    return;
+                }
                 Kind::Update | Kind::UpdateAll => sunrise::update_registry(
                     &request.profile,
                     request.identity,
@@ -754,6 +1120,10 @@ pub(crate) fn stage_label(step: InstallProgress) -> String {
             &[("percent", &format!("{:.0}", f * 100.))],
         ),
         InstallProgress::Preparing => tr("Getting ready…").into(),
+        InstallProgress::Rust(fraction) => trf(
+            "Downloading build tools {percent}%",
+            &[("percent", &format!("{:.0}", fraction * 100.0))],
+        ),
         InstallProgress::Tools { total, .. } => trf(
             "Getting build tools ({size})",
             &[("size", &sunrise_launcher::storage::format_bytes(total))],
@@ -766,7 +1136,7 @@ pub(crate) fn stage_label(step: InstallProgress) -> String {
 
 pub(crate) fn stage_fraction(step: InstallProgress) -> Option<f32> {
     match step {
-        InstallProgress::Downloading(f) => Some(f),
+        InstallProgress::Downloading(f) | InstallProgress::Rust(f) => Some(f),
         InstallProgress::Building(f) => f,
         InstallProgress::Tools { done, total } if total > 0 => Some(done as f32 / total as f32),
         _ => None,
@@ -779,6 +1149,7 @@ fn failure_line(error: &InstallError) -> &'static str {
         InstallError::Host(_) => tr("Native mods can't build on this computer"),
         InstallError::Unproved(_) => tr("Couldn't check that the mods fit"),
         InstallError::NotForVersion(_) => tr("Not available for your version"),
+        InstallError::Source(_) => tr("Couldn’t build on this computer."),
         InstallError::GithubBuild(_) => tr("Could not build the selected mods."),
         InstallError::Download(_) => tr("Download failed. Try again"),
         InstallError::Compile(_) => tr("Couldn't build on your computer"),
@@ -814,6 +1185,8 @@ mod tests {
             release: None,
             displayed_names: BTreeMap::new(),
             github: None,
+            sources: Vec::new(),
+            mixed_registry: Vec::new(),
             view: RequestView {
                 kind: Kind::Install,
                 card: id.into(),
@@ -833,6 +1206,8 @@ mod tests {
                 requests: vec![first.view],
                 stage: InstallProgress::Checking,
                 github: None,
+                source: None,
+                mixed: false,
             }),
             ..Installs::default()
         }

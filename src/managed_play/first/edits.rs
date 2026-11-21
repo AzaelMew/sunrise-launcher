@@ -170,6 +170,23 @@ impl Profile {
     }
 }
 
+pub(crate) fn copy_install_inputs(home: &Path, destination: &Path) -> Result<(), String> {
+    for name in [mod_list::DIR, mod_list::NATIVE_DIR] {
+        let dir = home.join(name);
+        match fs::symlink_metadata(&dir) {
+            Ok(_) => super::super::resources::copy_tree(&dir, &destination.join(name), false, 0)?,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => (),
+            Err(error) => return Err(at(&dir, error)),
+        }
+    }
+    for name in [MANIFEST, mod_list::FILE] {
+        if let Some(bytes) = super::super::optional_bytes(&home.join(name))? {
+            fs::write(destination.join(name), bytes).map_err(|e| at(destination, e))?;
+        }
+    }
+    Ok(())
+}
+
 impl Edit<'_> {
     pub(crate) fn base(&self) -> &str {
         match &self.basis {
@@ -217,25 +234,7 @@ impl Edit<'_> {
             .prefix("candidate-")
             .tempdir_in(self.stage().path())
             .map_err(|e| at(self.stage().path(), e))?;
-        for name in [mod_list::DIR, mod_list::NATIVE_DIR] {
-            let dir = self.home.join(name);
-            match fs::symlink_metadata(&dir) {
-                Ok(_) => super::super::resources::copy_tree(
-                    &dir,
-                    &candidate.path().join(name),
-                    false,
-                    0,
-                )?,
-                Err(error) if error.kind() == io::ErrorKind::NotFound => (),
-                Err(error) => return Err(at(&dir, error)),
-            }
-        }
-        for name in [MANIFEST, mod_list::FILE] {
-            if let Some(bytes) = super::super::optional_bytes(&self.home.join(name))? {
-                fs::write(candidate.path().join(name), bytes)
-                    .map_err(|e| at(candidate.path(), e))?;
-            }
-        }
+        copy_install_inputs(&self.home, candidate.path())?;
         if inputs(candidate.path(), None)? != self.before
             || inputs(&self.home, None)? != self.before
         {
@@ -287,12 +286,26 @@ impl Edit<'_> {
         restored: &BTreeSet<String>,
         authorize: impl FnOnce() -> Result<G, String>,
     ) -> Result<Active, String> {
+        self.publish_install_at(proof, cancellation, restored, authorize, || {})
+    }
+
+    pub(crate) fn publish_install_at<G>(
+        self,
+        proof: CandidateImage,
+        cancellation: &native_mods::Cancellation,
+        restored: &BTreeSet<String>,
+        authorize: impl FnOnce() -> Result<G, String>,
+        finishing: impl FnOnce(),
+    ) -> Result<Active, String> {
         self.publish_inner(
             proof,
             cancellation,
             (None, restored),
             authorize,
-            || Ok(()),
+            || {
+                finishing();
+                Ok(())
+            },
             |_, _| Ok(()),
         )
     }

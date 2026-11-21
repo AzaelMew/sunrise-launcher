@@ -45,9 +45,10 @@ impl Launcher {
 
     /// The strip, for the frame to place above the page: one row, as wide as it is given.
     pub(crate) fn status_strip(&mut self, cx: &mut Context<Self>) -> Option<Div> {
+        use crate::mods_page::install::{stage_fraction, stage_label};
+        use sunrise_launcher::browser::sunrise::InstallProgress;
+        let mixed = self.mixed_update_active();
         if let Some(activity) = self.source_activity() {
-            use crate::mods_page::install::{stage_fraction, stage_label};
-            use sunrise_launcher::browser::sunrise::InstallProgress;
             let step = activity.progress;
             let label = match step {
                 InstallProgress::Publishing => tr("Finishing…").into(),
@@ -81,11 +82,38 @@ impl Launcher {
                             .flex()
                             .flex_col()
                             .gap(px(4.))
+                            .children(mixed.then(|| {
+                                div()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child(tr("Building source mods…"))
+                            }))
                             .child(div().truncate().child(label))
                             .child(crate::widgets::progress_bar(fraction, &self.theme)),
                     )
                     .children(stop),
             );
+        }
+        if mixed {
+            if let Some(step) = self.registry_stage() {
+                let fraction = stage_fraction(step).map(|f| (f, f));
+                return Some(
+                    strip().child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .gap(px(4.))
+                            .child(
+                                div()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child(tr("Updating registry mods…")),
+                            )
+                            .child(div().truncate().child(stage_label(step)))
+                            .child(crate::widgets::progress_bar(fraction, &self.theme)),
+                    ),
+                );
+            }
         }
         let home = self.ui.page == crate::frame::Page::Home;
         if home {

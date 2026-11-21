@@ -25,6 +25,7 @@ pub use bundle::{
     MIXINS_REV, NATIVE_MANIFEST,
 };
 mod planning;
+pub(crate) use planning::source_routes;
 pub use planning::{routes, update_check, UpdateCheck};
 mod internals_sync;
 mod tool;
@@ -980,6 +981,8 @@ pub enum Failed {
     /// Mods this build can't use were saved into worlds: the player chooses (stay, or back the
     /// worlds up and build without them).
     Worlds(Box<AtStake>),
+    /// Transfer or preparation of the pinned compiler failed before mod code ran.
+    Tools(String),
     Other(String),
 }
 
@@ -992,7 +995,7 @@ impl From<String> for Failed {
 impl std::fmt::Display for Failed {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Mods { error, .. } | Self::Other(error) => f.write_str(error),
+            Self::Mods { error, .. } | Self::Tools(error) | Self::Other(error) => f.write_str(error),
             Self::Worlds(stake) => f.write_str(&stake.text),
             Self::Nothing => f.write_str(no_mods_to_build()),
             Self::NoConsent => f.write_str(tr("Native mods run inside your game with your rights; mixins compile code into the game. Allow native mods in Settings, Storage, or pass --trust-native-code.")),
@@ -1738,7 +1741,14 @@ fn pipeline(
     if let Some((game, program, expected_route)) = &prebuilt {
         let checking = std::time::Instant::now();
         linker()?;
-        let rust = rust_toolchain::install(|f| progress(Step::Rust(f)))?;
+        let rust = rust_toolchain::install_cancellable(|f| progress(Step::Rust(f)), cancellation)
+            .map_err(|error| {
+            if cancellation.is_stopped() {
+                Failed::Other(CANCELLED.into())
+            } else {
+                Failed::Tools(error)
+            }
+        })?;
         timed("Checking the Rust toolchain", checking)?;
         progress(Step::PrebuiltMods);
         let compiling = std::time::Instant::now();
@@ -1916,6 +1926,7 @@ fn isolated(
                 });
             }
             Err(Failed::NoConsent) => return Err(Failed::NoConsent),
+            Err(Failed::Tools(error)) => return Err(Failed::Tools(error)),
             Err(Failed::Worlds(stake)) => return Err(Failed::Worlds(stake)),
             Err(Failed::Other(error)) if error == CANCELLED => return Err(Failed::Other(error)),
             Err(Failed::Other(error)) => return Err(said(&skip, error)),

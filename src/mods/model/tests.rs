@@ -682,6 +682,7 @@ fn every_row_fills_the_same_columns_whatever_it_has_to_say() {
             tag: Some("v1.0".into()),
             commit: "a".repeat(40),
             asset: Some("lib.smod".into()),
+            source: None,
             sha256: "b".repeat(64),
         }),
         native: true,

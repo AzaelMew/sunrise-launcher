@@ -208,6 +208,10 @@ impl ChangeImpact {
         self.evidence
     }
 
+    pub(super) fn matches_world_review(&self, reviewed: &[worlds::WorldRisk]) -> bool {
+        self.evidence == reviewed
+    }
+
     fn affected(&self) -> impl Iterator<Item = &worlds::WorldRisk> {
         self.evidence.iter().filter(|world| !world.mods.is_empty())
     }

@@ -20,6 +20,10 @@ use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
+mod source;
+pub(crate) use source::{forward, pack_pasted, pack_pin};
+pub use source::{SourceOrigin, SourceTrack};
+
 /// What a player is told before a mod from GitHub is installed.
 pub const WARNING: &str = "Not reviewed by the Sunrise registry. Native mods run with full access to this computer. Read the source first.";
 
@@ -378,6 +382,8 @@ pub struct Origin {
     pub asset: Option<String>,
     /// The SHA-256 of the installed `.smod`.
     pub sha256: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<SourceOrigin>,
 }
 
 impl Origin {
@@ -395,7 +401,9 @@ impl Origin {
     }
 
     pub fn is_release_asset(&self) -> bool {
-        self.tag.as_deref().is_some_and(ref_ok) && self.asset.as_deref().is_some_and(asset_name)
+        self.source.is_none()
+            && self.tag.as_deref().is_some_and(ref_ok)
+            && self.asset.as_deref().is_some_and(asset_name)
     }
 
     pub(crate) fn matches_archive(&self, id: &str, version: &str, digest: &str) -> bool {
@@ -405,6 +413,14 @@ impl Origin {
             && plain(&self.repo)
             && sunrise_launcher_smod::manifest::revision(&self.commit)
             && self.sha256.eq_ignore_ascii_case(digest)
+            && self.source.as_ref().is_none_or(|source| {
+                source.validate()
+                    && self.asset.is_none()
+                    && match source.track {
+                        SourceTrack::Release => self.tag.as_deref().is_some_and(ref_ok),
+                        SourceTrack::Pinned | SourceTrack::Branch(_) => self.tag.is_none(),
+                    }
+            })
     }
 
     /// What its update is read from: the latest release for a mod from a release, the default
@@ -454,6 +470,7 @@ impl Packed {
             commit: found.commit.clone(),
             asset: asset.map(|a| a.name.clone()),
             sha256: self.sha256.clone(),
+            source: None,
         }
     }
 
@@ -704,41 +721,101 @@ fn fetch_packages(
     Ok(mods)
 }
 
-/// GitHub's archive (`.tar.gz`) of a commit, unpacked into the fresh folder `partial` without links or more than `limit` bytes: its one top folder.
-fn unpack_source(reader: impl std::io::Read, partial: &Path) -> Result<(), String> {
-    let mut archive = tar::Archive::new(reader);
+/// Unpack one fresh, bounded tar tree. Never materialize links, duplicate leaves or path aliases.
+fn unpack_bounded(
+    reader: impl Read,
+    partial: &Path,
+    limit: u64,
+    cancellation: Option<&native_mods::Cancellation>,
+) -> Result<PathBuf, String> {
+    fs::create_dir_all(partial).map_err(|e| e.to_string())?;
+    let mut archive = tar::Archive::new(reader.take(limit + 1));
+    let mut remaining = limit;
+    let mut root = None::<PathBuf>;
+    let mut seen = std::collections::BTreeSet::new();
+    let invalid =
+        || tr("The GitHub source archive contains an invalid or duplicate path.").to_owned();
+    let too_large = || tr("The GitHub mod download is too large.").to_owned();
     for entry in archive.entries().map_err(|e| e.to_string())? {
+        if let Some(cancellation) = cancellation {
+            cancellation.check()?;
+        }
         let mut entry =
             entry.map_err(|e| trf("Source interrupted: {error}", &[("error", &e.to_string())]))?;
+        remaining = remaining
+            .checked_sub(entry.size().saturating_add(512))
+            .ok_or_else(too_large)?;
         let kind = entry.header().entry_type();
-        // Match downloaded sources: horizon-mixins refuses links, which the build does not need.
+        // Ignore links entirely as the legacy importer does; no write may traverse one.
         if !(kind.is_file() || kind.is_dir()) {
             continue;
         }
+        let path = entry.path().map_err(|_| invalid())?;
+        let path = path.to_str().ok_or_else(invalid)?.trim_end_matches('/');
+        let mut parts = path.split('/');
+        let top = parts.next().ok_or_else(invalid)?;
+        if root.as_ref().is_some_and(|old| old.as_os_str() != top)
+            || !path.split('/').all(archive_segment)
+            || (kind.is_file() && parts.next().is_none())
+            || !seen.insert(path.to_lowercase())
+        {
+            return Err(invalid());
+        }
+        root.get_or_insert_with(|| top.into());
         if !entry.unpack_in(partial).map_err(|e| {
             trf(
                 "Could not unpack the source: {error}",
                 &[("error", &e.to_string())],
             )
         })? {
-            return Err(tr("The source archive contains a path outside its folder.").into());
+            return Err(invalid());
         }
     }
-    Ok(())
+    // `Take` alone can make a truncated stream look like ordinary tar EOF. Drain the remaining
+    // compressed member through its checksum and detect a limit hit before accepting it.
+    let mut reader = archive.into_inner();
+    std::io::copy(&mut reader, &mut std::io::sink()).map_err(|e| e.to_string())?;
+    if reader.limit() == 0 {
+        return Err(too_large());
+    }
+    root.map(|name| partial.join(name))
+        .ok_or_else(|| tr("The source archive is empty.").into())
+}
+
+fn archive_segment(part: &str) -> bool {
+    let device = part
+        .split('.')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_uppercase();
+    !part.is_empty()
+        && !part.ends_with(['.', ' '])
+        && !part
+            .chars()
+            .any(|c| c.is_control() || matches!(c, '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|'))
+        && !matches!(
+            device.as_str(),
+            "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
+        )
+        && !["COM", "LPT"].iter().any(|prefix| {
+            device.strip_prefix(prefix).is_some_and(|n| {
+                matches!(
+                    n,
+                    "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
+                )
+            })
+        })
 }
 
 fn unpack_archive(url: &str, partial: &Path, limit: u64) -> Result<PathBuf, FetchError> {
-    fs::create_dir_all(partial).map_err(|e| FetchError::Package(e.to_string()))?;
     let response = backend::get(url).map_err(FetchError::Transfer)?;
-    let reader = flate2::read::GzDecoder::new(response.into_reader()).take(limit + 1);
-    unpack_source(reader, partial).map_err(FetchError::Package)?;
-    // The archive's one top folder (<repo>-<commit>/) is the source's root.
-    fs::read_dir(partial)
-        .map_err(|e| FetchError::Package(e.to_string()))?
-        .flatten()
-        .map(|e| e.path())
-        .find(|p| p.is_dir())
-        .ok_or_else(|| FetchError::Package(tr("The source archive is empty.").into()))
+    unpack_bounded(
+        flate2::read::GzDecoder::new(response.into_reader()),
+        partial,
+        limit,
+        None,
+    )
+    .map_err(FetchError::Package)
 }
 
 /// Which of `found` to install: the one named, all of them, or the only one. Several with no

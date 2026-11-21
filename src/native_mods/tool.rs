@@ -88,6 +88,22 @@ impl Cancellation {
         Ok(permission)
     }
 
+    /// Check the attempt before each bounded download or extraction read.
+    pub(crate) fn reader<R: std::io::Read>(&self, reader: R) -> impl std::io::Read + use<'_, R> {
+        struct Reader<'a, R>(&'a Cancellation, R);
+        impl<R: std::io::Read> std::io::Read for Reader<'_, R> {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                self.0.check().map_err(std::io::Error::other)?;
+                self.1.read(buf)
+            }
+        }
+        Reader(self, reader)
+    }
+
+    pub fn is_stopped(&self) -> bool {
+        self.state().stopped
+    }
+
     /// Stops this attempt and the SDK tool it started, if any.
     pub fn stop(&self) {
         let mut state = self.state();

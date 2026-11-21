@@ -35,6 +35,17 @@ pub struct FirstBuild {
 }
 
 impl FirstBuild {
+    pub(crate) fn base_tag(&self) -> &str {
+        &self.base
+    }
+
+    /// Two cached choices prove the same exact base bytes, not merely the same tag.
+    pub(crate) fn same_cached_base(&self, other: &Self) -> bool {
+        self.base == other.base
+            && matches!((&self.selection, &other.selection),
+            (Selection::Cached { base: a, .. }, Selection::Cached { base: b, .. }) if a == b)
+    }
+
     pub fn installed(image: &str) -> Result<Self, String> {
         let base = if native_mods::is_native(image) {
             let data = native_mods::about(image).ok_or_else(unsettled)?;
@@ -262,6 +273,10 @@ impl Profile {
 
     pub(crate) fn lock_inputs(&self) -> Result<HomeLockGuard, String> {
         game_lock(self.home())
+    }
+
+    pub(crate) fn has_accepted_bootstrap(&self) -> Result<bool, String> {
+        self.0.has_bootstrap()
     }
 
     pub(crate) fn has_pending_bootstrap(&self) -> Result<bool, String> {
@@ -727,7 +742,7 @@ pub(super) fn game_lock(home: &Path) -> Result<HomeLockGuard, String> {
 }
 
 mod edits;
-pub(crate) use edits::{CandidateImage, Edit};
+pub(crate) use edits::{copy_install_inputs, CandidateImage, Edit};
 
 #[cfg(test)]
 mod tests;
