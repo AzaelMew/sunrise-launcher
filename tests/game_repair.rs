@@ -58,6 +58,40 @@ fn restarting_restores_the_previous_build_until_the_replacement_is_complete() {
 }
 
 #[test]
+fn restarting_recovers_an_incomplete_predecessor_without_marking_it_installed() {
+    for (detached, uncommitted) in [
+        (false, None),
+        (true, None),
+        (true, Some(true)),
+        (true, Some(false)),
+    ] {
+        let home = tempfile::tempdir().unwrap();
+        let versions = home.path().join("launcher/versions");
+        let repair = versions.join(format!(".repair-{TAG}"));
+        let target = versions.join(TAG);
+        let previous = repair.join("previous");
+        fs::create_dir_all(&repair).unwrap();
+        let old = if detached { &previous } else { &target };
+        fs::create_dir(old).unwrap();
+        fs::write(old.join("origin"), "before").unwrap();
+        if let Some(visible) = uncommitted {
+            let candidate = if visible {
+                target.clone()
+            } else {
+                repair.join("incomplete")
+            };
+            fs::create_dir(&candidate).unwrap();
+            fs::write(candidate.join("origin"), "uncommitted").unwrap();
+        }
+        let data = installed_on_restart(home.path());
+        assert_eq!(data["installed"], serde_json::json!([]));
+        assert_eq!(fs::read_to_string(target.join("origin")).unwrap(), "before");
+        assert!(!target.join(".installed").exists());
+        assert!(!repair.exists());
+    }
+}
+
+#[test]
 fn next_install_recovers_before_requiring_a_download() {
     const ACTOR: &str = "SUNRISE_TEST_REATTACH_ON_INSTALL";
     if std::env::var_os(ACTOR).is_none() {

@@ -2667,8 +2667,24 @@ mod tests {
             assert_eq!(fs::read(&client).unwrap(), b"different game");
         }
         install_release(old, InstallIntent::Repair).unwrap();
-        assert_eq!(fs::read(client).unwrap(), b"release game");
+        assert_eq!(fs::read(&client).unwrap(), b"release game");
         assert!(backend::installed().iter().any(|tag| tag == old));
+        // A legacy interrupted install occupied the tag without committing it. Explicit
+        // Repair uses the same exclusive staged publication, but cannot reuse its resources.
+        let old_root = backend::version_dir(old);
+        fs::remove_file(old_root.join(".installed")).unwrap();
+        fs::write(&client, b"interrupted game").unwrap();
+        prepare(old);
+        assert!(!backend::installed().iter().any(|tag| tag == old));
+        install_release(old, InstallIntent::Repair).unwrap();
+        assert_eq!(fs::read(client).unwrap(), b"release game");
+        assert!(old_root.join(".installed").is_file());
+        assert!(!backend::resources(old)
+            .join("sunrise-resources.json")
+            .exists());
+        assert!(!backend::versions_dir()
+            .join(format!(".repair-{old}"))
+            .exists());
         prepare(old);
         let base = base_for(None, &backend::installed(), false).unwrap();
         assert_eq!(base, old);

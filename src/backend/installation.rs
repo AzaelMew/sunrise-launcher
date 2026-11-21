@@ -24,38 +24,64 @@ pub(crate) fn valid_archive_digest(digest: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
+fn completion_marker(tree: &Path) -> std::io::Result<bool> {
+    use std::io::ErrorKind;
+    match fs::symlink_metadata(tree.join(COMPLETE)) {
+        Ok(meta) if meta.is_file() && !crate::native_cache::linked(&meta) => Ok(true),
+        Ok(_) => Err(ErrorKind::InvalidData.into()),
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(e),
+    }
+}
+
 /// The old tree's move to `previous` is the recovery marker. The replacement commits
 /// when the complete, flushed tree becomes visible under its version name.
 fn recover_previous(repair: &Path, target: &Path) -> std::io::Result<()> {
     use std::io::ErrorKind;
-    let plain = |meta: &fs::Metadata| !crate::native_cache::linked(meta);
+    let plain = |meta: &fs::Metadata| meta.is_dir() && !crate::native_cache::linked(meta);
     match fs::symlink_metadata(repair) {
-        Ok(meta) if meta.is_dir() && plain(&meta) => {}
+        Ok(meta) if plain(&meta) => {}
         Ok(_) => return Err(ErrorKind::InvalidData.into()),
         Err(e) if e.kind() == ErrorKind::NotFound => return Ok(()),
         Err(e) => return Err(e),
     }
-    let complete = |tree: &Path| {
-        fs::symlink_metadata(tree.join(COMPLETE)).is_ok_and(|meta| meta.is_file() && plain(&meta))
-    };
-    let incomplete = match fs::symlink_metadata(target) {
-        Ok(meta) if !meta.is_dir() || !plain(&meta) => return Err(ErrorKind::InvalidData.into()),
-        Ok(_) if complete(target) => return fs::remove_dir_all(repair),
-        Ok(_) => true,
-        Err(e) if e.kind() == ErrorKind::NotFound => false,
+    let visible = match fs::symlink_metadata(target) {
+        Ok(meta) if plain(&meta) => Some(completion_marker(target)?),
+        Ok(_) => return Err(ErrorKind::InvalidData.into()),
+        Err(e) if e.kind() == ErrorKind::NotFound => None,
         Err(e) => return Err(e),
     };
+    if visible == Some(true) {
+        return fs::remove_dir_all(repair);
+    }
     let previous = repair.join("previous");
-    let previous_meta = fs::symlink_metadata(&previous)?;
-    if !previous_meta.is_dir() || !plain(&previous_meta) || !complete(&previous) {
-        return Err(ErrorKind::InvalidData.into());
+    match fs::symlink_metadata(&previous) {
+        Ok(meta) if plain(&meta) => {
+            completion_marker(&previous)?;
+        }
+        Ok(_) => return Err(ErrorKind::InvalidData.into()),
+        // The launcher can stop after creating the marker, before moving a plain
+        // incomplete predecessor. An empty marker with its visible tree is harmless.
+        Err(e) if e.kind() == ErrorKind::NotFound && visible.is_some() => {
+            return fs::remove_dir(repair);
+        }
+        Err(e) => return Err(e),
     }
     // A repair from an earlier launcher can leave a visible uncommitted tree.
-    if incomplete {
-        durable::move_new_directory(target, &repair.join("incomplete"))?;
+    let discarded = repair.join("incomplete");
+    if visible.is_some() {
+        durable::move_new_directory(target, &discarded)?;
+    }
+    // Clear the discarded tree before restoring the predecessor. A stop after the
+    // restore then leaves just the empty marker, even when the predecessor is incomplete.
+    match fs::symlink_metadata(&discarded) {
+        Ok(meta) if plain(&meta) => fs::remove_dir_all(&discarded)?,
+        Ok(_) => return Err(ErrorKind::InvalidData.into()),
+        Err(e) if e.kind() == ErrorKind::NotFound => {}
+        Err(e) => return Err(e),
     }
     durable::move_new_directory(&previous, target)?;
-    fs::remove_dir_all(repair)
+    fs::remove_dir(repair)
 }
 
 pub(super) fn recover_replacement(tag: &str) -> Result<(), String> {
@@ -223,8 +249,8 @@ pub(crate) fn install_as(
     Ok(())
 }
 
-/// Reconcile an explicit release install with an existing complete version. The caller
-/// holds the exclusive publication fence. `false` means there was no earlier version.
+/// Reconcile an explicit release install with a plain existing version, even if it never
+/// completed. The caller holds the exclusive publication fence and ruled out references.
 fn replace_installed(
     registry: &std::sync::Arc<Registry>,
     tag: &str,
@@ -248,22 +274,20 @@ fn replace_installed(
     if in_use(tag) {
         return Err(cache_error(crate::storage::Error::Busy));
     }
-    if !fs::symlink_metadata(target.join(COMPLETE))
-        .is_ok_and(|meta| meta.is_file() && !crate::native_cache::linked(&meta))
-    {
-        return Err(existing_build(tag));
-    }
-    let from = resources_at(target);
-    let to = resources_at(top);
-    if !to.exists()
-        && read_json(&from.join(RESOURCES_MANIFEST))
-            .is_some_and(|manifest| resources_compatible(target, top, &manifest))
-    {
-        copy_dir_except(&from, &to, Some(&from.join(crate::preparer::DATA_FILE)))
-            .map_err(|e| e.to_string())?;
-    }
-    if target.join(AUTO_INSTALLED).is_file() {
-        fs::write(top.join(AUTO_INSTALLED), "").map_err(|e| e.to_string())?;
+    // Only a complete predecessor has prepared-resource or automatic-install state to keep.
+    if completion_marker(target).map_err(|e| e.to_string())? {
+        let from = resources_at(target);
+        let to = resources_at(top);
+        if !to.exists()
+            && read_json(&from.join(RESOURCES_MANIFEST))
+                .is_some_and(|manifest| resources_compatible(target, top, &manifest))
+        {
+            copy_dir_except(&from, &to, Some(&from.join(crate::preparer::DATA_FILE)))
+                .map_err(|e| e.to_string())?;
+        }
+        if target.join(AUTO_INSTALLED).is_file() {
+            fs::write(top.join(AUTO_INSTALLED), "").map_err(|e| e.to_string())?;
+        }
     }
     drop(tree);
     fs::create_dir(repair).map_err(|e| e.to_string())?;
