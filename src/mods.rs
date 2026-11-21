@@ -27,6 +27,7 @@ use sunrise_launcher::browser::{
     installed::{self, Entry},
     mod_list, sunrise, Kind, SourceId,
 };
+use sunrise_launcher::instances::Channel;
 
 mod actions;
 mod build_modal;
@@ -466,6 +467,14 @@ fn read_local(home: &Path, archive_names: &mut HashMap<String, ArchiveName>) -> 
         .collect()
 }
 
+impl crate::instances_page::Instances {
+    fn discover_channel(&self, selected: Option<&str>) -> Channel {
+        self.selected(selected)
+            .map(|profile| profile.channel)
+            .unwrap_or_default()
+    }
+}
+
 impl Launcher {
     /// The Mods screen for `self.ui.page`: Discover, Installed or a mod's page.
     pub(crate) fn mods(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
@@ -513,8 +522,13 @@ impl Launcher {
             Page::Installed => self.installed(window, &have_focus, cx),
             Page::PackFind => self.pack_find(window, &find_focus, cx),
             Page::PackProject => self.pack_project(cx),
-            _ if self.nightly_selected() => self.nightly_discover(window, &find_focus, cx),
-            _ => self.discover(window, &find_focus, cx),
+            _ => match self
+                .instances
+                .discover_channel(self.settings.instance.as_deref())
+            {
+                Channel::Stable => self.discover(window, &find_focus, cx),
+                Channel::Nightly => self.nightly_discover(window, &find_focus, cx),
+            },
         }
     }
 
@@ -1155,8 +1169,13 @@ impl Launcher {
         let focused = focus.is_focused(window);
         let packs = matches!(self.ui.page, Page::Packs | Page::PackFind);
         let placeholder: SharedString = match (packs, installed) {
-            (false, false) if self.nightly_selected() => tr("Search Nightly mods"),
-            (false, false) => tr("Search mods"),
+            (false, false) => match self
+                .instances
+                .discover_channel(self.settings.instance.as_deref())
+            {
+                Channel::Stable => tr("Search mods"),
+                Channel::Nightly => tr("Search source projects"),
+            },
             (false, true) => tr("Search your mods"),
             (true, false) => match self.ui.mods.packs.scope {
                 pack_discover::Scope::Resource => tr("Search resource packs"),
@@ -1290,6 +1309,49 @@ impl Launcher {
 #[cfg(test)]
 mod enabled_tests {
     use super::*;
+
+    #[test]
+    fn discover_changes_catalogues_with_the_selected_profile() {
+        let stable = instances::Instance {
+            id: instances::DEFAULT.into(),
+            name: "Stable profile".into(),
+            kind: instances::Kind::Default,
+            work: "stable".into(),
+            home: "stable".into(),
+            incarnation: None,
+            icon: None,
+            group: None,
+            version: Some("imported-2026-11-20".into()),
+            channel: Channel::Stable,
+            native_profile: native_mods::Profile::Optimized,
+            played: Default::default(),
+            last_played: None,
+            launch: Default::default(),
+        };
+        let nightly = instances::Instance {
+            id: "workshop".into(),
+            name: "Nightly profile".into(),
+            kind: instances::Kind::Own,
+            work: "workshop".into(),
+            home: "workshop".into(),
+            channel: Channel::Nightly,
+            ..stable.clone()
+        };
+        let profiles = crate::instances_page::Instances {
+            list: vec![stable, nightly],
+            ..Default::default()
+        };
+        assert_eq!(profiles.discover_channel(None), Channel::Stable);
+        assert_eq!(
+            profiles.discover_channel(Some("workshop")),
+            Channel::Nightly
+        );
+        assert_eq!(profiles.discover_channel(None), Channel::Stable);
+        assert_eq!(
+            crate::instances_page::Instances::default().discover_channel(None),
+            Channel::Nightly,
+        );
+    }
 
     #[test]
     fn reopening_the_same_mod_discards_previous_detail_replies() {

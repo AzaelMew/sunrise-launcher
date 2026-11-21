@@ -4,7 +4,6 @@ use super::*;
 use crate::frame::button;
 use std::time::{Duration, SystemTime};
 use sunrise_launcher::browser::sunrise::sources::{self, Catalogue, Source};
-use sunrise_launcher::instances::Channel;
 
 mod jobs;
 mod project;
@@ -17,7 +16,6 @@ const FRESH: Duration = Duration::from_secs(600);
 
 #[derive(Default)]
 pub(super) struct State {
-    overrides: HashMap<String, Channel>,
     catalogue: Option<Catalogue>,
     reading: bool,
     pub(super) open: Option<jobs::Open>,
@@ -26,41 +24,9 @@ pub(super) struct State {
     pub(super) work: jobs::Work,
 }
 
-fn browse_channel(overrides: &HashMap<String, Channel>, profile: &str, saved: Channel) -> Channel {
-    overrides.get(profile).copied().unwrap_or(saved)
-}
-
 impl Launcher {
-    pub(super) fn nightly_selected(&self) -> bool {
-        let instance = self.selected_instance();
-        browse_channel(
-            &self.ui.mods.nightly.overrides,
-            instance.map_or(instances::DEFAULT, |i| i.id.as_str()),
-            instance.map_or(Channel::Stable, |i| i.channel),
-        ) == Channel::Nightly
-    }
-
-    pub(super) fn source_catalogue_bar(&self, cx: &mut Context<Self>) -> Div {
-        let nightly = self.nightly_selected();
-        let views = [(tr("Stable"), false), (tr("Nightly"), true)]
-            .into_iter()
-            .map(|(label, is_nightly)| {
-                let choose: Choose = Rc::new(move |this, _| {
-                    let profile = this
-                        .selected_instance()
-                        .map_or_else(|| instances::DEFAULT.to_owned(), |i| i.id.clone());
-                    let channel = if is_nightly {
-                        Channel::Nightly
-                    } else {
-                        Channel::Stable
-                    };
-                    this.ui.mods.nightly.overrides.insert(profile, channel);
-                    this.ui.mods.menu = None;
-                });
-                (label.into(), is_nightly == nightly, choose)
-            })
-            .collect();
-        let target = self.nightly_target_name();
+    pub(super) fn discover_profile_line(&self, show_source_warning: bool) -> Div {
+        let target = self.discover_target_name();
         div()
             .flex()
             .flex_none()
@@ -68,17 +34,16 @@ impl Launcher {
             .items_center()
             .gap_x(px(10.))
             .gap_y(px(4.))
-            .child(choices("mod-catalogue", views, cx).gap(px(3.)))
-            .child(muted(if nightly {
-                tr("Build directly from GitHub. Listed source code is not reviewed.")
-            } else {
-                tr("Reviewed releases from the Sunrise registry.")
-            }))
+            .when(show_source_warning, |line| {
+                line.child(muted(tr(
+                    "Build directly from GitHub. Listed source code is not reviewed.",
+                )))
+            })
             .child(div().flex_1())
             .child(muted(trf("Profile: {build}", &[("build", &target)])))
     }
 
-    pub(super) fn nightly_target_name(&self) -> String {
+    pub(super) fn discover_target_name(&self) -> String {
         self.selected_instance()
             .and_then(|instance| self.profile_target(instance))
             .map_or_else(
@@ -123,7 +88,7 @@ impl Launcher {
             .p(px(24.))
             .text_color(c(palette().text))
             .child(header)
-            .child(self.source_catalogue_bar(cx))
+            .child(self.discover_profile_line(true))
             .children(self.strip(cx));
         let Some(catalogue) = &self.ui.mods.nightly.catalogue else {
             return page
@@ -341,23 +306,6 @@ fn source_time(time: SystemTime) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn catalogue_overrides_apply_only_to_the_browsed_profile() {
-        let overrides = HashMap::from([("garden".into(), Channel::Nightly)]);
-        assert_eq!(
-            browse_channel(&overrides, "garden", Channel::Stable),
-            Channel::Nightly
-        );
-        assert_eq!(
-            browse_channel(&overrides, "farm", Channel::Stable),
-            Channel::Stable
-        );
-        assert_eq!(
-            browse_channel(&overrides, "grove", Channel::Nightly),
-            Channel::Nightly
-        );
-    }
 
     #[test]
     fn compact_and_wide_catalogues_keep_card_width() {

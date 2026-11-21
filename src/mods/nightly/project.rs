@@ -166,7 +166,7 @@ impl Launcher {
             .child(super::super::project::about_row(tr("Source"), pin))
             .child(super::super::project::about_row(
                 tr("Game build"),
-                self.nightly_target_name(),
+                self.discover_target_name(),
             ))
             .children(offline.then(|| note(tr("Connect to check the source and build this mod."))))
             .children((!offline && !listed).then(|| {

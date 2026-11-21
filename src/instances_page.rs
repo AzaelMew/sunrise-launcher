@@ -37,6 +37,13 @@ pub(super) struct Instances {
     pub(super) icons: HashMap<(String, u32), Option<Arc<RenderImage>>>,
 }
 
+impl Instances {
+    pub(super) fn selected(&self, id: Option<&str>) -> Option<&Instance> {
+        let id = id.unwrap_or(instances::DEFAULT);
+        self.list.iter().find(|i| i.id == id).or(self.list.first())
+    }
+}
+
 impl Launcher {
     pub(super) fn reload_instances(&mut self) {
         self.instances.list = instances::list();
@@ -56,13 +63,7 @@ impl Launcher {
 
     /// The instance Play starts.
     pub(super) fn selected_instance(&self) -> Option<&Instance> {
-        let id = self
-            .settings
-            .instance
-            .as_deref()
-            .unwrap_or(instances::DEFAULT);
-        let list = &self.instances.list;
-        list.iter().find(|i| i.id == id).or(list.first())
+        self.instances.selected(self.settings.instance.as_deref())
     }
 
     /// The profile's Play target, including a build Play will have to install first.
