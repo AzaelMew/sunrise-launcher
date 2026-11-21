@@ -14,8 +14,18 @@ use sunrise_launcher_smod::{index, manifest};
 
 mod github;
 mod readme;
+pub(crate) use github::{branch_ahead, github_ready, pasted_source};
 pub use github::{details, resolve, resolve_batch, Details, Failure, SourceCommit};
 pub use readme::{readme_image, Readme, ReadmeImage};
+
+/// Proven origin of a manual GitHub source install, separate from release assets.
+pub(crate) struct PastedPin {
+    pub(crate) repo: String,
+    pub(crate) repo_id: u64,
+    pub(crate) track: crate::github_mods::SourceTrack,
+    pub(crate) published_at: Option<String>,
+    pub(crate) tag: Option<String>,
+}
 
 const FRESH: Duration = Duration::from_secs(600);
 const MAX_CATALOG: u64 = 2 << 20;
@@ -128,11 +138,9 @@ impl Source {
     }
 
     fn validate_identity(&self) -> Result<(), String> {
-        let link = format!("https://github.com/{}", self.repo);
         if !manifest::valid_mod_id(&self.id)
             || self.repo_id == 0
-            || self.repo.split('/').count() != 2
-            || super::github_repo(&link).as_deref() != Some(link.as_str())
+            || !github::valid_repo(&self.repo)
             || !safe_path(&self.manifest)
             || self.manifest.rsplit('/').next() != Some(manifest::MANIFEST)
             || matches!(&self.tracker, Tracker::Branch(branch) if !safe_ref(branch) || branch.starts_with('-'))

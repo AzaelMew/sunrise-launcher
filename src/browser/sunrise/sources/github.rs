@@ -1,6 +1,9 @@
 //! Explicit GitHub inspections. No code here fetches archives or runs mod code.
 use super::{bounded, digest, readme, safe_path, safe_ref, Source, Tracker, FRESH};
 use crate::i18n::tr;
+
+mod pasted;
+pub(crate) use pasted::{branch_ahead, pasted_source};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
@@ -32,6 +35,49 @@ pub enum Failure {
 struct Release {
     tag: String,
     published_at: String,
+}
+
+#[derive(Deserialize)]
+struct Repository {
+    id: u64,
+    full_name: String,
+    private: bool,
+    default_branch: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct GithubRelease {
+    tag_name: String,
+    published_at: Option<String>,
+    draft: bool,
+    prerelease: bool,
+}
+
+impl GithubRelease {
+    fn published(self) -> Result<Release, Failure> {
+        let published_at = self
+            .published_at
+            .filter(|time| chrono::DateTime::parse_from_rfc3339(time).is_ok())
+            .ok_or(Failure::RefUnavailable)?;
+        if self.draft || !safe_ref(&self.tag_name) {
+            return Err(Failure::RefUnavailable);
+        }
+        Ok(Release {
+            tag: self.tag_name,
+            published_at,
+        })
+    }
+}
+
+pub(super) fn valid_repo(repo: &str) -> bool {
+    let url = format!("https://github.com/{repo}");
+    crate::browser::sunrise::github_repo(&url).as_deref() == Some(url.as_str())
+}
+
+#[derive(Clone, Copy)]
+enum RefKind {
+    Head,
+    Tag,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -136,6 +182,16 @@ impl Github {
         )
     }
 
+    fn ready(&self, state: &mut State, now: SystemTime) -> Result<(), Failure> {
+        if let Some(&(until, retry_at)) = state.backoff.get(&self.cache) {
+            if now < until {
+                return Err(Failure::RateLimited { retry_at });
+            }
+            state.backoff.remove(&self.cache);
+        }
+        Ok(())
+    }
+
     fn fetch(
         &self,
         state: &mut State,
@@ -144,12 +200,7 @@ impl Github {
         max: u64,
     ) -> Result<Option<Vec<u8>>, Failure> {
         let now = SystemTime::now();
-        if let Some(&(until, retry_at)) = state.backoff.get(&self.cache) {
-            if now < until {
-                return Err(Failure::RateLimited { retry_at });
-            }
-            state.backoff.remove(&self.cache);
-        }
+        self.ready(state, now)?;
         #[cfg(test)]
         REQUESTS.set(REQUESTS.get() + 1);
         if let Some(root) = &self.fixture {
@@ -294,55 +345,53 @@ impl Github {
         )
     }
 
-    fn resolve_ref(&self, state: &mut State, source: &Source) -> Result<Pin, Failure> {
-        #[derive(Deserialize)]
-        struct Repository {
-            id: u64,
-            full_name: String,
-            private: bool,
-        }
-        let repo = source.repo();
+    fn repository(&self, state: &mut State, repo: &str) -> Result<Repository, Failure> {
         let shown: Repository = self
             .api(state, repo, &[], None)?
             .ok_or(Failure::RepositoryUnavailable)?;
-        if shown.private || shown.id != source.repo_id() || shown.full_name != repo {
+        if shown.private || shown.id == 0 || !shown.full_name.eq_ignore_ascii_case(repo) {
             return Err(Failure::RepositoryUnavailable);
         }
-        let release = if source.tracker() == &Tracker::Release {
-            #[derive(Deserialize)]
-            struct Latest {
-                tag_name: String,
-                published_at: Option<String>,
-                draft: bool,
-                prerelease: bool,
+        Ok(shown)
+    }
+
+    fn resolve_ref(&self, state: &mut State, source: &Source) -> Result<Pin, Failure> {
+        let repo = source.repo();
+        let shown = self.repository(state, repo)?;
+        if shown.id != source.repo_id() || shown.full_name != repo {
+            return Err(Failure::RepositoryUnavailable);
+        }
+        let (sha, release) = match source.tracker() {
+            Tracker::Branch(name) => (self.ref_commit(state, repo, RefKind::Head, name)?, None),
+            Tracker::Release => {
+                let latest: GithubRelease = self
+                    .api(state, repo, &["releases", "latest"], None)?
+                    .ok_or(Failure::RefUnavailable)?;
+                if latest.prerelease {
+                    return Err(Failure::RefUnavailable);
+                }
+                let release = latest.published()?;
+                let sha = self.ref_commit(state, repo, RefKind::Tag, &release.tag)?;
+                (sha, Some(release))
             }
-            let latest: Latest = self
-                .api(state, repo, &["releases", "latest"], None)?
-                .ok_or(Failure::RefUnavailable)?;
-            let published_at = latest
-                .published_at
-                .filter(|time| chrono::DateTime::parse_from_rfc3339(time).is_ok())
-                .ok_or(Failure::RefUnavailable)?;
-            if latest.draft || latest.prerelease || !safe_ref(&latest.tag_name) {
-                return Err(Failure::RefUnavailable);
-            }
-            Some(Release {
-                tag: latest.tag_name,
-                published_at,
-            })
-        } else {
-            None
         };
-        let (under, name) = match source.tracker() {
-            Tracker::Branch(branch) => ("heads", branch.as_str()),
-            Tracker::Release => (
-                "tags",
-                release
-                    .as_ref()
-                    .expect("release tracker has a tag")
-                    .tag
-                    .as_str(),
-            ),
+        Ok(Pin {
+            sha: sha.ok_or(Failure::RefUnavailable)?,
+            release,
+        })
+    }
+
+    /// `None` is an absent exact ref, not a malformed response or an unprovable object.
+    fn ref_commit(
+        &self,
+        state: &mut State,
+        repo: &str,
+        kind: RefKind,
+        name: &str,
+    ) -> Result<Option<String>, Failure> {
+        let under = match kind {
+            RefKind::Head => "heads",
+            RefKind::Tag => "tags",
         };
         #[derive(Deserialize)]
         struct Object {
@@ -356,9 +405,10 @@ impl Github {
             name: String,
             object: Object,
         }
-        let found: Ref = self
-            .api(state, repo, &["git", "ref", under, name], None)?
-            .ok_or(Failure::RefUnavailable)?;
+        let Some(found): Option<Ref> = self.api(state, repo, &["git", "ref", under, name], None)?
+        else {
+            return Ok(None);
+        };
         if found.name != format!("refs/{under}/{name}") {
             return Err(Failure::RefUnavailable);
         }
@@ -369,12 +419,9 @@ impl Github {
                 break;
             }
             if object.kind == "commit" {
-                return Ok(Pin {
-                    sha: object.sha,
-                    release,
-                });
+                return Ok(Some(object.sha));
             }
-            if under != "tags" || object.kind != "tag" {
+            if !matches!(kind, RefKind::Tag) || object.kind != "tag" {
                 break;
             }
             #[derive(Deserialize)]
@@ -401,7 +448,9 @@ impl Github {
             .join(format!("ref-{}.json", digest(key.as_bytes())));
         let last = state.resolves.get(&path);
         if let Some(last) = last.filter(|last| {
-            last.when.elapsed() < FRESH && refresh.is_none_or(|requested| last.when >= requested)
+            last.when.elapsed() < FRESH
+                && refresh.is_none_or(|requested| last.when >= requested)
+                && !matches!(last.failure, Some(Failure::RateLimited { .. }))
         }) {
             return last.clone();
         }
@@ -542,7 +591,10 @@ fn inspect(
         };
     };
     if failure.is_none() {
-        failure = github.manifest(&mut state, source, &pin.sha).err();
+        failure = github
+            .ready(&mut state, SystemTime::now())
+            .and_then(|()| github.manifest(&mut state, source, &pin.sha))
+            .err();
     }
     let readme = if include_readme {
         // Never make extra requests from a saved ref. A missing/invalid manifest is different:
@@ -573,6 +625,14 @@ fn inspect(
         readme,
         error: failure,
     }
+}
+
+/// Share the anonymous cooldown with source transfers outside this metadata API.
+pub(crate) fn github_ready() -> Result<(), Failure> {
+    Github::current().ready(
+        &mut STATE.lock().unwrap_or_else(|e| e.into_inner()),
+        SystemTime::now(),
+    )
 }
 
 pub fn details(source: &Source, refresh: bool) -> Details {
