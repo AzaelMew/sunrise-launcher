@@ -28,11 +28,11 @@ pub const FRESH_SECS: u64 = 5 * 60;
 
 /// What one source answered.
 #[derive(Debug)]
-pub(crate) enum Answer {
+enum Answer {
     /// 200, with the ETag GitHub gave (none from the mirror).
-    Fresh(serde_json::Value, Option<String>),
-    /// 304: the copy on disk is still current.
-    NotModified,
+    Fresh(Page, Option<String>),
+    /// 304: the copy on disk is still current. The reply can update its pagination link.
+    NotModified(Option<bool>),
     NotFound,
     /// 429, or 403 with GitHub's rate-limit headers.
     RateLimited,
@@ -55,47 +55,110 @@ pub(crate) enum CachePolicy {
 /// GitHub's JSON when the resource may not exist, such as a repository's latest release.
 /// A 404 is None, distinct from a connection or rate-limit failure.
 pub fn json_optional(url: &str) -> Result<Option<serde_json::Value>, String> {
-    json_optional_with_policy(url, CachePolicy::PreferCache)
+    Ok(page(Request {
+        url,
+        policy: CachePolicy::PreferCache,
+        paginated: false,
+    })?
+    .map(|page| page.body))
 }
 
-pub(crate) fn json_optional_with_policy(
-    url: &str,
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+struct Page {
+    body: serde_json::Value,
+    /// Missing when a legacy mirror stripped Link, or a saved copy predates pagination.
+    #[serde(default)]
+    next: Option<bool>,
+}
+
+#[derive(Clone, Copy)]
+struct Request<'a> {
+    url: &'a str,
     policy: CachePolicy,
-) -> Result<Option<serde_json::Value>, String> {
+    paginated: bool,
+}
+
+const RELEASES_PER_PAGE: usize = 100;
+// SDK and dated Nightly releases accumulate much faster than Stable releases. Bound the walk
+// well below GitHub's anonymous hourly limit without mistaking a partial feed for the whole list.
+const MAX_RELEASE_PAGES: usize = 32;
+
+/// Only a complete sequence of JSON arrays counts as a checked release feed.
+pub(crate) fn release_list(
+    repo: &str,
+    policy: CachePolicy,
+) -> Result<Vec<serde_json::Value>, String> {
+    release_list_with(repo, policy, page)
+}
+
+fn release_list_with(
+    repo: &str,
+    policy: CachePolicy,
+    fetch: impl Fn(Request<'_>) -> Result<Option<Page>, String>,
+) -> Result<Vec<serde_json::Value>, String> {
+    let first = format!("{API}/repos/{repo}/releases?per_page={RELEASES_PER_PAGE}");
+    let mut releases = Vec::new();
+    for number in 1..=MAX_RELEASE_PAGES {
+        // GitHub can spell Link targets /repositories/<id>/releases. Follow its next relation,
+        // not the response's URL: each page keeps our configured repo, mirror path and credentials.
+        let next_url = (number > 1).then(|| format!("{first}&page={number}"));
+        let url = next_url.as_deref().unwrap_or(&first);
+        let page = fetch(Request {
+            url,
+            policy,
+            paginated: true,
+        })?
+        .ok_or_else(|| format!("{url} answered 404"))?;
+        let serde_json::Value::Array(items) = page.body else {
+            return Err(format!("{url} didn't answer with a release list."));
+        };
+        releases.extend(items);
+        if page.next != Some(true) {
+            return Ok(releases);
+        }
+    }
+    Err(format!(
+        "{repo}'s release list exceeds {MAX_RELEASE_PAGES} pages."
+    ))
+}
+
+fn page(request: Request<'_>) -> Result<Option<Page>, String> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());
-    json_with(
-        url,
-        &cache_dir(),
-        now,
-        &mirror_base(),
-        policy,
-        github,
-        mirror,
-    )
+    page_with(request, &cache_dir(), now, &mirror_base(), github, mirror)
 }
 
-/// [`json`] with its cache folder, the time (Unix seconds), the mirror's base and its two sources
-/// given (tests).
-pub(crate) fn json_with(
-    url: &str,
+fn page_with(
+    Request {
+        url,
+        policy,
+        paginated,
+    }: Request<'_>,
     cache: &Path,
     now: u64,
     mirror_base: &str,
-    policy: CachePolicy,
     github: impl Fn(&str, Option<&str>) -> Answer,
     mirror: impl Fn(&str) -> Answer,
-) -> Result<Option<serde_json::Value>, String> {
+) -> Result<Option<Page>, String> {
     let file = cache.join(cache_name(url));
-    // The launcher's own releases are kept only as GitHub answered them (with its ETag), never a mirror's copy.
     let launcher = launcher_url(url);
-    let kept = read_kept(&file, url).filter(|k| !(launcher && k.etag.is_empty()));
+    let kept = read_kept(&file, url).filter(|k| {
+        // A pre-pagination full page has no saved Link. Fetch it without an ETag rather
+        // than let a 304 or an offline cache make a truncated list look complete.
+        !(launcher && k.etag.is_empty()
+            || paginated
+                && k.page.next.is_none()
+                && k.page
+                    .body
+                    .as_array()
+                    .is_some_and(|items| items.len() >= RELEASES_PER_PAGE))
+    });
     if policy == CachePolicy::PreferCache {
         if let Some(k) = kept.as_ref() {
             // A copy saved "later" than now (the clock was set back) is not trusted as fresh.
             if now >= k.saved && now - k.saved < FRESH_SECS {
-                return Ok(Some(k.body.clone()));
+                return Ok(Some(k.page.clone()));
             }
         }
     }
@@ -104,14 +167,15 @@ pub(crate) fn json_with(
         .map(|k| k.etag.as_str())
         .filter(|e| !e.is_empty());
     let why = match github(url, etag) {
-        Answer::Fresh(body, etag) => {
-            write_kept(&file, url, etag.as_deref().unwrap_or(""), &body, now);
-            return Ok(Some(body));
+        Answer::Fresh(page, etag) => {
+            write_kept(&file, url, etag.as_deref().unwrap_or(""), &page, now);
+            return Ok(Some(page));
         }
-        Answer::NotModified => match kept {
-            Some(k) => {
-                write_kept(&file, url, &k.etag, &k.body, now);
-                return Ok(Some(k.body));
+        Answer::NotModified(next) => match kept {
+            Some(mut k) => {
+                k.page.next = next.or(k.page.next);
+                write_kept(&file, url, &k.etag, &k.page, now);
+                return Ok(Some(k.page));
             }
             // A 304 to a request that had no ETag: can't happen, but don't trust it.
             None => "GitHub answered 304 without a saved copy".to_owned(),
@@ -122,22 +186,32 @@ pub(crate) fn json_with(
     };
     let from_mirror = match mirror_url_with(url, mirror_base) {
         Some(m) => match mirror(&m) {
-            Answer::Fresh(body, _) => {
-                if !launcher {
-                    write_kept(&file, url, "", &body, now);
+            Answer::Fresh(mut page, _) => {
+                // A JSON-only mirror may omit GitHub's Link header. Only there, probe the
+                // next page after a full page rather than assume the rest doesn't exist.
+                if paginated && page.next.is_none() {
+                    page.next = Some(
+                        page.body
+                            .as_array()
+                            .is_some_and(|rows| rows.len() == RELEASES_PER_PAGE),
+                    );
                 }
-                return Ok(Some(body));
+                // The launcher's own releases are never kept from a mirror.
+                if !launcher {
+                    write_kept(&file, url, "", &page, now);
+                }
+                return Ok(Some(page));
             }
             Answer::NotFound => return Ok(None),
             Answer::RateLimited => Some("too many requests from this network".to_owned()),
             Answer::Failed(e) => Some(e),
-            Answer::NotModified => Some("an unexpected 304".to_owned()),
+            Answer::NotModified(_) => Some("an unexpected 304".to_owned()),
         },
         None => None,
     };
     if policy == CachePolicy::PreferCache {
         if let Some(k) = kept {
-            return Ok(Some(k.body));
+            return Ok(Some(k.page));
         }
     }
     Err(match from_mirror {
@@ -177,7 +251,10 @@ fn mirror_base() -> String {
 
 /// GitHub itself, with the saved ETag when there is one.
 fn github(url: &str, etag: Option<&str>) -> Answer {
-    let mut request = backend::agent(url).get(url);
+    let mut request = match backend::agent(url) {
+        Ok(agent) => agent.get(url),
+        Err(error) => return Answer::Failed(error),
+    };
     // CI runners share addresses and hit GitHub's anonymous rate limit; they pass their own token.
     if let Some(token) = std::env::var("SUNRISE_GITHUB_TOKEN")
         .ok()
@@ -188,12 +265,24 @@ fn github(url: &str, etag: Option<&str>) -> Answer {
     if let Some(etag) = etag {
         request = request.set("If-None-Match", etag);
     }
-    match request.call() {
-        Ok(r) if r.status() == 304 => Answer::NotModified,
+    answer(url, request.call(), true)
+}
+
+fn mirror(url: &str) -> Answer {
+    match backend::agent(url) {
+        Ok(agent) => answer(url, agent.get(url).call(), false),
+        Err(error) => Answer::Failed(error),
+    }
+}
+
+fn answer(url: &str, response: Result<ureq::Response, ureq::Error>, direct: bool) -> Answer {
+    match response {
+        Ok(r) if r.status() == 304 => Answer::NotModified(next_link(&r)),
         Ok(r) => {
-            let etag = r.header("ETag").map(str::to_owned);
+            let etag = r.header("ETag").filter(|_| direct).map(str::to_owned);
+            let next = next_link(&r).or(direct.then_some(false));
             match r.into_json() {
-                Ok(body) => Answer::Fresh(body, etag),
+                Ok(body) => Answer::Fresh(Page { body, next }, etag),
                 Err(e) => Answer::Failed(e.to_string()),
             }
         }
@@ -201,14 +290,23 @@ fn github(url: &str, etag: Option<&str>) -> Answer {
     }
 }
 
-fn mirror(url: &str) -> Answer {
-    match backend::agent(url).get(url).call() {
-        Ok(r) => match r.into_json() {
-            Ok(body) => Answer::Fresh(body, None),
-            Err(e) => Answer::Failed(e.to_string()),
-        },
-        Err(e) => failure(url, e),
-    }
+fn next_link(response: &ureq::Response) -> Option<bool> {
+    let links = response.all("Link");
+    (!links.is_empty()).then(|| {
+        links
+            .iter()
+            .flat_map(|header| header.split(','))
+            .any(|link| {
+                link.trim()
+                    .strip_prefix('<')
+                    .and_then(|target| target.split_once('>'))
+                    .is_some_and(|(_, params)| {
+                        params
+                            .split(';')
+                            .any(|param| param.trim() == "rel=\"next\"")
+                    })
+            })
+    })
 }
 
 fn failure(url: &str, e: ureq::Error) -> Answer {
@@ -249,7 +347,8 @@ struct Kept {
     etag: String,
     /// When it was saved or last confirmed (Unix seconds).
     saved: u64,
-    body: serde_json::Value,
+    #[serde(flatten)]
+    page: Page,
 }
 
 fn read_kept(file: &Path, url: &str) -> Option<Kept> {
@@ -258,12 +357,12 @@ fn read_kept(file: &Path, url: &str) -> Option<Kept> {
 }
 
 /// Saves an answer for the next reads; a failure only costs that saving.
-fn write_kept(file: &Path, url: &str, etag: &str, body: &serde_json::Value, saved: u64) {
+fn write_kept(file: &Path, url: &str, etag: &str, page: &Page, saved: u64) {
     let kept = Kept {
         url: url.to_owned(),
         etag: etag.to_owned(),
         saved,
-        body: body.clone(),
+        page: page.clone(),
     };
     let Some(dir) = file.parent() else { return };
     let Ok(text) = serde_json::to_vec(&kept) else {

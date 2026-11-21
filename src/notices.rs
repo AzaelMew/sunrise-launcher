@@ -5,6 +5,7 @@
 
 /// File name in the `LICENSES` folder, and the notice.
 pub const FILES: &[(&str, &str)] = &[
+    ("PolyForm-Sunrise.txt", include_str!("../assets/LICENSE")),
     (
         "MIT-Horizon.txt",
         include_str!("../assets/LICENSES/MIT-Horizon.txt"),
@@ -251,9 +252,10 @@ mod tests {
     #[test]
     fn every_embedded_asset_has_its_notice_in_the_list() {
         let names: Vec<_> = FILES.iter().map(|(n, _)| *n).collect();
-        // Fonts and icons bundled into the binary: Figtree here, Geist, Bricolage and Pixelify
-        // Sans and both icon sets in the theme crate.
+        // Game copies, plus Figtree here, Geist, Bricolage and Pixelify Sans and both icon sets
+        // in the theme crate.
         for needed in [
+            "PolyForm-Sunrise.txt",
             "OFL-Figtree.txt",
             "OFL-Geist.txt",
             "OFL-BricolageGrotesque.txt",

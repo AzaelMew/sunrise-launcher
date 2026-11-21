@@ -45,10 +45,9 @@ const MAX: u64 = 1 << 30;
 ///
 /// It is kept between downloads: a fresh agent starts a new connection pool, so one per file would
 /// be a handshake per file, and a modpack brings hundreds.
-pub(super) fn agent(url: &str) -> ureq::Agent {
-    let spec = crate::proxy::spec_for(url);
-    crate::net::keep("browser", spec.as_deref(), |proxy| {
-        let builder = ureq::AgentBuilder::new()
+pub(super) fn agent(url: &str) -> Result<ureq::Agent, String> {
+    crate::proxy::agent("browser", url, |builder| {
+        builder
             .user_agent(&format!(
                 "{} sunrise-launcher/{} (github.com/{})",
                 crate::backend::GAME_REPO,
@@ -56,11 +55,7 @@ pub(super) fn agent(url: &str) -> ureq::Agent {
                 crate::backend::GAME_REPO
             ))
             .timeout_connect(std::time::Duration::from_secs(15))
-            .timeout_read(std::time::Duration::from_secs(60));
-        match proxy {
-            Some(proxy) => builder.proxy(proxy).build(),
-            None => builder.build(),
-        }
+            .timeout_read(std::time::Duration::from_secs(60))
     })
 }
 
@@ -194,7 +189,7 @@ pub fn fetch(file: &FileRef, folder: &Path, progress: &dyn Fn(f32)) -> Result<Pa
     if let Some(why) = refuse(file) {
         return Err(why);
     }
-    let response = agent(&file.url)
+    let response = agent(&file.url)?
         .get(&file.url)
         .call()
         .map_err(|e| match e {

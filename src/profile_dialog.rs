@@ -2,7 +2,7 @@
 //! instance creation/copy transaction as the launcher; the dialog doesn't write game files.
 use super::*;
 use crate::{
-    frame::{button, button_base, primary},
+    frame::{button, primary},
     instances_page::InstanceDialog,
     paint::palette,
     servers_page::Field,
@@ -16,17 +16,16 @@ impl Launcher {
         self.servers.text(Field::InstanceGroup).set(String::new());
         self.focus_handle(Field::InstanceName, cx);
         self.servers.focus_soon = Some(Field::InstanceName);
-        let channel = self.followed_channel(Channel::Stable);
         self.instances.dialog = Some(InstanceDialog {
             editing: None,
-            copy: false,
+            copy: None,
             icon: None,
             picture: None,
             picture_focus: cx.focus_handle().tab_index(0).tab_stop(true),
             error: None,
             busy: false,
             pin: None,
-            channel,
+            channel: Channel::Stable,
             discarding: false,
         });
         cx.notify();
@@ -38,9 +37,14 @@ impl Launcher {
         cx: &mut Context<Self>,
     ) -> Option<Stateful<Div>> {
         let d = self.instances.dialog.as_ref()?;
+        let bound = d
+            .copy
+            .as_ref()
+            .and_then(instances::CopyPreview::base)
+            .map(|tag| self.version_label(tag));
         let (busy, copy, icon, channel, pin, error) = (
             d.busy,
-            d.copy,
+            d.copy.is_some(),
             d.icon.clone(),
             d.channel,
             d.pin.clone(),
@@ -55,24 +59,19 @@ impl Launcher {
             .map(|c| c.preview.clone());
         let p = palette();
         let name = self.servers.value(Field::InstanceName).trim().to_owned();
-        let (stable_available, tags) = {
-            let mut stable = self.stable_builds().peekable();
-            let available = stable.peek().is_some();
-            let tags: Vec<String> = match channel {
-                Channel::Stable => stable.map(|r| r.tag.clone()).collect(),
-                Channel::Nightly => self.sunrise_choices(),
-            };
-            (available, tags)
-        };
-        let channel_available = channel != Channel::Stable || stable_available;
-        let ready = !name.is_empty() && !busy && channel_available;
-        let current = pin
-            .as_deref()
-            .map(|tag| self.version_label(tag))
+        let tags = self.profile_build_choices(channel);
+        let ready = !name.is_empty() && !busy;
+        let current = bound
+            .clone()
+            .or_else(|| {
+                self.target_version(pin.as_ref(), channel)
+                    .map(|tag| self.version_label(tag))
+            })
             .unwrap_or_else(|| {
                 match channel {
                     Channel::Stable => tr("Latest stable"),
                     Channel::Nightly => tr("Latest nightly"),
+                    Channel::Dev => tr("Latest Dev"),
                 }
                 .into()
             });
@@ -173,77 +172,99 @@ impl Launcher {
                             .min_w_0(),
                     ),
             );
-        let mut channels = row();
-        for (id, c, label) in [
-            ("new-stable", Channel::Stable, tr("Stable")),
-            ("new-nightly", Channel::Nightly, tr("Nightly")),
-        ] {
-            let available = c != Channel::Stable || stable_available;
-            let choice = if available {
-                button(id, label)
-            } else {
-                button_base(id, label)
-            };
-            channels = channels.child(
-                choice
-                    .when(available && c == channel, |d| {
-                        d.bg(rgb(p.selected)).border_color(rgb(p.accent_ink))
-                    })
-                    .when(!available, |d| {
-                        d.opacity(0.5).cursor_default().tab_stop(false)
-                    })
-                    .when(available, |d| {
-                        d.on_click(cx.listener(move |this, _, _, cx| {
+        if let Some(build) = bound.as_deref() {
+            form = form
+                .child(tr("Game build"))
+                .child(div().text_color(rgb(p.muted)).child(trf(
+                    "This copy keeps {build} from the selected profile.",
+                    &[("build", build)],
+                )));
+        } else {
+            let mut channels = row().flex_wrap();
+            for (id, c, label) in [
+                ("new-stable", Channel::Stable, tr("Stable")),
+                ("new-nightly", Channel::Nightly, tr("Nightly")),
+                ("new-dev", Channel::Dev, tr("Dev")),
+            ] {
+                channels = channels.child(
+                    button(id, label)
+                        .when(c == channel, |d| {
+                            d.bg(rgb(p.selected)).border_color(rgb(p.accent_ink))
+                        })
+                        .on_click(cx.listener(move |this, _, _, cx| {
                             if let Some(d) = this.instances.dialog.as_mut().filter(|d| !d.busy) {
                                 d.channel = c;
                                 d.pin = None;
                             }
                             cx.notify();
-                        }))
-                    }),
-            );
-        }
-        if !stable_available {
-            channels = channels.child(
-                div()
-                    .text_size(px(tokens::SMALL))
-                    .text_color(rgb(p.muted))
-                    .child(tr("No stable release yet")),
-            );
-        }
-        let mut versions = div()
-            .id("new-versions")
-            .max_h(px(94.))
-            .flex()
-            .flex_col()
-            .gap(px(3.))
-            .overflow_y_scroll()
-            .track_scroll(&crate::frame::scrolls("new-versions"));
-        for (idx, tag) in channel_available
-            .then_some(None)
-            .into_iter()
-            .chain(tags.into_iter().map(Some))
-            .enumerate()
-        {
-            let label = tag
-                .as_deref()
-                .map(|t| self.version_label(t))
-                .unwrap_or_else(|| tr("Follow latest").into());
-            versions = versions.child(
-                button(ElementId::named_usize("new-version", idx), label)
-                    .justify_start()
-                    .when(pin == tag, |d| {
-                        d.bg(rgb(p.selected)).border_color(rgb(p.accent_ink))
-                    })
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if let Some(d) = this.instances.dialog.as_mut().filter(|d| !d.busy) {
-                            d.pin = tag.clone();
+                        })),
+                );
+            }
+            let hint = match channel {
+                Channel::Stable if !self.stable_available() => {
+                    Some(tr("No stable release yet. Plays Nightly for now."))
+                }
+                Channel::Dev if tags.is_empty() => Some(tr("No Dev build for this platform yet.")),
+                _ => None,
+            };
+            let mut versions = div()
+                .id("new-versions")
+                .max_h(px(94.))
+                .flex()
+                .flex_col()
+                .gap(px(3.))
+                .overflow_y_scroll()
+                .track_scroll(&crate::frame::scrolls("new-versions"));
+            for (idx, tag) in std::iter::once(None)
+                .chain(tags.into_iter().map(Some))
+                .enumerate()
+            {
+                let label = tag
+                    .as_deref()
+                    .map(|t| {
+                        let name = self.version_label(t);
+                        if channel == Channel::Dev {
+                            trf(
+                                "{build} · {commit}",
+                                &[
+                                    ("build", &name),
+                                    (
+                                        "commit",
+                                        &sunrise_launcher::nightly::short_commit(
+                                            t.rsplit_once('-').map_or(t, |(_, sha)| sha),
+                                        ),
+                                    ),
+                                ],
+                            )
+                        } else {
+                            name
                         }
-                        cx.notify();
-                    })),
-            );
+                    })
+                    .unwrap_or_else(|| tr("Follow latest").into());
+                versions = versions.child(
+                    button(ElementId::named_usize("new-version", idx), label)
+                        .justify_start()
+                        .when(pin == tag, |d| {
+                            d.bg(rgb(p.selected)).border_color(rgb(p.accent_ink))
+                        })
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            if let Some(d) = this.instances.dialog.as_mut().filter(|d| !d.busy) {
+                                d.pin = tag.clone();
+                            }
+                            cx.notify();
+                        })),
+                );
+            }
+            form = form
+                .child(channels)
+                .children(hint.map(|hint| {
+                    div()
+                        .text_size(px(tokens::SMALL))
+                        .text_color(rgb(p.muted))
+                        .child(hint)
+                }))
+                .child(versions);
         }
-        form = form.child(channels).child(versions);
         let mut start = row();
         let copy_lock = self.profile_copy_lock();
         for (id, duplicate, label) in [
@@ -260,8 +281,22 @@ impl Launcher {
                     .cursor_default()
                     .tooltip(crate::glass_ui::tip(why)),
                 None => option.on_click(cx.listener(move |this, _, _, cx| {
+                    let preview = if duplicate {
+                        this.selected_instance()
+                            .ok_or_else(|| tr("Select a Sunrise profile first.").to_string())
+                            .and_then(instances::CopyPreview::read)
+                            .map(Some)
+                    } else {
+                        Ok(None)
+                    };
                     if let Some(d) = this.instances.dialog.as_mut().filter(|d| !d.busy) {
-                        d.copy = duplicate;
+                        match preview {
+                            Ok(copy) => {
+                                d.copy = copy;
+                                d.error = None;
+                            }
+                            Err(error) => d.error = Some(error),
+                        }
                     }
                     cx.notify();
                 })),
@@ -308,11 +343,11 @@ impl Launcher {
             .flex()
             .flex_col()
             .child(crate::sheets::title(tr("New profile").into()))
-            .child(
-                div()
-                    .text_color(rgb(p.muted))
-                    .child(tr("Name it, pick what it plays, then an icon.")),
-            )
+            .child(div().text_color(rgb(p.muted)).child(if bound.is_some() {
+                tr("Name the copy and pick an icon.")
+            } else {
+                tr("Name it, pick what it plays, then an icon.")
+            }))
             .child(
                 row()
                     .items_stretch()

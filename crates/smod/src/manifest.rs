@@ -102,6 +102,8 @@ pub struct Manifest {
     pub api: String,
     #[serde(default)]
     pub side: Side,
+    /// Absent, this carries the same label as a manifest written by the mod tool.
+    #[serde(default = "Capability::derived")]
     pub capabilities: Vec<Capability>,
     /// Namespaces besides `id` that the mod's `assets/` and `data/` use, for
     /// a content mod whose files sit under other names than its id (Towns
@@ -338,6 +340,10 @@ pub enum Capability {
     Registries,
 }
 impl Capability {
+    fn derived() -> Vec<Self> {
+        vec![Self::Registries]
+    }
+
     /// What the player reads before turning the mod on: "May <this>".
     pub fn describe(self) -> &'static str {
         match self {
@@ -363,7 +369,8 @@ pub fn revision(value: &str) -> bool {
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
-pub(super) fn valid_mod_id(id: &str) -> bool {
+/// The grammar shared by manifest IDs and source listings, including portable file names.
+pub fn valid_mod_id(id: &str) -> bool {
     (1..=64).contains(&id.len())
         && !reserved_mod_id(id)
         && id

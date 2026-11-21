@@ -5661,6 +5661,7 @@ dependencies = [
  "sunrise-launcher-friends",
  "sunrise-launcher-mcp",
  "sunrise-launcher-nbt",
+ "sunrise-launcher-proxy",
  "sunrise-launcher-release-verify",
  "sunrise-launcher-resolver",
  "sunrise-launcher-scenery",
@@ -5717,6 +5718,14 @@ dependencies = [
 [[package]]
 name = "sunrise-launcher-nbt"
 version = "0.1.0"
+
+[[package]]
+name = "sunrise-launcher-proxy"
+version = "0.1.0"
+dependencies = [
+ "ureq",
+ "url",
+]
 
 [[package]]
 name = "sunrise-launcher-release-verify"

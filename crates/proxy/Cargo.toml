@@ -1,0 +1,12 @@
+[package]
+name = "sunrise-launcher-proxy"
+version = "0.1.0"
+edition = "2024"
+license = "PolyForm-Shield-1.0.0"
+rust-version = "1.95"
+description = "Shared HTTP proxy selection and connection pools for Sunrise downloads"
+publish = false
+
+[dependencies]
+ureq = { version = "2", default-features = false, features = ["tls", "socks-proxy"] }
+url = "2"

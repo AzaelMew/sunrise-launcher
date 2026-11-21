@@ -36,7 +36,7 @@ fn index(files: &[(&str, &[u8])]) -> Index {
             date: "2026-11-13".into(),
             nightly: None,
         },
-        package_format: PACKAGE_FORMAT,
+        package_format: u64::from(PACKAGE_FORMAT),
         toolchain: Toolchain {
             rust: "1.99.1".into(),
         },
@@ -66,6 +66,49 @@ fn read(value: &serde_json::Value) -> Result<Index, Refusal> {
 }
 
 const ENGINE: &str = "engine-x86_64-unknown-linux-gnu.tar.xz";
+
+#[test]
+fn fit_retains_the_full_package_format_but_only_compiled_read_checks_compatibility() {
+    let mut value = json(&index(&[(ENGINE, b"engine")]));
+    let format = u64::from(u32::MAX) + 1;
+    value["package_format"] = format.into();
+    let bytes = serde_json::to_vec(&value).unwrap();
+    assert_eq!(
+        Index::read(&bytes, COMMIT),
+        Err(Refusal::PackageFormat(format))
+    );
+    let fit = Index::read_for_fit(&bytes, COMMIT).unwrap();
+    assert_eq!(fit.package_format, format);
+    assert_eq!(json(&fit)["package_format"], format);
+    assert!(matches!(
+        Index::read_for_fit(&bytes, &"f".repeat(40)),
+        Err(Refusal::Build { .. })
+    ));
+    value["assets"][ENGINE]["side"] = "server".into();
+    let bytes = serde_json::to_vec(&value).unwrap();
+    assert_eq!(
+        Index::read_for_fit(&bytes, COMMIT),
+        Err(Refusal::AssetName(ENGINE.into()))
+    );
+}
+
+#[test]
+fn sdk_asset_and_runtime_host_names_share_the_same_server_suffix() {
+    let target = "x86_64-unknown-linux-gnu";
+    assert_eq!(Asset::host_name(target, Side::Client), target);
+    assert_eq!(
+        Asset::host_name(target, Side::Server),
+        format!("{target}-server")
+    );
+    assert_eq!(
+        Asset::name(Kind::Engine, target, Side::Server),
+        format!("engine-{target}-server.tar.xz")
+    );
+    assert_eq!(
+        Asset::name(Kind::Tool, target, Side::Server),
+        format!("tool-{target}.tar.xz")
+    );
+}
 
 #[test]
 fn written_index_reads_back_and_unknown_fields_are_ignored() {

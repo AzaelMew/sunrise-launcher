@@ -48,10 +48,48 @@ SAME_BYTES = (
 # (the game's source, the launcher's copy, the edits that turn one into the other): compared as code, ignoring
 # layout, module docs and `use` items, which the launcher's edition formats and orders its own way.
 SAME_CODE = (
+    ("crates/sunrise-proxy/Cargo.toml", "crates/proxy/Cargo.toml", (
+        ('name = "sunrise-proxy"', 'name = "sunrise-launcher-proxy"'),
+        ("edition.workspace = true", 'edition = "2024"'),
+        ("license.workspace = true", 'license = "PolyForm-Shield-1.0.0"'),
+        ("rust-version.workspace = true", 'rust-version = "1.95"'),
+        ("[dependencies]", "publish = false\n[dependencies]"),
+        ("[lints]\nworkspace = true", ""),
+    )),
+    ("crates/sunrise-proxy/src/lib.rs", "crates/proxy/src/lib.rs", (
+        ("type Agents = HashMap<AgentKey, ureq::Agent>;",
+         "mod launcher;\ntype Agents = HashMap<AgentKey, ureq::Agent>;"),
+        ("/// A kept agent for `url`, using the environment unless the destination is reached directly.",
+         "/// A kept agent for `url`, using the launcher setting or the environment unless reached directly."),
+        ("url: &str, configure: impl FnOnce(ureq::AgentBuilder)",
+         "url: &str, setting: Option<&str>, configure: impl FnOnce(ureq::AgentBuilder)"),
+        ("agent_for(slot, Url::parse(url).ok().as_ref(), configure)",
+         "agent_for(slot, Url::parse(url).ok().as_ref(), setting, configure)"),
+        ("url: Option<&Url>, configure: impl FnOnce(ureq::AgentBuilder)",
+         "url: Option<&Url>, setting: Option<&str>, configure: impl FnOnce(ureq::AgentBuilder)"),
+        ('''let selected = if url.is_some_and(|url| bypasses_proxy(url, &no_proxy())) {
+        None
+    } else {
+        let scheme = url.map_or("https", Url::scheme);
+        env_proxy(scheme, |name| std::env::var_os(name))?
+    };''', "let selected = select(url, setting, &no_proxy(), |name| std::env::var_os(name))?;"),
+        ("headers: &[(&str, &str)], check: Option<&UrlCheck<'_>>",
+         "headers: &[(&str, &str)], setting: Option<&str>, check: Option<&UrlCheck<'_>>"),
+        ('agent_for("get-no-redirect", Some(current), |builder|',
+         'agent_for("get-no-redirect", Some(current), setting, |builder|'),
+        ("selected: Option<(&'static str, String)>", "selected: Selected"),
+        ("Result<Option<(&'static str, String)>, ProxyError>", "Result<Selected, ProxyError>"),
+        ('get(&format!("{origin}/start"), &headers, None)',
+         'get(&format!("{origin}/start"), &headers, None, None)'),
+        ('get(&format!("{origin}/secure"), &headers, None)',
+         'get(&format!("{origin}/secure"), &headers, None, None)'),
+        ('get(&format!("{origin}/status"), &headers, None)',
+         'get(&format!("{origin}/status"), &headers, None, None)'),
+    )),
     ("crates/sunrise-port-pack/src/net.rs", "src/net.rs", (
-        ("pub(crate) fn get_from_hosts", "pub fn get_from_hosts"),
-        ('.set("User-Agent", crate::modrinth::AGENT)',
-         '.set("User-Agent", concat!("sunrise-launcher/", env!("CARGO_PKG_VERSION")))'),
+        ("sunrise_proxy::get(", "sunrise_launcher_proxy::get("),
+        ('&[("User-Agent", crate::modrinth::AGENT)],',
+         '&[("User-Agent", USER_AGENT)], crate::proxy::setting().as_deref(),'),
     )),
     ("crates/sunrise-port-pack/src/zip_intake.rs", "src/zip_intake.rs", (
         ("""if let Ok(directory) = zip64
@@ -99,6 +137,9 @@ MIRRORED = (
      "ce65c921695767d21d8c3047d36b48b58d843a78ac4b56d2f77117c68a016430", "src/native_mods/build_log.rs failure"),
     ("crates/sunrise-native-build/src/lib.rs", "unpack_archive",
      "08b67ddd8289e49ed1ce5c81ff77ee25bfca94a9d6cbf0b85df68a28e203eb0c", "src/github_mods.rs unpack_archive"),
+    # The launcher's unpacker is stricter (size, duplicate and Windows-reserved paths, cancellation).
+    ("crates/sunrise-native-build/src/lib.rs", "unpack_source",
+     "356c9c82b888214518bbf5c6949f4ebfd4963e24993dda7bc11db877a33b2187", "src/github_mods.rs unpack_bounded"),
     ("crates/sunrise-native-build/src/package.rs", "read",
      "94d760c8ea6f5452f20a6a816d88207675ed454e44cc0973240cff8069aaecf0",
      "src/native_mods/bundle/package.rs read"),
@@ -161,7 +202,6 @@ SAME_FUNCTIONS = (
     )),
     ("crates/sunrise-native-build/src/prebuilt.rs", "src/native_mods/build_log.rs", ("compiling",)),
     ("crates/sunrise-native-build/src/prebuilt.rs", "src/native_mods/sdk_cache.rs", ("at",)),
-    ("crates/sunrise-native-build/src/lib.rs", "src/github_mods.rs", ("unpack_source",)),
     ("crates/sunrise-native-build/src/rust.rs", "src/rust_toolchain.rs", ("scrubbed", "low_priority")),
     ("crates/sunrise-mod-surface/src/uses.rs", "src/native_mods/uses.rs", ("item",)),
     ("crates/sunrise-mod-surface/src/lib.rs", "src/native_mods/uses.rs", ("leaf",)),
@@ -171,6 +211,8 @@ SAME_FUNCTIONS = (
 SAME_ITEMS = (
     ("crates/sunrise-mod-package/src/sdk.rs", "crates/sdk/src/lib.rs", (
         ('#[cfg(feature = "prebuilt")]', ""),
+        # The standalone launcher SDK always has the xz unpacker enabled.
+        ('#[cfg(any(feature = "prebuilt", feature = "index"))]', ""),
         ("crate::manifest::revision", "revision"),
         # The direct reader is the launcher rather than cargo sunrise-mod.
         (r""", so it is older than this SDK. Update it (`cargo sunrise-mod`: run the install block of the book's \"Install the mod tool\" page), or use the tool in this SDK's own release""",
@@ -182,7 +224,7 @@ SAME_ITEMS = (
         "pub struct Route", "pub enum Refusal", "impl fmt::Display for Refusal", "impl std::error::Error for Refusal",
         "struct Written", "struct WrittenAsset", "pub const DICTIONARY_LIMIT", "pub const EXTENSION_LIMIT",
         "pub const LOCK_SUFFIX", "pub const PARTIAL_SUFFIX", "const PAX_KEYS", "struct Partial", "impl Partial",
-        "impl Drop for Partial", "pub fn read",
+        "impl Drop for Partial", "pub fn read", "pub fn read_for_fit", "fn read_with_format",
     )),
     ("crates/sunrise-native-build/src/lib.rs", "src/native_mods/bundle.rs", (
         ("sunrise_mod_package::", "sunrise_launcher_smod::"),

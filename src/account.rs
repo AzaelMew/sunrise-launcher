@@ -112,23 +112,18 @@ impl ureq::Resolver for System {
     }
 }
 
-/// The agent builder sign-in requests start from: the launcher's user agent, a 20 s timeout, a
-/// 10 s connect timeout (shared between the addresses, so a dead IPv6 route falls back to IPv4
-/// long before the 20 s run out) and addresses of both families interleaved.
-fn builder() -> ureq::AgentBuilder {
-    ureq::AgentBuilder::new()
+/// Keep the short connect timeout and interleaved addresses so a dead IPv6 route
+/// falls back to IPv4 before the whole sign-in request times out.
+fn sign_in_agent(builder: ureq::AgentBuilder) -> ureq::AgentBuilder {
+    builder
         .timeout(Duration::from_secs(20))
         .timeout_connect(Duration::from_secs(10))
         .resolver(Interleaved(System))
-        .user_agent(&format!("sunrise-launcher/{}", crate::backend::VERSION))
+        .user_agent(crate::proxy::USER_AGENT)
 }
 
-/// A request to `url`: the launcher's user agent, a 20 s timeout, and the player's proxy when one
-/// is set (`proxy`), since a sign-in has to get out the way downloads do.
-fn request_to(method: &str, url: &str) -> ureq::Request {
-    crate::proxy::agent(builder(), url)
-        .build()
-        .request(method, url)
+fn request_to(method: &str, url: &str) -> Result<ureq::Request, String> {
+    Ok(crate::proxy::agent("account", url, sign_in_agent)?.request(method, url))
 }
 
 /// One request's result: the status and the JSON body (empty when there is none). Transport
@@ -211,7 +206,7 @@ pub enum Poll {
 
 pub fn device_code(ep: &Endpoints, client_id: &str) -> Result<DeviceCode, String> {
     let (status, v) = send(
-        request_to("POST", &format!("{}/devicecode", ep.microsoft)),
+        request_to("POST", &format!("{}/devicecode", ep.microsoft))?,
         Some(Body::Form(vec![("client_id", client_id), ("scope", SCOPE)])),
         "Microsoft",
     )?;
@@ -260,7 +255,7 @@ fn oauth_error(v: &Value) -> String {
 /// One poll of the token endpoint while the player signs in.
 pub fn poll(ep: &Endpoints, client_id: &str, code: &DeviceCode) -> Result<Poll, String> {
     let (status, v) = send(
-        request_to("POST", &format!("{}/token", ep.microsoft)),
+        request_to("POST", &format!("{}/token", ep.microsoft))?,
         Some(Body::Form(vec![
             ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
             ("client_id", client_id),
@@ -317,7 +312,7 @@ pub fn wait_for_sign_in(
 
 fn refresh_ms(ep: &Endpoints, client_id: &str, refresh: &str) -> Result<MsTokens, String> {
     let (status, v) = send(
-        request_to("POST", &format!("{}/token", ep.microsoft)),
+        request_to("POST", &format!("{}/token", ep.microsoft))?,
         Some(Body::Form(vec![
             ("grant_type", "refresh_token"),
             ("client_id", client_id),
@@ -367,7 +362,7 @@ fn minecraft_login(
 ) -> Result<Minecraft, String> {
     progress(session::Phase::Xbox);
     let (status, xbl) = send(
-        request_to("POST", &ep.xbox_user),
+        request_to("POST", &ep.xbox_user)?,
         Some(Body::Json(json!({
             "Properties": {
                 "AuthMethod": "RPS",
@@ -383,7 +378,7 @@ fn minecraft_login(
         .filter(|_| status == 200)
         .ok_or("Xbox Live refused the sign-in.")?;
     let (status, xsts) = send(
-        request_to("POST", &ep.xsts),
+        request_to("POST", &ep.xsts)?,
         Some(Body::Json(json!({
             "Properties": { "SandboxId": "RETAIL", "UserTokens": [xbl_token] },
             "RelyingParty": "rp://api.minecraftservices.com/",
@@ -419,7 +414,7 @@ fn minecraft_login(
 fn minecraft_token(ep: &Endpoints, xtoken: &str) -> Result<(String, u64), String> {
     let lifetime = |v: &Value| v.get("expires_in").and_then(Value::as_u64).unwrap_or(86400);
     let launcher = send(
-        request_to("POST", &format!("{}/launcher/login", ep.minecraft)),
+        request_to("POST", &format!("{}/launcher/login", ep.minecraft))?,
         Some(Body::Json(
             json!({ "xtoken": xtoken, "platform": "PC_LAUNCHER" }),
         )),
@@ -434,7 +429,7 @@ fn minecraft_token(ep: &Endpoints, xtoken: &str) -> Result<(String, u64), String
         request_to(
             "POST",
             &format!("{}/authentication/login_with_xbox", ep.minecraft),
-        ),
+        )?,
         Some(Body::Json(json!({ "identityToken": xtoken }))),
         "the Minecraft services",
     )?;
@@ -458,7 +453,7 @@ fn bearer(request: ureq::Request, token: &str) -> ureq::Request {
 fn owns_game(ep: &Endpoints, token: &str) -> Result<bool, String> {
     let (status, v) = send(
         bearer(
-            request_to("GET", &format!("{}/entitlements/mcstore", ep.minecraft)),
+            request_to("GET", &format!("{}/entitlements/mcstore", ep.minecraft))?,
             token,
         ),
         None,
@@ -496,7 +491,7 @@ pub struct Account {
 fn profile(ep: &Endpoints, token: &str) -> Result<Option<Account>, String> {
     let (status, v) = send(
         bearer(
-            request_to("GET", &format!("{}/minecraft/profile", ep.minecraft)),
+            request_to("GET", &format!("{}/minecraft/profile", ep.minecraft))?,
             token,
         ),
         None,
@@ -2196,7 +2191,12 @@ const SESSION_FILE_LIFE: Duration = Duration::from_secs(120);
 /// deletes each as it reads it; the rest go when the game would refuse them anyway
 /// ([`SESSION_FILE_LIFE`], a game that never started or crashed first) or when the launch failed
 /// ([`discard_unread_sessions`]). Nothing with a token stays on disk.
-static UNREAD: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+struct UnreadSession {
+    path: PathBuf,
+    expire_only: bool,
+}
+
+static UNREAD: Mutex<Vec<UnreadSession>> = Mutex::new(Vec::new());
 
 /// [`write_session_file`] for a game this launcher is about to start (see [`UNREAD`]).
 fn write_launch_session_file(
@@ -2224,33 +2224,46 @@ fn write_launch_session_file(
                 }
             });
     }
-    unread.push(path.clone());
+    unread.push(UnreadSession {
+        path: path.clone(),
+        expire_only: false,
+    });
     Ok(path)
 }
 
 /// Deletes the files of `unread` older than `life` (the game would refuse them) and forgets
 /// those gone (read).
-fn reap(unread: &mut Vec<PathBuf>, life: Duration) {
-    unread.retain(|path| {
-        let waiting = std::fs::metadata(path)
+fn reap(unread: &mut Vec<UnreadSession>, life: Duration) {
+    unread.retain(|file| {
+        let waiting = std::fs::metadata(&file.path)
             .and_then(|m| m.modified())
             .is_ok_and(|m| m.elapsed().is_ok_and(|age| age <= life));
         if !waiting {
-            let _ = std::fs::remove_file(path);
+            let _ = std::fs::remove_file(&file.path);
         }
         waiting
     });
 }
 
+/// A managed handoff can be unresolved. Nothing but its own definite failure/exit
+/// or the game's usual expiry may delete that launch's file.
+pub(crate) fn retain_launch_session(path: Option<&Path>) {
+    if let (Some(path), Ok(mut unread)) = (path, UNREAD.lock()) {
+        if let Some(file) = unread.iter_mut().find(|file| file.path == path) {
+            file.expire_only = true;
+        }
+    }
+}
+
 /// Deletes the session files written for a launch whose game didn't start, or has ended: any it
 /// didn't read is left over (a game deletes those it reads).
 pub fn discard_unread_sessions() {
-    let files = UNREAD
+    let files: Vec<_> = UNREAD
         .lock()
-        .map(|mut unread| std::mem::take(&mut *unread))
+        .map(|mut unread| unread.extract_if(.., |file| !file.expire_only).collect())
         .unwrap_or_default();
-    for path in files {
-        let _ = std::fs::remove_file(path);
+    for file in files {
+        let _ = std::fs::remove_file(file.path);
     }
 }
 
@@ -2258,7 +2271,7 @@ pub fn discard_unread_sessions() {
 pub fn discard_launch_session(file: Option<PathBuf>) {
     if let Some(file) = file {
         if let Ok(mut unread) = UNREAD.lock() {
-            unread.retain(|p| p != &file);
+            unread.retain(|session| session.path != file);
         }
         let _ = std::fs::remove_file(file);
     }
