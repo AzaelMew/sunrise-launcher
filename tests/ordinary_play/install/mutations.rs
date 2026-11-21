@@ -8,8 +8,6 @@ use sunrise_launcher_nbt::{self as nbt, Limits, NamedTag, Tag};
 mod native;
 
 fn world(home: &Path, folder: &str, ids: &[&str]) {
-    let dest = home.join("saves").join(folder);
-    fs::create_dir_all(&dest).unwrap();
     let tags = ids
         .iter()
         .map(|id| {
@@ -19,15 +17,22 @@ fn world(home: &Path, folder: &str, ids: &[&str]) {
             ])
         })
         .collect();
+    world_with_evidence(
+        home,
+        folder,
+        Tag::compound([("ContentModList", Tag::List(tags))]),
+    );
+}
+
+fn world_with_evidence(home: &Path, folder: &str, sunrise: Tag) {
+    let dest = home.join("saves").join(folder);
+    fs::create_dir_all(&dest).unwrap();
     let root = Tag::compound([
         (
             "Data",
             Tag::compound([("LevelName", Tag::String(folder.into()))]),
         ),
-        (
-            "sunrise",
-            Tag::compound([("ContentModList", Tag::List(tags))]),
-        ),
+        ("sunrise", sunrise),
     ]);
     fs::write(
         dest.join("level.dat"),
@@ -104,6 +109,41 @@ fn live_state(fixture: &Fixture) -> [Vec<u8>; 4] {
         fs::read(fixture.home.join(mod_list::FILE)).unwrap(),
         fs::read(fixture.home.join(mod_list::DIR).join("root_mod.smod")).unwrap(),
     ]
+}
+
+#[test]
+fn namespace_only_and_malformed_worlds_cannot_bypass_the_decision() {
+    let fixture = Fixture::new();
+    let (mut registry, _) = fixture.content_index();
+    let defs = [("data/root_mod/sunrise/block/amber.json", b"{}".as_slice())];
+    release(&fixture, &mut registry, "root_mod", "1.0.0", &defs);
+    install_root(&fixture, &registry);
+    release(&fixture, &mut registry, "root_mod", "1.1.0", &[]);
+    fixture.publish_registry(&registry);
+    let old = live_state(&fixture);
+    for evidence in [
+        Tag::compound([(
+            "BlockNamespaces",
+            Tag::List(vec![Tag::String("root_mod".into())]),
+        )]),
+        Tag::compound([(
+            "ContentModList",
+            Tag::List(vec![Tag::compound([
+                ("ModId", Tag::String("unrelated".into())),
+                ("ModVersion", Tag::Int(7)),
+            ])]),
+        )]),
+    ] {
+        world_with_evidence(&fixture.home, "Same world", evidence);
+        for action in ["remove", "update"] {
+            let (ok, text) = run(&fixture, &["mods", action, "root_mod"]);
+            assert!(
+                !ok && text.contains("1 saved world") && text.contains("--confirm-world-loss"),
+                "{action}: {text}"
+            );
+            assert_eq!(live_state(&fixture), old);
+        }
+    }
 }
 
 #[test]
@@ -216,7 +256,10 @@ fn remove_names_dependents_even_without_worlds_and_requires_compatible_activatio
 fn update_all_asks_once_only_for_destructive_or_unproved_definitions_and_preserves_cancel() {
     let fixture = Fixture::new();
     let (mut registry, _) = fixture.content_index();
-    let defs: &[(&str, &[u8])] = &[("data/root_mod/sunrise/item/amber.json", b"{}")];
+    let defs: &[(&str, &[u8])] = &[(
+        "data/root_mod/sunrise/block/amber.json",
+        br#"{"properties":{"lit":[true,false]}}"#,
+    )];
     let first = release(&fixture, &mut registry, "root_mod", "1.0.0", defs);
     let second_def: &[(&str, &[u8])] = &[("data/required_mod/sunrise/item/glowstone.json", b"{}")];
     release(&fixture, &mut registry, "required_mod", "1.0.0", second_def);
@@ -232,7 +275,13 @@ fn update_all_asks_once_only_for_destructive_or_unproved_definitions_and_preserv
     assert!(!text.contains("saved world"), "{text}");
     assert_eq!(fs::read(&path).unwrap(), retained);
 
-    let lost = release(&fixture, &mut registry, "root_mod", "1.2.0", &[]);
+    let lost = release(
+        &fixture,
+        &mut registry,
+        "root_mod",
+        "1.2.0",
+        &[(defs[0].0, b"{}")],
+    );
     let required = release(&fixture, &mut registry, "required_mod", "1.1.0", &[]);
     fixture.publish_registry(&registry);
     let old = live_state(&fixture);
