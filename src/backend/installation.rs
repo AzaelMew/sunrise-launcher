@@ -121,10 +121,19 @@ pub fn recover_game_installations() {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum InstallIntent {
-    /// First Play uses only its saved binding. A different installation stays untouched.
+    /// First Play fetches its saved binding automatically. A different installation stays untouched.
     Exact,
-    /// The release install action may repair this exact tag, never a profile's saved binding.
+    /// An explicit release install may repair this exact tag, never a saved binding.
     Repair,
+}
+
+impl InstallIntent {
+    fn download(self) -> version_storage::Download {
+        match self {
+            Self::Exact => version_storage::Download::Automatic,
+            Self::Repair => version_storage::Download::Requested,
+        }
+    }
 }
 
 /// Success means the image is usable, even when the separate rolling Nightly receipt failed.
@@ -235,6 +244,7 @@ pub(crate) fn install_as(
         keep_release_file(&top, bytes, sha256)?;
     }
     Artifact::record_archive(&top, tag, sha256)?;
+    intent.download().mark(&top)?;
     crate::nightly::record_install_time(&top, release).map_err(|e| e.to_string())?;
     // Transfer and unpack privately. Only the visibility boundary fences readers.
     let registry = Registry::with_release(&data_dir(), LockRelease::Close)
@@ -270,6 +280,9 @@ pub(crate) fn install_as(
             {
                 if !matches_archive() {
                     return Err(existing_build(tag));
+                }
+                if intent == InstallIntent::Repair {
+                    intent.download().mark(&target)?;
                 }
                 progress(1.0);
                 return Ok(None);
@@ -313,7 +326,7 @@ fn replace_installed(
     if in_use(tag) {
         return Err(cache_error(crate::storage::Error::Busy));
     }
-    // Only a complete predecessor has prepared-resource or automatic-install state to keep.
+    // Only a complete predecessor has prepared resources to keep.
     if completion_marker(target).map_err(|e| e.to_string())? {
         let from = resources_at(target);
         let to = resources_at(top);
@@ -323,9 +336,6 @@ fn replace_installed(
         {
             copy_dir_except(&from, &to, Some(&from.join(crate::preparer::DATA_FILE)))
                 .map_err(|e| e.to_string())?;
-        }
-        if target.join(AUTO_INSTALLED).is_file() {
-            fs::write(top.join(AUTO_INSTALLED), "").map_err(|e| e.to_string())?;
         }
     }
     drop(tree);

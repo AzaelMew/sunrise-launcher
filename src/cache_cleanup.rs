@@ -373,17 +373,29 @@ pub(crate) fn delete_game_unit_observed(
     path: &Path,
     after_classification: impl FnOnce(),
 ) -> Result<(), Error> {
-    delete_unit(path, false, after_classification)
+    delete_unit(path, false, after_classification, || Ok(()))
 }
 
-/// Removes an installed version folder. A build from before runtime leases carries no lease
-/// marker and can never take one, so the caller, having found no program running from the
-/// folder, vouches for it with `idle` instead.
+/// Remove an installed version after the caller's selection checks under the publication fence.
+/// Legacy builds have no runtime lease, so `check` must also rule out a running program.
+pub(crate) fn delete_version_checked(
+    path: &Path,
+    check: impl FnOnce() -> Result<(), Error>,
+) -> Result<(), Error> {
+    delete_unit(path, true, || {}, check)
+}
+
+/// Remove an installed version whose running processes have already been checked.
 pub(crate) fn delete_version(path: &Path, idle: bool) -> Result<(), Error> {
-    delete_unit(path, idle, || {})
+    delete_unit(path, idle, || {}, || Ok(()))
 }
 
-fn delete_unit(path: &Path, idle: bool, after_classification: impl FnOnce()) -> Result<(), Error> {
+fn delete_unit(
+    path: &Path,
+    idle: bool,
+    after_classification: impl FnOnce(),
+    check: impl FnOnce() -> Result<(), Error>,
+) -> Result<(), Error> {
     use sunrise_launcher_smod::{locks::Release, runtime_leases::Registry};
     let registry = Registry::with_release(&crate::backend::data_dir(), Release::Close)?;
     registry.remove_unit(path, |directory, is_directory| {
@@ -404,6 +416,7 @@ fn delete_unit(path: &Path, idle: bool, after_classification: impl FnOnce()) -> 
             }
             crate::managed_play::require_unreferenced_build(tag)?;
         }
+        check()?;
         after_classification();
         if is_directory && contains_operational_locks(directory)? {
             return Err(Error::IncompleteUnit);

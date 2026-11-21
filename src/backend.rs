@@ -3171,70 +3171,8 @@ pub fn no_version_installed() -> String {
     )
 }
 
-/// Removes an installed version, unless a program runs from it, and moves the selection to the
-/// newest one left if needed.
-pub fn remove_version(tag: &str) -> Result<(), String> {
-    if !installed().iter().any(|t| t == tag) {
-        return Err(format!("{tag} is not installed."));
-    }
-    if in_use(tag) {
-        return Err(format!("{tag} is running. Quit it first."));
-    }
-    remove(tag)?;
-    crate::storage::eviction::request_cleanup();
-    let mut settings = Settings::load();
-    if settings.selected.as_deref() == Some(tag) {
-        settings.selected = installed().first().cloned();
-        settings.save()?;
-    }
-    Ok(())
-}
-
-/// How many of the newest managed versions of each kind stay installed by default.
-const KEEP_NEWEST: usize = 2;
-
-/// Only Nightlies installed by an update may be removed automatically. Absence of this marker
-/// means a manual install or a version from an older launcher whose origin is unknown.
-const AUTO_INSTALLED: &str = ".auto-installed";
-
-pub(crate) fn auto_installed(tag: &str) -> bool {
-    version_dir(tag).join(AUTO_INSTALLED).is_file()
-}
-
-pub fn mark_auto_installed(tag: &str) -> Result<(), String> {
-    let dir = version_dir(tag);
-    if !dir.join(COMPLETE).is_file() {
-        return Err(format!("{tag} is not installed."));
-    }
-    fs::write(dir.join(AUTO_INSTALLED), "").map_err(|e| e.to_string())
-}
-
-/// Keep the newest releases and automatically installed Nightlies separately. Manual and legacy
-/// Nightlies are outside the quota; selected and instance-pinned versions are always protected.
-fn stale_versions(
-    installed: &[String],
-    keep: usize,
-    protected: &[String],
-    auto: impl Fn(&str) -> bool,
-) -> Vec<String> {
-    let (mut releases, mut nightlies) = (0, 0);
-    installed
-        .iter()
-        .filter(|t| {
-            if is_game_tag(t) {
-                releases += 1;
-                releases > keep
-            } else if crate::nightly::date_of(t).is_some() && auto(t) {
-                nightlies += 1;
-                nightlies > keep
-            } else {
-                false
-            }
-        })
-        .filter(|t| !protected.contains(t))
-        .cloned()
-        .collect()
-}
+pub mod version_storage;
+pub use version_storage::remove_version;
 
 /// Whether a running program was started from the version's folder: the game and a server take
 /// their program and `--resources` from it. Windows refuses to delete a running program's files,
@@ -3257,47 +3195,6 @@ pub(crate) fn in_use(tag: &str) -> bool {
 #[cfg(not(any(unix, windows)))]
 pub(crate) fn in_use(_tag: &str) -> bool {
     false
-}
-
-/// Deletes the release versions nothing needs after an install or update, unless the player
-/// turned that off: all but the newest few (`Settings::keep_newest`), the selected version, the
-/// ones instances pin and the ones a program is running from. A version that does not delete
-/// is logged and the rest still go. Returns the versions deleted. They install again from GitHub.
-pub fn prune_old_versions() -> Vec<String> {
-    let settings = Settings::load();
-    if !settings.auto_prune() {
-        return Vec::new();
-    }
-    let mut protected: Vec<String> = settings.selected.iter().cloned().collect();
-    protected.extend(
-        crate::instances::list()
-            .into_iter()
-            .filter_map(|i| i.version),
-    );
-    let mut gone = Vec::new();
-    for tag in stale_versions(
-        &installed(),
-        settings.keep_newest(),
-        &protected,
-        auto_installed,
-    ) {
-        if crate::native_mods::resource_dependent(&tag).is_some() {
-            eprintln!("Keeping old version {tag}: a native build uses its resources.");
-            continue;
-        }
-        if in_use(&tag) {
-            eprintln!("Keeping old version {tag}: the game is running from it.");
-            continue;
-        }
-        match remove(&tag) {
-            Ok(()) => {
-                eprintln!("Removed old version {tag}.");
-                gone.push(tag);
-            }
-            Err(e) => eprintln!("Could not remove old version {tag}: {e}"),
-        }
-    }
-    gone
 }
 
 /// The Minecraft folder to prepare from: the one given, the one chosen in the launcher, or the
@@ -3664,11 +3561,6 @@ fn install_offered_tag(
     if matches!(outcome, InstallOutcome::ReceiptOnly(_)) {
         return Ok(release.tag.clone());
     }
-    if as_update && release.nightly.is_some() {
-        if let Err(e) = mark_auto_installed(&release.tag) {
-            eprintln!("Could not mark updated Nightly {}: {e}", release.tag);
-        }
-    }
     let mut settings = Settings::load();
     let select =
         !as_update || select_after_update(settings.selected.as_deref(), &before, &release.tag);
@@ -3676,10 +3568,9 @@ fn install_offered_tag(
         settings.selected = Some(release.tag.clone());
         settings.save()?;
     }
-    if as_update && release.nightly.is_some() {
-        crate::nightly::after_update(&release.tag);
+    for (tag, error) in version_storage::prune_old_versions(releases, &release.tag) {
+        eprintln!("Could not remove old game build {tag}: {error}");
     }
-    prune_old_versions();
     Ok(release.tag.clone())
 }
 
@@ -4686,11 +4577,10 @@ pub struct Settings {
     pub instance: Option<String>,
     pub minecraft_dir: Option<PathBuf>,
     pub server_dir: Option<PathBuf>,
-    /// Unset means on: after an install the launcher deletes the release versions nothing needs
-    /// (`prune_old_versions`). Only a player who turned it off has `false` here.
+    /// Unset means on: after an install the launcher deletes unused old automatic downloads.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prune_old_versions: Option<bool>,
-    /// How many of the newest release versions pruning keeps. Unset means [`KEEP_NEWEST`].
+    /// How many of the newest release versions pruning keeps. Unset means [`version_storage::KEEP_NEWEST`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub keep_versions: Option<usize>,
     /// Off by default, so the opening animation shows unless the player turns it off.
@@ -4968,7 +4858,9 @@ impl Settings {
     }
     /// How many of the newest release versions pruning keeps: at least the newest.
     pub fn keep_newest(&self) -> usize {
-        self.keep_versions.unwrap_or(KEEP_NEWEST).max(1)
+        self.keep_versions
+            .unwrap_or(version_storage::KEEP_NEWEST)
+            .max(1)
     }
 }
 
@@ -7710,109 +7602,6 @@ esac"#
         names.sort();
         assert_eq!(names, ["new", "sunrise-launcher"]);
         let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn pruning_keeps_the_newest_and_the_protected() {
-        let tags = |t: &[&str]| t.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        let installed = tags(&[
-            "26.3-0.1.91",
-            "26.3-0.1.90",
-            "26.3-0.1.88",
-            "26.3-0.1.85",
-            "26.3-0.1.80",
-            "nightly",
-        ]);
-        assert_eq!(
-            stale_versions(&installed, 2, &tags(&["26.3-0.1.85"]), |_| false),
-            tags(&["26.3-0.1.88", "26.3-0.1.80"])
-        );
-        // A protected version among the newest still leaves the newest `keep` in place.
-        assert_eq!(
-            stale_versions(&installed, 2, &tags(&["26.3-0.1.91"]), |_| false),
-            tags(&["26.3-0.1.88", "26.3-0.1.85", "26.3-0.1.80"])
-        );
-        assert!(stale_versions(&installed, 9, &[], |_| false).is_empty());
-    }
-
-    #[test]
-    fn pruning_removes_unused_nightlies_when_the_instance_follows_updates() {
-        let installed = [
-            "nightly-2026-11-05-f319701",
-            "nightly-2026-11-04-6475f62",
-            "nightly-2026-11-03-f42ef42",
-            "nightly-2026-10-31-d91cab6",
-        ]
-        .map(String::from);
-        // The default instance follows the selected version, so it adds no pin.
-        let protected = [installed[0].clone()];
-        assert_eq!(
-            stale_versions(&installed, 2, &protected, |_| true),
-            ["nightly-2026-11-03-f42ef42", "nightly-2026-10-31-d91cab6"]
-        );
-    }
-
-    #[test]
-    fn pruning_keeps_selected_and_instance_pinned_nightlies() {
-        let installed = [
-            "nightly-2026-11-05-f319701",
-            "nightly-2026-11-04-6475f62",
-            "nightly-2026-11-03-f42ef42",
-            "nightly-2026-11-01-c9d474d",
-            "nightly-2026-10-31-d91cab6",
-        ]
-        .map(String::from);
-        // A manual selection and a different instance's pin both survive the keep limit.
-        let protected = [installed[2].clone(), installed[4].clone()];
-        assert_eq!(
-            stale_versions(&installed, 1, &protected, |_| true),
-            ["nightly-2026-11-04-6475f62", "nightly-2026-11-01-c9d474d"]
-        );
-        assert!(stale_versions(&installed, 5, &protected, |_| true).is_empty());
-    }
-
-    #[test]
-    fn pruning_keeps_releases_separate_from_nightlies_and_local_builds() {
-        let installed = [
-            "native-local-build",
-            "imported-2026-11-05-abcdef0",
-            "nightly-2026-11-05-f319701",
-            "nightly-2026-11-04-6475f62",
-            "26.3-0.1.91",
-            "26.3-0.1.90",
-        ]
-        .map(String::from);
-        assert!(stale_versions(&installed, 2, &[], |_| true).is_empty());
-        assert_eq!(
-            stale_versions(&installed, 1, &[], |_| true),
-            ["nightly-2026-11-04-6475f62", "26.3-0.1.90"]
-        );
-    }
-
-    #[test]
-    fn pruning_preserves_manual_and_legacy_nightlies() {
-        let root =
-            std::env::temp_dir().join(format!("sunrise-prune-origin-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
-        let installed = [
-            "nightly-2026-11-05-aaaaaaa", // automatically updated, selected
-            "nightly-2026-11-04-bbbbbbb", // installed manually
-            "nightly-2026-11-03-ccccccc", // automatically updated
-            "nightly-2026-11-02-ddddddd", // from an older launcher; origin unknown
-            "nightly-2026-11-01-eeeeeee", // automatically updated
-        ]
-        .map(String::from);
-        for tag in [&installed[0], &installed[2], &installed[4]] {
-            let dir = root.join(tag);
-            fs::create_dir_all(&dir).unwrap();
-            fs::write(dir.join(AUTO_INSTALLED), "").unwrap();
-        }
-        let auto = |tag: &str| root.join(tag).join(AUTO_INSTALLED).is_file();
-        assert_eq!(
-            stale_versions(&installed, 2, &[installed[0].clone()], auto),
-            [installed[4].clone()]
-        );
-        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]

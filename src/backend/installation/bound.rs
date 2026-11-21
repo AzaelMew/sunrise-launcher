@@ -258,6 +258,11 @@ impl GameDownload {
         if let Some(warning) = outcome.receipt_warning() {
             eprintln!("{warning}");
         }
+        if matches!(outcome, InstallOutcome::Installed(_)) {
+            for (build, error) in version_storage::prune_old_versions(&[], tag) {
+                eprintln!("Could not remove old game build {build}: {error}");
+            }
+        }
         Ok(())
     }
 
@@ -318,6 +323,8 @@ impl GameDownload {
             // receipt alone isn't a failed install: only a noted failure makes the
             // operation a receipt-only retry rather than an ordinary Install or Update.
             if self.installed_at(&home, tag, proof, intent).is_ok() {
+                // An explicit download or repair also protects a matching automatic install.
+                intent.download().mark(&home)?;
                 let versions = versions_dir();
                 let outcome = if crate::nightly::has_current_receipt(&versions, tag) {
                     InstallOutcome::AlreadyInstalled(None)
