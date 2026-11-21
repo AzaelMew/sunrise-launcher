@@ -861,6 +861,7 @@ fn zoo() -> Index {
         "id": "farm", "name": "Farm", "summary": "Animals.", "owners": ["Someone"],
         "icon": "https://example.test/farm.png",
         "members": [{"id": "cow"}, {"id": "pig"}, {"id": "owl", "default": false}],
+        "downloads": 5,
     }))
     .unwrap()];
     idx
@@ -906,7 +907,7 @@ fn discover_folds_members_into_the_collection_and_hides_libraries_until_searched
     );
     let farm = all.iter().find(|c| c.id == "farm").unwrap();
     assert_eq!(farm.members, Some(3));
-    assert_eq!(farm.downloads, 30, "its mods' downloads added up");
+    assert_eq!(farm.downloads, 5, "the collection's own downloads");
     assert!(all.iter().find(|c| c.id == "lib").unwrap().library);
     assert!(!all.iter().find(|c| c.id == "jei").unwrap().library);
     // A search finds a member and a library like any other mod.
