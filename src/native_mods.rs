@@ -948,6 +948,7 @@ pub enum Failed {
         left: Vec<LeftOut>,
         error: String,
         compiling: bool,
+        log: Option<std::sync::Arc<str>>,
     },
     /// The folder holds no native mod to build.
     Nothing,
@@ -1385,6 +1386,7 @@ fn pipeline(
                     left: isolate::with_dependents(&unfit, &pairs),
                     error,
                     compiling: false,
+                    log: None,
                 });
             }
             return Err(error.into());
@@ -1471,6 +1473,7 @@ fn pipeline(
                 left,
                 error: texts.join("\n\n"),
                 compiling: false,
+                log: None,
             });
         }
     }
@@ -1527,6 +1530,7 @@ fn pipeline(
             error: format!("{reason}\n\n{e}"),
             left: going,
             compiling: true,
+            log: options.exact_home.and_then(|_| build_log::snapshot()),
         }
     };
     let mixins = mixins::for_key(&mixins_pins, |r| {
@@ -1849,6 +1853,7 @@ fn isolated(
                 left,
                 error,
                 compiling,
+                ..
             }) => {
                 compiles += usize::from(compiling);
                 let new: Vec<LeftOut> = left
@@ -1874,6 +1879,7 @@ fn isolated(
                     left: skip,
                     error: last,
                     compiling: false,
+                    log: None,
                 })
             }
             Err(Failed::NoConsent) => return Err(Failed::NoConsent),
@@ -2641,6 +2647,7 @@ mod tests {
                         }],
                         error: "compiler failure".into(),
                         compiling: true,
+                        log: None,
                     });
                 }
                 assert_eq!(skip[0].id, "broken");
@@ -2937,6 +2944,7 @@ mod tests {
                     left: vec![unfit.clone()],
                     error: "jei doesn't fit this game.".into(),
                     compiling: false,
+                    log: None,
                 }),
                 _ => Err(Failed::Nothing),
             },
@@ -2987,6 +2995,7 @@ mod tests {
                     left: compile_omissions("lib", &bundles, &deps),
                     error,
                     compiling: true,
+                    log: None,
                 })
             },
             &|step| {
@@ -3042,6 +3051,7 @@ mod tests {
                     }],
                     error: "compiler failure".into(),
                     compiling: true,
+                    log: None,
                 })
             },
             &|_| {},

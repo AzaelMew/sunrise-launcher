@@ -16,6 +16,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
     path::Path,
+    sync::Arc,
 };
 use sunrise_launcher_smod::{
     index::{browser_state, resolve},
@@ -69,9 +70,27 @@ pub struct NativeQuestion {
 
 #[derive(Clone, Debug)]
 pub struct BuildNotice {
-    /// A matched compiler diagnostic, not a transport, preflight or tooling failure.
-    pub mods: Vec<String>,
+    pub changes: Vec<BuildChange>,
+    /// Raw compiler/proof error for the headless route, not the visible sheet.
     pub detail: String,
+    pub log: Option<Arc<str>>,
+}
+
+#[derive(Clone, Debug)]
+pub struct BuildChange {
+    pub project: String,
+    pub title: String,
+    pub reason: installed::InstallHold,
+    pub predecessor: Option<String>,
+}
+
+impl BuildChange {
+    pub fn disposition(&self) -> String {
+        match &self.predecessor {
+            Some(version) => trf("Keep installed version {version}", &[("version", version)]),
+            None => tr("Keep installed, but off").into(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -363,6 +382,7 @@ pub fn install_registry(
                 left,
                 error,
                 compiling: false,
+                ..
             }) if !left.is_empty()
                 && left.iter().all(|failure| match &failure.why {
                     native_mods::Why::Needs(_) => true,
@@ -388,8 +408,9 @@ pub fn install_registry(
                 left,
                 error,
                 compiling: true,
+                log,
             }) => {
-                let mut failed = BTreeSet::new();
+                let mut failed = BTreeMap::new();
                 for failure in left {
                     match failure.why {
                         native_mods::Why::Needs(_) => (),
@@ -398,7 +419,7 @@ pub fn install_registry(
                                 .get(&failure.id)
                                 .is_some_and(|entry| entry.version == failure.version) =>
                         {
-                            failed.insert(failure.id);
+                            failed.insert(failure.id, installed::InstallHold::Compile);
                         }
                         _ => return Err(InstallError::Unproved(error)),
                     }
@@ -406,27 +427,32 @@ pub fn install_registry(
                 if failed.is_empty() {
                     return Err(InstallError::Unproved(error));
                 }
-                let notice = BuildNotice {
-                    mods: failed.iter().map(|id| entries[id].title.clone()).collect(),
-                    detail: error,
-                };
-                if !(hooks.continue_after_failure)(&notice) {
-                    return Err(InstallError::Compile(notice));
-                }
-                restore_or_disable(
+                let changes = restore_or_disable(
                     old.path(),
                     next.path(),
                     &before,
                     &mut entries,
                     &mut doc,
                     failed,
-                    &notice,
                 )?;
                 if let Some(conflict) = manifest_conflict(next.path(), &catalogue)? {
                     return Err(InstallError::Refused(conflict.reason));
                 }
+                let notice = BuildNotice {
+                    changes,
+                    detail: error,
+                    log,
+                };
+                if !(hooks.continue_after_failure)(&notice) {
+                    return Err(InstallError::Compile(notice));
+                }
                 result.failure = Some(notice);
-                prove().map_err(|e| InstallError::Unproved(e.into()))?
+                let proof = prove().map_err(|e| InstallError::Unproved(e.into()))?;
+                if entries.is_empty() {
+                    // Only the already-live predecessors survived. No pointer needs advancing.
+                    return Ok(result);
+                }
+                proof
             }
             Err(error) => return Err(InstallError::Unproved(error.into())),
         };
@@ -569,17 +595,22 @@ fn stage_package(
         page: shown.page,
         dependency: false,
         verdict: Some(trust_label(checked).into()),
-        compile_failure: None,
+        install_hold: None,
     })
 }
 
-fn required_satisfied(manifest: &Manifest, enabled: &BTreeMap<&str, &Manifest>) -> bool {
-    manifest.dependencies.iter().all(|(id, dependency)| {
+fn missing_required<'a>(
+    manifest: &'a Manifest,
+    enabled: &BTreeMap<&str, &Manifest>,
+) -> Option<&'a str> {
+    manifest.dependencies.iter().find_map(|(id, dependency)| {
         let need = dependency.details();
-        need.optional
-            || enabled.get(id.as_str()).is_some_and(|other| {
-                semver::Version::parse(&other.version).is_ok_and(|v| need.version.matches(&v))
-            })
+        (!need.optional
+            && !enabled.get(id.as_str()).is_some_and(|other| {
+                sunrise_launcher_smod::dependencies::parse_version(&other.version)
+                    .is_ok_and(|v| need.version.matches(&v))
+            }))
+        .then_some(id.as_str())
     })
 }
 
@@ -625,7 +656,7 @@ fn manifest_conflict(
                 &[("mod", &manifest.name), ("reason", &revocation.reason)],
             )));
         }
-        if !required_satisfied(manifest, &enabled) {
+        if missing_required(manifest, &enabled).is_some() {
             return Err(InstallError::Refused(trf(
                 "The proposed mods don't work with {mod}. Nothing was installed.",
                 &[("mod", &manifest.name)],
@@ -676,27 +707,32 @@ fn restore_or_disable(
     before: &Inventory,
     entries: &mut BTreeMap<String, installed::Entry>,
     doc: &mut Document,
-    failed: BTreeSet<String>,
-    notice: &BuildNotice,
-) -> Result<(), String> {
+    mut remaining: BTreeMap<String, installed::InstallHold>,
+) -> Result<Vec<BuildChange>, String> {
     let old = Document::read(original)?;
-    let mut remaining = failed;
-    loop {
-        if remaining.is_empty() {
-            break;
-        }
-        for id in std::mem::take(&mut remaining) {
+    let mut changes = Vec::new();
+    while !remaining.is_empty() {
+        for (id, reason) in std::mem::take(&mut remaining) {
             let entry = entries.get_mut(&id).ok_or_else(unproved_mods)?;
-            if let Some(previous) = before.get(&id) {
+            let title = entry.title.clone();
+            let predecessor = if let Some(previous) = before.get(&id) {
                 let target = candidate.join(&entry.file);
                 fs::copy(&previous.package.path, &target).map_err(|e| at(&target, e))?;
                 doc.set(&id, old.row(&id)?.ok_or_else(unproved_mods)?.clone())?;
                 entries.remove(&id);
+                Some(previous.package.manifest.version.clone())
             } else {
                 mod_list::set_enabled(candidate, &id, false)?;
-                entry.compile_failure = Some(notice.detail.clone());
+                entry.install_hold = Some(reason.clone());
                 doc.replace(entry)?;
-            }
+                None
+            };
+            changes.push(BuildChange {
+                project: id,
+                title,
+                reason,
+                predecessor,
+            });
         }
         let packages = inventory(candidate)?;
         let enabled: BTreeMap<_, _> = packages
@@ -704,14 +740,22 @@ fn restore_or_disable(
             .filter(|(id, _)| mod_list::is_enabled(candidate, id))
             .map(|(id, p)| (id.as_str(), &p.package.manifest))
             .collect();
-        remaining.extend(
-            enabled
-                .iter()
-                .filter(|(_, p)| !required_satisfied(p, &enabled))
-                .map(|(id, _)| (*id).to_owned()),
-        );
+        for (&id, &manifest) in &enabled {
+            if let Some(missing) = missing_required(manifest, &enabled) {
+                let name = packages
+                    .get(missing)
+                    .map_or(missing, |p| p.package.manifest.name.as_str());
+                remaining.insert(
+                    id.to_owned(),
+                    installed::InstallHold::Needs {
+                        name: name.to_owned(),
+                    },
+                );
+            }
+        }
     }
-    doc.write(candidate)
+    doc.write(candidate)?;
+    Ok(changes)
 }
 
 fn guard_replacements(
@@ -792,7 +836,7 @@ impl Document {
             Some(_) => return Err(unproved_mods()),
             None => Map::new(),
         };
-        fields.remove("launcher_compile_failure");
+        fields.remove("launcher_install_hold");
         fields.remove("verdict");
         let Value::Object(encoded) = encoded else {
             unreachable!("Entry serializes as an object")
@@ -815,3 +859,6 @@ fn unproved_mods() -> String {
 fn at(path: &Path, error: impl std::fmt::Display) -> String {
     format!("{}: {error}", path.display())
 }
+
+#[cfg(test)]
+mod tests;

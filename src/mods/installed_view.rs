@@ -583,28 +583,25 @@ impl Launcher {
             model::Tone::Success => palette().success,
             model::Tone::Muted => palette().muted,
         };
-        let last_compile = r
+        let install_hold = r
             .entry
             .as_ref()
-            .and_then(|entry| entry.compile_failure.clone())
+            .and_then(|entry| entry.install_hold.as_ref())
             .filter(|_| !r.on);
-        let status_cell: AnyElement = if let Some(detail) = last_compile {
-            status(
-                "warning",
-                tr("Installed, couldn't build"),
-                palette().warning,
-            )
-            .id(("alt-row-compile-failure", n))
-            .reach()
-            .min_w_0()
-            .cursor_pointer()
-            .tooltip(crate::glass_ui::tip(tr("Show why")))
-            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                this.open_notice(detail.clone(), None);
-                cx.stop_propagation();
-                cx.notify();
-            }))
-            .into_any_element()
+        let status_cell: AnyElement = if let Some(hold) = install_hold {
+            let detail = hold.detail();
+            status("warning", hold.label(), palette().warning)
+                .id(("alt-row-install-hold", n))
+                .reach()
+                .min_w_0()
+                .cursor_pointer()
+                .tooltip(crate::glass_ui::tip(tr("Show why")))
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    this.open_notice(detail.clone(), None);
+                    cx.stop_propagation();
+                    cx.notify();
+                }))
+                .into_any_element()
         } else {
             match (&cells.status, r.unfit.clone()) {
                 (Some(_), Some(unfit)) if cells.popover => {

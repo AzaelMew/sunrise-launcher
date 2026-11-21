@@ -787,7 +787,7 @@ impl Launcher {
         });
     }
 
-    pub(crate) fn registry_compile_failure(&self, id: &str) -> Option<String> {
+    pub(crate) fn registry_install_hold(&self, id: &str) -> Option<installed::InstallHold> {
         let snap = self
             .ui
             .mods
@@ -800,7 +800,7 @@ impl Launcher {
         snap.entries
             .iter()
             .find(|entry| entry.source == SourceId::Sunrise && entry.project == id)?
-            .compile_failure
+            .install_hold
             .clone()
     }
 

@@ -148,7 +148,7 @@ impl Installs {
                                 .iter()
                                 .filter(|entry| {
                                     !request.ids.contains(&entry.project)
-                                        && entry.compile_failure.is_none()
+                                        && entry.install_hold.is_none()
                                 })
                                 .map(|entry| entry.title.clone())
                                 .collect(),
@@ -161,31 +161,56 @@ impl Installs {
                                 })
                                 .collect(),
                             failure: done.failure.as_ref().map(|notice| {
-                                let off: Vec<_> = done
-                                    .added
+                                let this = notice
+                                    .changes
                                     .iter()
-                                    .filter(|entry| entry.compile_failure.is_some())
-                                    .collect();
-                                let label = if request.ids.len() == 1
-                                    && off.iter().any(|entry| entry.project == request.ids[0])
-                                {
-                                    tr("Installed, couldn't build").into()
-                                } else if off.is_empty() {
-                                    tr("Kept the working version").into()
-                                } else {
-                                    trf(
-                                        "Turned off: {mods}",
-                                        &[(
-                                            "mods",
-                                            &off.iter()
-                                                .map(|entry| entry.title.as_str())
-                                                .collect::<Vec<_>>()
-                                                .join(", "),
-                                        )],
-                                    )
+                                    .find(|change| change.project == request.card);
+                                let label = match this {
+                                    Some(change) if change.predecessor.is_some() => {
+                                        tr("Kept the working version").into()
+                                    }
+                                    Some(change) => change.reason.label(),
+                                    None => {
+                                        tr("Some mods stayed off or kept their old version").into()
+                                    }
                                 };
-                                (label, notice.detail.clone())
+                                let detail = notice
+                                    .changes
+                                    .iter()
+                                    .map(|change| {
+                                        trf(
+                                            "{mod}: {disposition}. {reason}",
+                                            &[
+                                                ("mod", &change.title),
+                                                ("disposition", &change.disposition()),
+                                                ("reason", &change.reason.detail()),
+                                            ],
+                                        )
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .join("\n\n");
+                                (label, detail)
                             }),
+                        },
+                        Err(InstallError::Compile(notice)) => Outcome {
+                            failure: Some((
+                                tr("Stayed. No mods changed.").into(),
+                                notice
+                                    .changes
+                                    .iter()
+                                    .map(|change| {
+                                        trf(
+                                            "{mod}: {reason}",
+                                            &[
+                                                ("mod", &change.title),
+                                                ("reason", &change.reason.detail()),
+                                            ],
+                                        )
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .join("\n\n"),
+                            )),
+                            ..Outcome::default()
                         },
                         Err(InstallError::Cancelled) => Outcome::default(),
                         Err(error) => Outcome {
@@ -283,12 +308,11 @@ impl Launcher {
 
     fn registry_outcome(&self, id: &str) -> Option<Outcome> {
         match self.registry_card(id) {
-            Some(Card::Done(outcome)) if outcome.failure.is_some() => Some(outcome.clone()),
             Some(Card::Progress(_) | Card::Waiting) => None,
             card => {
-                if let Some(detail) = self.registry_compile_failure(id) {
+                if let Some(hold) = self.registry_install_hold(id) {
                     return Some(Outcome {
-                        failure: Some((tr("Installed, couldn't build").into(), detail)),
+                        failure: Some((hold.label(), hold.detail())),
                         ..Outcome::default()
                     });
                 }

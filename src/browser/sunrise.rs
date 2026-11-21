@@ -1345,7 +1345,7 @@ impl Install<'_> {
             page: project.page.clone(),
             dependency: false,
             verdict: Some(trust_label(trust).into()),
-            compile_failure: None,
+            install_hold: None,
         };
         Ok((entry, Some((path, facts)), unreadable))
     }
