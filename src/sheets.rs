@@ -447,23 +447,25 @@ impl Launcher {
             });
         }
         if let Some((impact, _)) = &self.mods.installs.world {
-            let (heading, action) = if impact.removal {
-                (tr("Remove mods?"), tr("Remove"))
+            let action = if impact.removal {
+                tr("Remove")
             } else {
-                (tr("Update mods?"), tr("Update"))
+                tr("Update")
             };
             let body =
                 div()
                     .flex()
                     .flex_col()
-                    .child(title(heading.into()))
-                    .child(
-                        div()
-                            .id("registry-impact-text")
-                            .max_h(px(310.))
-                            .overflow_y_scroll()
-                            .child(crate::selectable::selectable(impact.detail.clone())),
-                    )
+                    .child(title(impact.heading.clone()))
+                    .when(!impact.detail.is_empty(), |body| {
+                        body.child(
+                            div()
+                                .id("registry-impact-text")
+                                .max_h(px(310.))
+                                .overflow_y_scroll()
+                                .child(crate::selectable::selectable(impact.detail.clone())),
+                        )
+                    })
                     .child(
                         div()
                             .flex()

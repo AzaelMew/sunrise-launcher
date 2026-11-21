@@ -3,6 +3,8 @@ use super::*;
 use crate::worlds;
 use sunrise_launcher_smod::{dependencies::parse_version, mod_list::ModList};
 
+mod gui;
+
 pub(super) fn update_floors(
     catalogue: &index::Index,
     before: &Inventory,
@@ -88,16 +90,35 @@ pub struct ChangeImpact {
 
 #[derive(Debug)]
 pub(super) enum Change {
-    Update(Vec<String>),
+    Update(Vec<ReviewedUpdate>),
     GithubUpdate {
-        name: String,
+        target: ReviewedMod,
         file: String,
         releases: [ReviewedRelease; 2],
     },
     Remove {
         removed: Vec<ReviewedArchive>,
-        disabled: Vec<String>,
+        disabled: Vec<ReviewedMod>,
     },
+}
+
+#[derive(Debug)]
+pub(super) struct ReviewedMod {
+    pub(super) name: String,
+    pub(super) id: String,
+}
+
+impl ReviewedMod {
+    fn label(&self) -> String {
+        format!("{} ({})", self.name, self.id)
+    }
+}
+
+#[derive(Debug)]
+pub(super) struct ReviewedUpdate {
+    pub(super) name: String,
+    pub(super) installed: Option<String>,
+    pub(super) replacement: String,
 }
 
 #[derive(Debug)]
@@ -122,7 +143,7 @@ impl From<&crate::github_mods::Origin> for ReviewedRelease {
 
 #[derive(Debug)]
 pub(super) struct ReviewedArchive {
-    name: String,
+    target: ReviewedMod,
     file: String,
     digest: String,
 }
@@ -155,18 +176,33 @@ impl ChangeImpact {
         matches!(self.change, Change::Remove { .. })
     }
 
+    /// The heading and plain-language warning shown by the GUI, not the archive audit detail.
+    pub fn gui_review(&self) -> (String, String) {
+        self.change.gui_review(self.affected().count())
+    }
+
     pub fn detail(&self) -> String {
         let mut lines = Vec::new();
         match &self.change {
             Change::Update(mods) => {
-                lines.push(trf("Update: {mods}.", &[("mods", &mods.join(", "))]));
+                let labels = mods
+                    .iter()
+                    .map(|update| match &update.installed {
+                        Some(old) => format!("{} {old} → {}", update.name, update.replacement),
+                        None => trf(
+                            "Install {mod} {version}",
+                            &[("mod", &update.name), ("version", &update.replacement)],
+                        ),
+                    })
+                    .collect::<Vec<_>>();
+                lines.push(trf("Update: {mods}.", &[("mods", &labels.join(", "))]));
             }
             Change::GithubUpdate {
-                name,
+                target,
                 file,
                 releases,
             } => {
-                lines.push(trf("Update: {mods}.", &[("mods", name)]));
+                lines.push(trf("Update: {mods}.", &[("mods", &target.label())]));
                 for (label, release) in [tr("Installed archive"), tr("Replacement archive")]
                     .into_iter()
                     .zip(releases)
@@ -180,7 +216,7 @@ impl ChangeImpact {
             Change::Remove { removed, disabled } => {
                 let names = removed
                     .iter()
-                    .map(|archive| archive.name.as_str())
+                    .map(|archive| archive.target.label())
                     .collect::<Vec<_>>();
                 lines.push(trf("Remove: {mods}.", &[("mods", &names.join(", "))]));
                 lines.extend(
@@ -191,7 +227,7 @@ impl ChangeImpact {
                 if !disabled.is_empty() {
                     lines.push(trf(
                         "These mods need the ones you are removing. They will be turned off, but their files will stay installed: {mods}.",
-                        &[("mods", &disabled.join(", "))],
+                        &[("mods", &disabled.iter().map(ReviewedMod::label).collect::<Vec<_>>().join(", "))],
                     ));
                 }
             }
@@ -349,7 +385,10 @@ pub fn remove_mods(
         reviewed_leaves.push((id.as_str(), file.clone()));
         fs::remove_file(&item.package.path).map_err(|e| at(&item.package.path, e))?;
         archives.push(ReviewedArchive {
-            name: format!("{} ({id})", item.package.manifest.name),
+            target: ReviewedMod {
+                name: item.package.manifest.name.clone(),
+                id: id.clone(),
+            },
             file,
             digest: digest.clone(),
         });
@@ -387,10 +426,9 @@ pub fn remove_mods(
     if let Some(conflict) = manifest_conflict(home, None, None, |_| false)? {
         return Err(InstallError::Refused(conflict.reason));
     }
-    let named = |id: &String| format!("{} ({id})", present[id].package.manifest.name);
     let removed = archives
         .iter()
-        .map(|archive| archive.name.clone())
+        .map(|archive| archive.target.label())
         .collect::<Vec<_>>();
     let suspect = worlds::unproved_mod_effects(
         old.path(),
@@ -403,7 +441,13 @@ pub fn remove_mods(
         &instance.home,
         Change::Remove {
             removed: archives,
-            disabled: disabled.iter().map(named).collect(),
+            disabled: disabled
+                .into_iter()
+                .map(|id| ReviewedMod {
+                    name: present[&id].package.manifest.name.clone(),
+                    id,
+                })
+                .collect(),
         },
         &suspect,
     )?;

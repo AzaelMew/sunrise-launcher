@@ -92,7 +92,10 @@ pub fn update_github(
     let impact = ChangeImpact::read(
         &instance.home,
         mutations::Change::GithubUpdate {
-            name: format!("{title} ({id})"),
+            target: mutations::ReviewedMod {
+                name: title.clone(),
+                id: id.clone(),
+            },
             file: file.clone(),
             releases: [(&predecessor).into(), replacement.into()],
         },

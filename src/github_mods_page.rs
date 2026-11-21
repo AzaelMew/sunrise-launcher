@@ -183,11 +183,7 @@ impl Launcher {
                                 },
                                 &|impact| {
                                     let (reply, answer) = std::sync::mpsc::channel();
-                                    let question = WorldQuestion {
-                                        removal: false,
-                                        detail: impact.detail(),
-                                    };
-                                    tx.send(Event::Review(question, reply)).is_ok()
+                                    tx.send(Event::Review(impact.into(), reply)).is_ok()
                                         && answer.recv().unwrap_or(false)
                                 },
                             )

@@ -53,7 +53,19 @@ struct RequestView {
 
 pub(crate) struct WorldQuestion {
     pub(crate) removal: bool,
+    pub(crate) heading: String,
     pub(crate) detail: String,
+}
+
+impl From<&ChangeImpact> for WorldQuestion {
+    fn from(impact: &ChangeImpact) -> Self {
+        let (heading, detail) = impact.gui_review();
+        Self {
+            removal: impact.is_removal(),
+            heading,
+            detail,
+        }
+    }
 }
 
 pub(crate) enum Decision {
@@ -559,11 +571,7 @@ impl Launcher {
             };
             let approve = |impact: &ChangeImpact| {
                 let (reply, answer) = std::sync::mpsc::channel();
-                let question = WorldQuestion {
-                    removal: impact.is_removal(),
-                    detail: impact.detail(),
-                };
-                post(Worker::World(question, reply)).is_ok() && answer.recv().unwrap_or(false)
+                post(Worker::World(impact.into(), reply)).is_ok() && answer.recv().unwrap_or(false)
             };
             let result = match kind {
                 Kind::Install => sunrise::install_registry(

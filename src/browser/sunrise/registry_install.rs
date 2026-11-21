@@ -763,18 +763,12 @@ fn registry_edit<'a>(
             Action::Update(_, approve) => {
                 let reviewed = entries
                     .values()
-                    .map(|entry| {
-                        if let Some(old) = before.get(&entry.project) {
-                            format!(
-                                "{} {} → {}",
-                                entry.title, old.package.manifest.version, entry.version
-                            )
-                        } else {
-                            trf(
-                                "Install {mod} {version}",
-                                &[("mod", &entry.title), ("version", &entry.version)],
-                            )
-                        }
+                    .map(|entry| mutations::ReviewedUpdate {
+                        name: entry.title.clone(),
+                        installed: before
+                            .get(&entry.project)
+                            .map(|old| old.package.manifest.version.clone()),
+                        replacement: entry.version.clone(),
                     })
                     .collect();
                 let impact = ChangeImpact::read(
