@@ -3,6 +3,10 @@ use super::*;
 use sunrise_launcher::browser::mod_list as selection;
 use sunrise_launcher_nbt::{self as nbt, Limits, NamedTag, Tag};
 
+#[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
+#[path = "mutations/native.rs"]
+mod native;
+
 fn world(home: &Path, folder: &str, ids: &[&str]) {
     let dest = home.join("saves").join(folder);
     fs::create_dir_all(&dest).unwrap();

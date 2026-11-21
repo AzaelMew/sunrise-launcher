@@ -294,6 +294,15 @@ impl Active {
         Ok(value)
     }
 
+    /// Read the currently published generation without recovering or changing the profile.
+    pub fn read_pointer(home: &Path) -> Result<Option<Self>, String> {
+        crate::profile_txn::references(home)?
+            .pointer
+            .as_deref()
+            .map(Self::parse)
+            .transpose()
+    }
+
     pub fn holds(&self) -> impl Iterator<Item = &Held> {
         self.receipts
             .iter()

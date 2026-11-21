@@ -109,6 +109,13 @@ impl Edit<'_> {
         }
     }
 
+    pub(crate) fn held(&self, id: &str) -> Option<&crate::managed_play::Held> {
+        match &self.basis {
+            Basis::Active(active, _) => active.holds().find(|held| held.id() == id),
+            Basis::First(_) => None,
+        }
+    }
+
     fn stage(&self) -> &Staging<'_> {
         match &self.basis {
             Basis::Active(_, stage) => stage,
@@ -197,6 +204,7 @@ impl Edit<'_> {
         self,
         proof: CandidateImage,
         cancellation: &native_mods::Cancellation,
+        retire_holds: &BTreeSet<String>,
         authorize: impl FnOnce() -> Result<(), String>,
     ) -> Result<Active, String> {
         let resources = match &self.basis {
@@ -209,7 +217,7 @@ impl Edit<'_> {
         if inputs(&self.home, None)? != self.before {
             return Err(unsettled());
         }
-        let (active, stage) = match self.basis {
+        let (mut active, stage) = match self.basis {
             Basis::Active(old, stage) => {
                 old.verify_artifacts()?;
                 let active = Active::capture(
@@ -238,6 +246,13 @@ impl Edit<'_> {
                 (active, first.stage)
             }
         };
+        active.receipts.retain_mut(|receipt| {
+            receipt
+                .waiting_for_update
+                .retain(|held| !retire_holds.contains(held.id()));
+            !receipt.waiting_for_update.is_empty()
+                || (!receipt.acknowledged && !receipt.removed.is_empty())
+        });
         let files = changed_files(&self.home, &proof.candidate)?;
         let pointer = serde_json::to_vec(&active).map_err(|e| e.to_string())?;
         stage.seal(pointer, &files)?.publish(|| {

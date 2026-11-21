@@ -331,12 +331,31 @@ fn registry_edit<'a>(
             doc.replace(entry)?;
         }
         doc.write(next.path())?;
+        let mut restored_holds = BTreeSet::new();
+        for id in above.keys().filter(|id| entries.contains_key(*id)) {
+            if let Some(held) = edit.held(id) {
+                let kept = &before[id];
+                if held.enabled_before()
+                    && kept.matches_hold(old.path(), held)
+                    && !kept.digest.as_ref().is_some_and(|digest| {
+                        entries[id]
+                            .checksum
+                            .eq_ignore_ascii_case(&format!("SHA-256:{digest}"))
+                    })
+                {
+                    restored_holds.insert(id.clone());
+                }
+            }
+        }
         let staged = inventory(next.path())?;
         let activate: Vec<_> =
             if matches!(action, Action::Install(_)) {
                 entries
                     .keys()
-                    .filter(|id| !before.contains_key(*id) || was_enabled.contains(*id))
+                    .filter(|id| {
+                        edit.held(id).is_none()
+                            && (!before.contains_key(*id) || was_enabled.contains(*id))
+                    })
                     .map(String::as_str)
                     .collect()
             } else {
@@ -344,7 +363,11 @@ fn registry_edit<'a>(
                 // the intended enabled closure; an existing off dependency remains explicitly off.
                 let mut activate = BTreeSet::new();
                 let mut visited = BTreeSet::new();
-                let mut needed: Vec<_> = was_enabled.iter().map(String::as_str).collect();
+                let mut needed: Vec<_> = was_enabled
+                    .iter()
+                    .chain(&restored_holds)
+                    .map(String::as_str)
+                    .collect();
                 while let Some(id) = needed.pop() {
                     if !visited.insert(id) {
                         continue;
@@ -352,7 +375,10 @@ fn registry_edit<'a>(
                     let Some(package) = staged.get(id) else {
                         continue;
                     };
-                    if !was_enabled.contains(id) && before.contains_key(id) {
+                    if !restored_holds.contains(id)
+                        && (edit.held(id).is_some()
+                            || (!was_enabled.contains(id) && before.contains_key(id)))
+                    {
                         continue;
                     }
                     if !was_enabled.contains(id) {
@@ -366,6 +392,19 @@ fn registry_edit<'a>(
             };
         if !activate.is_empty() {
             mod_list::set_all_enabled(next.path(), &activate, true)?;
+        }
+        // An inconsistent on-list cannot bypass a typed hold while updating that package.
+        let keep_off: Vec<_> = entries
+            .keys()
+            .filter(|id| {
+                edit.held(id).is_some()
+                    && !restored_holds.contains(*id)
+                    && was_enabled.contains(*id)
+            })
+            .map(String::as_str)
+            .collect();
+        if !keep_off.is_empty() {
+            mod_list::set_all_enabled(next.path(), &keep_off, false)?;
         }
         if let Some(conflict) = manifest_conflict(next.path(), Some(&catalogue))? {
             if conflicts.contains(&conflict) {
@@ -547,8 +586,9 @@ fn registry_edit<'a>(
                 Some((impact, affected))
             }
         };
+        restored_holds.retain(|id| entries.contains_key(id));
         (hooks.progress)(InstallProgress::Publishing);
-        edit.publish(proof, &cancelled, || {
+        edit.publish(proof, &cancelled, &restored_holds, || {
             let (_, current) = fetch_index(&source, local)?;
             if source_bytes != current {
                 return Err(tr("The mod registry changed while the install was being prepared. Nothing was installed.").into());
@@ -614,6 +654,35 @@ struct SeenPackage {
 }
 
 impl SeenPackage {
+    fn matches_hold(&self, home: &Path, hold: &managed_play::Held) -> bool {
+        if self.package.manifest.native.is_none()
+            || self.package.path != home.join(hold.path())
+            || !self.digest.as_ref().is_some_and(|hash| {
+                let digest = sha2::digest::Output::<sha2::Sha256>::from(*hold.digest());
+                hash.eq_ignore_ascii_case(&format!("{digest:x}"))
+            })
+        {
+            return false;
+        }
+        match hold.source() {
+            managed_play::HeldSource::Registry { version, .. } => {
+                self.owned && version == &self.package.manifest.version
+            }
+            managed_play::HeldSource::Github {
+                owner,
+                repo,
+                commit,
+                version,
+            } => self.github_origin(home).is_some_and(|row| {
+                &row.owner == owner
+                    && &row.repo == repo
+                    && &row.commit == commit
+                    && &row.version == version
+            }),
+            managed_play::HeldSource::Local { .. } => false,
+        }
+    }
+
     fn github_origin(&self, home: &Path) -> Option<crate::github_mods::Origin> {
         let id = &self.package.manifest.id;
         let target = home.join(native_mods::INSTALLED).join(format!("{id}.smod"));

@@ -175,7 +175,8 @@ impl ChangeImpact {
     }
 }
 
-/// The ordinary enable switch must not reactivate a mod missing a required dependency. Call under the game's manifest lock and write the list under the same lock.
+/// The ordinary enable switch must not reactivate an exact hold or a mod missing a required
+/// dependency. Call under the game's manifest lock and write the list under the same lock.
 pub fn check_activation(home: &Path, activate: &[&str]) -> Result<(), String> {
     let packages = inventory(home)?;
     let mut enabled = enabled(home)?;
@@ -185,11 +186,21 @@ pub fn check_activation(home: &Path, activate: &[&str]) -> Result<(), String> {
         .filter(|(id, _)| enabled.contains(*id))
         .map(|(id, p)| (id.as_str(), &p.package.manifest))
         .collect::<BTreeMap<_, _>>();
+    let active = managed_play::Active::read_pointer(home)?;
     let mut visited = BTreeSet::new();
     let mut remaining = activate.to_vec();
     while let Some(id) = remaining.pop() {
         if !visited.insert(id) {
             continue;
+        }
+        if active
+            .as_ref()
+            .is_some_and(|active| active.holds().any(|hold| hold.id() == id))
+        {
+            return Err(trf(
+                "{mod} needs an update from its author before it can be turned on.",
+                &[("mod", id)],
+            ));
         }
         let target = manifests.get(id).ok_or_else(unproved_mods)?;
         for (name, dep) in &target.dependencies {
@@ -238,6 +249,7 @@ pub fn remove_mods(
     let mut rows = Document::read(home)?;
     let enabled = enabled(home)?;
     let mut changed_rows = false;
+    let mut retired = BTreeSet::new();
     for id in &ids {
         let item = present.get(id).ok_or_else(|| {
             trf(
@@ -245,6 +257,12 @@ pub fn remove_mods(
                 &[("mod", id)],
             )
         })?;
+        if edit
+            .held(id)
+            .is_some_and(|hold| item.matches_hold(home, hold))
+        {
+            retired.insert(id.clone());
+        }
         if item.owned {
             rows.remove(id)?;
             changed_rows = true;
@@ -310,7 +328,7 @@ pub fn remove_mods(
     let proof = prove_edit(&edit, home, instance, &cancellation, &hooks)
         .map_err(|e| InstallError::Unproved(e.into()))?;
     (hooks.progress)(InstallProgress::Publishing);
-    edit.publish(proof, &cancellation, || {
+    edit.publish(proof, &cancellation, &retired, || {
         impact.recheck(&instance.home, &affected)
     })?;
     Ok(removed)
