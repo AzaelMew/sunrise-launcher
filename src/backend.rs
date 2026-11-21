@@ -4549,6 +4549,15 @@ pub const MAX_CORNER_RADIUS: u8 = 30;
 pub const PANEL_OPACITY_MIN: u8 = 82;
 pub const PANEL_OPACITY_MAX: u8 = 100;
 
+/// Explicit permission to build one GitHub source mod. A rename within the same owner
+/// retains consent; a change of owner, repository ID or mod ID never does.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SourceModGrant {
+    pub repo_id: u64,
+    pub owner: String,
+    pub id: String,
+}
+
 #[derive(Default, serde::Serialize, serde::Deserialize)]
 pub struct Settings {
     pub selected: Option<String>,
@@ -4649,6 +4658,8 @@ pub struct Settings {
     /// First-use native code permission for this launcher install, Unix seconds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_mods_allowed_at: Option<u64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub source_mod_grants: Vec<SourceModGrant>,
     /// Managed cache limit in GiB (unset: 25; zero: no automatic cleanup). Player data isn't cache.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_limit_gib: Option<u64>,
@@ -4785,6 +4796,11 @@ impl Settings {
                 .is_some_and(|v| !v.is_boolean())
             {
                 fields.remove("sidebar_expanded");
+            }
+            if fields.get("source_mod_grants").is_some_and(|grants| {
+                serde_json::from_value::<Vec<SourceModGrant>>(grants.clone()).is_err()
+            }) {
+                fields.remove("source_mod_grants");
             }
             look_settings::tidy(fields);
             // A language this launcher doesn't have yet follows the system's.
