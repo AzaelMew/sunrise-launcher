@@ -435,6 +435,14 @@ mod tests {
             return;
         };
         let home = root.join("game");
+        let packages = home.join(sunrise_launcher_smod::mod_list::DIR);
+        std::fs::create_dir_all(&packages).unwrap();
+        let archive = sunrise_launcher_smod::Package::write_files(
+            "id='light'\nname='Light'\nversion='1.0.0'\napi='0.2'\ncapabilities=['registries']\n",
+            &[],
+        )
+        .unwrap();
+        std::fs::write(packages.join("light.smod"), archive).unwrap();
         let manifest = sunrise_launcher::browser::lock_home(&home).unwrap();
         let identity = Identity::of(&home).unwrap();
         let (returned, wait_return) = channel();
