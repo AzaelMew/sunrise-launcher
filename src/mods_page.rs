@@ -6,7 +6,7 @@ use super::*;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use sunrise_launcher::browser::{self, installed, mod_list, sunrise};
+use sunrise_launcher::browser::{installed, sunrise};
 use sunrise_launcher::native_status;
 
 pub(crate) mod install;
@@ -181,28 +181,13 @@ impl Launcher {
         self.start_registry_queue() || changed
     }
 
-    /// Turns a Sunrise mod the browser installed on or off, as the game's Options > Mods does.
+    /// Turns a Sunrise mod the browser installed on after the worker admits its profile.
     pub(super) fn mods_switch(&mut self, e: &installed::Entry) {
         let home = self.mods.home();
-        let profile = match sunrise_launcher::managed_play::Profile::open(&home, None) {
-            Ok(profile) => profile,
-            Err(error) => {
-                self.mods.message = Some(Err(error));
-                return;
-            }
-        };
-        // An update holds the folder: the window doesn't wait for it.
-        let Some(_lock) = browser::try_lock_home(&home) else {
-            self.mods.message = Some(Err(tr("Wait for the current operation to finish.").into()));
-            return;
-        };
         let Some(id) = sunrise::mod_id(e) else {
             return;
         };
-        let on = !mod_list::is_enabled(&home, id);
-        if on
-            && native_status::is_native_file(&e.file)
-            && self.settings.native_mods_allowed_at.is_none()
+        if native_status::is_native_file(&e.file) && self.settings.native_mods_allowed_at.is_none()
         {
             self.pending_consent = Some(PendingConsent::Toggle(e.clone()));
             return;
@@ -212,27 +197,14 @@ impl Launcher {
             .as_ref()
             .and_then(|index| index.project(&e.project))
             .map_or(id, |project| &project.name);
-        let revoked = index.as_ref().and_then(|index| {
-            let hash = e.checksum.trim_start_matches("SHA-256:");
-            index.revoked(&e.project, hash)
-        });
-        let result = match revoked.filter(|_| on) {
-            Some(revoked) => Err(format!("{title} was taken down: {}", revoked.reason)),
-            None if on => profile.enable_unheld(&[id]).and_then(|skipped| {
-                if skipped.is_empty() {
-                    Ok(())
-                } else {
-                    Err(tr("Needs an update from its author").into())
-                }
-            }),
-            None => mod_list::set_enabled(&home, id, false),
-        };
-        self.mods.message = Some(result.map(|()| {
-            format!(
-                "{title} is {}. The game reads this when it starts.",
-                if on { "on" } else { "off" }
-            )
-        }));
+        if let Some(revoked) = index
+            .as_ref()
+            .and_then(|index| index.revoked(&e.project, e.checksum.trim_start_matches("SHA-256:")))
+        {
+            self.mods.message = Some(Err(format!("{title} was taken down: {}", revoked.reason)));
+            return;
+        }
+        self.enable_one_in(home, id.into(), title.into());
     }
 }
 

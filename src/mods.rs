@@ -224,6 +224,11 @@ impl InstalledRefresh<'_> {
 enum Event {
     /// Installed rows read for the requested folder and fingerprint, off the window thread.
     Local(String, InstalledRead),
+    Enabled(
+        PathBuf,
+        actions::EnableNotice,
+        Result<actions::EnabledMods, String>,
+    ),
     Catalog(String, Result<(Vec<Card>, Vec<String>), String>),
     Page(u64, Result<Box<model::Page>, String>),
     Progress(String, f32),
@@ -643,6 +648,7 @@ impl Launcher {
                         }
                     }
                 }
+                Event::Enabled(home, notice, result) => self.enabled_mods(&home, notice, result),
                 Event::Page(request, page) => {
                     if let Some(open) = m.open.as_mut().filter(|o| o.request == request) {
                         open.page = Some(page);

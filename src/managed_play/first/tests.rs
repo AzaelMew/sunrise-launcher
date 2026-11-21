@@ -613,7 +613,12 @@ fn home_read_recovers_the_first_switch_receipt_after_a_killed_commit() {
         let mut profile = Profile::open(&home, None).unwrap();
         assert_eq!(
             profile.enable_unheld(&["fireflies", "moths"]).unwrap(),
-            ["fireflies"]
+            [(
+                "fireflies",
+                HeldReason::NoFit {
+                    build: BUILD.into()
+                }
+            )]
         );
         assert!(!crate::browser::mod_list::is_enabled(&home, "fireflies"));
         assert!(crate::browser::mod_list::is_enabled(&home, "moths"));

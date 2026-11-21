@@ -2540,8 +2540,8 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                 }
             }
             if let Some(profile) = profile {
-                if !profile.enable_unheld(&[id])?.is_empty() {
-                    return Err(format!("{}: Needs an update from its author.", e.title));
+                if let Some((_, reason)) = profile.enable_unheld(&[id])?.into_iter().next() {
+                    return Err(format!("{}: {}.", e.title, reason.label()));
                 }
             } else {
                 sunrise_launcher::browser::mod_list::set_enabled(&home, id, false)?;

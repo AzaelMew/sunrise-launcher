@@ -14,6 +14,47 @@ pub(super) enum Action {
     Update(Vec<Included>),
 }
 
+use sunrise_launcher::{
+    managed_play::{HeldReason, Profile},
+    profile_txn::Identity,
+};
+
+pub(super) enum EnableNotice {
+    One(String),
+    Bulk {
+        held: Vec<(String, HeldReason)>,
+        blocked: Vec<(String, String)>,
+    },
+}
+
+pub(super) struct EnabledMods {
+    count: usize,
+    skipped: Vec<(String, HeldReason)>,
+}
+
+fn dispatch_enable(
+    home: PathBuf,
+    identity: Identity,
+    ids: Vec<String>,
+    reply: impl FnOnce(Result<EnabledMods, String>) + Send + 'static,
+) {
+    std::thread::spawn(move || {
+        let result = (|| {
+            let profile = Profile::open_for(&home, None, Some(identity)).map_err(String::from)?;
+            let ids: Vec<_> = ids.iter().map(String::as_str).collect();
+            let skipped = profile.enable_unheld(&ids)?;
+            Ok(EnabledMods {
+                count: ids.len() - skipped.len(),
+                skipped: skipped
+                    .into_iter()
+                    .map(|(id, reason)| (id.into(), reason))
+                    .collect(),
+            })
+        })();
+        reply(result);
+    });
+}
+
 impl Launcher {
     /// Opens a confirmation, remembering which folder it was reviewed for.
     fn confirm(&mut self, confirm: Confirm) {
@@ -108,83 +149,143 @@ impl Launcher {
             if let Some(Err(e)) = self.mods.message.take() {
                 self.ui.mods.notice = Some(Err(e));
             }
-        } else if let Some(snapshot) = &mut self.ui.mods.snapshot {
-            self.ui.mods.notice =
-                match sunrise_launcher::managed_play::Profile::open(&snapshot.home, None)
-                    .and_then(|profile| profile.enable_unheld(&[row.id.as_str()]))
-                {
-                    Ok(skipped) if skipped.is_empty() => {
-                        snapshot.key.clear();
-                        None
-                    }
-                    Ok(_) => Some(Err(tr("Needs an update from its author").into())),
-                    Err(e) => Some(Err(e)),
-                };
+        } else if let Some(snapshot) = &self.ui.mods.snapshot {
+            self.enable_one_in(snapshot.home.clone(), row.id.clone(), row.title.clone());
         }
     }
 
-    /// Turn the chosen registry mods on in one rewrite of the list. Local and GitHub mods
-    /// have individual switches only: they aren't selectable for registry bulk actions.
-    /// A mod that can't be turned on stays as it is and its row says why.
+    pub(crate) fn enable_one_in(&mut self, home: PathBuf, id: String, title: String) {
+        self.queue_enable(home, vec![id], EnableNotice::One(title));
+    }
+
+    /// Turn the chosen registry mods on in one admitted rewrite. An already-known hold
+    /// stays out of the plan; the worker also checks live holds before touching the file.
     pub(super) fn bulk_on(&mut self) {
         if !self.guard() {
             return;
         }
         let rows = self.rows();
-        let chosen: Vec<&Row> = rows
-            .iter()
-            .filter(|r| r.local.is_none() && self.ui.mods.selection.contains(&r.id))
-            .collect();
-        let m = &mut self.ui.mods;
-        let Some(snapshot) = &m.snapshot else {
+        let Some(snapshot) = &self.ui.mods.snapshot else {
             return;
         };
-        let (held, candidates): (Vec<_>, Vec<_>) = chosen
-            .into_iter()
-            .partition(|row| snapshot.switch_held.contains_key(&row.id));
+        let mut held = Vec::new();
+        let mut candidates = Vec::new();
+        for row in rows
+            .iter()
+            .filter(|r| r.local.is_none() && self.ui.mods.selection.contains(&r.id))
+        {
+            if let Some(reason) = snapshot.switch_held.get(&row.id) {
+                held.push((row.id.clone(), reason.clone()));
+            } else {
+                candidates.push(row);
+            }
+        }
         let (go, blocked) =
             model::turn_on_plan(&candidates, self.settings.native_mods_allowed_at.is_some());
-        m.errors = blocked
-            .iter()
-            .map(|(r, why)| (r.id.clone(), why.clone()))
+        let blocked = blocked
+            .into_iter()
+            .map(|(row, reason)| (row.id.clone(), reason))
             .collect();
-        let ids: Vec<&str> = go.iter().map(|r| r.id.as_str()).collect();
-        let result = if ids.is_empty() {
-            Ok(Vec::new())
-        } else {
-            sunrise_launcher::managed_play::Profile::open(&snapshot.home, None)
-                .and_then(|profile| profile.enable_unheld(&ids))
-        };
-        m.notice = Some(result.and_then(|skipped| {
-            let wanted = ids.len() - skipped.len();
-            let needs_update = held.len() + skipped.len();
-            for id in held.iter().map(|r| r.id.as_str()).chain(skipped) {
-                m.errors
-                    .insert(id.into(), tr("Needs an update from its author").into());
+        let ids = go.into_iter().map(|row| row.id.clone()).collect();
+        self.queue_enable(
+            snapshot.home.clone(),
+            ids,
+            EnableNotice::Bulk { held, blocked },
+        );
+    }
+
+    fn queue_enable(&mut self, home: PathBuf, ids: Vec<String>, notice: EnableNotice) {
+        if !self.guard() {
+            return;
+        }
+        self.ui.mods.errors.clear();
+        self.ui.mods.notice = None;
+        if ids.is_empty() {
+            self.enabled_mods(
+                &home,
+                notice,
+                Ok(EnabledMods {
+                    count: 0,
+                    skipped: Vec::new(),
+                }),
+            );
+            return;
+        }
+        let identity = match Identity::of(&home) {
+            Ok(identity) => identity,
+            Err(error) => {
+                self.ui.mods.notice = Some(Err(error));
+                return;
             }
-            if needs_update > 0 {
-                Err(trf(
-                    "Turned on {done}. Needs an update from its author: {held}.",
-                    &[
-                        ("done", &wanted.to_string()),
-                        ("held", &needs_update.to_string()),
-                    ],
-                ))
-            } else if wanted == 0 {
-                Err(tr("Nothing selected can be turned on yet.").into())
-            } else if !blocked.is_empty() {
-                Err(trf(
-                    "Turned on {done}. {held} stayed off: see their rows.",
-                    &[
-                        ("done", &wanted.to_string()),
-                        ("held", &blocked.len().to_string()),
-                    ],
-                ))
-            } else {
-                Ok(trf(
-                    "Turned on {count} mods. The game reads this when it starts.",
-                    &[("count", &wanted.to_string())],
-                ))
+        };
+        self.ui.mods.busy = Some((tr("Turning on mods…").into(), 0.));
+        let tx = self.ui.mods.tx.clone();
+        dispatch_enable(home.clone(), identity, ids, move |result| {
+            let _ = tx.send(Event::Enabled(home, notice, result));
+        });
+    }
+
+    pub(super) fn enabled_mods(
+        &mut self,
+        home: &Path,
+        notice: EnableNotice,
+        result: Result<EnabledMods, String>,
+    ) {
+        self.ui.mods.busy = None;
+        if self.mods_home() != home {
+            return;
+        }
+        let m = &mut self.ui.mods;
+        m.notice = Some(result.and_then(|result| match notice {
+            EnableNotice::One(title) => {
+                if let Some((_, reason)) = result.skipped.first() {
+                    Err(reason.label().into())
+                } else {
+                    Ok(trf(
+                        "{mod} is on. The game reads this when it starts.",
+                        &[("mod", &title)],
+                    ))
+                }
+            }
+            EnableNotice::Bulk { mut held, blocked } => {
+                held.extend(result.skipped);
+                let unknown = held.iter().filter(|(_, reason)| reason.unproved()).count();
+                let needs_update = held.len() - unknown;
+                m.errors.extend(
+                    held.into_iter()
+                        .map(|(id, reason)| (id, reason.label().into())),
+                );
+                let other = blocked.len();
+                m.errors.extend(blocked);
+                if needs_update == 0 && unknown == 0 && other == 0 {
+                    return Ok(trf(
+                        "Turned on {count} mods. The game reads this when it starts.",
+                        &[("count", &result.count.to_string())],
+                    ));
+                }
+                let mut lines = vec![trf(
+                    "Turned on {count}.",
+                    &[("count", &result.count.to_string())],
+                )];
+                if needs_update != 0 {
+                    lines.push(trf(
+                        "Needs an update from its author: {count}.",
+                        &[("count", &needs_update.to_string())],
+                    ));
+                }
+                if unknown != 0 {
+                    lines.push(trf(
+                        "Fit could not be verified: {count}.",
+                        &[("count", &unknown.to_string())],
+                    ));
+                }
+                if other != 0 {
+                    lines.push(trf(
+                        "{count} stayed off: see their rows.",
+                        &[("count", &other.to_string())],
+                    ));
+                }
+                Err(lines.join(" "))
             }
         }));
     }
@@ -420,6 +521,50 @@ mod tests {
     use super::*;
     use std::sync::mpsc::channel;
     use sunrise_launcher_nbt::{self as nbt, Limits, Tag};
+
+    #[test]
+    fn enabling_dispatch_returns_before_a_held_manifest_lock_releases() {
+        use std::time::Duration;
+        const ACTOR: &str = "ENABLE_UNHELD_LOCK_ACTOR";
+        let Some(root) = std::env::var_os(ACTOR).map(PathBuf::from) else {
+            let root = tempfile::tempdir().unwrap();
+            assert!(std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "mods::actions::tests::enabling_dispatch_returns_before_a_held_manifest_lock_releases"])
+                .env(ACTOR, root.path())
+                .env("SUNRISE_HOME", root.path().join("game"))
+                .env("SUNRISE_LAUNCHER_HOME", root.path().join("launcher"))
+                .status().unwrap().success());
+            return;
+        };
+        let home = root.join("game");
+        let manifest = sunrise_launcher::browser::lock_home(&home).unwrap();
+        let identity = Identity::of(&home).unwrap();
+        let (returned, wait_return) = channel();
+        let (done, wait_done) = channel();
+        let selected = home.clone();
+        std::thread::spawn(move || {
+            dispatch_enable(selected, identity, vec!["light".into()], move |result| {
+                done.send(result).unwrap()
+            });
+            returned.send(()).unwrap();
+        });
+        wait_return
+            .recv_timeout(Duration::from_secs(5))
+            .expect("don't block the caller on profile or manifest admission");
+        assert!(matches!(
+            wait_done.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Empty)
+        ));
+        assert!(!mod_list::is_enabled(&home, "light"));
+        drop(manifest);
+        let enabled = wait_done
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap()
+            .unwrap();
+        assert_eq!(enabled.count, 1);
+        assert!(enabled.skipped.is_empty());
+        assert!(mod_list::is_enabled(&home, "light"));
+    }
 
     fn home_with_world(mod_id: &str) -> PathBuf {
         static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);

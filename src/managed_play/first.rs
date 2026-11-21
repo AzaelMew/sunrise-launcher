@@ -1,7 +1,7 @@
 //! First Play freezes the candidate and its proof before downloading or preparing anything.
 use super::{
-    at, inputs, scan_packages, unsettled, Active, Artifact, Generation, ReferencePublication,
-    Resources,
+    at, inputs, scan_packages, unsettled, Active, Artifact, Generation, HeldReason,
+    ReferencePublication, Resources,
 };
 use crate::{
     backend::{
@@ -186,14 +186,21 @@ impl Profile {
 
     /// Enable only the requested mods that aren't held by Switch. An exact hold is retired by
     /// a proved replacement, not by turning on its old ID from a stale view or command.
-    pub fn enable_unheld<'a>(&self, ids: &[&'a str]) -> Result<Vec<&'a str>, String> {
+    pub fn enable_unheld<'a>(&self, ids: &[&'a str]) -> Result<Vec<(&'a str, HeldReason)>, String> {
         let _manifest = game_lock(self.home())?;
         let active = self.active()?;
-        let (go, skipped): (Vec<_>, Vec<_>) = ids.iter().copied().partition(|id| {
-            !active
+        let mut go = Vec::new();
+        let mut skipped = Vec::new();
+        for &id in ids {
+            if let Some(hold) = active
                 .as_ref()
-                .is_some_and(|active| active.holds().any(|hold| hold.id() == *id))
-        });
+                .and_then(|active| active.holds().find(|hold| hold.id() == id))
+            {
+                skipped.push((id, hold.reason().clone()));
+            } else {
+                go.push(id);
+            }
+        }
         if !go.is_empty() {
             crate::browser::mod_list::set_all_enabled(self.home(), &go, true)?;
         }
