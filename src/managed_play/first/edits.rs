@@ -214,13 +214,14 @@ impl Edit<'_> {
         retire_holds: &BTreeSet<String>,
         authorize: impl FnOnce() -> Result<G, String>,
     ) -> Result<Active, String> {
-        self.publish_observed(proof, cancellation, authorize, |_, _| Ok(()))
+        self.publish_observed(proof, cancellation, retire_holds, authorize, |_, _| Ok(()))
     }
 
     fn publish_observed<G>(
         self,
         proof: CandidateImage,
         cancellation: &native_mods::Cancellation,
+        retire_holds: &BTreeSet<String>,
         authorize: impl FnOnce() -> Result<G, String>,
         observe: impl FnMut(usize, profile_txn::Boundary) -> Result<(), String>,
     ) -> Result<Active, String> {
