@@ -459,10 +459,9 @@ impl Launcher {
             ))
         };
 
-        // The list's shared columns (`model::cells`): kind, version, status, the one action
-        // and the switch, each in its own fixed place on every row of every group. Narrow,
-        // kind and version move under the name with the status after them, in fixed places
-        // too; the action and the switch keep theirs.
+        // The list's shared columns (`model::cells`) keep their places across every group.
+        // Narrow, the version starts under the name, then kind and status; the action and
+        // switch stay at the right.
         let wide = self.content_width() >= 860.;
         use super::build_run::State;
         let building = self
@@ -645,7 +644,7 @@ impl Launcher {
                 .flex_none()
                 .truncate()
                 .text_size(px(tokens::LABEL))
-                .font_family(crate::theme::MONO)
+                .when(wide, |d| d.font_family(crate::theme::MONO))
                 .child(cells.version.clone())
         };
         let row = div()
@@ -709,8 +708,8 @@ impl Launcher {
                         div()
                             .flex()
                             .items_center()
-                            .child(kind(64.))
                             .child(version(60.))
+                            .child(kind(column::KIND))
                             .child(div().flex_1().min_w_0().flex().child(status_cell)),
                     ),
             )
