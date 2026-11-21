@@ -588,7 +588,16 @@ impl Launcher {
             .as_ref()
             .and_then(|entry| entry.install_hold.as_ref())
             .filter(|_| !r.on);
-        let status_cell: AnyElement = if let Some(hold) = install_hold {
+        let switch_held = !r.on
+            && self
+                .ui
+                .mods
+                .snapshot
+                .as_ref()
+                .is_some_and(|snapshot| snapshot.rows.switch_held.contains(&r.id));
+        let status_cell: AnyElement = if switch_held {
+            div().into_any_element()
+        } else if let Some(hold) = install_hold {
             let detail = hold.detail();
             status("warning", hold.label(), palette().warning)
                 .id(("alt-row-install-hold", n))
@@ -656,7 +665,7 @@ impl Launcher {
                     "Enabled for this profile, but not included in the build.",
                 )))
             });
-            if cells.switch {
+            if cells.switch && !switch_held {
                 let row = r.clone();
                 s.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     this.toggle(&row);
@@ -701,20 +710,27 @@ impl Launcher {
                 None => d,
             }
         };
-        let title =
-            div()
-                .flex()
-                .flex_col()
-                .min_w_0()
-                .child(title)
-                .when(r.registry_unchecked, |d| {
-                    d.child(
-                        div()
-                            .text_size(px(tokens::SMALL))
-                            .text_color(c(palette().muted))
-                            .child(tr("Registry not checked")),
-                    )
-                });
+        let title = div()
+            .flex()
+            .flex_col()
+            .min_w_0()
+            .child(title)
+            .when(switch_held, |d| {
+                d.child(
+                    div()
+                        .text_size(px(tokens::SMALL))
+                        .text_color(c(palette().warning))
+                        .child(tr("Needs an update from its author")),
+                )
+            })
+            .when(r.registry_unchecked, |d| {
+                d.child(
+                    div()
+                        .text_size(px(tokens::SMALL))
+                        .text_color(c(palette().muted))
+                        .child(tr("Registry not checked")),
+                )
+            });
         use model::column;
         let kind = |width: f32| {
             div()

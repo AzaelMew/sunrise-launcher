@@ -223,6 +223,18 @@ impl Launcher {
             self.ui.mods.notice = Some(Err(why.to_string()));
             return;
         }
+        if self
+            .ui
+            .mods
+            .snapshot
+            .as_ref()
+            .is_some_and(|snap| snap.rows.switch_held.contains(&row.id))
+        {
+            if let Err(error) = self.queue_registry_install(row.id.clone(), vec![row.id.clone()]) {
+                self.ui.mods.notice = Some(Err(error));
+            }
+            return;
+        }
         self.run(Action::Update(vec![Included {
             id: row.id.clone(),
             title: row.title.clone(),

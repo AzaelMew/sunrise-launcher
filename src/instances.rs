@@ -396,6 +396,10 @@ pub fn list() -> Vec<Instance> {
 }
 
 fn list_in(game_home: &Path, data: &Path) -> Vec<Instance> {
+    list_profiles(game_home, data, true)
+}
+
+fn list_profiles(game_home: &Path, data: &Path, prune_missing: bool) -> Vec<Instance> {
     let mut store = Store::load(data);
     let mut found = vec![(
         DEFAULT.to_string(),
@@ -414,7 +418,7 @@ fn list_in(game_home: &Path, data: &Path) -> Vec<Instance> {
     own.sort();
     // An own instance whose folder is gone (deleted outside the launcher) is forgotten, so a new
     // one of that name starts clean. Only when the folder of instances itself can be read.
-    if game_home.join(OWN).is_dir() {
+    if prune_missing && game_home.join(OWN).is_dir() {
         let before = store.instances.len();
         store
             .instances
@@ -568,6 +572,14 @@ pub fn retired_selection_message(id: &str) -> String {
 
 /// The instance a command without `--instance` acts on: [`selected`], except that a retired
 /// selection is an error naming it, so nothing is written to Sunrise's setup in its place.
+pub fn read_profile(query: Option<&str>) -> Result<Instance, String> {
+    let all = list_profiles(&backend::game_home(), &backend::data_dir(), false);
+    match query {
+        Some(name) => find_in(&all, name),
+        None => selection_in(&all, backend::Settings::load().instance.as_deref()),
+    }
+}
+
 pub fn selection() -> Result<Instance, String> {
     selection_in(&list(), backend::Settings::load().instance.as_deref())
 }

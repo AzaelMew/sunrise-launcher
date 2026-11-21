@@ -115,6 +115,7 @@ struct InstalledRows {
     enabled: HashSet<String>,
     chosen: std::collections::BTreeMap<String, String>,
     local: Vec<model::Local>,
+    switch_held: HashSet<String>,
 }
 
 #[derive(Debug)]
@@ -136,12 +137,24 @@ impl InstalledRows {
         let local = read_local(home);
         let enabled = enabled_ids(home, &entries, &local);
         let chosen = sunrise::chosen(home);
+        let switch_held = sunrise_launcher::managed_play::display_active(home)
+            .ok()
+            .flatten()
+            .map(|active| {
+                active
+                    .holds()
+                    .filter(|hold| hold.matches_archive(home))
+                    .map(|hold| hold.id().to_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
         Ok((
             Self {
                 entries,
                 enabled,
                 chosen,
                 local,
+                switch_held,
             },
             backup_notice,
         ))
@@ -751,7 +764,7 @@ impl Launcher {
         Some(OpenScope {
             id: instance.id.clone(),
             home: instance.home.clone(),
-            target: self.profile_target(instance).cloned(),
+            target: self.profile_target(instance),
         })
     }
 

@@ -139,7 +139,7 @@ fn retry_worker() {
         &instance,
         install_target(&instance).unwrap(),
         || vec!["root_mod".into()],
-        || managed_play::headless_first(&instance, None),
+        || managed_play::headless_first(&instance),
         InstallHooks {
             progress: &|_| {},
             native: &|q| {

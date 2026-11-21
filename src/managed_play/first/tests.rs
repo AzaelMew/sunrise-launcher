@@ -333,6 +333,7 @@ fn receipt_acknowledgement_recovers_the_exact_pointer_across_all_durable_cuts() 
     use sha2::{Digest, Sha256};
     let hold = Held::new(
         "lantern".into(),
+        "Lanterns".into(),
         Sha256::digest(&package).into(),
         (root, "lantern.smod".into()),
         HeldSource::Local {
@@ -349,6 +350,7 @@ fn receipt_acknowledgement_recovers_the_exact_pointer_across_all_durable_cuts() 
     for root in [HeldRoot::Native, HeldRoot::Content] {
         assert!(Held::new(
             hold.id().into(),
+            hold.title().into(),
             *hold.digest(),
             (root, "CON.smod".into()),
             hold.source().clone(),
@@ -389,7 +391,8 @@ fn receipt_acknowledgement_recovers_the_exact_pointer_across_all_durable_cuts() 
             serde_json::json!({"kind":"no_fit", "build":"../somewhere"}),
         ),
         ("enabled_before", serde_json::json!("true")),
-        ("title", serde_json::json!("not authority")),
+        ("title", serde_json::json!("\n")),
+        ("unexpected", serde_json::json!("not authority")),
     ] {
         let mut invalid_pointer = seed.clone();
         invalid_pointer["receipts"][0]["waiting_for_update"][0][field] = invalid;

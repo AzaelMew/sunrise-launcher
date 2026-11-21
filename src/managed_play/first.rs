@@ -318,15 +318,6 @@ impl Profile {
         choose: impl FnOnce() -> Result<FirstBuild, String>,
         progress: impl Fn(f32),
     ) -> Result<FirstAttempt<'_>, String> {
-        self.begin_requested(None, choose, progress)
-    }
-
-    pub(super) fn begin_requested(
-        &mut self,
-        requested: Option<&str>,
-        choose: impl FnOnce() -> Result<FirstBuild, String>,
-        progress: impl Fn(f32),
-    ) -> Result<FirstAttempt<'_>, String> {
         let home = self.home().to_path_buf();
         let mut admitted = None;
         let initial = {
@@ -336,7 +327,6 @@ impl Profile {
             let initial = self.0.bind_bootstrap(
                 || {
                     let choice = choose()?;
-                    assert_requested(requested, &choice.base, &choice.image)?;
                     let profile = profile_identity()?;
                     let selection =
                         serde_json::to_value(&choice.selection).map_err(|e| e.to_string())?;
@@ -364,7 +354,6 @@ impl Profile {
             initial
         };
         let mut bound = admitted.map_or_else(|| Bound::from_record(initial), Ok)?;
-        assert_requested(requested, &bound.base, &bound.image)?;
         if let Selection::Download { archive } = &bound.selection {
             if bound.proof.is_none() {
                 let proof = archive.prove(&bound.base)?;
@@ -398,20 +387,6 @@ fn profile_identity() -> Result<[u8; 16], String> {
         getrandom::fill(&mut profile).map_err(|e| e.to_string())?;
     }
     Ok(profile)
-}
-
-pub(super) fn assert_requested(
-    requested: Option<&str>,
-    base: &str,
-    image: &str,
-) -> Result<(), String> {
-    if let Some(requested) = requested.filter(|tag| *tag != base && *tag != image) {
-        return Err(crate::i18n::trf(
-            "This profile is bound to {build}, not {requested}. Change the profile's build before playing another one.",
-            &[("build", base), ("requested", requested)],
-        ));
-    }
-    Ok(())
 }
 
 pub struct FirstAttempt<'a> {
@@ -603,6 +578,7 @@ pub(super) fn game_lock(home: &Path) -> Result<HomeLockGuard, String> {
 }
 
 mod edits;
+pub(crate) use edits::CandidateImage;
 
 #[cfg(test)]
 mod tests;

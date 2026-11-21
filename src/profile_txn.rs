@@ -625,6 +625,16 @@ pub fn references(home: &Path) -> Result<References, String> {
     Ok(refs)
 }
 
+/// A display snapshot is not permission to act. An interrupted attempt is still
+/// presented as the last settled generation until an admitter finishes recovery.
+pub(crate) fn display_pointer(home: &Path) -> Result<Option<Vec<u8>>, String> {
+    let pending = read_at(home, RECORD)?;
+    if let Some(operation) = pending.and_then(|record| record.operation) {
+        return Ok(operation.previous_pointer);
+    }
+    pointer_bytes(home)
+}
+
 fn pointer_bytes(home: &Path) -> Result<Option<Vec<u8>>, String> {
     record_dir(home)?;
     let file = home.join(POINTER);

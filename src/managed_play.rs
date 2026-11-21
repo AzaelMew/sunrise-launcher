@@ -9,6 +9,7 @@ mod inputs;
 mod resources;
 mod roots;
 pub use client::{headless_first, Client, Progress, StartError, Started};
+pub(crate) use first::CandidateImage;
 pub use first::{FirstAttempt, FirstBuild, Profile};
 use inputs::inputs;
 pub use inputs::{scan_packages, ScannedPackage};
@@ -28,6 +29,11 @@ pub(crate) fn authorize_cache_removal(tag: &str) -> Result<(), crate::native_cac
 
 /// The profile gate is already owned. Holding this fence excludes both deletion and
 /// another roster writer until the caller durably publishes its new reference.
+// A repaint's shared snapshot is brief, but it can otherwise win the same-process
+// race with Switch or receipt acknowledgement. Only serialize entry with the local
+// reader; the kernel claim still controls exclusion with other processes and cache work.
+static DISPLAY_PUBLICATION: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 pub struct ReferencePublication {
     _fence: sunrise_launcher_smod::runtime_leases::Publication,
 }
@@ -38,9 +44,11 @@ impl ReferencePublication {
             locks::{LockMode, Release},
             runtime_leases::Registry,
         };
+        let readers = DISPLAY_PUBLICATION.lock().map_err(|_| unsettled())?;
         let fence = Registry::with_release(&crate::backend::data_dir(), Release::Close)
             .and_then(|registry| registry.publication(LockMode::Exclusive))
             .map_err(|e| native_mods::cache_error(e.into()))?;
+        drop(readers);
         roots::register(home)?;
         Ok(Self { _fence: fence })
     }
@@ -149,11 +157,12 @@ struct Receipt {
 }
 
 /// An exact package left installed but held off by a proved no-fit on Switch.
-/// This is update authority, not the notice's display text.
+/// The digest and source authorize an update; the package title is only for the receipt.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Held {
     id: String,
+    title: String,
     digest: [u8; 32],
     root: HeldRoot,
     leaf: String,
@@ -206,6 +215,7 @@ pub enum HeldReason {
 impl Held {
     pub fn new(
         id: String,
+        title: String,
         digest: [u8; 32],
         (root, leaf): (HeldRoot, String),
         source: HeldSource,
@@ -214,6 +224,7 @@ impl Held {
     ) -> Result<Self, String> {
         let held = Self {
             id,
+            title,
             digest,
             root,
             leaf,
@@ -232,7 +243,10 @@ impl Held {
         }
         // The journal's portable key is the folded leaf, even across the two roots.
         let key = self.leaf.to_ascii_lowercase();
-        if !valid_id(&self.id) {
+        if !valid_id(&self.id)
+            || self.title.trim().is_empty()
+            || self.title.chars().any(char::is_control)
+        {
             return Err(unsettled());
         }
         let version = match &self.source {
@@ -262,6 +276,13 @@ impl Held {
     pub fn id(&self) -> &str {
         &self.id
     }
+    pub fn title(&self) -> &str {
+        &self.title
+    }
+    pub fn matches_archive(&self, home: &Path) -> bool {
+        digest_file(&home.join(self.path())).is_ok_and(|hash| hash.as_ref() == Some(&self.digest))
+    }
+
     pub fn digest(&self) -> &[u8; 32] {
         &self.digest
     }
@@ -289,6 +310,43 @@ enum Generation<'a> {
         variant: Option<Box<BoundVariant>>,
     },
     Advance(&'a Active),
+    Switch {
+        previous: &'a Active,
+        resources: Resources,
+        variant: Option<Box<BoundVariant>>,
+    },
+}
+
+/// Read only the last settled pointer for display. Preparing a candidate never makes it
+/// the profile's visible build; mutators and Play must still claim admission themselves.
+pub fn display_active(home: &Path) -> Result<Option<Active>, String> {
+    use sunrise_launcher_smod::{
+        locks::LockMode,
+        runtime_leases::{Error, Registry},
+    };
+    let _reader = DISPLAY_PUBLICATION
+        .try_lock()
+        .map_err(|error| match error {
+            std::sync::TryLockError::WouldBlock => native_mods::cache_error(Error::Busy.into()),
+            std::sync::TryLockError::Poisoned(_) => unsettled(),
+        })?;
+    let _publication = match Registry::existing(&crate::backend::data_dir())
+        .and_then(|registry| registry.publication(LockMode::Shared))
+    {
+        Ok(lock) => Some(lock),
+        Err(Error::Io(error)) if error.kind() == io::ErrorKind::NotFound => None,
+        Err(error) => return Err(native_mods::cache_error(error.into()).to_string()),
+    };
+    crate::profile_txn::display_pointer(home)?
+        .as_deref()
+        .map(Active::parse)
+        .transpose()
+}
+
+pub struct PendingChanges<'a> {
+    pub id: [u8; 16],
+    pub held: &'a [Held],
+    pub removed: &'a [(String, String)],
 }
 
 impl Active {
@@ -328,8 +386,23 @@ impl Active {
             .flat_map(|receipt| &receipt.waiting_for_update)
     }
 
+    /// The next unacknowledged receipt. Acknowledgment retains exact hold authority.
+    pub fn pending_changes(&self) -> Option<PendingChanges<'_>> {
+        self.receipts
+            .iter()
+            .find(|receipt| !receipt.acknowledged)
+            .map(|receipt| PendingChanges {
+                id: receipt.id,
+                held: &receipt.waiting_for_update,
+                removed: &receipt.removed,
+            })
+    }
+
     pub fn base(&self) -> &str {
         &self.base.tag
+    }
+    pub fn generation(&self) -> u64 {
+        self.generation
     }
     pub fn executable(&self) -> &str {
         &self.executable.tag
@@ -356,6 +429,10 @@ impl Active {
     }
 
     /// Hash the actual image, including runtime dependencies and the signed archive marker.
+    pub(crate) fn matches_inputs(&self, home: &Path) -> bool {
+        inputs(home, None).is_ok_and(|input| input == self.inputs)
+    }
+
     pub fn verify_artifacts(&self) -> Result<(), String> {
         let base = match &self.variant {
             Some(variant) => variant.verify(self.base())?,
@@ -371,7 +448,7 @@ impl Active {
     }
 
     /// Capture a full immutable generation after owning the admitted profile and checking
-    /// the chosen image. A previous generation is only advanced on the same exact base.
+    /// the chosen image. Only the journal's Switch arm may advance to a distinct base.
     fn capture(
         base: &str,
         executable: &str,
@@ -407,6 +484,23 @@ impl Active {
                     old.resources.clone(),
                     old.receipts.clone(),
                     old.variant.clone(),
+                )
+            }
+            Generation::Switch {
+                previous,
+                resources,
+                variant,
+            } => {
+                if base.tag == previous.base() {
+                    return Err(unsettled());
+                }
+                resources.verify(&base.tag)?;
+                (
+                    previous.profile,
+                    previous.generation.checked_add(1).ok_or_else(unsettled)?,
+                    resources,
+                    previous.receipts.clone(),
+                    variant,
                 )
             }
         };

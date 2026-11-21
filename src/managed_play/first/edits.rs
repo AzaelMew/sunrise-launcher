@@ -1,7 +1,14 @@
-//! Same-base package edits use the exact profile journal and the existing staged compiler.
+//! Package edits and explicit Switch use the exact profile journal and staged compiler.
 use super::*;
-use crate::{browser::installed::MANIFEST, managed_play::digest_file};
-use std::{collections::BTreeSet, fs, io};
+use crate::{
+    browser::installed::MANIFEST,
+    i18n::tr,
+    managed_play::{digest_file, Held, Receipt},
+};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs, io,
+};
 use sunrise_launcher_smod::mod_list;
 
 pub(crate) struct Edit<'a> {
@@ -13,6 +20,11 @@ pub(crate) struct Edit<'a> {
 enum Basis<'a> {
     Active(Active, Staging<'a>),
     First(FirstAttempt<'a>),
+    Switch {
+        old: Option<Active>,
+        target: Box<FirstAttempt<'a>>,
+        resources: Resources,
+    },
 }
 
 pub(crate) struct CandidateImage {
@@ -99,6 +111,63 @@ impl Profile {
             before,
         })
     }
+
+    /// Reserve one exact, already-prepared target. Download and Prepare never change a profile.
+    pub(crate) fn begin_switch(&mut self, tag: &str) -> Result<Option<Edit<'_>>, String> {
+        let home = self.home().to_owned();
+        let manifest = game_lock(&home)?;
+        let before = inputs(&home, None)?;
+        let old = self.active()?;
+        if let Some(active) = &old {
+            active.verify_artifacts()?;
+            if active.base() == tag {
+                return Ok(None);
+            }
+        } else if self.0.has_bootstrap()? {
+            return Err(tr("Finish the profile's first Play before switching builds.").into());
+        }
+        let choice = FirstBuild::installed(tag)?;
+        if choice.base != tag || choice.image != tag {
+            return Err(tr("Choose a game build, not a compiled mod image.").into());
+        }
+        backend::need_prepared(tag)?;
+        let bound = Bound {
+            base: choice.base,
+            image: choice.image,
+            profile: old
+                .as_ref()
+                .map(|a| a.profile)
+                .map_or_else(profile_identity, Ok)?,
+            inputs: before,
+            selection: choice.selection,
+            proof: None,
+        };
+        let stage = {
+            let _references = ReferencePublication::begin(&home)?;
+            bound.verify_image()?;
+            let mut targets = BTreeSet::from([bound.base.clone()]);
+            if let Some(active) = &old {
+                targets.extend([active.base().to_owned(), active.executable().to_owned()]);
+            }
+            self.0.reserve(Intent::Switch, targets)?
+        };
+        drop(manifest);
+        let resources = Resources::capture(tag, &stage)?;
+        let target = FirstAttempt {
+            home: home.clone(),
+            bound,
+            stage,
+        };
+        Ok(Some(Edit {
+            basis: Basis::Switch {
+                old,
+                target: Box::new(target),
+                resources,
+            },
+            home,
+            before,
+        }))
+    }
 }
 
 impl Edit<'_> {
@@ -106,6 +175,24 @@ impl Edit<'_> {
         match &self.basis {
             Basis::Active(active, _) => active.base(),
             Basis::First(first) => first.base(),
+            Basis::Switch { target, .. } => target.base(),
+        }
+    }
+
+    pub(crate) fn current(&self) -> Option<&Active> {
+        match &self.basis {
+            Basis::Active(active, _) => Some(active),
+            Basis::First(_) => None,
+            Basis::Switch { old, .. } => old.as_ref(),
+        }
+    }
+
+    pub(crate) fn switch_resources(&self) -> Result<PathBuf, String> {
+        match &self.basis {
+            Basis::Switch {
+                target, resources, ..
+            } => Ok(resources.path(target.base())),
+            _ => Err(unsettled()),
         }
     }
 
@@ -113,6 +200,7 @@ impl Edit<'_> {
         match &self.basis {
             Basis::Active(_, stage) => stage,
             Basis::First(first) => &first.stage,
+            Basis::Switch { target, .. } => &target.stage,
         }
     }
 
@@ -170,6 +258,7 @@ impl Edit<'_> {
         let preferred = match &self.basis {
             Basis::Active(old, _) => old.executable(),
             Basis::First(first) => first.preferred_image(),
+            Basis::Switch { target, .. } => target.preferred_image(),
         };
         let tag = image_for_stage(
             self.base(),
@@ -191,17 +280,55 @@ impl Edit<'_> {
         })
     }
 
-    /// Keep one authoritative commit. Verify the same live and candidate bytes at cutoff,
-    /// including any other approval (e.g. registry evidence or a world question).
-    pub(crate) fn publish(
+    /// Verify the exact live and candidate images plus any extra evidence at cutoff.
+    pub(crate) fn publish_install(
         self,
         proof: CandidateImage,
         cancellation: &native_mods::Cancellation,
+        restored: &BTreeSet<String>,
         authorize: impl FnOnce() -> Result<(), String>,
+    ) -> Result<Active, String> {
+        self.publish_inner(proof, cancellation, None, restored, authorize, || Ok(()))
+    }
+
+    pub(crate) fn publish_switch(
+        self,
+        proof: CandidateImage,
+        cancellation: &native_mods::Cancellation,
+        holds: Vec<Held>,
+        removed: BTreeMap<String, (String, String)>,
+        authorize: impl FnOnce() -> Result<(), String>,
+        at_cutoff: impl FnOnce() -> Result<(), String>,
+    ) -> Result<Active, String> {
+        if !matches!(self.basis, Basis::Switch { .. }) {
+            return Err(unsettled());
+        }
+        let retired = removed.keys().cloned().collect();
+        let receipt = if holds.is_empty() && removed.is_empty() {
+            None
+        } else {
+            Some(Receipt {
+                id: profile_identity()?,
+                waiting_for_update: holds,
+                removed: removed.into_values().collect(),
+                acknowledged: false,
+            })
+        };
+        self.publish_inner(proof, cancellation, receipt, &retired, authorize, at_cutoff)
+    }
+
+    fn publish_inner(
+        self,
+        proof: CandidateImage,
+        cancellation: &native_mods::Cancellation,
+        receipt: Option<Receipt>,
+        retired_holds: &BTreeSet<String>,
+        authorize: impl FnOnce() -> Result<(), String>,
+        at_cutoff: impl FnOnce() -> Result<(), String>,
     ) -> Result<Active, String> {
         let resources = match &self.basis {
             Basis::First(first) => Some(Resources::capture(first.base(), &first.stage)?),
-            Basis::Active(..) => None,
+            Basis::Active(..) | Basis::Switch { .. } => None,
         };
         let _manifest = game_lock(&self.home)?;
         crate::browser::installed::recover_game_install(&self.home)?;
@@ -209,7 +336,7 @@ impl Edit<'_> {
         if inputs(&self.home, None)? != self.before {
             return Err(unsettled());
         }
-        let (active, stage) = match self.basis {
+        let (mut active, stage) = match self.basis {
             Basis::Active(old, stage) => {
                 old.verify_artifacts()?;
                 let active = Active::capture(
@@ -237,9 +364,53 @@ impl Edit<'_> {
                 )?;
                 (active, first.stage)
             }
+            Basis::Switch {
+                old,
+                target,
+                resources,
+            } => {
+                target.bound.verify_image()?;
+                let variant = target.variant().map(Box::new);
+                let generation = match &old {
+                    Some(previous) => {
+                        previous.verify_artifacts()?;
+                        Generation::Switch {
+                            previous,
+                            resources,
+                            variant,
+                        }
+                    }
+                    None => Generation::First {
+                        profile: target.bound.profile,
+                        resources,
+                        variant,
+                    },
+                };
+                let active = Active::capture(
+                    target.base(),
+                    &proof.tag,
+                    &proof.candidate,
+                    proof.inputs,
+                    generation,
+                )?;
+                (active, target.stage)
+            }
         };
+        if !retired_holds.is_empty() {
+            active.receipts.retain_mut(|receipt| {
+                receipt
+                    .waiting_for_update
+                    .retain(|held| !retired_holds.contains(held.id()));
+                !receipt.waiting_for_update.is_empty()
+                    || !receipt.acknowledged && !receipt.removed.is_empty()
+            });
+        }
+        if let Some(receipt) = receipt {
+            active.receipts.push(receipt);
+        }
         let files = changed_files(&self.home, &proof.candidate)?;
         let pointer = serde_json::to_vec(&active).map_err(|e| e.to_string())?;
+        Active::parse(&pointer)?;
         stage.seal(pointer, &files)?.publish(|| {
             authorize()?;
             active.verify_artifacts()?;
@@ -248,7 +419,9 @@ impl Edit<'_> {
             {
                 return Err(unsettled());
             }
-            cancellation.publication_guard()
+            let permission = cancellation.begin_publication()?;
+            at_cutoff()?;
+            Ok(permission)
         })?;
         Ok(active)
     }

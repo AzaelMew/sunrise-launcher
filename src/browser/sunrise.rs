@@ -307,10 +307,19 @@ fn load(
 }
 
 fn fetch_index(at: &str, local: bool) -> Result<(Index, String), String> {
+    let text = fetch_index_text(at, local, false)?;
+    let index = if local {
+        Index::parse_local(&text)?
+    } else {
+        Index::parse(&text)?
+    };
+    Ok((index, text))
+}
+
+fn fetch_index_text(at: &str, local: bool, full: bool) -> Result<String, String> {
     use std::io::Read;
     if local {
-        let text = fs::read_to_string(at).map_err(|e| format!("{at}: {e}"))?;
-        return Ok((Index::parse_local(&text)?, text));
+        return fs::read_to_string(at).map_err(|e| format!("{at}: {e}"));
     }
     let spec = crate::proxy::spec_for(at);
     let agent = crate::net::keep("sunrise-index", spec.as_deref(), |proxy| {
@@ -326,6 +335,9 @@ fn fetch_index(at: &str, local: bool) -> Result<(Index, String), String> {
         ureq::Error::Status(code, _) => format!("The mod registry answered {code}."),
         ureq::Error::Transport(t) => format!("The mod registry can't be reached: {t}"),
     })?;
+    if full && (response.status() != 200 || response.header("Content-Range").is_some()) {
+        return Err(tr("The mod registry didn't send the full index.").into());
+    }
     let mut text = String::new();
     response
         .into_reader()
@@ -335,7 +347,32 @@ fn fetch_index(at: &str, local: bool) -> Result<(Index, String), String> {
     if text.len() as u64 > MAX_INDEX {
         return Err("The mod registry index is too large.".into());
     }
-    Ok((Index::parse(&text)?, text))
+    Ok(text)
+}
+
+/// Unlike Discover, neither an omitted section nor an isolated bad row is allowed
+/// to become evidence that a package has no fit or has been taken down.
+fn complete_index(at: &str, local: bool) -> Result<(Index, String), String> {
+    #[derive(serde::Deserialize)]
+    struct Sections {
+        schema: u32,
+        #[serde(rename = "projects")]
+        _projects: Vec<serde::de::IgnoredAny>,
+        #[serde(rename = "revoked")]
+        _revoked: Vec<serde::de::IgnoredAny>,
+    }
+    let text = fetch_index_text(at, local, true)?;
+    let sections: Sections = serde_json::from_str(&text).map_err(|error| error.to_string())?;
+    if sections.schema != index::SCHEMA {
+        return Err(tr("The mod registry didn't send the full index.").into());
+    }
+    let index: Index = serde_json::from_str(&text).map_err(|error| error.to_string())?;
+    if local {
+        index.check_local()?;
+    } else {
+        index.check()?;
+    }
+    Ok((index, text))
 }
 
 /// A project's ratings: 1 to 5 stars, their mean and how many.
@@ -1558,8 +1595,9 @@ mod dependencies;
 pub mod pack;
 mod registry_install;
 pub use registry_install::{
-    install_registry, install_target, BuildNotice, InstallError, InstallHooks, InstallProgress,
-    InstalledBatch, NativeQuestion,
+    checked_switch_fit, install_registry, install_target, switch_build, BuildNotice, InstallError,
+    InstallHooks, InstallProgress, InstalledBatch, NativeQuestion, SwitchHooks, SwitchQuestion,
+    Switched,
 };
 #[cfg(test)]
 mod tests;
