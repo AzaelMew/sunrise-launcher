@@ -187,7 +187,7 @@ fn ordinary_pack_installs_reuse_the_only_successful_registry_reply() {
         include_bytes!("../crates/smod/tests/index/glow-1.0.0.sshader"),
     )
     .unwrap();
-    shader.versions[0].file.url = format!("file://{}", shader_file.display());
+    shader.versions[0].file.url = url::Url::from_file_path(&shader_file).unwrap().into();
     catalogue.projects = vec![shader.clone()];
     for (id, kind, namespace) in [
         (
@@ -223,7 +223,7 @@ fn ordinary_pack_installs_reuse_the_only_successful_registry_reply() {
         project.versions[0].api = "94".into();
         project.versions[0].file = index::File {
             name,
-            url: format!("file://{}", path.display()),
+            url: url::Url::from_file_path(&path).unwrap().into(),
             size: fs::metadata(&path).unwrap().len(),
             sha256: index::sha256_file(&path).unwrap(),
             signature: None,
