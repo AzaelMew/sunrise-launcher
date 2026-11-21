@@ -233,12 +233,7 @@ impl Launcher {
             true => tr("Each mod updates and is removed on its own, from Installed."),
             false => tr("Each mod installs, updates and is removed on its own."),
         };
-        let downloads: u64 = collection
-            .members
-            .iter()
-            .filter_map(|m| index.project(&m.id))
-            .map(|p| p.downloads)
-            .sum();
+        let downloads = collection.downloads;
         let updated = collection
             .members
             .iter()

@@ -194,7 +194,7 @@ pub struct Project {
     pub stars: u64,
 }
 
-fn is_zero(n: &u64) -> bool {
+pub(super) fn is_zero(n: &u64) -> bool {
     *n == 0
 }
 

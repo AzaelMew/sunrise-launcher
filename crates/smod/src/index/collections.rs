@@ -18,6 +18,9 @@ pub struct Collection {
     /// The registry's published HTTPS icon address.
     pub icon: String,
     pub members: Vec<Member>,
+    /// The collection's downloads, added by the registry's publish job:
+    #[serde(default, skip_serializing_if = "super::is_zero")]
+    pub downloads: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

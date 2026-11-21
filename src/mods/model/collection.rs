@@ -42,8 +42,8 @@ pub(in crate::mods) fn libraries(index: &Index) -> HashSet<String> {
         .collect()
 }
 
-/// The collections' own cards for Discover: their members' downloads and newest day added up,
-/// fitting when any member fits the build.
+/// The collections' own cards for Discover: their downloads and newest day, fitting when any
+/// member fits the build.
 pub(in crate::mods) fn cards(index: &Index, mods: &[Card]) -> Vec<Card> {
     index
         .collections
@@ -66,7 +66,7 @@ pub(in crate::mods) fn cards(index: &Index, mods: &[Card]) -> Vec<Card> {
                 name: c.name.clone(),
                 authors: c.owners.join(", "),
                 summary: c.summary.clone(),
-                downloads: members.iter().map(|m| m.downloads).sum(),
+                downloads: c.downloads,
                 make: if members.iter().any(|m| m.make == Make::Native) {
                     Make::Native
                 } else {
