@@ -208,6 +208,28 @@ fn ordinary_cli() {
     println!("Windows ordinary CLI Play used its exact copied game and returned its status, not the wrapper's");
 }
 
+fn copy_game_image(executable: &Path) {
+    let actor = std::env::current_exe().unwrap();
+    // Every proof hashes the whole image. Hundreds of MiB of unused DWARF in the Linux
+    // test binary put repeated proofs near the deadline without testing any game behavior.
+    if cfg!(target_os = "linux") {
+        let status = Command::new("strip")
+            .args(["--strip-debug", "-o"])
+            .arg(executable)
+            .arg(&actor)
+            .status();
+        match status {
+            Ok(status) => assert!(status.success(), "stripping the fixture: {status}"),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                fs::copy(&actor, executable).unwrap();
+            }
+            Err(error) => panic!("stripping the fixture: {error}"),
+        }
+    } else {
+        fs::copy(&actor, executable).unwrap();
+    }
+}
+
 fn owner() {
     let mode = std::env::var(MODE).unwrap();
     let phase = |step| eprintln!("{mode} owner: {step}");
@@ -220,25 +242,7 @@ fn owner() {
     });
     let resources = backend::resources(BUILD);
     fs::create_dir_all(&resources).unwrap();
-    let actor = std::env::current_exe().unwrap();
-    // Every proof hashes the whole image. Hundreds of MiB of unused DWARF in the Linux
-    // test binary put repeated proofs near the deadline without testing any game behavior.
-    if cfg!(target_os = "linux") {
-        let status = Command::new("strip")
-            .args(["--strip-debug", "-o"])
-            .arg(&executable)
-            .arg(&actor)
-            .status();
-        match status {
-            Ok(status) => assert!(status.success(), "stripping the fixture: {status}"),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                fs::copy(&actor, &executable).unwrap();
-            }
-            Err(error) => panic!("stripping the fixture: {error}"),
-        }
-    } else {
-        fs::copy(&actor, &executable).unwrap();
-    }
+    copy_game_image(&executable);
     fs::write(executable.with_file_name(".installed"), []).unwrap();
     fs::write(resources.join("sunrise-resources.json"), b"{}").unwrap();
     phase("opening profile and binding game");

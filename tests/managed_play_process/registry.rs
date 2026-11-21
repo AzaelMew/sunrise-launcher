@@ -26,11 +26,7 @@ pub(super) fn ordinary_install() {
         r#"{"minecraft":{"version":"26.3"}}"#,
     )
     .unwrap();
-    fs::copy(
-        std::env::current_exe().unwrap(),
-        build.join(format!("sunrise-client{}", std::env::consts::EXE_SUFFIX)),
-    )
-    .unwrap();
+    copy_game_image(&build.join(format!("sunrise-client{}", std::env::consts::EXE_SUFFIX)));
     fs::write(
         data.join("instances.json"),
         json!({"instances":{"sunrise":{"version":TAG}}}).to_string(),
@@ -83,6 +79,7 @@ pub(super) fn ordinary_install() {
             .env("SUNRISE_TELEMETRY_URL", "off");
         command
     };
+    println!("registry Play fixture: CLI Install");
     let installed = launcher(&[
         "--json", "mods", "install", "lanterns", "--source", "sunrise",
     ])
@@ -95,6 +92,7 @@ pub(super) fn ordinary_install() {
     );
     let pointer = home.join("mod-browser/active-build.json");
     let before = fs::read(&pointer).unwrap();
+    println!("registry Play fixture: CLI Play");
     let mut game = Guard(launcher(&["play"]).stdin(Stdio::null()).spawn().unwrap());
     await_event(|| {
         assert!(
@@ -129,12 +127,14 @@ pub(super) fn ordinary_install() {
     rpc(1, "initialize", json!({}));
     let install =
         json!({"name":"mods_install", "arguments":{"project":"fireflies", "source":"sunrise"}});
+    println!("registry Play fixture: MCP Install with Play active");
     let busy = rpc(2, "tools/call", install.clone());
     assert_eq!(busy["isError"], true, "{busy}");
     assert_eq!(fs::read(&pointer).unwrap(), before);
     assert!(!home.join(mod_list::DIR).join(&files[1].1).exists());
     fs::write(home.join("game-stop"), []).unwrap();
     assert_eq!(game.0.wait().unwrap().code(), Some(23));
+    println!("registry Play fixture: MCP Install after Play exits");
     let done = rpc(3, "tools/call", install);
     assert_ne!(done["isError"], true, "{done}");
     assert_ne!(fs::read(pointer).unwrap(), before);
