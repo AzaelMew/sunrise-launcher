@@ -810,7 +810,7 @@ pub(super) enum Group {
 
 impl Row {
     pub(super) fn group(&self) -> Group {
-        if self.need.is_some() {
+        if self.need.is_some() || self.held_for.is_some() {
             Group::NeedsYou
         } else if self.update.is_some() {
             Group::Updates

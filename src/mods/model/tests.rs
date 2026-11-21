@@ -301,6 +301,18 @@ fn pack() -> (Index, Vec<Entry>) {
 }
 
 #[test]
+fn a_held_source_is_grouped_with_rows_that_need_attention() {
+    let (idx, entries) = pack();
+    let enabled = HashSet::new();
+    let unbuilt = HashSet::new();
+    let mut assembled = rows(&entries, &world(&idx, &enabled, &unbuilt, true));
+    let quiet = assembled.iter_mut().find(|row| row.id == "quiet").unwrap();
+    assert_eq!(quiet.group(), Group::Rest);
+    quiet.held_for = Some("nightly-test".into());
+    assert_eq!(quiet.group(), Group::NeedsYou);
+}
+
+#[test]
 fn rows_put_what_needs_the_player_first_then_updates_then_the_rest() {
     let (idx, entries) = pack();
     let enabled: HashSet<String> = ["quiet", "zoom", "deep", "bad"].map(String::from).into();
