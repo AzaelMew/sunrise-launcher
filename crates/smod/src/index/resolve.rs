@@ -171,17 +171,26 @@ pub fn install_whole(
     refusal.map_or(Ok(plan), Err)
 }
 
-/// The exact batch must replace each requested root with a strictly newer eligible version.
-/// Dependencies still use the normal resolver ranking and the current enabled set.
+pub struct UpdateTargets<'a> {
+    /// Requested roots must advance strictly unless they have no candidate after SDK proof.
+    pub above: &'a BTreeMap<String, semver::Version>,
+    /// Dependencies may stay at the installed precedence but never go backwards.
+    pub minimum: &'a BTreeMap<String, semver::Version>,
+    /// Bulk update only: keep the exact installed artifact for roots with only known no-fits.
+    pub retain_unfit: bool,
+}
+
+/// Resolve one exact update batch. Only bulk updates can keep SDK-exhausted roots installed.
 pub fn update_whole(
     index: &Index,
-    above: &BTreeMap<String, semver::Version>,
+    targets: UpdateTargets<'_>,
     installed: &[InstalledMod],
     game: &str,
     side: Side,
     options: WholeOptions<'_, impl Fn(&Project, &Version) -> bool>,
 ) -> Result<InstallPlan, WholeRefusal> {
-    let requests = above
+    let requests = targets
+        .above
         .keys()
         .map(|id| Request {
             id: id.clone(),
@@ -195,13 +204,12 @@ pub fn update_whole(
         game,
         side,
         options.native_fits,
-        (options.messages, Some((options.conflicts, Some(above)))),
+        (options.messages, Some((options.conflicts, Some(targets)))),
     );
     refusal.map_or(Ok(plan), Err)
 }
 
-type UpdateFloors = BTreeMap<String, semver::Version>;
-type WholeConstraints<'a> = (&'a [ManifestConflict], Option<&'a UpdateFloors>);
+type WholeConstraints<'a> = (&'a [ManifestConflict], Option<UpdateTargets<'a>>);
 
 fn plan_install(
     index: &Index,
@@ -246,9 +254,31 @@ fn plan_install(
         }
     }
     let mut catalog = Catalog::new(index, game, side, native_fits, &present);
-    if let Some((blocked, above)) = conflicts {
+    if let Some((blocked, update)) = conflicts {
         catalog.conflicts = blocked;
-        catalog.above = above;
+        if let Some(targets) = update {
+            catalog.above = Some(targets.above);
+            catalog.minimum = Some(targets.minimum);
+            if targets.retain_unfit {
+                catalog.retained = targets
+                    .above
+                    .iter()
+                    .filter_map(|(id, old)| {
+                        // A dependency conflict or unsupported catalogue row isn't SDK proof.
+                        let mut newer = catalog.mods.get(id.as_str())?.iter().filter(|c| {
+                            c.is_newer(old) && matches!(c.fit, Fit::Yes | Fit::WrongSunrise)
+                        });
+                        (newer.next()?.fit == Fit::WrongSunrise
+                            && newer.all(|c| c.fit == Fit::WrongSunrise))
+                        .then_some(id.as_str())
+                    })
+                    .collect::<BTreeSet<_>>();
+                roots.retain(|id, _| !catalog.retained.contains(id));
+                if roots.is_empty() {
+                    return (plan, None);
+                }
+            }
+        }
     }
     catalog.message = message;
     let installed_choices: Selected<'_> = present
@@ -417,12 +447,24 @@ struct Candidate<'a> {
     optional: Vec<Range<'a>>,
 }
 
+impl Candidate<'_> {
+    fn is_newer(&self, old: &semver::Version) -> bool {
+        !self.installed
+            && self
+                .number
+                .as_ref()
+                .is_some_and(|new| new.cmp_precedence(old).is_gt())
+    }
+}
+
 struct Catalog<'a> {
     game: &'a str,
     mods: BTreeMap<&'a str, Vec<Candidate<'a>>>,
     conflicts: &'a [ManifestConflict],
     message: Messages,
-    above: Option<&'a UpdateFloors>,
+    above: Option<&'a BTreeMap<String, semver::Version>>,
+    minimum: Option<&'a BTreeMap<String, semver::Version>>,
+    retained: BTreeSet<&'a str>,
 }
 
 type Roots<'a> = BTreeMap<&'a str, Vec<&'a str>>;
@@ -630,6 +672,8 @@ impl<'a> Catalog<'a> {
             conflicts: &[],
             message: english,
             above: None,
+            minimum: None,
+            retained: BTreeSet::new(),
         }
     }
 
@@ -652,17 +696,24 @@ impl<'a> Catalog<'a> {
                 &[("mod", &describe())],
             ));
         };
+        let retain = self.retained.contains(id);
         let newer_than = self.above.and_then(|above| above.get(id));
+        let minimum = self.minimum.and_then(|minimum| minimum.get(id));
         let mut matches = versions
             .iter()
             .filter(|c| {
                 need.accepts(c)
-                    && newer_than.is_none_or(|old| {
-                        !c.installed
-                            && c.number
+                    && if retain {
+                        c.installed
+                    } else if let Some(old) = newer_than {
+                        c.is_newer(old)
+                    } else {
+                        minimum.is_none_or(|old| {
+                            c.number
                                 .as_ref()
-                                .is_some_and(|new| new.cmp_precedence(old).is_gt())
-                    })
+                                .is_some_and(|new| !new.cmp_precedence(old).is_lt())
+                        })
+                    }
             })
             .peekable();
         if matches.peek().is_none() {

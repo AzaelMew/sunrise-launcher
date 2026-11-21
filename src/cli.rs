@@ -2477,10 +2477,15 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                     .map(|e| e.project.clone())
                     .collect::<Vec<_>>();
                 if !ids.is_empty() {
+                    let requested = if project.is_some() {
+                        sunrise::UpdateRequest::Strict(ids)
+                    } else {
+                        sunrise::UpdateRequest::Bulk(ids)
+                    };
                     let result = sunrise::update_registry(
                         &instance,
                         identity?,
-                        Some(ids),
+                        requested,
                         || sunrise_launcher::managed_play::headless_first(&instance, None),
                         mutation_hooks(),
                         &|impact| approve(impact, confirm_world_loss),

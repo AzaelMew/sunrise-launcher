@@ -16,7 +16,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
     path::Path,
-    sync::Arc,
+    sync::{Arc, Mutex},
 };
 use sunrise_launcher_smod::{
     index::{browser_state, resolve},
@@ -24,6 +24,19 @@ use sunrise_launcher_smod::{
 };
 
 const MAX_TRIALS: usize = 64;
+
+// Advisory only. Never use these in place of a fresh, admitted worker proof. Key by the
+// base build and verified archive hash, not the Minecraft version or catalogue version number.
+static UNFIT_UPDATES: Mutex<BTreeMap<String, BTreeSet<String>>> = Mutex::new(BTreeMap::new());
+
+pub fn known_unfit_updates(base: &str) -> BTreeSet<String> {
+    UNFIT_UPDATES
+        .lock()
+        .unwrap()
+        .get(base)
+        .cloned()
+        .unwrap_or_default()
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum InstallProgress {
@@ -139,12 +152,18 @@ pub fn install_registry(
     )
 }
 
+pub enum UpdateRequest {
+    /// Every named root must advance, even if it is the only one requested.
+    Strict(Vec<String>),
+    /// The bulk action can retain roots with no usable newer release proved by this attempt.
+    Bulk(Vec<String>),
+}
+
 /// Explicit update uses the same candidate and proof as Install, but never opts a world in.
-/// `None` requests all owned installed registry mods; `Some` identifies the reviewed rows.
 pub fn update_registry(
     instance: &Instance,
     identity: Identity,
-    requested: Option<Vec<String>>,
+    requested: UpdateRequest,
     choose: impl FnOnce() -> Result<FirstBuild, String>,
     hooks: InstallHooks<'_>,
     approve: &dyn Fn(&ChangeImpact) -> bool,
@@ -160,7 +179,7 @@ pub fn update_registry(
 
 enum Action<'a> {
     Install(Vec<String>),
-    Update(Option<Vec<String>>, &'a dyn Fn(&ChangeImpact) -> bool),
+    Update(UpdateRequest, &'a dyn Fn(&ChangeImpact) -> bool),
 }
 
 fn registry_edit<'a>(
@@ -210,7 +229,10 @@ fn registry_edit<'a>(
     let (ids, above) = match &action {
         Action::Install(ids) => (ids.clone(), BTreeMap::new()),
         Action::Update(requested, _) => {
-            let above = mutations::update_floors(&catalogue, &before, &game, requested.as_deref())?;
+            let ids = match requested {
+                UpdateRequest::Strict(ids) | UpdateRequest::Bulk(ids) => ids.as_slice(),
+            };
+            let above = mutations::update_floors(&catalogue, &before, &game, ids)?;
             if above.is_empty() {
                 return Ok(InstalledBatch::default());
             }
@@ -256,6 +278,20 @@ fn registry_edit<'a>(
             }
         })
         .collect::<Vec<_>>();
+    let mut minimum = above.clone();
+    if !above.is_empty() {
+        for (id, installed) in before.iter().filter(|(_, installed)| installed.owned) {
+            if let std::collections::btree_map::Entry::Vacant(slot) = minimum.entry(id.clone()) {
+                slot.insert(
+                    sunrise_launcher_smod::dependencies::parse_version(
+                        &installed.package.manifest.version,
+                    )
+                    .map_err(|_| unproved_mods())?,
+                );
+            }
+        }
+    }
+    let retain_unfit = matches!(action, Action::Update(UpdateRequest::Bulk(_), _));
     let mut unfit = BTreeSet::new();
     let mut conflicts = Vec::new();
     let mut last_sdk_refusal = None;
@@ -271,7 +307,18 @@ fn registry_edit<'a>(
         let plan = if above.is_empty() {
             resolve::install_whole(&catalogue, &roots, &held, &game, Side::Both, options)
         } else {
-            resolve::update_whole(&catalogue, &above, &held, &game, Side::Both, options)
+            resolve::update_whole(
+                &catalogue,
+                resolve::UpdateTargets {
+                    above: &above,
+                    minimum: &minimum,
+                    retain_unfit,
+                },
+                &held,
+                &game,
+                Side::Both,
+                options,
+            )
         };
         let plan = match plan {
             Ok(plan) => plan,
@@ -279,7 +326,11 @@ fn registry_edit<'a>(
                 return Err(InstallError::Unproved(reason))
             }
             Err(resolve::WholeRefusal::Inconsistent(reason)) => {
-                return Err(InstallError::Refused(last_sdk_refusal.unwrap_or(reason)))
+                return Err(InstallError::Refused(if retain_unfit {
+                    reason
+                } else {
+                    last_sdk_refusal.unwrap_or(reason)
+                }))
             }
         };
         let versions = plan
@@ -546,11 +597,22 @@ fn registry_edit<'a>(
                 }) =>
             {
                 let first = unfit.len();
-                unfit.extend(
-                    left.into_iter()
-                        .filter(|f| matches!(f.why, native_mods::Why::Unfit(_)))
-                        .map(|f| (f.id, f.version)),
-                );
+                for failed in left
+                    .into_iter()
+                    .filter(|f| matches!(f.why, native_mods::Why::Unfit(_)))
+                {
+                    let (_, version) = versions
+                        .iter()
+                        .find(|(p, v)| p.id == failed.id && v.version == failed.version)
+                        .expect("the no-fit names a checked staged release");
+                    UNFIT_UPDATES
+                        .lock()
+                        .unwrap()
+                        .entry(edit.base().into())
+                        .or_default()
+                        .insert(version.file.sha256.to_ascii_lowercase());
+                    unfit.insert((failed.id, failed.version));
+                }
                 if first == unfit.len() {
                     return Err(InstallError::Unproved(error));
                 }

@@ -12,9 +12,19 @@ fn native_release(
     version: &str,
     source: &[u8],
 ) -> Vec<u8> {
+    native_release_for(fixture, registry, version, source, 'a')
+}
+
+fn native_release_for(
+    fixture: &Fixture,
+    registry: &mut index::Index,
+    version: &str,
+    source: &[u8],
+    pin: char,
+) -> Vec<u8> {
     let project = &mut registry.projects[0];
     let number = version.to_owned();
-    let manifest = format!("id='{ID}'\nname='Native Lantern'\nversion='{version}'\napi='0.2'\nside='both'\ncapabilities=['registries']\n[native]\nsunrise='{}'\nmixins='{}'\ngame='26.3'\n", "a".repeat(40), "c".repeat(40));
+    let manifest = format!("id='{ID}'\nname='Native Lantern'\nversion='{version}'\napi='0.2'\nside='both'\ncapabilities=['registries']\n[native]\nsunrise='{}'\nmixins='{}'\ngame='26.3'\n", pin.to_string().repeat(40), "c".repeat(40));
     let cargo = format!("[package]\nname='{ID}'\nversion='{version}'\n");
     let bytes = Package::write_files(
         &manifest,
@@ -240,6 +250,86 @@ fn an_exact_hold_can_advance_after_native_proof_without_losing_the_off_choice() 
             );
         }
     }
+}
+
+#[test]
+fn update_all_keeps_a_proved_unfit_root_without_blocking_a_fitting_sibling() {
+    let (fixture, mut registry, predecessor) = configured();
+    let (content, _) = fixture.content_index();
+    registry
+        .projects
+        .push(content.project("extra_mod").unwrap().clone());
+    fixture.publish_registry(&registry);
+    let (ok, text) = native_client(
+        &fixture,
+        &["mods", "install", "extra_mod", "--source", "sunrise"],
+    );
+    assert!(ok, "{text}");
+    let path = fixture.home.join(mod_list::DIR).join("extra_mod.smod");
+    let before_content = fs::read(&path).unwrap();
+    let rows = fixture.home.join(index::browser_state::MANIFEST);
+    let list = fixture.home.join(mod_list::FILE);
+    let before = (
+        fixture.pointer(),
+        fs::read(&rows).unwrap(),
+        fs::read(&list).unwrap(),
+    );
+    let unchanged = || {
+        assert_eq!(fixture.pointer(), before.0);
+        assert_eq!(fs::read(&rows).unwrap(), before.1);
+        assert_eq!(fs::read(&list).unwrap(), before.2);
+        assert_eq!(fs::read(&path).unwrap(), before_content);
+        assert_eq!(fs::read(fixture.home.join(ARCHIVE)).unwrap(), predecessor);
+    };
+
+    let unfit = native_release_for(&fixture, &mut registry, "1.1.0", b"", 'b');
+    fixture.publish_registry(&registry);
+    let (ok, text) = native_client(&fixture, &["mods", "update", ID]);
+    assert!(
+        !ok && text.contains("Made for other Sunrise versions"),
+        "{text}"
+    );
+    unchanged();
+    // This is still bulk even though only one root has a catalogue update.
+    let (ok, text) = native_client(&fixture, &["mods", "update"]);
+    assert!(
+        ok && text.contains("No registry updates available."),
+        "{text}"
+    );
+    unchanged();
+
+    let next = release(&fixture, &mut registry, "extra_mod", "1.2.0", &[]);
+    fixture.publish_registry(&registry);
+    let archive = fixture.root.join(format!("{ID}-1.1.0.smod"));
+    fs::remove_file(&archive).unwrap();
+    let (ok, text) = native_client(&fixture, &["mods", "update"]);
+    assert!(!ok, "download failure isn't a proved no-fit: {text}");
+    unchanged();
+
+    fs::write(archive, unfit).unwrap();
+    let (ok, text) = native_client(&fixture, &["mods", "update"]);
+    assert!(ok && text.contains("Fireflies 1.2.0"), "{text}");
+    assert_eq!(fs::read(&path).unwrap(), next);
+    assert_ne!(fixture.pointer(), before.0);
+    assert_eq!(fs::read(&list).unwrap(), before.2);
+    assert!(selection::is_enabled(&fixture.home, ID));
+    assert_eq!(fs::read(fixture.home.join(ARCHIVE)).unwrap(), predecessor);
+    let updated: Value = serde_json::from_slice(&fs::read(rows).unwrap()).unwrap();
+    let old: Value = serde_json::from_slice(&before.1).unwrap();
+    let native_row = |doc: &Value| {
+        doc["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["project"] == ID)
+            .unwrap()
+            .clone()
+    };
+    assert_eq!(native_row(&updated), native_row(&old));
+    assert_eq!(
+        fs::read_to_string(fixture.root.join("compiled")).unwrap(),
+        "1.0.0\n"
+    );
 }
 
 #[test]

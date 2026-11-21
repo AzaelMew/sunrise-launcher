@@ -49,6 +49,7 @@ const B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 
 static NO_PINS: std::sync::LazyLock<std::collections::BTreeMap<String, String>> =
     std::sync::LazyLock::new(Default::default);
+static NO_UNFIT_UPDATES: BTreeSet<String> = BTreeSet::new();
 
 fn world<'a>(
     index: &'a Index,
@@ -59,6 +60,7 @@ fn world<'a>(
     World {
         index: Some(index),
         game: GAME,
+        unfit_updates: &NO_UNFIT_UPDATES,
         enabled,
         unbuilt,
         native_allowed: allowed,
@@ -171,22 +173,55 @@ fn an_update_is_only_ever_forward_to_what_fits() {
         vec![],
     );
     let p = idx.project("zoom").unwrap();
-    assert_eq!(newer(&idx, p, "2.0.0", GAME), Some("3.0.0".into()));
-    assert_eq!(newer(&idx, p, "3.0.0", GAME), None);
     assert_eq!(
-        newer(&idx, p, "0.9.0", GAME),
+        newer(&idx, p, "2.0.0", GAME, &NO_UNFIT_UPDATES),
+        Some("3.0.0".into())
+    );
+    assert_eq!(newer(&idx, p, "3.0.0", GAME, &NO_UNFIT_UPDATES), None);
+    assert_eq!(
+        newer(&idx, p, "0.9.0", GAME, &NO_UNFIT_UPDATES),
         None,
         "a version the index doesn't list is left alone"
     );
     assert_eq!(
-        newer_for_hold(&idx, p, "0.9.0", GAME),
+        newer_for_hold(&idx, p, "0.9.0", GAME, &NO_UNFIT_UPDATES),
         Some("3.0.0".into()),
         "a typed hold can offer a reviewed replacement for a delisted older archive"
     );
     assert_eq!(
-        newer(&idx, p, "2.0.0", "25.1"),
+        newer(&idx, p, "2.0.0", "25.1", &NO_UNFIT_UPDATES),
         None,
         "nothing for another build"
+    );
+}
+
+#[test]
+fn known_unfit_archives_are_not_offered_as_updates() {
+    let idx = index(
+        vec![project(
+            "zoom",
+            "native-mod",
+            &[("3.0.0", GAME, B), ("2.0.0", GAME, A), ("1.0.0", GAME, A)],
+            serde_json::json!({}),
+        )],
+        vec![],
+    );
+    let on = HashSet::from(["zoom".to_owned()]);
+    let unbuilt = HashSet::new();
+    let known = BTreeSet::from([B.to_owned()]);
+    let w = World {
+        unfit_updates: &known,
+        ..world(&idx, &on, &unbuilt, true)
+    };
+    let latest = rows(&[entry("zoom", "2.0.0", true, A)], &w).remove(0);
+    assert!(latest.on);
+    assert!(latest.update.is_none() && !bulk_updatable(&latest));
+    let older = rows(&[entry("zoom", "1.0.0", true, A)], &w).remove(0);
+    assert_eq!(older.update.as_deref(), Some("2.0.0"));
+    assert!(bulk_updatable(&older));
+    assert_eq!(
+        newer_for_hold(&idx, idx.project("zoom").unwrap(), "0.9.0", GAME, &known).as_deref(),
+        Some("2.0.0")
     );
 }
 
@@ -477,6 +512,7 @@ fn turning_on_a_local_native_file_exposes_permission_then_build() {
             &World {
                 index: None,
                 game: GAME,
+                unfit_updates: &NO_UNFIT_UPDATES,
                 enabled: &enabled,
                 unbuilt: &unbuilt,
                 native_allowed: allowed,

@@ -296,7 +296,7 @@ fn world_cutoff_worker() {
         update_registry(
             &instance,
             identity,
-            Some(vec!["root_mod".into()]),
+            UpdateRequest::Strict(vec!["root_mod".into()]),
             choose,
             hooks,
             &decide,

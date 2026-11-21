@@ -7,16 +7,12 @@ pub(super) fn update_floors(
     catalogue: &index::Index,
     before: &Inventory,
     game: &str,
-    requested: Option<&[String]>,
+    requested: &[String],
 ) -> Result<BTreeMap<String, semver::Version>, InstallError> {
-    let ids = match requested {
-        Some(ids) => ids.iter().map(String::as_str).collect::<BTreeSet<_>>(),
-        None => before
-            .iter()
-            .filter(|(_, entry)| entry.owned)
-            .map(|(id, _)| id.as_str())
-            .collect(),
-    };
+    let ids = requested
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
     let mut above = BTreeMap::new();
     for id in ids {
         let old = before.get(id).filter(|p| p.owned).ok_or_else(|| {

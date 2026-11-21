@@ -41,6 +41,7 @@ struct Request {
 pub(crate) enum Kind {
     Install,
     Update,
+    UpdateAll,
     Remove,
 }
 
@@ -562,10 +563,14 @@ impl Launcher {
                     choose,
                     hooks,
                 ),
-                Kind::Update => sunrise::update_registry(
+                Kind::Update | Kind::UpdateAll => sunrise::update_registry(
                     &request.profile,
                     request.identity,
-                    Some(ids),
+                    if kind == Kind::Update {
+                        sunrise::UpdateRequest::Strict(ids)
+                    } else {
+                        sunrise::UpdateRequest::Bulk(ids)
+                    },
                     choose,
                     hooks,
                     &approve,

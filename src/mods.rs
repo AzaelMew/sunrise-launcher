@@ -836,6 +836,13 @@ impl Launcher {
             || self.mods_game(),
             |managed| sunrise_launcher::backend::game_version(managed.active.base()),
         );
+        let unfit_updates = snap
+            .rows
+            .managed
+            .as_ref()
+            .map_or_else(BTreeSet::new, |managed| {
+                sunrise::known_unfit_updates(managed.active.base())
+            });
         let local_offers = if cfg!(debug_assertions) && sunrise::local() {
             sunrise::known_index()
         } else {
@@ -846,6 +853,7 @@ impl Launcher {
             &model::World {
                 index: index.as_deref(),
                 game: &game,
+                unfit_updates: &unfit_updates,
                 enabled: &snap.rows.enabled,
                 unbuilt: &unbuilt,
                 native_allowed: self.settings.native_mods_allowed_at.is_some(),
@@ -881,11 +889,12 @@ impl Launcher {
             {
                 if local_offers.is_some() {
                     row.title.clone_from(&project.name);
-                    row.update = model::newer(offers, project, &row.version, &game);
+                    row.update = model::newer(offers, project, &row.version, &game, &unfit_updates);
                     regroup = true;
                 }
                 if held.is_some() {
-                    row.update = model::newer_for_hold(offers, project, &row.version, &game);
+                    row.update =
+                        model::newer_for_hold(offers, project, &row.version, &game, &unfit_updates);
                 }
             }
         }

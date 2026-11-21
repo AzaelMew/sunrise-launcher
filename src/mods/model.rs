@@ -742,6 +742,8 @@ impl Row {
 pub(super) struct World<'a> {
     pub(super) index: Option<&'a Index>,
     pub(super) game: &'a str,
+    /// Verified archive hashes already rejected by the SDK for this base build.
+    pub(super) unfit_updates: &'a BTreeSet<String>,
     pub(super) enabled: &'a HashSet<String>,
     /// Native mods whose build isn't made.
     pub(super) unbuilt: &'a HashSet<String>,
@@ -799,7 +801,7 @@ pub(super) fn rows(entries: &[Entry], w: &World) -> Vec<Row> {
             let update = w
                 .index
                 .zip(p)
-                .and_then(|(i, p)| newer(i, p, &e.version, w.game));
+                .and_then(|(i, p)| newer(i, p, &e.version, w.game, w.unfit_updates));
             Some(Row {
                 title: p.map_or_else(|| id.clone(), |p| p.name.clone()),
                 id,
@@ -870,15 +872,16 @@ impl Ord for Group {
     }
 }
 
-/// A catalogue offer, not native fit proof. Only a known older row gets an ordinary offer.
+/// A catalogue offer, not native fit proof. Exclude releases already proved not to fit.
 pub(super) fn newer(
     index: &Index,
     p: &index::Project,
     installed: &str,
     game: &str,
+    unfit_updates: &BTreeSet<String>,
 ) -> Option<String> {
     p.versions.iter().find(|v| v.version == installed)?;
-    newer_for_hold(index, p, installed, game)
+    newer_for_hold(index, p, installed, game, unfit_updates)
 }
 
 /// A Switch hold may name a version older than the catalogue retains. The Update worker
@@ -888,6 +891,7 @@ pub(super) fn newer_for_hold(
     p: &index::Project,
     installed: &str,
     game: &str,
+    unfit_updates: &BTreeSet<String>,
 ) -> Option<String> {
     use sunrise_launcher_smod::dependencies::parse_version;
     let old = parse_version(installed).ok()?;
@@ -897,6 +901,7 @@ pub(super) fn newer_for_hold(
         .filter_map(|v| {
             if !sunrise_launcher::browser::sunrise::fits_game(v, game)
                 || index.revoked(&p.id, &v.file.sha256).is_some()
+                || unfit_updates.contains(&v.file.sha256.to_ascii_lowercase())
             {
                 return None;
             }

@@ -206,7 +206,7 @@ impl Launcher {
             })
             .map(|row| row.id)
             .collect();
-        self.submit_registry_change(Kind::Update, "update-all", ids);
+        self.submit_registry_change(Kind::UpdateAll, "update-all", ids);
     }
 
     pub(super) fn update_one(&mut self, row: &Row) {
