@@ -454,6 +454,7 @@ impl Github {
         }) {
             return last.clone();
         }
+        let cached = last.and_then(|last| last.pin.clone());
         let fresh = self.resolve_ref(state, source);
         let (pin, failure) = match fresh {
             Ok(pin) => {
@@ -468,7 +469,7 @@ impl Github {
                 (None, Some(problem))
             }
             Err(problem) => {
-                let cached = last.and_then(|last| last.pin.clone()).or_else(|| {
+                let cached = cached.or_else(|| {
                     let bytes = bounded(fs::File::open(&path).ok()?, 4096).ok()?;
                     let pin: Pin = serde_json::from_slice(&bytes).ok()?;
                     (manifest::revision(&pin.sha)

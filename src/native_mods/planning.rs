@@ -20,8 +20,7 @@ pub(crate) fn source_routes(
     cancellation.check()?;
     let lease = crate::native_cache::Cache::acquire(&backend::build_dir()).map_err(cache_error)?;
     let scratch = tempfile::tempdir().map_err(|error| error.to_string())?;
-    let folder =
-        stage_installed(home, scratch.path().join("mods"))?.ok_or_else(no_mods_to_build)?;
+    let folder = stage_installed(home, scratch.path().join("mods"))?.ok_or(Failed::Nothing)?;
     let result = classify(&folder, Some(base), &lease, cancellation)?;
     cancellation.check()?;
     Ok(result)
