@@ -56,6 +56,9 @@ fn main() {
             scenario("different-status");
             scenario("early-wrapper");
             scenario("failed");
+            // A release build refuses a local registry (registry_install.rs), and release.yml
+            // runs `cargo test --release`; the fixture only has a local one.
+            #[cfg(debug_assertions)]
             registry::ordinary_install();
             #[cfg(windows)]
             ordinary_cli();
@@ -63,6 +66,7 @@ fn main() {
     }
 }
 
+#[cfg(debug_assertions)]
 #[path = "managed_play_process/registry.rs"]
 mod registry;
 
