@@ -662,25 +662,36 @@ pub(crate) fn profile_homes_strict(game: &Path) -> Result<Vec<PathBuf>, String> 
 }
 
 fn list_in(game_home: &Path, data: &Path) -> Vec<Instance> {
-    list_with_snapshot(game_home, data, || {})
+    list_with_snapshot(game_home, data, true, || {})
 }
 
-fn list_with_snapshot(game_home: &Path, data: &Path, after_read: impl FnOnce()) -> Vec<Instance> {
+fn list_with_snapshot(
+    game_home: &Path,
+    data: &Path,
+    housekeeping: bool,
+    after_read: impl FnOnce(),
+) -> Vec<Instance> {
     match Store::under_lock(data, || {
         let stored = Store::read(data);
         after_read();
         match stored {
-            Ok(store) => list_snapshot(game_home, data, store, true),
-            Err(_) => list_snapshot(game_home, data, Store::default(), false),
+            Ok(store) => list_snapshot(game_home, data, store, true, housekeeping),
+            Err(_) => list_snapshot(game_home, data, Store::default(), false, false),
         }
     }) {
         Ok(instances) => instances,
         // Keep the listing usable, but don't authorize mutation with unpaired choices.
-        Err(_) => list_snapshot(game_home, data, Store::load(data), false),
+        Err(_) => list_snapshot(game_home, data, Store::load(data), false, false),
     }
 }
 
-fn list_snapshot(game_home: &Path, data: &Path, mut store: Store, admitted: bool) -> Vec<Instance> {
+fn list_snapshot(
+    game_home: &Path,
+    data: &Path,
+    mut store: Store,
+    admitted: bool,
+    housekeeping: bool,
+) -> Vec<Instance> {
     let mut found = vec![(
         DEFAULT.to_string(),
         "Sunrise".to_string(),
@@ -696,12 +707,12 @@ fn list_snapshot(game_home: &Path, data: &Path, mut store: Store, admitted: bool
         .filter_map(|e| e.file_name().into_string().ok())
         .collect();
     own.sort();
-    // Creation and detachment also hold the store lock through their directory rename.
-    // Recover initial choices left by a creator that exited between rename and store save.
+    // Directory renames and metadata snapshots share the lock. Play/Delete need the initial
+    // choices even after an interrupted create, but a refused request must not save the store.
     if admitted {
         let parent = game_home.join(OWN);
         let before = store.instances.len();
-        if parent.is_dir() {
+        if housekeeping && parent.is_dir() {
             store.instances.retain(|id, _| {
                 id == DEFAULT
                     || crate::browser::safe_name(id) != Some(id)
@@ -717,7 +728,7 @@ fn list_snapshot(game_home: &Path, data: &Path, mut store: Store, admitted: bool
                 }
             }
         }
-        if retained != before || store.instances.len() != retained {
+        if housekeeping && (retained != before || store.instances.len() != retained) {
             if let Err(error) = store.save(data) {
                 eprintln!("Sunrise: instances.json is not saved: {error}");
             }

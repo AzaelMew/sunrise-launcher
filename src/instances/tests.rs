@@ -443,7 +443,7 @@ fn a_profile_lookup_pairs_its_old_row_with_its_old_directory() {
     let root = scratch("lookup-snapshot");
     let (game, cache, trash) = (root.join("game"), root.join("cache"), root.join("trash"));
     let old = create_in(&game, &cache, "Castle!", None).unwrap();
-    let snapshot = list_with_snapshot(&game, &cache, || {
+    let snapshot = list_with_snapshot(&game, &cache, true, || {
         // Pause after reading the old row, before opening any profile directory. This is
         // the exact lock held across the competing Delete and Create directory renames.
         let competitor = fs::File::options()
