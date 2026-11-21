@@ -311,11 +311,13 @@ shows a small "available, Install" line on Play.
 
 Release lists and commits come from GitHub's API, which allows 60 anonymous calls an hour per
 address: players behind a shared one (a school, a dorm, a carrier's NAT) spend them together.
-So each answer is kept in `cache/github/` in the data folder and used again for 5 minutes without
-asking, then revalidated with its ETag. When GitHub answers with its rate limit, or not at all,
-Sunrise's own releases are read through the read-only mirror `SUNRISE_GITHUB_MIRROR` names (none
-by default); when both fail the last saved answer is used, else the error names both. The release files
-themselves come from their download links, which that limit doesn't cover.
+Each answer, including each release-list page and its pagination link, is kept in `cache/github/`
+in the data folder and used again for 5 minutes without asking, then revalidated with its ETag.
+When GitHub answers with its rate limit, or not at all, Sunrise's own releases are read through
+the read-only mirror `SUNRISE_GITHUB_MIRROR` names (none by default). If the mirror omits
+pagination links, a full page prompts a request for the next page. When both fail the last saved
+answer is used, else the error names both. Release files themselves come from their download
+links, which that limit doesn't cover.
 
 It also updates itself from GitHub releases tagged `launcher@X.Y.Z` (the game's are `nightly`, and
 `vX.Y.Z` before 2026-10-28; neither is ever taken for the other). Before 0.2 they were `launcher-vX.Y.Z` and `vYYYY.MM.DD`:
