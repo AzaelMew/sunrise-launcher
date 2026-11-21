@@ -189,7 +189,8 @@ pub fn install_registry(
             )));
         }
     }
-    let old = edit.candidate()?;
+    let registry_proof = (!local).then_some(&catalogue);
+    let old = edit.candidate(registry_proof)?;
     let before = inventory(old.path())?;
     for root in &roots {
         if let Some(package) = before.get(&root.id).filter(|package| !package.owned) {
@@ -302,7 +303,7 @@ pub fn install_registry(
         if versions.is_empty() {
             return Ok(InstalledBatch::default());
         }
-        let next = edit.candidate()?;
+        let next = edit.candidate(registry_proof)?;
         let mut entries = BTreeMap::new();
         for (n, (project, version)) in versions.iter().enumerate() {
             let entry = stage_package(
@@ -524,7 +525,7 @@ pub fn install_registry(
         for id in restores.keys().filter(|id| entries.contains_key(*id)) {
             let package = &before[id].package;
             if package.manifest.native.is_some() && !mod_list::is_enabled(next.path(), id) {
-                let activation = edit.candidate()?;
+                let activation = edit.candidate(registry_proof)?;
                 Document::read(next.path())?.write(activation.path())?;
                 // Copy all staged package changes and exact selection before testing activation.
                 for other in entries.values() {
@@ -632,6 +633,7 @@ fn build_progress(step: native_mods::Step, progress: &dyn Fn(InstallProgress)) {
 struct SeenPackage {
     package: ScannedPackage,
     digest: Option<String>,
+    registry_claim: bool,
     owned: bool,
 }
 
@@ -649,22 +651,27 @@ fn inventory(home: &Path) -> Result<Inventory, String> {
             let row: Option<installed::Entry> = doc
                 .row(&id)?
                 .and_then(|row| serde_json::from_value(row.clone()).ok());
-            let owned = row.is_some_and(|row| {
+            let registry_claim = row.as_ref().is_some_and(|row| {
                 row.source == SourceId::Sunrise
                     && row.kind == Kind::Mod
                     && row.project == id
-                    && row.version == p.manifest.version
                     && row.path(home).as_ref() == Some(&p.path)
-                    && digest.as_ref().is_some_and(|digest| {
-                        row.checksum
-                            .eq_ignore_ascii_case(&format!("SHA-256:{digest}"))
-                    })
             });
+            let mut owned = false;
+            if let Some(row) = row.filter(|_| registry_claim) {
+                doc.rows
+                    .check_other_claims(home, &id, &row.file)
+                    .map_err(|e| e.render(trf))?;
+                owned = digest.as_deref().is_some_and(|digest| {
+                    managed_play::registry_row_matches(home, &row, &p, digest)
+                });
+            }
             Ok((
                 id,
                 SeenPackage {
                     package: p,
                     digest,
+                    registry_claim,
                     owned,
                 },
             ))

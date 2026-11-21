@@ -97,7 +97,8 @@ pub fn switch_build(
         return Err(tr("Connect to the Sunrise registry before switching builds.").into());
     }
     let (catalogue, evidence) = super::super::complete_index(&source, local)?;
-    let old = edit.candidate()?;
+    let registry_proof = (!local).then_some(&catalogue);
+    let old = edit.candidate(registry_proof)?;
     let original = Originals::read(old.path(), edit.current(), &catalogue)?;
     let download = tempfile::Builder::new()
         .prefix("switch-download-")
@@ -117,7 +118,7 @@ pub fn switch_build(
         let Some(enabled) = enabled_set(&set, &original.mods) else {
             return Ok(false);
         };
-        let next = edit.candidate()?;
+        let next = edit.candidate(registry_proof)?;
         apply(next.path(), &original, &set, &enabled)?;
         validate_enabled(next.path(), &catalogue).map_err(|e| e.to_string())?;
         let prove = |home: &Path| {
@@ -144,7 +145,7 @@ pub fn switch_build(
             if !activate(id, &set, &mut activated) || !fits(&set, &activated) {
                 return Ok(false);
             }
-            let trial = edit.candidate()?;
+            let trial = edit.candidate(registry_proof)?;
             apply(trial.path(), &original, &set, &activated)?;
             if exact_image(prove(trial.path()), &set)?.is_none() {
                 return Ok(false);
@@ -293,9 +294,12 @@ impl<'a> Originals<'a> {
                 Err(error) if error.kind() == io::ErrorKind::NotFound => None,
                 _ => return Err(unproved_switch()),
             };
-            if doc.row(&id)?.is_some() != seen.owned || (seen.owned && github.is_some()) {
+            let has_row = doc.row(&id)?.is_some();
+            if has_row != seen.registry_claim || (has_row && github.is_some()) {
                 return Err(unproved_switch());
             }
+            // A stale row at this path is kept, but does not assign the new bytes
+            // a source or authorize a registry update or project-wide removal.
             let source = if seen.owned {
                 HeldSource::Registry {
                     project: id.clone(),
@@ -503,12 +507,7 @@ fn choices(
                     replacement,
                 });
             }
-        } else if old.is_some()
-            && !catalogue
-                .revoked
-                .iter()
-                .any(|revoked| revoked.id == id && revoked.sha256.is_none())
-        {
+        } else if old.is_some() {
             // A complete response can still omit a project. Omission doesn't prove
             // an installed archive incompatible (and must not turn it off).
             return Err(unproved_switch());

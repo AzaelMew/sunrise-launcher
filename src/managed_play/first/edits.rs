@@ -206,7 +206,10 @@ impl Edit<'_> {
 
     /// Each resolver trial starts with the exact old inputs, including files and rows the
     /// launcher does not understand. Candidate paths never escape this journal attempt.
-    pub(crate) fn candidate(&self) -> Result<tempfile::TempDir, String> {
+    pub(crate) fn candidate(
+        &self,
+        registry: Option<&sunrise_launcher_smod::index::Index>,
+    ) -> Result<tempfile::TempDir, String> {
         let _manifest = game_lock(&self.home)?;
         let candidate = tempfile::Builder::new()
             .prefix("candidate-")
@@ -239,6 +242,7 @@ impl Edit<'_> {
         if let Some(repaired) = super::super::inputs::browser_repair(
             candidate.path(),
             &scan_packages(candidate.path())?,
+            registry,
         )? {
             fs::write(candidate.path().join(MANIFEST), repaired)
                 .map_err(|e| at(candidate.path(), e))?;

@@ -640,6 +640,104 @@ fn switch_holds_content_in_place_and_registry_update_restores_only_enabled_holds
 }
 
 #[test]
+fn switch_takedowns_require_registry_origin_or_the_exact_archive_digest() {
+    for github in [false, true] {
+        let fixture = Fixture::new();
+        let (mut registry, archives) = fixture.content_index();
+        fixture.publish_registry(&registry);
+        fixture.other_build();
+        fixture.install_mod("root_mod");
+        let mods = fixture.home.join(mod_list::DIR);
+        let document = fixture.home.join(index::browser_state::MANIFEST);
+        let mut rows: Value = serde_json::from_slice(&fs::read(&document).unwrap()).unwrap();
+        let entries = rows["entries"].as_array_mut().unwrap();
+        let stale = entries
+            .iter()
+            .find(|row| row["project"] == "root_mod")
+            .unwrap()
+            .clone();
+        // Exact digest takedowns do not require a browser row.
+        entries.retain(|row| row["project"] != "required_mod");
+        fs::write(&document, serde_json::to_vec(&rows).unwrap()).unwrap();
+        let fork = Package::write_files(
+            &format!("id='root_mod'\nname='Private Lanterns'\nversion='1.0.0'\napi='{}'\ncapabilities=['registries']\n[dependencies]\nrequired_mod='^1'", manifest::API),
+            &[("data/private/function/light.mcfunction", b"say private")],
+        ).unwrap();
+        let fork_path = mods.join("root_mod.smod");
+        fs::write(&fork_path, &fork).unwrap();
+        let untracked = mods.join("extra_mod.smod");
+        fs::write(&untracked, &archives["extra_mod"]).unwrap();
+        let origin = github.then(|| {
+            let origin = fixture
+                .home
+                .join(mod_list::NATIVE_DIR)
+                .join("extra_mod.origin.json");
+            fs::create_dir_all(origin.parent().unwrap()).unwrap();
+            let bytes = serde_json::to_vec(&sunrise_launcher::github_mods::Origin {
+                id: "extra_mod".into(),
+                version: "1.0.0".into(),
+                owner: "example".into(),
+                repo: "extra".into(),
+                tag: None,
+                commit: "c".repeat(40),
+                asset: None,
+                sha256: index::sha256(&archives["extra_mod"]),
+            })
+            .unwrap();
+            fs::write(&origin, &bytes).unwrap();
+            (origin, bytes)
+        });
+        registry.projects.retain(|project| project.id != "root_mod");
+        for (id, sha256) in [
+            ("root_mod", None),
+            ("extra_mod", None),
+            (
+                "required_mod",
+                Some(index::sha256(&archives["required_mod"])),
+            ),
+        ] {
+            registry.revoked.push(index::Revoked {
+                id: id.into(),
+                sha256,
+                reason: "Fixture takedown".into(),
+                date: "2026-11-20".into(),
+            });
+        }
+        fixture.publish_registry(&registry);
+        let result = fixture
+            .registry_client(&["--json", "switch", OTHER])
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let active = Active::parse(&fixture.pointer()).unwrap();
+        assert_eq!(
+            active.pending_changes().unwrap().removed,
+            [("Lantern Core".into(), "Fixture takedown".into())]
+        );
+        let holds = active.holds().collect::<Vec<_>>();
+        assert_eq!(holds.len(), 1);
+        assert_eq!(holds[0].id(), "root_mod");
+        assert!(matches!(holds[0].source(), HeldSource::Local { .. }));
+        assert_eq!(fs::read(fork_path).unwrap(), fork);
+        assert_eq!(fs::read(untracked).unwrap(), archives["extra_mod"]);
+        assert!(!mods.join("required_mod.smod").exists());
+        if let Some((origin, bytes)) = origin {
+            assert_eq!(fs::read(origin).unwrap(), bytes);
+        }
+        let rows: Value = serde_json::from_slice(&fs::read(document).unwrap()).unwrap();
+        assert_eq!(
+            rows["entries"],
+            json!([stale]),
+            "no postimage asserts registry origin for local bytes"
+        );
+    }
+}
+
+#[test]
 fn switch_uses_short_game_versions_and_refuses_an_unindexed_installed_project() {
     let fixture = Fixture::new();
     let (mut registry, archives) = fixture.content_index();
