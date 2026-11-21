@@ -11,9 +11,9 @@ fn directory(path: &Path) -> Dir {
     Dir::open_ambient_dir(path, cap_std::ambient_authority()).unwrap()
 }
 
-#[cfg(unix)]
 fn released(registry: &std::sync::Arc<Registry>, tree: &Dir) {
-    // Another parallel fork can briefly retain an untouched CLOEXEC copy until its exec.
+    // Windows may still be closing inherited handles after wait returns. On Unix an
+    // unrelated parallel fork can briefly retain an untouched CLOEXEC copy until exec.
     let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
     loop {
         match registry.lock(tree, LockMode::Exclusive) {
@@ -176,10 +176,7 @@ fn one_game_child_keeps_profile_and_cache_claims_without_mixing_their_handles() 
     assert!(Admission::open(&home, None).is_err());
     child.stdin.take().unwrap().write_all(b"exit\n").unwrap();
     assert!(child.wait().unwrap().success());
-    #[cfg(unix)]
     released(&registry, &trees[0]);
-    #[cfg(windows)]
-    drop(registry.lock(&trees[0], LockMode::Exclusive).unwrap());
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
     while Admission::open(&home, None).is_err() {
         assert!(
