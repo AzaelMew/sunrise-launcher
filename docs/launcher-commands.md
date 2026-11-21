@@ -833,12 +833,13 @@ Install a native mod from a GitHub link (docs/modding/src/how-to/native-mods.md,
 - `--all`: Install every mod the link holds
 - `--instance`: The profile (default: the selected one)
 - `--trust-native-code`: Allow native code for this install (remembered; revoke in Settings, Storage)
+- `--confirm-world-loss`: Allow a replacement that could remove saved-world content when adding an already installed mod
 
 MCP: none: the player's switch.
 
 ## `sunrise-launcher mods update-github`
 
-Look for newer versions of the native mods installed from GitHub (the latest release, or the default branch's head for a mod installed from a commit), and install them.
+Check native mods from GitHub, and update those installed from a release with a matching record. Before replacement, Sunrise verifies the installed archive against its recorded GitHub asset and shows its path and SHA-256. A commit install can still be checked with `--check`; to replace it, remove it explicitly and add the new version.
 
     sunrise-launcher mods update-github [ID]
 
@@ -846,6 +847,7 @@ Look for newer versions of the native mods installed from GitHub (the latest rel
 - `--check`: Only say what is newer
 - `--instance`: The profile (default: the selected one)
 - `--trust-native-code`: Allow native code for this install (remembered; revoke in Settings, Storage)
+- `--confirm-world-loss`: Allow a reviewed update that could remove saved-world content
 
 MCP: none: the player's switch.
 

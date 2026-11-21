@@ -89,10 +89,35 @@ pub struct ChangeImpact {
 #[derive(Debug)]
 pub(super) enum Change {
     Update(Vec<String>),
+    GithubUpdate {
+        name: String,
+        file: String,
+        releases: [ReviewedRelease; 2],
+    },
     Remove {
         removed: Vec<ReviewedArchive>,
         disabled: Vec<String>,
     },
+}
+
+#[derive(Debug)]
+pub(super) struct ReviewedRelease {
+    label: String,
+    sha256: String,
+}
+
+impl From<&crate::github_mods::Origin> for ReviewedRelease {
+    fn from(origin: &crate::github_mods::Origin) -> Self {
+        Self {
+            label: format!(
+                "{} {} ({})",
+                origin.version,
+                origin.label(),
+                origin.asset.as_deref().unwrap_or_default(),
+            ),
+            sha256: origin.sha256.clone(),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -135,6 +160,22 @@ impl ChangeImpact {
         match &self.change {
             Change::Update(mods) => {
                 lines.push(trf("Update: {mods}.", &[("mods", &mods.join(", "))]));
+            }
+            Change::GithubUpdate {
+                name,
+                file,
+                releases,
+            } => {
+                lines.push(trf("Update: {mods}.", &[("mods", name)]));
+                for (label, release) in [tr("Installed archive"), tr("Replacement archive")]
+                    .into_iter()
+                    .zip(releases)
+                {
+                    lines.push(format!(
+                        "{label}: {}\n{file}\nSHA-256: {}",
+                        release.label, release.sha256
+                    ));
+                }
             }
             Change::Remove { removed, disabled } => {
                 let names = removed

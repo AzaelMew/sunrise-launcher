@@ -509,9 +509,11 @@ enum ModsCmd {
         /// Allow native code for this install (remembered; revoke in Settings, Storage)
         #[arg(long)]
         trust_native_code: bool,
+        /// Allow reviewed mod changes that could remove saved-world content
+        #[arg(long)]
+        confirm_world_loss: bool,
     },
-    /// Look for newer versions of the native mods installed from GitHub (the latest release, or the
-    /// default branch's head for a mod installed from a commit), and install them
+    /// Check native mods from GitHub, and update those installed from a release with a matching record
     UpdateGithub {
         /// One mod (default: all of them)
         id: Option<String>,
@@ -524,6 +526,9 @@ enum ModsCmd {
         /// Allow native code for this install (remembered; revoke in Settings, Storage)
         #[arg(long)]
         trust_native_code: bool,
+        /// Allow reviewed mod changes that could remove saved-world content
+        #[arg(long)]
+        confirm_world_loss: bool,
     },
     /// Remove an installed mod archive or a pack the browser installed
     Remove {
@@ -2155,6 +2160,21 @@ fn servers(action: ServersCmd, as_json: bool) -> Result<(), String> {
     }
     Ok(())
 }
+fn approve_mod_change(
+    impact: &sunrise_launcher::browser::sunrise::ChangeImpact,
+    confirmed: bool,
+) -> bool {
+    eprintln!("{}", impact.detail());
+    let allowed = confirmed || !impact.risks_worlds();
+    if !allowed {
+        eprintln!(
+            "{}",
+            tr("Nothing was changed. Use --confirm-world-loss only if you accept this risk.")
+        );
+    }
+    allowed
+}
+
 /// Commands for browser-installed content and registry mods in a selected profile.
 fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
     use sunrise_launcher::browser::{installed, sunrise, Kind, Query, SourceId};
@@ -2196,17 +2216,6 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
         },
         registry_crates: None,
         continue_after_failure: &|_| false,
-    };
-    let approve = |impact: &sunrise::ChangeImpact, confirmed| {
-        eprintln!("{}", impact.detail());
-        let allowed = confirmed || !impact.risks_worlds();
-        if !allowed {
-            eprintln!(
-                "{}",
-                tr("Nothing was changed. Use --confirm-world-loss only if you accept this risk.")
-            );
-        }
-        allowed
     };
     let on = matches!(action, ModsCmd::Enable { .. });
     match action {
@@ -2502,7 +2511,7 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                         requested,
                         || sunrise_launcher::managed_play::headless_first(&instance, None),
                         mutation_hooks(),
-                        &|impact| approve(impact, confirm_world_loss),
+                        &|impact| approve_mod_change(impact, confirm_world_loss),
                     )
                     .map_err(|e| match e {
                         sunrise::InstallError::Cancelled => tr("Nothing was updated.").into(),
@@ -2542,16 +2551,26 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
             mod_id,
             all,
             trust_native_code,
+            confirm_world_loss,
             ..
         } => {
             let link = github_mods::parse(&url)?;
             let found = github_mods::resolve(&link, &github_mods::api)?;
-            github_native(&home, &found, mod_id.as_deref(), all, trust_native_code)?;
+            github_native(GithubInstall {
+                instance: &instance,
+                found: &found,
+                only: mod_id.as_deref(),
+                all,
+                update: false,
+                trust: trust_native_code,
+                confirm_world_loss,
+            })?;
         }
         ModsCmd::UpdateGithub {
             id,
             check,
             trust_native_code,
+            confirm_world_loss,
             ..
         } => {
             let mut origins = github_mods::origins(&home);
@@ -2575,7 +2594,15 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                     o.label()
                 );
                 if !check {
-                    github_native(&home, &latest, Some(&o.id), false, trust_native_code)?;
+                    github_native(GithubInstall {
+                        instance: &instance,
+                        found: &latest,
+                        only: Some(&o.id),
+                        all: false,
+                        update: true,
+                        trust: trust_native_code,
+                        confirm_world_loss,
+                    })?;
                 }
             }
         }
@@ -2601,7 +2628,7 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                     &[id],
                     || sunrise_launcher::managed_play::headless_first(&instance, None),
                     mutation_hooks(),
-                    &|impact| approve(impact, confirm_world_loss),
+                    &|impact| approve_mod_change(impact, confirm_world_loss),
                 )
                 .map_err(|e| match e {
                     sunrise::InstallError::Cancelled => tr("Nothing was removed.").into(),
@@ -3799,7 +3826,7 @@ mod catalog_tests;
 
 #[path = "cli_native_permission.rs"]
 mod native_permission_impl;
-use native_permission_impl::{github_native, native_permission, registry_consent};
+use native_permission_impl::{github_native, native_permission, registry_consent, GithubInstall};
 
 mod developer_builds;
 

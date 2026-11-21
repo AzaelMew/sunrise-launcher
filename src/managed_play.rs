@@ -11,7 +11,7 @@ mod roots;
 pub use client::{headless_first, Client, Progress, StartError, Started};
 pub(crate) use first::{CandidateImage, Edit};
 pub use first::{FirstAttempt, FirstBuild, Profile};
-use inputs::inputs;
+pub(crate) use inputs::inputs;
 pub use inputs::{scan_packages, ScannedPackage};
 
 /// Called only within the cache publication fence immediately before detaching a build.

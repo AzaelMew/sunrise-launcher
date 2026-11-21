@@ -1225,9 +1225,11 @@ fn at(path: &Path, error: impl std::fmt::Display) -> String {
     format!("{}: {error}", path.display())
 }
 
+mod github;
 mod mutations;
 #[cfg(test)]
 mod tests;
 #[cfg(all(test, debug_assertions, unix))]
 mod update_tests;
+pub use github::update_github;
 pub use mutations::{check_activation, remove_mods, ChangeImpact};
