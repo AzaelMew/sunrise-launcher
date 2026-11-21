@@ -125,7 +125,8 @@ fn hold_updates(fixture: &mut Fixture, succeeds: HoldCase, refusals: &[HoldCase]
         .unwrap();
         // Switch publishes these typed receipts. Seed one on the real disabled generation.
         let mut with_hold = base.clone();
-        with_hold["receipts"] = json!([{"id": [8_u8; 16], "waiting_for_update": [hold], "removed": [], "acknowledged": true}]);
+        let receipt_id = [8_u8; 16];
+        with_hold["receipts"] = json!([{"id": receipt_id, "waiting_for_update": [hold], "removed": [], "acknowledged": true}]);
         fs::write(&pointer, serde_json::to_vec(&with_hold).unwrap()).unwrap();
         assert_eq!(
             Active::read_pointer(fixture.home())
