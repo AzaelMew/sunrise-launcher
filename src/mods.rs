@@ -1155,7 +1155,7 @@ mod installed_refresh_tests {
             let root = scratch.path();
             assert!(std::process::Command::new(std::env::current_exe().unwrap())
                 .args(["--exact", "mods::installed_refresh_tests::busy_publication_keeps_the_settled_hold_and_disables_actions_until_refresh"])
-                .env(ACTOR, &root).env("SUNRISE_LAUNCHER_HOME", root.join("launcher"))
+                .env(ACTOR, root).env("SUNRISE_LAUNCHER_HOME", root.join("launcher"))
                 .status().unwrap().success());
             return;
         };
