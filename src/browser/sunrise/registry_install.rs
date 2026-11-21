@@ -1,6 +1,7 @@
 //! Registry and collection requests produce one admitted, fully proved same-base generation.
 use super::{
-    fetch, fetch_index, fits_game, index, installed, location, project_of, trust_label, version_of,
+    fetch, fetch_with_official, fits_game, index, installed, location, project_of, trust_label,
+    version_of, OfficialRegistry,
 };
 use crate::{
     backend,
@@ -143,7 +144,8 @@ pub fn install_registry(
                 .into(),
         ));
     }
-    let (catalogue, source_bytes) = fetch_index(&source, local)?;
+    let (catalogue, source_bytes, authority) = fetch_with_official(&source, local)?;
+    let authority = authority.as_ref();
     if !catalogue.left_out.is_empty() {
         return Err(InstallError::Unproved(
             tr("The mod registry didn't send a complete index. Nothing was installed.").into(),
@@ -183,7 +185,7 @@ pub fn install_registry(
         }
     }
     let old = edit.candidate()?;
-    let before = inventory(old.path())?;
+    let before = inventory(old.path(), authority)?;
     for root in &roots {
         if let Some(package) = before.get(&root.id).filter(|package| !package.owned) {
             return Err(InstallError::Refused(trf(
@@ -289,7 +291,7 @@ pub fn install_registry(
         if !enabled.is_empty() {
             mod_list::set_all_enabled(next.path(), &enabled, true)?;
         }
-        if let Some(conflict) = manifest_conflict(next.path(), &catalogue)? {
+        if let Some(conflict) = manifest_conflict(next.path(), &catalogue, authority)? {
             if conflicts.contains(&conflict) {
                 return Err(InstallError::Unproved(conflict.reason));
             }
@@ -297,7 +299,7 @@ pub fn install_registry(
             continue;
         }
         (hooks.progress)(InstallProgress::Preparing);
-        let staged = inventory(next.path())?;
+        let staged = inventory(next.path(), authority)?;
         let build_packages: Vec<_> = staged
             .values()
             .filter(|p| {
@@ -439,7 +441,7 @@ pub fn install_registry(
                     &mut doc,
                     failed,
                 )?;
-                if let Some(conflict) = manifest_conflict(next.path(), &catalogue)? {
+                if let Some(conflict) = manifest_conflict(next.path(), &catalogue, authority)? {
                     return Err(InstallError::Refused(conflict.reason));
                 }
                 let notice = BuildNotice {
@@ -480,8 +482,8 @@ pub fn install_registry(
         let reviewed = guard_replacements(&instance.home, &suspect)?;
         (hooks.progress)(InstallProgress::Publishing);
         edit.publish(proof, &cancelled, || {
-            let (_, current) = fetch_index(&source, local)?;
-            if source_bytes != current {
+            let (_, current, proof) = fetch_with_official(&source, local)?;
+            if source_bytes != current || proof.is_some() != authority.is_some() {
                 return Err(tr("The mod registry changed while the install was being prepared. Nothing was installed.").into());
             }
             let guard = crate::worlds::lock_reviewed(&reviewed)?;
@@ -514,7 +516,7 @@ struct SeenPackage {
 
 type Inventory = BTreeMap<String, SeenPackage>;
 
-fn inventory(home: &Path) -> Result<Inventory, String> {
+fn inventory(home: &Path, authority: Option<&OfficialRegistry>) -> Result<Inventory, String> {
     let doc = Document::read(home)?;
     managed_play::scan_packages(home)?
         .into_iter()
@@ -535,7 +537,7 @@ fn inventory(home: &Path) -> Result<Inventory, String> {
                 doc.rows
                     .check_other_claims(home, &id, &row.file)
                     .map_err(|error| error.render(trf))?;
-                managed_play::registry_row_matches(home, row, &p, digest)
+                authority.is_some_and(|proof| proof.proves_archive(&id, digest))
             } else {
                 false
             };
@@ -643,8 +645,9 @@ fn missing_required<'a>(
 fn manifest_conflict(
     home: &Path,
     catalogue: &index::Index,
+    authority: Option<&OfficialRegistry>,
 ) -> Result<Option<resolve::ManifestConflict>, InstallError> {
-    let packages = inventory(home)?;
+    let packages = inventory(home, authority)?;
     let enabled: BTreeMap<_, _> = packages
         .iter()
         .filter(|(id, _)| mod_list::is_enabled(home, id))
@@ -760,7 +763,7 @@ fn restore_or_disable(
                 predecessor,
             });
         }
-        let packages = inventory(candidate)?;
+        let packages = inventory(candidate, None)?;
         let enabled: BTreeMap<_, _> = packages
             .iter()
             .filter(|(id, _)| mod_list::is_enabled(candidate, id))

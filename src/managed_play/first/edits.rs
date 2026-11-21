@@ -209,6 +209,16 @@ impl Edit<'_> {
         cancellation: &native_mods::Cancellation,
         authorize: impl FnOnce() -> Result<G, String>,
     ) -> Result<Active, String> {
+        self.publish_observed(proof, cancellation, authorize, |_, _| Ok(()))
+    }
+
+    fn publish_observed<G>(
+        self,
+        proof: CandidateImage,
+        cancellation: &native_mods::Cancellation,
+        authorize: impl FnOnce() -> Result<G, String>,
+        observe: impl FnMut(usize, profile_txn::Boundary) -> Result<(), String>,
+    ) -> Result<Active, String> {
         let resources = match &self.basis {
             Basis::First(first) => Some(Resources::capture(first.base(), &first.stage)?),
             Basis::Active(..) => None,
@@ -250,16 +260,24 @@ impl Edit<'_> {
         };
         let files = changed_files(&self.home, &proof.candidate)?;
         let pointer = serde_json::to_vec(&active).map_err(|e| e.to_string())?;
-        stage.seal(pointer, &files)?.publish(|| {
-            let authorization = authorize()?;
-            active.verify_artifacts()?;
-            if inputs(&self.home, None)? != self.before
-                || inputs(&proof.candidate, None)? != proof.inputs
-            {
-                return Err(unsettled());
-            }
-            Ok((authorization, cancellation.publication_guard()?))
-        })?;
+        // The journal drops the cutoff guard before the first live rename. Save locks
+        // returned by authorization must also cover the renames and any journal undo.
+        let mut authorization = None;
+        let result = stage.seal(pointer, &files)?.publish_observed(
+            || {
+                authorization = Some(authorize()?);
+                active.verify_artifacts()?;
+                if inputs(&self.home, None)? != self.before
+                    || inputs(&proof.candidate, None)? != proof.inputs
+                {
+                    return Err(unsettled());
+                }
+                cancellation.publication_guard()
+            },
+            observe,
+        );
+        drop(authorization);
+        result?;
         Ok(active)
     }
 }
@@ -302,3 +320,6 @@ fn changed_files(home: &Path, candidate: &Path) -> Result<Vec<(PathBuf, Option<P
     }
     Ok(changes)
 }
+
+#[cfg(test)]
+mod tests;
