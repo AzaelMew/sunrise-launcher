@@ -150,6 +150,7 @@ pub fn install_registry(
         || Action::Install(request()),
         choose,
         hooks,
+        fetch_with_official,
     )
 }
 
@@ -175,6 +176,7 @@ pub fn update_registry(
         || Action::Update(requested, approve),
         choose,
         hooks,
+        fetch_with_official,
     )
 }
 
@@ -189,6 +191,10 @@ fn registry_edit<'a>(
     request: impl FnOnce() -> Action<'a>,
     choose: impl FnOnce() -> Result<FirstBuild, String>,
     hooks: InstallHooks<'_>,
+    fetch_registry: impl Fn(
+        &str,
+        bool,
+    ) -> Result<(index::Index, String, Option<OfficialRegistry>), String>,
 ) -> Result<InstalledBatch, InstallError> {
     if instance.kind == InstanceKind::Pack {
         return Err(InstallError::Refused(
@@ -204,7 +210,7 @@ fn registry_edit<'a>(
                 .into(),
         ));
     }
-    let (catalogue, source_bytes, authority) = fetch_with_official(&source, local)?;
+    let (catalogue, source_bytes, authority) = fetch_registry(&source, local)?;
     let authority = authority.as_ref();
     if !catalogue.left_out.is_empty() {
         return Err(InstallError::Unproved(
@@ -391,10 +397,11 @@ fn registry_edit<'a>(
             let Some(held) = edit.held(id) else { continue };
             // Only an explicit Update may consume an exact predecessor. An implicit
             // dependency or Install cannot replace bytes while the hold still names them.
-            let Some(previous) = before
-                .get(id)
-                .filter(|p| p.matches_hold(old.path(), edit.base(), held))
-            else {
+            let Some(previous) = before.get(id).filter(|p| {
+                p.owned
+                    && matches!(held.source(), managed_play::HeldSource::Registry { .. })
+                    && p.matches_hold(old.path(), edit.base(), held)
+            }) else {
                 return Err(held_change_refusal(id));
             };
             if previous.digest.as_ref().is_some_and(|digest| {
@@ -735,7 +742,7 @@ fn registry_edit<'a>(
             .collect();
         (hooks.progress)(InstallProgress::Publishing);
         edit.publish(proof, &cancelled, &retired_holds, || {
-            let (_, current, current_authority) = fetch_with_official(&source, local)?;
+            let (_, current, current_authority) = fetch_registry(&source, local)?;
             if source_bytes != current || current_authority.is_some() != authority.is_some() {
                 return Err(tr("The mod registry changed while the install was being prepared. Nothing was installed.").into());
             }
@@ -1221,4 +1228,6 @@ fn at(path: &Path, error: impl std::fmt::Display) -> String {
 mod mutations;
 #[cfg(test)]
 mod tests;
+#[cfg(all(test, debug_assertions, unix))]
+mod update_tests;
 pub use mutations::{check_activation, remove_mods, ChangeImpact};

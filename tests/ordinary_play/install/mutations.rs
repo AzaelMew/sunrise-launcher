@@ -3,10 +3,6 @@ use super::*;
 use sunrise_launcher::browser::mod_list as selection;
 use sunrise_launcher_nbt::{self as nbt, Limits, NamedTag, Tag};
 
-#[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
-#[path = "mutations/native.rs"]
-mod native;
-
 fn world(home: &Path, folder: &str, ids: &[&str]) {
     let tags = ids
         .iter()
@@ -348,6 +344,38 @@ fn local(fixture: &Fixture, id: &str, required: &str, native: bool) -> (PathBuf,
     let path = directory.join(format!("{id}.smod"));
     fs::write(&path, &archive).unwrap();
     (path, archive)
+}
+
+#[test]
+fn remove_accepts_local_and_github_archives_but_not_unpacked_folders() {
+    let fixture = Fixture::new();
+    let (registry, _) = fixture.content_index();
+    install_root(&fixture, &registry);
+    let loose = local(&fixture, "local_lamp", "", false);
+    let github = local(&fixture, "github_lamp", "", true);
+    let sidecar = github.0.with_extension("origin.json");
+    fs::write(&sidecar, json!({"id":"github_lamp", "version":"1.0.0", "owner":"fixture", "repo":"lanterns", "commit":"a".repeat(40), "sha256":index::sha256(&github.1)}).to_string()).unwrap();
+    let unpacked = fixture.home.join(mod_list::DIR).join("unpacked_lamp");
+    fs::create_dir(&unpacked).unwrap();
+    let manifest = unpacked.join("sunrise-mod.toml");
+    fs::write(&manifest, "id='unpacked_lamp'\nname='Unpacked Lamp'\nversion='1.0.0'\napi='0.2'\nside='both'\ncapabilities=['registries']\n").unwrap();
+    let expected = live_state(&fixture);
+    let (ok, text) = run(&fixture, &["mods", "remove", "unpacked_lamp"]);
+    assert!(!ok && text.contains("Nothing was removed"), "{text}");
+    assert!(manifest.is_file());
+    assert_eq!(live_state(&fixture), expected);
+
+    for (id, (path, bytes)) in [("github_lamp", github), ("local_lamp", loose)] {
+        let (ok, text) = run(&fixture, &["mods", "remove", id]);
+        assert!(ok && text.contains(&index::sha256(&bytes)), "{text}");
+        assert!(!path.exists());
+    }
+    assert!(!sidecar.exists());
+    assert!(manifest.is_file());
+    assert_eq!(
+        fs::read(fixture.home.join(index::browser_state::MANIFEST)).unwrap(),
+        expected[1]
+    );
 }
 
 #[test]
