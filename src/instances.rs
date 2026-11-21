@@ -501,32 +501,34 @@ fn initialize_default_in(game_home: &Path, data: &Path) -> Result<(), String> {
     {
         return Ok(());
     }
-    use std::io::Write as _;
-    fs::create_dir_all(data).map_err(|e| format!("{FILE}: {e}"))?;
+    Store::under_lock(data, || {
+        use std::io::Write as _;
 
-    let store = Store {
-        instances: BTreeMap::from([(
-            DEFAULT.to_owned(),
-            Meta {
-                channel: Some(Channel::Stable),
-                ..Meta::default()
-            },
-        )]),
-    };
-    let bytes = serde_json::to_vec_pretty(&store).map_err(|e| format!("{FILE}: {e}"))?;
-    let write = || -> std::io::Result<()> {
-        let mut part = tempfile::Builder::new()
-            .prefix(".instances-")
-            .tempfile_in(data)?;
-        part.write_all(&bytes)?;
-        match part.persist_noclobber(data.join(FILE)) {
-            Ok(_) => (),
-            Err(e) if e.error.kind() == std::io::ErrorKind::AlreadyExists => (),
-            Err(e) => return Err(e.error),
-        }
-        Ok(())
-    };
-    write().map_err(|e| format!("{FILE}: {e}"))
+        let store = Store {
+            instances: BTreeMap::from([(
+                DEFAULT.to_owned(),
+                Meta {
+                    channel: Some(Channel::Stable),
+                    ..Meta::default()
+                },
+            )]),
+        };
+        let bytes = serde_json::to_vec_pretty(&store).map_err(|e| format!("{FILE}: {e}"))?;
+        let write = || -> std::io::Result<()> {
+            let mut part = tempfile::Builder::new()
+                .prefix(".instances-")
+                .tempfile_in(data)?;
+            part.write_all(&bytes)?;
+            part.as_file().sync_all()?;
+            match part.persist_noclobber(data.join(FILE)) {
+                Ok(_) => (),
+                Err(e) if e.error.kind() == std::io::ErrorKind::AlreadyExists => (),
+                Err(e) => return Err(e.error),
+            }
+            Ok(())
+        };
+        write().map_err(|e| format!("{FILE}: {e}"))
+    })?
 }
 
 #[derive(Clone, Debug, PartialEq)]
