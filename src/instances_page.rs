@@ -245,7 +245,7 @@ impl Launcher {
                             _ => this.instances.dialog = None,
                         }
                         // Download the saved target, not a draft choice a bound copy replaced.
-                        this.installed = backend::installed();
+                        this.refresh_installed();
                         if let Some(release) = this.profile_creation_download(&instance) {
                             this.install_for_instance(release);
                         }

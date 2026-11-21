@@ -2,7 +2,7 @@
 use super::*;
 
 impl Launcher {
-    fn refresh_installed(&mut self) {
+    pub(super) fn refresh_installed(&mut self) {
         (self.installed, self.known_nightly) =
             backend::play_installations(self.settings.selected.as_deref());
     }
@@ -117,7 +117,7 @@ impl Launcher {
                             if game.owner {
                                 self.owner = Some(true);
                             }
-                            self.installed = backend::installed();
+                            self.refresh_installed();
                             self.client_home = Some(game.instance.home.clone());
                             self.client_run = Some((game.instance, Instant::now()));
                             self.client = Some(backend::monitor_game(
