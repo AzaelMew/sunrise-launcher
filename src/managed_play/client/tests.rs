@@ -184,7 +184,7 @@ fn windows_bound_x64_fallback_survives_pending_retry_and_committed_replay() {
         profile_txn::{Admission, Bootstrap},
     };
     const TEST: &str = "managed_play::client::tests::windows_bound_x64_fallback_survives_pending_retry_and_committed_replay";
-    const BUILD: &str = "v0.1.7";
+    const BUILD: &str = "26.3-0.1.7";
     if std::env::var_os("PLAY_VARIANT_FIXTURE").is_none() {
         let root = tempfile::tempdir().unwrap();
         assert!(Command::new(std::env::current_exe().unwrap())

@@ -1,5 +1,5 @@
 //! The archive a deferred first Play resolved before any full download.
-use super::super::*;
+use super::{super::*, InstallIntent};
 use crate::managed_play::Artifact;
 use sunrise_launcher_release_verify::{is_build, Channel, SIGNATURE, SIGNATURE_V2, SUMS};
 
@@ -53,7 +53,7 @@ impl BoundVariant {
     pub(crate) fn verify(&self, tag: &str) -> Result<Artifact, String> {
         self.download.validate(tag)?;
         self.download
-            .installed_at(&version_dir(tag), tag, &self.proof)
+            .installed_at(&version_dir(tag), tag, &self.proof, InstallIntent::Exact)
     }
 }
 
@@ -181,7 +181,13 @@ impl GameDownload {
         proof: &GameProof,
         progress: impl Fn(f32),
     ) -> Result<(), String> {
-        self.publish(tag, proof, super::InstallIntent::Exact, progress)
+        self.publish(
+            tag,
+            proof,
+            InstallIntent::Exact,
+            progress,
+            crate::signed::asset_url,
+        )
     }
 
     pub(in crate::backend) fn repair(
@@ -190,35 +196,41 @@ impl GameDownload {
         proof: &GameProof,
         progress: impl Fn(f32),
     ) -> Result<(), String> {
-        self.publish(tag, proof, super::InstallIntent::Repair, progress)
+        self.publish(
+            tag,
+            proof,
+            InstallIntent::Repair,
+            progress,
+            crate::signed::asset_url,
+        )
     }
 
     fn publish(
         &self,
         tag: &str,
         proof: &GameProof,
-        intent: super::InstallIntent,
+        intent: InstallIntent,
         progress: impl Fn(f32),
+        asset_url: impl Fn(&str, &str) -> String,
     ) -> Result<(), String> {
+        // A saved binding can reuse an archive regardless of which preference previously
+        // installed it. Repair is explicit: it must also publish the new request marker.
+        if intent == InstallIntent::Exact && self.is_installed(tag, proof) {
+            progress(1.0);
+            return Ok(());
+        }
         let release = Release {
             tag: tag.into(),
             name: String::new(),
             body: String::new(),
             date: String::new(),
             time: self.time.clone(),
-            asset: Some((
-                crate::signed::asset_url(&self.source, &self.file),
-                self.size,
-            )),
+            asset: Some((asset_url(&self.source, &self.file), self.size)),
             prerelease: false,
             nightly: Channel::of(&self.source).map(|_| self.source.clone()),
         };
-        if self.is_installed(tag, proof) {
-            progress(1.0);
-            return Ok(());
-        }
         let facts = if let Some(sha) = proof.facts.as_deref() {
-            let bytes = fetch_small(&crate::signed::asset_url(&self.source, RELEASE_FILE))?
+            let bytes = fetch_small(&asset_url(&self.source, RELEASE_FILE))?
                 .ok_or_else(|| format!("{RELEASE_FILE}: signed build facts are missing"))?;
             Some((bytes, sha))
         } else {
@@ -233,17 +245,22 @@ impl GameDownload {
             intent,
             progress,
         )?;
-        if !self.is_installed(tag, proof) {
-            return Err(super::existing_build(tag));
-        }
-        Ok(())
+        self.installed_at(&version_dir(tag), tag, proof, intent)
+            .map(|_| ())
     }
 
     pub(crate) fn is_installed(&self, tag: &str, proof: &GameProof) -> bool {
-        self.installed_at(&version_dir(tag), tag, proof).is_ok()
+        self.installed_at(&version_dir(tag), tag, proof, InstallIntent::Exact)
+            .is_ok()
     }
 
-    fn installed_at(&self, home: &Path, tag: &str, proof: &GameProof) -> Result<Artifact, String> {
+    fn installed_at(
+        &self,
+        home: &Path,
+        tag: &str,
+        proof: &GameProof,
+        intent: InstallIntent,
+    ) -> Result<Artifact, String> {
         let regular = |name: &str| {
             fs::symlink_metadata(home.join(name))
                 .is_ok_and(|meta| meta.is_file() && !crate::native_cache::linked(&meta))
@@ -263,7 +280,11 @@ impl GameDownload {
             fs::read(home.join(GAME_BUILD_ARCHITECTURE))
                 .ok()
                 .and_then(|bytes| serde_json::from_slice::<InstalledGameArchitecture>(&bytes).ok())
-                .is_some_and(|actual| actual.binary == binary)
+                .is_some_and(|actual| {
+                    actual.binary == binary
+                        && (intent == InstallIntent::Exact
+                            || Some(actual.requested) == self.requested)
+                })
         });
         if !facts_match || !binary_matches {
             return Err(super::existing_build(tag));
@@ -275,6 +296,110 @@ impl GameDownload {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const TAG: &str = "26.3-0.1.7";
+
+    fn isolated_case(test: &str, run: impl FnOnce()) {
+        const ACTOR: &str = "SUNRISE_TEST_ARCHIVE_REPAIR";
+        if std::env::var_os(ACTOR).is_some() {
+            run();
+            return;
+        }
+        let root = tempfile::tempdir().unwrap();
+        let module = module_path!().split_once("::").unwrap().1;
+        assert!(std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", &format!("{module}::{test}")])
+            .env(ACTOR, "1")
+            .env("SUNRISE_HOME", root.path().join("game"))
+            .env("SUNRISE_LAUNCHER_HOME", root.path().join("launcher"))
+            .status()
+            .unwrap()
+            .success());
+    }
+
+    fn serve_windows_archive(
+        requested: GameArchitecture,
+        asset: &str,
+        client: &[u8],
+    ) -> (GameDownload, GameProof, String, std::thread::JoinHandle<()>) {
+        use std::io::{Read, Write};
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        zip.start_file(CLIENT, zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(client).unwrap();
+        let bytes = zip.finish().unwrap().into_inner();
+        let proof = GameProof {
+            archive: sunrise_launcher_release_verify::sha256_hex(&bytes),
+            facts: None,
+        };
+        let download = GameDownload {
+            source: TAG.into(),
+            file: asset.into(),
+            requested: Some(requested),
+            size: bytes.len() as u64,
+            time: String::new(),
+        };
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/{asset}", listener.local_addr().unwrap());
+        let serve = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let _ = stream.read(&mut [0; 4096]).unwrap();
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                bytes.len()
+            )
+            .unwrap();
+            stream.write_all(&bytes).unwrap();
+        });
+        (download, proof, url, serve)
+    }
+
+    #[test]
+    fn explicit_repair_records_arm64_request_when_the_signed_fallback_is_unchanged() {
+        isolated_case(
+            "explicit_repair_records_arm64_request_when_the_signed_fallback_is_unchanged",
+            || {
+                use GameArchitecture::{Arm64, X64};
+                let client = b"the signed x64 image";
+                let (download, proof, url, server) =
+                    serve_windows_archive(Arm64, "sunrise-windows-x64.zip", client);
+                let home = version_dir(TAG);
+                fs::create_dir_all(&home).unwrap();
+                fs::write(home.join(COMPLETE), b"").unwrap();
+                fs::write(home.join(CLIENT), client).unwrap();
+                fs::write(
+                    home.join(GAME_BUILD_ARCHITECTURE),
+                    br#"{"requested":"x64","binary":"x64"}"#,
+                )
+                .unwrap();
+                Artifact::record_archive(&home, TAG, &proof.archive).unwrap();
+                assert!(
+                    download.is_installed(TAG, &proof),
+                    "exact Play can already reuse these signed bytes"
+                );
+                assert!(check_game_architecture(TAG, None, Arm64).is_some());
+
+                download
+                    .publish(
+                        TAG,
+                        &proof,
+                        InstallIntent::Repair,
+                        |_| {},
+                        |_, _| url.clone(),
+                    )
+                    .unwrap();
+
+                assert!(download
+                    .installed_at(&home, TAG, &proof, InstallIntent::Repair)
+                    .is_ok());
+                let repaired = installed_game_architecture(TAG).unwrap();
+                assert_eq!((repaired.requested, repaired.binary), (Arm64, X64));
+                assert!(check_game_architecture(TAG, None, Arm64).is_none());
+                server.join().unwrap();
+            },
+        );
+    }
 
     #[test]
     fn both_requests_reuse_the_same_signed_fallback_but_not_a_different_binary() {
@@ -311,7 +436,9 @@ mod tests {
         marker(Arm64, X64);
         Artifact::record_archive(home, tag, &"b".repeat(64)).unwrap();
         assert!(
-            download.installed_at(home, tag, &proof).is_err(),
+            download
+                .installed_at(home, tag, &proof, InstallIntent::Exact)
+                .is_err(),
             "wrong archive"
         );
         fs::remove_file(&archive).unwrap();
@@ -322,17 +449,25 @@ mod tests {
         for request in [Arm64, X64] {
             marker(request, X64);
             Artifact::record_archive(home, tag, &proof.archive).unwrap();
-            assert!(download.installed_at(home, tag, &proof).is_ok());
-            assert!(direct.installed_at(home, tag, &proof).is_ok());
+            assert!(download
+                .installed_at(home, tag, &proof, InstallIntent::Exact)
+                .is_ok());
+            assert!(direct
+                .installed_at(home, tag, &proof, InstallIntent::Exact)
+                .is_ok());
             fs::remove_file(&archive).unwrap();
             marker(request, Arm64);
             Artifact::record_archive(home, tag, &proof.archive).unwrap();
             assert!(
-                download.installed_at(home, tag, &proof).is_err(),
+                download
+                    .installed_at(home, tag, &proof, InstallIntent::Exact)
+                    .is_err(),
                 "wrong binary"
             );
             assert!(
-                direct.installed_at(home, tag, &proof).is_err(),
+                direct
+                    .installed_at(home, tag, &proof, InstallIntent::Exact)
+                    .is_err(),
                 "wrong binary"
             );
             fs::remove_file(&archive).unwrap();
