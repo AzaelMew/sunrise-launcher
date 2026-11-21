@@ -46,10 +46,27 @@ impl Change {
                 let heading = match removed.as_slice() {
                     [archive] => trf("Remove {name}?", &[("name", &archive.target.name)]),
                     _ => {
-                        let names = removed
+                        let mut seen = std::collections::BTreeSet::new();
+                        let duplicate_names: std::collections::BTreeSet<_> = removed
                             .iter()
                             .map(|archive| archive.target.name.as_str())
-                            .collect::<Vec<_>>();
+                            .filter(|name| !seen.insert(*name))
+                            .collect();
+                        let labels: Vec<_> = removed
+                            .iter()
+                            .map(|archive| {
+                                let name = archive.target.name.as_str();
+                                if duplicate_names.contains(name) {
+                                    trf(
+                                        "{name} ({file})",
+                                        &[("name", name), ("file", &archive.file)],
+                                    )
+                                } else {
+                                    name.to_owned()
+                                }
+                            })
+                            .collect();
+                        let names: Vec<_> = labels.iter().map(String::as_str).collect();
                         lines.push(trf("Remove: {mods}.", &[("mods", &joined_names(&names))]));
                         trf(
                             "Remove {count} mods?",
@@ -189,6 +206,35 @@ mod tests {
                 "They'll be turned off, and their files stay installed."
             )
         );
+    }
+
+    #[test]
+    fn bulk_removal_disambiguates_only_duplicate_display_names() {
+        let impact = ChangeImpact {
+            change: remove(
+                &[
+                    ("Lanterns", "lanterns"),
+                    ("Lanterns", "lanterns_extra"),
+                    ("Torches", "torches"),
+                ],
+                vec![],
+            ),
+            evidence: vec![],
+        };
+        assert_eq!(
+            impact.gui_review(),
+            (
+                "Remove 3 mods?".into(),
+                concat!(
+                    "Remove: Lanterns (sunrise-mods/lanterns.smod), ",
+                    "Lanterns (sunrise-mods/lanterns_extra.smod) and Torches."
+                )
+                .into()
+            )
+        );
+        let detail = impact.detail();
+        assert!(detail.contains("sunrise-mods/torches.smod"));
+        assert!(detail.contains("reviewed digest"));
     }
 
     #[test]
