@@ -501,7 +501,11 @@ fn nothing_found_lists_every_folder_and_what_it_lacks() {
         chosen.display(),
         wrong.display(),
         empty.display(),
-        chosen.join("versions/26.3/26.3.json").display(),
+        chosen
+            .join("versions")
+            .join("26.3")
+            .join("26.3.json")
+            .display(),
     );
     assert!(error.starts_with(&expected), "{error}");
     assert!(error.contains("--minecraft PATH"));
