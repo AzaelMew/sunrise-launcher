@@ -484,6 +484,37 @@ fn a_profile_lookup_pairs_its_old_row_with_its_old_directory() {
 }
 
 #[test]
+fn play_completion_waits_for_the_departing_games_profile_gate() {
+    let root = scratch("exit-gate");
+    let (game, cache) = (root.join("game"), root.join("cache"));
+    let accepted = create_in(&game, &cache, "Survival", None).unwrap();
+    let owner = ManagedProfile::open_instance(&game, &cache, &accepted).unwrap();
+    let elapsed = Duration::from_secs(73);
+    std::thread::scope(|scope| {
+        scope.spawn(move || {
+            std::thread::sleep(Duration::from_millis(50));
+            drop(owner);
+        });
+        finish_play_in(&game, &cache, &accepted, elapsed, || {
+            assert!(ManagedProfile::open_instance(&game, &cache, &accepted).is_err());
+            put(&accepted.home.join("owned-hook"), "ran after release");
+        })
+        .unwrap();
+    });
+    assert_eq!(
+        find_in(&list_in(&game, &cache), &accepted.id)
+            .unwrap()
+            .played,
+        elapsed
+    );
+    assert_eq!(
+        fs::read_to_string(accepted.home.join("owned-hook")).unwrap(),
+        "ran after release"
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_delayed_play_completion_never_records_time_or_runs_a_hook_for_a_replacement() {
     let root = scratch("delayed-exit");
     let (game, cache, trash) = (root.join("game"), root.join("cache"), root.join("trash"));

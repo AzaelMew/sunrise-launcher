@@ -1454,7 +1454,8 @@ fn finish_play_in(
 ) -> Result<(), String> {
     let expected = instance.incarnation.ok_or_else(lifecycle::changed)?;
     let owner = lifecycle::owner_file(game, &instance.home)?;
-    let profile = crate::profile_txn::Admission::claim(&instance.home, owner.as_deref())?;
+    let profile =
+        crate::profile_txn::Admission::claim_after_exit(&instance.home, owner.as_deref())?;
     expected.check(instance, profile.identity())?;
     let saved = record_play_in(data, &instance.id, played, SystemTime::now());
     hook();

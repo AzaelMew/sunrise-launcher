@@ -13,6 +13,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fs, io,
     path::{Component, Path, PathBuf},
+    time::{Duration, Instant},
 };
 
 const RECORD: &str = "mod-browser/install-txn.json";
@@ -77,6 +78,13 @@ fn at(path: &Path, error: impl std::fmt::Display) -> String {
     format!("{}: {error}", path.display())
 }
 
+fn profile_in_use() -> String {
+    crate::i18n::tr(
+        "This profile is in use. Close the game or wait for the other operation to finish.",
+    )
+    .to_owned()
+}
+
 /// An admitted profile. The owner file must be stable and never removed, including across
 /// detach/recreate; managed names pass a path outside the directory they can move. Its inherited
 /// file description outlives a launcher killed while a game child still holds it.
@@ -105,17 +113,16 @@ impl Drop for NameGate {
 }
 impl NameGate {
     pub(crate) fn open(gate: &Path) -> Result<Self, String> {
+        Self::try_open(gate)?.ok_or_else(profile_in_use)
+    }
+
+    /// `None` means the gate is held, not that the profile is missing or invalid.
+    fn try_open(gate: &Path) -> Result<Option<Self>, String> {
         match fs::symlink_metadata(gate) {
             Ok(meta) if regular(&meta) && meta.is_file() => (),
             Err(e) if e.kind() == io::ErrorKind::NotFound => (),
             _ => return Err(at(gate, unsettled())),
         }
-        let busy = || {
-            crate::i18n::tr(
-                "This profile is in use. Close the game or wait for the other operation to finish.",
-            )
-            .to_owned()
-        };
         let mut open = fs::File::options();
         open.read(true).write(true).create(true).truncate(false);
         #[cfg(windows)]
@@ -126,20 +133,20 @@ impl NameGate {
         let file = match open.open(gate) {
             Ok(file) => file,
             #[cfg(windows)]
-            Err(error) if matches!(error.raw_os_error(), Some(32 | 33)) => return Err(busy()),
+            Err(error) if matches!(error.raw_os_error(), Some(32 | 33)) => return Ok(None),
             Err(error) => return Err(at(gate, error)),
         };
         #[cfg(unix)]
         match file.try_lock() {
             Ok(()) => (),
-            Err(fs::TryLockError::WouldBlock) => return Err(busy()),
+            Err(fs::TryLockError::WouldBlock) => return Ok(None),
             Err(fs::TryLockError::Error(e)) => return Err(at(gate, e)),
         }
-        Ok(Self {
+        Ok(Some(Self {
             file,
             #[cfg(unix)]
             handed_off: std::sync::atomic::AtomicBool::new(false),
-        })
+        }))
     }
 }
 
@@ -163,19 +170,45 @@ impl Admission {
     }
 
     pub(crate) fn claim(home: &Path, external_owner: Option<&Path>) -> Result<Self, String> {
+        Self::try_claim(home, external_owner)?.ok_or_else(profile_in_use)
+    }
+
+    /// After a confirmed game exit, the child's inherited gate can still be closing.
+    /// Only completion waits; a new Play or profile change still reports contention immediately.
+    pub(crate) fn claim_after_exit(
+        home: &Path,
+        external_owner: Option<&Path>,
+    ) -> Result<Self, String> {
+        let deadline = Instant::now() + Duration::from_millis(500);
+        loop {
+            if let Some(profile) = Self::try_claim(home, external_owner)? {
+                return Ok(profile);
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(profile_in_use());
+            }
+            std::thread::sleep(remaining.min(Duration::from_millis(10)));
+        }
+    }
+
+    fn try_claim(home: &Path, external_owner: Option<&Path>) -> Result<Option<Self>, String> {
         let identity = Identity::of(home)?;
         let gate = match external_owner {
-            Some(path) => NameGate::open(path)?,
-            None => NameGate::open(&home.join(".install-txn.lock"))?,
+            Some(path) => NameGate::try_open(path)?,
+            None => NameGate::try_open(&home.join(".install-txn.lock"))?,
+        };
+        let Some(gate) = gate else {
+            return Ok(None);
         };
         if Identity::of(home)? != identity {
             return Err(unsettled());
         }
-        Ok(Self {
+        Ok(Some(Self {
             home: home.into(),
             identity,
             gate,
-        })
+        }))
     }
 
     /// Give a game child the gate of this already-admitted profile. The game spawn
