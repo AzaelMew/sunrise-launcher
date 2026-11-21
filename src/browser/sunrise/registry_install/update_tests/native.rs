@@ -275,6 +275,8 @@ fn a_proved_unfit_prior_off_update_leaves_the_hold_and_hides_only_that_offer() {
     );
 }
 
+const SIGNED_BUILD: &str = "26.3-0.1.7";
+
 fn no_list_sdk(fixture: &Fixture) -> PathBuf {
     use sunrise_launcher_release_verify::{sha256_hex, sums_file, SigningKey, SIGNATURE, SUMS};
     use sunrise_launcher_sdk::{self as sdk, Asset, Kind, Side};
@@ -302,7 +304,7 @@ fn no_list_sdk(fixture: &Fixture) -> PathBuf {
         (sdk::INDEX.into(), sha256_hex(index.as_bytes())),
         (asset.clone(), sha256_hex(tool)),
     ]);
-    for tag in [BUILD, &sdk_tag] {
+    for tag in [SIGNED_BUILD, &sdk_tag] {
         let dir = base.join(tag);
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join(sdk::INDEX), &index).unwrap();
@@ -317,6 +319,68 @@ fn no_list_sdk(fixture: &Fixture) -> PathBuf {
     std::env::set_var("FIXTURE_NATIVE_CHECK_REQUEST", &request);
     std::env::set_var("FIXTURE_NATIVE_CHECK_REPLY", json!({"contract": 2, "route": null, "mods": [{"id": ID, "verdict": {"kind": "no-list", "made_for": "b".repeat(40), "why": "newer-schema"}}]}).to_string());
     request
+}
+
+#[test]
+#[ignore = "daily; build the launcher binary first"]
+fn bulk_update_refuses_no_list_without_excluding_that_offer() {
+    Fixture::run(
+        concat!(
+            module_path!(),
+            "::bulk_update_refuses_no_list_without_excluding_that_offer"
+        ),
+        |mut fixture| {
+            // A developer-prefixed tag only does an exact revision check, even with no marker.
+            // Bind a normal Stable base so the real signed SDK check supplies the verdict.
+            fs::rename(
+                backend::version_dir(BUILD),
+                backend::version_dir(SIGNED_BUILD),
+            )
+            .unwrap();
+            fixture.project("extra_mod", "Fireflies", index::Kind::Mod);
+            fixture.release("extra_mod", "1.0.0", "", &[]);
+            fixture
+                .apply_on(SIGNED_BUILD, Action::Install(projects(&["extra_mod"])))
+                .unwrap();
+            fixture.project(ID, "Native Lantern", index::Kind::NativeMod);
+            let original = release(&mut fixture, "1.0.0", 'a', SOURCE);
+            let archive = fixture.home().join(ARCHIVE);
+            fs::create_dir_all(archive.parent().unwrap()).unwrap();
+            fs::write(&archive, &original).unwrap();
+            let rows = fixture.home().join(installed::MANIFEST);
+            let mut document: Value = serde_json::from_slice(&fs::read(&rows).unwrap()).unwrap();
+            document["entries"].as_array_mut().unwrap().push(json!({
+                "source": "sunrise", "project": ID, "slug": ID, "title": "Native Lantern",
+                "version": "1.0.0", "number": "1.0.0", "kind": "mod", "file": ARCHIVE,
+                "checksum": format!("SHA-256:{}", index::sha256(&original)), "page": ""
+            }));
+            fs::write(rows, serde_json::to_vec(&document).unwrap()).unwrap();
+            mod_list::set_enabled(fixture.home(), ID, true).unwrap();
+            backend::Settings::default().allow_native_mods().unwrap();
+            release(&mut fixture, "1.1.0", 'b', SOURCE);
+            fixture.release("extra_mod", "1.2.0", "", &[]);
+
+            let request = no_list_sdk(&fixture);
+            let before = fixture.snapshot(&[ARCHIVE, EXTRA]);
+            let unknown = fixture
+                .apply_on(
+                    SIGNED_BUILD,
+                    Action::Update(
+                        UpdateRequest::Bulk(projects(&[ID, "extra_mod"])),
+                        &no_world_question,
+                    ),
+                )
+                .unwrap_err();
+            assert!(
+                matches!(unknown, InstallError::Unproved(ref detail) if detail.contains("newer tool")),
+                "{unknown}"
+            );
+            let checked: Value = serde_json::from_slice(&fs::read(request).unwrap()).unwrap();
+            assert_eq!(checked["build"], "a".repeat(40));
+            assert_eq!(fixture.snapshot(&[ARCHIVE, EXTRA]), before);
+            assert!(known_unfit_updates(SIGNED_BUILD).is_empty());
+        },
+    );
 }
 
 #[test]
@@ -342,37 +406,15 @@ fn bulk_update_can_keep_a_proved_unfit_root_and_advance_an_independent_sibling()
                 ))
             };
 
-            let next = fixture.release("extra_mod", "1.2.0", "", &[]);
-            let request = no_list_sdk(&fixture);
-            let developer = backend::version_dir(BUILD).join("developer.json");
-            let developer_facts = fs::read(&developer).unwrap();
-            fs::remove_file(&developer).unwrap();
-            let unknown = bulk(&fixture).unwrap_err();
-            assert!(
-                matches!(unknown, InstallError::Unproved(ref detail) if detail.contains("newer tool")),
-                "{unknown}"
-            );
-            let checked: Value = serde_json::from_slice(&fs::read(request).unwrap()).unwrap();
-            assert_eq!(checked["build"], "a".repeat(40));
-            assert_eq!(fixture.snapshot(&[ARCHIVE, EXTRA]), before);
-            assert!(known_unfit_updates(BUILD).is_empty());
-            fs::write(developer, developer_facts).unwrap();
-
             let strict = fixture.update(&[ID], &no_world_question).unwrap_err();
             assert!(
                 matches!(strict, InstallError::Refused(ref detail) if detail.contains("Made for other Sunrise versions")),
                 "{strict}"
             );
             assert_eq!(fixture.snapshot(&[ARCHIVE, EXTRA]), before);
-            assert!(fixture
-                .apply(Action::Update(
-                    UpdateRequest::Bulk(projects(&[ID])),
-                    &no_world_question
-                ))
-                .unwrap()
-                .updated
-                .is_empty());
+            assert!(bulk(&fixture).unwrap().updated.is_empty());
             assert_eq!(fixture.snapshot(&[ARCHIVE, EXTRA]), before);
+            let next = fixture.release("extra_mod", "1.2.0", "", &[]);
             assert!(matches!(
                 fixture.update(ids, &no_world_question),
                 Err(InstallError::Refused(_))

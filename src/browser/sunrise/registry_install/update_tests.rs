@@ -155,11 +155,15 @@ impl Fixture {
     }
 
     fn apply(&self, action: Action<'_>) -> Result<InstalledBatch, InstallError> {
+        self.apply_on(BUILD, action)
+    }
+
+    fn apply_on(&self, base: &str, action: Action<'_>) -> Result<InstalledBatch, InstallError> {
         registry_edit(
             &self.instance,
             install_target(&self.instance).unwrap(),
             || action,
-            || FirstBuild::installed(BUILD),
+            || FirstBuild::installed(base),
             InstallHooks {
                 progress: &|_| {},
                 native: &|question| panic!("unexpected native consent question: {question:?}"),
