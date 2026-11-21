@@ -586,3 +586,55 @@ fn review_refuses_symlinked_worlds_and_evidence() {
     std::os::unix::fs::symlink(&dat, alias.join("level.dat")).unwrap();
     assert!(review_risk(home.path(), &sources).is_err());
 }
+
+#[test]
+fn reviewed_world_locks_exclude_game_and_release_without_changing_evidence() {
+    let home = tempfile::tempdir().unwrap();
+    let dir = home.path().join("saves/basin");
+    write_evidence(&dir.join("level.dat"), None);
+    let sources = BTreeMap::new();
+    let reviewed = review_risk(home.path(), &sources).unwrap();
+    let guard = lock_reviewed(&reviewed).unwrap();
+    let game = fs::OpenOptions::new()
+        .write(true)
+        .open(dir.join(LOCK))
+        .unwrap();
+    assert!(game.try_lock().is_err());
+    assert_eq!(review_risk(home.path(), &sources).unwrap(), reviewed);
+    drop(guard);
+    game.try_lock().unwrap();
+    assert!(lock_reviewed(&reviewed).is_err());
+    game.unlock().unwrap();
+}
+
+#[test]
+fn reviewed_world_locks_never_create_a_lock_in_a_same_path_replacement() {
+    let home = tempfile::tempdir().unwrap();
+    let dir = home.path().join("saves/basin");
+    write_evidence(&dir.join("level.dat"), None);
+    let reviewed = review_risk(home.path(), &BTreeMap::new()).unwrap();
+    fs::rename(&dir, home.path().join("original")).unwrap();
+    write_evidence(&dir.join("level.dat"), None);
+    assert!(lock_reviewed(&reviewed).is_err());
+    assert!(!dir.join(LOCK).exists());
+}
+
+#[test]
+fn reviewed_world_locks_refuse_an_aliased_session_file() {
+    let home = tempfile::tempdir().unwrap();
+    let dir = home.path().join("saves/basin");
+    write_evidence(&dir.join("level.dat"), None);
+    let reviewed = review_risk(home.path(), &BTreeMap::new()).unwrap();
+    let foreign = home.path().join("foreign");
+    fs::write(&foreign, "foreign").unwrap();
+    fs::hard_link(&foreign, dir.join(LOCK)).unwrap();
+    assert!(lock_reviewed(&reviewed).is_err());
+    assert_eq!(fs::read(&foreign).unwrap(), b"foreign");
+    #[cfg(unix)]
+    {
+        fs::remove_file(dir.join(LOCK)).unwrap();
+        std::os::unix::fs::symlink(&foreign, dir.join(LOCK)).unwrap();
+        assert!(lock_reviewed(&reviewed).is_err());
+        assert_eq!(fs::read(foreign).unwrap(), b"foreign");
+    }
+}

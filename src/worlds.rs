@@ -343,8 +343,8 @@ impl DirectoryIdentity {
 ///
 /// Fails on traversal errors, redirected directories and aliased evidence files; a readable file
 /// with unparseable contents is unknown, not absent. This read-only snapshot does not acquire or
-/// create `session.lock`. Callers must hold profile admission (including roster writers) and the
-/// game's world locks through the decision and publish, then compare a fresh snapshot at cutoff.
+/// create `session.lock`. Callers hold profile admission (including roster writers), obtain
+/// [`lock_reviewed`] before publishing, and compare a fresh snapshot while both are held.
 /// Paths above the admitted home, same-volume mount aliases without a second visible name and
 /// arbitrary external writes are outside this check.
 pub fn review_risk(
@@ -447,6 +447,72 @@ pub fn review_risk(
     }
     worlds.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(worlds)
+}
+
+/// Held game-compatible locks for an admitted world roster. Dropping this guard releases them.
+pub struct ReviewedWorldLocks {
+    _locks: Vec<WorldLock>,
+}
+
+/// Lock the exact reviewed directories in path order without following redirected directories or
+/// aliased lock files. If any lock can't be acquired, release the rest and return an error.
+/// The caller keeps profile admission, rechecks the entire roster with [`review_risk`] after
+/// acquiring these locks and holds this guard through publishing. These locks exclude Sunrise's
+/// world opener, not arbitrary external file edits or new children in `saves`.
+pub fn lock_reviewed(worlds: &[WorldRisk]) -> Result<ReviewedWorldLocks, String> {
+    let mut ordered: Vec<_> = worlds.iter().collect();
+    ordered.sort_unstable_by(|a, b| a.path.cmp(&b.path));
+    let mut locks = Vec::with_capacity(ordered.len());
+    for world in ordered {
+        let path = &world.path;
+        let parent = path
+            .parent()
+            .ok_or_else(|| world_error(path, io::ErrorKind::InvalidInput))?;
+        let folder = path
+            .file_name()
+            .ok_or_else(|| world_error(path, io::ErrorKind::InvalidInput))?;
+        let home = parent
+            .parent()
+            .ok_or_else(|| world_error(parent, io::ErrorKind::InvalidInput))?;
+        let saves_name = parent
+            .file_name()
+            .ok_or_else(|| world_error(parent, io::ErrorKind::InvalidInput))?;
+        for directory in [home, parent, path] {
+            let meta = fs::symlink_metadata(directory).map_err(|e| world_error(directory, e))?;
+            if linked(&meta) || !meta.is_dir() {
+                return Err(world_error(directory, io::ErrorKind::InvalidData));
+            }
+        }
+        let dir = Dir::open_ambient_dir(home, ambient_authority())
+            .and_then(|home| home.open_dir_nofollow(saves_name))
+            .and_then(|saves| saves.open_dir_nofollow(folder))
+            .map_err(|e| world_error(path, e))?;
+        if DirectoryIdentity::of(&dir).map_err(|e| world_error(path, e))? != world.directory {
+            return Err(world_error(path, "The reviewed world directory changed"));
+        }
+        let lock = path.join(LOCK);
+        let mut options = cap_std::fs::OpenOptions::new();
+        options.write(true).follow(FollowSymlinks::No);
+        match fs::symlink_metadata(&lock) {
+            Ok(meta) if meta.is_file() && !linked(&meta) => (),
+            Ok(_) => return Err(world_error(&lock, io::ErrorKind::InvalidData)),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                options.create_new(true);
+            }
+            Err(e) => return Err(world_error(&lock, e)),
+        }
+        let file = dir
+            .open_with(LOCK, &options)
+            .map_err(|e| world_error(&lock, e))?;
+        let meta = file.metadata().map_err(|e| world_error(&lock, e))?;
+        if !meta.is_file() || meta.nlink() != 1 || meta.dev() != world.directory.device {
+            return Err(world_error(&lock, io::ErrorKind::InvalidData));
+        }
+        let file = file.into_std();
+        file.try_lock().map_err(|e| world_error(&lock, e))?;
+        locks.push(WorldLock(file));
+    }
+    Ok(ReviewedWorldLocks { _locks: locks })
 }
 
 fn world_error(path: &Path, error: impl std::fmt::Display) -> String {
