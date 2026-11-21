@@ -69,11 +69,25 @@ fn a_release_signed_by_the_script_installs_and_nothing_else_passes_for_it() {
 
 #[test]
 fn a_build_installs_by_its_own_version_and_never_by_the_channel_or_the_other_channel() {
-    let keys = keys();
-    for (channel, version, other) in [
-        (Channel::Nightly, "nightly-2026-10-28-0c02067", Channel::Dev),
-        (Channel::Dev, "dev-2026-11-13-0c02067", Channel::Nightly),
+    let stable = "v2026.10.19";
+    let stable_sums = read(&format!("release/{SUMS}"));
+    let stable_signature = text(&format!("release/{SIGNATURE}"));
+    let stable_keys = keys();
+    for (channel, version, other, public_key) in [
+        (
+            Channel::Nightly,
+            "nightly-2026-10-28-0c02067",
+            Channel::Dev,
+            "test.pub",
+        ),
+        (
+            Channel::Dev,
+            "dev-2026-11-13-0c02067",
+            Channel::Nightly,
+            "dev/ephemeral.pub",
+        ),
     ] {
+        let keys = release::parse_keys(&text(public_key)).unwrap();
         let dir = channel.tag();
         let sums = read(&format!("{dir}/{SUMS}"));
         let v2 = text(&format!("{dir}/{SIGNATURE_V2}"));
@@ -98,6 +112,23 @@ fn a_build_installs_by_its_own_version_and_never_by_the_channel_or_the_other_cha
         assert!(digest(channel, &version.replace("0c02067", "0c02068"), &v2).is_err());
         assert!(release::verify(dir, &sums, &channel_signature, &keys).is_ok());
         assert!(release::verify(other.tag(), &sums, &channel_signature, &keys).is_err());
+        assert!(release::verify(dir, &stable_sums, &stable_signature, &stable_keys).is_err());
+        assert!(
+            release::build_digest(
+                channel,
+                version,
+                LINUX,
+                Some(&stable_sums),
+                Some(&stable_signature),
+                &stable_keys,
+            )
+            .is_err()
+        );
+        for signature in [&channel_signature, &v2] {
+            assert!(
+                release::signed_digest(stable, LINUX, Some(&sums), Some(signature), &keys).is_err()
+            );
+        }
         assert!(
             release::signed_digest(dir, LINUX, Some(&sums), Some(&channel_signature), &keys)
                 .is_err()

@@ -271,7 +271,7 @@ mod tests {
         assert_eq!(newer.compare(&same_day), Some(Ordering::Equal));
         assert!(decode("nightly-2026-11-18-aaaaaaa", "aaaaaaa").is_none());
         assert!(decode("nightly-2026-11-18-aaaaaaa", b).is_none());
-        assert!(decode("snapshot-2026-11-18-bbbbbbb", b).is_none());
+        assert!(decode("preview-2026-11-18-bbbbbbb", b).is_none());
     }
 
     fn published(channel: &str) -> Vec<Release> {
@@ -332,12 +332,7 @@ mod tests {
                                            "assets": [{"name": x64, "size": 1}]}]);
         assert!(dev_in(&nightly, "nightly", Some(x64), None).is_none());
         // Other tags are not looked up here; only a full Dev tag may go to GitHub.
-        for tag in [
-            "nightly",
-            "26.3-0.1.0",
-            "snapshot",
-            "snapshot-2026-11-13-bbbbbbb",
-        ] {
+        for tag in ["nightly", "26.3-0.1.0", "preview-2026-11-13-bbbbbbb"] {
             assert!(dev(tag).unwrap().is_none(), "{tag}");
         }
         for tag in ["dev", "dev-2026-11-13", "dev-../../x"] {

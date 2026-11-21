@@ -275,6 +275,13 @@ mod tests {
         assert_eq!(offer(Channel::Stable, new_dev, None, true), Some(stable));
         assert_eq!(offer(Channel::Nightly, new_dev, None, true), Some(nightly));
         assert_eq!(offer(Channel::Stable, new_dev, None, false), None);
+        // A feed with only Dev still cannot offer an update to either ordinary channel.
+        for (channel, base) in [(Channel::Stable, stable), (Channel::Nightly, nightly)] {
+            let profile = home_profile("profile", channel, None);
+            assert!(
+                home_update(&profile, &releases[..1], |_| Ok(Some(active(base, base)))).is_none()
+            );
+        }
     }
 
     #[test]

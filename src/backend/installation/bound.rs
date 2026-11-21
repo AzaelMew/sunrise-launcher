@@ -450,7 +450,7 @@ mod tests {
         };
         assert!(download.validate(DEV).is_ok());
         assert!(download.validate("dev-2026-11-21-0c02068").is_err());
-        for source in ["dev", "dev-2026-11-21", "snapshot-2026-11-21-0c02067"] {
+        for source in ["dev", "dev-2026-11-21", "nightly-2026-11-21-0c02067"] {
             download.source = source.into();
             assert!(download.validate(DEV).is_err(), "{source}");
             assert!(download.validate(source).is_err(), "{source}");

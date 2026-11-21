@@ -723,6 +723,29 @@ fn a_picture_is_kept_small_and_goes_to_the_trash() {
 }
 
 #[test]
+fn the_profile_channel_schema_accepts_only_its_current_channel_names() {
+    for (name, channel) in [
+        ("stable", Channel::Stable),
+        ("nightly", Channel::Nightly),
+        ("dev", Channel::Dev),
+    ] {
+        let saved = serde_json::json!(name);
+        assert_eq!(
+            serde_json::from_value::<Channel>(saved.clone()).unwrap(),
+            channel
+        );
+        assert_eq!(serde_json::to_value(channel).unwrap(), saved);
+    }
+    let error = serde_json::from_value::<Channel>(serde_json::json!("preview"))
+        .unwrap_err()
+        .to_string();
+    assert_eq!(
+        error,
+        "unknown variant `preview`, expected one of `stable`, `nightly`, `dev`"
+    );
+}
+
+#[test]
 fn an_instance_without_a_channel_is_nightly_and_an_unknown_one_too() {
     let meta: Meta = serde_json::from_str("{}").unwrap();
     assert_eq!(meta.channel.unwrap_or_default(), Channel::Nightly);
