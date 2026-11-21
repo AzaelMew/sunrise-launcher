@@ -2511,6 +2511,15 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
             println!("Removed {} ({}).", e.title, e.file);
         }
         ModsCmd::Enable { project, .. } | ModsCmd::Disable { project, .. } => {
+            let profile = if on {
+                let identity = sunrise_launcher::profile_txn::Identity::of(&home)?;
+                Some(
+                    sunrise_launcher::managed_play::Profile::open_for(&home, None, Some(identity))
+                        .map_err(String::from)?,
+                )
+            } else {
+                None
+            };
             let e = installed::Installed::load(&home)
                 .lookup(&project)
                 .cloned()
@@ -2530,7 +2539,13 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                     return Err(format!("{} was taken down: {}", e.title, r.reason));
                 }
             }
-            sunrise_launcher::browser::mod_list::set_enabled(&home, id, on)?;
+            if let Some(profile) = profile {
+                if !profile.enable_unheld(&[id])?.is_empty() {
+                    return Err(format!("{}: Needs an update from its author.", e.title));
+                }
+            } else {
+                sunrise_launcher::browser::mod_list::set_enabled(&home, id, false)?;
+            }
             println!("{} is {}.", e.title, if on { "on" } else { "off" });
         }
     }

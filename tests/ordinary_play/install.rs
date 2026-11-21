@@ -607,6 +607,47 @@ fn switch_holds_content_in_place_and_an_override_cannot_replace_it() {
             Active::parse(&fixture.pointer()).unwrap().holds().count(),
             1
         );
+        let pointer = fixture.pointer();
+        let enable = fixture
+            .registry_client(&["mods", "enable", "extra_mod"])
+            .output()
+            .unwrap();
+        assert!(!enable.status.success(), "{enable:?}");
+        assert!(String::from_utf8_lossy(&enable.stderr).contains("Needs an update from its author"));
+        if !initial_enabled {
+            let mut mcp = Running(
+                fixture
+                    .registry_client(&["mcp"])
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::piped())
+                    .spawn()
+                    .unwrap(),
+            );
+            let mut input = mcp.0.stdin.take().unwrap();
+            let mut output = BufReader::new(mcp.0.stdout.take().unwrap());
+            mcp_request(&mut input, &mut output, 1, "initialize", json!({}));
+            let refused = mcp_request(
+                &mut input,
+                &mut output,
+                2,
+                "tools/call",
+                json!({"name":"mods_enable", "arguments":{"project":"extra_mod"}}),
+            );
+            assert_eq!(refused["isError"], true, "{refused}");
+            assert!(
+                refused
+                    .to_string()
+                    .contains("Needs an update from its author"),
+                "{refused}"
+            );
+            drop(input);
+            assert!(mcp.0.wait().unwrap().success());
+        }
+        assert_eq!(fixture.pointer(), pointer);
+        assert!(!sunrise_launcher::browser::mod_list::is_enabled(
+            &fixture.home,
+            "extra_mod"
+        ));
 
         let project = registry
             .projects

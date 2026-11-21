@@ -63,6 +63,16 @@ impl Launcher {
             .and_then(|s| s.error.as_ref())
         {
             Some(problem.summary().into())
+        } else if self
+            .ui
+            .mods
+            .snapshot
+            .as_ref()
+            .is_some_and(|snapshot| !snapshot.ready())
+        {
+            Some(
+                tr("Installed mods aren't settled yet. Wait or retry before changing them.").into(),
+            )
         } else if self.mutating() {
             Some(tr("Wait for the current operation to finish.").to_string())
         } else {
@@ -99,18 +109,17 @@ impl Launcher {
                 self.ui.mods.notice = Some(Err(e));
             }
         } else if let Some(snapshot) = &mut self.ui.mods.snapshot {
-            let Some(_lock) = sunrise_launcher::browser::try_lock_home(&snapshot.home) else {
-                self.ui.mods.notice =
-                    Some(Err(tr("Wait for the current operation to finish.").into()));
-                return;
-            };
-            self.ui.mods.notice = match mod_list::set_enabled(&snapshot.home, &row.id, true) {
-                Ok(()) => {
-                    snapshot.key.clear();
-                    None
-                }
-                Err(e) => Some(Err(e)),
-            };
+            self.ui.mods.notice =
+                match sunrise_launcher::managed_play::Profile::open(&snapshot.home, None)
+                    .and_then(|profile| profile.enable_unheld(&[row.id.as_str()]))
+                {
+                    Ok(skipped) if skipped.is_empty() => {
+                        snapshot.key.clear();
+                        None
+                    }
+                    Ok(_) => Some(Err(tr("Needs an update from its author").into())),
+                    Err(e) => Some(Err(e)),
+                };
         }
     }
 
@@ -126,39 +135,58 @@ impl Launcher {
             .iter()
             .filter(|r| r.local.is_none() && self.ui.mods.selection.contains(&r.id))
             .collect();
-        let (go, held) =
-            model::turn_on_plan(&chosen, self.settings.native_mods_allowed_at.is_some());
         let m = &mut self.ui.mods;
-        m.errors = held
+        let Some(snapshot) = &m.snapshot else {
+            return;
+        };
+        let (held, candidates): (Vec<_>, Vec<_>) = chosen
+            .into_iter()
+            .partition(|row| snapshot.switch_held.contains(&row.id));
+        let (go, blocked) =
+            model::turn_on_plan(&candidates, self.settings.native_mods_allowed_at.is_some());
+        m.errors = blocked
             .iter()
             .map(|(r, why)| (r.id.clone(), why.clone()))
             .collect();
-        let Some(home) = m.snapshot.as_ref().map(|s| s.home.clone()) else {
-            return;
-        };
-        if go.is_empty() {
-            m.notice = Some(Err(tr("Nothing selected can be turned on yet.").to_string()));
-            return;
-        }
-        let Some(_lock) = sunrise_launcher::browser::try_lock_home(&home) else {
-            m.notice = Some(Err(
-                tr("Wait for the current operation to finish.").to_string()
-            ));
-            return;
-        };
         let ids: Vec<&str> = go.iter().map(|r| r.id.as_str()).collect();
-        let count = ids.len().to_string();
-        m.notice = Some(match mod_list::set_all_enabled(&home, &ids, true) {
-            Ok(()) if held.is_empty() => Ok(trf(
-                "Turned on {count} mods. The game reads this when it starts.",
-                &[("count", &count)],
-            )),
-            Ok(()) => Err(trf(
-                "Turned on {done}. {held} stayed off: see their rows.",
-                &[("done", &count), ("held", &held.len().to_string())],
-            )),
-            Err(e) => Err(e),
-        });
+        let result = if ids.is_empty() {
+            Ok(Vec::new())
+        } else {
+            sunrise_launcher::managed_play::Profile::open(&snapshot.home, None)
+                .and_then(|profile| profile.enable_unheld(&ids))
+        };
+        m.notice = Some(result.and_then(|skipped| {
+            let wanted = ids.len() - skipped.len();
+            let needs_update = held.len() + skipped.len();
+            for id in held.iter().map(|r| r.id.as_str()).chain(skipped) {
+                m.errors
+                    .insert(id.into(), tr("Needs an update from its author").into());
+            }
+            if needs_update > 0 {
+                Err(trf(
+                    "Turned on {done}. Needs an update from its author: {held}.",
+                    &[
+                        ("done", &wanted.to_string()),
+                        ("held", &needs_update.to_string()),
+                    ],
+                ))
+            } else if wanted == 0 {
+                Err(tr("Nothing selected can be turned on yet.").into())
+            } else if !blocked.is_empty() {
+                Err(trf(
+                    "Turned on {done}. {held} stayed off: see their rows.",
+                    &[
+                        ("done", &wanted.to_string()),
+                        ("held", &blocked.len().to_string()),
+                    ],
+                ))
+            } else {
+                Ok(trf(
+                    "Turned on {count} mods. The game reads this when it starts.",
+                    &[("count", &wanted.to_string())],
+                ))
+            }
+        }));
     }
 
     pub(super) fn bulk_off(&mut self) {

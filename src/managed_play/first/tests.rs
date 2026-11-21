@@ -524,11 +524,12 @@ fn home_read_recovers_the_first_switch_receipt_after_a_killed_commit() {
     let home = backend::game_home();
     let ready = home.join("marker-ready");
     let relative = Path::new(mod_list::DIR).join("fireflies.smod");
-    let package = |version| {
-        Package::write_files(
-        &format!("id='fireflies'\nname='Fireflies'\nversion='{version}'\napi='{}'\ncapabilities=['registries']", manifest::API),
-        &[],
-    ).unwrap()
+    let package = |id, name, version| {
+        let manifest = format!(
+            "id='{id}'\nname='{name}'\nversion='{version}'\napi='{}'\ncapabilities=['registries']",
+            manifest::API
+        );
+        Package::write_files(&manifest, &[]).unwrap()
     };
     if role == "publish" {
         let mut profile = Profile::open(&home, None).unwrap();
@@ -607,11 +608,17 @@ fn home_read_recovers_the_first_switch_receipt_after_a_killed_commit() {
         // Exercise the real same-base publication after the caller has checked a replacement.
         // No test override is granted registry authority by this fixture.
         let mut profile = Profile::open(&home, None).unwrap();
+        assert_eq!(
+            profile.enable_unheld(&["fireflies", "moths"]).unwrap(),
+            ["fireflies"]
+        );
+        assert!(!crate::browser::mod_list::is_enabled(&home, "fireflies"));
+        assert!(crate::browser::mod_list::is_enabled(&home, "moths"));
         let edit = profile
             .begin_edit(|| panic!("the build is already committed"), |_| {}, &|_| {})
             .unwrap();
         let candidate = edit.candidate().unwrap();
-        let replacement = package("2.0");
+        let replacement = package("fireflies", "Fireflies", "2.0");
         fs::write(candidate.path().join(&relative), &replacement).unwrap();
         crate::browser::mod_list::set_enabled(candidate.path(), "fireflies", true).unwrap();
         let cancellation = native_mods::Cancellation::default();
@@ -646,7 +653,16 @@ fn home_read_recovers_the_first_switch_receipt_after_a_killed_commit() {
     }
     assert_eq!(role, "scenario");
     fs::create_dir_all(home.join(mod_list::DIR)).unwrap();
-    fs::write(home.join(relative), package("1.0")).unwrap();
+    fs::write(
+        home.join(relative),
+        package("fireflies", "Fireflies", "1.0"),
+    )
+    .unwrap();
+    fs::write(
+        home.join(mod_list::DIR).join("moths.smod"),
+        package("moths", "Moths", "1.0"),
+    )
+    .unwrap();
     let resources = backend::resources(BUILD);
     fs::create_dir_all(&resources).unwrap();
     fs::write(resources.join("sunrise-resources.json"), b"{}").unwrap();
