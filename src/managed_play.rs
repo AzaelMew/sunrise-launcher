@@ -9,8 +9,9 @@ mod inputs;
 mod resources;
 mod roots;
 pub use client::{headless_first, Client, Progress, StartError, Started};
+pub(crate) use first::{CandidateImage, Edit};
 pub use first::{FirstAttempt, FirstBuild, Profile};
-use inputs::inputs;
+pub(crate) use inputs::inputs;
 pub use inputs::{scan_packages, ScannedPackage};
 pub(crate) use roots::remap_relocated_root;
 
@@ -303,6 +304,15 @@ impl Active {
             }
         }
         Ok(value)
+    }
+
+    /// Read the currently published generation without recovering or changing the profile.
+    pub fn read_pointer(home: &Path) -> Result<Option<Self>, String> {
+        crate::profile_txn::references(home)?
+            .pointer
+            .as_deref()
+            .map(Self::parse)
+            .transpose()
     }
 
     pub fn holds(&self) -> impl Iterator<Item = &Held> {
