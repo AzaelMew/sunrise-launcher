@@ -83,13 +83,7 @@ impl Session {
                 if self.client.as_ref().is_some_and(|c| c.finished().is_none()) {
                     return Err("The client is already running.".into());
                 }
-                let instance = match arg_str(args, "instance") {
-                    Some(name) => instances::find(name)?,
-                    None => instances::selection()?,
-                };
-                if instance.kind == instances::Kind::Pack {
-                    return Err(sunrise_launcher::browser::sunrise::pack::play_unavailable());
-                }
+                let instance = instances::for_play(arg_str(args, "instance"))?;
                 use sunrise_launcher::managed_play;
                 let requested = arg_str(args, "version");
                 let add_arguments = |cmd: &mut std::process::Command| -> Result<(), String> {

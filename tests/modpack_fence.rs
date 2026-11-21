@@ -31,6 +31,11 @@ fn legacy_modpack_writers_refuse_in_cli_and_mcp_without_touching_the_pack() {
         .join(sunrise_launcher_smod::mod_list::FILE);
     fs::write(enabled, b"existing choices").unwrap();
     fs::create_dir_all(&data).unwrap();
+    fs::create_dir_all(game.join("instances")).unwrap();
+    let profiles = data.join("instances.json");
+    let stale = b"{\n \"instances\": {\"already-gone\": {\"name\": \"Old profile\"}}\n}\n";
+    fs::write(&profiles, stale).unwrap();
+    fs::write(data.join("settings.json"), br#"{"instance":"pack:cozy"}"#).unwrap();
     let mut index: Value =
         serde_json::from_str(include_str!("../crates/smod/tests/index/index-v1.json")).unwrap();
     let projects = index["projects"].as_array_mut().unwrap();
@@ -68,8 +73,21 @@ fn legacy_modpack_writers_refuse_in_cli_and_mcp_without_touching_the_pack() {
             INSTALL,
         ),
         (&["mods", "install", "cozy", "--source", "sunrise"], INSTALL),
+        (
+            &[
+                "mods",
+                "install",
+                "cozy",
+                "--source",
+                "sunrise",
+                "--instance",
+                "already-gone",
+            ],
+            INSTALL,
+        ),
         (&["modpack", "play", "cozy"], PLAY),
         (&["play", "--instance", "pack:cozy"], PLAY),
+        (&["play"], PLAY),
         (&["modpack", "remove", "cozy"], REMOVE),
         (&["instance", "delete", "pack:cozy"], REMOVE),
     ] {
@@ -80,6 +98,7 @@ fn legacy_modpack_writers_refuse_in_cli_and_mcp_without_touching_the_pack() {
             "{args:?}: {out:?}"
         );
         assert_eq!(bytes_in(&game), before, "{args:?}");
+        assert_eq!(fs::read(&profiles).unwrap(), stale, "{args:?}");
     }
 
     let mut mcp = launcher(&["mcp"])
@@ -111,6 +130,7 @@ fn legacy_modpack_writers_refuse_in_cli_and_mcp_without_touching_the_pack() {
         ),
         ("modpack_play", json!({"pack":"cozy"}), PLAY),
         ("play", json!({"instance":"pack:cozy"}), PLAY),
+        ("play", json!({}), PLAY),
         (
             "modpack_remove",
             json!({"pack":"cozy","confirm":true}),
@@ -139,6 +159,7 @@ fn legacy_modpack_writers_refuse_in_cli_and_mcp_without_touching_the_pack() {
             "{name}: {answer}"
         );
         assert_eq!(bytes_in(&game), before, "{name}");
+        assert_eq!(fs::read(&profiles).unwrap(), stale, "{name}");
     }
     drop(input);
     assert!(mcp.wait().unwrap().success());

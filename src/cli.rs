@@ -1397,13 +1397,7 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
             arg,
             account,
         } => {
-            let instance = match instance {
-                Some(name) => instances::find(&name)?,
-                None => instances::selection()?,
-            };
-            if instance.kind == instances::Kind::Pack {
-                return Err(sunrise_launcher::browser::sunrise::pack::play_unavailable());
-            }
+            let instance = instances::for_play(instance.as_deref())?;
             use sunrise_launcher::{jars, managed_play};
             let accounts = Accounts::load();
             let account = account
@@ -2138,6 +2132,21 @@ fn servers(action: ServersCmd, as_json: bool) -> Result<(), String> {
 /// Commands for browser-installed content and registry mods in a selected profile.
 fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
     use sunrise_launcher::browser::{installed, sunrise, Kind, Query, SourceId};
+    // The pause is about the registry project, regardless of the requested destination.
+    let registry_project = match &action {
+        ModsCmd::Install {
+            project,
+            source: SourceArg::Sunrise,
+            ..
+        } => {
+            let found = sunrise::install_project(project)?;
+            if found.kind == Kind::Modpack {
+                return Err(sunrise::pack::install_unavailable());
+            }
+            Some(found)
+        }
+        _ => None,
+    };
     // What the browser installs goes into an instance's game folder.
     let instance = match &action {
         ModsCmd::List { instance }
@@ -2275,14 +2284,10 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
             ..
         } => {
             let source = source.get();
-            let p = if source.id() == SourceId::Sunrise {
-                sunrise::install_project(&project)?
-            } else {
-                source.project(&project)?
+            let p = match registry_project {
+                Some(found) => found,
+                None => source.project(&project)?,
             };
-            if p.kind == Kind::Modpack && p.source == SourceId::Sunrise {
-                return Err(sunrise::pack::install_unavailable());
-            }
             if let Some(world) = world {
                 let world = sunrise_launcher::worlds::find(&home, &world)?;
                 let done = installed::install_datapack(
