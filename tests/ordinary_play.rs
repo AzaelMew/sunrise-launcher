@@ -15,6 +15,9 @@ use std::{
 };
 use sunrise_launcher_smod::{manifest, mod_list};
 
+// These install from a local registry, which a release build refuses (registry_install.rs);
+// release.yml runs `cargo test --release`, so they run in debug only, like #204's fixture.
+#[cfg(debug_assertions)]
 #[path = "ordinary_play/install.rs"]
 mod install;
 
