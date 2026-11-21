@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use sunrise_launcher::browser::{installed, sunrise};
-use sunrise_launcher::native_status;
+use sunrise_launcher::{native_status, profile_txn::Identity};
 
 pub(crate) mod install;
 
@@ -181,17 +181,17 @@ impl Launcher {
         self.start_registry_queue() || changed
     }
 
-    /// Turns a Sunrise mod the browser installed on after the worker admits its profile.
-    pub(super) fn mods_switch(&mut self, e: &installed::Entry) {
-        let home = self.mods.home();
+    /// Turns a Sunrise mod on after the worker admits its profile. A consent answer
+    /// can only act on the profile (and incarnation) that asked the question.
+    pub(super) fn enable_registry_mod(
+        &mut self,
+        e: &installed::Entry,
+        home: PathBuf,
+        approved: Option<Identity>,
+    ) {
         let Some(id) = sunrise::mod_id(e) else {
             return;
         };
-        if native_status::is_native_file(&e.file) && self.settings.native_mods_allowed_at.is_none()
-        {
-            self.pending_consent = Some(PendingConsent::Toggle(e.clone()));
-            return;
-        }
         let index = sunrise::fetched_index();
         let title = index
             .as_ref()
@@ -204,7 +204,24 @@ impl Launcher {
             self.mods.message = Some(Err(format!("{title} was taken down: {}", revoked.reason)));
             return;
         }
-        self.enable_one_in(home, id.into(), title.into());
+        if let Some(identity) = approved {
+            self.enable_native_in(home, identity, id.into(), title.into());
+        } else if native_status::is_native_file(&e.file)
+            && self.settings.native_mods_allowed_at.is_none()
+        {
+            match Identity::of(&home) {
+                Ok(identity) => {
+                    self.pending_consent = Some(PendingConsent::Toggle(native_consent::Toggle {
+                        entry: e.clone(),
+                        home,
+                        identity,
+                    }));
+                }
+                Err(error) => self.mods.message = Some(Err(error)),
+            }
+        } else {
+            self.enable_one_in(home, id.into(), title.into());
+        }
     }
 }
 

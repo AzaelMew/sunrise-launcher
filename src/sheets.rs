@@ -1138,7 +1138,7 @@ impl Launcher {
         frame("alt-consent", 760., body, cx)
     }
 
-    /// Allow: persist the permission, then run the one pending action. The old overlay's match.
+    /// Allow: consume the one pending action. A Toggle's worker saves its grant and enables it.
     fn allow_native_consent(&mut self) {
         let result = native_consent::resolve(
             &mut self.pending_consent,
@@ -1161,7 +1161,9 @@ impl Launcher {
                             self.native_consent_build.take().unwrap_or_default();
                         self.build_native_on(base, leave_out)
                     }
-                    PendingConsent::Toggle(entry) => self.mods_switch(&entry),
+                    PendingConsent::Toggle(toggle) => {
+                        self.enable_registry_mod(&toggle.entry, toggle.home, Some(toggle.identity));
+                    }
                     PendingConsent::Registry(_, reply) => {
                         let _ = reply.send(Ok(true));
                     }

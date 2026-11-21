@@ -36,11 +36,18 @@ fn dispatch_enable(
     home: PathBuf,
     identity: Identity,
     ids: Vec<String>,
-    reply: impl FnOnce(Result<EnabledMods, String>) + Send + 'static,
+    grant_native: bool,
+    reply: impl FnOnce(Result<EnabledMods, String>, Option<u64>) + Send + 'static,
 ) {
     std::thread::spawn(move || {
+        let mut allowed_at = None;
         let result = (|| {
             let profile = Profile::open_for(&home, None, Some(identity)).map_err(String::from)?;
+            if grant_native {
+                let mut settings = backend::Settings::default();
+                settings.allow_native_mods()?;
+                allowed_at = settings.native_mods_allowed_at;
+            }
             let ids: Vec<_> = ids.iter().map(String::as_str).collect();
             let skipped = profile.enable_unheld(&ids)?;
             Ok(EnabledMods {
@@ -51,7 +58,7 @@ fn dispatch_enable(
                     .collect(),
             })
         })();
-        reply(result);
+        reply(result, allowed_at);
     });
 }
 
@@ -145,7 +152,7 @@ impl Launcher {
             self.run(Action::TurnOff(vec![(row.id.clone(), row.title.clone())]));
         } else if let Some(entry) = &row.entry {
             self.mods.message = None;
-            self.mods_switch(entry);
+            self.enable_registry_mod(entry, self.mods_home(), None);
             if let Some(Err(e)) = self.mods.message.take() {
                 self.ui.mods.notice = Some(Err(e));
             }
@@ -155,7 +162,17 @@ impl Launcher {
     }
 
     pub(crate) fn enable_one_in(&mut self, home: PathBuf, id: String, title: String) {
-        self.queue_enable(home, vec![id], EnableNotice::One(title));
+        self.queue_enable(home, vec![id], EnableNotice::One(title), None);
+    }
+
+    pub(crate) fn enable_native_in(
+        &mut self,
+        home: PathBuf,
+        identity: Identity,
+        id: String,
+        title: String,
+    ) {
+        self.queue_enable(home, vec![id], EnableNotice::One(title), Some(identity));
     }
 
     /// Turn the chosen registry mods on in one admitted rewrite. An already-known hold
@@ -191,11 +208,22 @@ impl Launcher {
             snapshot.home.clone(),
             ids,
             EnableNotice::Bulk { held, blocked },
+            None,
         );
     }
 
-    fn queue_enable(&mut self, home: PathBuf, ids: Vec<String>, notice: EnableNotice) {
+    fn queue_enable(
+        &mut self,
+        home: PathBuf,
+        ids: Vec<String>,
+        notice: EnableNotice,
+        approved: Option<Identity>,
+    ) {
         if !self.guard() {
+            return;
+        }
+        if home != self.mods_home() {
+            self.ui.mods.notice = Some(Err(tr("The selected profile changed. Try again.").into()));
             return;
         }
         self.ui.mods.errors.clear();
@@ -208,10 +236,11 @@ impl Launcher {
                     count: 0,
                     skipped: Vec::new(),
                 }),
+                None,
             );
             return;
         }
-        let identity = match Identity::of(&home) {
+        let identity = match approved.map_or_else(|| Identity::of(&home), Ok) {
             Ok(identity) => identity,
             Err(error) => {
                 self.ui.mods.notice = Some(Err(error));
@@ -220,9 +249,15 @@ impl Launcher {
         };
         self.ui.mods.busy = Some((tr("Turning on mods…").into(), 0.));
         let tx = self.ui.mods.tx.clone();
-        dispatch_enable(home.clone(), identity, ids, move |result| {
-            let _ = tx.send(Event::Enabled(home, notice, result));
-        });
+        dispatch_enable(
+            home.clone(),
+            identity,
+            ids,
+            approved.is_some(),
+            move |result, allowed_at| {
+                let _ = tx.send(Event::Enabled(home, notice, result, allowed_at));
+            },
+        );
     }
 
     pub(super) fn enabled_mods(
@@ -230,7 +265,11 @@ impl Launcher {
         home: &Path,
         notice: EnableNotice,
         result: Result<EnabledMods, String>,
+        allowed_at: Option<u64>,
     ) {
+        if allowed_at.is_some() {
+            self.settings.native_mods_allowed_at = allowed_at;
+        }
         self.ui.mods.busy = None;
         if self.mods_home() != home {
             return;
@@ -543,9 +582,13 @@ mod tests {
         let (done, wait_done) = channel();
         let selected = home.clone();
         std::thread::spawn(move || {
-            dispatch_enable(selected, identity, vec!["light".into()], move |result| {
-                done.send(result).unwrap()
-            });
+            dispatch_enable(
+                selected,
+                identity,
+                vec!["light".into()],
+                false,
+                move |result, _| done.send(result).unwrap(),
+            );
             returned.send(()).unwrap();
         });
         wait_return
@@ -564,6 +607,126 @@ mod tests {
         assert_eq!(enabled.count, 1);
         assert!(enabled.skipped.is_empty());
         assert!(mod_list::is_enabled(&home, "light"));
+    }
+
+    #[test]
+    fn toggle_consent_returns_while_manifest_and_settings_are_locked() {
+        use crate::native_consent::{self, PendingConsent, Toggle};
+        use std::{fs, time::Duration};
+        use sunrise_launcher::browser::{installed::Entry, sunrise, Kind, SourceId};
+
+        const ACTOR: &str = "NATIVE_TOGGLE_LOCK_ACTOR";
+        let Some(root) = std::env::var_os(ACTOR).map(PathBuf::from) else {
+            let root = tempfile::tempdir().unwrap();
+            assert!(std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "mods::actions::tests::toggle_consent_returns_while_manifest_and_settings_are_locked"])
+                .env(ACTOR, root.path())
+                .env("SUNRISE_HOME", root.path().join("game"))
+                .env("SUNRISE_LAUNCHER_HOME", root.path().join("launcher"))
+                .status().unwrap().success());
+            return;
+        };
+        let home = root.join("game");
+        let manifest = sunrise_launcher::browser::lock_home(&home).unwrap();
+        let identity = Identity::of(&home).unwrap();
+        let data = root.join("launcher");
+        fs::create_dir_all(&data).unwrap();
+        let settings_path = data.join("settings.json");
+        let settings_before = br#"{"native_consent_revision":0,"unrelated":1}"#;
+        fs::write(&settings_path, settings_before).unwrap();
+        let settings_gate = fs::File::options()
+            .write(true)
+            .read(true)
+            .create_new(true)
+            .open(data.join(".settings.json.lock"))
+            .unwrap();
+        settings_gate.lock().unwrap();
+        let list = home.join("sunrise-mods.txt");
+        let list_before = b"mod.light:false\nmod.other:true\n";
+        fs::write(&list, list_before).unwrap();
+        let (returned, wait_return) = channel();
+        let (done, wait_done) = channel();
+        let selected = home.clone();
+        let caller = std::thread::spawn(move || {
+            let question = || {
+                Some(PendingConsent::Toggle(Toggle {
+                    entry: Entry {
+                        source: SourceId::Sunrise,
+                        project: "light".into(),
+                        slug: "light".into(),
+                        title: "Light".into(),
+                        kind: Kind::Mod,
+                        version: "1".into(),
+                        number: "1".into(),
+                        file: "sunrise-native-mods/light.smod".into(),
+                        checksum: String::new(),
+                        page: String::new(),
+                        dependency: false,
+                        verdict: None,
+                        install_hold: None,
+                    },
+                    home: selected.clone(),
+                    identity,
+                }))
+            };
+            let mut settings = backend::Settings::load();
+            for _ in ["Cancel", "Escape"] {
+                let mut pending = question();
+                assert!(native_consent::resolve(
+                    &mut pending,
+                    false,
+                    true,
+                    &mut settings,
+                    &selected
+                )
+                .unwrap()
+                .is_none());
+                assert!(pending.is_none());
+            }
+            let mut pending = question();
+            let action =
+                native_consent::resolve(&mut pending, true, true, &mut settings, &selected)
+                    .unwrap();
+            assert!(pending.is_none());
+            assert!(settings.native_mods_allowed_at.is_none());
+            let Some(PendingConsent::Toggle(toggle)) = action else {
+                panic!("Allow must dispatch this Toggle to the On worker");
+            };
+            let id = sunrise::mod_id(&toggle.entry).unwrap().to_owned();
+            dispatch_enable(
+                toggle.home,
+                toggle.identity,
+                vec![id],
+                true,
+                move |result, allowed_at| {
+                    done.send((result, allowed_at)).unwrap();
+                },
+            );
+            returned.send(()).unwrap();
+        });
+        wait_return
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the consent handler must not wait on either lock");
+        caller.join().unwrap();
+        assert_eq!(fs::read(&list).unwrap(), list_before);
+        assert_eq!(fs::read(&settings_path).unwrap(), settings_before);
+        drop(manifest);
+        assert!(matches!(
+            wait_done.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Empty)
+        ));
+        assert!(!mod_list::is_enabled(&home, "light"));
+        drop(settings_gate);
+        let (result, allowed_at) = wait_done.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(result.unwrap().count, 1);
+        assert!(allowed_at.is_some());
+        let written: serde_json::Value =
+            serde_json::from_slice(&fs::read(settings_path).unwrap()).unwrap();
+        assert_eq!(written["native_mods_allowed_at"].as_u64(), allowed_at);
+        assert_eq!(written["native_consent_revision"], 1);
+        assert_eq!(written["unrelated"], 1);
+        assert!(mod_list::is_enabled(&home, "light"));
+        assert!(mod_list::is_enabled(&home, "other"));
     }
 
     fn home_with_world(mod_id: &str) -> PathBuf {

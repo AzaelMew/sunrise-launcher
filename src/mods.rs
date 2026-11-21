@@ -228,6 +228,7 @@ enum Event {
         PathBuf,
         actions::EnableNotice,
         Result<actions::EnabledMods, String>,
+        Option<u64>,
     ),
     Catalog(String, Result<(Vec<Card>, Vec<String>), String>),
     Page(u64, Result<Box<model::Page>, String>),
@@ -648,7 +649,9 @@ impl Launcher {
                         }
                     }
                 }
-                Event::Enabled(home, notice, result) => self.enabled_mods(&home, notice, result),
+                Event::Enabled(home, notice, result, allowed_at) => {
+                    self.enabled_mods(&home, notice, result, allowed_at);
+                }
                 Event::Page(request, page) => {
                     if let Some(open) = m.open.as_mut().filter(|o| o.request == request) {
                         open.page = Some(page);
