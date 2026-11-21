@@ -184,14 +184,21 @@ pub(crate) fn install_as(
     let _publication = registry
         .publication(mode)
         .map_err(|e| crate::native_mods::cache_error(e.into()))?;
-    let replaced = intent == InstallIntent::Repair
-        && replace_installed(
+    let replaced = if intent == InstallIntent::Repair {
+        // A pending First Play can reserve this name before its tree exists.
+        // Only the exact managed path may publish its frozen archive in that case.
+        crate::managed_play::require_unreferenced_build(tag)
+            .map_err(crate::native_mods::cache_error)?;
+        replace_installed(
             &registry,
             tag,
             &top,
             &target,
             &root.join(format!("{REPAIR}{tag}")),
-        )?;
+        )?
+    } else {
+        false
+    };
     if !replaced {
         match crate::run_leases::publish_build(&top, &target) {
             Ok(()) => {}
@@ -233,8 +240,6 @@ fn replace_installed(
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
         Err(e) => return Err(e.to_string()),
     }
-    // A different image behind a saved exact name would strand its profile.
-    crate::managed_play::authorize_cache_removal(tag).map_err(cache_error)?;
     let tree = cap_std::fs::Dir::open_ambient_dir(target, cap_std::ambient_authority())
         .map_err(|e| e.to_string())?;
     let old = registry

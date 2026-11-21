@@ -402,6 +402,100 @@ mod tests {
     }
 
     #[test]
+    fn ordinary_install_cannot_claim_an_absent_pending_first_play_build() {
+        use crate::{
+            managed_play::ReferencePublication,
+            profile_txn::{self, Admission, Bootstrap},
+        };
+        use GameArchitecture::{Arm64, X64};
+
+        isolated_case(
+            "ordinary_install_cannot_claim_an_absent_pending_first_play_build",
+            || {
+                let home = game_home();
+                fs::create_dir_all(&home).unwrap();
+                let (frozen, proof, url, server) =
+                    serve_windows_archive(X64, "sunrise-windows-x64.zip", b"frozen x64 image");
+                let target = version_dir(TAG);
+                let saved = std::cell::OnceCell::new();
+                let (other, other_proof, other_url, other_server) =
+                    serve_windows_archive(Arm64, "sunrise-windows-arm64.zip", b"other arm64 image");
+                let ordinary = other.publish(
+                    TAG,
+                    &other_proof,
+                    InstallIntent::Repair,
+                    |_| {
+                        if saved.get().is_some() {
+                            return;
+                        }
+                        assert!(!target.exists());
+                        // Leave an interrupted First Play binding while the ordinary archive
+                        // is still private. The cache target has never been published.
+                        let mut admission = Admission::open(&home, None).unwrap();
+                        admission
+                            .bind_bootstrap(
+                                || {
+                                    Ok(Bootstrap::new(
+                                        TAG.into(),
+                                        TAG.into(),
+                                        [1; 16],
+                                        [2; 32],
+                                        serde_json::json!({"kind":"download", "archive":frozen}),
+                                    ))
+                                },
+                                |_| ReferencePublication::begin(&home),
+                            )
+                            .unwrap();
+                        let _fence = ReferencePublication::begin(&home).unwrap();
+                        let binding = admission
+                            .prove_bootstrap(|_| {
+                                serde_json::to_value(&proof).map_err(|e| e.to_string())
+                            })
+                            .unwrap();
+                        saved.set(binding).unwrap();
+                    },
+                    |_, _| other_url.clone(),
+                );
+                assert_eq!(
+                    ordinary.unwrap_err(),
+                    crate::native_mods::cache_error(crate::native_cache::Error::ReferencedProfile)
+                );
+                other_server.join().unwrap();
+                assert!(!target.exists());
+                let references = profile_txn::references(&home).unwrap();
+                assert!(references.targets.contains(TAG));
+                assert!(references.pointer.is_none());
+
+                let mut admission =
+                    Admission::open_fenced(&home, None, || ReferencePublication::begin(&home))
+                        .unwrap();
+                let resumed = admission
+                    .bind_bootstrap::<ReferencePublication>(
+                        || panic!("re-resolved the interrupted binding"),
+                        |_| panic!("replaced the interrupted binding"),
+                    )
+                    .unwrap();
+                assert_eq!(resumed, saved.into_inner().unwrap());
+                let download: GameDownload =
+                    serde_json::from_value(resumed.selection["archive"].clone()).unwrap();
+                let proof = GameProof::saved(resumed.proof.unwrap()).unwrap();
+                download
+                    .publish(
+                        TAG,
+                        &proof,
+                        InstallIntent::Exact,
+                        |_| {},
+                        |_, _| url.clone(),
+                    )
+                    .unwrap();
+                server.join().unwrap();
+                assert!(download.is_installed(TAG, &proof));
+                assert_eq!(fs::read(target.join(CLIENT)).unwrap(), b"frozen x64 image");
+            },
+        );
+    }
+
+    #[test]
     fn both_requests_reuse_the_same_signed_fallback_but_not_a_different_binary() {
         let home = tempfile::tempdir().unwrap();
         let home = home.path();

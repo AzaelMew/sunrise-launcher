@@ -14,8 +14,9 @@ use inputs::inputs;
 pub use inputs::{scan_packages, ScannedPackage};
 pub(crate) use roots::remap_relocated_root;
 
-/// Called only within the cache publication fence immediately before detaching a build.
-pub(crate) fn authorize_cache_removal(tag: &str) -> Result<(), crate::native_cache::Error> {
+/// Check pending and committed references under the exclusive cache publication fence
+/// before detaching a build or publishing an ordinary download at its name.
+pub(crate) fn require_unreferenced_build(tag: &str) -> Result<(), crate::native_cache::Error> {
     use crate::{backend, native_cache::Error};
     match roots::referenced(&backend::data_dir(), &backend::game_home(), tag) {
         Ok(false) => Ok(()),
