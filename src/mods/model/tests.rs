@@ -196,7 +196,7 @@ fn the_page_names_the_version_add_installs() {
         Some("2.0.0")
     );
     assert_eq!(p.versions[1].fit, Fit::OtherBuild("25.1".into()));
-    assert_eq!(p.side, "Not needed on servers");
+    assert_eq!(p.about.unwrap().side, "Not needed on servers");
     assert!(page(&idx, "missing", GAME, vec![], false).is_none());
 }
 
@@ -490,17 +490,19 @@ fn native_files_the_browser_didnt_install_are_listed_and_never_planned() {
     let local = [
         Local {
             id: "mine".into(),
+            file: "mine".to_owned(),
             name: "mine".into(),
             version: "0.3".into(),
-            github: false,
+            github: None,
             native: true,
             unreadable: false,
         },
         Local {
             id: "by_hand".into(),
+            file: "by_hand".to_owned(),
             name: "By Hand".into(),
             version: "1.0".into(),
-            github: false,
+            github: None,
             native: false,
             unreadable: false,
         },
@@ -536,9 +538,10 @@ fn turning_on_a_local_native_file_exposes_permission_then_build() {
     let id = "example";
     let local = [Local {
         id: id.into(),
+        file: format!("{id}.smod"),
         name: "Example".into(),
         version: "1.0".into(),
-        github: false,
+        github: None,
         native: true,
         unreadable: false,
     }];
@@ -607,9 +610,10 @@ fn every_reason_a_build_left_a_mod_out_is_shown_and_counted() {
     let none = HashSet::new();
     let local = ["lib", "addon", "old", "fine"].map(|id| Local {
         id: id.into(),
+        file: format!("{id}.smod"),
         name: id.into(),
         version: "1.0".into(),
-        github: false,
+        github: None,
         native: true,
         unreadable: false,
     });
@@ -667,9 +671,19 @@ fn every_row_fills_the_same_columns_whatever_it_has_to_say() {
     let unbuilt: HashSet<String> = ["addon".to_string()].into();
     let local = ["lib", "addon", "old", "fine"].map(|id| Local {
         id: id.into(),
+        file: format!("{id}.smod"),
         name: id.into(),
         version: "1.0".into(),
-        github: id == "lib",
+        github: (id == "lib").then(|| sunrise_launcher::github_mods::Origin {
+            id: id.to_owned(),
+            version: "1.0".into(),
+            owner: "publisher".into(),
+            repo: "source".into(),
+            tag: Some("v1.0".into()),
+            commit: "a".repeat(40),
+            asset: Some("lib.smod".into()),
+            sha256: "b".repeat(64),
+        }),
         native: true,
         unreadable: false,
     });
@@ -694,6 +708,17 @@ fn every_row_fills_the_same_columns_whatever_it_has_to_say() {
         |tag| tag.to_owned(),
     );
     let row = |id: &str| r.iter().find(|r| r.id == id && r.local.is_some()).unwrap();
+    let github_details = row("lib").installed_details();
+    assert_eq!(
+        github_details.source,
+        Some(SourceLink::GitHub(
+            "https://github.com/publisher/source".into()
+        ))
+    );
+    assert_eq!(github_details.fit, Fit::Unknown);
+    assert!(github_details.about.is_none() && github_details.will_install.is_none());
+    assert_eq!(row("addon").installed_details().source, None);
+
     // Every row has a kind and a version for the same two columns.
     for row in &r {
         let cells = cells(row, None, None, true);
@@ -790,9 +815,10 @@ fn the_build_button_is_only_counted_as_drawn_when_its_group_is_shown() {
     let unbuilt: HashSet<String> = ["addon".to_string()].into();
     let local = ["lib", "addon", "fine"].map(|id| Local {
         id: id.into(),
+        file: format!("{id}.smod"),
         name: id.into(),
         version: "1.0".into(),
-        github: false,
+        github: None,
         native: true,
         unreadable: false,
     });
@@ -1293,9 +1319,10 @@ fn an_unreadable_file_is_never_on_and_cannot_switch_a_working_mod_of_its_name() 
     let (idx, _) = pack();
     let file = |unreadable| Local {
         id: "ruby".into(),
+        file: "ruby".to_owned(),
         name: "ruby".into(),
         version: String::new(),
-        github: false,
+        github: None,
         native: true,
         unreadable,
     };

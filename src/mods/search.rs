@@ -136,9 +136,10 @@ mod tests {
     fn rows() -> Vec<model::Row> {
         let local = ["lantern", "rain", "trail"].map(|id| Local {
             id: id.into(),
+            file: format!("{id}.smod"),
             name: id.into(),
             version: "1.0".into(),
-            github: false,
+            github: None,
             native: id != "rain",
             unreadable: false,
         });
