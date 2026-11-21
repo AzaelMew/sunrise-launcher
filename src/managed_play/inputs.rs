@@ -110,11 +110,32 @@ pub(super) fn inputs(home: &Path, repaired: Option<&[u8]>) -> Result<[u8; 32], S
     Ok(hash.finalize().into())
 }
 
-/// Game-owned updates can leave stale display fields. Prove the existing row's
-/// destination using the game's own checks before deriving a new row. Others are opaque.
+/// Only a previously recorded registry row matching these exact archive bytes can
+/// authorize a mutation. The caller must also check for duplicate/alias claims.
+pub fn registry_row_matches(
+    home: &Path,
+    row: &crate::browser::installed::Entry,
+    package: &ScannedPackage,
+    digest: &str,
+) -> bool {
+    use crate::browser::{Kind, SourceId};
+    !package.directory
+        && row.source == SourceId::Sunrise
+        && row.kind == Kind::Mod
+        && row.project == package.manifest.id
+        && row.version == package.manifest.version
+        && row.path(home).as_ref() == Some(&package.path)
+        && row
+            .checksum
+            .eq_ignore_ascii_case(&format!("SHA-256:{digest}"))
+}
+
+/// A fresh registry response can corroborate newly observed bytes at a claimed
+/// destination. A local cache or a repaired display row cannot be that response.
 pub(super) fn browser_repair(
     home: &Path,
     packages: &[ScannedPackage],
+    registry: Option<&index::Index>,
 ) -> Result<Option<Vec<u8>>, String> {
     use crate::browser::{installed, sunrise, Kind, SourceId};
     use serde_json::Value;
@@ -170,10 +191,32 @@ pub(super) fn browser_repair(
         claims
             .check_other_claims(home, id, file)
             .map_err(|e| e.render(crate::i18n::trf))?;
-        let checksum = format!("SHA-256:{}", index::sha256_file(&package.path)?);
-        if row.version != package.manifest.version || !row.checksum.eq_ignore_ascii_case(&checksum)
+        let digest = index::sha256_file(&package.path)?;
+        if registry_row_matches(home, &row, package, &digest) {
+            continue;
+        }
+        let kind = if package.manifest.native.is_some() {
+            index::Kind::NativeMod
+        } else {
+            index::Kind::Mod
+        };
+        // Adopt the actual profile input separately; never manufacture ownership for
+        // a replacement from just its ID and location. Leave the old row opaque.
+        if registry
+            .and_then(|registry| registry.project(id))
+            .filter(|project| project.kind == kind)
+            .is_some_and(|project| {
+                project.versions.iter().any(|release| {
+                    release.version == package.manifest.version
+                        && release.file.sha256.eq_ignore_ascii_case(&digest)
+                })
+            })
         {
-            changes.push((position, package.manifest.version.clone(), checksum));
+            changes.push((
+                position,
+                package.manifest.version.clone(),
+                format!("SHA-256:{digest}"),
+            ));
         }
     }
     if changes.is_empty() {

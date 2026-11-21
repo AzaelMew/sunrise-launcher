@@ -8,6 +8,9 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use sunrise_launcher_nbt::{self as nbt, Limits, Tag};
 
+mod effects;
+pub use effects::{unproved_mod_effects, SuspectMods};
+
 /// The lock a running game holds on a world; vanilla's backups leave it out.
 const LOCK: &str = "session.lock";
 /// The latest `LastPlayed` kept: the end of year 9999, in milliseconds. A later time does not fit a
