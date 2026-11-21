@@ -146,7 +146,8 @@ fn approve(tty: bool, mut input: impl BufRead, mut output: impl Write) -> io::Re
     write!(output, "{} ", tr("Switch anyway? [y/N]"))?;
     output.flush()?;
     let mut reply = String::new();
-    Ok(input.read_line(&mut reply)? != 0 && reply.trim().eq_ignore_ascii_case("y"))
+    input.read_line(&mut reply)?;
+    Ok(reply.ends_with('\n') && reply.trim().eq_ignore_ascii_case("y"))
 }
 
 #[cfg(test)]
@@ -155,7 +156,7 @@ mod tests {
     #[test]
     fn only_a_terminal_yes_accepts_the_sealed_world_decision() {
         assert!(approve(true, &b"y\n"[..], Vec::new()).unwrap());
-        for reply in ["", "\n", "no\n", "yes?\n"] {
+        for reply in ["", "\n", "no\n", "yes?\n", "y", "Y\r"] {
             assert!(!approve(true, reply.as_bytes(), Vec::new()).unwrap());
         }
         assert!(!approve(false, &b"y\n"[..], Vec::new()).unwrap());
