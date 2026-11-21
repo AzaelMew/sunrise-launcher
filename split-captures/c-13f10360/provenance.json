@@ -1,0 +1,10 @@
+{
+  "suite": "staged Switch and same-base Resolve",
+  "source_head": "13f10360ffc1562e5c5f067a170d38bac5e1bef4",
+  "binary_sha256": "877b51265e0693d52dde4a329012d4a763bef2bda56662251e3f6bffc95d4440",
+  "size": [
+    "1280x800",
+    "800x600"
+  ],
+  "status": "captured"
+}

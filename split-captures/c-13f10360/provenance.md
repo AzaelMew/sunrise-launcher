@@ -1,0 +1,10 @@
+# Switch, Resolve and native Toggle captures
+
+These 40 real Linux launcher captures were taken at 1280×800 and 800×600 from `13f10360ffc1562e5c5f067a170d38bac5e1bef4`. `provenance.json` records the executable digest. The runs use isolated local catalogue and registry fixtures, local game artifacts, a synthetic Riverside save and a fixture account. No launched game or live credentials were involved.
+
+- **Picker and Versions:** proved and unknown previews, download and preparation states, and both current-build cache actions. Versions does not change the selected profile. The Checking frame holds the registry reply during a real Switch.
+- **Switch and receipt:** Stay preserved the pointer and save. Approving changed the pointer, preserved the save and private archive, and retained the unproved registry-claimed bytes off when the local fixture's takedown could not authorize deletion. The receipt shows details, a write error with an unavailable Downloads directory, and a separate read error from an unreadable pointer. Done acknowledged the receipt before normal navigation to Installed, which kept both held rows off when bulk Turn on was pressed.
+- **Unknown fit:** Night Light's native check is unavailable without permission, so it and its required content dependent, Lanterns, both show “Fit could not be verified” in the real receipt. The separate automated SDK fixture produces a structured missing-uses verdict rather than the permission refusal used for these frames.
+- **Resolve:** installing Lumen Ore Glow conflicts with Bridge Cranes and Rail Markers; the real prompt names both blockers and Riverside. Declining kept the original pointer and committed build.
+- **Native Toggle:** with the real manifest and settings locks held, both Not now and Escape dismissed the consent without changing either file. Allow closed the sheet and showed Turning on mods before either lock was released. After release, the grant was recorded and the row turned on. No native code ran.
+- **Terminal (not pictured):** EOF, an incomplete `y` and SIGINT each preserved the pointer, package, enable file and save bytes.
