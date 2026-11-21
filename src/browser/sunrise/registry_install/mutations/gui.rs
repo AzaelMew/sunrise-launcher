@@ -300,10 +300,7 @@ mod tests {
         );
         assert_eq!(
             installed,
-            [
-                Some("Lanterns · by Ann · 1.0.0 · Local file · 2".into()),
-                Some("Lanterns · by Ann · 1.0.0 · Local file · 1".into())
-            ]
+            [Some("Lanterns · 2".into()), Some("Lanterns · 1".into())]
         );
         let sources = colliding_mod_labels([
             label(targets[0], ModLabelSource::Registry),
@@ -352,11 +349,7 @@ mod tests {
             impact.gui_review(),
             (
                 "Remove 2 mods?".into(),
-                concat!(
-                    "Remove: Lanterns · by Ann · 1.0.0 · Local file · 1 and ",
-                    "Lanterns · by Ann · 1.0.0 · Local file · 2."
-                )
-                .into()
+                "Remove: Lanterns · 1 and Lanterns · 2.".into()
             )
         );
         let detail = impact.detail();

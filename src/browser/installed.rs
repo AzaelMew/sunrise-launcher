@@ -306,7 +306,8 @@ impl ModLabel<'_> {
 
 /// Player-facing labels for equal display names, returned in input order. A unique
 /// name needs no replacement. For namesakes, try author, version and source alone,
-/// then combine them. Number any remaining ties by manifest ID, not display order.
+/// then combine them. Break remaining ties with just the name and a number, ordered
+/// by manifest ID, not display order.
 pub fn colliding_mod_labels<'a>(
     mods: impl IntoIterator<Item = ModLabel<'a>>,
 ) -> Vec<Option<String>> {
@@ -365,13 +366,13 @@ pub fn colliding_mod_labels<'a>(
     pending.sort_by_key(|&i| mods[i].id);
     let mut ordinals = HashMap::new();
     for i in pending {
-        let base = all_details(&mods[i]);
-        let ordinal = ordinals.entry(base.clone()).or_insert(0usize);
+        let name = mods[i].name;
+        let ordinal = ordinals.entry(name).or_insert(0usize);
         loop {
             *ordinal += 1;
             let label = trf(
                 "{label} · {n}",
-                &[("n", &ordinal.to_string()), ("label", &base)],
+                &[("n", &ordinal.to_string()), ("label", name)],
             );
             if used.insert(label.clone()) {
                 labels[i] = Some(label);
