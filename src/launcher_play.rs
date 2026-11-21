@@ -500,9 +500,15 @@ impl Launcher {
         self.begin_sign_in(None);
     }
 
+    /// Signs an account in again on the sign-in screen, where its code is shown (#110).
     pub(crate) fn re_sign_in(&mut self, uuid: &str) {
+        if self.account_locked() {
+            self.say_account_locked();
+            return;
+        }
         if let Some(account) = self.accounts.find(uuid).cloned() {
             self.begin_sign_in(Some(account));
+            self.owner_screen_open = true;
         }
     }
 
