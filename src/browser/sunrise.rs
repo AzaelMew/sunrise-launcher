@@ -1558,8 +1558,8 @@ mod dependencies;
 pub mod pack;
 mod registry_install;
 pub use registry_install::{
-    install_registry, install_target, update_registry, BuildNotice, ChangeImpact, InstallError,
-    InstallHooks, InstallProgress, InstalledBatch, NativeQuestion,
+    check_activation, install_registry, install_target, remove_mods, update_registry, BuildNotice,
+    ChangeImpact, InstallError, InstallHooks, InstallProgress, InstalledBatch, NativeQuestion,
 };
 #[cfg(test)]
 mod tests;

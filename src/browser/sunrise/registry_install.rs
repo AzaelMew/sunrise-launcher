@@ -367,7 +367,7 @@ fn registry_edit<'a>(
         if !activate.is_empty() {
             mod_list::set_all_enabled(next.path(), &activate, true)?;
         }
-        if let Some(conflict) = manifest_conflict(next.path(), &catalogue)? {
+        if let Some(conflict) = manifest_conflict(next.path(), Some(&catalogue))? {
             if conflicts.contains(&conflict) {
                 return Err(InstallError::Unproved(conflict.reason));
             }
@@ -492,7 +492,7 @@ fn registry_edit<'a>(
                     &mut doc,
                     failed,
                 )?;
-                if let Some(conflict) = manifest_conflict(next.path(), &catalogue)? {
+                if let Some(conflict) = manifest_conflict(next.path(), Some(&catalogue))? {
                     return Err(InstallError::Refused(conflict.reason));
                 }
                 let notice = BuildNotice {
@@ -611,6 +611,27 @@ struct SeenPackage {
     package: ScannedPackage,
     digest: Option<String>,
     owned: bool,
+}
+
+impl SeenPackage {
+    fn github_origin(&self, home: &Path) -> Option<crate::github_mods::Origin> {
+        let id = &self.package.manifest.id;
+        let target = home.join(native_mods::INSTALLED).join(format!("{id}.smod"));
+        if self.package.path != target || self.package.manifest.native.is_none() {
+            return None;
+        }
+        crate::github_mods::origin(home, id).filter(|row| {
+            &row.id == id
+                && row.version == self.package.manifest.version
+                && crate::github_mods::plain(&row.owner)
+                && crate::github_mods::plain(&row.repo)
+                && sunrise_launcher_smod::manifest::revision(&row.commit)
+                && self
+                    .digest
+                    .as_ref()
+                    .is_some_and(|hash| row.sha256.eq_ignore_ascii_case(hash))
+        })
+    }
 }
 
 type Inventory = BTreeMap<String, SeenPackage>;
@@ -741,7 +762,7 @@ fn missing_required<'a>(
 
 fn manifest_conflict(
     home: &Path,
-    catalogue: &index::Index,
+    catalogue: Option<&index::Index>,
 ) -> Result<Option<resolve::ManifestConflict>, InstallError> {
     let packages = inventory(home)?;
     let enabled: BTreeMap<_, _> = packages
@@ -760,20 +781,22 @@ fn manifest_conflict(
     let mut namespaces = BTreeMap::new();
     for (&id, &manifest) in &enabled {
         let package = &packages[id];
-        let revocation = package.digest.as_ref().and_then(|hash| {
-            if package.owned {
-                catalogue.revoked(id, hash)
-            } else if manifest.native.is_some() {
-                catalogue.revoked.iter().find(|row| {
-                    row.id == id
-                        && row
-                            .sha256
-                            .as_ref()
-                            .is_some_and(|listed| listed.eq_ignore_ascii_case(hash))
-                })
-            } else {
-                None
-            }
+        let revocation = catalogue.and_then(|catalogue| {
+            package.digest.as_ref().and_then(|hash| {
+                if package.owned {
+                    catalogue.revoked(id, hash)
+                } else if manifest.native.is_some() {
+                    catalogue.revoked.iter().find(|row| {
+                        row.id == id
+                            && row
+                                .sha256
+                                .as_ref()
+                                .is_some_and(|listed| listed.eq_ignore_ascii_case(hash))
+                    })
+                } else {
+                    None
+                }
+            })
         });
         if let Some(revocation) = revocation {
             return Err(InstallError::Refused(trf(
@@ -955,6 +978,11 @@ impl Document {
         }
         Ok(())
     }
+    fn remove(&mut self, id: &str) -> Result<(), String> {
+        let i = self.position(id)?.ok_or_else(unproved_mods)?;
+        self.rows.entries.remove(i);
+        Ok(())
+    }
     fn replace(&mut self, entry: &installed::Entry) -> Result<(), String> {
         let encoded = serde_json::to_value(entry).map_err(|e| e.to_string())?;
         let mut fields = match self.row(&entry.project)? {
@@ -989,4 +1017,4 @@ fn at(path: &Path, error: impl std::fmt::Display) -> String {
 mod mutations;
 #[cfg(test)]
 mod tests;
-pub use mutations::ChangeImpact;
+pub use mutations::{check_activation, remove_mods, ChangeImpact};

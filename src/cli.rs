@@ -525,12 +525,15 @@ enum ModsCmd {
         #[arg(long)]
         trust_native_code: bool,
     },
-    /// Remove a pack the browser installed
+    /// Remove a mod or pack the browser installed
     Remove {
         project: String,
         /// The profile (default: the selected one)
         #[arg(long)]
         instance: Option<String>,
+        /// Allow removal even if it could remove content from a saved world
+        #[arg(long)]
+        confirm_world_loss: bool,
     },
     /// Turn on a mod the browser installed (sunrise-mods.txt; the game's Mods screen has no
     /// switch)
@@ -2557,13 +2560,45 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                 }
             }
         }
-        ModsCmd::Remove { project, .. } if github_mods::origin(&home, &project).is_some() => {
-            github_mods::remove(&home, &project)?;
-            println!("Removed {project} (installed from GitHub).");
-        }
-        ModsCmd::Remove { project, .. } => {
-            let e = installed::remove(&home, &project)?;
-            println!("Removed {} ({}).", e.title, e.file);
+        ModsCmd::Remove {
+            project,
+            confirm_world_loss,
+            ..
+        } => {
+            let identity = sunrise_launcher::profile_txn::Identity::of(&home);
+            let list = installed::Installed::read(&home)?;
+            let registry = list
+                .lookup(&project)
+                .filter(|row| row.kind == Kind::Mod && row.source == SourceId::Sunrise);
+            let github = github_mods::origin(&home, &project).is_some();
+            if instance.kind != instances::Kind::Pack && (registry.is_some() || github) {
+                let id = registry.map_or(project, |row| row.project.clone());
+                let removed = sunrise::remove_mods(
+                    &instance,
+                    identity?,
+                    &[id],
+                    || sunrise_launcher::managed_play::headless_first(&instance, None),
+                    mutation_hooks(),
+                    &|impact| approve(impact, confirm_world_loss),
+                )
+                .map_err(|e| match e {
+                    sunrise::InstallError::Cancelled => tr("Nothing was removed.").into(),
+                    e => e.to_string(),
+                })?;
+                if as_json {
+                    json(removed.into());
+                } else {
+                    for name in removed {
+                        println!("{}", trf("Removed {mod}.", &[("mod", &name)]));
+                    }
+                }
+            } else if github {
+                github_mods::remove(&home, &project)?;
+                println!("Removed {project} (installed from GitHub).");
+            } else {
+                let e = installed::remove(&home, &project)?;
+                println!("Removed {} ({}).", e.title, e.file);
+            }
         }
         ModsCmd::Enable { project, .. } | ModsCmd::Disable { project, .. } => {
             let e = installed::Installed::load(&home)
@@ -2584,6 +2619,11 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                 {
                     return Err(format!("{} was taken down: {}", e.title, r.reason));
                 }
+            }
+            let _manifest =
+                sunrise_launcher::browser::lock_home(&home).map_err(|e| e.to_string())?;
+            if on && e.source == SourceId::Sunrise && instance.kind != instances::Kind::Pack {
+                sunrise::check_activation(&home, &[id])?;
             }
             sunrise_launcher::browser::mod_list::set_enabled(&home, id, on)?;
             println!("{} is {}.", e.title, if on { "on" } else { "off" });

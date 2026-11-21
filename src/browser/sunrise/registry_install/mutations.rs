@@ -81,6 +81,10 @@ pub struct ChangeImpact {
 #[derive(Debug)]
 pub(super) enum Change {
     Update(Vec<String>),
+    Remove {
+        removed: Vec<String>,
+        disabled: Vec<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -121,12 +125,26 @@ impl ChangeImpact {
         !self.affected.is_empty()
     }
 
+    pub fn is_removal(&self) -> bool {
+        matches!(self.change, Change::Remove { .. })
+    }
+
     pub fn detail(&self) -> String {
         let mut lines = Vec::new();
         let action = match &self.change {
             Change::Update(mods) => {
                 lines.push(trf("Update: {mods}.", &[("mods", &mods.join(", "))]));
                 tr("update")
+            }
+            Change::Remove { removed, disabled } => {
+                lines.push(trf("Remove: {mods}.", &[("mods", &removed.join(", "))]));
+                if !disabled.is_empty() {
+                    lines.push(trf(
+                        "These mods need the ones you are removing. They will be turned off, but their files will stay installed: {mods}.",
+                        &[("mods", &disabled.join(", "))],
+                    ));
+                }
+                tr("removal")
             }
         };
         match self.affected.len() {
@@ -155,4 +173,145 @@ impl ChangeImpact {
         }
         Ok(())
     }
+}
+
+/// The ordinary enable switch must not reactivate a mod missing a required dependency. Call under the game's manifest lock and write the list under the same lock.
+pub fn check_activation(home: &Path, activate: &[&str]) -> Result<(), String> {
+    let packages = inventory(home)?;
+    let mut enabled = enabled(home)?;
+    enabled.extend(activate.iter().map(|&id| id.to_owned()));
+    let manifests = packages
+        .iter()
+        .filter(|(id, _)| enabled.contains(*id))
+        .map(|(id, p)| (id.as_str(), &p.package.manifest))
+        .collect::<BTreeMap<_, _>>();
+    let mut visited = BTreeSet::new();
+    let mut remaining = activate.to_vec();
+    while let Some(id) = remaining.pop() {
+        if !visited.insert(id) {
+            continue;
+        }
+        let target = manifests.get(id).ok_or_else(unproved_mods)?;
+        for (name, dep) in &target.dependencies {
+            let requirement = dep.details();
+            if requirement.optional {
+                continue;
+            }
+            if !manifests.get(name.as_str()).is_some_and(|other| {
+                parse_version(&other.version)
+                    .is_ok_and(|version| requirement.version.matches(&version))
+            }) {
+                return Err(trf("{mod} needs {required} {version}. Install or turn on a version that fits before trying again.", &[
+                    ("mod", &target.name), ("required", name), ("version", &requirement.version.to_string()),
+                ]));
+            }
+            remaining.push(name.as_str());
+        }
+    }
+    Ok(())
+}
+
+/// Remove exact owned archive(s) and disable, rather than delete, the required dependent closure.
+pub fn remove_mods(
+    instance: &Instance,
+    identity: Identity,
+    ids: &[String],
+    choose: impl FnOnce() -> Result<FirstBuild, String>,
+    hooks: InstallHooks<'_>,
+    approve: &dyn Fn(&ChangeImpact) -> bool,
+) -> Result<Vec<String>, InstallError> {
+    if instance.kind == InstanceKind::Pack || ids.is_empty() {
+        return Err(InstallError::Cancelled);
+    }
+    (hooks.progress)(InstallProgress::Checking);
+    let mut profile =
+        Profile::open_for(&instance.home, None, Some(identity)).map_err(String::from)?;
+    let edit = profile.begin_edit(
+        choose,
+        |f| (hooks.progress)(InstallProgress::Downloading(f)),
+        &|_| (hooks.progress)(InstallProgress::Preparing),
+    )?;
+    let next = edit.candidate()?;
+    let home = next.path();
+    let present = inventory(home)?;
+    let ids = ids.iter().cloned().collect::<BTreeSet<_>>();
+    let mut rows = Document::read(home)?;
+    let enabled = enabled(home)?;
+    let mut changed_rows = false;
+    for id in &ids {
+        let item = present.get(id).ok_or_else(|| {
+            trf(
+                "Couldn't verify the installed file for {mod}. Nothing was removed.",
+                &[("mod", id)],
+            )
+        })?;
+        if item.owned {
+            rows.remove(id)?;
+            changed_rows = true;
+        } else if item.github_origin(home).is_some() {
+            let origin = item.package.path.with_extension("origin.json");
+            fs::remove_file(&origin).map_err(|e| at(&origin, e))?;
+        } else {
+            return Err(InstallError::Refused(trf(
+                "{mod} isn't an installed registry or GitHub mod. Nothing was removed.",
+                &[("mod", &item.package.manifest.name)],
+            )));
+        }
+        fs::remove_file(&item.package.path).map_err(|e| at(&item.package.path, e))?;
+    }
+    if changed_rows {
+        rows.write(home)?;
+    }
+
+    // Only propagate along actual, enabled, required edges. Keep every dependent path and
+    // provenance byte; validate the effective enabled graph separately after changing its list.
+    let mut disabled = BTreeSet::new();
+    let mut unavailable = ids.clone();
+    loop {
+        let before = unavailable.len();
+        for (id, item) in &present {
+            if !unavailable.contains(id)
+                && enabled.contains(id)
+                && item
+                    .package
+                    .manifest
+                    .dependencies
+                    .iter()
+                    .any(|(dep, rule)| !rule.details().optional && unavailable.contains(dep))
+            {
+                disabled.insert(id.clone());
+                unavailable.insert(id.clone());
+            }
+        }
+        if before == unavailable.len() {
+            break;
+        }
+    }
+    let disabled_ids = unavailable.iter().map(String::as_str).collect::<Vec<_>>();
+    mod_list::set_all_enabled(home, &disabled_ids, false)?;
+    if let Some(conflict) = manifest_conflict(home, None)? {
+        return Err(InstallError::Refused(conflict.reason));
+    }
+    let named = |id: &String| format!("{} ({id})", present[id].package.manifest.name);
+    let removed = ids.iter().map(named).collect::<Vec<_>>();
+    let affected = unavailable.into_iter().collect::<Vec<_>>();
+    let impact = ChangeImpact::read(
+        &instance.home,
+        Change::Remove {
+            removed: removed.clone(),
+            disabled: disabled.iter().map(named).collect(),
+        },
+        &affected,
+    )?;
+    if !approve(&impact) {
+        return Err(InstallError::Cancelled);
+    }
+    let cancellation = native_mods::Cancellation::default();
+    let proof = prove_edit(&edit, home, instance, &cancellation, &hooks)
+        .map_err(|e| InstallError::Unproved(e.into()))?;
+    (hooks.progress)(InstallProgress::Publishing);
+    edit.publish(proof, &cancellation, || {
+        impact.recheck(&instance.home, &affected)
+    })?;
+    Ok(removed)
 }
