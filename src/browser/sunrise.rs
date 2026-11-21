@@ -1590,7 +1590,6 @@ fn check_baked_revocations(
 }
 
 pub mod auto;
-mod content_loss;
 mod dependencies;
 pub mod pack;
 mod registry_install;

@@ -201,8 +201,15 @@ impl Client<'_> {
             let _manifest = game_lock(&home)?;
             crate::browser::installed::recover_game_install(&home).map_err(StartError::Journal)?;
             let notices = catalogue::inspect(&home, load_catalogue)?;
+            let registry = crate::browser::sunrise::fetched_index();
             let active = profile
-                .refresh(mode, cancellation, native, native_consent)
+                .refresh(
+                    mode,
+                    cancellation,
+                    native,
+                    native_consent,
+                    registry.as_deref(),
+                )
                 .map_err(StartError::Native)?
                 .ok_or_else(unsettled)?;
             return Ok((active, notices));

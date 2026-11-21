@@ -12,7 +12,7 @@ pub use client::{headless_first, Client, Progress, StartError, Started};
 pub(crate) use first::CandidateImage;
 pub use first::{FirstAttempt, FirstBuild, Profile};
 use inputs::inputs;
-pub use inputs::{scan_packages, ScannedPackage};
+pub use inputs::{registry_row_matches, scan_packages, ScannedPackage};
 
 /// Called only within the cache publication fence immediately before detaching a build.
 pub(crate) fn authorize_cache_removal(tag: &str) -> Result<(), crate::native_cache::Error> {
@@ -513,9 +513,15 @@ impl Active {
     pub fn base(&self) -> &str {
         &self.base.tag
     }
+
     pub fn generation(&self) -> u64 {
         self.generation
     }
+
+    pub(crate) fn same_base(&self, other: &Self) -> bool {
+        self.base == other.base && self.variant == other.variant
+    }
+
     pub fn executable(&self) -> &str {
         &self.executable.tag
     }

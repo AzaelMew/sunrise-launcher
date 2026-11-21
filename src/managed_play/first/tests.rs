@@ -190,8 +190,40 @@ fn game_replacements_repair_only_owned_row_fields_and_advance_the_same_base() {
                 "stale game launched"
             ))
             .is_err());
+        // Play can adopt a local file as input, but an old matching path can't turn
+        // those new bytes into a registry archive. Only the proved release may restamp it.
+        let local = profile
+            .refresh(
+                native_mods::Profile::Optimized,
+                &cancellation,
+                |_| {},
+                None,
+                None,
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(local.generation, previous.generation + 1);
+        assert_eq!(
+            serde_json::from_slice::<Value>(&fs::read(&path).unwrap()).unwrap(),
+            expected
+        );
+        previous = local;
+        let digest = index::sha256_file(&package).unwrap();
+        let registry: index::Index = serde_json::from_value(json!({"schema":1,"projects":[{
+            "id":"lantern", "kind":"mod", "name":"Lantern", "summary":"A test lamp",
+            "license":"MIT", "source":"https://example.invalid/lantern", "versions":[{
+                "version": version, "api": manifest::API, "game":"26.3",
+                "file":{"name":"lantern.smod", "url":"https://example.invalid/lantern.smod", "size":fs::metadata(&package).unwrap().len(),"sha256":digest}
+            }]
+        }]})).unwrap();
         let current = profile
-            .refresh(native_mods::Profile::Optimized, &cancellation, |_| {}, None)
+            .refresh(
+                native_mods::Profile::Optimized,
+                &cancellation,
+                |_| {},
+                None,
+                Some(&registry),
+            )
             .unwrap()
             .unwrap();
         assert_eq!(current.profile, previous.profile);
@@ -219,7 +251,13 @@ fn game_replacements_repair_only_owned_row_fields_and_advance_the_same_base() {
     let before = serde_json::to_vec(&expected).unwrap();
     fs::write(&path, &before).unwrap();
     assert!(profile
-        .refresh(native_mods::Profile::Optimized, &cancellation, |_| {}, None)
+        .refresh(
+            native_mods::Profile::Optimized,
+            &cancellation,
+            |_| {},
+            None,
+            None
+        )
         .is_err());
     assert_eq!(profile.active().unwrap(), Some(previous));
     assert_eq!(fs::read(&path).unwrap(), before);

@@ -285,12 +285,13 @@ impl Edit<'_> {
     }
 
     /// Verify the exact live and candidate images plus any extra evidence at cutoff.
-    pub(crate) fn publish_install(
+    /// Keep the returned authorization guard alive through publication.
+    pub(crate) fn publish_install<G>(
         self,
         proof: CandidateImage,
         cancellation: &native_mods::Cancellation,
         restored: &BTreeSet<String>,
-        authorize: impl FnOnce() -> Result<(), String>,
+        authorize: impl FnOnce() -> Result<G, String>,
     ) -> Result<Active, String> {
         self.publish_inner(proof, cancellation, None, restored, authorize, || Ok(()))
     }
@@ -322,13 +323,13 @@ impl Edit<'_> {
         self.publish_inner(proof, cancellation, receipt, &retired, authorize, at_cutoff)
     }
 
-    fn publish_inner(
+    fn publish_inner<G>(
         self,
         proof: CandidateImage,
         cancellation: &native_mods::Cancellation,
         receipt: Option<Receipt>,
         retired_holds: &BTreeSet<String>,
-        authorize: impl FnOnce() -> Result<(), String>,
+        authorize: impl FnOnce() -> Result<G, String>,
         at_cutoff: impl FnOnce() -> Result<(), String>,
     ) -> Result<Active, String> {
         let resources = match &self.basis {
@@ -428,7 +429,7 @@ impl Edit<'_> {
         let pointer = serde_json::to_vec(&active).map_err(|e| e.to_string())?;
         Active::parse(&pointer)?;
         stage.seal(pointer, &files)?.publish(|| {
-            authorize()?;
+            let authorization = authorize()?;
             active.verify_artifacts()?;
             if inputs(&self.home, None)? != self.before
                 || inputs(&proof.candidate, None)? != proof.inputs
@@ -437,7 +438,7 @@ impl Edit<'_> {
             }
             let permission = cancellation.begin_publication()?;
             at_cutoff()?;
-            Ok(permission)
+            Ok((authorization, permission))
         })?;
         Ok(active)
     }

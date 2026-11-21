@@ -556,34 +556,51 @@ pub fn install_registry(
                 .map_err(|e| InstallError::Unproved(e.into()))?;
             }
         }
-        let fence = if let Some(approve) = hooks.resolve.filter(|_| !disabled.is_empty()) {
-            let question =
-                conflicts::question(&catalogue, &roots, &before, next.path(), &disabled)?;
-            let affected = crate::worlds::unproved_mod_effects(
-                old.path(),
-                edit.current(),
-                next.path(),
-                edit.current(),
-                disabled
-                    .iter()
-                    .copied()
-                    .chain(entries.keys().map(String::as_str)),
-            )?;
-            let (fence, worlds) = Fence::hold(
-                &instance.home,
-                affected,
-                |id| &before[id].package.manifest.name,
-                None,
-            )?;
-            if !approve(&ResolveQuestion { worlds, ..question }) {
-                return Err(InstallError::Cancelled);
-            }
-            Some(fence)
-        } else {
-            // Ordinary Update/Remove world approval is separate from conflict resolution.
-            guard_replacements(&instance.home, next.path(), &before, &entries)?;
-            None
-        };
+        let (fence, replacements) =
+            if let Some(approve) = hooks.resolve.filter(|_| !disabled.is_empty()) {
+                let question =
+                    conflicts::question(&catalogue, &roots, &before, next.path(), &disabled)?;
+                let affected = crate::worlds::unproved_mod_effects(
+                    old.path(),
+                    edit.current(),
+                    next.path(),
+                    edit.current(),
+                    disabled
+                        .iter()
+                        .copied()
+                        .chain(entries.keys().map(String::as_str)),
+                )?;
+                let (fence, worlds) = Fence::hold(
+                    &instance.home,
+                    affected,
+                    |id| &before[id].package.manifest.name,
+                    None,
+                )?;
+                if !approve(&ResolveQuestion { worlds, ..question }) {
+                    return Err(InstallError::Cancelled);
+                }
+                (Some(fence), None)
+            } else {
+                // One-click Install cannot consent to replace definitions a saved world may use.
+                let mut replaced = entries
+                    .keys()
+                    .filter(|id| before.contains_key(*id))
+                    .map(String::as_str)
+                    .peekable();
+                let suspect = if replaced.peek().is_some() {
+                    crate::worlds::unproved_mod_effects(
+                        old.path(),
+                        edit.current(),
+                        next.path(),
+                        edit.current(),
+                        replaced,
+                    )?
+                } else {
+                    crate::worlds::SuspectMods::new()
+                };
+                let reviewed = guard_replacements(&instance.home, &suspect)?;
+                (None, Some((suspect, reviewed)))
+            };
         let restored = restores
             .keys()
             .filter(|id| entries.contains_key(*id))
@@ -599,9 +616,20 @@ pub fn install_registry(
             if source_bytes != current {
                 return Err(registry_changed());
             }
-            match &fence {
-                Some(fence) => fence.revalidate(&instance.home),
-                None => guard_replacements(&instance.home, next.path(), &before, &entries),
+            if let Some(fence) = &fence {
+                fence.revalidate(&instance.home)?;
+            }
+            if let Some((suspect, reviewed)) = replacements {
+                let guard = crate::worlds::lock_reviewed(&reviewed)?;
+                if reviewed != guard_replacements(&instance.home, &suspect)? {
+                    return Err(tr(
+                        "The affected worlds changed after review. Nothing was changed; try again.",
+                    )
+                    .into());
+                }
+                Ok(Some(guard))
+            } else {
+                Ok(None)
             }
         })?;
         for (id, entry) in entries {
@@ -657,21 +685,20 @@ fn inventory(home: &Path) -> Result<Inventory, String> {
             let row: Option<installed::Entry> = doc
                 .row(&id)?
                 .and_then(|row| serde_json::from_value(row.clone()).ok());
-            let registry_claim = row.as_ref().is_some_and(|row| {
+            let claim = row.as_ref().zip(digest.as_deref()).filter(|(row, _)| {
                 row.source == SourceId::Sunrise
                     && row.kind == Kind::Mod
-                    && row.project == id
                     && row.path(home).as_ref() == Some(&p.path)
             });
-            let mut owned = false;
-            if let Some(row) = row.filter(|_| registry_claim) {
+            let registry_claim = claim.is_some();
+            let owned = if let Some((row, digest)) = claim {
                 doc.rows
                     .check_other_claims(home, &id, &row.file)
-                    .map_err(|e| e.render(trf))?;
-                owned = digest.as_deref().is_some_and(|digest| {
-                    managed_play::registry_row_matches(home, &row, &p, digest)
-                });
-            }
+                    .map_err(|error| error.render(trf))?;
+                managed_play::registry_row_matches(home, row, &p, digest)
+            } else {
+                false
+            };
             Ok((
                 id,
                 SeenPackage {
@@ -928,40 +955,20 @@ fn restore_or_disable(
 
 fn guard_replacements(
     home: &Path,
-    candidate: &Path,
-    before: &Inventory,
-    entries: &BTreeMap<String, installed::Entry>,
-) -> Result<(), String> {
-    for (id, entry) in entries {
-        let Some(old) = before.get(id) else {
-            continue;
-        };
-        if !mod_list::is_enabled(home, id) {
-            continue;
-        }
-        let unknown = old.package.manifest.native.is_some();
-        if unknown
-            || !super::content_loss::dropped(&old.package.path, &candidate.join(&entry.file))?
-                .is_empty()
-        {
-            let saves = home.join("saves");
-            match fs::read_dir(&saves) {
-                Ok(mut rows) => {
-                    if rows
-                        .next()
-                        .transpose()
-                        .map_err(|e| at(&saves, e))?
-                        .is_some()
-                    {
-                        return Err(trf("Installing this version of {mod} could remove content from saved worlds. Nothing was installed.", &[("mod", &entry.title)]));
-                    }
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
-                Err(error) => return Err(at(&saves, error)),
-            }
-        }
+    suspect: &crate::worlds::SuspectMods,
+) -> Result<Vec<crate::worlds::WorldRisk>, String> {
+    if suspect.is_empty() {
+        return Ok(Vec::new());
     }
-    Ok(())
+    let reviewed = crate::worlds::review_risk(home, suspect)?;
+    if let Some(mods) = reviewed
+        .iter()
+        .find(|world| !world.mods.is_empty())
+        .map(|world| world.mods.join(", "))
+    {
+        return Err(trf("Installing this version of {mod} could remove content from saved worlds. Nothing was installed.", &[("mod", &mods)]));
+    }
+    Ok(reviewed)
 }
 
 struct Document {
