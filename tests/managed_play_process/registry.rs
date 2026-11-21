@@ -54,7 +54,7 @@ pub(super) fn ordinary_install() {
         version.capabilities = facts.capabilities.into();
         version.dependencies = None;
         version.file = index::File {
-            name: name.clone(), url: format!("file://{}", path.display()),
+            name: name.clone(), url: url::Url::from_file_path(&path).unwrap().to_string(),
             size: bytes.len() as u64, sha256: index::sha256(&bytes), signature: None,
         };
         (index::Project { id: id.into(), name: id.into(), key: None, versions: vec![version], ..template.clone() }, name, bytes)
@@ -64,7 +64,10 @@ pub(super) fn ordinary_install() {
         .map(|(project, _, _)| project.clone())
         .collect();
     let registry = root.join("index.json");
-    fs::write(&registry, serde_json::to_vec(&index).unwrap()).unwrap();
+    let text = serde_json::to_string(&index).unwrap();
+    let parsed = index::Index::parse_local(&text).unwrap();
+    assert!(parsed.left_out.is_empty(), "{:?}", parsed.left_out);
+    fs::write(&registry, text).unwrap();
     let launcher = |args: &[&str]| {
         let mut command = Command::new(env!("CARGO_BIN_EXE_sunrise-launcher"));
         command
