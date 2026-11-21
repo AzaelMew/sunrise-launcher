@@ -97,7 +97,38 @@ pub fn install(
     side: Side,
     native_fits: impl Fn(&Project, &Version) -> bool,
 ) -> InstallPlan {
-    plan_install(index, requests, installed, game, side, native_fits, None).0
+    install_with_messages(index, requests, installed, game, side, native_fits, english)
+}
+
+/// Templates belong to the solver; applications supply their own translation at presentation.
+pub type Messages = fn(&str, &[(&str, &str)]) -> String;
+
+fn english(template: &str, args: &[(&str, &str)]) -> String {
+    args.iter()
+        .fold(template.to_owned(), |message, (name, value)| {
+            message.replace(&format!("{{{name}}}"), value)
+        })
+}
+
+pub fn install_with_messages(
+    index: &Index,
+    requests: &[Request],
+    installed: &[InstalledMod],
+    game: &str,
+    side: Side,
+    native_fits: impl Fn(&Project, &Version) -> bool,
+    messages: Messages,
+) -> InstallPlan {
+    plan_install(
+        index,
+        requests,
+        installed,
+        game,
+        side,
+        native_fits,
+        (messages, None),
+    )
+    .0
 }
 
 /// An exact operation cannot use a compatible subset, or report unexamined choices as no fit.
@@ -114,14 +145,19 @@ pub struct ManifestConflict {
     pub reason: String,
 }
 
+pub struct WholeOptions<'a, F> {
+    pub conflicts: &'a [ManifestConflict],
+    pub native_fits: F,
+    pub messages: Messages,
+}
+
 pub fn install_whole(
     index: &Index,
     requests: &[Request],
     installed: &[InstalledMod],
     game: &str,
     side: Side,
-    conflicts: &[ManifestConflict],
-    native_fits: impl Fn(&Project, &Version) -> bool,
+    options: WholeOptions<'_, impl Fn(&Project, &Version) -> bool>,
 ) -> Result<InstallPlan, WholeRefusal> {
     let (plan, refusal) = plan_install(
         index,
@@ -129,8 +165,8 @@ pub fn install_whole(
         installed,
         game,
         side,
-        native_fits,
-        Some(conflicts),
+        options.native_fits,
+        (options.messages, Some(options.conflicts)),
     );
     refusal.map_or(Ok(plan), Err)
 }
@@ -142,7 +178,7 @@ fn plan_install(
     game: &str,
     side: Side,
     native_fits: impl Fn(&Project, &Version) -> bool,
-    conflicts: Option<&[ManifestConflict]>,
+    (message, conflicts): (Messages, Option<&[ManifestConflict]>),
 ) -> (InstallPlan, Option<WholeRefusal>) {
     let whole = conflicts.is_some();
     let mut plan = InstallPlan::default();
@@ -162,9 +198,13 @@ fn plan_install(
         if let Some(previous) = present.insert(m.id.as_str(), m)
             && previous != m
         {
-            let reason = format!(
-                "{} has conflicting installed files ({} and {}): keep only one",
-                m.id, previous.version, m.version
+            let reason = message(
+                "{mod} has conflicting installed files ({previous} and {current}): keep only one",
+                &[
+                    ("mod", &m.id),
+                    ("previous", &previous.version),
+                    ("current", &m.version),
+                ],
             );
             if whole {
                 return (plan, Some(WholeRefusal::Unproved(reason)));
@@ -175,6 +215,7 @@ fn plan_install(
     }
     let mut catalog = Catalog::new(index, game, side, native_fits, &present);
     catalog.conflicts = conflicts.unwrap_or_default();
+    catalog.message = message;
     let installed_choices: Selected<'_> = present
         .keys()
         .filter_map(|&id| Some((id, catalog.mods.get(id)?.iter().find(|c| c.installed)?)))
@@ -345,6 +386,7 @@ struct Catalog<'a> {
     game: &'a str,
     mods: BTreeMap<&'a str, Vec<Candidate<'a>>>,
     conflicts: &'a [ManifestConflict],
+    message: Messages,
 }
 
 type Roots<'a> = BTreeMap<&'a str, Vec<&'a str>>;
@@ -454,15 +496,16 @@ impl Need<'_> {
             })
     }
 
-    fn describe(&self) -> String {
+    fn describe(&self, message: Messages) -> String {
         self.pins
             .iter()
-            .map(|v| format!("requested {v}"))
-            .chain(
-                self.ranges
-                    .iter()
-                    .map(|(owner, r)| format!("{owner} needs {}", r.row.version)),
-            )
+            .map(|v| message("requested {version}", &[("version", v)]))
+            .chain(self.ranges.iter().map(|(owner, r)| {
+                message(
+                    "{owner} needs {range}",
+                    &[("owner", owner), ("range", &r.row.version)],
+                )
+            }))
             .collect::<Vec<_>>()
             .join("; ")
     }
@@ -505,8 +548,8 @@ impl<'a> Catalog<'a> {
                                 Fit::Revoked
                             } else if v.game != game {
                                 Fit::WrongGame
-                            } else if let Some(reason) = v.capabilities.unsupported() {
-                                Fit::Unsupported(reason)
+                            } else if !v.capabilities.unknown().is_empty() {
+                                Fit::Unsupported(v.capabilities.unknown().join(", "))
                             } else if p.kind == Kind::NativeMod && !native_fits(p, v) {
                                 Fit::WrongSunrise
                             } else {
@@ -549,22 +592,27 @@ impl<'a> Catalog<'a> {
             game,
             mods,
             conflicts: &[],
+            message: english,
         }
     }
 
     fn choices(&self, id: &str, need: &Need<'_>) -> Result<Vec<&Candidate<'a>>, String> {
+        let message = self.message;
         let describe = || {
-            let needs = need.describe();
+            let needs = need.describe(message);
             if needs.is_empty() {
                 id.to_owned()
             } else {
-                format!("{id} ({needs})")
+                message(
+                    "{mod} ({requirements})",
+                    &[("mod", id), ("requirements", &needs)],
+                )
             }
         };
         let Some(versions) = self.mods.get(id) else {
-            return Err(format!(
-                "{}: not listed as a mod in the registry",
-                describe()
+            return Err(message(
+                "{mod}: not listed as a mod in the registry",
+                &[("mod", &describe())],
             ));
         };
         let mut matches = versions.iter().filter(|c| need.accepts(c)).peekable();
@@ -584,44 +632,50 @@ impl<'a> Catalog<'a> {
                             })
                     })
             {
-                return Err(format!(
-                    "{}: no listed version satisfies all requirements; use a range that names the prerelease, such as ={pre}",
-                    describe()
+                return Err(message(
+                    "{mod}: no listed version satisfies all requirements; use a range that names the prerelease, such as ={version}",
+                    &[("mod", &describe()), ("version", &pre.to_string())],
                 ));
             }
-            return Err(format!(
-                "{}: no listed version satisfies all requirements",
-                describe()
+            return Err(message(
+                "{mod}: no listed version satisfies all requirements",
+                &[("mod", &describe())],
             ));
         }
         let mut unrevoked = matches.filter(|c| c.fit != Fit::Revoked).peekable();
         if unrevoked.peek().is_none() {
-            return Err(format!(
-                "{}: every matching version was taken down",
-                describe()
+            return Err(message(
+                "{mod}: every matching version was taken down",
+                &[("mod", &describe())],
             ));
         }
         let mut game_fits = unrevoked.filter(|c| c.fit != Fit::WrongGame).peekable();
         let Some(first) = game_fits.peek().copied() else {
-            return Err(format!(
-                "{}: no matching version fits this instance (Minecraft {})",
-                describe(),
-                self.game
+            return Err(message(
+                "{mod}: no matching version fits this instance (Minecraft {game})",
+                &[("mod", &describe()), ("game", self.game)],
             ));
         };
         let mut supported = game_fits
             .filter(|c| !matches!(c.fit, Fit::Unsupported(_)))
             .peekable();
         if supported.peek().is_none()
-            && let Fit::Unsupported(reason) = &first.fit
+            && let Fit::Unsupported(capabilities) = &first.fit
         {
-            return Err(format!("{} {}: {reason}", describe(), first.version));
+            return Err(message(
+                "{mod} {version}: it asks for {capabilities}, which this Sunrise doesn't have",
+                &[
+                    ("mod", &describe()),
+                    ("version", first.version),
+                    ("capabilities", capabilities),
+                ],
+            ));
         }
         let fits: Vec<_> = supported.filter(|c| c.fit == Fit::Yes).collect();
         if fits.is_empty() {
-            return Err(format!(
-                "{}: no matching native version fits this Sunrise build",
-                describe()
+            return Err(message(
+                "{mod}: no matching native version fits this Sunrise build",
+                &[("mod", &describe())],
             ));
         }
         Ok(fits)
@@ -676,7 +730,10 @@ impl<'a> Catalog<'a> {
                             refuse(
                                 plan,
                                 &roots,
-                                &format!("{ids} cannot be installed together: {}", failure.reason),
+                                &(self.message)(
+                                    "{mods} cannot be installed together: {reason}",
+                                    &[("mods", &ids), ("reason", &failure.reason)],
+                                ),
                             );
                             continue;
                         }
@@ -695,7 +752,11 @@ impl<'a> Catalog<'a> {
                 // A speculative selection must not cause a viable request to be refused.
                 for group in component {
                     if let Some(failure) = group.blocked {
-                        refuse(plan, &group.roots, limit.unwrap_or(&failure.reason));
+                        refuse(
+                            plan,
+                            &group.roots,
+                            limit.as_deref().unwrap_or(&failure.reason),
+                        );
                     } else {
                         groups.push(group);
                     }
@@ -718,7 +779,7 @@ impl<'a> Catalog<'a> {
         installed: &Selected<'s>,
         budget: &mut usize,
         plan: &mut InstallPlan,
-    ) -> Result<Option<Group<'s>>, &'static str> {
+    ) -> Result<Option<Group<'s>>, String> {
         let blocked: Vec<_> = component
             .iter()
             .enumerate()
@@ -757,9 +818,10 @@ impl<'a> Catalog<'a> {
             }
         }
         if *budget == 0 {
-            return Err(
+            return Err((self.message)(
                 "dependency subgroup resolution limit reached; try fewer requests or pin a version",
-            );
+                &[],
+            ));
         }
         Ok(None)
     }
@@ -782,6 +844,7 @@ impl<'a> Catalog<'a> {
         installed: &Selected<'s>,
         budget: &mut usize,
     ) -> Result<Selected<'s>, SolveFailure<'s>> {
+        let message = self.message;
         let mut selected = Selected::new();
         let mut stack = Vec::<(&str, std::vec::IntoIter<&Candidate<'_>>)>::new();
         let mut failure = None;
@@ -841,10 +904,7 @@ impl<'a> Catalog<'a> {
                             {
                                 replacements.insert(target);
                                 optional_refusal.get_or_insert_with(|| {
-                                    format!(
-                                        "{target} {} is installed, but {owner} needs {}",
-                                        row.version, range.row.version
-                                    )
+                                    message("{target} {version} is installed, but {owner} needs {range}", &[("target", target), ("version", row.version), ("owner", owner), ("range", &range.row.version)])
                                 });
                             }
                         }
@@ -877,10 +937,13 @@ impl<'a> Catalog<'a> {
                     {
                         // Distinguish a true disjoint range from a choice another branch can undo.
                         self.choices(id, need)?;
-                        return Err(format!(
-                            "{id} {} does not fit all requirements ({})",
-                            chosen.version,
-                            need.describe()
+                        return Err(message(
+                            "{mod} {version} does not fit all requirements ({requirements})",
+                            &[
+                                ("mod", id),
+                                ("version", chosen.version),
+                                ("requirements", &need.describe(message)),
+                            ],
                         ));
                     }
                 }
@@ -929,7 +992,10 @@ impl<'a> Catalog<'a> {
                         .into_iter()
                         .map(|i| format!("{} {}", nodes[i], selected[nodes[i]].version))
                         .collect();
-                    return Err(format!("required dependency cycle: {}", names.join(" -> ")));
+                    return Err(message(
+                        "required dependency cycle: {mods}",
+                        &[("mods", &names.join(" -> "))],
+                    ));
                 }
                 Ok(None)
             })();
@@ -950,17 +1016,21 @@ impl<'a> Catalog<'a> {
             }
             if stack.is_empty() {
                 return Err(SolveFailure {
-                    reason: failure
-                        .unwrap_or_else(|| "no consistent versions for the requested mods".into()),
+                    reason: failure.unwrap_or_else(|| {
+                        message("no consistent versions for the requested mods", &[])
+                    }),
                     limited: false,
                     replacements,
                 });
             }
         }
         Err(SolveFailure {
-            reason: format!(
-                "{}: dependency resolution limit reached; try fewer requests or pin a version",
-                roots.keys().copied().collect::<Vec<_>>().join(", ")
+            reason: message(
+                "{mods}: dependency resolution limit reached; try fewer requests or pin a version",
+                &[(
+                    "mods",
+                    &roots.keys().copied().collect::<Vec<_>>().join(", "),
+                )],
             ),
             limited: true,
             replacements,

@@ -288,6 +288,17 @@ impl Launcher {
         let gallery = self.gallery(p.screenshots.clone(), cx);
         let about = prose(self.theme, &p.description);
 
+        let unavailable = (installed_here.is_none() && p.fit.fits() && p.make == Make::Native)
+            .then(|| {
+                let index = sunrise::known_index()?;
+                let profile = self.selected_instance()?;
+                let base = self.version_of(profile).map(String::as_str);
+                let game = self.mods_game();
+                sunrise::NativeInstallReadiness::for_profile(&profile.home, base, &game)
+                    .block(&index, &p.id, &game)
+            })
+            .flatten();
+        let can_install = unavailable.is_none();
         let versions = card().children(p.versions.iter().enumerate().map(|(i, v)| {
             let installed = installed_here.as_deref() == Some(v.number.as_str());
             let will = p
@@ -325,12 +336,18 @@ impl Launcher {
                             (_, true, _) => div()
                                 .text_color(c(palette().success))
                                 .child(tr("Installed")),
-                            (None, _, true) => div()
+                            (None, _, true) if can_install => div()
                                 .text_color(c(palette().success))
                                 .child(tr("Fits your game · what Install adds")),
-                            (None, _, false) => div()
-                                .text_color(c(palette().success))
-                                .child(tr("Fits your game")),
+                            (None, _, _) => {
+                                div()
+                                    .text_color(c(palette().success))
+                                    .child(if can_install {
+                                        tr("Fits your game")
+                                    } else {
+                                        tr("Matches the game version")
+                                    })
+                            }
                             (Some(why), _, _) => {
                                 div().text_color(c(palette().muted)).child(why.clone())
                             }
@@ -390,7 +407,7 @@ impl Launcher {
                     .child(blocks::icon("check", 14., c(palette().success)))
                     .child(tr("Installed"))
                     .into_any_element(),
-                (None, fit, Some(_)) if fit.fits() => {
+                (None, fit, Some(_)) if fit.fits() && can_install => {
                     let b = primary("alt-project-add", self.registry_install_label())
                         .w_full()
                         .h(px(tokens::ACTION));
@@ -412,9 +429,9 @@ impl Launcher {
                     .child(dim(primary("alt-project-add", tr("Install"))
                         .w_full()
                         .h(px(tokens::ACTION))))
-                    .child(note(fit.reason().unwrap_or_else(|| {
-                        tr("No version fits this build.").to_string()
-                    })))
+                    .child(note(unavailable.or_else(|| fit.reason()).unwrap_or_else(
+                        || tr("No version fits this build.").to_string(),
+                    )))
                     .into_any_element(),
             }
         };
@@ -491,7 +508,7 @@ impl Launcher {
                 palette().muted,
             ));
         }
-        let game_line = p.another_build.then(|| {
+        let game_line = (p.another_build && can_install).then(|| {
             div()
                 .flex()
                 .items_start()
@@ -583,7 +600,10 @@ impl Launcher {
         let details = open.then(|| {
             let facts_line = p.will_install.as_ref().map(|w| {
                 let code = match p.make {
-                    Make::Native => tr("native code, built on this computer after you allow it"),
+                    Make::Native if can_install => {
+                        tr("native code, built on this computer after you allow it")
+                    }
+                    Make::Native => tr("native code"),
                     Make::Content => tr("content only, no native code"),
                 };
                 trf(

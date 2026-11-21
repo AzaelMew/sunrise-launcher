@@ -533,6 +533,7 @@ pub(crate) fn stage_fraction(step: InstallProgress) -> Option<f32> {
 fn failure_line(error: &InstallError) -> &'static str {
     match error {
         InstallError::Refused(_) => tr("Can't install these mods together"),
+        InstallError::Host(_) => tr("Native mods can't build on this computer"),
         InstallError::Unproved(_) => tr("Couldn't check that the mods fit"),
         InstallError::Download(_) => tr("Download failed. Try again"),
         InstallError::Compile(_) => tr("Couldn't build on your computer"),

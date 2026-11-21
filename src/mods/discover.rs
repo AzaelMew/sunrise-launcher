@@ -251,6 +251,12 @@ impl Launcher {
                 .child(order),
         );
 
+        // Read readiness once for this frame, separately from the catalogue filter.
+        let game = self.mods_game();
+        let readiness = self.selected_instance().map(|instance| {
+            let base = self.version_of(instance).map(String::as_str);
+            sunrise::NativeInstallReadiness::for_profile(&instance.home, base, &game)
+        });
         // The cards.
         let mut grid = div()
             .grid()
@@ -274,8 +280,12 @@ impl Launcher {
                 dim(crate::frame::button(("alt-add", n), label)).into_any_element()
             });
             let issue = self.registry_card_note(&id);
-            let note = issue
+            let unavailable = (!is_added && card_data.fit.fits() && card_data.make == Make::Native)
+                .then(|| readiness.as_ref()?.block(index.as_deref()?, &id, &game))
+                .flatten();
+            let note = unavailable
                 .clone()
+                .or_else(|| issue.clone())
                 .or_else(|| card_data.fit.reason().filter(|_| !is_added));
             let control = if working.is_some() {
                 working
@@ -283,6 +293,8 @@ impl Launcher {
                 Some(added_mark())
             } else if !card_data.fit.fits() {
                 None
+            } else if unavailable.is_some() {
+                Some(dim(crate::frame::button(("alt-add", n), tr("Install"))).into_any_element())
             } else {
                 let label = if card_data.members.is_some() {
                     tr("Choose mods").into()
@@ -329,7 +341,7 @@ impl Launcher {
             if let Some(name) = &card_data.part_of {
                 facts.push(muted(trf("Part of {collection}", &[("collection", name)])));
             }
-            if card_data.builds_locally && card_data.fit.fits() {
+            if card_data.builds_locally && card_data.fit.fits() && unavailable.is_none() {
                 facts.push(muted(tr("Builds on this computer")));
             }
             let open = id.clone();

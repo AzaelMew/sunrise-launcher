@@ -222,13 +222,14 @@ fn plan(
     held: &[InstalledMod],
     game: &str,
 ) -> InstallPlan {
-    resolve::install(
+    resolve::install_with_messages(
         index,
         &c.requests(chosen),
         held,
         game,
         Side::Both,
         |_, v| sunrise_launcher::browser::sunrise::fits_game(v, game),
+        sunrise_launcher::i18n::trf,
     )
 }
 

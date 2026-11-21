@@ -145,6 +145,23 @@ fn platform_for_game(base: &str) -> Result<BuildPlatform, String> {
     windows_build_platform(machine, host.target)
 }
 
+/// Only a known host or game-machine mismatch; missing or unreadable game files are not a verdict.
+pub(crate) fn known_host_block(base: Option<&str>) -> Option<String> {
+    let host = match rust_toolchain::host() {
+        Some(host) => host,
+        None => return Some(rust_toolchain::unsupported_host()),
+    };
+    if let Some(error) = backend::native_mod_architecture_error() {
+        return Some(error);
+    }
+    if cfg!(windows) {
+        let base = base?;
+        let machine = pe_machine(&backend::version_dir(base).join(backend::CLIENT)).ok()?;
+        return windows_build_platform(machine, host.target).err();
+    }
+    None
+}
+
 fn windows_build_platform(machine: u16, host_target: &str) -> Result<BuildPlatform, String> {
     let target = rust_toolchain::windows_target_for_machine(machine).ok_or_else(|| {
         architecture_mismatch(&format!("PE machine 0x{machine:04x}"), "x64 or ARM64")
@@ -1368,8 +1385,11 @@ fn pipeline(
     // made for it exactly. Any other build tests each mod made for another build (SDK design §10).
     let sdk = if developer {
         if let Some(list) = mismatch(&mods, &revision) {
-            let error = mismatch_error(&list);
             if options.exact_home.is_some() {
+                let error = trf(
+                    "Made for other Sunrise versions: {mods}; rebuild against this game.",
+                    &[("mods", &list)],
+                );
                 // A local developer checkout has no alternate surface to compare. An
                 // exact revision mismatch is a proved no-fit, not a failed SDK request.
                 let unfit: Vec<_> = mods
@@ -1389,7 +1409,7 @@ fn pipeline(
                     log: None,
                 });
             }
-            return Err(error.into());
+            return Err(mismatch_error(&list).into());
         }
         None
     } else {

@@ -38,6 +38,7 @@ pub enum InstallProgress {
 #[derive(Debug)]
 pub enum InstallError {
     Refused(String),
+    Host(String),
     Unproved(String),
     Download(String),
     Compile(BuildNotice),
@@ -47,7 +48,10 @@ pub enum InstallError {
 impl std::fmt::Display for InstallError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Refused(text) | Self::Unproved(text) | Self::Download(text) => f.write_str(text),
+            Self::Refused(text)
+            | Self::Host(text)
+            | Self::Unproved(text)
+            | Self::Download(text) => f.write_str(text),
             Self::Compile(failure) => f.write_str(&failure.detail),
             Self::Cancelled => f.write_str(tr("Install cancelled.")),
         }
@@ -211,8 +215,13 @@ pub fn install_registry(
             &held,
             &game,
             Side::Both,
-            &conflicts,
-            |p, v| !unfit.contains(&(p.id.clone(), v.version.clone())),
+            resolve::WholeOptions {
+                conflicts: &conflicts,
+                native_fits: |p: &index::Project, v: &index::Version| {
+                    !unfit.contains(&(p.id.clone(), v.version.clone()))
+                },
+                messages: trf,
+            },
         );
         let plan = match plan {
             Ok(plan) => plan,
@@ -244,14 +253,6 @@ pub fn install_registry(
             .collect::<Result<Vec<_>, String>>()?;
         if versions.is_empty() {
             return Ok(InstalledBatch::default());
-        }
-        if versions
-            .iter()
-            .any(|(p, _)| p.kind == index::Kind::NativeMod)
-        {
-            if let Some(error) = backend::native_mod_architecture_error() {
-                return Err(InstallError::Refused(error));
-            }
         }
         let next = edit.candidate()?;
         let mut entries = BTreeMap::new();
@@ -305,6 +306,9 @@ pub fn install_registry(
             })
             .collect();
         if !build_packages.is_empty() {
+            if let Some(error) = native_mods::known_host_block(Some(edit.base())) {
+                return Err(InstallError::Host(error));
+            }
             let retry = named_native.is_some();
             if retry || backend::NativeGrant::read()?.is_none() {
                 let newly_named: Vec<_> = build_packages
