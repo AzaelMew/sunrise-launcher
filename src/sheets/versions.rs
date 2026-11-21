@@ -621,6 +621,69 @@ impl Launcher {
     }
 }
 
+/// The build list's scroll, which `sunrise-launcher benchmark` scrolls.
+pub(crate) fn bench_scroll_target(sheets: &super::SheetsState) -> gpui::ScrollHandle {
+    sheets.versions.scroll.0.borrow().base_handle.clone()
+}
+
+/// `sunrise-launcher benchmark`: after each frame, one wheel step over the build list through
+/// the window's ordinary input path, so the list scrolls, caches and redraws as it does under a
+/// player's wheel. While the sheet opens the list grows, so a list with nothing to scroll is
+/// given up on only once its place has held for a few frames; the wheel stops then, or when
+/// scrolling ends.
+pub(crate) fn bench_wheel(launcher: gpui::WeakEntity<Launcher>, window: &mut Window) {
+    wheel_after_frame(launcher, window, None, 0);
+}
+
+/// Frames a list's place must hold before it counts as settled.
+const SETTLED: u32 = 10;
+
+fn wheel_after_frame(
+    launcher: gpui::WeakEntity<Launcher>,
+    window: &mut Window,
+    last: Option<gpui::Bounds<gpui::Pixels>>,
+    held: u32,
+) {
+    window.on_next_frame(move |window, cx| {
+        let Some(entity) = launcher.upgrade() else {
+            return;
+        };
+        if !entity
+            .read(cx)
+            .bench
+            .as_ref()
+            .is_some_and(crate::perf::Bench::scrolling)
+        {
+            return;
+        }
+        let handle = bench_scroll_target(&entity.read(cx).ui.sheets);
+        let bounds = handle.bounds();
+        let held = if Some(bounds) == last { held + 1 } else { 0 };
+        if bounds.size.height > px(0.) {
+            let (offset, max) = (
+                f32::from(handle.offset().y),
+                f32::from(handle.max_offset().y),
+            );
+            match entity.update(cx, |l, _| l.bench.as_mut()?.wheel(offset, max)) {
+                Some(step) => {
+                    window.dispatch_event(
+                        gpui::PlatformInput::Scroll(gpui::ScrollEvent {
+                            position: bounds.center(),
+                            delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(step))),
+                            ..Default::default()
+                        }),
+                        cx,
+                    );
+                }
+                // Laid out, settled and nothing to scroll: no more frames for it.
+                None if held >= SETTLED => return,
+                None => {}
+            }
+        }
+        wheel_after_frame(launcher, window, Some(bounds), held);
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

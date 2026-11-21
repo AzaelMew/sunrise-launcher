@@ -23,6 +23,16 @@ pub(super) enum Page {
 }
 
 impl Page {
+    /// The pages `sunrise-launcher benchmark` switches through, as a player clicks them: the
+    /// header's tabs, then Settings.
+    pub(super) const BENCH: [Page; 5] = [
+        Page::Home,
+        Page::Discover,
+        Page::Packs,
+        Page::Join,
+        Page::Settings,
+    ];
+
     /// The tab that stays selected on a subpage.
     fn active_tab(self) -> Self {
         match self {
@@ -528,6 +538,19 @@ impl Launcher {
             self.panel_opacity_preview(),
         );
         scrolls_begin();
+        // Records start-up and UI frame times, and lets a benchmark window begin once the
+        // window has drawn. Reading where the build list is scrolled to doesn't touch it: the
+        // benchmark moves it with wheel input between frames (`bench_wheel`).
+        let now = std::time::Instant::now();
+        let gap = self.perf.frame(now);
+        if let Some(bench) = &mut self.bench {
+            let offset = bench
+                .scrolling()
+                .then(|| crate::sheets::bench_scroll_target(&self.ui.sheets))
+                .filter(|h| h.bounds().size.height > px(0.))
+                .map(|h| f32::from(h.offset().y));
+            bench.frame(now, gap, offset);
+        }
         crate::selectable::begin();
         crate::tokens::set_roundness(self.corner_roundness());
         self.modal_before(window, cx);

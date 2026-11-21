@@ -16,6 +16,7 @@ use sunrise_launcher::native_mods::Consent;
 
 mod switching;
 mod versions;
+pub(crate) use versions::{bench_scroll_target, bench_wheel};
 
 /// More Tab stops than any page has: how far [`Launcher::modal`] looks for the next one inside
 /// the layer before it gives up.
