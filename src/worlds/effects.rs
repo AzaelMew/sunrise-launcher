@@ -117,11 +117,11 @@ fn preserved_mods<'a>(
     }
     let mut preserved = BTreeSet::new();
     let mut changed = BTreeSet::new();
-    let mut shadowed = BTreeSet::new();
-    let definitions = |p: Option<&ScannedPackage>| match p {
+    let mut shadows: BTreeMap<String, BTreeSet<&str>> = BTreeMap::new();
+    let contents = |p: Option<&ScannedPackage>| match p {
         None => Some(BTreeMap::new()),
         Some(p) if !p.directory && p.manifest.native.is_none() && p.manifest.jar.is_empty() => {
-            definition_bytes(&p.path)
+            content_bytes(&p.path)
         }
         Some(_) => None,
     };
@@ -141,7 +141,7 @@ fn preserved_mods<'a>(
                     .zip(b.path.strip_prefix(after).ok())
                     .is_some_and(|(a, b)| a == b)
             });
-        let (Some(old_files), Some(new_files)) = (definitions(a), definitions(b)) else {
+        let (Some(old_files), Some(new_files)) = (contents(a), contents(b)) else {
             // An opaque layer can supply definitions in any namespace. Exact equality
             // limits this uncertainty to the layer itself; it does not clear that layer.
             let digest = |p: &Path| opaque_digest(p, 0, &mut (files::MAX_FILES, files::MAX_TOTAL));
@@ -158,15 +158,7 @@ fn preserved_mods<'a>(
         };
         let comparable = same_position
             && pair.is_some_and(|(a, b)| equivalent_manifest(&a.manifest, &b.manifest));
-        if comparable && old_files == new_files {
-            preserved.insert(id);
-        }
-        // A leaf can have a display-only new release. Its consumers still see a new version.
-        if !preserved.contains(id)
-            || pair.is_some_and(|(a, b)| a.manifest.version != b.manifest.version)
-        {
-            changed.insert(id);
-        }
+        let mut same_definitions = comparable;
         // If placement or declarations changed, even unchanged paths may become visible.
         for (name, _) in old_files
             .iter()
@@ -177,30 +169,44 @@ fn preserved_mods<'a>(
                     .filter(|(name, _)| !old_files.contains_key(*name)),
             )
         {
-            // `definition_bytes` validated every path as assets|data/<namespace>/<file>.
+            // `content_bytes` validated every path as assets|data/<namespace>/<file>.
             let (root, path) = name.split_once('/').expect("content root");
             let (namespace, path) = path.split_once('/').expect("content namespace");
             let kind = path.split_once('/').map(|(kind, _)| kind);
             if root == "data" && matches!(kind, Some("tags" | "worldgen")) {
                 continue;
             }
+            let definition = matches!(
+                (root, kind),
+                ("data", Some("sunrise")) | ("assets", Some("blockstates" | "models"))
+            );
+            same_definitions &= !definition;
             if matches!(namespace, "minecraft" | "c") {
-                // Shared registrations can change any mod's definitions. Atlases and other
-                // vanilla assets are not saved definitions; blockstates and models can be.
-                if matches!(
-                    (root, kind),
-                    ("data", Some("sunrise")) | ("assets", Some("blockstates" | "models"))
-                ) {
+                // Shared registrations can change any mod's definitions.
+                if definition {
                     return None;
                 }
             } else {
-                shadowed.insert(namespace.to_owned());
+                shadows.entry(namespace.into()).or_default().insert(id);
             }
+        }
+        if same_definitions {
+            preserved.insert(id);
+        }
+        // A leaf can have a new release with the same definitions. Its consumers still
+        // see a changed version when they resolve a dependency or compatibility rule.
+        if !same_definitions || pair.is_some_and(|(a, b)| a.manifest.version != b.manifest.version)
+        {
+            changed.insert(id);
         }
     }
     let mut consumers: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
     for m in old.into_iter().chain(new) {
-        if m.owned_namespaces().any(|ns| shadowed.contains(ns)) {
+        if m.owned_namespaces().any(|ns| {
+            shadows
+                .get(ns)
+                .is_some_and(|writers| writers.iter().any(|&writer| writer != m.id.as_str()))
+        }) {
             preserved.remove(m.id.as_str());
             changed.insert(m.id.as_str());
         }
@@ -258,7 +264,7 @@ fn overrides_bytes(mods: &Path) -> Option<Option<Vec<u8>>> {
     }
 }
 
-fn definition_bytes(path: &Path) -> Option<BTreeMap<String, [u8; 32]>> {
+fn content_bytes(path: &Path) -> Option<BTreeMap<String, [u8; 32]>> {
     let mut zip = zip::ZipArchive::new(fs::File::open(path).ok()?).ok()?;
     let mut contents = BTreeMap::new();
     let mut total = 0u64;
@@ -389,7 +395,7 @@ mod tests {
     }
 
     #[test]
-    fn shared_tags_and_worldgen_do_not_taint_the_owners_of_unchanged_definitions() {
+    fn a_leaf_changing_only_tags_worldgen_or_an_atlas_preserves_every_mod() {
         let [before, after] = shadow_profiles();
         let definition = ("assets/lighting/blockstates/lamp.json", b"same".as_slice());
         content(before.path(), "overlay", "'lighting'", &[definition]);
@@ -410,7 +416,11 @@ mod tests {
         );
         assert_eq!(
             compare(before.path(), after.path()),
-            Some(BTreeSet::from(["lamp".into(), "unrelated".into()]))
+            Some(BTreeSet::from([
+                "lamp".into(),
+                "overlay".into(),
+                "unrelated".into()
+            ]))
         );
     }
 
@@ -498,7 +508,7 @@ mod tests {
         let root = "root_mod";
         let dep = "required_mod";
         let defs = [(
-            "data/root_mod/blocks/lamp.json",
+            "data/root_mod/sunrise/block/lamp.json",
             br#"{"properties":{"lit":[true,false]}}"#.as_slice(),
         )];
         let write = |home: &Path, id: &str, version: &str, data: &[(&str, &[u8])]| {
