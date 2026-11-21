@@ -110,28 +110,8 @@ pub(super) fn inputs(home: &Path, repaired: Option<&[u8]>) -> Result<[u8; 32], S
     Ok(hash.finalize().into())
 }
 
-/// Only a previously recorded registry row matching these exact archive bytes can
-/// authorize a mutation. The caller must also check for duplicate/alias claims.
-pub fn registry_row_matches(
-    home: &Path,
-    row: &crate::browser::installed::Entry,
-    package: &ScannedPackage,
-    digest: &str,
-) -> bool {
-    use crate::browser::{Kind, SourceId};
-    !package.directory
-        && row.source == SourceId::Sunrise
-        && row.kind == Kind::Mod
-        && row.project == package.manifest.id
-        && row.version == package.manifest.version
-        && row.path(home).as_ref() == Some(&package.path)
-        && row
-            .checksum
-            .eq_ignore_ascii_case(&format!("SHA-256:{digest}"))
-}
-
-/// A fresh registry response can corroborate newly observed bytes at a claimed
-/// destination. A local cache or a repaired display row cannot be that response.
+/// A fresh registry response can corroborate a display change at a claimed destination.
+/// These rows are game-facing metadata, never destructive authority for the launcher.
 pub(super) fn browser_repair(
     home: &Path,
     packages: &[ScannedPackage],
@@ -192,7 +172,11 @@ pub(super) fn browser_repair(
             .check_other_claims(home, id, file)
             .map_err(|e| e.render(crate::i18n::trf))?;
         let digest = index::sha256_file(&package.path)?;
-        if registry_row_matches(home, &row, package, &digest) {
+        if row.version == package.manifest.version
+            && row
+                .checksum
+                .eq_ignore_ascii_case(&format!("SHA-256:{digest}"))
+        {
             continue;
         }
         let kind = if package.manifest.native.is_some() {
