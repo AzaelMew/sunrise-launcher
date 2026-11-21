@@ -1126,6 +1126,26 @@ mod tests {
     }
 
     #[test]
+    fn stopped_pinned_archive_is_never_published() {
+        let directory = tempfile::tempdir().unwrap();
+        let archive = directory.path().join("archive");
+        let cancellation = crate::native_mods::Cancellation::default();
+        let bytes = vec![b'x'; 1 << 17];
+        let expected = sunrise_launcher_smod::index::sha256(&bytes);
+        let result = save_archive(
+            cancellation.reader(bytes.as_slice()),
+            "fixture",
+            bytes.len() as u64,
+            &expected,
+            &archive,
+            &|_| cancellation.stop(),
+        );
+        assert!(result.is_err());
+        assert!(cancellation.is_stopped());
+        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 0);
+    }
+
+    #[test]
     fn every_host_pins_each_component_once_with_a_sha256() {
         for host in HOSTS {
             let names: Vec<&str> = host.components.iter().map(|(name, ..)| *name).collect();

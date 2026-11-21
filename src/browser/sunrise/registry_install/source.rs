@@ -16,7 +16,7 @@ pub enum SourceRequest {
     Add(SourceCommit),
     Update {
         pin: SourceCommit,
-        predecessor: Origin,
+        predecessor: Box<Origin>,
     },
 }
 
@@ -132,7 +132,7 @@ pub fn prepare_source(
 ) -> Result<PreparedSource, SourceError> {
     let (pin, predecessor) = match request {
         SourceRequest::Add(pin) => (pin, None),
-        SourceRequest::Update { pin, predecessor } => (pin, Some(predecessor)),
+        SourceRequest::Update { pin, predecessor } => (pin, Some(*predecessor)),
     };
     let result = (|| {
         cancellation.check()?;
@@ -252,16 +252,21 @@ fn prepare_package(
     Ok(result)
 }
 
+pub struct SourceHooks<'a> {
+    pub install: InstallHooks<'a>,
+    pub cancellation: &'a native_mods::Cancellation,
+    pub authorize: &'a dyn Fn(&[PreparedSource]) -> Result<bool, String>,
+    pub approve_worlds: &'a dyn Fn(&ChangeImpact) -> bool,
+}
+
 pub fn apply_sources(
     instance: &Instance,
     identity: Identity,
     prepared: &[PreparedSource],
     choose: impl FnOnce() -> Result<FirstBuild, String>,
-    cancellation: &native_mods::Cancellation,
-    hooks: InstallHooks<'_>,
-    authorize_source: &dyn Fn(&[PreparedSource]) -> Result<bool, String>,
-    approve_worlds: &dyn Fn(&ChangeImpact) -> bool,
+    hooks: SourceHooks<'_>,
 ) -> Result<(), SourceError> {
+    let cancellation = hooks.cancellation;
     let Some(first) = prepared.first() else {
         return Err(SourceError::Cancelled);
     };
@@ -294,14 +299,14 @@ pub fn apply_sources(
             }
             Ok(first_build)
         },
-        hooks,
-        Some(approve_worlds),
+        hooks.install,
+        Some(hooks.approve_worlds),
         Some(github::SourceBatch {
             before: first.before,
             base: &first.base,
             active: first.active.as_ref(),
             cancellation,
-            authorize: &|| authorize_source(prepared),
+            authorize: &|| (hooks.authorize)(prepared),
         }),
     )
     .map_err(SourceError::from);

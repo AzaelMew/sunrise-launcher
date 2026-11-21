@@ -269,7 +269,7 @@ impl Launcher {
                         target.base(),
                         SourceRequest::Update {
                             pin,
-                            predecessor: origin.clone(),
+                            predecessor: Box::new(origin.clone()),
                         },
                         &cancellation,
                     ) {

@@ -66,17 +66,19 @@ pub fn update_registry_and_sources(
             identity,
             mixed.prepared,
             choose,
-            cancellation,
-            source_hooks,
-            authorize_source,
-            &|impact| {
-                if let Some(checked) = &reviewed {
-                    let same = impact.matches_world_review(checked);
-                    changed.set(!same);
-                    same
-                } else {
-                    !impact.risks_worlds() || review(impact, None)
-                }
+            SourceHooks {
+                install: source_hooks,
+                cancellation,
+                authorize: authorize_source,
+                approve_worlds: &|impact| {
+                    if let Some(checked) = &reviewed {
+                        let same = impact.matches_world_review(checked);
+                        changed.set(!same);
+                        same
+                    } else {
+                        !impact.risks_worlds() || review(impact, None)
+                    }
+                },
             },
         );
         if changed.get() {

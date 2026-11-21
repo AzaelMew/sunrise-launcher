@@ -1753,8 +1753,8 @@ pub use registry_install::{
     known_unfit_updates, prepare_pasted_sources, prepare_source, remove_mods, switch_build,
     update_github, update_registry, update_registry_and_sources, BuildNotice, ChangeImpact,
     CombinedUpdate, InstallError, InstallHooks, InstallProgress, InstalledBatch, NativeQuestion,
-    PreparedSource, ResolveQuestion, SourceError, SourceRequest, SwitchHooks, SwitchQuestion,
-    Switched, UpdateRequest,
+    PreparedSource, ResolveQuestion, SourceError, SourceHooks, SourceRequest, SwitchHooks,
+    SwitchQuestion, Switched, UpdateRequest,
 };
 #[cfg(test)]
 mod tests;

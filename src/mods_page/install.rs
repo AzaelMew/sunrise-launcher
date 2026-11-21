@@ -9,7 +9,7 @@ use std::{
 use sunrise_launcher::{
     browser::sunrise::{
         BuildNotice, ChangeImpact, CombinedUpdate, InstallError, InstallHooks, InstallProgress,
-        InstalledBatch, NativeQuestion, PreparedSource, ResolveQuestion, SourceError,
+        InstalledBatch, NativeQuestion, PreparedSource, ResolveQuestion, SourceError, SourceHooks,
     },
     github_mods::Origin,
     managed_play::FirstBuild,
@@ -1058,10 +1058,12 @@ impl Launcher {
                     request.identity,
                     &request.sources,
                     choose,
-                    &cancellation,
-                    hooks,
-                    &authorize,
-                    &approve,
+                    SourceHooks {
+                        install: hooks,
+                        cancellation: &cancellation,
+                        authorize: &authorize,
+                        approve_worlds: &approve,
+                    },
                 )
                 .map(|()| InstalledBatch::default())
                 .map_err(InstallError::Source),

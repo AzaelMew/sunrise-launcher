@@ -33,7 +33,7 @@ pub use conflicts::ResolveQuestion;
 use source::MixedSources;
 pub use source::{
     apply_sources, prepare_pasted_sources, prepare_source, update_registry_and_sources,
-    CombinedUpdate, PreparedSource, SourceError, SourceRequest,
+    CombinedUpdate, PreparedSource, SourceError, SourceHooks, SourceRequest,
 };
 pub use switch::{checked_switch_fit, switch_build, SwitchHooks, SwitchQuestion, Switched};
 

@@ -611,3 +611,226 @@ fn github_add_and_checked_update_share_the_candidate_proof() {
         },
     );
 }
+
+#[test]
+#[ignore = "daily; build the launcher binary first"]
+fn pinned_source_preflight_refusal_cancel_and_failed_update_keep_the_profile() {
+    Fixture::run(
+        concat!(
+            module_path!(),
+            "::pinned_source_preflight_refusal_cancel_and_failed_update_keep_the_profile"
+        ),
+        |fixture| {
+            use crate::browser::sunrise::sources::{self, Source, Tracker};
+            use crate::github_mods::{self, SourceTrack};
+            use crate::native_mods::Cancellation;
+            configure_tool(&fixture);
+            let home = fixture.home();
+            let identity = install_target(&fixture.instance).unwrap();
+            let fixtures = fixture.root.join("github");
+            std::env::set_var("SUNRISE_SOURCE_FIXTURES", &fixtures);
+            let repo = fixtures.join("repos/Fixture/Lantern");
+            fs::create_dir_all(repo.join("lantern/src")).unwrap();
+            let git = |args: &[&str]| {
+                let output = Command::new("git")
+                    .current_dir(&repo)
+                    .args([
+                        "-c",
+                        "user.name=Fixture",
+                        "-c",
+                        "user.email=fixture@example.invalid",
+                        "-c",
+                        "commit.gpgSign=false",
+                        "-c",
+                        "core.hooksPath=/dev/null",
+                    ])
+                    .args(args)
+                    .output()
+                    .unwrap();
+                assert!(
+                    output.status.success(),
+                    "{}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                String::from_utf8(output.stdout).unwrap().trim().to_owned()
+            };
+            git(&["init", "-q", "--initial-branch=main", "--template="]);
+            let fixtures_repo = fixtures.join("api/repos/Fixture");
+            let branch = fixtures_repo.join("Lantern/git/ref/heads");
+            fs::create_dir_all(&branch).unwrap();
+            fs::write(fixtures_repo.join("Lantern.json"), json!({"id": 42, "full_name":"Fixture/Lantern", "default_branch":"main", "private":false}).to_string()).unwrap();
+            let put = |version: &str, revision: char, source: &[u8], extra: &str| {
+                let manifest = format!("id='{ID}'\nname='Native Lantern'\nversion='{version}'\napi='0.2'\nside='both'\ncapabilities=[]\n{extra}\n[native]\nsunrise='{}'\nmixins='{}'\ngame='{}'\n", revision.to_string().repeat(40), "c".repeat(40), backend::PINNED_GAME);
+                fs::write(repo.join("lantern/sunrise-mod.toml"), &manifest).unwrap();
+                fs::write(
+                    repo.join("lantern/Cargo.toml"),
+                    format!("[package]\nname='{ID}'\nversion='{version}'\n"),
+                )
+                .unwrap();
+                fs::write(repo.join("lantern/src/lib.rs"), source).unwrap();
+                git(&["add", "lantern"]);
+                git(&["commit", "-qm", version]);
+                let sha = git(&["rev-parse", "HEAD"]);
+                let raw = fixtures
+                    .join("raw/Fixture/Lantern")
+                    .join(&sha)
+                    .join("lantern");
+                fs::create_dir_all(&raw).unwrap();
+                fs::write(raw.join("sunrise-mod.toml"), &manifest).unwrap();
+                fs::write(
+                    branch.join("main.json"),
+                    json!({"ref":"refs/heads/main", "object":{"type":"commit", "sha":&sha}})
+                        .to_string(),
+                )
+                .unwrap();
+                sha
+            };
+            let listing = Source::for_origin(
+                ID,
+                "Fixture/Lantern",
+                42,
+                "lantern/sunrise-mod.toml",
+                Tracker::Branch("main".into()),
+            )
+            .unwrap();
+            let cancellation = Cancellation::default();
+            let add_candidate = || {
+                prepare_source(
+                    &fixture.instance,
+                    identity,
+                    BUILD,
+                    SourceRequest::Add(sources::resolve(&listing, true).unwrap()),
+                    &cancellation,
+                )
+            };
+            put("0.8.0", 'b', SOURCE, "");
+            assert!(matches!(add_candidate(), Err(SourceError::DoesNotFit(_))));
+            put("0.9.0", 'a', SOURCE, "[dependencies]\nfixture_lib='^1'\n");
+            assert!(
+                matches!(add_candidate(), Err(SourceError::Dependency { required: Some(id), .. }) if id == "fixture_lib")
+            );
+            let old = put("1.0.0", 'a', SOURCE, "");
+            let ready = add_candidate().unwrap();
+            assert!(!home.join(ARCHIVE).exists());
+            assert!(!home.join(crate::profile_txn::POINTER).exists());
+            assert!(!fixture.root.join("compiled").exists());
+            let build = |prepared: &PreparedSource,
+                         cancellation: &Cancellation,
+                         authorize: &dyn Fn(&[PreparedSource]) -> Result<bool, String>,
+                         approve_worlds: &dyn Fn(&ChangeImpact) -> bool| {
+                apply_sources(
+                    &fixture.instance,
+                    identity,
+                    std::slice::from_ref(prepared),
+                    || FirstBuild::installed(BUILD),
+                    SourceHooks {
+                        install: InstallHooks {
+                            progress: &|_| {},
+                            native: &|_| panic!("source permission has its own gate"),
+                            registry_crates: None,
+                            continue_after_failure: &|_| false,
+                            resolve: None,
+                        },
+                        cancellation,
+                        authorize,
+                        approve_worlds,
+                    },
+                )
+            };
+            assert!(matches!(
+                build(&ready, &cancellation, &|_| Ok(false), &no_world_question),
+                Err(SourceError::Cancelled)
+            ));
+            let stopped = Cancellation::default();
+            assert!(matches!(
+                build(
+                    &ready,
+                    &stopped,
+                    &|_| {
+                        stopped.stop();
+                        Ok(true)
+                    },
+                    &no_world_question
+                ),
+                Err(SourceError::Cancelled)
+            ));
+            assert!(!fixture.root.join("compiled").exists());
+            assert!(!home.join(ARCHIVE).exists());
+            build(
+                &ready,
+                &cancellation,
+                &|mods| {
+                    assert_eq!(mods[0].origin().commit, old);
+                    Ok(true)
+                },
+                &no_world_question,
+            )
+            .unwrap();
+            let recorded = github_mods::origin(home, ID).unwrap();
+            assert_eq!(recorded, *ready.origin());
+            assert!(
+                matches!(recorded.source.as_ref().map(|r| &r.track), Some(SourceTrack::Branch(branch)) if branch == "main")
+            );
+            assert!(!recorded.is_release_asset());
+            let old_bytes = fs::read(home.join(ARCHIVE)).unwrap();
+            let before = fixture.snapshot(&[ARCHIVE]);
+            put("1.1.0", 'a', b"compile_error!(\"fixture failure\");", "");
+            let update_candidate = || {
+                prepare_source(
+                    &fixture.instance,
+                    identity,
+                    BUILD,
+                    SourceRequest::Update {
+                        pin: sources::resolve(&listing, true).unwrap(),
+                        predecessor: Box::new(recorded.clone()),
+                    },
+                    &cancellation,
+                )
+            };
+            let rejected = update_candidate().unwrap();
+            assert_eq!(compiled(&fixture), "1.0.0\n");
+            assert!(matches!(
+                build(&rejected, &cancellation, &|_| Ok(true), &|_| true),
+                Err(SourceError::Build { log: Some(_), .. })
+            ));
+            assert_eq!(fixture.snapshot(&[ARCHIVE]), before);
+            assert_eq!(github_mods::origin(home, ID).unwrap(), recorded);
+            assert!(mod_list::is_enabled(home, ID));
+
+            let next = put("1.2.0", 'a', SOURCE, "");
+            let pointer = disabled_pointer(&fixture);
+            let active: Value = serde_json::from_slice(&fs::read(&pointer).unwrap()).unwrap();
+            stamp_hold(
+                &pointer,
+                active,
+                Held::new(
+                    ID.into(),
+                    "Native Lantern".into(),
+                    Sha256::digest(&old_bytes).into(),
+                    (HeldRoot::Native, "native_lantern.smod".into()),
+                    HeldSource::Github {
+                        owner: recorded.owner.clone(),
+                        repo: recorded.repo.clone(),
+                        commit: old,
+                        version: recorded.version.clone(),
+                    },
+                    true,
+                    HeldReason::NoFit {
+                        build: BUILD.into(),
+                    },
+                )
+                .unwrap(),
+            );
+            let updated = update_candidate().unwrap();
+            assert_eq!(updated.origin().commit, next);
+            build(&updated, &cancellation, &|_| Ok(true), &|_| true).unwrap();
+            assert!(mod_list::is_enabled(home, ID));
+            assert_eq!(
+                Active::read_pointer(home).unwrap().unwrap().holds().count(),
+                0
+            );
+            assert_eq!(github_mods::origin(home, ID).unwrap(), *updated.origin());
+            assert_eq!(compiled(&fixture), "1.0.0\n1.1.0\n1.2.0\n");
+        },
+    );
+}
