@@ -16,7 +16,7 @@ pub(crate) struct GithubInput {
 
 pub(crate) enum GithubSelection {
     Add(Vec<Packed>),
-    Update(Packed),
+    Update(Box<Packed>),
 }
 
 pub(crate) struct Feedback {
@@ -303,7 +303,7 @@ impl Launcher {
             return;
         };
         let selection = if self.github.update.is_some() {
-            GithubSelection::Update(mods.pop().expect("the update names one package"))
+            GithubSelection::Update(Box::new(mods.pop().expect("the update names one package")))
         } else {
             GithubSelection::Add(mods)
         };

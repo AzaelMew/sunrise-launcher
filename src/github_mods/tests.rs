@@ -99,6 +99,44 @@ fn a_repository_resolves_to_its_latest_releases_smod_and_commit() {
 }
 
 #[test]
+fn a_release_keeps_all_distinct_checked_packages_and_their_asset_receipts() {
+    let dir = tempfile::tempdir().unwrap();
+    let assets = ["keys", "zoom"].map(|id| {
+        let folder = dir.path().join(id);
+        project(&folder, id, SHA);
+        let bytes = pack(&find_mods(&folder).unwrap()[0]).unwrap();
+        (format!("{id}.smod"), bytes)
+    });
+    let api = recorded(vec![
+        (
+            "repos/acme/zoom/releases/latest",
+            release(
+                "v1",
+                json!([asset(&assets[0].0, None), asset(&assets[1].0, None),]),
+            ),
+        ),
+        ("repos/acme/zoom/commits/v1", json!({"sha": SHA})),
+    ]);
+    let found = resolve(&link("https://github.com/acme/zoom"), &api).unwrap();
+    let checked = fetch_with(&found, |url| {
+        let (_, bytes) = assets.iter().find(|(name, _)| url.ends_with(name)).unwrap();
+        Ok(bytes.clone())
+    })
+    .unwrap();
+    for (package, (name, bytes)) in checked.iter().zip(&assets) {
+        let origin = package.release_origin(&found).unwrap();
+        assert_eq!(origin.asset.as_deref(), Some(name.as_str()));
+        assert_eq!(origin.sha256, sha256(bytes));
+    }
+    let retained = checked[0].file.clone();
+    assert!(retained.is_file());
+    drop(checked);
+    assert!(!retained.exists());
+    let same_package_twice = fetch_with(&found, |_| Ok(assets[0].1.clone())).unwrap_err();
+    assert!(same_package_twice.contains("more than one package for keys"));
+}
+
+#[test]
 fn a_link_in_another_letter_case_still_finds_the_releases_smod() {
     let api = recorded(vec![
         (

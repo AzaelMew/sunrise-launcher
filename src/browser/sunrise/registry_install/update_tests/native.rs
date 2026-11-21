@@ -29,7 +29,7 @@ fn release(fixture: &mut Fixture, version: &str, pin: char, source: &[u8]) -> Ve
     )
 }
 
-fn configured(fixture: &mut Fixture) -> Vec<u8> {
+fn configure_tool(fixture: &Fixture) {
     let runtime = fixture.root.join("sdk/runtime/bin");
     fs::create_dir_all(&runtime).unwrap();
     fs::copy(
@@ -51,6 +51,10 @@ fn configured(fixture: &mut Fixture) -> Vec<u8> {
     .unwrap();
     fs::set_permissions(tool, fs::Permissions::from_mode(0o755)).unwrap();
     backend::Settings::default().allow_native_mods().unwrap();
+}
+
+fn configured(fixture: &mut Fixture) -> Vec<u8> {
+    configure_tool(fixture);
     fixture.project(ID, "Native Lantern", index::Kind::NativeMod);
     let bytes = release(fixture, "1.0.0", 'a', SOURCE);
     fixture.install(&[ID]);
@@ -504,6 +508,106 @@ fn native_compile_failure_keeps_the_working_predecessor() {
             assert_eq!(failure.changes[0].predecessor.as_deref(), Some("1.0.0"));
             assert_eq!(compiled(&fixture), "1.0.0\n1.1.0\n");
             assert_eq!(fixture.snapshot(&[ARCHIVE]), before);
+        },
+    );
+}
+
+#[test]
+#[ignore = "daily; build the launcher binary first"]
+fn github_add_and_checked_update_share_the_candidate_proof() {
+    Fixture::run(
+        concat!(
+            module_path!(),
+            "::github_add_and_checked_update_share_the_candidate_proof"
+        ),
+        |mut fixture| {
+            use crate::github_mods::{self, Asset, Resolved};
+            configure_tool(&fixture);
+            fixture.project(ID, "Native Lantern", index::Kind::NativeMod);
+            let make_release = |version: &str, bytes: &[u8]| {
+                Resolved {
+            owner: "fixture".into(),
+            repo: "lantern".into(),
+            tag: Some(version.into()),
+            commit: "c".repeat(40),
+            assets: vec![Asset {
+                name: "lantern.smod".into(),
+                url: format!("https://github.com/fixture/lantern/releases/download/{version}/lantern.smod"),
+                sha256: Some(index::sha256(bytes)),
+            }],
+        }
+            };
+            let install = |fixture: &Fixture, found: &Resolved, packs: &[github_mods::Packed]| {
+                add_github(
+                    &fixture.instance,
+                    install_target(&fixture.instance).unwrap(),
+                    found,
+                    packs,
+                    || FirstBuild::installed(BUILD),
+                    InstallHooks {
+                        progress: &|_| {},
+                        native: &|_| panic!("consent already recorded"),
+                        registry_crates: None,
+                        continue_after_failure: &|_| false,
+                        resolve: None,
+                    },
+                )
+            };
+            let wrong = release(&mut fixture, "0.9.0", 'b', SOURCE);
+            let found = make_release("v0.9.0", &wrong);
+            let checked = github_mods::fetch_with(&found, |_| Ok(wrong.clone())).unwrap();
+            let err = install(&fixture, &found, &checked).unwrap_err();
+            assert!(matches!(err, InstallError::NotForVersion(_)), "{err}");
+            let home = fixture.home().to_owned();
+            let sidecar = github_mods::origin_path(&home, ID);
+            assert!(!home.join(ARCHIVE).exists() && !sidecar.exists());
+            assert!(!home.join(crate::profile_txn::POINTER).exists());
+            assert!(!fixture.root.join("compiled").exists());
+
+            let first = release(&mut fixture, "1.0.0", 'a', SOURCE);
+            let found = make_release("v1.0.0", &first);
+            let checked = github_mods::fetch_with(&found, |_| Ok(first.clone())).unwrap();
+            install(&fixture, &found, &checked).unwrap();
+            assert_eq!(fs::read(home.join(ARCHIVE)).unwrap(), first);
+            assert!(mod_list::is_enabled(&home, ID));
+            let old_sidecar = fs::read(&sidecar).unwrap();
+            let old_pointer = fs::read(home.join(crate::profile_txn::POINTER)).unwrap();
+
+            let next = release(&mut fixture, "1.1.0", 'a', SOURCE);
+            let found = make_release("v1.1.0", &next);
+            let checked = github_mods::fetch_with(&found, |_| Ok(next.clone())).unwrap();
+            assert!(matches!(
+                install(&fixture, &found, &checked),
+                Err(InstallError::Refused(_))
+            ));
+            assert_eq!(fs::read(&sidecar).unwrap(), old_sidecar);
+            assert_eq!(
+                fs::read(home.join(crate::profile_txn::POINTER)).unwrap(),
+                old_pointer
+            );
+            let updated = update_github(
+                &fixture.instance,
+                install_target(&fixture.instance).unwrap(),
+                &found,
+                &checked[0],
+                || panic!("the update uses the committed base"),
+                InstallHooks {
+                    progress: &|_| {},
+                    native: &|_| panic!("consent already recorded"),
+                    registry_crates: None,
+                    continue_after_failure: &|_| false,
+                    resolve: None,
+                },
+                &|impact| {
+                    assert!(!impact.risks_worlds());
+                    true
+                },
+            )
+            .unwrap();
+            assert_eq!(fs::read(home.join(ARCHIVE)).unwrap(), next);
+            assert_eq!(github_mods::origin(&home, ID), Some(updated));
+            assert!(mod_list::is_enabled(&home, ID));
+            assert_eq!(compiled(&fixture), "1.0.0\n1.1.0\n");
         },
     );
 }
