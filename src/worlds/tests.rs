@@ -417,6 +417,7 @@ fn review_finds_namespace_only_use_and_does_not_clear_historic_content() {
     assert_eq!(risk[0].confirmed_mods, ["bricks"]);
     assert!(!risk[0].known);
     assert!(!risk[0].primary_complete);
+    assert!(!risk[0].malformed);
     let sources = BTreeMap::from([("bricks".into(), sources["bricks"].clone())]);
     assert!(review_risk(home.path(), &sources).unwrap()[0].known);
     assert!(!dat.with_file_name(LOCK).exists());
@@ -445,12 +446,15 @@ fn review_unknown_evidence_cannot_clear_a_suspect() {
         blocks(vec![name("construction"), name("bad:namespace")]),
         blocks(vec![name("construction"), Tag::Int(7)]),
     ];
-    for records in cases {
+    for (index, records) in cases.into_iter().enumerate() {
         write_evidence(&dat, records);
         let risk = review_risk(home.path(), &sources).unwrap();
         assert_eq!(risk.len(), 1);
         assert_eq!(risk[0].mods, ["bricks"]);
         assert!(!risk[0].known);
+        assert!(!risk[0].primary_complete);
+        // Omitted and explicitly empty lists are unknown, not malformed.
+        assert_eq!(risk[0].malformed, index > 1);
         assert!(risk[0].confirmed_mods.is_empty());
     }
 }
@@ -489,6 +493,7 @@ fn complete_primary_clears_unrelated_last_loaded_suspects_but_checks_fallback() 
     fs::write(&old, b"bad").unwrap();
     let risk = review_risk(home.path(), &sources).unwrap();
     assert!(risk[0].primary_complete);
+    assert!(risk[0].malformed);
     assert!(!risk[0].known);
     assert_eq!(risk[0].mods, ["bricks"]);
     assert!(risk[0].confirmed_mods.is_empty());
@@ -515,7 +520,13 @@ fn review_keeps_positive_fallback_and_does_not_take_its_game_age() {
     let recovered = review_risk(home.path(), &sources).unwrap();
     assert_ne!(recovered, snapshot);
     assert_eq!(recovered[0].confirmed_mods, ["bricks"]);
+    assert!(recovered[0].malformed);
     assert_eq!(recovered[0].data_version, None);
+    fs::remove_file(&dat).unwrap();
+    let fallback_only = review_risk(home.path(), &sources).unwrap();
+    assert!(!fallback_only[0].malformed);
+    assert_eq!(fallback_only[0].confirmed_mods, ["bricks"]);
+    fs::write(&dat, b"corrupt").unwrap();
     fs::remove_file(&old).unwrap();
     let unknown = review_risk(home.path(), &sources).unwrap();
     assert_eq!(unknown[0].mods, ["bricks"]);

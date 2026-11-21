@@ -309,6 +309,9 @@ pub struct WorldRisk {
     /// `level.dat` contains at least one nonempty, valid mod list and no malformed mod evidence.
     /// This describes the last-loaded set only, never whether historic chunks contain a mod.
     pub primary_complete: bool,
+    /// A present level file could not be parsed or has malformed mod evidence. Omitted or empty
+    /// lists are not malformed. Positive evidence in other lists or files is still reported.
+    pub malformed: bool,
     /// Build-order evidence comes only from `level.dat`, never the older recovery file.
     pub data_version: Option<i32>,
     pub saved_commit: Option<String>,
@@ -341,9 +344,10 @@ impl DirectoryIdentity {
 /// list only says what was last loaded: callers considering loss from historic chunks must not
 /// use it to clear unmatched suspects. A directory with neither level file isn't a discovered world.
 ///
-/// Fails on traversal errors, redirected directories and aliased evidence files; a readable file
-/// with unparseable contents is unknown, not absent. This read-only snapshot does not acquire or
-/// create `session.lock`. Callers hold profile admission (including roster writers), obtain
+/// Fails on traversal or read I/O errors, redirected directories and aliased evidence files. A
+/// file whose bytes could be read and hashed but not parsed sets [`WorldRisk::malformed`] without
+/// suppressing recoverable positive evidence. This reader does not create or acquire `session.lock`.
+/// Callers hold profile admission (including roster writers), obtain
 /// [`lock_reviewed`] before publishing, and compare a fresh snapshot while both are held.
 /// Paths above the admitted home, same-volume mount aliases without a second visible name and
 /// arbitrary external writes are outside this check.
@@ -404,8 +408,10 @@ pub fn review_risk(
         let primary_records = primary.as_ref().and_then(|level| level.records.as_ref());
         let fallback_records = fallback.as_ref().and_then(|level| level.records.as_ref());
         let primary_complete = primary_records.is_some_and(|r| r.valid && !r.ids.is_empty());
-        let complete =
-            primary_complete && (fallback.is_none() || fallback_records.is_some_and(|r| r.valid));
+        let malformed = [primary.as_ref(), fallback.as_ref()]
+            .into_iter()
+            .flatten()
+            .any(|file| !file.records.as_ref().is_some_and(|r| r.valid));
         let confirmed_mods: Vec<String> = sources
             .iter()
             .filter(|(id, claims)| {
@@ -421,7 +427,7 @@ pub fn review_risk(
             })
             .map(|(id, _)| id.clone())
             .collect();
-        let mods = if complete {
+        let mods = if primary_complete && !malformed {
             confirmed_mods.clone()
         } else {
             sources.keys().cloned().collect()
@@ -436,6 +442,7 @@ pub fn review_risk(
             mods,
             confirmed_mods,
             primary_complete,
+            malformed,
             data_version: primary_records.and_then(|r| r.data_version),
             saved_commit: primary_records.and_then(|r| r.saved_commit.clone()),
             directory,
