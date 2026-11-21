@@ -692,7 +692,11 @@ impl Launcher {
             .filter(|t| native_mods::is_native(t))
             .and_then(|t| crate::glass_instance::native_base(t));
         let build = version.as_ref().map_or_else(
-            || tr("Sunrise").into(),
+            // Dev never falls back to another channel, so say it has nothing to play yet.
+            || match instance.channel {
+                instances::Channel::Dev => tr("Dev · no build yet").into(),
+                _ => tr("Sunrise").into(),
+            },
             |tag| {
                 let base = made_from.as_ref().unwrap_or(tag);
                 if let Some(date) = backend::dev_date(base) {
