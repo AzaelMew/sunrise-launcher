@@ -232,6 +232,7 @@ impl Launcher {
                     self.installing = None;
                     self.bar = (0., 0.);
                     self.refresh_installed();
+                    let warning = self.record_nightly_receipt_outcome(&tag, &result);
                     if self.finish_switch_download(&tag, &result) {
                         self.install_started = None;
                         if let Some(next) = self.install_next.take() {
@@ -239,11 +240,6 @@ impl Launcher {
                         }
                         continue;
                     }
-                    let warning = result
-                        .as_ref()
-                        .ok()
-                        .and_then(backend::InstallOutcome::receipt_warning)
-                        .map(str::to_owned);
                     let receipt_only =
                         matches!(&result, Ok(backend::InstallOutcome::ReceiptOnly(_)));
                     let result = result.map(|_| ());
@@ -290,6 +286,12 @@ impl Launcher {
                     if let Some(next) = self.install_next.take() {
                         self.install_for_instance(next);
                     }
+                }
+                Msg::NightlyReceiptRetried(warning, result) => {
+                    if result.is_ok() {
+                        self.refresh_installed();
+                    }
+                    self.finish_nightly_receipt_retry(&warning, result);
                 }
                 Msg::Removed(tag, result) => {
                     self.removing.retain(|t| *t != tag);

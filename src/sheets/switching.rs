@@ -61,11 +61,7 @@ impl Launcher {
         {
             return false;
         }
-        let warning = match result {
-            Ok(outcome) => outcome.receipt_warning(),
-            Err(error) => Some(error.as_str()),
-        };
-        self.ui.sheets.error = warning.map(str::to_owned);
+        self.ui.sheets.error = result.as_ref().err().cloned();
         true
     }
 

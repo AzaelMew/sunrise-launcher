@@ -86,6 +86,25 @@ pub(crate) fn has_current_receipt(versions: &Path, tag: &str) -> bool {
     receipt_matches(&versions.join(CURRENT_INSTALL), tag)
 }
 
+/// The record a live retry saw. A later successful record must not be overwritten by a stale notice.
+pub(crate) fn current_receipt(versions: &Path) -> Option<String> {
+    use std::io::Read as _;
+    use sunrise_launcher_release_verify::{is_build, Channel};
+    let path = versions.join(CURRENT_INSTALL);
+    let meta = fs::symlink_metadata(&path).ok()?;
+    if !meta.is_file() || crate::native_cache::linked(&meta) {
+        return None;
+    }
+    let mut tag = String::new();
+    // A full bound tag (prefix, ISO date and up to 40 hex digits) is at most 59 bytes.
+    fs::File::open(path)
+        .ok()?
+        .take(60)
+        .read_to_string(&mut tag)
+        .ok()?;
+    is_build(Channel::Nightly, &tag).then_some(tag)
+}
+
 pub(crate) fn failed_install_receipt(versions: &Path, tag: &str) -> bool {
     receipt_matches(&versions.join(FAILED_INSTALL_RECEIPT), tag)
 }

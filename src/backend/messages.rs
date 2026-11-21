@@ -7,6 +7,7 @@ pub enum Msg {
     Links(Links),
     Progress(String, f32),
     Installed(String, Result<InstallOutcome, String>),
+    NightlyReceiptRetried(Arc<NightlyReceiptWarning>, Result<(), String>),
     /// A version's files are gone (or could not be deleted).
     Removed(String, Result<(), String>),
     /// `prune_old_versions` ended; these versions were deleted.

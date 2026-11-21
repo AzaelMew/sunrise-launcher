@@ -1,6 +1,9 @@
 //! The archive a deferred first Play resolved before any full download.
-use super::{super::*, InstallIntent, InstallOutcome, LockMode, LockRelease, Registry};
+use super::{
+    super::*, InstallIntent, InstallOutcome, LockMode, LockRelease, ReceiptFailure, Registry,
+};
 use crate::managed_play::Artifact;
+use std::sync::Arc;
 use sunrise_launcher_release_verify::{is_build, Channel, NIGHTLY, SIGNATURE, SIGNATURE_V2, SUMS};
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -20,6 +23,70 @@ pub(crate) struct GameDownload {
 pub(crate) struct GameProof {
     archive: String,
     facts: Option<String>,
+}
+
+/// An installed, verified rolling build whose separate newest-Nightly record could not be saved.
+#[derive(Debug)]
+pub struct NightlyReceiptWarning {
+    tag: String,
+    download: GameDownload,
+    proof: GameProof,
+    failure: ReceiptFailure,
+}
+
+impl NightlyReceiptWarning {
+    pub fn tag(&self) -> &str {
+        &self.tag
+    }
+
+    pub fn message(&self) -> String {
+        let build = crate::nightly::display_name(&self.tag)
+            .unwrap_or_else(|| crate::i18n::tr("Nightly").to_owned());
+        crate::i18n::trf(
+            "{build} is installed, but Sunrise couldn't record it as the newest Nightly.",
+            &[("build", &build)],
+        )
+    }
+
+    pub fn detail(&self) -> String {
+        format!(
+            "Could not save the rolling receipt for {}: {}",
+            self.tag, self.failure.error
+        )
+    }
+
+    /// Retry just the record, using the signed proof from the install that produced this warning.
+    /// A different cache image cannot be selected, and there is no download or reinstallation.
+    pub fn retry(&self) -> Result<(), String> {
+        let registry = Registry::with_release(&data_dir(), LockRelease::Close)
+            .map_err(|e| crate::native_mods::cache_error(e.into()))?;
+        let _publication = registry
+            .publication(LockMode::Exclusive)
+            .map_err(|e| crate::native_mods::cache_error(e.into()))?;
+        self.download.installed_at(
+            &version_dir(&self.tag),
+            &self.tag,
+            &self.proof,
+            InstallIntent::Exact,
+        )?;
+        let versions = versions_dir();
+        if crate::nightly::current_receipt(&versions)
+            .as_deref()
+            .is_some_and(|current| {
+                current == self.tag || Some(current) != self.failure.previous.as_deref()
+            })
+        {
+            return Ok(());
+        }
+        super::save_nightly_receipt(&versions, &self.tag)
+            .map_or(Ok(()), |failure| Err(failure.error.to_string()))
+    }
+}
+
+impl std::fmt::Display for NightlyReceiptWarning {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}\n{}", self.message(), self.detail())
+    }
 }
 
 impl GameProof {
@@ -209,6 +276,20 @@ impl GameDownload {
         )
     }
 
+    fn receipt_warning(
+        &self,
+        tag: &str,
+        proof: &GameProof,
+        failure: ReceiptFailure,
+    ) -> Arc<NightlyReceiptWarning> {
+        Arc::new(NightlyReceiptWarning {
+            tag: tag.to_owned(),
+            download: self.clone(),
+            proof: proof.clone(),
+            failure,
+        })
+    }
+
     fn publish(
         &self,
         tag: &str,
@@ -242,7 +323,8 @@ impl GameDownload {
                     InstallOutcome::AlreadyInstalled(None)
                 } else {
                     let retry = crate::nightly::failed_install_receipt(&versions, tag);
-                    let warning = super::save_nightly_receipt(&versions, tag);
+                    let warning = super::save_nightly_receipt(&versions, tag)
+                        .map(|failure| self.receipt_warning(tag, proof, failure));
                     if retry {
                         InstallOutcome::ReceiptOnly(warning)
                     } else {
@@ -270,7 +352,7 @@ impl GameDownload {
         } else {
             None
         };
-        let warning = super::install_as(
+        let receipt_failure = super::install_as(
             &release,
             tag,
             &proof.archive,
@@ -280,7 +362,9 @@ impl GameDownload {
             progress,
         )?;
         self.installed_at(&home, tag, proof, intent)?;
-        Ok(InstallOutcome::Installed(warning))
+        Ok(InstallOutcome::Installed(
+            receipt_failure.map(|failure| self.receipt_warning(tag, proof, failure)),
+        ))
     }
 
     pub(crate) fn is_installed(&self, tag: &str, proof: &GameProof) -> bool {
@@ -470,9 +554,19 @@ mod tests {
                     panic!("expected a published build with a receipt warning: {result:?}");
                 };
                 assert_eq!(
-                    warning,
-                    "Nightly · Nov 20 is installed, but Sunrise couldn't record it as the newest Nightly. Install it again to fix this."
+                    warning.message(),
+                    "Nightly · Nov 20 is installed, but Sunrise couldn't record it as the newest Nightly."
                 );
+                assert_eq!(
+                    warning.to_string(),
+                    format!(
+                        "{}\nCould not save the rolling receipt for {ROLLING}: {}",
+                        warning.message(),
+                        warning.failure.error
+                    ),
+                );
+                // The Versions action retries only the record; another failure still leaves it installed.
+                assert!(warning.retry().is_err());
                 assert_eq!(
                     fs::read(receipt.join("obstruction")).unwrap(),
                     b"leave this alone"
@@ -503,8 +597,12 @@ mod tests {
                     matches!(retry, InstallOutcome::ReceiptOnly(None)),
                     "{retry:?}"
                 );
-                assert_eq!(fs::read_to_string(receipt).unwrap(), ROLLING);
+                assert_eq!(fs::read_to_string(&receipt).unwrap(), ROLLING);
                 assert!(!crate::nightly::failed_install_receipt(&versions, ROLLING));
+                // Exercise the Versions action with no release lookup.
+                fs::remove_file(&receipt).unwrap();
+                warning.retry().unwrap();
+                assert!(crate::nightly::has_current_receipt(&versions, ROLLING));
                 assert_eq!(crate::profile_txn::Identity::of(&target).unwrap(), identity);
                 assert_eq!(
                     download
@@ -512,6 +610,17 @@ mod tests {
                         .unwrap(),
                     image
                 );
+
+                // A later successful record wins over the stale warning.
+                let later = "nightly-2026-11-20-bbbbbbb";
+                fs::write(&receipt, later).unwrap();
+                warning.retry().unwrap();
+                assert_eq!(fs::read_to_string(&receipt).unwrap(), later);
+
+                fs::remove_file(&receipt).unwrap();
+                fs::write(target.join(CLIENT), b"a different image").unwrap();
+                assert!(warning.retry().is_err());
+                assert!(!crate::nightly::has_current_receipt(&versions, ROLLING));
             },
         );
     }

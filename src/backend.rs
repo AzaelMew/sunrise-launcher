@@ -1327,7 +1327,7 @@ fn unpack(archive: &Path, url: &str, to: &Path) -> Result<(), String> {
     }
 }
 
-pub use installation::InstallOutcome;
+pub use installation::{InstallOutcome, NightlyReceiptWarning};
 
 /// Installs one signed release or reuses its proved rolling Nightly image. Only a retry of
 /// a known receipt failure skips the normal post-install actions.

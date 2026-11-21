@@ -7,6 +7,7 @@ use sunrise_launcher_smod::{
 };
 
 mod bound;
+pub use bound::NightlyReceiptWarning;
 pub(crate) use bound::{BoundVariant, GameDownload, GameProof};
 
 const STAGE_PREFIX: &str = ".build-stage-";
@@ -129,32 +130,37 @@ pub(crate) enum InstallIntent {
 /// Success means the image is usable, even when the separate rolling Nightly receipt failed.
 #[derive(Debug)]
 pub enum InstallOutcome {
-    Installed(Option<String>),
-    AlreadyInstalled(Option<String>),
-    ReceiptOnly(Option<String>),
+    Installed(Option<Arc<NightlyReceiptWarning>>),
+    AlreadyInstalled(Option<Arc<NightlyReceiptWarning>>),
+    ReceiptOnly(Option<Arc<NightlyReceiptWarning>>),
 }
 
 impl InstallOutcome {
-    pub fn receipt_warning(&self) -> Option<&str> {
+    pub fn receipt_warning(&self) -> Option<&Arc<NightlyReceiptWarning>> {
         match self {
             Self::Installed(warning)
             | Self::AlreadyInstalled(warning)
-            | Self::ReceiptOnly(warning) => warning.as_deref(),
+            | Self::ReceiptOnly(warning) => warning.as_ref(),
         }
     }
 }
 
-fn save_nightly_receipt(root: &Path, tag: &str) -> Option<String> {
-    crate::nightly::record_current(root, tag).err().map(|error| {
-        crate::nightly::remember_install_receipt_failure(root, tag);
-        eprintln!("Could not save the rolling receipt for {tag}: {error}");
-        let build = crate::nightly::display_name(tag)
-            .unwrap_or_else(|| crate::i18n::tr("Nightly").to_owned());
-        crate::i18n::trf(
-            "{build} is installed, but Sunrise couldn't record it as the newest Nightly. Install it again to fix this.",
-            &[("build", &build)],
-        )
-    })
+#[derive(Debug)]
+pub(crate) struct ReceiptFailure {
+    error: std::io::Error,
+    previous: Option<String>,
+}
+
+fn save_nightly_receipt(root: &Path, tag: &str) -> Option<ReceiptFailure> {
+    crate::nightly::record_current(root, tag)
+        .err()
+        .map(|error| {
+            crate::nightly::remember_install_receipt_failure(root, tag);
+            ReceiptFailure {
+                error,
+                previous: crate::nightly::current_receipt(root),
+            }
+        })
 }
 
 pub(crate) fn install_as(
@@ -165,7 +171,7 @@ pub(crate) fn install_as(
     release_facts: Option<(&[u8], &str)>,
     intent: InstallIntent,
     progress: impl Fn(f32),
-) -> Result<Option<String>, String> {
+) -> Result<Option<ReceiptFailure>, String> {
     let (url, size) = release
         .asset
         .clone()
