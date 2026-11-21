@@ -43,7 +43,7 @@ pub(crate) struct Facts {
     pub build_gone: Option<instances::Channel>,
     /// The name of the build a held update would move to.
     pub held: Option<String>,
-    /// The name of a newer build, for a profile that follows the newest Nightly.
+    /// The available release for the selected profile, if Home can offer an update.
     pub update: Option<String>,
     /// How many mods the game was made without.
     pub mods_off: usize,

@@ -5,7 +5,11 @@
 //! appearance only: the light look keeps `instance_dialog`.
 use super::*;
 
-use sunrise_launcher::instances::Channel;
+use std::path::Path;
+use sunrise_launcher::{
+    instances::Channel,
+    managed_play::{display_active, Active},
+};
 
 impl Launcher {
     /// Queue the saved profile's Play target, not the former dialog draft.
@@ -37,14 +41,13 @@ impl Launcher {
         }
     }
 
-    /// Compare the selected profile's settled base, not its executable or another cached build.
+    /// The Home offer and the picker opened by its Update action use the same decision.
     pub(crate) fn game_update(&self) -> Option<&Release> {
         let profile = self.selected_instance()?;
-        if profile.kind == instances::Kind::Pack || profile.version.is_some() {
-            return None;
-        }
-        let base = self.profile_target(profile)?;
-        profile_update(self.game_releases(), &base, profile.channel)
+        home_update(profile, self.game_releases(), display_active, || {
+            self.target_version(None, profile.channel)
+                .map(String::as_str)
+        })
     }
 
     /// Stable can follow an installed build even when its release feed is unavailable.
@@ -89,17 +92,35 @@ impl Launcher {
     }
 }
 
-fn profile_update<'a>(
+fn home_update<'a>(
+    profile: &instances::Instance,
     releases: &'a [Release],
-    base: &str,
-    channel: Channel,
+    read_active: impl FnOnce(&Path) -> Result<Option<Active>, String>,
+    unbound_target: impl FnOnce() -> Option<&'a str>,
 ) -> Option<&'a Release> {
-    let release = channel.builds(releases).next()?;
-    if release.tag == base || Channel::of_build(base) != Some(channel) {
+    if profile.kind == instances::Kind::Pack {
+        return None;
+    }
+    // An unreadable snapshot cannot fall back to a guess. A legacy pin only gates
+    // offers before the first commit; afterward compare the base, not the executable.
+    let active = read_active(&profile.home).ok()?;
+    let base = match &active {
+        Some(active) => active.base(),
+        None if profile.version.is_none() => unbound_target()?,
+        None => return None,
+    };
+    let release = profile.channel.builds(releases).next()?;
+    let base_channel = Channel::of_build(base)?;
+    // Stable may have started on Nightly while no Stable was published. Once a Stable
+    // release is available, offer that channel directly without comparing version formats.
+    if active.is_some() && (profile.channel, base_channel) == (Channel::Stable, Channel::Nightly) {
+        return Some(release);
+    }
+    if release.tag == base || base_channel != profile.channel {
         return None;
     }
     let newer = backend::compare_game_versions(&release.tag, base);
-    match channel {
+    match profile.channel {
         Channel::Stable => newer.is_gt(),
         Channel::Nightly => newer.is_ge(),
     }
@@ -175,21 +196,122 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_cached_stable_update_still_differs_from_the_profiles_committed_base() {
+    fn home_offers_the_update_to_the_committed_older_profile_even_after_it_is_cached() {
         let old = "26.3-0.1.0";
         let new = "26.3-0.1.1";
-        let nightly = "nightly-2026-11-20-aaaaaaa";
+        let releases = [release(new, false, true), release(old, false, true)];
+        // The legacy pin already names the new release, but the running base is still old.
+        let mut older = home_profile("older", Channel::Stable, Some(new));
+        let current = home_profile("current", Channel::Stable, None);
+        let older_base = active(old, "native-aaaaaaa-0123456789abcdef");
+        let current_base = active(new, new);
+        let before = [old.to_owned()];
+        let after = [new.to_owned(), old.to_owned()];
+        let offer = |profile: &instances::Instance, installed: &[String]| {
+            home_update(
+                profile,
+                &releases,
+                |home| {
+                    assert_eq!(home, profile.home.as_path());
+                    Ok(Some(if home == current.home.as_path() {
+                        current_base.clone()
+                    } else {
+                        older_base.clone()
+                    }))
+                },
+                || {
+                    profile
+                        .channel
+                        .play_target(&releases, installed, None, None)
+                        .map(String::as_str)
+                },
+            )
+            .map(|release| release.tag.clone())
+        };
+        assert_eq!(offer(&older, &before).as_deref(), Some(new));
+        assert_eq!(offer(&older, &after).as_deref(), Some(new));
+        // The same offer survives for an unpinned older profile as well.
+        older.version = None;
+        assert_eq!(offer(&older, &after).as_deref(), Some(new));
+        assert_eq!(offer(&current, &after), None);
+    }
+
+    #[test]
+    fn home_offers_stable_but_not_a_new_nightly_to_a_committed_stable_fallback() {
+        let fallback = "nightly-2026-11-18-aaaaaaa";
+        let stable = "26.3-0.1.0";
+        let profile = home_profile("fallback", Channel::Stable, None);
         let releases = [
-            release(nightly, true, true),
-            release(new, false, true),
-            release(old, false, true),
+            release("nightly-2026-11-20-bbbbbbb", true, true),
+            release("26.3-0.1.1", false, false),
+            release(stable, false, true),
         ];
-        assert_eq!(
-            profile_update(&releases, old, Channel::Stable).unwrap().tag,
-            new
-        );
-        assert!(profile_update(&releases, new, Channel::Stable).is_none());
-        assert!(profile_update(&releases, nightly, Channel::Stable).is_none());
+        let offer = |releases: &[Release], base: &str| {
+            home_update(
+                &profile,
+                releases,
+                |_| Ok(Some(active(base, base))),
+                || panic!("The base is already committed"),
+            )
+            .map(|release| release.tag.clone())
+        };
+        assert_eq!(offer(&releases[..2], fallback), None);
+        assert_eq!(offer(&releases, fallback).as_deref(), Some(stable));
+        assert_eq!(offer(&releases, "imported-2026-11-18"), None);
+    }
+
+    #[test]
+    fn home_limits_legacy_updates_to_unbound_unpinned_ordinary_profiles() {
+        let old = "26.3-0.1.0";
+        let releases = [release("26.3-0.1.1", false, true)];
+        let mut profile = home_profile("unbound", Channel::Stable, None);
+        let unbound = || Some(old);
+        assert!(home_update(&profile, &releases, |_| Ok(None), unbound).is_some());
+        assert!(home_update(&profile, &releases, |_| Err("Unsettled".into()), unbound).is_none());
+
+        profile.version = Some(old.into());
+        assert!(home_update(&profile, &releases, |_| Ok(None), unbound).is_none());
+
+        profile.kind = instances::Kind::Pack;
+        assert!(home_update(&profile, &releases, |_| panic!("Pack is fenced"), unbound).is_none());
+    }
+
+    fn home_profile(id: &str, channel: Channel, pin: Option<&str>) -> instances::Instance {
+        instances::Instance {
+            id: id.into(),
+            name: id.into(),
+            kind: instances::Kind::Own,
+            work: id.into(),
+            home: id.into(),
+            incarnation: None,
+            icon: None,
+            group: None,
+            version: pin.map(String::from),
+            channel,
+            native_profile: Default::default(),
+            played: Duration::ZERO,
+            last_played: None,
+            launch: Default::default(),
+        }
+    }
+
+    // The display decision needs a parsed pointer, not an executable or prepared resources.
+    fn active(base: &str, executable: &str) -> Active {
+        let digest = [0_u8; 32];
+        let profile = [1_u8; 16];
+        let artifact =
+            |tag: &str| serde_json::json!({ "tag": tag, "executable": digest, "runtime": digest });
+        let pointer = serde_json::json!({
+            "version": 1,
+            "profile": profile,
+            "generation": 1,
+            "base": artifact(base),
+            "executable": artifact(executable),
+            "resources": { "primary": digest },
+            "inputs": digest,
+            "receipts": [],
+        });
+        Active::parse(&serde_json::to_vec(&pointer).unwrap()).unwrap()
     }
 
     #[test]
