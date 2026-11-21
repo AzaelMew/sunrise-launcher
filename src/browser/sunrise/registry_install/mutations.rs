@@ -28,8 +28,8 @@ pub(super) fn update_floors(
                 |p| p.package.manifest.name.as_str(),
             );
             return Err(InstallError::Refused(trf(
-                "{mod} can't be updated here because it wasn't installed from the Sunrise registry.",
-                &[("mod", name)],
+                "Sunrise couldn't confirm that {name} came from the Sunrise registry, so it can't be updated here.",
+                &[("name", name)],
             )));
         };
         let installed =

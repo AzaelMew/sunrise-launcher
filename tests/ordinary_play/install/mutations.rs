@@ -205,7 +205,7 @@ fn a_self_consistent_local_index_cannot_update_but_explicit_remove_can_remove_it
         &["mods", "update", "root_mod", "--confirm-world-loss"],
     );
     let not_owned =
-        "Lanterns can't be updated here because it wasn't installed from the Sunrise registry.";
+        "Sunrise couldn't confirm that Lanterns came from the Sunrise registry, so it can't be updated here.";
     assert!(!ok && text.contains(not_owned), "{text}");
     assert_eq!(live_state(&fixture), old);
 
