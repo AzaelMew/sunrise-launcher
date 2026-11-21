@@ -570,9 +570,11 @@ impl Launcher {
             None if snapshot.is_none() => div(),
             None => div()
                 .flex()
+                .flex_wrap()
                 .items_center()
-                .gap(px(8.))
-                .py(px(8.))
+                .gap_x(px(8.))
+                .gap_y(px(4.))
+                .py(px(4.))
                 .child(muted(tr("No mods yet")))
                 .child(
                     link("alt-home-browse-mods", tr("Browse mods").to_string())

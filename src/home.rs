@@ -302,8 +302,11 @@ impl Launcher {
                 .into_any_element();
         };
         self.load_worlds(instance.home.clone(), cx);
+        let viewport = window.viewport_size();
+        let compact = !crate::home_mods::side_by_side(f32::from(viewport.width))
+            && f32::from(viewport.height) < 700.;
         let header = self.profile_header(&instance, window, cx);
-        let body = self.continue_playing(&instance, window, cx);
+        let body = self.continue_playing(&instance, window, compact, cx);
         let notice = self.launcher_update_notice(cx);
         div()
             .id("alt-home")
@@ -312,8 +315,8 @@ impl Launcher {
             .track_scroll(&crate::frame::scrolls("home"))
             .flex()
             .flex_col()
-            .gap(px(GAP))
-            .pt(px(24.))
+            .gap(px(if compact { 14. } else { GAP }))
+            .pt(px(if compact { 16. } else { 24. }))
             // The profile sits on the scene, inset like the text of the panel under it.
             .child(header.flex_none().px(px(INSET)))
             .children(notice)
@@ -327,7 +330,7 @@ impl Launcher {
                     .flex()
                     .flex_col()
                     .gap(px(16.))
-                    .p(px(22.))
+                    .p(px(if compact { 16. } else { 22. }))
                     .rounded(crate::tokens::r(crate::tokens::R_PANEL))
                     .bg(palette().chrome_plate())
                     .border_1()
@@ -686,7 +689,8 @@ impl Launcher {
             .when_some(version.cloned(), |d, tag| {
                 d.tooltip(crate::glass_ui::tip(tag))
             })
-            .flex_none()
+            .min_w_0()
+            .max_w(px(340.))
             .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
             .border_1()
             .border_color(palette().input_edge())
@@ -702,16 +706,18 @@ impl Launcher {
             .pr(px(14.))
             .child(
                 div()
+                    .min_w_0()
+                    .truncate()
                     .text_size(px(tokens::BODY))
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(rgb(palette().text))
                     .child(build),
             )
-            .child(blocks::icon(
+            .child(div().flex_none().child(blocks::icon(
                 "chevron-down",
                 13.,
                 rgb(palette().muted).into(),
-            ))
+            )))
             .child(
                 gpui::canvas(
                     move |bounds, window, cx| {
@@ -742,6 +748,7 @@ impl Launcher {
         &mut self,
         instance: &instances::Instance,
         window: &Window,
+        compact: bool,
         cx: &mut Context<Self>,
     ) -> Div {
         let list: Vec<World> = self.worlds.list.clone();
@@ -811,7 +818,7 @@ impl Launcher {
         let first_start = self.accounts.selected().is_none() && self.worlds.list.is_empty();
         let worlds = div().flex_1().min_w_0().flex().flex_col().gap(px(10.));
         let worlds = if first_start {
-            worlds.child(self.welcome(cx))
+            worlds.child(self.welcome(compact, cx))
         } else {
             worlds.child(top).child(body)
         };
@@ -821,7 +828,7 @@ impl Launcher {
         let both = div()
             .flex_grow(1.)
             .flex()
-            .gap(px(22.))
+            .gap(px(if compact { 14. } else { 22. }))
             .child(worlds)
             .child(mods);
         if crate::home_mods::side_by_side(f32::from(window.viewport_size().width)) {
@@ -1054,13 +1061,13 @@ impl Launcher {
 
     /// The first start: signed out, nothing to play yet. Nothing is read from outside the
     /// launcher's own data.
-    fn welcome(&mut self, cx: &mut Context<Self>) -> Div {
+    fn welcome(&mut self, compact: bool, cx: &mut Context<Self>) -> Div {
         div()
             .flex()
             .flex_col()
-            .gap(px(10.))
+            .gap(px(if compact { 6. } else { 10. }))
             .pr(px(12.))
-            .py(px(8.))
+            .py(px(if compact { 0. } else { 8. }))
             .child(
                 div()
                     .text_size(px(tokens::DISPLAY))
