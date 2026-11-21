@@ -781,6 +781,12 @@ fn registry_edit<'a>(
             ),
             Action::Install(_) => (crate::worlds::SuspectMods::new(), false),
         };
+        for id in restored_holds.iter().filter(|id| entries.contains_key(*id)) {
+            if !mod_list::is_enabled(next.path(), id) {
+                return Err(held_change_refusal(id));
+            }
+        }
+        let committed_inputs = proof.inputs();
         let reviewed_worlds = match &action {
             Action::Install(_) if resolve_fence.is_some() => Vec::new(),
             Action::Install(_) => guard_replacements(
@@ -810,7 +816,7 @@ fn registry_edit<'a>(
                 .with_unchecked_update(unchecked_update);
                 (hooks.progress)(InstallProgress::Reviewing);
                 let allowed = if let Some(mixed) = &mut mixed {
-                    mixed.combine(&impact, instance, identity, &edit, old.path())
+                    mixed.combine(&impact, &edit, old.path(), next.path(), committed_inputs)
                 } else {
                     approve(&impact)
                 };
@@ -820,20 +826,11 @@ fn registry_edit<'a>(
                 impact.into_evidence()
             }
         };
-        for id in restored_holds.iter().filter(|id| entries.contains_key(*id)) {
-            if !mod_list::is_enabled(next.path(), id) {
-                return Err(held_change_refusal(id));
-            }
-        }
         let retired_holds = restored_holds
             .into_iter()
             .chain(retired_off)
             .filter(|id| entries.contains_key(id))
             .collect();
-        let committed_inputs = mixed
-            .as_ref()
-            .map(|_| managed_play::inputs(next.path(), None))
-            .transpose()?;
         (hooks.progress)(InstallProgress::Publishing);
         let published = edit.publish_install(proof, &cancelled, &retired_holds, || {
             let (_, current, current_authority) = if resolve_fence.is_some() {
@@ -851,8 +848,8 @@ fn registry_edit<'a>(
                 mutations::bind_worlds(&instance.home, &suspect, &reviewed_worlds).map(Some)
             }
         })?;
-        if let (Some(mixed), Some(inputs)) = (&mut mixed, committed_inputs) {
-            mixed.published(published, inputs);
+        if let Some(mixed) = &mut mixed {
+            mixed.published(published, committed_inputs);
         }
         for (id, entry) in entries {
             if let Some(previous) = before.get(&id) {

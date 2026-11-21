@@ -4,6 +4,8 @@ use crate::managed_play::{Active, Held, HeldReason, HeldRoot, HeldSource};
 use sha2::{Digest, Sha256};
 use std::os::unix::fs::PermissionsExt;
 
+mod mixed;
+
 const ID: &str = "native_lantern";
 const ARCHIVE: &str = "sunrise-native-mods/native_lantern.smod";
 const EXTRA: &str = "sunrise-mods/extra_mod.smod";
