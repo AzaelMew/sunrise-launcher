@@ -1596,8 +1596,8 @@ pub mod pack;
 mod registry_install;
 pub use registry_install::{
     checked_switch_fit, install_registry, install_target, switch_build, BuildNotice, InstallError,
-    InstallHooks, InstallProgress, InstalledBatch, NativeQuestion, SwitchHooks, SwitchQuestion,
-    Switched,
+    InstallHooks, InstallProgress, InstalledBatch, NativeQuestion, ResolveQuestion, SwitchHooks,
+    SwitchQuestion, Switched,
 };
 #[cfg(test)]
 mod tests;

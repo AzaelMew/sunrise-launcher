@@ -2405,6 +2405,7 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                             trust_native_code
                         }),
                         continue_after_failure: &|_| false,
+                        resolve: None,
                     },
                 )
                 .map_err(|error| error.to_string())?;

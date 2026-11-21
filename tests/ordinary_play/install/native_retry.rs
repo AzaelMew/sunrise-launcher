@@ -152,6 +152,7 @@ fn retry_worker() {
             },
             registry_crates: None,
             continue_after_failure: &|_| panic!("no compile can run"),
+            resolve: None,
         },
     );
     assert!(matches!(done, Err(InstallError::Cancelled)), "{done:?}");

@@ -328,6 +328,7 @@ fn conflicting_pair_worker() {
             native: &|_| panic!("content-only fixture"),
             registry_crates: None,
             continue_after_failure: &|_| panic!("content-only fixture"),
+            resolve: None,
         },
     )
     .unwrap();
@@ -369,6 +370,7 @@ fn cutoff_worker() {
             native: &|_| panic!("content-only fixture"),
             registry_crates: None,
             continue_after_failure: &|_| panic!("content-only fixture"),
+            resolve: None,
         },
     );
     assert!(
@@ -627,6 +629,87 @@ fn switch_holds_content_in_place_and_registry_update_restores_only_enabled_holds
 }
 
 #[test]
+fn resolve_default_and_stale_approval_keep_exact_bytes_then_only_proved_blocker_turns_off() {
+    let fixture = Fixture::new();
+    let (mut registry, archives) = fixture.content_index();
+    fixture.publish_registry(&registry);
+    fixture.install_mod("root_mod");
+    let project = registry
+        .projects
+        .iter_mut()
+        .find(|p| p.id == "required_mod")
+        .unwrap();
+    let (row, new_core) = fixture.new_version(project, "2.0.0", "26.3", None);
+    project.versions.insert(0, row);
+    let project = registry
+        .projects
+        .iter_mut()
+        .find(|p| p.id == "extra_mod")
+        .unwrap();
+    let (row, extra) = fixture.new_version(project, "2.0.0", "26.3", Some("^2"));
+    project.versions = vec![row];
+    fixture.publish_registry(&registry);
+    let world = write_world(&fixture.home, 4200);
+    let saves = fs::read(&world).unwrap();
+    let pointer = fixture.pointer();
+    let list = fs::read(fixture.home.join(mod_list::FILE)).unwrap();
+    let rows = fs::read(fixture.home.join(index::browser_state::MANIFEST)).unwrap();
+    let mods = fixture.home.join(mod_list::DIR);
+    let headless = fixture
+        .registry_client(&["mods", "install", "extra_mod", "--source", "sunrise"])
+        .output()
+        .unwrap();
+    assert!(!headless.status.success(), "{headless:?}");
+    for decision in [
+        "resolve-stay",
+        "resolve-changed-world",
+        "resolve-changed-index",
+    ] {
+        fixture.decision_worker(decision);
+        assert_eq!(fixture.pointer(), pointer);
+        assert_eq!(fs::read(fixture.home.join(mod_list::FILE)).unwrap(), list);
+        assert_eq!(
+            fs::read(fixture.home.join(index::browser_state::MANIFEST)).unwrap(),
+            rows
+        );
+        assert_eq!(
+            fs::read(mods.join("root_mod.smod")).unwrap(),
+            archives["root_mod"]
+        );
+        assert_eq!(
+            fs::read(mods.join("required_mod.smod")).unwrap(),
+            archives["required_mod"]
+        );
+        assert!(!mods.join("extra_mod.smod").exists());
+        fs::write(&world, &saves).unwrap();
+        fixture.publish_registry(&registry);
+    }
+    fixture.decision_worker("resolve-accept");
+    let active = Active::parse(&fixture.pointer()).unwrap();
+    assert_eq!(active.base(), BUILD);
+    assert_eq!(active.generation(), 2);
+    assert_eq!(
+        fs::read(mods.join("root_mod.smod")).unwrap(),
+        archives["root_mod"]
+    );
+    assert_eq!(fs::read(mods.join("required_mod.smod")).unwrap(), new_core);
+    assert_eq!(fs::read(mods.join("extra_mod.smod")).unwrap(), extra);
+    assert!(!sunrise_launcher::browser::mod_list::is_enabled(
+        &fixture.home,
+        "root_mod"
+    ));
+    assert!(sunrise_launcher::browser::mod_list::is_enabled(
+        &fixture.home,
+        "required_mod"
+    ));
+    assert!(sunrise_launcher::browser::mod_list::is_enabled(
+        &fixture.home,
+        "extra_mod"
+    ));
+    assert_eq!(fs::read(world).unwrap(), saves);
+}
+
+#[test]
 fn profile_decision_worker() {
     let Ok(mode) = std::env::var("FIXTURE_PROFILE_DECISION") else {
         return;
@@ -689,6 +772,38 @@ fn profile_decision_worker() {
             _ => unreachable!(),
         }
         assert_eq!(cutoff.get(), u32::from(mode == "switch-accept"));
+    } else {
+        let result = install_registry(
+            &instance,
+            sunrise_launcher::browser::sunrise::install_target(&instance).unwrap(),
+            || vec!["extra_mod".into()],
+            || panic!("already bound"),
+            InstallHooks {
+                progress: &|_| {},
+                native: &|_| panic!("content only"),
+                registry_crates: None,
+                continue_after_failure: &|_| panic!("content only"),
+                resolve: Some(&|q| {
+                    assert_eq!(q.requested, ["Fireflies"]);
+                    assert_eq!(q.blockers.len(), 1);
+                    assert_eq!(q.blockers[0].0, "Lanterns");
+                    assert!(q.blockers[0].1.contains("^1"), "{q:?}");
+                    assert_eq!(q.worlds.affected[0].world, "Glass Basin");
+                    decide()
+                }),
+            },
+        );
+        match mode.as_str() {
+            "resolve-stay" => assert!(matches!(result, Err(InstallError::Cancelled)), "{result:?}"),
+            "resolve-changed-index" => {
+                assert!(result.unwrap_err().to_string().contains("registry changed"))
+            }
+            "resolve-changed-world" => {
+                assert!(result.unwrap_err().to_string().contains("worlds changed"))
+            }
+            "resolve-accept" => assert!(result.is_ok(), "{result:?}"),
+            _ => unreachable!(),
+        }
     }
     assert_eq!(approved.get(), 1);
 }

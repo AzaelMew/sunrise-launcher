@@ -10,6 +10,7 @@ use crate::{
     managed_play::{self, FirstBuild, Held, HeldSource, Profile, ScannedPackage},
     native_mods,
     profile_txn::Identity,
+    worlds::switch::{Changed, Fence, Question},
 };
 use serde_json::{Map, Value};
 use std::{
@@ -24,7 +25,9 @@ use sunrise_launcher_smod::{
 };
 
 const MAX_TRIALS: usize = 64;
+mod conflicts;
 mod switch;
+pub use conflicts::ResolveQuestion;
 pub use switch::{checked_switch_fit, switch_build, SwitchHooks, SwitchQuestion, Switched};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -111,6 +114,8 @@ pub struct InstallHooks<'a> {
     pub native: &'a dyn Fn(&NativeQuestion) -> Result<bool, String>,
     pub registry_crates: Option<&'a dyn Fn(&native_mods::Consent) -> bool>,
     pub continue_after_failure: &'a dyn Fn(&BuildNotice) -> bool,
+    /// Interactive approval of a fully prepared same-base conflict plan; absent in automation.
+    pub resolve: Option<&'a dyn Fn(&ResolveQuestion) -> bool>,
 }
 
 /// Capture the Install target before it queues. The initial default profile may not have
@@ -234,27 +239,45 @@ pub fn install_registry(
     let mut last_sdk_refusal = None;
     let mut named_native: Option<BTreeSet<String>> = None;
     for _ in 0..MAX_TRIALS {
+        let options = resolve::WholeOptions {
+            conflicts: &conflicts,
+            native_fits: |p: &index::Project, v: &index::Version| {
+                !unfit.contains(&(p.id.clone(), v.version.clone()))
+            },
+            messages: trf,
+        };
         let plan = resolve::install_whole(
             &planning,
             &roots,
             &enabled_before,
             &game,
             Side::Both,
-            resolve::WholeOptions {
-                conflicts: &conflicts,
-                native_fits: |p: &index::Project, v: &index::Version| {
-                    !unfit.contains(&(p.id.clone(), v.version.clone()))
-                },
-                messages: trf,
-            },
+            options,
         );
-        let plan = match plan {
-            Ok(plan) => plan,
+        let (plan, disabled) = match plan {
+            Ok(plan) => (plan, Vec::new()),
             Err(resolve::WholeRefusal::Unproved(reason)) => {
                 return Err(InstallError::Unproved(reason))
             }
             Err(resolve::WholeRefusal::Inconsistent(reason)) => {
-                return Err(InstallError::Refused(last_sdk_refusal.unwrap_or(reason)));
+                if hooks.resolve.is_none() || edit.current().is_none() {
+                    return Err(InstallError::Refused(last_sdk_refusal.unwrap_or(reason)));
+                }
+                // Negative evidence must come from a complete index, not Discover or cached rows.
+                let (_, complete) = super::complete_index(&source, local)?;
+                if complete != source_bytes {
+                    return Err(registry_changed().into());
+                }
+                validate_enabled(old.path(), &catalogue)?;
+                conflicts::minimal(
+                    &planning,
+                    &roots,
+                    &enabled_before,
+                    &game,
+                    &conflicts,
+                    |p, v| !unfit.contains(&(p.id.clone(), v.version.clone())),
+                )?
+                .ok_or_else(|| InstallError::Refused(last_sdk_refusal.take().unwrap_or(reason)))?
             }
         };
         let versions = plan
@@ -337,6 +360,12 @@ pub fn install_registry(
             .collect();
         if !enabled.is_empty() {
             mod_list::set_all_enabled(next.path(), &enabled, true)?;
+        }
+        if !disabled.is_empty() {
+            if disabled.iter().any(|id| entries.contains_key(*id)) {
+                return Err(unproved_mods().into());
+            }
+            mod_list::set_all_enabled(next.path(), &disabled, false)?;
         }
         if let Some(conflict) = manifest_conflict(next.path(), &catalogue)? {
             if conflicts.contains(&conflict) {
@@ -479,7 +508,7 @@ pub fn install_registry(
                     detail: error,
                     log,
                 };
-                if !(hooks.continue_after_failure)(&notice) {
+                if !disabled.is_empty() || !(hooks.continue_after_failure)(&notice) {
                     return Err(InstallError::Compile(notice));
                 }
                 result.failure = Some(notice);
@@ -526,7 +555,28 @@ pub fn install_registry(
                 .map_err(|e| InstallError::Unproved(e.into()))?;
             }
         }
-        guard_replacements(&instance.home, next.path(), &before, &entries)?;
+        let fence = if let Some(approve) = hooks.resolve.filter(|_| !disabled.is_empty()) {
+            let question = conflicts::question(
+                &catalogue,
+                &roots,
+                &before,
+                next.path(),
+                &entries,
+                &disabled,
+            )?;
+            let (fence, worlds) = Fence::hold(&instance.home, &question.1, None)?;
+            if !approve(&ResolveQuestion {
+                worlds,
+                ..question.0
+            }) {
+                return Err(InstallError::Cancelled);
+            }
+            Some(fence)
+        } else {
+            // Ordinary Update/Remove world approval is separate from conflict resolution.
+            guard_replacements(&instance.home, next.path(), &before, &entries)?;
+            None
+        };
         let restored = restores
             .keys()
             .filter(|id| entries.contains_key(*id))
@@ -534,11 +584,18 @@ pub fn install_registry(
             .collect();
         (hooks.progress)(InstallProgress::Publishing);
         edit.publish_install(proof, &cancelled, &restored, || {
-            let (_, current) = fetch_index(&source, local)?;
+            let (_, current) = if fence.is_some() {
+                super::complete_index(&source, local)?
+            } else {
+                fetch_index(&source, local)?
+            };
             if source_bytes != current {
                 return Err(registry_changed());
             }
-            guard_replacements(&instance.home, next.path(), &before, &entries)
+            match &fence {
+                Some(fence) => fence.revalidate(&instance.home),
+                None => guard_replacements(&instance.home, next.path(), &before, &entries),
+            }
         })?;
         for (id, entry) in entries {
             if let Some(previous) = before.get(&id) {
