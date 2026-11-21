@@ -182,6 +182,8 @@ impl Launcher {
             .child(
                 div().flex().justify_end().child(
                     button("nightly-github", tr("Open on GitHub"))
+                        .gap(px(5.))
+                        .child("↗")
                         .on_click(cx.listener(move |_, _, _, cx| cx.open_url(&repo_url))),
                 ),
             );
