@@ -145,8 +145,10 @@ pub(crate) struct WorldBuildOrder {
 
 impl WorldBuildOrder {
     pub(crate) fn for_target(tag: &str) -> Self {
-        let mut releases = super::releases().unwrap_or_default();
-        if Channel::of(tag) == Some(Channel::Snapshot) {
+        let mut releases = super::release_list()
+            .map(|list| world_order_releases(&list))
+            .unwrap_or_default();
+        if Channel::of(tag) == Some(Channel::Snapshot) && !releases.iter().any(|r| r.tag == tag) {
             releases.extend(snapshot(tag).unwrap_or_default());
         }
         let target = releases
@@ -162,6 +164,14 @@ impl WorldBuildOrder {
 
     /// Abbreviated tags are only lookup hints, never the saved world's identity.
     pub(crate) fn compare_saved(&mut self, commit: &str) -> Option<Ordering> {
+        self.compare_saved_with(commit, SignedIdentity::read)
+    }
+
+    fn compare_saved_with(
+        &mut self,
+        commit: &str,
+        read_signed: impl FnMut(&Release) -> Option<SignedIdentity>,
+    ) -> Option<Ordering> {
         let target = self.target.as_ref()?;
         if commit == target.commit {
             return Some(Ordering::Equal);
@@ -179,7 +189,7 @@ impl WorldBuildOrder {
                             .rsplit_once('-')
                             .is_some_and(|(_, hint)| commit.starts_with(hint))
                 })
-                .filter_map(SignedIdentity::read)
+                .filter_map(read_signed)
                 .filter(|identity| identity.commit == commit);
             let saved = signed.next()?;
             if signed.any(|identity| identity.day != saved.day) {
@@ -190,10 +200,57 @@ impl WorldBuildOrder {
     }
 }
 
+fn world_order_releases(list: &serde_json::Value) -> Vec<Release> {
+    let mut releases = super::game_releases(list);
+    // Snapshots are excluded from the picker and update feed. Their signed metadata
+    // still proves which game last saved a world, including against a Nightly target.
+    releases.extend(
+        super::parse_releases(list, None, |tag| {
+            sunrise_launcher_release_verify::is_build(Channel::Snapshot, tag)
+        })
+        .into_iter()
+        .map(|mut snapshot| {
+            snapshot.nightly = Some(snapshot.tag.clone());
+            snapshot
+        }),
+    );
+    releases
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::backend::game_releases_with;
+
+    #[test]
+    fn a_saved_snapshot_gets_signed_order_against_a_nightly_target() {
+        let saved = "b".repeat(40);
+        let tag = "snapshot-2026-11-19-bbbbbbb";
+        let raw = serde_json::json!([{
+            "tag_name": tag,
+            "name": "Snapshot",
+            "published_at": "2026-11-19T00:00:00Z",
+            "prerelease": true,
+            "assets": []
+        }]);
+        assert!(super::super::game_releases(&raw).is_empty());
+        let mut order = WorldBuildOrder {
+            target: Some(SignedIdentity {
+                commit: "a".repeat(40),
+                day: NaiveDate::from_ymd_opt(2026, 11, 18).unwrap(),
+            }),
+            releases: world_order_releases(&raw),
+            comparisons: BTreeMap::new(),
+        };
+        assert_eq!(
+            order.compare_saved_with(&saved, |release| {
+                assert_eq!(release.nightly.as_deref(), Some(tag));
+                let signed = serde_json::json!({ "contract": 1, "build": tag, "commit": saved });
+                SignedIdentity::decode(&release.tag, signed.to_string().as_bytes())
+            }),
+            Some(Ordering::Greater)
+        );
+    }
 
     #[test]
     fn world_order_uses_full_signed_identity_and_has_no_order_within_one_day() {
