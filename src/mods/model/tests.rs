@@ -524,6 +524,9 @@ fn native_files_the_browser_didnt_install_are_listed_and_never_planned() {
     assert_eq!((content.make, &content.need), (None, &None));
     assert!(content.local.is_some() && content.entry.is_none());
     assert!(!bulk_updatable(mine));
+    let shown = visible(&r, &RowFilter::default());
+    assert_eq!(shown.len(), 6, "four managed mods and two hand-added mods");
+    assert_eq!(visible_count(&r, &shown), "6 of 6 mods shown");
 }
 
 #[test]

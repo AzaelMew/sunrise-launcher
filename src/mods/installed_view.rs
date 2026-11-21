@@ -273,13 +273,7 @@ impl Launcher {
                 .border_color(c(palette().divider))
                 .child(select_all);
             if n_sel == 0 {
-                bar = bar.child(muted(trf(
-                    "{shown} of {total} mods shown",
-                    &[
-                        ("shown", &visible.len().to_string()),
-                        ("total", &rows.len().to_string()),
-                    ],
-                )));
+                bar = bar.child(muted(model::visible_count(&rows, &visible)));
                 if any_update {
                     let update_all = bulk("alt-update-all", tr("Update all").into(), true, false);
                     bar = bar.child(div().flex_1()).child(if busy {
