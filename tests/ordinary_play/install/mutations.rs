@@ -108,6 +108,71 @@ fn live_state(fixture: &Fixture) -> [Vec<u8>; 4] {
 }
 
 #[test]
+fn a_pack_row_cannot_update_or_remove_an_installed_mod_archive() {
+    let fixture = Fixture::new();
+    let (mut registry, archives) = fixture.content_index();
+    let mut shader = fixture.registry().project("glow").unwrap().clone();
+    let shader_name = &shader.versions[0].file.name;
+    let download = fixture.root.join(shader_name);
+    let shader_bytes = include_bytes!("../../../crates/smod/tests/index/glow-1.0.0.sshader");
+    fs::write(&download, shader_bytes).unwrap();
+    let shader_file = fixture.home.join("shaderpacks").join(shader_name);
+    shader.versions[0].file.url = format!("file://{}", download.display());
+    registry.projects.push(shader);
+    fixture.publish_registry(&registry);
+
+    let archive = format!("{}/root_mod.smod", mod_list::DIR);
+    fs::create_dir_all(fixture.home.join(mod_list::DIR)).unwrap();
+    fs::write(fixture.home.join(&archive), &archives["root_mod"]).unwrap();
+    let manifest = fixture.home.join(index::browser_state::MANIFEST);
+    let mut rows = json!({"entries": [{
+        "source": "sunrise", "project": "glow", "slug": "glow", "title": "Soft Glow",
+        "kind": "shader", "version": "0.9.0", "number": "0.9.0", "file": archive,
+        "checksum": format!("SHA-256:{}", index::sha256(&archives["root_mod"])), "page": ""
+    }]});
+    let before = serde_json::to_vec(&rows).unwrap();
+    fs::write(&manifest, &before).unwrap();
+    for args in [
+        &["mods", "update", "glow", "--check"][..],
+        &["mods", "update", "glow"],
+        &["mods", "remove", "glow"],
+    ] {
+        let (ok, text) = run(&fixture, args);
+        assert!(
+            !ok && text.contains("isn't a pack file"),
+            "{args:?}: {text}"
+        );
+        assert_eq!(
+            fs::read(fixture.home.join(&archive)).unwrap(),
+            archives["root_mod"]
+        );
+        assert_eq!(fs::read(&manifest).unwrap(), before);
+        assert!(!shader_file.exists());
+    }
+
+    // The same commands still work on an actual shader pack, including replacing its older file.
+    let old_shader = fixture.home.join("shaderpacks/glow-0.9.0.sshader");
+    fs::create_dir_all(old_shader.parent().unwrap()).unwrap();
+    fs::write(&old_shader, shader_bytes).unwrap();
+    rows["entries"][0]["file"] = json!("shaderpacks/glow-0.9.0.sshader");
+    rows["entries"][0]["checksum"] = json!(format!("SHA-256:{}", index::sha256(shader_bytes)));
+    fs::write(&manifest, serde_json::to_vec(&rows).unwrap()).unwrap();
+    let (ok, text) = run(&fixture, &["mods", "update", "glow", "--check"]);
+    assert!(ok && text.contains("1.0.0 is available"), "{text}");
+    let (ok, text) = run(&fixture, &["mods", "update", "glow"]);
+    assert!(ok, "{text}");
+    assert!(!old_shader.exists());
+    assert_eq!(fs::read(&shader_file).unwrap(), shader_bytes);
+    let (ok, text) = run(&fixture, &["mods", "remove", "glow"]);
+    assert!(ok, "{text}");
+    assert!(!shader_file.exists());
+    assert_eq!(
+        fs::read(fixture.home.join(archive)).unwrap(),
+        archives["root_mod"]
+    );
+}
+
+#[test]
 fn a_self_consistent_local_index_cannot_update_but_explicit_remove_can_remove_its_bytes() {
     let fixture = Fixture::new();
     let (mut registry, _) = fixture.content_index();

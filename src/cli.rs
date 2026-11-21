@@ -2535,18 +2535,24 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                     }
                 }
             }
-            for e in chosen.into_iter().filter(|e| check || e.kind != Kind::Mod) {
-                let source = sunrise_launcher::browser::source(e.source);
-                let newer = installed::update_for(&*source, e, &game)?;
-                match newer {
-                    None => println!("{} {}: up to date.", e.title, e.number),
-                    Some(v) if check => {
-                        println!("{} {}: {} is available.", e.title, e.number, v.number)
+            for e in chosen {
+                use installed::PackUpdate;
+                let status = if e.kind != Kind::Mod {
+                    installed::update_pack(&home, e, &game, check, &line)?
+                } else if check {
+                    let source = sunrise_launcher::browser::source(e.source);
+                    installed::update_for(&*source, e, &game)?
+                        .map_or(PackUpdate::Current, |v| PackUpdate::Available(v.number))
+                } else {
+                    continue;
+                };
+                match status {
+                    PackUpdate::Current => println!("{} {}: up to date.", e.title, e.number),
+                    PackUpdate::Available(number) => {
+                        println!("{} {}: {number} is available.", e.title, e.number)
                     }
-                    Some(_) => {
-                        let p = source.project(&e.project)?;
-                        let done = installed::install(&*source, &p, true, &home, &game, &line)?;
-                        for done in done {
+                    PackUpdate::Updated(entries) => {
+                        for done in entries {
                             println!("{} {}: {}", done.title, done.number, done.file);
                         }
                     }
@@ -2621,8 +2627,8 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
             let identity = sunrise_launcher::profile_txn::Identity::of(&home);
             let list = installed::Installed::read(&home)?;
             let installed = list.lookup(&project);
-            if installed.is_some_and(|row| row.kind != Kind::Mod) {
-                let entry = installed::remove(&home, &project)?;
+            if let Some(row) = installed.filter(|row| row.kind != Kind::Mod) {
+                let entry = installed::remove_pack(&home, row)?;
                 println!("Removed {} ({}).", entry.title, entry.file);
             } else {
                 if instance.kind == instances::Kind::Pack {
