@@ -90,15 +90,33 @@ impl Registry {
                             let active: Claim = serde_json::from_slice(&bytes)
                                 .map_err(|error| problem(&record, error))?;
                             if exclusive || active.exclusive {
-                                for active_root in active.roots.into_iter().map(decode_path) {
-                                    if let Some((root, _)) =
-                                        roots.iter().find(|(_, key)| overlaps(key, &active_root))
-                                    {
-                                        return Err(crate::i18n::trf(
-                                            "Cannot lock {path}: another launcher is using or moving this data. Close it and try again.",
-                                            &[("path", &root.to_string_lossy())],
-                                        ));
+                                let overlap = match active.exact {
+                                    Some(exact) => {
+                                        if exact.len() != active.roots.len()
+                                            || exact.iter().any(|root| root.directories.is_empty())
+                                        {
+                                            return Err(problem(
+                                                &record,
+                                                std::io::ErrorKind::InvalidData,
+                                            ));
+                                        }
+                                        roots.iter().find(|(_, key)| {
+                                            exact.iter().any(|root| key.exact.overlaps(root))
+                                        })
                                     }
+                                    None => {
+                                        let legacy: Vec<_> =
+                                            active.roots.into_iter().map(decode_path).collect();
+                                        roots.iter().find(|(_, key)| {
+                                            legacy.iter().any(|root| overlaps(&key.legacy, root))
+                                        })
+                                    }
+                                };
+                                if let Some((root, _)) = overlap {
+                                    return Err(crate::i18n::trf(
+                                        "Cannot lock {path}: another launcher is using or moving this data. Close it and try again.",
+                                        &[("path", &root.to_string_lossy())],
+                                    ));
                                 }
                             }
                             continue;
@@ -121,7 +139,11 @@ impl Registry {
         let lease = super::lock_file(&entry.path().join("owner.lock"), true)?;
         let record = entry.path().join("claim.json");
         let claim = Claim {
-            roots: roots.iter().map(|(_, key)| encode_path(key)).collect(),
+            roots: roots
+                .iter()
+                .map(|(_, key)| encode_path(key.legacy.as_os_str()))
+                .collect(),
+            exact: Some(roots.into_iter().map(|(_, key)| key.exact).collect()),
             exclusive,
         };
         let bytes = serde_json::to_vec(&claim).map_err(|error| problem(&record, error))?;
@@ -131,12 +153,14 @@ impl Registry {
     }
 }
 
-// Use the portable folded spelling on every OS. Keep it separate from the real I/O
-// path: a claimed missing component must match even if it is subsequently created
-// with a different case, including on case-sensitive volumes used by tests.
-fn claim_key(path: &Path) -> Result<PathBuf> {
-    let resolved = match fs::canonicalize(path) {
-        Ok(real) => super::plain_drive(real),
+struct ClaimKey {
+    legacy: PathBuf,
+    exact: CheckedRoot,
+}
+
+fn claim_key(path: &Path) -> Result<ClaimKey> {
+    let (prefix, missing) = match fs::canonicalize(path) {
+        Ok(real) => (super::plain_drive(real), Vec::new()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             let absolute = std::path::absolute(path).map_err(|error| problem(path, error))?;
             let (prefix, missing) = super::resolved_prefix(&absolute)?;
@@ -152,14 +176,119 @@ fn claim_key(path: &Path) -> Result<PathBuf> {
                     ),
                 ));
             }
-            missing
-                .iter()
-                .rev()
-                .fold(prefix, |path, part| path.join(part))
+            (prefix, missing)
         }
         Err(error) => return Err(problem(path, error)),
     };
-    Ok(PathBuf::from(resolved.as_os_str().to_ascii_lowercase()))
+    let mut directories = prefix
+        .ancestors()
+        .map(|dir| {
+            Ok(ExistingDirectory {
+                name: encode_path(dir.file_name().unwrap_or(dir.as_os_str())),
+                identity: directory_identity(dir).map_err(|error| problem(dir, error))?,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    directories.reverse();
+    let legacy = missing
+        .iter()
+        .rev()
+        .fold(prefix, |path, part| path.join(part));
+    Ok(ClaimKey {
+        legacy: PathBuf::from(legacy.as_os_str().to_ascii_lowercase()),
+        exact: CheckedRoot {
+            directories,
+            missing: missing
+                .iter()
+                .rev()
+                .map(|part| encode_path(&part.to_ascii_lowercase()))
+                .collect(),
+        },
+    })
+}
+
+#[derive(Serialize, Deserialize)]
+struct CheckedRoot {
+    /// Exact native spelling and file identity through the deepest existing directory.
+    directories: Vec<ExistingDirectory>,
+    /// A reservation keeps these components unresolved for its lifetime, even after mkdir.
+    missing: Vec<Vec<PathUnit>>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct ExistingDirectory {
+    name: Vec<PathUnit>,
+    identity: (u64, u64),
+}
+
+impl CheckedRoot {
+    fn overlaps(&self, other: &Self) -> bool {
+        self.overlaps_from_existing_prefix(other) || other.overlaps_from_existing_prefix(self)
+    }
+
+    fn overlaps_from_existing_prefix(&self, other: &Self) -> bool {
+        let parent = self.directories.last().expect("checked existing prefix");
+        other.directories.iter().enumerate().any(|(i, dir)| {
+            // Identity also recognizes differently cased aliases on insensitive volumes.
+            // Preserve exact path containment if a real directory was replaced meanwhile.
+            let same_parent = dir.identity == parent.identity
+                || i + 1 == self.directories.len()
+                    && self
+                        .directories
+                        .iter()
+                        .zip(&other.directories)
+                        .all(|(a, b)| a.name == b.name);
+            same_parent
+                && self
+                    .missing
+                    .iter()
+                    .zip(
+                        other.directories[i + 1..]
+                            .iter()
+                            .map(|dir| &dir.name)
+                            .chain(&other.missing),
+                    )
+                    .all(|(a, b)| {
+                        a.len() == b.len() && a.iter().zip(b).all(|(&a, &b)| a == fold_ascii(b))
+                    })
+        })
+    }
+}
+
+fn fold_ascii(unit: PathUnit) -> PathUnit {
+    if (PathUnit::from(b'A')..=PathUnit::from(b'Z')).contains(&unit) {
+        unit + PathUnit::from(b'a' - b'A')
+    } else {
+        unit
+    }
+}
+
+fn directory_identity(path: &Path) -> std::io::Result<(u64, u64)> {
+    #[cfg(unix)]
+    let (volume, inode, directory) = {
+        use std::os::unix::fs::MetadataExt as _;
+        let meta = fs::metadata(path)?;
+        (meta.dev(), meta.ino(), meta.is_dir())
+    };
+    #[cfg(windows)]
+    let (volume, inode, directory) = {
+        use cap_fs_ext::MetadataExt as _;
+        use std::os::windows::fs::OpenOptionsExt as _;
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_FLAG_BACKUP_SEMANTICS, FILE_READ_ATTRIBUTES,
+        };
+        // Metadata only. A searchable ancestor need not be readable or writable.
+        let file = fs::OpenOptions::new()
+            .access_mode(FILE_READ_ATTRIBUTES)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+            .open(path)?;
+        let meta = cap_std::fs::File::from_std(file).metadata()?;
+        (meta.dev(), meta.ino(), meta.is_dir())
+    };
+    if !directory {
+        return Err(std::io::ErrorKind::NotADirectory.into());
+    }
+    Ok((volume, inode))
 }
 
 #[cfg(unix)]
@@ -227,20 +356,23 @@ type PathUnit = u16;
 
 #[derive(Serialize, Deserialize)]
 struct Claim {
+    // Older launchers still use this conservative spelling for mixed-version leases.
     roots: Vec<Vec<PathUnit>>,
+    #[serde(default)]
+    exact: Option<Vec<CheckedRoot>>,
     exclusive: bool,
 }
 
-fn encode_path(path: &Path) -> Vec<PathUnit> {
+fn encode_path(path: &std::ffi::OsStr) -> Vec<PathUnit> {
     #[cfg(unix)]
     {
         use std::os::unix::ffi::OsStrExt as _;
-        path.as_os_str().as_bytes().to_vec()
+        path.as_bytes().to_vec()
     }
     #[cfg(windows)]
     {
         use std::os::windows::ffi::OsStrExt as _;
-        path.as_os_str().encode_wide().collect()
+        path.encode_wide().collect()
     }
 }
 

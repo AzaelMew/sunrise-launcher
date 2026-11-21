@@ -66,6 +66,13 @@ fn move_excludes_cli_writers_between_settlement_and_copying() {
     let nested = location_for_game("child.json", nested_game.clone());
     let ancestor = location_for_game("parent.json", game_parent.clone());
     let sibling = location_for_game("sibling.json", sibling_game.clone());
+    let case_game = game_parent.join("GAME");
+    let distinct_case = match fs::create_dir(&case_game) {
+        Ok(()) => true,
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => false,
+        Err(error) => panic!("could not probe case-distinct roots: {error}"),
+    };
+    let in_other_case = location_for_game("case.json", case_game.clone());
     let alternative_case = base.join("newhome/GAME");
     let nonportable = base.join("NewHöme");
     #[cfg(unix)]
@@ -94,8 +101,42 @@ fn move_excludes_cli_writers_between_settlement_and_copying() {
     assert_eq!(refused.status.code(), Some(1), "{refused:?}");
     assert!(String::from_utf8_lossy(&refused.stderr).contains("Choose a portable folder name"));
     assert!(!nonportable.exists());
+    let root_claim = "another launcher is using or moving this data";
+    let assert_blocked = |path: &std::path::Path, game_override, lock: &str| {
+        let blocked = create(path, game_override);
+        let error = String::from_utf8_lossy(&blocked.stderr);
+        assert_eq!(blocked.status.code(), Some(1), "{blocked:?}");
+        assert!(
+            error.contains("Cannot lock") && error.contains(lock),
+            "{error}"
+        );
+        assert!(!source.game.join("instances/late-writer").exists());
+        assert!(!spare.game.join("instances/late-writer").exists());
+    };
     let mut reached_copy = false;
+    let mut reached_commit = false;
     let moved = data_location::migrate(&source, &target, &bootstrap, |step| {
+        if step == "Committing data location" {
+            reached_commit = true;
+            assert!(target.join("game").is_dir());
+            // On a sensitive volume, both spellings now physically exist. The
+            // Move still holds the portable spelling it reserved before mkdir.
+            let alternate_parent = alternative_case.parent().unwrap();
+            let made_parent = !alternate_parent.exists();
+            let made_game = !alternative_case.exists();
+            if made_game {
+                fs::create_dir_all(&alternative_case).unwrap();
+            }
+            assert_blocked(&alternate, Some(&alternative_case), root_claim);
+            assert!(!alternative_case.join("instances/late-writer").exists());
+            if made_game {
+                fs::remove_dir(&alternative_case).unwrap();
+            }
+            if made_parent {
+                fs::remove_dir(alternate_parent).unwrap();
+            }
+            return;
+        }
         if step != "Copying and verifying launcher data" {
             return;
         }
@@ -104,19 +145,7 @@ fn move_excludes_cli_writers_between_settlement_and_copying() {
             !target.exists(),
             "prove the contention before the destination mkdir"
         );
-        let assert_blocked = |path: &std::path::Path, game_override, lock: &str| {
-            let blocked = create(path, game_override);
-            let error = String::from_utf8_lossy(&blocked.stderr);
-            assert_eq!(blocked.status.code(), Some(1), "{blocked:?}");
-            assert!(
-                error.contains("Cannot lock") && error.contains(lock),
-                "{error}"
-            );
-            assert!(!source.game.join("instances/late-writer").exists());
-            assert!(!spare.game.join("instances/late-writer").exists());
-        };
         assert_blocked(&bootstrap, None, "migration.lock");
-        let root_claim = "another launcher is using or moving this data";
         assert_blocked(&alternate, None, root_claim);
         for game in [&source.game, &target, &alternative_case] {
             assert_blocked(&alternate, Some(game), root_claim);
@@ -133,9 +162,16 @@ fn move_excludes_cli_writers_between_settlement_and_copying() {
         let disjoint = create(&sibling, None);
         assert!(disjoint.status.success(), "{disjoint:?}");
         assert!(sibling_game.join("instances/late-writer").is_dir());
+        if distinct_case {
+            let case_disjoint = create(&in_other_case, None);
+            assert!(case_disjoint.status.success(), "{case_disjoint:?}");
+            assert!(case_game.join("instances/late-writer").is_dir());
+        } else {
+            assert_blocked(&in_other_case, None, root_claim);
+        }
     })
     .unwrap();
-    assert!(reached_copy);
+    assert!(reached_copy && reached_commit);
     assert!(!moved.game.join("instances/late-writer").exists());
     assert!(!moved
         .game
