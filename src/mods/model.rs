@@ -313,7 +313,10 @@ impl SourceLink {
         let mut parts = path.split(['?', '#']).next()?.split('/');
         let owner = parts.next()?;
         let repo = parts.next()?;
-        let repo = repo.strip_suffix(".git").unwrap_or(repo);
+        Self::github(owner, repo.strip_suffix(".git").unwrap_or(repo))
+    }
+
+    pub(super) fn github(owner: &str, repo: &str) -> Option<Self> {
         let repo_part = |part: &str| {
             !part.is_empty()
                 && !matches!(part, "." | "..")
@@ -326,30 +329,35 @@ impl SourceLink {
     }
 }
 
-/// Everything the project page shows, read from the index in one go.
+/// Facts only the registry can provide.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct About {
+    pub(super) license: String,
+    pub(super) downloads: u64,
+    pub(super) updated: String,
+    pub(super) side: &'static str,
+    pub(super) signed: bool,
+}
+
+/// Everything the shared details screen shows, from the registry or a local archive.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct Page {
     pub(super) id: String,
     pub(super) name: String,
     pub(super) authors: Vec<String>,
     pub(super) description: String,
-    pub(super) license: String,
     pub(super) source: Option<SourceLink>,
-    pub(super) downloads: u64,
-    pub(super) updated: String,
+    pub(super) about: Option<About>,
     pub(super) categories: Vec<String>,
     pub(super) screenshots: Vec<String>,
     pub(super) icon: Option<String>,
-    pub(super) make: Make,
-    pub(super) side: &'static str,
+    pub(super) make: Option<Make>,
     pub(super) versions: Vec<VersionLine>,
     pub(super) fit: Fit,
     /// The newest version that fits: what Add installs.
     pub(super) will_install: Option<VersionLine>,
     /// What the registry says about who made it and what it may do (`trust_and_capabilities`).
     pub(super) trust: Vec<String>,
-    /// Its author signs its files.
-    pub(super) signed: bool,
     /// Native code made for another game build than the one played: checked before it runs.
     pub(super) another_build: bool,
     /// Mods the newest version lists as part of itself (a registry modpack's rule; a mod rarely has any).
@@ -391,24 +399,26 @@ pub(super) fn page(
         name: p.name.clone(),
         authors: p.authors.clone(),
         description: p.description.clone(),
-        license: p.license.clone(),
         source: SourceLink::read(&p.source),
-        downloads: p.downloads,
-        updated: lines
-            .iter()
-            .map(|l| l.published.clone())
-            .max()
-            .unwrap_or_default(),
+        about: Some(About {
+            license: p.license.clone(),
+            downloads: p.downloads,
+            updated: lines
+                .iter()
+                .map(|l| l.published.clone())
+                .max()
+                .unwrap_or_default(),
+            side: side_label(p.versions.first().and_then(|v| v.side.as_ref())),
+            signed: p.key.is_some(),
+        }),
         categories: p.categories.clone(),
         screenshots: p.screenshots.clone(),
         icon: p.icon.clone(),
-        make,
-        side: side_label(p.versions.first().and_then(|v| v.side.as_ref())),
+        make: Some(make),
         fit: fit_of(index, p, game),
         will_install,
         versions: lines,
         trust,
-        signed: p.key.is_some(),
         another_build,
         requires: p
             .versions
@@ -710,12 +720,12 @@ pub(super) fn cells(
     if let Some(local) = &row.local {
         say(
             "folder-01",
-            match local.github {
+            match local.github.is_some() {
                 true => tr("From GitHub").into(),
                 false => tr("Local file").into(),
             },
             Tone::Muted,
-            match local.github {
+            match local.github.is_some() {
                 true => tr("Get updates from GitHub, not the registry.").into(),
                 false => tr("Replace the local file to update this mod.").into(),
             },
@@ -754,6 +764,31 @@ pub(super) fn cells(
 }
 
 impl Row {
+    pub(super) fn installed_details(&self) -> Page {
+        Page {
+            id: self.id.clone(),
+            name: self.title.clone(),
+            authors: Vec::new(),
+            description: String::new(),
+            source: self
+                .local
+                .as_ref()
+                .and_then(|local| local.github.as_ref())
+                .and_then(|origin| SourceLink::github(&origin.owner, &origin.repo)),
+            about: None,
+            categories: Vec::new(),
+            screenshots: Vec::new(),
+            icon: self.icon.clone(),
+            make: self.make,
+            versions: Vec::new(),
+            fit: Fit::Unknown,
+            will_install: None,
+            trust: Vec::new(),
+            another_build: false,
+            requires: Vec::new(),
+        }
+    }
+
     pub(super) fn native(&self) -> bool {
         self.make == Some(Make::Native)
     }
@@ -803,9 +838,11 @@ pub(super) struct World<'a> {
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct Local {
     pub(super) id: String,
+    /// The exact row, even if another archive claims the same mod ID.
+    pub(super) file: String,
     pub(super) name: String,
     pub(super) version: String,
-    pub(super) github: bool,
+    pub(super) github: Option<sunrise_launcher::github_mods::Origin>,
     /// Native code, which needs permission and a build, rather than content only.
     pub(super) native: bool,
     /// The file can't be read: it has no id of its own (the id is only its file name), so it is

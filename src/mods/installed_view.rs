@@ -7,6 +7,15 @@ use crate::paint::palette;
 use std::{collections::BTreeMap, rc::Rc};
 use sunrise_launcher::browser::images;
 
+/// Keep removal reviews on the same labels Installed paints, including hidden dependents.
+pub(super) fn remove_names(rows: &[Row], labels: &[Option<String>]) -> BTreeMap<String, String> {
+    rows.iter()
+        .zip(labels)
+        .filter(|(row, _)| row.selectable_archive())
+        .map(|(row, label)| (row.id.clone(), label.as_ref().unwrap_or(&row.title).clone()))
+        .collect()
+}
+
 impl Launcher {
     pub(super) fn installed(
         &mut self,
@@ -90,7 +99,7 @@ impl Launcher {
         };
         let refresh_ready = refresh.is_none();
         page = page.children(refresh);
-        let mut rows = self.rows();
+        let (rows, labels) = self.labeled_installed_rows();
         if rows.is_empty() {
             if !refresh_ready {
                 return page.into_any_element();
@@ -118,43 +127,6 @@ impl Launcher {
                 .into_any_element();
         }
 
-        // Use the exact installed package's display name here, as in the Remove review.
-        // Compute collisions before filtering so a row keeps its label when peers are hidden.
-        let archive_names = self.ui.mods.snapshot.as_ref().map(|s| &s.archive_names);
-        let archive_name = |r: &Row| {
-            archive_names
-                .filter(|_| r.selectable_archive())
-                .and_then(|names| names.get(&r.id))
-        };
-        let mut renamed = false;
-        for row in &mut rows {
-            if let Some(archive) = archive_name(row).filter(|archive| row.title != archive.name) {
-                row.title.clone_from(&archive.name);
-                renamed = true;
-            }
-        }
-        if renamed {
-            model::sort(&mut rows);
-        }
-        use installed::{ModLabel, ModLabelSource};
-        let labels = installed::colliding_mod_labels(rows.iter().map(|row| {
-            let (authors, version) = archive_name(row).map_or_else(
-                || (std::slice::from_ref(&row.authors), row.version.as_str()),
-                |archive| (archive.authors.as_slice(), archive.version.as_str()),
-            );
-            let source = match &row.local {
-                None => ModLabelSource::Registry,
-                Some(local) if local.github => ModLabelSource::Github,
-                Some(_) => ModLabelSource::Local,
-            };
-            ModLabel {
-                id: &row.id,
-                name: &row.title,
-                authors,
-                version,
-                source,
-            }
-        }));
         let filter = self.ui.mods.row_filter.clone();
         let visible = model::visible(&rows, &filter);
         // Whether this page draws the Build button, and with it a running build's bar: the
@@ -320,17 +292,7 @@ impl Launcher {
                 let remove = if busy {
                     rm
                 } else {
-                    // Freeze the labels actually painted in Installed, before filtering. The
-                    // transaction discovers exact archives and dependents independently; it
-                    // does not make up another roster to number for its GUI review.
-                    let names: BTreeMap<_, _> = rows
-                        .iter()
-                        .zip(&labels)
-                        .filter(|(row, _)| row.selectable_archive())
-                        .map(|(row, label)| {
-                            (row.id.clone(), label.as_ref().unwrap_or(&row.title).clone())
-                        })
-                        .collect();
+                    let names = remove_names(&rows, &labels);
                     let chosen: Vec<_> = selected.iter().map(|row| row.id.clone()).collect();
                     let home = self.mods_home();
                     rm.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
@@ -464,6 +426,48 @@ impl Launcher {
         page.into_any_element()
     }
 
+    pub(super) fn labeled_installed_rows(&self) -> (Vec<Row>, Vec<Option<String>>) {
+        let mut rows = self.rows();
+        // Use the exact installed package's display name here, as in the Remove review.
+        // Compute collisions before filtering so a row keeps its label when peers are hidden.
+        let archive_names = self.ui.mods.snapshot.as_ref().map(|s| &s.archive_names);
+        let archive_name = |r: &Row| {
+            archive_names
+                .filter(|_| r.selectable_archive())
+                .and_then(|names| names.get(&r.id))
+        };
+        let mut renamed = false;
+        for row in &mut rows {
+            if let Some(archive) = archive_name(row).filter(|archive| row.title != archive.name) {
+                row.title.clone_from(&archive.name);
+                renamed = true;
+            }
+        }
+        if renamed {
+            model::sort(&mut rows);
+        }
+        use installed::{ModLabel, ModLabelSource};
+        let labels = installed::colliding_mod_labels(rows.iter().map(|row| {
+            let (authors, version) = archive_name(row).map_or_else(
+                || (std::slice::from_ref(&row.authors), row.version.as_str()),
+                |archive| (archive.authors.as_slice(), archive.version.as_str()),
+            );
+            let source = match &row.local {
+                None => ModLabelSource::Registry,
+                Some(local) if local.github.is_some() => ModLabelSource::Github,
+                Some(_) => ModLabelSource::Local,
+            };
+            ModLabel {
+                id: &row.id,
+                name: &row.title,
+                authors,
+                version,
+                source,
+            }
+        }));
+        (rows, labels)
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn row(
         &mut self,
@@ -481,7 +485,6 @@ impl Launcher {
             .clone()
             .and_then(|u| self.mods_image(&u, images::ROW));
         let error = self.ui.mods.errors.get(&r.id).cloned();
-        let project = r.entry.as_ref().map(|e| e.project.clone());
 
         let check = {
             let id = r.id.clone();
@@ -562,7 +565,7 @@ impl Launcher {
         } else {
             match (&cells.status, r.unfit.clone()) {
                 (Some(_), Some(unfit)) if cells.popover => {
-                    self.unfit(n, &r, unfit, cx).into_any_element()
+                    self.unfit(n, &r, unfit, busy, cx).into_any_element()
                 }
                 // A mod the last build could not build: its status opens that build's window
                 // again, where Details and the build log are.
@@ -596,10 +599,11 @@ impl Launcher {
             };
             let b = crate::frame::button((id, n), label);
             if busy {
-                return dim(b);
+                return dim(b).on_click(|_, _, cx| cx.stop_propagation());
             }
             let row = r.clone();
             b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                cx.stop_propagation();
                 match action {
                     model::RowAction::Allow => this.allow(),
                     model::RowAction::Update => this.update_one(&row),
@@ -616,18 +620,20 @@ impl Launcher {
             if cells.switch && !switch_held && !busy {
                 let row = r.clone();
                 s.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    cx.stop_propagation();
                     this.toggle(&row);
                     cx.notify();
                 }))
             } else {
-                s.opacity(0.45).cursor_default().tab_stop(false)
+                s.opacity(0.45)
+                    .cursor_default()
+                    .tab_stop(false)
+                    .on_click(|_, _, cx| cx.stop_propagation())
             }
         };
         let title = {
             let plain_name = label.is_none();
-            let d = div()
-                .id(("alt-row-title", n))
-                .reach()
+            div()
                 .min_w_0()
                 .flex()
                 .items_baseline()
@@ -647,17 +653,7 @@ impl Launcher {
                         .text_color(c(palette().muted))
                         .truncate()
                         .child(r.authors.clone())
-                }));
-            match project {
-                Some(id) => {
-                    d.cursor_pointer()
-                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                            this.mods_show_project(id.clone());
-                            cx.notify();
-                        }))
-                }
-                None => d,
-            }
+                }))
         };
         let title = div()
             .flex()
@@ -764,19 +760,33 @@ impl Launcher {
             )
             .children(action)
         };
-        row.child(
-            div()
-                .w(px(column::SWITCH))
-                .flex_none()
-                .flex()
-                .justify_end()
-                .child(sw),
-        )
+        row.reach()
+            .cursor_pointer()
+            .hover(|s| s.bg(c(palette().hover)))
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                this.mods_show_installed_project(&r);
+                cx.notify();
+            }))
+            .child(
+                div()
+                    .w(px(column::SWITCH))
+                    .flex_none()
+                    .flex()
+                    .justify_end()
+                    .child(sw),
+            )
     }
 
     /// Where a row's switch would be, for a mod the game was made without: "Not on Nov 17" and
     /// a "?" that says why in one sentence, the changed items for its author, and the way on.
-    fn unfit(&mut self, n: usize, r: &Row, unfit: model::Unfit, cx: &mut Context<Self>) -> Div {
+    pub(super) fn unfit(
+        &mut self,
+        n: usize,
+        r: &Row,
+        unfit: model::Unfit,
+        busy: bool,
+        cx: &mut Context<Self>,
+    ) -> Div {
         use crate::frame::button;
         let open = self.ui.mods.unfit_open.as_deref() == Some(r.id.as_str());
         let id = r.id.clone();
@@ -863,8 +873,9 @@ impl Launcher {
             });
             // One way on: a version that fits when the registry has a newer one, else back to
             // the build it was made for when that build is still here.
-            let action = match (&r.update, &unfit.made_for) {
-                (Some(_), _) => {
+            let action = match (busy, &r.update, &unfit.made_for) {
+                (true, _, _) => None,
+                (false, Some(_), _) => {
                     let b = button(
                         "alt-unfit-update",
                         trf("Update {mod}", &[("mod", &r.title)]),
@@ -877,7 +888,7 @@ impl Launcher {
                         cx.notify();
                     })))
                 }
-                (None, Some((tag, made))) if self.installed.contains(tag) => {
+                (false, None, Some((tag, made))) if self.installed.contains(tag) => {
                     let b = button(
                         "alt-unfit-stay",
                         trf("Stay on {build}", &[("build", made)]),

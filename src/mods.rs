@@ -73,8 +73,15 @@ struct OpenScope {
     game: String,
 }
 
+enum InstalledProject {
+    Registry,
+    Local(String),
+}
+
 struct Open {
     id: String,
+    installed: Option<InstalledProject>,
+    collection: bool,
     request: u64,
     scope: OpenScope,
     /// The screen Back returns to.
@@ -444,9 +451,10 @@ fn read_local(home: &Path, archive_names: &mut HashMap<String, ArchiveName>) -> 
             }
             model::Local {
                 id: file.id,
+                file: file.file,
                 name: file.name,
                 version: file.version,
-                github: file.origin.is_some(),
+                github: file.origin,
                 native,
                 unreadable,
             }
@@ -483,7 +491,13 @@ impl Launcher {
                 {
                     let open = self.ui.mods.open.take().expect("different open scope");
                     self.ui.mods.picks = None;
-                    self.mods_load_page(open.id, open.from);
+                    if open.installed.is_some()
+                        && (scope.profile != open.scope.profile || scope.home != open.scope.home)
+                    {
+                        self.ui.page = Page::Installed;
+                        return self.installed(window, &have_focus, cx);
+                    }
+                    self.mods_load_page(open.id, open.from, open.installed);
                     if let Some(now) = self.ui.mods.open.as_mut() {
                         now.parent = open.parent;
                     }
@@ -513,20 +527,39 @@ impl Launcher {
         if self.is_collection(&id) && self.ui.page != Page::Project {
             self.ui.mods.picks = None;
         }
-        let parent = (self.ui.page == Page::Project)
-            .then(|| self.ui.mods.open.as_ref().map(|o| o.id.clone()))
-            .flatten()
-            .filter(|open| self.is_collection(open));
+        let parent = self
+            .ui
+            .mods
+            .open
+            .as_ref()
+            .filter(|open| self.ui.page == Page::Project && open.collection)
+            .map(|open| open.id.clone());
         self.ui.page = Page::Project;
-        self.mods_load_page(id, from);
+        self.mods_load_page(id, from, None);
         if let Some(open) = self.ui.mods.open.as_mut() {
             open.parent = parent;
         }
     }
 
+    fn mods_show_installed_project(&mut self, row: &Row) {
+        let (id, installed) = match &row.local {
+            Some(local) => (row.id.clone(), InstalledProject::Local(local.file.clone())),
+            None => (
+                row.entry
+                    .as_ref()
+                    .map_or(&row.id, |entry| &entry.project)
+                    .clone(),
+                InstalledProject::Registry,
+            ),
+        };
+        self.ui.page = Page::Project;
+        self.mods_load_page(id, Page::Installed, Some(installed));
+    }
+
     fn is_collection(&self, id: &str) -> bool {
         matches!(&self.ui.mods.catalog, Catalog::Ready(cards, _)
             if cards.iter().any(|c| c.id == id && c.members.is_some()))
+            || sunrise::known_index().is_some_and(|index| index.collection(id).is_some())
     }
 
     /// The installed mods `ids` as people read them: each one's name, and the newer version the
@@ -834,21 +867,26 @@ impl Launcher {
         }
     }
 
-    fn mods_load_page(&mut self, id: String, from: Page) {
+    fn mods_load_page(&mut self, id: String, from: Page, installed: Option<InstalledProject>) {
+        self.ui.mods.facts_open = false;
+        let collection = installed.is_none() && self.is_collection(&id);
+        let load = !collection && !matches!(installed, Some(InstalledProject::Local(_)));
         let scope = self.mods_page_scope();
         let game = scope.game.clone();
         self.ui.mods.page_request += 1;
         let request = self.ui.mods.page_request;
         self.ui.mods.open = Some(Open {
             id: id.clone(),
+            installed,
+            collection,
             request,
             scope,
             from,
             page: None,
             parent: None,
         });
-        // A collection's page reads the index when it draws.
-        if sunrise::known_index().is_some_and(|index| index.collection(&id).is_some()) {
+        // Collections and local archives render from state already held by the launcher.
+        if !load {
             return;
         }
         let tx = self.ui.mods.tx.clone();
@@ -1257,6 +1295,8 @@ mod enabled_tests {
         let current = scope("current", "new-build", "26.3");
         let mut open = Open {
             id: "ruby".into(),
+            installed: Some(InstalledProject::Registry),
+            collection: false,
             request: 2,
             scope: scope("current", "new-build", "26.3"),
             from: Page::Installed,
@@ -1295,9 +1335,10 @@ mod enabled_tests {
         .unwrap();
         let local = |id: &str| model::Local {
             id: id.into(),
+            file: format!("{id}.smod"),
             name: id.into(),
             version: String::new(),
-            github: false,
+            github: None,
             native: false,
             unreadable: false,
         };
