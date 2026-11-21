@@ -25,7 +25,7 @@ pub fn unproved_mod_effects<'a>(
     let previous = managed_play::scan_packages(before)?;
     let changed: BTreeSet<_> = changed.into_iter().collect();
     let old_on = enabled(before)?;
-    let watched: SuspectMods = previous
+    let mut watched: SuspectMods = previous
         .iter()
         .filter(|p| old_on.contains(&p.manifest.id) || changed.contains(p.manifest.id.as_str()))
         .map(|p| {
@@ -44,12 +44,18 @@ pub fn unproved_mod_effects<'a>(
     }
     let next = managed_play::scan_packages(after)?;
     let new_on = enabled(after)?;
-    if old_on != new_on
-        || !same_effects(before, after, &old_on, &watched, &previous, &next).unwrap_or(false)
-    {
-        return Ok(watched);
+    let previous = previous
+        .iter()
+        .filter(|p| old_on.contains(&p.manifest.id))
+        .collect::<Vec<_>>();
+    let next = next
+        .iter()
+        .filter(|p| new_on.contains(&p.manifest.id))
+        .collect::<Vec<_>>();
+    if let Some(preserved) = preserved_mods(before, after, &previous, &next) {
+        watched.retain(|id, _| !preserved.contains(id.as_str()));
     }
-    Ok(BTreeMap::new())
+    Ok(watched)
 }
 
 fn enabled(home: &Path) -> Result<BTreeSet<String>, String> {
@@ -61,80 +67,106 @@ fn enabled(home: &Path) -> Result<BTreeSet<String>, String> {
     }
 }
 
-fn same_effects(
+fn preserved_mods<'a>(
     before: &Path,
     after: &Path,
-    enabled: &BTreeSet<String>,
-    watched: &SuspectMods,
-    previous: &[ScannedPackage],
-    next: &[ScannedPackage],
-) -> Option<bool> {
-    let previous: Vec<_> = previous
-        .iter()
-        .filter(|p| watched.contains_key(&p.manifest.id))
-        .collect();
-    let next: Vec<_> = next
-        .iter()
-        .filter(|p| watched.contains_key(&p.manifest.id))
-        .collect();
-    if previous.len() != next.len() || !enabled.iter().all(|id| watched.contains_key(id)) {
-        return Some(false);
-    }
-    // A native mod can observe package metadata and change registrations; jars and unpacked
-    // mods have inputs outside the flat content we can compare. Don't guess about any of them.
-    if previous
-        .iter()
-        .chain(&next)
-        .any(|p| p.directory || p.manifest.native.is_some() || !p.manifest.jar.is_empty())
-    {
-        return Some(false);
-    }
+    previous: &[&'a ScannedPackage],
+    next: &[&'a ScannedPackage],
+) -> Option<BTreeSet<&'a str>> {
     let before_mods = before.join(mod_list::DIR);
     let after_mods = after.join(mod_list::DIR);
-    let before_overrides = overrides_bytes(&before_mods)?;
-    if before_overrides != overrides_bytes(&after_mods)? {
-        return Some(false);
+    if overrides_bytes(&before_mods)? != overrides_bytes(&after_mods)? {
+        return None;
     }
     let overrides = dependencies::Overrides::read(&before_mods).ok()?;
-    let mut old = Vec::new();
-    let mut new = Vec::new();
-    for (a, b) in previous.iter().zip(&next) {
-        // The loader's order and the location of each package are also part of the proof.
-        if a.path.strip_prefix(before).ok()? != b.path.strip_prefix(after).ok()?
-            || !equivalent_manifest(&a.manifest, &b.manifest)
-            || definition_bytes(&a.path)? != definition_bytes(&b.path)?
+    let old: Vec<_> = previous.iter().map(|p| &p.manifest).collect();
+    let new: Vec<_> = next.iter().map(|p| &p.manifest).collect();
+    let old_ids: BTreeSet<_> = old.iter().map(|m| m.id.as_str()).collect();
+    let new_packages: BTreeMap<_, _> = next.iter().map(|p| (p.manifest.id.as_str(), *p)).collect();
+    let mut preserved = BTreeSet::new();
+    let mut changed: BTreeSet<_> = new_packages
+        .keys()
+        .copied()
+        .filter(|id| !old_ids.contains(id))
+        .collect();
+    for a in previous {
+        let id = a.manifest.id.as_str();
+        let Some(b) = new_packages.get(id) else {
+            changed.insert(id);
+            continue;
+        };
+        let flat = |p: &ScannedPackage| {
+            !p.directory && p.manifest.native.is_none() && p.manifest.jar.is_empty()
+        };
+        if flat(a)
+            && flat(b)
+            && a.path
+                .strip_prefix(before)
+                .ok()
+                .zip(b.path.strip_prefix(after).ok())
+                .is_some_and(|(a, b)| a == b)
+            && equivalent_manifest(&a.manifest, &b.manifest)
+            && definition_bytes(&a.path)
+                .zip(definition_bytes(&b.path))
+                .is_some_and(|(a, b)| a == b)
         {
-            return Some(false);
+            preserved.insert(id);
         }
-        // A currently off predecessor has no admitted dependency environment to compare
-        // against the earlier one in which its definitions could have been saved.
-        if !enabled.contains(&a.manifest.id) {
-            return Some(false);
-        }
-        old.push(&a.manifest);
-        new.push(&b.manifest);
-    }
-    for (a, b) in old.iter().zip(&new) {
-        // Updating a dependency changes its consumer's environment, even if the two
-        // versions satisfy the same range. A leaf's display version can still advance.
-        if a.version != b.version
-            && old.iter().any(|consumer| {
-                consumer.dependencies.contains_key(&a.id)
-                    || consumer.incompatible.contains_key(&a.id)
-                    || consumer.discouraged.contains_key(&a.id)
-            })
-        {
-            return Some(false);
+        // A leaf can have a display-only new release. Its consumers still see a new version.
+        if !preserved.contains(id) || a.manifest.version != b.manifest.version {
+            changed.insert(id);
         }
     }
     for side in [manifest::Side::Client, manifest::Side::Server] {
         let a = dependencies::resolve_manifests(&old, side, &overrides).ok()?;
         let b = dependencies::resolve_manifests(&new, side, &overrides).ok()?;
-        if a.order != b.order || a.warnings != b.warnings {
-            return Some(false);
+        let ranks: BTreeMap<_, _> = b
+            .order
+            .into_iter()
+            .map(|i| new[i].id.as_str())
+            .filter(|id| old_ids.contains(id))
+            .enumerate()
+            .map(|(i, id)| (id, i))
+            .collect();
+        let mut prefix_max: Option<usize> = None;
+        for (index, id) in a
+            .order
+            .into_iter()
+            .map(|i| old[i].id.as_str())
+            .filter(|id| ranks.contains_key(id))
+            .enumerate()
+        {
+            let rank = ranks[id];
+            // Ignore the positions of added/removed mods, but require the same set of
+            // surviving predecessors; an equal numeric rank alone doesn't prove that.
+            if rank != index || prefix_max.is_some_and(|previous| previous > rank) {
+                preserved.remove(id);
+                changed.insert(id);
+            }
+            prefix_max = Some(prefix_max.map_or(rank, |previous| previous.max(rank)));
         }
     }
-    Some(true)
+    let mut consumers: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for m in old.into_iter().chain(new) {
+        for target in m
+            .dependencies
+            .keys()
+            .chain(m.incompatible.keys())
+            .chain(m.discouraged.keys())
+        {
+            consumers.entry(target).or_default().push(&m.id);
+        }
+    }
+    let mut pending: Vec<_> = changed.iter().copied().collect();
+    while let Some(id) = pending.pop() {
+        for consumer in consumers.get(id).into_iter().flatten().copied() {
+            preserved.remove(consumer);
+            if changed.insert(consumer) {
+                pending.push(consumer);
+            }
+        }
+    }
+    Some(preserved)
 }
 
 fn equivalent_manifest(a: &manifest::Manifest, b: &manifest::Manifest) -> bool {
@@ -234,34 +266,35 @@ mod tests {
             write(home, dep, "1.0.0", &[]);
         }
         let ids = BTreeSet::from([dep.to_owned(), root.to_owned()]);
-        let watched = ids
+        let watched: SuspectMods = ids
             .iter()
             .map(|id| (id.clone(), BTreeSet::from([id.clone()])))
             .collect();
         let compare = || {
-            same_effects(
+            let old = managed_play::scan_packages(before.path()).unwrap();
+            let new = managed_play::scan_packages(after.path()).unwrap();
+            preserved_mods(
                 before.path(),
                 after.path(),
-                &ids,
-                &watched,
-                &managed_play::scan_packages(before.path()).unwrap(),
-                &managed_play::scan_packages(after.path()).unwrap(),
+                &old.iter().collect::<Vec<_>>(),
+                &new.iter().collect::<Vec<_>>(),
             )
+            .map(|ids| ids.into_iter().map(str::to_owned).collect::<BTreeSet<_>>())
         };
         write(after.path(), root, "1.1.0", &defs);
-        assert_eq!(compare(), Some(true));
+        assert_eq!(compare(), Some(ids));
         write(after.path(), dep, "1.1.0", &[]);
-        assert_eq!(compare(), Some(false));
+        assert_eq!(compare(), Some(BTreeSet::from([dep.into()])));
         write(after.path(), dep, "1.0.0", &[]);
         let overrides = after
             .path()
             .join(mod_list::DIR)
             .join(dependencies::OVERRIDES);
         fs::write(&overrides, "[root_mod]\nrequired_mod='drop'\n").unwrap();
-        assert_eq!(compare(), Some(false));
+        assert_eq!(compare(), None);
         fs::remove_file(overrides).unwrap();
         write(after.path(), root, "1.1.0", &[(defs[0].0, b"{}")]);
-        assert_eq!(compare(), Some(false));
+        assert_eq!(compare(), Some(BTreeSet::from([dep.into()])));
         // Byte-equal archives still cannot testify to equivalence on an unproved base.
         assert_eq!(
             unproved_mod_effects(before.path(), None, before.path(), None, []).unwrap(),
