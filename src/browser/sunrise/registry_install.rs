@@ -10,7 +10,7 @@ use crate::{
     managed_play::{self, FirstBuild, Held, HeldSource, Profile, ScannedPackage},
     native_mods,
     profile_txn::Identity,
-    worlds::switch::{Changed, Fence, Question},
+    worlds::switch::{Fence, Question},
 };
 use serde_json::{Map, Value};
 use std::{
@@ -557,19 +557,25 @@ pub fn install_registry(
             }
         }
         let fence = if let Some(approve) = hooks.resolve.filter(|_| !disabled.is_empty()) {
-            let question = conflicts::question(
-                &catalogue,
-                &roots,
-                &before,
+            let question =
+                conflicts::question(&catalogue, &roots, &before, next.path(), &disabled)?;
+            let affected = crate::worlds::unproved_mod_effects(
+                old.path(),
+                edit.current(),
                 next.path(),
-                &entries,
-                &disabled,
+                edit.current(),
+                disabled
+                    .iter()
+                    .copied()
+                    .chain(entries.keys().map(String::as_str)),
             )?;
-            let (fence, worlds) = Fence::hold(&instance.home, &question.1, None)?;
-            if !approve(&ResolveQuestion {
-                worlds,
-                ..question.0
-            }) {
+            let (fence, worlds) = Fence::hold(
+                &instance.home,
+                affected,
+                |id| &before[id].package.manifest.name,
+                None,
+            )?;
+            if !approve(&ResolveQuestion { worlds, ..question }) {
                 return Err(InstallError::Cancelled);
             }
             Some(fence)

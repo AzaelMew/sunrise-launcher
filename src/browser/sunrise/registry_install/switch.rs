@@ -2,7 +2,7 @@
 use super::*;
 use crate::{
     managed_play::{Active, CandidateImage, Held, HeldReason, HeldRoot, HeldSource},
-    worlds::switch::{Changed, Fence, Question, TargetAge},
+    worlds::switch::{Fence, Question, TargetAge},
 };
 use std::{io, path::PathBuf};
 use sunrise_launcher_smod::dependencies::parse_version;
@@ -151,13 +151,12 @@ pub fn switch_build(
                 return Ok(false);
             }
         }
-        selected = Some((next, proof, set, enabled));
+        selected = Some((next, proof, set));
         Ok(true)
     })?;
-    let (next, proof, set, enabled) = selected.ok_or_else(unproved_switch)?;
+    let (next, proof, set) = selected.ok_or_else(unproved_switch)?;
     let mut holds = Vec::new();
     let mut held = Vec::new();
-    let mut changed = Vec::new();
     for (id, old) in &original.mods {
         let manifest = &old.seen.package.manifest;
         let chosen = set.get(id.as_str());
@@ -192,32 +191,20 @@ pub fn switch_build(
             )?);
             held.push(manifest.name.clone());
         }
-        if old.on {
-            let loses_content = match chosen {
-                Some(package) if enabled.contains(id.as_str()) => {
-                    if package.digest == old.seen.digest {
-                        false
-                    } else if manifest.native.is_some() {
-                        true
-                    } else {
-                        let path = next
-                            .path()
-                            .join(relative(&old.seen.package.path, original.home)?);
-                        !super::super::content_loss::dropped(&old.seen.package.path, &path)?
-                            .is_empty()
-                    }
-                }
-                _ => true,
-            };
-            if loses_content {
-                changed.push(Changed {
-                    id,
-                    title: &manifest.name,
-                    namespaces: &manifest.namespaces,
-                });
-            }
-        }
     }
+    let affected = crate::worlds::unproved_mod_effects(
+        old.path(),
+        edit.current(),
+        next.path(),
+        // The staged image proves compatibility with the target, not that the old
+        // game and the new one interpret saved definitions in the same way.
+        None,
+        original.removed.keys().map(String::as_str).chain(
+            set.iter()
+                .filter(|(_, package)| package.replacement.is_some())
+                .map(|(&id, _)| id),
+        ),
+    )?;
     let resources = edit.switch_resources()?;
     let mut order = None;
     let mut compare = |commit: &str| {
@@ -227,7 +214,8 @@ pub fn switch_build(
     };
     let (fence, worlds) = Fence::hold(
         &instance.home,
-        &changed,
+        affected,
+        |id| &original.mods[id].seen.package.manifest.name,
         Some(TargetAge {
             data_version: backend::prepared_world_version(&resources),
             compare_saved: &mut compare,

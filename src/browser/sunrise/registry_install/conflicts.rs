@@ -73,14 +73,13 @@ pub(super) fn minimal<'a>(
     Ok(None)
 }
 
-pub(super) fn question<'a>(
+pub(super) fn question(
     catalogue: &index::Index,
     roots: &[resolve::Request],
-    before: &'a Inventory,
+    before: &Inventory,
     candidate: &Path,
-    entries: &BTreeMap<String, installed::Entry>,
     disabled: &[&str],
-) -> Result<(ResolveQuestion, Vec<Changed<'a>>), String> {
+) -> Result<ResolveQuestion, String> {
     let packages = inventory(candidate)?;
     let enabled: BTreeMap<_, _> = packages
         .iter()
@@ -88,7 +87,6 @@ pub(super) fn question<'a>(
         .map(|(id, p)| (id.as_str(), &p.package.manifest))
         .collect();
     let mut blockers = Vec::new();
-    let mut affected = Vec::new();
     for &id in disabled {
         let old = &before[id].package.manifest;
         // The resolver uses catalogue metadata. Require a concrete blocker in the staged
@@ -141,29 +139,6 @@ pub(super) fn question<'a>(
             })
             .ok_or_else(unproved_mods)?;
         blockers.push((old.name.clone(), reason));
-        affected.push(Changed {
-            id: &old.id,
-            title: &old.name,
-            namespaces: &old.namespaces,
-        });
-    }
-    for (id, entry) in entries {
-        let Some(old) = before.get(id) else { continue };
-        let manifest = &old.package.manifest;
-        if enabled.contains_key(id.as_str())
-            && (manifest.native.is_some()
-                || !super::super::content_loss::dropped(
-                    &old.package.path,
-                    &candidate.join(&entry.file),
-                )?
-                .is_empty())
-        {
-            affected.push(Changed {
-                id: &manifest.id,
-                title: &manifest.name,
-                namespaces: &manifest.namespaces,
-            });
-        }
     }
     let requested = roots
         .iter()
@@ -173,12 +148,9 @@ pub(super) fn question<'a>(
                 .map_or_else(|| r.id.clone(), |p| p.name.clone())
         })
         .collect();
-    Ok((
-        ResolveQuestion {
-            requested,
-            blockers,
-            worlds: Question::default(),
-        },
-        affected,
-    ))
+    Ok(ResolveQuestion {
+        requested,
+        blockers,
+        worlds: Question::default(),
+    })
 }

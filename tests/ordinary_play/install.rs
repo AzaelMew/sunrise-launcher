@@ -46,9 +46,17 @@ impl Fixture {
             ("required_mod", "Lantern Core", ""),
             ("extra_mod", "Fireflies", ""),
         ] {
+            let definitions: &[(&str, &[u8])] = if id == "required_mod" {
+                &[(
+                    "data/required_mod/sunrise/block/core.json",
+                    br#"{"properties":{"lit":[false,true]}}"#,
+                )]
+            } else {
+                &[]
+            };
             let archive = Package::write_files(
                 &format!("id='{id}'\nname='{name}'\nversion='1.0.0'\napi='0.2'\nside='both'\ncapabilities=['registries']\n{dependencies}"),
-                &[],
+                definitions,
             ).unwrap();
             let file_name = format!("{id}-1.0.0.smod");
             let file = self.root.join(&file_name);
@@ -445,9 +453,17 @@ impl Fixture {
         let dependency = need
             .map(|range| format!("[dependencies]\nrequired_mod='{range}'"))
             .unwrap_or_default();
+        let definitions: &[(&str, &[u8])] = if project.id == "required_mod" {
+            &[(
+                "data/required_mod/sunrise/block/core.json",
+                br#"{"properties":{}}"#,
+            )]
+        } else {
+            &[("data/lantern/function/lit.mcfunction", b"say lit")]
+        };
         let bytes = Package::write_files(
             &format!("id='{}'\nname='{}'\nversion='{version}'\napi='{}'\nside='both'\ncapabilities=['registries']\n{dependency}", project.id, project.name, manifest::API),
-            &[("data/lantern/function/lit.mcfunction", b"say lit")],
+            definitions,
         ).unwrap();
         let name = format!("{}-{version}.smod", project.id);
         let path = self.root.join(&name);
@@ -553,7 +569,10 @@ fn switch_holds_content_in_place_and_registry_update_restores_only_enabled_holds
                 fixture.publish_registry(&registry);
             }
             fixture.decision_worker("switch-accept");
-            assert_eq!(fs::read(world).unwrap(), bytes);
+            assert_eq!(fs::read(&world).unwrap(), bytes);
+            // The rest of this case exercises receipt retirement, not permission to replace
+            // content in a save. Keep the fixture's verified world outside the profile.
+            fs::rename(world.parent().unwrap(), fixture.root.join("verified-save")).unwrap();
         } else {
             let switched = fixture
                 .registry_client(&["--json", "switch", OTHER])
@@ -637,6 +656,32 @@ fn switch_holds_content_in_place_and_registry_update_restores_only_enabled_holds
         );
         assert_eq!(fixture.pointer(), serde_json::to_vec(&updated).unwrap());
     }
+}
+
+#[test]
+fn switch_warns_about_saved_definitions_even_when_its_target_uses_the_same_archive() {
+    let fixture = Fixture::new();
+    let (mut registry, archives) = fixture.content_index();
+    fixture.publish_registry(&registry);
+    fixture.other_build();
+    fixture.install_mod("extra_mod");
+    let extra = registry
+        .projects
+        .iter_mut()
+        .find(|p| p.id == "extra_mod")
+        .unwrap();
+    extra.versions[0].game = "26.4".into();
+    fixture.publish_registry(&registry);
+    let world = write_world(&fixture.home, 4000);
+    let bytes = fs::read(&world).unwrap();
+    let before = fixture.pointer();
+    fixture.decision_worker("switch-same-archive-stay");
+    assert_eq!(fixture.pointer(), before);
+    assert_eq!(fs::read(world).unwrap(), bytes);
+    assert_eq!(
+        fs::read(fixture.home.join(mod_list::DIR).join("extra_mod.smod")).unwrap(),
+        archives["extra_mod"]
+    );
 }
 
 #[test]
@@ -976,8 +1021,15 @@ fn profile_decision_worker() {
                 progress: &|_| {},
                 registry_crates: None,
                 approve: &|q| {
-                    assert_eq!(q.held, ["Fireflies"]);
-                    assert_eq!(q.worlds.newer, ["Glass Basin"]);
+                    if mode == "switch-same-archive-stay" {
+                        assert!(q.held.is_empty());
+                        assert!(q.worlds.newer.is_empty());
+                        assert!(q.worlds.unknown_order.is_empty());
+                        assert_eq!(q.worlds.affected[0].mods, ["Fireflies"]);
+                    } else {
+                        assert_eq!(q.held, ["Fireflies"]);
+                        assert_eq!(q.worlds.newer, ["Glass Basin"]);
+                    }
                     assert_eq!(q.worlds.affected[0].world, "Glass Basin");
                     Ok(decide())
                 },
@@ -988,7 +1040,9 @@ fn profile_decision_worker() {
             },
         );
         match mode.as_str() {
-            "switch-stay" => assert!(matches!(result, Ok(Switched::Stayed))),
+            "switch-stay" | "switch-same-archive-stay" => {
+                assert!(matches!(result, Ok(Switched::Stayed)))
+            }
             "switch-changed-index" => assert!(result.err().unwrap().contains("registry changed")),
             "switch-changed-world" => assert!(result.err().unwrap().contains("worlds changed")),
             "switch-accept" => assert!(matches!(result, Ok(Switched::Changed(_)))),
@@ -1012,6 +1066,13 @@ fn profile_decision_worker() {
                     assert_eq!(q.blockers[0].0, "Lanterns");
                     assert!(q.blockers[0].1.contains("^1"), "{q:?}");
                     assert_eq!(q.worlds.affected[0].world, "Glass Basin");
+                    assert!(
+                        q.worlds.affected[0]
+                            .mods
+                            .iter()
+                            .any(|m| m == "Lantern Core"),
+                        "replacement changed the bytes of an existing block definition: {q:?}"
+                    );
                     decide()
                 }),
             },
