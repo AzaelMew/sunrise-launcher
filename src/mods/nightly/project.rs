@@ -457,7 +457,7 @@ impl Launcher {
                 .child(tr("Build unreviewed source code?")))
             .child(note(trf("Game build: {build}", &[("build", &base)])))
             .child(div().id("nightly-consent-mods").max_h(px(185.)).overflow_y_scroll().child(list))
-            .child(note(tr("Sunrise has not reviewed this code. Building runs the author’s code and build scripts on this computer. Native mods can also run code when you play, with the same access as other programs you run. Only continue if you trust this mod.")))
+            .child(note(tr("Sunrise hasn't reviewed this code. Building and playing run the author's code on your computer.")))
             .child(div().flex().justify_end().gap(px(8.))
                 .child(button("nightly-consent-cancel", tr("Cancel")).on_click(cx.listener(|this, _, _, cx| {
                     this.close_sheet();
