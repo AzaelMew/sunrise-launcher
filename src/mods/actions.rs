@@ -546,7 +546,7 @@ mod tests {
         let selected = home.clone();
         let caller = std::thread::spawn(move || {
             let question = || {
-                Some(PendingConsent::Toggle(Toggle {
+                Some(PendingConsent::Toggle(Box::new(Toggle {
                     entry: Entry {
                         source: SourceId::Sunrise,
                         project: "light".into(),
@@ -564,7 +564,7 @@ mod tests {
                     },
                     home: selected.clone(),
                     identity,
-                }))
+                })))
             };
             let mut settings = backend::Settings::load();
             for _ in ["Cancel", "Escape"] {
