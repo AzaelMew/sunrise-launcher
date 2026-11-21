@@ -2640,9 +2640,14 @@ pub(crate) fn preparer_staged(
         .join("server-jars")
         .join(format!("{version}.jar"));
     if !reused {
-        let json: serde_json::Value =
-            serde_json::from_str(&fs::read_to_string(&manifest).map_err(|e| e.to_string())?)
-                .map_err(|e| e.to_string())?;
+        let manifest_text = fs::read_to_string(&manifest).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                sources::missing_version_file(&manifest) + &sources::prepare_advice()
+            } else {
+                e.to_string()
+            }
+        })?;
+        let json = serde_json::from_str(&manifest_text).map_err(|e| e.to_string())?;
         let fetch = |url: &str| -> Result<Vec<u8>, String> {
             let mut body = Vec::new();
             get(url)?
