@@ -116,7 +116,22 @@ fn unrun(error: std::io::Error) -> String {
 
 /// Exclusive access to a version's shared preparation tree. On Unix the flock follows
 /// the inherited file description; on Windows the no-share open follows the handle.
-pub struct Preparation(pub(crate) fs::File);
+pub struct Preparation {
+    file: fs::File,
+    #[cfg(unix)]
+    handed_off: std::sync::atomic::AtomicBool,
+}
+
+#[cfg(unix)]
+impl Drop for Preparation {
+    fn drop(&mut self) {
+        // An unrelated fork can still have a descriptor before exec. Only a deliberate
+        // preparer handoff needs that descriptor to keep the lock after we drop ours.
+        if !*self.handed_off.get_mut() {
+            let _ = self.file.unlock();
+        }
+    }
+}
 
 pub(crate) struct Handoff<'a> {
     preparation: &'a Preparation,
@@ -124,6 +139,14 @@ pub(crate) struct Handoff<'a> {
 }
 
 impl Preparation {
+    pub(crate) fn new(file: fs::File) -> Self {
+        Self {
+            file,
+            #[cfg(unix)]
+            handed_off: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
     pub(crate) fn handoff<'a>(
         &'a self,
         profile: Option<crate::process::leases::ProfileHandoff<'a>>,
@@ -145,12 +168,17 @@ impl Handoff<'_> {
         command: Command,
         piped: bool,
     ) -> io::Result<crate::process::child::Child> {
-        crate::process::leases::spawn_preparer(
+        let child = crate::process::leases::spawn_preparer(
             command,
-            &self.preparation.0,
+            &self.preparation.file,
             self.profile.as_ref(),
             piped,
-        )
+        )?;
+        #[cfg(unix)]
+        self.preparation
+            .handed_off
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        Ok(child)
     }
 }
 
@@ -439,6 +467,21 @@ pub(crate) fn add_extras(
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_unhanded_preparation_unlocks_despite_an_incidental_descriptor() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(".preparing.lock");
+        let file = fs::File::create(&path).unwrap();
+        file.try_lock().unwrap();
+        let incidental = file.try_clone().unwrap();
+        let preparation = Preparation::new(file);
+        let next = fs::OpenOptions::new().write(true).open(&path).unwrap();
+        assert!(matches!(next.try_lock(), Err(fs::TryLockError::WouldBlock)));
+        drop(preparation);
+        next.try_lock().unwrap();
+        drop(incidental);
+    }
 
     /// A preparer that runs `script` (a shell `case` on its first argument).
     fn fake(dir: &Path, script: &str) -> PathBuf {
