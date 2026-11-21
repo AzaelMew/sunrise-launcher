@@ -411,22 +411,6 @@ fn registry_edit<'a>(
         }
         let mut doc = Document::read(next.path())?;
         for entry in entries.values_mut() {
-            if let Some(hold) = edit.held(&entry.project) {
-                let previous = before.get(&entry.project).ok_or_else(unproved_mods)?;
-                let digest = previous
-                    .digest
-                    .as_deref()
-                    .map(switch::sha256_bytes)
-                    .transpose()?;
-                if !previous.owned
-                    || digest.as_ref() != Some(hold.digest())
-                    || old.path().join(hold.path()) != previous.package.path
-                    || next.path().join(hold.path()) != next.path().join(&entry.file)
-                    || mod_list::is_enabled(old.path(), hold.id())
-                {
-                    return Err(unproved_mods().into());
-                }
-            }
             entry.dependency = !ids.contains(&entry.project);
             if let Some(old) = doc.row(&entry.project)? {
                 let dependency = old["dependency"].as_bool().unwrap_or(false);
