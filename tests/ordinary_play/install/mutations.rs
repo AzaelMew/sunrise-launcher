@@ -112,6 +112,36 @@ fn live_state(fixture: &Fixture) -> [Vec<u8>; 4] {
 }
 
 #[test]
+fn updating_a_dependency_warns_for_its_world_but_not_an_independent_mods_world() {
+    let fixture = Fixture::new();
+    let (mut registry, _) = fixture.content_index();
+    release(
+        &fixture,
+        &mut registry,
+        "required_mod",
+        "1.0.0",
+        &[("data/required_mod/sunrise/block/lamp.json", b"{}")],
+    );
+    install_root(&fixture, &registry);
+    let (ok, text) = run(
+        &fixture,
+        &["mods", "install", "extra_mod", "--source", "sunrise"],
+    );
+    assert!(ok, "{text}");
+    world(&fixture.home, "Uses the dependent", &["root_mod"]);
+    world(&fixture.home, "Uses an unrelated mod", &["extra_mod"]);
+    release(&fixture, &mut registry, "required_mod", "1.1.0", &[]);
+    fixture.publish_registry(&registry);
+    let old = live_state(&fixture);
+    let (ok, text) = run(&fixture, &["mods", "update", "required_mod"]);
+    assert!(
+        !ok && text.contains("1 saved world") && text.contains("--confirm-world-loss"),
+        "{text}"
+    );
+    assert_eq!(live_state(&fixture), old);
+}
+
+#[test]
 fn namespace_only_and_malformed_worlds_cannot_bypass_the_decision() {
     let fixture = Fixture::new();
     let (mut registry, _) = fixture.content_index();
