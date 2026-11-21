@@ -70,6 +70,8 @@ pub enum InstallError {
     Host(String),
     Unproved(String),
     Download(String),
+    NotForVersion(String),
+    GithubBuild(String),
     Compile(BuildNotice),
     Cancelled,
 }
@@ -80,6 +82,8 @@ impl std::fmt::Display for InstallError {
             Self::Refused(text)
             | Self::Host(text)
             | Self::Unproved(text)
+            | Self::NotForVersion(text)
+            | Self::GithubBuild(text)
             | Self::Download(text) => f.write_str(text),
             Self::Compile(failure) => f.write_str(&failure.detail),
             Self::Cancelled => f.write_str(tr("Install cancelled.")),
@@ -1336,6 +1340,6 @@ mod mutations;
 mod tests;
 #[cfg(all(test, debug_assertions, unix))]
 mod update_tests;
-pub use github::update_github;
+pub use github::{add_github, update_github};
 pub(crate) use mutations::check_activation;
 pub use mutations::{remove_mods, ChangeImpact};

@@ -1748,10 +1748,10 @@ pub mod pack;
 mod registry_install;
 pub(crate) use registry_install::check_activation;
 pub use registry_install::{
-    checked_switch_fit, install_registry, install_target, known_unfit_updates, remove_mods,
-    switch_build, update_github, update_registry, BuildNotice, ChangeImpact, InstallError,
-    InstallHooks, InstallProgress, InstalledBatch, NativeQuestion, ResolveQuestion, SwitchHooks,
-    SwitchQuestion, Switched, UpdateRequest,
+    add_github, checked_switch_fit, install_registry, install_target, known_unfit_updates,
+    remove_mods, switch_build, update_github, update_registry, BuildNotice, ChangeImpact,
+    InstallError, InstallHooks, InstallProgress, InstalledBatch, NativeQuestion, ResolveQuestion,
+    SwitchHooks, SwitchQuestion, Switched, UpdateRequest,
 };
 #[cfg(test)]
 mod tests;

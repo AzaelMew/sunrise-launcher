@@ -661,6 +661,8 @@ fn failure_line(error: &InstallError) -> &'static str {
         InstallError::Refused(_) => tr("Can't install these mods together"),
         InstallError::Host(_) => tr("Native mods can't build on this computer"),
         InstallError::Unproved(_) => tr("Couldn't check that the mods fit"),
+        InstallError::NotForVersion(_) => tr("Not available for your version"),
+        InstallError::GithubBuild(_) => tr("Could not build the selected mods."),
         InstallError::Download(_) => tr("Download failed. Try again"),
         InstallError::Compile(_) => tr("Couldn't build on your computer"),
         InstallError::Cancelled => tr("Install cancelled."),

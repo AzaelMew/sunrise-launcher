@@ -1,4 +1,4 @@
-//! Replacing a GitHub release uses an exact admission, review and same-base publication.
+//! GitHub Add and checked Update use the same admitted candidate and publication as registry installs.
 use super::*;
 use crate::github_mods;
 use cap_fs_ext::MetadataExt;
@@ -15,64 +15,141 @@ pub fn update_github(
     hooks: InstallHooks<'_>,
     approve: &dyn Fn(&ChangeImpact) -> bool,
 ) -> Result<github_mods::Origin, InstallError> {
+    let replacement = packed.release_origin(found).ok_or_else(|| {
+        InstallError::Refused(tr("GitHub Update needs a checked release asset.").into())
+    })?;
+    edit_github(
+        instance,
+        identity,
+        &[(packed, replacement)],
+        choose,
+        hooks,
+        Some(approve),
+    )?;
+    Ok(replacement.clone())
+}
+
+/// Install all selected packages together. Fresh Add never silently upgrades or claims an
+/// existing file, even when it came from the same repository; use checked Update for that.
+pub fn add_github(
+    instance: &Instance,
+    identity: Identity,
+    found: &github_mods::Resolved,
+    selected: &[github_mods::Packed],
+    choose: impl FnOnce() -> Result<FirstBuild, String>,
+    hooks: InstallHooks<'_>,
+) -> Result<(), InstallError> {
+    let packages = selected
+        .iter()
+        .map(|package| {
+            let origin = package.checked_origin(found).ok_or_else(|| {
+                InstallError::Refused(tr("Couldn't verify the selected GitHub package.").into())
+            })?;
+            Ok((package, origin))
+        })
+        .collect::<Result<Vec<_>, InstallError>>()?;
+    edit_github(instance, identity, &packages, choose, hooks, None)
+}
+
+fn edit_github(
+    instance: &Instance,
+    identity: Identity,
+    packages: &[(&github_mods::Packed, &github_mods::Origin)],
+    choose: impl FnOnce() -> Result<FirstBuild, String>,
+    hooks: InstallHooks<'_>,
+    approve: Option<&dyn Fn(&ChangeImpact) -> bool>,
+) -> Result<(), InstallError> {
     if instance.kind == InstanceKind::Pack {
         return Err(InstallError::Refused(
             tr("This pack controls which mods it installs.").into(),
         ));
     }
-    let replacement = packed.release_origin(found).ok_or_else(|| {
-        InstallError::Refused(tr("GitHub Update needs a checked release asset.").into())
-    })?;
-    let id = &replacement.id;
-    let file = format!("{}/{id}.smod", native_mods::INSTALLED);
+    if packages.is_empty() {
+        return Err(InstallError::Cancelled);
+    }
     (hooks.progress)(InstallProgress::Checking);
     let mut profile =
         Profile::open_for(&instance.home, None, Some(identity)).map_err(String::from)?;
+    let file = |id: &str| format!("{}/{id}.smod", native_mods::INSTALLED);
     let predecessor = {
         let _home = crate::browser::lock_home(&instance.home).map_err(|e| at(&instance.home, e))?;
-        installed_release(&instance.home, id, &file)?
+        if approve.is_some() {
+            let (_, replacement) = packages[0];
+            let id = &replacement.id;
+            let prior = installed_release(&instance.home, id, &file(id))?;
+            if !prior.owner.eq_ignore_ascii_case(&replacement.owner)
+                || !prior.repo.eq_ignore_ascii_case(&replacement.repo)
+            {
+                return Err(InstallError::Refused(
+                    tr("Choose a release from the same GitHub repository as the installed mod.")
+                        .into(),
+                ));
+            }
+            if prior.sha256.eq_ignore_ascii_case(&replacement.sha256) {
+                return Err(InstallError::Refused(
+                    tr("That GitHub archive is already installed. Nothing was changed.").into(),
+                ));
+            }
+            Some(prior)
+        } else {
+            check_fresh(&instance.home, packages)?;
+            None
+        }
     };
-    if !predecessor.owner.eq_ignore_ascii_case(&replacement.owner)
-        || !predecessor.repo.eq_ignore_ascii_case(&replacement.repo)
-    {
-        return Err(InstallError::Refused(
-            tr("Choose a release from the same GitHub repository as the installed mod.").into(),
-        ));
-    }
-    if predecessor.sha256.eq_ignore_ascii_case(&replacement.sha256) {
-        return Err(InstallError::Refused(
-            tr("That GitHub archive is already installed. Nothing was changed.").into(),
-        ));
-    }
-
     let edit = profile.begin_edit(
         choose,
         |f| (hooks.progress)(InstallProgress::Downloading(f)),
         &|_| (hooks.progress)(InstallProgress::Preparing),
     )?;
     let old = edit.candidate()?;
-    let before = inventory(old.path(), None)?;
-    let previous = before.get(id).ok_or_else(|| changed(id))?;
-    if previous.github_origin(old.path()).as_ref() != Some(&predecessor) {
-        return Err(changed(id).into());
-    }
-    let held = edit.held(id);
-    if held.is_some_and(|held| {
-        !matches!(held.source(), managed_play::HeldSource::Github { .. })
-            || !previous.matches_hold(old.path(), edit.base(), held)
-    }) {
-        return Err(held_change_refusal(id));
-    }
     let next = edit.candidate()?;
     let home = next.path();
-    packed.copy_verified(&home.join(&file))?;
-    let sidecar = github_mods::origin_path(home, id);
-    let bytes = serde_json::to_vec_pretty(replacement).map_err(|e| at(&sidecar, e))?;
-    fs::write(&sidecar, bytes).map_err(|e| at(&sidecar, e))?;
-    let was_enabled = mutations::enabled(old.path())?.contains(id);
-    let enabled = held.map_or(was_enabled, managed_play::Held::enabled_before);
-    if enabled != was_enabled {
-        mod_list::set_enabled(home, id, enabled)?;
+    // Add can't change another package, its enabled bit, or a hold. This is the same no-drop
+    // case as a fresh registry Install; the graph must fit without switching anything off.
+    if predecessor.is_none() {
+        check_fresh(home, packages)?;
+        if let Some((_, origin)) = packages
+            .iter()
+            .find(|(_, origin)| edit.held(&origin.id).is_some())
+        {
+            return Err(held_change_refusal(&origin.id));
+        }
+    }
+    let before = inventory(old.path(), None)?;
+    let (prior, hold) = if let Some(origin) = &predecessor {
+        let id = &origin.id;
+        let prior = before.get(id).ok_or_else(|| changed(id))?;
+        if prior.github_origin(old.path()).as_ref() != Some(origin) {
+            return Err(changed(id).into());
+        }
+        let hold = edit.held(id);
+        if hold.is_some_and(|held| {
+            !matches!(held.source(), managed_play::HeldSource::Github { .. })
+                || !prior.matches_hold(old.path(), edit.base(), held)
+        }) {
+            return Err(held_change_refusal(id));
+        }
+        (Some(prior), hold)
+    } else {
+        (None, None)
+    };
+    fs::create_dir_all(home.join(native_mods::INSTALLED)).map_err(|e| at(home, e))?;
+    let mut off_trial = None;
+    for (packed, origin) in packages {
+        let id = &origin.id;
+        let was_enabled = mod_list::is_enabled(old.path(), id);
+        let enabled =
+            prior.is_none() || hold.map_or(was_enabled, managed_play::Held::enabled_before);
+        if hold.is_some() && !enabled {
+            off_trial = Some(id);
+        }
+        packed.copy_verified(&home.join(file(id)))?;
+        let sidecar = github_mods::origin_path(home, id);
+        let bytes = serde_json::to_vec_pretty(origin).map_err(|e| at(&sidecar, e))?;
+        fs::write(&sidecar, bytes).map_err(|e| at(&sidecar, e))?;
+        if enabled != was_enabled {
+            mod_list::set_enabled(home, id, enabled)?;
+        }
     }
     let catalogue = super::super::fetched_index();
     let check_graph = || match manifest_conflict(home, catalogue.as_deref(), None, |_| false)? {
@@ -81,41 +158,46 @@ pub fn update_github(
     };
     check_graph()?;
     let reviewed_inputs = managed_play::inputs(home, None)?;
-    let (suspect, unchecked_update) = mutations::update_worlds(home, [&previous.package])?;
-    let title = &previous.package.manifest.name;
-    let impact = ChangeImpact::read(
-        &instance.home,
-        mutations::Change::GithubUpdate {
-            target: mutations::ReviewedMod {
-                name: title.clone(),
-                id: id.clone(),
-            },
-            file: file.clone(),
-            releases: [(&predecessor).into(), replacement.into()],
-        },
-        &suspect,
-    )?
-    .with_unchecked_update(unchecked_update);
-    // GUI review applies even when no dropped definition is known.
-    // Ask before proving the replacement: native builds may run the author's build scripts.
-    (hooks.progress)(InstallProgress::Reviewing);
-    if !approve(&impact) {
-        return Err(InstallError::Cancelled);
-    }
+    let review =
+        if let (Some(approve), Some(prior), Some(predecessor)) = (approve, prior, &predecessor) {
+            let id = &predecessor.id;
+            let (_, replacement) = packages[0];
+            let (suspect, unchecked) = mutations::update_worlds(home, [&prior.package])?;
+            let impact = ChangeImpact::read(
+                &instance.home,
+                mutations::Change::GithubUpdate {
+                    target: mutations::ReviewedMod {
+                        name: prior.package.manifest.name.clone(),
+                        id: id.clone(),
+                    },
+                    file: file(id),
+                    releases: [predecessor.into(), replacement.into()],
+                },
+                &suspect,
+            )?
+            .with_unchecked_update(unchecked);
+            // Update reviews the checked replacement before any code from it can build.
+            (hooks.progress)(InstallProgress::Reviewing);
+            if !approve(&impact) {
+                return Err(InstallError::Cancelled);
+            }
+            Some((suspect, impact.into_evidence()))
+        } else {
+            None
+        };
     let unchanged_candidate = || {
         if managed_play::inputs(home, None)? != reviewed_inputs {
-            return Err(tr(
-                "The staged GitHub update changed after review. Nothing was changed; try again.",
-            )
-            .to_owned());
+            return Err(
+                tr("The staged GitHub packages changed. Nothing was changed; try again.")
+                    .to_owned(),
+            );
         }
         Ok(())
     };
-    unchanged_candidate()?;
     let cancellation = native_mods::Cancellation::default();
     if backend::NativeGrant::read()?.is_none()
         && !(hooks.native)(&NativeQuestion {
-            names: vec![title.clone()],
+            names: packages.iter().map(|(p, _)| p.name.clone()).collect(),
             reviewed: false,
             retry: false,
         })?
@@ -126,10 +208,24 @@ pub fn update_github(
         .admit_native_work()
         .map_err(|e| InstallError::Unproved(e.into()))?;
     let prove = || {
-        prove_edit(&edit, home, instance, &cancellation, &hooks)
-            .map_err(|e| InstallError::Unproved(e.into()))
+        prove_edit(&edit, home, instance, &cancellation, &hooks).map_err(|e| match &e {
+            native_mods::Failed::Mods { left, .. }
+                if left.iter().any(|item| {
+                    matches!(item.why, native_mods::Why::Unfit(_))
+                        && packages.iter().any(|(_, origin)| {
+                            item.id == origin.id && item.version == origin.version
+                        })
+                }) =>
+            {
+                InstallError::NotForVersion(e.into())
+            }
+            native_mods::Failed::Mods {
+                compiling: true, ..
+            } => InstallError::GithubBuild(e.into()),
+            _ => InstallError::Unproved(e.into()),
+        })
     };
-    if held.is_some() && !enabled {
+    if let Some(id) = off_trial {
         // Prove the off replacement would build, but do not publish a different switch or image.
         let list = home.join(sunrise_launcher_smod::mod_list::FILE);
         let selection = match fs::read(&list) {
@@ -149,19 +245,63 @@ pub fn update_github(
     }
     unchanged_candidate()?;
     let proof = prove()?;
-    let retired = held.into_iter().map(|_| id.clone()).collect();
-    let reviewed = impact.into_evidence();
+    let retired = hold.into_iter().map(|h| h.id().to_owned()).collect();
     (hooks.progress)(InstallProgress::Publishing);
     edit.publish_install(proof, &cancellation, &retired, || {
         unchanged_candidate()?;
-        // The journal checks both input digests and holds the home lock. Also recheck claims
-        // and aliases here: they can change without changing any bytes in the copied mod tree.
-        if installed_release(&instance.home, id, &file).map_err(|e| e.to_string())? != predecessor {
-            return Err(changed(id));
+        // The journal holds the home lock and compares the input digests. Check claims and
+        // aliases here as well: those can change without changing the copied files' bytes.
+        if let (Some(predecessor), Some((suspect, evidence))) = (&predecessor, &review) {
+            let id = &predecessor.id;
+            if installed_release(&instance.home, id, &file(id)).map_err(|e| e.to_string())?
+                != *predecessor
+            {
+                return Err(changed(id));
+            }
+            mutations::bind_worlds(&instance.home, suspect, evidence).map(Some)
+        } else {
+            check_fresh(&instance.home, packages).map_err(|e| e.to_string())?;
+            Ok(None)
         }
-        mutations::bind_worlds(&instance.home, &suspect, &reviewed)
     })?;
-    Ok(replacement.clone())
+    Ok(())
+}
+
+fn check_fresh(
+    home: &Path,
+    packages: &[(&github_mods::Packed, &github_mods::Origin)],
+) -> Result<(), InstallError> {
+    let claims = browser_state::Installed::read(home).map_err(|e| e.details(trf))?;
+    let present = inventory(home, None)?;
+    let mut ids = BTreeSet::new();
+    for (_, origin) in packages {
+        let id = &origin.id;
+        let collision = || {
+            InstallError::Refused(trf(
+            "{mod} is already installed. Use Update for a GitHub release or remove the existing mod first.",
+            &[("mod", id)],
+        ))
+        };
+        if !ids.insert(id)
+            || present.contains_key(id)
+            || claims.single(id).map_err(|e| e.render(trf))?.is_some()
+        {
+            return Err(collision());
+        }
+        for suffix in ["smod", "origin.json"] {
+            let relative = format!("{}/{id}.{suffix}", native_mods::INSTALLED);
+            claims
+                .check_other_claims(home, id, &relative)
+                .map_err(|e| e.render(trf))?;
+            let path = home.join(&relative);
+            match fs::symlink_metadata(&path) {
+                Ok(_) => return Err(collision()),
+                Err(e) if e.kind() == ErrorKind::NotFound => (),
+                Err(e) => return Err(at(&path, e).into()),
+            }
+        }
+    }
+    Ok(())
 }
 
 fn installed_release(
