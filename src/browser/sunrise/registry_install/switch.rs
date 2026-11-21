@@ -820,35 +820,67 @@ fn exact_image(
             left,
             compiling: false,
             ..
-        }) if left
-            .iter()
-            .any(|m| matches!(m.why, native_mods::Why::Unfit(_)))
-            && left.iter().all(|m| {
-                set.get(m.id.as_str())
-                    .is_some_and(|p| p.manifest.version == m.version)
-                    && matches!(
-                        m.why,
-                        native_mods::Why::Unfit(_) | native_mods::Why::Needs(_)
-                    )
-            }) =>
-        {
+        }) => {
+            cancellation.check()?;
+            let mut unfit = BTreeSet::new();
+            let mut unknown = BTreeSet::new();
+            for omission in &left {
+                let (id, _) = set
+                    .get_key_value(omission.id.as_str())
+                    .filter(|(id, p)| {
+                        enabled.contains(*id) && p.manifest.version == omission.version
+                    })
+                    .ok_or_else(unproved_switch)?;
+                match &omission.why {
+                    native_mods::Why::Unfit(_) => unfit.insert(*id),
+                    native_mods::Why::Unproved(_) => unknown.insert(*id),
+                    native_mods::Why::Needs(_) => continue,
+                    _ => return Err(unproved_switch()),
+                };
+            }
+            if unfit.is_empty() && unknown.is_empty() {
+                return Err(unproved_switch());
+            }
+            // The builder only sees native bundles and reports one cause per omitted
+            // dependent. Use the entire trial's required client closure, including content
+            // and all of its causes. A known incompatibility alone defeats that trial.
+            spread_to_dependents(set, &mut unfit);
+            spread_to_dependents(set, &mut unknown);
+            unproved.extend(unknown.difference(&unfit).map(|&id| id.to_owned()));
             Ok(None)
         }
-        Err(error) => {
+        Err(native_mods::Failed::NoConsent) => {
             cancellation.check()?;
-            // An unavailable proof does not say a pinned native mod is incompatible.
-            // Only attribute a failed native check to local inputs if no listed native
-            // is part of the failed trial. An error in a listed build still stops Switch.
-            let native: Vec<_> = enabled
-                .iter()
-                .map(|id| set[id])
-                .filter(|p| p.manifest.native.is_some())
-                .collect();
-            if native.is_empty() || native.iter().any(|p| !p.unlisted) {
-                return Err(error.into());
+            // The trial could not check any native input. Only a wholly pinned local
+            // input set can be left off without attempting a listed mod's exact build.
+            let mut unknown = BTreeSet::new();
+            for (&id, p) in set {
+                if enabled.contains(id) && p.manifest.native.is_some() {
+                    if !p.unlisted {
+                        return Err(native_mods::Failed::NoConsent.into());
+                    }
+                    unknown.insert(id);
+                }
             }
-            unproved.extend(native.into_iter().map(|p| p.manifest.id.clone()));
+            if unknown.is_empty() {
+                return Err(unproved_switch());
+            }
+            spread_to_dependents(set, &mut unknown);
+            unproved.extend(unknown.into_iter().map(str::to_owned));
             Ok(None)
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn spread_to_dependents<'a>(set: &Set<'a>, omitted: &mut BTreeSet<&'a str>) {
+    let mut before = 0;
+    while before != omitted.len() {
+        before = omitted.len();
+        for (&id, package) in set {
+            if required(&package.manifest).any(|(dep, _)| omitted.contains(dep.as_str())) {
+                omitted.insert(id);
+            }
         }
     }
 }
