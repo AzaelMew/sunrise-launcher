@@ -7,7 +7,7 @@
 use super::{pick, safe_name, Kind, Project, Source, SourceId, Support, Version};
 use crate::i18n::{tr, trf};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
@@ -250,50 +250,136 @@ impl Installed {
     }
 }
 
-/// Player-facing labels for equal display names, in input order. Use the author if it
-/// identifies one member of the name group, otherwise the installed version. A unique
-/// name needs no replacement label. No filenames or paths are used.
-pub fn colliding_mod_labels<'a>(
-    mods: impl IntoIterator<Item = (&'a str, &'a [String], &'a str)>,
-) -> Vec<Option<String>> {
-    let mods: Vec<_> = mods
-        .into_iter()
-        .map(|(name, authors, version)| {
-            let mut authors: Vec<_> = authors
-                .iter()
-                .map(|author| author.trim())
-                .filter(|author| !author.is_empty())
-                .collect();
-            authors.sort_unstable();
-            authors.dedup();
-            (name, authors, version)
+/// Display metadata, not proof that a package may be updated or removed.
+#[derive(Clone, Copy)]
+pub enum ModLabelSource {
+    Registry,
+    Github,
+    Local,
+}
+
+pub struct ModLabel<'a> {
+    /// The manifest ID, used only to order ordinals (never displayed).
+    pub id: &'a str,
+    pub name: &'a str,
+    pub authors: &'a [String],
+    pub version: &'a str,
+    pub source: ModLabelSource,
+}
+
+impl ModLabel<'_> {
+    fn with_author(&self) -> Option<String> {
+        let mut authors: Vec<_> = self
+            .authors
+            .iter()
+            .map(|a| a.trim())
+            .filter(|a| !a.is_empty())
+            .collect();
+        authors.sort_unstable();
+        authors.dedup();
+        (!authors.is_empty()).then(|| {
+            trf(
+                "{name} · by {authors}",
+                &[("name", self.name), ("authors", &authors.join(", "))],
+            )
         })
-        .collect();
-    let mut names = HashMap::new();
-    let mut by_author = HashMap::new();
-    for (name, authors, _) in &mods {
-        *names.entry(*name).or_insert(0) += 1;
-        *by_author.entry((*name, authors.as_slice())).or_insert(0) += 1;
     }
-    mods.iter()
-        .map(|(name, authors, version)| {
-            if names[name] == 1 {
-                None
-            } else if !authors.is_empty() && by_author[&(*name, authors.as_slice())] == 1 {
-                Some(trf(
-                    "{name} · by {authors}",
-                    &[("name", name), ("authors", &authors.join(", "))],
-                ))
-            } else if !version.is_empty() {
-                Some(trf(
-                    "{name} · {version}",
-                    &[("name", name), ("version", version)],
-                ))
-            } else {
-                None
-            }
+
+    fn with_version(&self, name: &str) -> Option<String> {
+        (!self.version.is_empty()).then(|| {
+            trf(
+                "{name} · {version}",
+                &[("version", self.version), ("name", name)],
+            )
         })
-        .collect()
+    }
+
+    fn with_source(&self, name: &str) -> String {
+        let source = match self.source {
+            ModLabelSource::Registry => tr("Sunrise registry"),
+            ModLabelSource::Github => tr("GitHub"),
+            ModLabelSource::Local => tr("Local file"),
+        };
+        trf("{name} · {source}", &[("source", source), ("name", name)])
+    }
+}
+
+/// Player-facing labels for equal display names, returned in input order. A unique
+/// name needs no replacement. For namesakes, try author, version and source alone,
+/// then combine them. Number any remaining ties by manifest ID, not display order.
+pub fn colliding_mod_labels<'a>(
+    mods: impl IntoIterator<Item = ModLabel<'a>>,
+) -> Vec<Option<String>> {
+    let mods: Vec<_> = mods.into_iter().collect();
+    let mut names = HashMap::new();
+    for item in &mods {
+        *names.entry(item.name).or_insert(0) += 1;
+    }
+    let mut used = HashSet::new();
+    let mut pending = Vec::new();
+    let mut labels = vec![None; mods.len()];
+    for (i, item) in mods.iter().enumerate() {
+        if names[item.name] == 1 {
+            used.insert(item.name.to_owned());
+        } else {
+            pending.push(i);
+        }
+    }
+
+    // Compare rendered labels, not just the fields: e.g. one author named "A, B"
+    // displays the same as two authors named "A" and "B".
+    let mut assign = |candidate: &dyn Fn(&ModLabel<'_>) -> Option<String>| {
+        let mut proposals = HashMap::new();
+        for &i in &pending {
+            if let Some(label) = candidate(&mods[i]) {
+                proposals
+                    .entry(label)
+                    .and_modify(|slot| *slot = None)
+                    .or_insert(Some(i));
+            }
+        }
+        for (label, row) in proposals {
+            if let Some(i) = row {
+                if used.insert(label.clone()) {
+                    labels[i] = Some(label);
+                }
+            }
+        }
+        pending.retain(|&i| labels[i].is_none());
+    };
+    assign(&|item| item.with_author());
+    assign(&|item| item.with_version(item.name));
+    assign(&|item| Some(item.with_source(item.name)));
+    assign(&|item| {
+        item.with_author()
+            .and_then(|author| item.with_version(&author))
+    });
+    let all_details = |item: &ModLabel<'_>| {
+        let author = item.with_author();
+        let detail = author.as_deref().unwrap_or(item.name);
+        let version = item.with_version(detail);
+        item.with_source(version.as_deref().unwrap_or(detail))
+    };
+    assign(&|item| Some(all_details(item)));
+
+    pending.sort_by_key(|&i| mods[i].id);
+    let mut ordinals = HashMap::new();
+    for i in pending {
+        let base = all_details(&mods[i]);
+        let ordinal = ordinals.entry(base.clone()).or_insert(0usize);
+        loop {
+            *ordinal += 1;
+            let label = trf(
+                "{label} · {n}",
+                &[("n", &ordinal.to_string()), ("label", &base)],
+            );
+            if used.insert(label.clone()) {
+                labels[i] = Some(label);
+                break;
+            }
+        }
+    }
+    labels
 }
 
 /// One file to install: the project, the version chosen and why it was pulled in.

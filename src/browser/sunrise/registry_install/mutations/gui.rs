@@ -138,6 +138,7 @@ mod tests {
         ChangeImpact, ReviewedArchive, ReviewedMod, ReviewedRelease, ReviewedUpdate,
     };
     use super::*;
+    use crate::browser::installed::{colliding_mod_labels, ModLabel, ModLabelSource};
 
     fn item(name: &str, id: &str) -> ReviewedMod {
         ReviewedMod {
@@ -224,13 +225,15 @@ mod tests {
         ];
         let authors = ["Ann", "Bo", "Ann", "Ann", "Ann"].map(|name| [name.to_owned()]);
         let versions = ["1.0.0", "1.0.0", "1.1.0", "1.2.0", "1.0.0"];
-        let labels = crate::browser::installed::colliding_mod_labels(
-            targets
-                .iter()
-                .zip(&authors)
-                .zip(versions)
-                .map(|((&(name, _), authors), version)| (name, authors.as_slice(), version)),
-        );
+        let labels = colliding_mod_labels(targets.iter().zip(&authors).zip(versions).map(
+            |((&(name, id), authors), version)| ModLabel {
+                id,
+                name,
+                authors,
+                version,
+                source: ModLabelSource::Registry,
+            },
+        ));
         let names: std::collections::BTreeMap<_, _> = targets
             .iter()
             .zip(labels)
@@ -275,6 +278,272 @@ mod tests {
                     .into(),
             )
         );
+    }
+
+    #[test]
+    fn removal_labels_identical_metadata_by_id_without_exposing_archive_identity() {
+        // Installed can show b above a (e.g. different status groups). Remove uses ID order.
+        let targets = [("Lanterns", "lanterns_a"), ("Lanterns", "lanterns_b")];
+        let authors = ["Ann".to_owned()];
+        let label = |(name, id), source| ModLabel {
+            id,
+            name,
+            authors: &authors,
+            version: "1.0.0",
+            source,
+        };
+        let installed = colliding_mod_labels(
+            targets
+                .into_iter()
+                .rev()
+                .map(|target| label(target, ModLabelSource::Local)),
+        );
+        assert_eq!(
+            installed,
+            [
+                Some("Lanterns · by Ann · 1.0.0 · Local file · 2".into()),
+                Some("Lanterns · by Ann · 1.0.0 · Local file · 1".into())
+            ]
+        );
+        let sources = colliding_mod_labels([
+            label(targets[0], ModLabelSource::Registry),
+            label(targets[1], ModLabelSource::Github),
+            label(("Lanterns", "lanterns_c"), ModLabelSource::Local),
+        ]);
+        assert_eq!(
+            sources,
+            [
+                Some("Lanterns · Sunrise registry".into()),
+                Some("Lanterns · GitHub".into()),
+                Some("Lanterns · Local file".into())
+            ]
+        );
+
+        let mut change = remove(&targets, vec![]);
+        let Change::Remove {
+            removed, gui_names, ..
+        } = &mut change
+        else {
+            unreachable!();
+        };
+        // The exact files/digests are distinct and need not sort like manifest IDs.
+        removed[0].file = "sunrise-mods/z.smod".into();
+        removed[0].digest = "a".repeat(64);
+        removed[1].file = "sunrise-mods/a.smod".into();
+        removed[1].digest = "b".repeat(64);
+        let labels = colliding_mod_labels(
+            targets
+                .into_iter()
+                .map(|target| label(target, ModLabelSource::Local)),
+        );
+        assert!(labels.iter().eq(installed.iter().rev()));
+        gui_names.extend(
+            targets
+                .into_iter()
+                .zip(labels)
+                .filter_map(|((_, id), label)| label.map(|label| (id.to_owned(), label))),
+        );
+        let impact = ChangeImpact {
+            change,
+            evidence: vec![],
+            unchecked_update: false,
+        };
+        assert_eq!(
+            impact.gui_review(),
+            (
+                "Remove 2 mods?".into(),
+                concat!(
+                    "Remove: Lanterns · by Ann · 1.0.0 · Local file · 1 and ",
+                    "Lanterns · by Ann · 1.0.0 · Local file · 2."
+                )
+                .into()
+            )
+        );
+        let detail = impact.detail();
+        for (file, digest) in [("z.smod", "a"), ("a.smod", "b")] {
+            assert!(detail.contains(&format!(
+                "sunrise-mods/{file}\nSHA-256: {}",
+                digest.repeat(64)
+            )));
+        }
+    }
+
+    #[test]
+    fn removal_uses_combinations_before_numbering_namesakes() {
+        let ids = ["ann_first", "ann_second", "lee_first", "lee_second"];
+        let ann = ["Ann".to_owned()];
+        let lee = ["Lee".to_owned()];
+        let labels = |authors: [&[String]; 4], versions: [&str; 4], sources| {
+            colliding_mod_labels(ids.into_iter().zip(authors).zip(versions).zip(sources).map(
+                |(((id, authors), version), source)| ModLabel {
+                    id,
+                    name: "Lanterns",
+                    authors,
+                    version,
+                    source,
+                },
+            ))
+        };
+        let authors = [
+            ann.as_slice(),
+            ann.as_slice(),
+            lee.as_slice(),
+            lee.as_slice(),
+        ];
+        let versions = ["1.0.0", "1.0.1", "1.0.0", "1.0.1"];
+        assert_eq!(
+            labels(authors, versions, [ModLabelSource::Local; 4]),
+            [
+                Some("Lanterns · by Ann · 1.0.0".into()),
+                Some("Lanterns · by Ann · 1.0.1".into()),
+                Some("Lanterns · by Lee · 1.0.0".into()),
+                Some("Lanterns · by Lee · 1.0.1".into()),
+            ]
+        );
+        let sources = [
+            ModLabelSource::Local,
+            ModLabelSource::Github,
+            ModLabelSource::Local,
+            ModLabelSource::Github,
+        ];
+        assert_eq!(
+            labels([&[]; 4], ["1.0.0", "1.0.0", "1.0.1", "1.0.1"], sources),
+            [
+                Some("Lanterns · 1.0.0 · Local file".into()),
+                Some("Lanterns · 1.0.0 · GitHub".into()),
+                Some("Lanterns · 1.0.1 · Local file".into()),
+                Some("Lanterns · 1.0.1 · GitHub".into()),
+            ]
+        );
+        assert_eq!(
+            labels(authors, [""; 4], sources),
+            [
+                Some("Lanterns · by Ann · Local file".into()),
+                Some("Lanterns · by Ann · GitHub".into()),
+                Some("Lanterns · by Lee · Local file".into()),
+                Some("Lanterns · by Lee · GitHub".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn canonical_archive_sources_match_the_installed_roster() {
+        use super::super::{inventory, removal_gui_names};
+        use crate::{
+            browser::{installed, Kind, SourceId},
+            github_mods, native_mods, native_status,
+        };
+        use std::{collections::BTreeMap, fs};
+        use sunrise_launcher_smod::{index::sha256_file, Package};
+
+        let scratch = tempfile::tempdir().unwrap();
+        let home = scratch.path().canonicalize().unwrap();
+        let folder = home.join(native_mods::INSTALLED);
+        fs::create_dir_all(&folder).unwrap();
+        let pin = "a".repeat(40);
+        for id in ["registry", "github"] {
+            let manifest = format!(
+                "id='{id}'\nname='Lanterns'\nauthors=['Ann']\nversion='1.0.0'\napi='0.2'\ncapabilities=['registries']\n[native]\ngame='26.3'\nsunrise='{pin}'\nmixins='{pin}'\n"
+            );
+            let files: &[(&str, &[u8])] = &[
+                (
+                    "Cargo.toml",
+                    b"[package]\nname='fixture'\nversion='1.0.0'\n",
+                ),
+                ("src/lib.rs", b"fn hook() {}"),
+            ];
+            fs::write(
+                folder.join(format!("{id}.smod")),
+                Package::write_files(&manifest, files).unwrap(),
+            )
+            .unwrap();
+        }
+        let content = home.join(sunrise_launcher_smod::mod_list::DIR);
+        fs::create_dir_all(&content).unwrap();
+        let manifest = "id='local'\nname='Lanterns'\nauthors=['Ann']\nversion='1.0.0'\napi='0.2'\ncapabilities=['registries']\n";
+        fs::write(
+            content.join("local.smod"),
+            Package::write_files(manifest, &[]).unwrap(),
+        )
+        .unwrap();
+        installed::Installed {
+            entries: vec![installed::Entry {
+                source: SourceId::Sunrise,
+                project: "registry".into(),
+                slug: "registry".into(),
+                title: "Lanterns".into(),
+                kind: Kind::Mod,
+                version: "1.0.0".into(),
+                number: "1.0.0".into(),
+                file: format!("{}/registry.smod", native_mods::INSTALLED),
+                checksum: format!(
+                    "SHA-256:{}",
+                    sha256_file(&folder.join("registry.smod")).unwrap()
+                ),
+                page: String::new(),
+                dependency: false,
+                verdict: None,
+                install_hold: None,
+            }],
+        }
+        .save(&home)
+        .unwrap();
+        let record = github_mods::Origin {
+            id: "github".into(),
+            version: "1.0.0".into(),
+            owner: "example".into(),
+            repo: "mods".into(),
+            tag: None,
+            commit: pin,
+            asset: None,
+            sha256: sha256_file(&folder.join("github.smod")).unwrap(),
+        };
+        fs::write(
+            folder.join("github.origin.json"),
+            serde_json::to_vec(&record).unwrap(),
+        )
+        .unwrap();
+
+        // The Installed snapshot takes registry rows plus untracked native/content archives.
+        let registry = installed::Installed::read(&home).unwrap().entries;
+        let local: Vec<_> = native_status::untracked(&home)
+            .into_iter()
+            .chain(native_status::untracked_content(&home))
+            .collect();
+        let rows = registry
+            .iter()
+            .map(|row| (row.project.as_str(), ModLabelSource::Registry))
+            .chain(local.iter().filter(|file| file.icon.is_ok()).map(|file| {
+                (
+                    file.id.as_str(),
+                    if file.origin.is_some() {
+                        ModLabelSource::Github
+                    } else {
+                        ModLabelSource::Local
+                    },
+                )
+            }))
+            .collect::<Vec<_>>();
+        let present = inventory(&home, None).unwrap();
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows.len(), present.len());
+        let authors = ["Ann".to_owned()];
+        let labels = colliding_mod_labels(rows.iter().map(|&(id, source)| ModLabel {
+            id,
+            name: "Lanterns",
+            authors: &authors,
+            version: "1.0.0",
+            source,
+        }));
+        let expected = rows
+            .into_iter()
+            .zip(labels)
+            .map(|((id, _), label)| (id.to_owned(), label.unwrap()))
+            .collect::<BTreeMap<_, _>>();
+        assert_eq!(removal_gui_names(&home, &present), expected);
+        assert_eq!(expected["registry"], "Lanterns · Sunrise registry");
+        assert_eq!(expected["github"], "Lanterns · GitHub");
+        assert_eq!(expected["local"], "Lanterns · Local file");
     }
 
     #[test]

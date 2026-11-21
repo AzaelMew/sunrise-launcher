@@ -136,12 +136,24 @@ impl Launcher {
         if renamed {
             model::sort(&mut rows);
         }
+        use installed::{ModLabel, ModLabelSource};
         let labels = installed::colliding_mod_labels(rows.iter().map(|row| {
             let (authors, version) = archive_name(row).map_or_else(
                 || (std::slice::from_ref(&row.authors), row.version.as_str()),
                 |archive| (archive.authors.as_slice(), archive.version.as_str()),
             );
-            (row.title.as_str(), authors, version)
+            let source = match &row.local {
+                None => ModLabelSource::Registry,
+                Some(local) if local.github => ModLabelSource::Github,
+                Some(_) => ModLabelSource::Local,
+            };
+            ModLabel {
+                id: &row.id,
+                name: &row.title,
+                authors,
+                version,
+                source,
+            }
         }));
         let filter = self.ui.mods.row_filter.clone();
         let visible = model::visible(&rows, &filter);

@@ -351,6 +351,40 @@ pub(crate) fn check_activation(
     Ok(())
 }
 
+fn removal_gui_names(home: &Path, present: &Inventory) -> BTreeMap<String, String> {
+    use installed::{ModLabel, ModLabelSource};
+    let labels = installed::colliding_mod_labels(present.values().map(|item| {
+        let m = &item.package.manifest;
+        let source = if item.registry_claim {
+            ModLabelSource::Registry
+        } else if m.native.is_some()
+            && item.package.path
+                == home
+                    .join(native_mods::INSTALLED)
+                    .join(format!("{}.smod", m.id))
+            && crate::github_mods::origin(home, &m.id).is_some()
+        {
+            // Match the Installed row's displayed origin; the sidecar is removed only
+            // under the separate exact github_origin proof below.
+            ModLabelSource::Github
+        } else {
+            ModLabelSource::Local
+        };
+        ModLabel {
+            id: &m.id,
+            name: &m.name,
+            authors: &m.authors,
+            version: &m.version,
+            source,
+        }
+    }));
+    present
+        .keys()
+        .zip(labels)
+        .filter_map(|(id, label)| label.map(|label| (id.clone(), label)))
+        .collect()
+}
+
 /// Explicit Remove approves the displayed path and digest, independent of archive origin.
 /// The required dependent closure is turned off, not deleted.
 pub fn remove_mods(
@@ -376,6 +410,8 @@ pub fn remove_mods(
     let next = edit.candidate()?;
     let home = next.path();
     let present = inventory(home, None)?;
+    // Use the full installed set, before staging can delete a namesake or its sidecar.
+    let gui_names = removal_gui_names(home, &present);
     let ids = ids.iter().cloned().collect::<BTreeSet<_>>();
     let mut rows = Document::read(home)?;
     let enabled = enabled(home)?;
@@ -489,16 +525,6 @@ pub fn remove_mods(
         edit.current(),
         unavailable.iter().map(String::as_str),
     )?;
-    // Review against the full installed set, even when only one of the namesakes is selected.
-    let labels = installed::colliding_mod_labels(present.values().map(|item| {
-        let m = &item.package.manifest;
-        (m.name.as_str(), m.authors.as_slice(), m.version.as_str())
-    }));
-    let gui_names = present
-        .keys()
-        .zip(labels)
-        .filter_map(|(id, label)| label.map(|label| (id.clone(), label)))
-        .collect();
     let impact = ChangeImpact::read(
         &instance.home,
         Change::Remove {
