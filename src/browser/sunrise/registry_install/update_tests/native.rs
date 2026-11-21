@@ -543,6 +543,7 @@ fn github_add_and_checked_update_share_the_candidate_proof() {
                     install_target(&fixture.instance).unwrap(),
                     found,
                     packs,
+                    None,
                     || FirstBuild::installed(BUILD),
                     InstallHooks {
                         progress: &|_| {},

@@ -85,7 +85,7 @@ fn github_native_from(
         );
     };
     if !fresh.is_empty() {
-        let installed = sunrise::add_github(instance, identity, found, &fresh, choose, hooks)
+        let installed = sunrise::add_github(instance, identity, found, &fresh, None, choose, hooks)
             .map_err(|error| error.to_string())?;
         for origin in installed {
             report("Installed", origin);

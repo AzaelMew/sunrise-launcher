@@ -301,7 +301,7 @@ pub fn apply_sources(
         },
         hooks.install,
         Some(hooks.approve_worlds),
-        Some(github::SourceBatch {
+        github::Check::Source(github::SourceBatch {
             before: first.before,
             base: &first.base,
             active: first.active.as_ref(),

@@ -1,11 +1,11 @@
 //! Installed's link form. Fetching only reads packages; the normal install worker owns mutation.
 use super::*;
 use crate::frame::{button, input, primary, Page, Reach as _};
-use crate::mods_page::install::{GithubTarget, SourceTarget};
+use crate::mods_page::install::GithubTarget;
 use crate::paint::palette;
 use crate::sheets::{self, Sheet};
 use gpui::rgb;
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, sync::Arc};
 use sunrise_launcher::{
     browser::sunrise::{self, sources::Failure, PreparedSource, SourceError},
     github_mods::{self, FetchError, Origin, Packed, ResolveError, Resolved},
@@ -13,6 +13,7 @@ use sunrise_launcher::{
 };
 
 pub(crate) struct GithubInput {
+    pub(crate) target: GithubTarget,
     pub(crate) link: String,
     pub(crate) source: Resolved,
     pub(crate) selection: GithubSelection,
@@ -20,6 +21,7 @@ pub(crate) struct GithubInput {
 
 pub(crate) enum GithubSelection {
     Add(Vec<Packed>),
+    Source(Vec<PreparedSource>),
     Update(Box<Packed>),
 }
 
@@ -27,6 +29,7 @@ pub(crate) struct Feedback {
     pub(crate) profile: instances::Instance,
     pub(crate) link: String,
     pub(crate) result: Result<String, (String, String)>,
+    pub(crate) retry: Option<Arc<GithubInput>>,
 }
 
 struct FormError {
@@ -55,7 +58,7 @@ impl FormError {
 
 enum PickInput {
     Assets(Resolved, Vec<Packed>),
-    Source(Box<SourceTarget>, Resolved, Vec<PreparedSource>),
+    Source(Resolved, Vec<PreparedSource>),
 }
 
 impl PickInput {
@@ -65,7 +68,7 @@ impl PickInput {
                 .iter()
                 .map(|p| (p.id.as_str(), p.name.as_str(), p.version.as_str()))
                 .collect(),
-            Self::Source(_, _, mods) => mods
+            Self::Source(_, mods) => mods
                 .iter()
                 .map(|p| {
                     (
@@ -80,7 +83,7 @@ impl PickInput {
 
     fn resolved(&self) -> &Resolved {
         match self {
-            Self::Assets(resolved, _) | Self::Source(_, resolved, _) => resolved,
+            Self::Assets(resolved, _) | Self::Source(resolved, _) => resolved,
         }
     }
 }
@@ -100,6 +103,33 @@ impl Pick {
         Self { input, selected }
     }
 
+    fn checked(self, target: GithubTarget, link: String, update: bool) -> GithubInput {
+        let Self { input, selected } = self;
+        let (source, selection) = match input {
+            PickInput::Assets(source, mut mods) => {
+                mods.retain(|package| selected.contains(&package.id));
+                let selection = if update {
+                    GithubSelection::Update(Box::new(
+                        mods.pop().expect("the update names one package"),
+                    ))
+                } else {
+                    GithubSelection::Add(mods)
+                };
+                (source, selection)
+            }
+            PickInput::Source(source, mut mods) => {
+                mods.retain(|package| selected.contains(&package.origin().id));
+                (source, GithubSelection::Source(mods))
+            }
+        };
+        GithubInput {
+            target,
+            link,
+            source,
+            selection,
+        }
+    }
+
     fn toggle(&mut self, id: &str) {
         if !self.selected.remove(id) {
             self.selected.insert(id.to_owned());
@@ -114,6 +144,12 @@ enum Stage {
     Resolving(Receiver<Result<Resolution, FormError>>, Cancellation),
     Pick(Box<Pick>),
     Failed(FormError, bool),
+    InstallFailed(Box<CheckedFailure>, bool),
+}
+
+struct CheckedFailure {
+    error: FormError,
+    retry: Arc<GithubInput>,
 }
 
 enum Resolution {
@@ -128,6 +164,7 @@ pub(super) struct Github {
     focus: Option<FocusHandle>,
     target: Option<GithubTarget>,
     update: Option<Origin>,
+    pending_failure: Option<CheckedFailure>,
 }
 
 impl Github {
@@ -206,9 +243,7 @@ fn resolve_link(
             }
         })?;
         return Ok(Resolution::Ready(Box::new(PickInput::Source(
-            Box::new(target),
-            found,
-            sources,
+            found, sources,
         ))));
     }
     let mut mods = github_mods::fetch_checked(&found).map_err(|error| match error {
@@ -266,7 +301,19 @@ impl Launcher {
                 return;
             }
         }
-        if let Some(update) = update {
+        if update.is_none()
+            && self.github.pending_failure.as_ref().is_some_and(|f| {
+                self.github
+                    .target
+                    .as_ref()
+                    .is_some_and(|current| f.retry.target.same_destination(current))
+            })
+        {
+            if let Some(failure) = self.github.pending_failure.take() {
+                self.github.stage = Stage::InstallFailed(Box::new(failure), false);
+                self.mods.message = None;
+            }
+        } else if let Some(update) = update {
             self.github.text.set(update.source_url());
             self.github.update = Some(update);
             self.github_resolve();
@@ -278,26 +325,52 @@ impl Launcher {
             profile,
             link,
             result,
+            retry,
         } = feedback;
-        if !self.selected_instance().is_some_and(|current| {
+        let same_profile = self.selected_instance().is_some_and(|current| {
             current.home == profile.home
                 && current.id == profile.id
                 && current.incarnation == profile.incarnation
-        }) {
-            return;
-        }
+        });
         match result {
-            Ok(message) => self.mods.message = Some(Ok(message)),
+            Ok(message) if same_profile => self.mods.message = Some(Ok(message)),
+            Ok(_) => (),
             Err((line, detail)) => {
+                let failure = retry.map(|retry| CheckedFailure {
+                    error: FormError::new(&line, detail.clone()),
+                    retry,
+                });
+                if !same_profile {
+                    if let Some(failure) = failure {
+                        self.github.pending_failure = Some(failure);
+                    }
+                    return;
+                }
                 if self.ui.page == Page::Installed
                     && self.ui.sheet.is_none()
                     && !self.blocking_dialog()
                 {
-                    self.open_github_add(None);
-                    self.github.text.set(link);
-                    self.github.stage = Stage::Failed(FormError::new(&line, detail), false);
+                    self.github.close();
+                    self.open_sheet(Sheet::GithubAdd);
+                    self.github.target = self.github_target().ok();
+                    self.github.stage = match failure {
+                        Some(failure)
+                            if self.github.target.as_ref().is_some_and(|current| {
+                                failure.retry.target.same_destination(current)
+                            }) =>
+                        {
+                            Stage::InstallFailed(Box::new(failure), false)
+                        }
+                        _ => {
+                            self.github.text.set(link);
+                            Stage::Failed(FormError::new(&line, detail), false)
+                        }
+                    };
                     self.mods.message = None;
                 } else {
+                    if let Some(failure) = failure {
+                        self.github.pending_failure = Some(failure);
+                    }
                     self.mods.message = Some(Err(format!("{line}\n{detail}")));
                 }
             }
@@ -377,36 +450,29 @@ impl Launcher {
     }
 
     fn github_submit(&mut self, pick: Pick) {
-        let Pick { input, selected } = pick;
-        let (source, mut mods) = match input {
-            PickInput::Assets(source, mut mods) => {
-                mods.retain(|mod_| selected.contains(&mod_.id));
-                (source, mods)
-            }
-            PickInput::Source(target, _, mut mods) => {
-                mods.retain(|mod_| selected.contains(&mod_.origin().id));
-                self.close_sheet();
-                if let Err(error) = self.queue_sources(*target, mods) {
-                    self.mods.message = Some(Err(error));
-                }
-                return;
-            }
-        };
         let Some(target) = self.github.target.take() else {
             return;
         };
-        let selection = if self.github.update.is_some() {
-            GithubSelection::Update(Box::new(mods.pop().expect("the update names one package")))
-        } else {
-            GithubSelection::Add(mods)
-        };
-        let input = GithubInput {
-            link: self.github.text.text().to_owned(),
-            source,
-            selection,
-        };
+        let input = Arc::new(pick.checked(
+            target,
+            self.github.text.text().to_owned(),
+            self.github.update.is_some(),
+        ));
         self.close_sheet();
-        self.queue_github(target, input);
+        if let Err(error) = self.queue_github(input) {
+            self.mods.message = Some(Err(error));
+        }
+    }
+
+    fn github_retry(&mut self) {
+        let Stage::InstallFailed(failure, _) = &self.github.stage else {
+            return;
+        };
+        let retry = failure.retry.clone();
+        self.close_sheet();
+        if let Err(error) = self.queue_github(retry) {
+            self.mods.message = Some(Err(error));
+        }
     }
 
     pub(crate) fn github_add_sheet(
@@ -498,63 +564,88 @@ impl Launcher {
             )
         } else {
             let resolving = self.github.busy();
-            let focused = !resolving && focus.is_focused(window);
-            let mut field_theme = crate::mods::field_theme(self.theme);
-            field_theme.glass = true;
-            let field = input(focused)
-                .id("github-add-field")
-                .h(px(tokens::ACTION))
-                .px(px(12.))
-                .text_size(px(tokens::BODY))
-                .child(line_edit::content_with(
-                    &self.github.text,
-                    &field_theme,
-                    focused,
-                    false,
-                    false,
-                    "https://github.com/owner/repo".into(),
-                ));
-            let field = if resolving {
-                field.opacity(0.55)
-            } else {
-                let field = field
-                    .track_focus(&focus)
-                    .seen()
-                    .cursor_text()
-                    .on_click(cx.listener(move |_, _: &ClickEvent, window, cx| {
-                        window.focus(&focus, cx);
-                        cx.notify();
-                    }))
-                    .on_key_down(cx.listener(|this, e: &KeyDownEvent, _, cx| {
-                        match line_edit::handle(&mut this.github.text, e, cx) {
-                            line_edit::Key::Pass | line_edit::Key::Escape => return,
-                            line_edit::Key::Enter => this.github_resolve(),
-                            line_edit::Key::Edited
-                            | line_edit::Key::Paste
-                            | line_edit::Key::Cut(_) => {
-                                this.github.stage = Stage::Link;
-                                this.github.update = None;
-                            }
-                            _ => {}
-                        }
-                        cx.stop_propagation();
-                        cx.notify();
-                    }));
-                line_edit::mouse(field, cx, |this| &mut this.github.text)
+            let checked_failure = match &self.github.stage {
+                Stage::InstallFailed(failure, _) => Some(failure.as_ref()),
+                _ => None,
             };
-            let mut body = body
-                .child(sheets::title(tr("Add from GitHub").into()))
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(px(8.))
-                        .child(muted(tr(
-                            "Paste a link to a repository, release, tag, branch or commit.",
-                        )))
-                        .child(field)
-                        .child(muted(tr(github_mods::WARNING))),
-                );
+            let mut body = if let Some(failure) = checked_failure {
+                let selected = match &failure.retry.selection {
+                    GithubSelection::Add(packages) => {
+                        packages.iter().map(|p| p.name.as_str()).collect::<Vec<_>>()
+                    }
+                    GithubSelection::Source(packages) => {
+                        packages.iter().map(PreparedSource::name).collect()
+                    }
+                    GithubSelection::Update(_) => unreachable!("only Add is retryable"),
+                };
+                body.child(sheets::title(tr("Add from GitHub").into()))
+                    .child(
+                        muted(&format!(
+                            "{} @ {:.7}",
+                            failure.retry.source.name(),
+                            failure.retry.source.commit,
+                        ))
+                        .truncate(),
+                    )
+                    .child(muted(&selected.join(", ")).truncate())
+            } else {
+                let focused = !resolving && focus.is_focused(window);
+                let mut field_theme = crate::mods::field_theme(self.theme);
+                field_theme.glass = true;
+                let field = input(focused)
+                    .id("github-add-field")
+                    .h(px(tokens::ACTION))
+                    .px(px(12.))
+                    .text_size(px(tokens::BODY))
+                    .child(line_edit::content_with(
+                        &self.github.text,
+                        &field_theme,
+                        focused,
+                        false,
+                        false,
+                        "https://github.com/owner/repo".into(),
+                    ));
+                let field = if resolving {
+                    field.opacity(0.55)
+                } else {
+                    let field = field
+                        .track_focus(&focus)
+                        .seen()
+                        .cursor_text()
+                        .on_click(cx.listener(move |_, _: &ClickEvent, window, cx| {
+                            window.focus(&focus, cx);
+                            cx.notify();
+                        }))
+                        .on_key_down(cx.listener(|this, e: &KeyDownEvent, _, cx| {
+                            match line_edit::handle(&mut this.github.text, e, cx) {
+                                line_edit::Key::Pass | line_edit::Key::Escape => return,
+                                line_edit::Key::Enter => this.github_resolve(),
+                                line_edit::Key::Edited
+                                | line_edit::Key::Paste
+                                | line_edit::Key::Cut(_) => {
+                                    this.github.stage = Stage::Link;
+                                    this.github.update = None;
+                                }
+                                _ => {}
+                            }
+                            cx.stop_propagation();
+                            cx.notify();
+                        }));
+                    line_edit::mouse(field, cx, |this| &mut this.github.text)
+                };
+                body.child(sheets::title(tr("Add from GitHub").into()))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(8.))
+                            .child(muted(tr(
+                                "Paste a link to a repository, release, tag, branch or commit.",
+                            )))
+                            .child(field)
+                            .child(muted(tr(github_mods::WARNING))),
+                    )
+            };
             if resolving {
                 body = body.child(
                     div()
@@ -565,7 +656,12 @@ impl Launcher {
                         .child(widgets::progress_bar(None, &self.theme).flex_none()),
                 );
             }
-            if let Stage::Failed(error, expanded) = &self.github.stage {
+            let error = match &self.github.stage {
+                Stage::Failed(error, expanded) => Some((error, expanded)),
+                Stage::InstallFailed(failure, expanded) => Some((&failure.error, expanded)),
+                _ => None,
+            };
+            if let Some((error, expanded)) = error {
                 body =
                     body.child(
                         div()
@@ -581,8 +677,10 @@ impl Launcher {
                             )
                             .child(button("github-add-details", tr("Details")).on_click(
                                 cx.listener(|this, _: &ClickEvent, _, cx| {
-                                    if let Stage::Failed(_, expanded) = &mut this.github.stage {
-                                        *expanded ^= true;
+                                    match &mut this.github.stage {
+                                        Stage::Failed(_, expanded)
+                                        | Stage::InstallFailed(_, expanded) => *expanded ^= true,
+                                        _ => (),
                                     }
                                     cx.notify();
                                 }),
@@ -605,13 +703,20 @@ impl Launcher {
             }
             let next = primary(
                 "github-add-continue",
-                if matches!(&self.github.stage, Stage::Failed(error, _) if error.retry) {
+                if checked_failure.is_some()
+                    || matches!(&self.github.stage, Stage::Failed(error, _) if error.retry)
+                {
                     tr("Try again")
                 } else {
                     tr("Continue")
                 },
             );
-            let next = if self.github.target.is_some() && self.github.can_resolve() {
+            let next = if checked_failure.is_some() {
+                next.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                    this.github_retry();
+                    cx.notify();
+                }))
+            } else if self.github.target.is_some() && self.github.can_resolve() {
                 next.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                     this.github_resolve();
                     cx.notify();
@@ -637,5 +742,53 @@ impl Launcher {
                 .child(action),
         );
         sheets::frame("github-add-sheet", 500., body, cx)
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+    use sunrise_launcher_smod::{index, Package};
+
+    pub(crate) fn checked_subset(target: GithubTarget) -> Arc<GithubInput> {
+        let release = "https://github.com/fixture/add/releases/download/v1";
+        let archive = |id: &str| {
+            let manifest = format!("id='{id}'\nname='{id}'\nversion='1.0.0'\napi='0.2'\nside='both'\ncapabilities=['registries']\n[native]\nsunrise='{}'\nmixins='{}'\ngame='26.3'\n", "b".repeat(40), "c".repeat(40));
+            let cargo = format!("[package]\nname='{id}'\nversion='1.0.0'\n");
+            Package::write_files(
+                &manifest,
+                &[("Cargo.toml", cargo.as_bytes()), ("src/lib.rs", b"")],
+            )
+            .unwrap()
+        };
+        let packages = [archive("one"), archive("two")];
+        let found = Resolved {
+            owner: "fixture".into(),
+            repo: "add".into(),
+            tag: Some("v1".into()),
+            commit: "a".repeat(40),
+            assets: ["one", "two"]
+                .into_iter()
+                .zip(&packages)
+                .map(|(id, bytes)| github_mods::Asset {
+                    name: format!("{id}.smod"),
+                    url: format!("{release}/{id}.smod"),
+                    sha256: Some(index::sha256(bytes)),
+                })
+                .collect(),
+        };
+        let checked = github_mods::fetch_with(&found, |url| {
+            let i = found
+                .assets
+                .iter()
+                .position(|asset| asset.url == url)
+                .unwrap();
+            Ok(packages[i].clone())
+        })
+        .unwrap();
+        let mut pick = Pick::new(PickInput::Assets(found, checked));
+        assert_eq!(pick.selected.len(), 2);
+        pick.toggle("one");
+        Arc::new(pick.checked(target, "https://github.com/fixture/add".into(), false))
     }
 }

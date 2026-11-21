@@ -29,7 +29,7 @@ pub fn update_github(
         choose,
         hooks,
         Some(approve),
-        None,
+        Check::Current,
     )?;
     Ok(replacement.clone())
 }
@@ -41,6 +41,7 @@ pub fn add_github(
     identity: Identity,
     found: &github_mods::Resolved,
     selected: &[github_mods::Packed],
+    base: Option<&str>,
     choose: impl FnOnce() -> Result<FirstBuild, String>,
     hooks: InstallHooks<'_>,
 ) -> Result<Vec<github_mods::Origin>, InstallError> {
@@ -57,7 +58,15 @@ pub fn add_github(
             })
         })
         .collect::<Result<Vec<_>, InstallError>>()?;
-    edit_github(instance, identity, &packages, choose, hooks, None, None)?;
+    edit_github(
+        instance,
+        identity,
+        &packages,
+        choose,
+        hooks,
+        None,
+        base.map_or(Check::Current, Check::Base),
+    )?;
     Ok(packages
         .into_iter()
         .map(|entry| entry.origin.clone())
@@ -77,6 +86,12 @@ pub(super) enum Prior<'a> {
     Source(&'a github_mods::Origin),
 }
 
+pub(super) enum Check<'a> {
+    Current,
+    Base(&'a str),
+    Source(SourceBatch<'a>),
+}
+
 pub(super) struct SourceBatch<'a> {
     pub(super) before: [u8; 32],
     pub(super) base: &'a str,
@@ -92,8 +107,12 @@ pub(super) fn edit_github(
     choose: impl FnOnce() -> Result<FirstBuild, String>,
     hooks: InstallHooks<'_>,
     approve: Option<&dyn Fn(&ChangeImpact) -> bool>,
-    source: Option<SourceBatch<'_>>,
+    check: Check<'_>,
 ) -> Result<(), InstallError> {
+    let source = match &check {
+        Check::Source(source) => Some(source),
+        _ => None,
+    };
     if instance.kind == InstanceKind::Pack {
         return Err(InstallError::Refused(
             tr("This pack controls which mods it installs.").into(),
@@ -103,16 +122,14 @@ pub(super) fn edit_github(
         return Err(InstallError::Cancelled);
     }
     let legacy_cancellation = native_mods::Cancellation::default();
-    let cancellation = source
-        .as_ref()
-        .map_or(&legacy_cancellation, |source| source.cancellation);
+    let cancellation = source.map_or(&legacy_cancellation, |source| source.cancellation);
     cancellation.check()?;
     (hooks.progress)(InstallProgress::Checking);
     let mut profile =
         Profile::open_for(&instance.home, None, Some(identity)).map_err(String::from)?;
     let previous = {
         let _home = profile.lock_inputs()?;
-        if let Some(source) = &source {
+        if let Some(source) = source {
             if managed_play::inputs(&instance.home, None)? != source.before
                 || profile.active()?.as_ref() != source.active
             {
@@ -130,9 +147,14 @@ pub(super) fn edit_github(
         |f| (hooks.progress)(InstallProgress::Downloading(f)),
         &|_| (hooks.progress)(InstallProgress::Preparing),
     )?;
+    if matches!(check, Check::Base(base) if edit.base() != base) {
+        return Err(InstallError::Refused(
+            super::source::changed_source_target().to_string(),
+        ));
+    }
     let old = edit.candidate()?;
     let next = edit.candidate()?;
-    if let Some(source) = &source {
+    if let Some(source) = source {
         if edit.base() != source.base
             || edit.current() != source.active
             || managed_play::inputs(old.path(), None)? != source.before
@@ -198,7 +220,7 @@ pub(super) fn edit_github(
         Ok(())
     };
     cancellation.check()?;
-    if let Some(source) = &source {
+    if let Some(source) = source {
         if !(source.authorize)()? {
             return Err(InstallError::Cancelled);
         }
@@ -253,6 +275,8 @@ pub(super) fn edit_github(
             _ if source.is_some() && tools.get() => {
                 InstallError::Source(SourceError::Tools(e.into()))
             }
+            native_mods::Failed::Tools(_) => InstallError::Download(e.into()),
+            _ if tools.get() => InstallError::Download(e.into()),
             native_mods::Failed::Mods {
                 compiling: true, ..
             } => InstallError::GithubBuild(e.into()),

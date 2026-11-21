@@ -36,7 +36,7 @@ struct Running {
     batch: Arc<Mutex<Option<Vec<String>>>>,
     requests: Vec<RequestView>,
     stage: InstallProgress,
-    github: Option<(String, bool)>,
+    github: Option<Arc<GithubInput>>,
     source: Option<RunningSource>,
     mixed: bool,
 }
@@ -48,9 +48,18 @@ struct Request {
     release: Option<backend::Release>,
     displayed_names: BTreeMap<String, String>,
     view: RequestView,
-    github: Option<GithubInput>,
+    github: Option<Arc<GithubInput>>,
     sources: Vec<PreparedSource>,
     mixed_registry: Vec<String>,
+}
+
+impl Request {
+    fn source_inputs(&self) -> &[PreparedSource] {
+        match self.github.as_deref().map(|input| &input.selection) {
+            Some(GithubSelection::Source(sources)) => sources,
+            _ => &self.sources,
+        }
+    }
 }
 
 /// Bound before the link can start a network lookup, not when its answer comes back.
@@ -63,6 +72,19 @@ pub(crate) struct GithubTarget {
 }
 
 impl GithubTarget {
+    pub(crate) fn same_destination(&self, current: &Self) -> bool {
+        self.identity == current.identity
+            && self.profile.home == current.profile.home
+            && self.profile.id == current.profile.id
+            && self.profile.incarnation == current.profile.incarnation
+            && self.profile.native_profile == current.profile.native_profile
+            && self.target == current.target
+            && match (&self.release, &current.release) {
+                (Some(a), Some(b)) => a.nightly == b.nightly && a.asset == b.asset,
+                _ => true, // A successful exact cache-only download can satisfy the retry.
+            }
+    }
+
     pub(crate) fn source(&self) -> Result<SourceTarget, String> {
         Ok(SourceTarget {
             profile: self.profile.clone(),
@@ -125,6 +147,7 @@ pub(crate) enum Kind {
     Remove,
 }
 
+#[derive(Clone)]
 struct RequestView {
     kind: Kind,
     card: String,
@@ -239,6 +262,11 @@ impl Installs {
                 && q.view.kind == request.view.kind
                 && q.view.card == request.view.card
                 && q.view.ids == request.view.ids
+                && match (&q.github, &request.github) {
+                    (None, None) => true,
+                    (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+                    _ => false,
+                }
         }) {
             self.waiting.push_back(request);
         }
@@ -246,24 +274,36 @@ impl Installs {
 
     pub(super) fn github_feedback(&self, event: &Worker) -> Option<Feedback> {
         let run = self.running.as_ref()?;
-        let (link, update) = run.github.as_ref()?;
+        let input = run.github.as_ref()?;
         let Worker::Done(result) = event else {
             return None;
         };
+        let update = matches!(input.selection, GithubSelection::Update(_));
+        let retry = match result {
+            Err(
+                InstallError::Download(_)
+                | InstallError::GithubBuild(_)
+                | InstallError::Source(SourceError::Tools(_) | SourceError::Build { .. }),
+            ) if !update => Some(input.clone()),
+            _ => None,
+        };
         let result = match result {
-            Ok(_) => Ok(if *update {
+            Ok(_) => Ok(if update {
                 tr("Updated the GitHub mod.")
             } else {
                 tr("Installed the selected GitHub mods.")
             }
             .into()),
-            Err(InstallError::Cancelled) => return None,
+            Err(InstallError::Cancelled | InstallError::Source(SourceError::Cancelled)) => {
+                return None
+            }
             Err(error) => Err((failure_line(error).into(), error.to_string())),
         };
         Some(Feedback {
             profile: run.profile.clone(),
-            link: link.clone(),
+            link: input.link.clone(),
             result,
+            retry,
         })
     }
 
@@ -807,19 +847,41 @@ impl Launcher {
         })
     }
 
-    pub(crate) fn queue_github(&mut self, target: GithubTarget, input: GithubInput) {
-        let ids = match &input.selection {
-            GithubSelection::Add(packages) => packages.iter().map(|p| p.id.clone()).collect(),
-            GithubSelection::Update(package) => vec![package.id.clone()],
+    pub(crate) fn queue_github(&mut self, input: Arc<GithubInput>) -> Result<(), String> {
+        let target = &input.target;
+        if !target.same_destination(&self.github_target()?) {
+            return Err(tr(
+                "The profile or game build changed. Check the source again; nothing was changed.",
+            )
+            .into());
+        }
+        let (kind, ids) = match &input.selection {
+            GithubSelection::Add(packages) => (
+                Kind::Github,
+                packages.iter().map(|p| p.id.clone()).collect(),
+            ),
+            GithubSelection::Update(package) => (Kind::Github, vec![package.id.clone()]),
+            GithubSelection::Source(packages) => (
+                Kind::Source,
+                packages.iter().map(|p| p.origin().id.clone()).collect(),
+            ),
         };
+        if kind == Kind::Source {
+            for id in &ids {
+                self.mods
+                    .installs
+                    .source_outcomes
+                    .remove(&(target.identity, id.clone()));
+            }
+        }
         self.mods.installs.submit(Request {
             identity: target.identity,
-            profile: target.profile,
-            target: target.target,
-            release: target.release,
+            profile: target.profile.clone(),
+            target: target.target.clone(),
+            release: target.release.clone(),
             displayed_names: BTreeMap::new(),
             view: RequestView {
-                kind: Kind::Github,
+                kind,
                 card: input.link.clone(),
                 ids,
             },
@@ -828,6 +890,7 @@ impl Launcher {
             mixed_registry: Vec::new(),
         });
         self.start_registry_queue();
+        Ok(())
     }
 
     pub(crate) fn queue_registry_change(
@@ -894,6 +957,16 @@ impl Launcher {
         let ids = request.view.ids.clone();
         let cancellation = Cancellation::default();
         let mixed = kind == Kind::Mixed;
+        let source = matches!(kind, Kind::Source | Kind::Mixed).then(|| RunningSource {
+            ids: ids.clone(),
+            visible: !mixed,
+            names: request
+                .source_inputs()
+                .iter()
+                .map(|source| source.name().into())
+                .collect(),
+            cancellation: cancellation.clone(),
+        });
         let mut views = Vec::new();
         if mixed {
             views.push(RequestView {
@@ -902,7 +975,7 @@ impl Launcher {
                 ids: request.mixed_registry.clone(),
             });
         }
-        views.push(request.view);
+        views.push(request.view.clone());
         self.mods.installs.running = Some(Running {
             profile: request.profile.clone(),
             identity: request.identity,
@@ -911,22 +984,8 @@ impl Launcher {
             requests: views,
             mixed,
             stage: InstallProgress::Checking,
-            source: matches!(kind, Kind::Source | Kind::Mixed).then(|| RunningSource {
-                ids: ids.clone(),
-                visible: !mixed,
-                names: request
-                    .sources
-                    .iter()
-                    .map(|source| source.name().into())
-                    .collect(),
-                cancellation: cancellation.clone(),
-            }),
-            github: request.github.as_ref().map(|input| {
-                (
-                    input.link.clone(),
-                    matches!(input.selection, GithubSelection::Update(_)),
-                )
-            }),
+            source,
+            github: request.github.clone(),
         });
         let tx = self.mods.tx.clone();
         let launcher = self.tx.clone();
@@ -1030,13 +1089,13 @@ impl Launcher {
                     hooks,
                 ),
                 Kind::Github => {
-                    let input = request.github.expect("a checked GitHub request");
-                    match input.selection {
+                    let input = request.github.as_ref().expect("a checked GitHub request");
+                    match &input.selection {
                         GithubSelection::Update(package) => sunrise::update_github(
                             &request.profile,
                             request.identity,
                             &input.source,
-                            &package,
+                            package,
                             choose,
                             hooks,
                             &approve,
@@ -1046,17 +1105,21 @@ impl Launcher {
                             &request.profile,
                             request.identity,
                             &input.source,
-                            &packages,
+                            packages,
+                            request.target.as_deref(),
                             choose,
                             hooks,
                         )
                         .map(|_| InstalledBatch::default()),
+                        GithubSelection::Source(_) => {
+                            unreachable!("source installs use the source worker")
+                        }
                     }
                 }
                 Kind::Source => sunrise::apply_sources(
                     &request.profile,
                     request.identity,
-                    &request.sources,
+                    request.source_inputs(),
                     choose,
                     SourceHooks {
                         install: hooks,
@@ -1213,6 +1276,42 @@ mod tests {
             }),
             ..Installs::default()
         }
+    }
+
+    #[test]
+    fn failed_github_add_retries_only_the_checked_subset_and_never_a_version_refusal() {
+        let root = homes();
+        let mut installs = with_running(root.path());
+        let run = installs.running.as_mut().unwrap();
+        let target = GithubTarget {
+            profile: run.profile.clone(),
+            identity: run.identity,
+            target: run.target.clone(),
+            release: None,
+        };
+        let exact = crate::github_mods_page::tests::checked_subset(target);
+        run.github = Some(exact.clone());
+        let failed = Worker::Done(Err(InstallError::GithubBuild(
+            "fixture build stopped".into(),
+        )));
+        let retry = installs.github_feedback(&failed).unwrap().retry.unwrap();
+        assert!(installs.handle(failed));
+        // The retry survives losing the worker and owns the exact files and revision it used.
+        assert!(Arc::ptr_eq(&retry, &exact));
+        assert_eq!(retry.source.commit, "a".repeat(40));
+        let GithubSelection::Add(selected) = &retry.selection else {
+            panic!("expected a fresh Add");
+        };
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].id, "two");
+        assert!(selected[0].file.is_file());
+
+        let mut installs = with_running(root.path());
+        installs.running.as_mut().unwrap().github = Some(retry);
+        let wrong = Worker::Done(Err(InstallError::NotForVersion(
+            "fixture version refusal".into(),
+        )));
+        assert!(installs.github_feedback(&wrong).unwrap().retry.is_none());
     }
 
     #[test]
