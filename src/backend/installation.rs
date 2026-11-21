@@ -1,11 +1,28 @@
 //! Installation publication excludes concurrent capability snapshots.
 use super::*;
+use crate::{managed_play::Artifact, profile_txn::durable};
 use sunrise_launcher_smod::{
     locks::{LockMode, Release as LockRelease},
     runtime_leases::Registry,
 };
 
+mod bound;
+pub(crate) use bound::{BoundVariant, GameDownload, GameProof};
+
+const STAGE_PREFIX: &str = ".build-stage-";
 const REPAIR: &str = ".repair-";
+
+pub(crate) fn private_stage(name: &std::ffi::OsStr) -> bool {
+    name.to_str()
+        .is_some_and(|name| name.starts_with(STAGE_PREFIX))
+}
+
+pub(crate) fn valid_archive_digest(digest: &str) -> bool {
+    digest.len() == 64
+        && digest
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
 
 /// The old tree's move to `previous` is the recovery marker. The old tree stays intact until
 /// the target's own completion marker commits its replacement.
@@ -65,137 +82,194 @@ pub fn recover_game_installations() {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum InstallIntent {
+    /// First Play uses only its saved binding. A different installation stays untouched.
+    Exact,
+    /// The release install action may repair this exact tag, never a profile's saved binding.
+    Repair,
+}
+
 pub(crate) fn install_as(
     release: &Release,
     tag: &str,
     sha256: &str,
     requested_architecture: Option<GameArchitecture>,
+    release_facts: Option<(&[u8], &str)>,
+    intent: InstallIntent,
     progress: impl Fn(f32),
 ) -> Result<(), String> {
-    let staging = crate::run_leases::installation().map_err(crate::native_mods::cache_error)?;
     let (url, size) = release
         .asset
         .clone()
         .ok_or_else(|| format!("{tag} has no build for this platform."))?;
     let root = versions_dir();
+    let target = version_dir(tag);
+    let matches_archive = || Artifact::matches_archive(&target, tag, sha256);
+    if intent == InstallIntent::Exact {
+        match fs::symlink_metadata(&target) {
+            Ok(_) if matches_archive() => {
+                progress(1.0);
+                return Ok(());
+            }
+            Ok(_) => return Err(existing_build(tag)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e.to_string()),
+        }
+    }
     fs::create_dir_all(&root).map_err(|e| e.to_string())?;
-    let work = tempfile::Builder::new()
-        .prefix(&format!(".{tag}.partial-"))
+    let stage = tempfile::Builder::new()
+        .prefix(STAGE_PREFIX)
         .tempdir_in(&root)
         .map_err(|e| e.to_string())?;
-    let partial = work.path();
-    let archive = partial.join("download");
+    let archive = stage.path().join("download");
     download(&url, size, sha256, &archive, &progress)?;
-    let unpacked = partial.join("unpacked");
+    let unpacked = stage.path().join("unpacked");
     unpack(&archive, &url, &unpacked)?;
     progress(0.97);
     // The archives hold one top folder (sunrise-linux-x86_64/...); the version folder is its contents.
     let entries: Vec<_> = fs::read_dir(&unpacked)
-        .map_err(|e| e.to_string())?
-        .flatten()
-        .collect();
+        .and_then(|entries| entries.collect::<std::io::Result<_>>())
+        .map_err(|e| e.to_string())?;
     let top = match entries.as_slice() {
         [only] if only.path().is_dir() => only.path(),
         _ => unpacked.clone(),
     };
-    if !top.join(CLIENT).exists() {
+    if !fs::symlink_metadata(&top)
+        .is_ok_and(|meta| meta.is_dir() && !crate::native_cache::linked(&meta))
+        || !fs::symlink_metadata(top.join(CLIENT))
+            .is_ok_and(|meta| meta.is_file() && !crate::native_cache::linked(&meta))
+    {
         return Err(format!("The download has no {CLIENT}"));
     }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(top.join(CLIENT), fs::Permissions::from_mode(0o755));
+        fs::set_permissions(top.join(CLIENT), fs::Permissions::from_mode(0o755))
+            .map_err(|e| e.to_string())?;
     }
     if let (Some(requested), Some(binary)) = (requested_architecture, architecture_for_asset(&url))
     {
-        fs::write(
-            top.join(GAME_BUILD_ARCHITECTURE),
-            serde_json::to_vec(&InstalledGameArchitecture { requested, binary })
-                .map_err(|e| e.to_string())?,
+        let mut marker =
+            fs::File::create_new(top.join(GAME_BUILD_ARCHITECTURE)).map_err(|e| e.to_string())?;
+        serde_json::to_writer(
+            &mut marker,
+            &InstalledGameArchitecture { requested, binary },
         )
         .map_err(|e| e.to_string())?;
     }
+    if let Some((bytes, sha256)) = release_facts {
+        keep_release_file(&top, bytes, sha256)?;
+    }
+    Artifact::record_archive(&top, tag, sha256)?;
     crate::nightly::record_install_time(&top, release).map_err(|e| e.to_string())?;
-    // Use an exclusive publication only for the directory switch, not for the download. That
-    // makes two installs of the same tag see either the old tree or the new one, never the gap.
-    drop(staging);
+    // Transfer and unpack privately. Only the visibility boundary fences readers.
     let registry = Registry::with_release(&data_dir(), LockRelease::Close)
         .map_err(|e| crate::native_mods::cache_error(e.into()))?;
-    let publication = registry
-        .publication(LockMode::Exclusive)
+    let mode = if intent == InstallIntent::Repair {
+        LockMode::Exclusive
+    } else {
+        LockMode::Shared
+    };
+    let _publication = registry
+        .publication(mode)
         .map_err(|e| crate::native_mods::cache_error(e.into()))?;
-    let target = version_dir(tag);
-    let repair = root.join(format!("{REPAIR}{tag}"));
-    recover_previous(&repair, &target).map_err(|e| e.to_string())?;
-    // Archive contents are fully staged, but only the launcher can publish completion.
-    match fs::remove_file(top.join(COMPLETE)) {
-        Ok(()) => {}
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+    let replaced = intent == InstallIntent::Repair
+        && replace_installed(
+            &registry,
+            tag,
+            &top,
+            &target,
+            &root.join(format!("{REPAIR}{tag}")),
+        )?;
+    if !replaced {
+        match crate::run_leases::publish_build(&top, &target) {
+            Ok(()) => {}
+            Err(crate::native_cache::Error::Io(ref e))
+                if e.kind() == std::io::ErrorKind::AlreadyExists =>
+            {
+                if !matches_archive() {
+                    return Err(existing_build(tag));
+                }
+                progress(1.0);
+                return Ok(());
+            }
+            Err(e) => return Err(crate::native_mods::cache_error(e)),
+        }
+    }
+    if release.nightly.as_deref() == Some(sunrise_launcher_release_verify::NIGHTLY) {
+        crate::nightly::record_current(&root, tag).map_err(|e| e.to_string())?;
+    }
+    // First Play prepares through the profile's staged handoff, not the cache-only
+    // import hook (whose detached preparer could otherwise outlive that admission).
+    progress(1.0);
+    Ok(())
+}
+
+/// Reconcile an explicit release install with an existing complete version. The caller
+/// holds the exclusive publication fence. `false` means there was no earlier version.
+fn replace_installed(
+    registry: &std::sync::Arc<Registry>,
+    tag: &str,
+    top: &Path,
+    target: &Path,
+    repair: &Path,
+) -> Result<bool, String> {
+    use crate::native_mods::cache_error;
+    recover_previous(repair, target).map_err(|e| e.to_string())?;
+    match fs::symlink_metadata(target) {
+        Ok(meta) if meta.is_dir() && !crate::native_cache::linked(&meta) => {}
+        Ok(_) => return Err(existing_build(tag)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
         Err(e) => return Err(e.to_string()),
     }
-    let mut previous = partial.join("incomplete");
-    let old_claim = if target.try_exists().map_err(|e| e.to_string())? {
-        let tree = cap_std::fs::Dir::open_ambient_dir(&target, cap_std::ambient_authority())
+    // A different image behind a saved exact name would strand its profile.
+    crate::managed_play::authorize_cache_removal(tag).map_err(cache_error)?;
+    let tree = cap_std::fs::Dir::open_ambient_dir(target, cap_std::ambient_authority())
+        .map_err(|e| e.to_string())?;
+    let old = registry
+        .lock(&tree, LockMode::Exclusive)
+        .map_err(|e| cache_error(e.into()))?;
+    if in_use(tag) {
+        return Err(cache_error(crate::storage::Error::Busy));
+    }
+    if !fs::symlink_metadata(target.join(COMPLETE))
+        .is_ok_and(|meta| meta.is_file() && !crate::native_cache::linked(&meta))
+    {
+        return Err(existing_build(tag));
+    }
+    let from = resources_at(target);
+    let to = resources_at(top);
+    if !to.exists()
+        && read_json(&from.join(RESOURCES_MANIFEST))
+            .is_some_and(|manifest| resources_compatible(target, top, &manifest))
+    {
+        copy_dir_except(&from, &to, Some(&from.join(crate::preparer::DATA_FILE)))
             .map_err(|e| e.to_string())?;
-        let claim = registry
-            .lock(&tree, LockMode::Exclusive)
-            .map_err(|e| crate::native_mods::cache_error(e.into()))?;
-        if in_use(tag) {
-            return Err(crate::native_mods::cache_error(crate::storage::Error::Busy));
-        }
-        // Keep preparation and the automatic-install classification of the same build.
-        let from = resources_at(&target);
-        let to = resources_at(&top);
-        if !to.exists()
-            && read_json(&from.join(RESOURCES_MANIFEST))
-                .is_some_and(|manifest| resources_compatible(&target, &top, &manifest))
-        {
-            copy_dir_except(&from, &to, Some(&from.join(crate::preparer::DATA_FILE)))
-                .map_err(|e| e.to_string())?;
-        }
-        if target.join(AUTO_INSTALLED).is_file() {
-            fs::write(top.join(AUTO_INSTALLED), "").map_err(|e| e.to_string())?;
-        }
-        drop(tree);
-        if target.join(COMPLETE).is_file() {
-            fs::create_dir(&repair).map_err(|e| e.to_string())?;
-            previous = repair.join("previous");
-        }
-        // An unmanaged Windows game that started meanwhile can refuse this rename. Never
-        // remove files from the old installation one by one in that case.
-        fs::rename(&target, &previous).map_err(|e| e.to_string())?;
-        Some(claim)
-    } else {
-        None
-    };
-    let publish = (|| {
-        fs::rename(&top, &target).map_err(|e| e.to_string())?;
-        crate::run_leases::publish(&target).map_err(crate::native_mods::cache_error)?;
-        if release.nightly.as_deref() == Some(sunrise_launcher_release_verify::NIGHTLY) {
-            crate::nightly::record_current(&root, tag).map_err(|e| e.to_string())?;
-        }
-        fs::write(target.join(COMPLETE), "").map_err(|e| e.to_string())
-    })();
+    }
+    if target.join(AUTO_INSTALLED).is_file() {
+        fs::write(top.join(AUTO_INSTALLED), "").map_err(|e| e.to_string())?;
+    }
+    drop(tree);
+    fs::create_dir(repair).map_err(|e| e.to_string())?;
+    let publish = durable::move_new_directory(target, &repair.join("previous"))
+        .map_err(|e| e.to_string())
+        .and_then(|()| crate::run_leases::publish_build(top, target).map_err(cache_error));
     if let Err(error) = publish {
-        // Keep the marker if rollback itself is interrupted or refused. Both startup and the
-        // next install retry the same recovery without needing the vanished process's stage.
-        return match recover_previous(&repair, &target) {
+        return match recover_previous(repair, target) {
             Ok(()) => Err(error),
             Err(restore) => Err(format!("{error}; {restore}")),
         };
     }
-    if let Some(claim) = old_claim {
-        let removed = if previous.starts_with(&repair) {
-            recover_previous(&repair, &target)
-        } else {
-            fs::remove_dir_all(&previous)
-        };
-        if removed.is_ok() {
-            let _ = claim.retire();
-        }
+    if recover_previous(repair, target).is_ok() {
+        let _ = old.retire();
     }
-    drop(publication);
-    reuse_prepared_for(tag);
-    progress(1.0);
-    Ok(())
+    Ok(true)
+}
+
+fn existing_build(tag: &str) -> String {
+    crate::i18n::trf(
+        "A different installation already occupies {build}. It was not replaced.",
+        &[("build", tag)],
+    )
 }
