@@ -34,7 +34,7 @@ fn resolve_attributes_incompatibility_to_the_games_short_version() {
     let old = tempfile::tempdir().unwrap();
     let candidate = tempfile::tempdir().unwrap();
     let blocker = archive(old.path(), "lanterns", "Lanterns", "1.0.0", false);
-    let manifest = "id='lanterns'\nname='Lanterns'\nversion='1.0.0'\napi='0.2'\n[incompatible]\nlight_core='^2'\n";
+    let manifest = "id='lanterns'\nname='Lanterns'\nversion='1.0.0'\napi='0.2'\ncapabilities=['registries']\n[incompatible]\nlight_core='^2'\n";
     fs::write(
         old.path().join(blocker.file),
         Package::write_files(manifest, &[]).unwrap(),

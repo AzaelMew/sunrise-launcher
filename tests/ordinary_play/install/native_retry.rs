@@ -136,7 +136,7 @@ fn switch_proves_native_against_the_exact_target_even_with_an_unlike_catalogue_g
     let template = registry.project("coords_hud").unwrap().clone();
     let kind = index::Kind::NativeMod;
     let bytes = Package::write_files(
-        &format!("id='night_light'\nname='Night Light'\nversion='1'\napi='{}'\nside='both'\n[native]\nsunrise='{}'\nmixins='{}'\ngame='26.3'", manifest::API, "a".repeat(40), "c".repeat(40)),
+        &format!("id='night_light'\nname='Night Light'\nversion='1'\napi='{}'\nside='both'\ncapabilities=['registries']\n[native]\nsunrise='{}'\nmixins='{}'\ngame='26.3'", manifest::API, "a".repeat(40), "c".repeat(40)),
         &[("Cargo.toml", b"[package]\nname='night_light'\nversion='1.0.0'\n"), ("src/lib.rs", b"")],
     ).unwrap();
     let file = format!("{}/night_light.smod", mod_list::NATIVE_DIR);
