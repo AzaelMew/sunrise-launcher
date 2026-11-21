@@ -494,10 +494,12 @@ fn receipt_acknowledgement_recovers_the_exact_pointer_across_all_durable_cuts() 
 #[test]
 fn home_read_recovers_the_first_switch_receipt_after_a_killed_commit() {
     use crate::managed_play::{
-        build_changes_hint, display_active, read_build_changes, Receipt, ReceiptHint, ReceiptReport,
+        build_changes_hint, digest_file, display_active, read_build_changes, Held, HeldReason,
+        HeldRoot, HeldSource, Receipt, ReceiptHint, ReceiptReport,
     };
     use crate::profile_txn::Boundary;
     use std::collections::BTreeSet;
+    use sunrise_launcher_smod::{manifest, mod_list, Package};
     const CASE: &str = "managed_play::first::tests::home_read_recovers_the_first_switch_receipt_after_a_killed_commit";
     const ID: [u8; 16] = [6; 16];
     let actor = |role| {
@@ -521,6 +523,13 @@ fn home_read_recovers_the_first_switch_receipt_after_a_killed_commit() {
     };
     let home = backend::game_home();
     let ready = home.join("marker-ready");
+    let relative = Path::new(mod_list::DIR).join("fireflies.smod");
+    let package = |version| {
+        Package::write_files(
+        &format!("id='fireflies'\nname='Fireflies'\nversion='{version}'\napi='{}'\ncapabilities=['registries']", manifest::API),
+        &[],
+    ).unwrap()
+    };
     if role == "publish" {
         let mut profile = Profile::open(&home, None).unwrap();
         let _references = ReferencePublication::begin(&home).unwrap();
@@ -540,12 +549,27 @@ fn home_read_recovers_the_first_switch_receipt_after_a_killed_commit() {
             },
         )
         .unwrap();
+        let holds = vec![Held::new(
+            "fireflies".into(),
+            "Fireflies".into(),
+            digest_file(&home.join(&relative)).unwrap().unwrap(),
+            (HeldRoot::Content, "fireflies.smod".into()),
+            HeldSource::Registry {
+                project: "fireflies".into(),
+                version: "1.0".into(),
+            },
+            true,
+            HeldReason::NoFit {
+                build: BUILD.into(),
+            },
+        )
+        .unwrap()];
         pointer.receipts.push(Receipt {
             id: ID,
-            waiting_for_update: Vec::new(),
+            report: Some(ReceiptReport::new(Some(BUILD.into()), &holds)),
+            waiting_for_update: holds,
             removed: vec![("Lamp".into(), "Taken down".into())],
             acknowledged: false,
-            report: Some(ReceiptReport::new(Some(BUILD.into()), &[])),
         });
         stage
             .seal(serde_json::to_vec(&pointer).unwrap(), &[])
@@ -577,11 +601,52 @@ fn home_read_recovers_the_first_switch_receipt_after_a_killed_commit() {
         assert_eq!(receipt.id, ID);
         assert_eq!(receipt.base(), Some(BUILD));
         assert_eq!(receipt.removed[0].0, "Lamp");
+        assert_eq!(receipt.held().collect::<Vec<_>>(), [("Fireflies", true)]);
         assert!(!profile_txn::recovery_pending(&home).unwrap());
+
+        // Exercise the real same-base publication after the caller has checked a replacement.
+        // No test override is granted registry authority by this fixture.
+        let mut profile = Profile::open(&home, None).unwrap();
+        let edit = profile
+            .begin_edit(|| panic!("the build is already committed"), |_| {}, &|_| {})
+            .unwrap();
+        let candidate = edit.candidate(None).unwrap();
+        let replacement = package("2.0");
+        fs::write(candidate.path().join(&relative), &replacement).unwrap();
+        crate::browser::mod_list::set_enabled(candidate.path(), "fireflies", true).unwrap();
+        let cancellation = native_mods::Cancellation::default();
+        let proof = edit
+            .prove(
+                candidate.path(),
+                native_mods::Profile::Optimized,
+                &cancellation,
+                |_| {},
+                None,
+            )
+            .unwrap();
+        let updated = edit
+            .publish_install(
+                proof,
+                &cancellation,
+                &BTreeSet::from(["fireflies".into()]),
+                || Ok(()),
+            )
+            .unwrap();
+        assert_eq!(updated.holds().count(), 0);
+        assert_eq!(fs::read(home.join(relative)).unwrap(), replacement);
+        let original_report = updated.pending_changes().unwrap();
+        assert_eq!(original_report.id, ID);
+        assert_eq!(original_report.base(), Some(BUILD));
+        assert_eq!(
+            original_report.held().collect::<Vec<_>>(),
+            [("Fireflies", true)]
+        );
+        assert_eq!(original_report.removed, receipt.removed);
         return;
     }
     assert_eq!(role, "scenario");
-    fs::create_dir_all(&home).unwrap();
+    fs::create_dir_all(home.join(mod_list::DIR)).unwrap();
+    fs::write(home.join(relative), package("1.0")).unwrap();
     let resources = backend::resources(BUILD);
     fs::create_dir_all(&resources).unwrap();
     fs::write(resources.join("sunrise-resources.json"), b"{}").unwrap();
