@@ -115,7 +115,7 @@ struct InstalledRows {
     enabled: HashSet<String>,
     chosen: std::collections::BTreeMap<String, String>,
     local: Vec<model::Local>,
-    switch_held: HashSet<String>,
+    switch_held: std::collections::HashMap<String, sunrise_launcher::managed_play::HeldReason>,
 }
 
 #[derive(Debug)]
@@ -145,7 +145,7 @@ impl InstalledRows {
             Ok(active) => active
                 .iter()
                 .flat_map(|active| active.holds())
-                .map(|hold| hold.id().to_owned())
+                .map(|hold| (hold.id().to_owned(), hold.reason().clone()))
                 .collect(),
             Err(DisplayActiveError::Publishing) => return Ok(None),
             Err(DisplayActiveError::Read(error)) => return Err(InstalledReadError::Other(error)),
@@ -1166,7 +1166,12 @@ mod installed_refresh_tests {
             key: "viewed fingerprint".into(),
             home: home.clone(),
             rows: InstalledRows {
-                switch_held: HashSet::from(["ruby".into()]),
+                switch_held: std::collections::HashMap::from([(
+                    "ruby".into(),
+                    sunrise_launcher::managed_play::HeldReason::NoFit {
+                        build: "fixture".into(),
+                    },
+                )]),
                 ..Default::default()
             },
             reading: true,
@@ -1179,7 +1184,7 @@ mod installed_refresh_tests {
             InstalledRefresh::of(Some(&snapshot)),
             InstalledRefresh::Reading
         ));
-        assert!(snapshot.switch_held.contains("ruby"));
+        assert!(snapshot.switch_held.contains_key("ruby"));
         assert!(
             snapshot.key.is_empty(),
             "the same fingerprint must be reread"

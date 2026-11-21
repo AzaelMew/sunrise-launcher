@@ -78,12 +78,7 @@ pub(super) fn run(instance: &instances::Instance, tag: &str, as_json: bool) -> R
                         .worlds
                         .lines()
                         .into_iter()
-                        .chain(question.held.iter().map(|name| {
-                            trf(
-                                "{mod} will be turned off. Needs an update from its author.",
-                                &[("mod", name)],
-                            )
-                        }))
+                        .chain(question.hold_lines())
                         .chain(question.removed.iter().map(|(name, reason)| {
                             trf(
                                 "{mod} was taken down: {reason}",
@@ -125,12 +120,7 @@ pub(super) fn run(instance: &instances::Instance, tag: &str, as_json: bool) -> R
                     if let Some(base) = changes.base().filter(|base| *base != active.base()) {
                         writeln!(output, "{}", trf("Report for game build: {build}", &[("build", base)]))?;
                     }
-                    for (title, enabled) in changes.held() {
-                        let line = if enabled {
-                            trf("{mod} was turned off. Needs an update from its author.", &[("mod", title)])
-                        } else {
-                            trf("{mod} stays off. Needs an update from its author.", &[("mod", title)])
-                        };
+                    for line in changes.held_lines() {
                         writeln!(output, "{line}")?;
                     }
                     for (name, reason) in changes.removed {

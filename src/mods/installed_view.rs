@@ -588,13 +588,14 @@ impl Launcher {
             .as_ref()
             .and_then(|entry| entry.install_hold.as_ref())
             .filter(|_| !r.on);
-        let switch_held = !r.on
-            && self
-                .ui
-                .mods
-                .snapshot
-                .as_ref()
-                .is_some_and(|snapshot| snapshot.rows.switch_held.contains(&r.id));
+        let hold_label = self
+            .ui
+            .mods
+            .snapshot
+            .as_ref()
+            .and_then(|snapshot| snapshot.rows.switch_held.get(&r.id))
+            .map(|hold| hold.label());
+        let switch_held = hold_label.is_some();
         let status_cell: AnyElement = if switch_held {
             div().into_any_element()
         } else if let Some(hold) = install_hold {
@@ -715,14 +716,12 @@ impl Launcher {
             .flex_col()
             .min_w_0()
             .child(title)
-            .when(switch_held, |d| {
-                d.child(
-                    div()
-                        .text_size(px(tokens::SMALL))
-                        .text_color(c(palette().warning))
-                        .child(tr("Needs an update from its author")),
-                )
-            })
+            .children(hold_label.map(|label| {
+                div()
+                    .text_size(px(tokens::SMALL))
+                    .text_color(c(palette().warning))
+                    .child(label)
+            }))
             .when(r.registry_unchecked, |d| {
                 d.child(
                     div()

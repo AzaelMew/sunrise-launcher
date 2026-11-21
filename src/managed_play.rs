@@ -164,17 +164,26 @@ struct Receipt {
 struct ReceiptReport {
     base: Option<String>,
     held: Vec<(String, bool)>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    unproved: Vec<(String, bool)>,
 }
 
 impl ReceiptReport {
     fn new(base: Option<String>, held: &[Held]) -> Self {
-        Self {
+        let mut report = Self {
             base,
-            held: held
-                .iter()
-                .map(|hold| (hold.title().into(), hold.enabled_before()))
-                .collect(),
+            held: Vec::new(),
+            unproved: Vec::new(),
+        };
+        for hold in held {
+            let facts = (hold.title().into(), hold.enabled_before());
+            if hold.reason().unproved() {
+                report.unproved.push(facts);
+            } else {
+                report.held.push(facts);
+            }
         }
+        report
     }
 }
 
@@ -184,11 +193,11 @@ impl Receipt {
             return report.base.as_deref();
         }
         // Legacy reports with a hold recorded its target build on the hold itself.
-        let HeldReason::NoFit { build } = self.waiting_for_update.first()?.reason();
+        let build = self.waiting_for_update.first()?.reason().build();
         self.waiting_for_update
             .iter()
-            .all(|hold| matches!(hold.reason(), HeldReason::NoFit { build: other } if other == build))
-            .then_some(build.as_str())
+            .all(|hold| hold.reason().build() == build)
+            .then_some(build)
     }
 
     fn has_report(&self) -> bool {
@@ -197,12 +206,12 @@ impl Receipt {
             || self
                 .report
                 .as_ref()
-                .is_some_and(|report| !report.held.is_empty())
+                .is_some_and(|report| !report.held.is_empty() || !report.unproved.is_empty())
     }
 }
 
-/// An exact package left installed but held off by a proved no-fit on Switch.
-/// The digest and source authorize an update; the package title is only for the receipt.
+/// An exact package left installed but held off after Switch. The receipt explains why;
+/// its metadata alone cannot authorize replacing the archive.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Held {
@@ -255,6 +264,27 @@ pub enum HeldSource {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum HeldReason {
     NoFit { build: String },
+    Unproved { build: String },
+}
+
+impl HeldReason {
+    fn build(&self) -> &str {
+        match self {
+            Self::NoFit { build } | Self::Unproved { build } => build,
+        }
+    }
+
+    pub fn unproved(&self) -> bool {
+        matches!(self, Self::Unproved { .. })
+    }
+
+    pub fn label(&self) -> &'static str {
+        if self.unproved() {
+            crate::i18n::tr("Fit could not be verified")
+        } else {
+            crate::i18n::tr("Needs an update from its author")
+        }
+    }
 }
 
 impl Held {
@@ -313,8 +343,7 @@ impl Held {
         if version.is_empty() || version.chars().any(char::is_control) {
             return Err(unsettled());
         }
-        let HeldReason::NoFit { build } = &self.reason;
-        validate_tag(build)?;
+        validate_tag(self.reason.build())?;
         Ok(key)
     }
 
@@ -453,21 +482,47 @@ impl<'a> PendingChanges<'a> {
         self.receipt.base()
     }
 
-    pub fn held(&self) -> impl Iterator<Item = (&'a str, bool)> {
+    pub fn held(&self) -> impl Iterator<Item = (&'a str, bool, bool)> {
         let recorded = self.receipt.report.as_ref();
         let original = recorded.into_iter().flat_map(|report| {
             report
                 .held
                 .iter()
-                .map(|(title, enabled)| (title.as_str(), *enabled))
+                .map(|(title, enabled)| (title.as_str(), *enabled, false))
+                .chain(
+                    report
+                        .unproved
+                        .iter()
+                        .map(|(title, enabled)| (title.as_str(), *enabled, true)),
+                )
         });
         let legacy = recorded
             .is_none()
             .then_some(&self.receipt.waiting_for_update)
             .into_iter()
             .flatten()
-            .map(|hold| (hold.title(), hold.enabled_before()));
+            .map(|hold| {
+                (
+                    hold.title(),
+                    hold.enabled_before(),
+                    hold.reason().unproved(),
+                )
+            });
         original.chain(legacy)
+    }
+
+    pub fn held_lines(&self) -> impl Iterator<Item = String> + 'a {
+        self.held().map(|(title, enabled, unknown)| {
+            crate::i18n::trf(
+                match (enabled, unknown) {
+                    (true, false) => "{mod} was turned off. Needs an update from its author.",
+                    (false, false) => "{mod} stays off. Needs an update from its author.",
+                    (true, true) => "{mod} was turned off. Fit could not be verified.",
+                    (false, true) => "{mod} stays off. Fit could not be verified.",
+                },
+                &[("mod", title)],
+            )
+        })
     }
 }
 
@@ -497,9 +552,14 @@ impl Active {
                 if let Some(base) = &report.base {
                     validate_tag(base)?;
                 }
-                if report.held.iter().any(|(title, _)| {
-                    title.trim().is_empty() || title.chars().any(char::is_control)
-                }) {
+                if report
+                    .held
+                    .iter()
+                    .chain(&report.unproved)
+                    .any(|(title, _)| {
+                        title.trim().is_empty() || title.chars().any(char::is_control)
+                    })
+                {
                     return Err(unsettled());
                 }
             }

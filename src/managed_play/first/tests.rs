@@ -602,7 +602,10 @@ fn home_read_recovers_the_first_switch_receipt_after_a_killed_commit() {
         assert_eq!(receipt.id, ID);
         assert_eq!(receipt.base(), Some(BUILD));
         assert_eq!(receipt.removed[0].0, "Lamp");
-        assert_eq!(receipt.held().collect::<Vec<_>>(), [("Fireflies", true)]);
+        assert_eq!(
+            receipt.held().collect::<Vec<_>>(),
+            [("Fireflies", true, false)]
+        );
         assert!(!profile_txn::recovery_pending(&home).unwrap());
 
         // Exercise the real same-base publication after the caller has checked a replacement.
@@ -646,7 +649,7 @@ fn home_read_recovers_the_first_switch_receipt_after_a_killed_commit() {
         assert_eq!(original_report.base(), Some(BUILD));
         assert_eq!(
             original_report.held().collect::<Vec<_>>(),
-            [("Fireflies", true)]
+            [("Fireflies", true, false)]
         );
         assert_eq!(original_report.removed, receipt.removed);
         return;

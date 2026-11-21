@@ -21,7 +21,15 @@ pub struct SwitchQuestion {
     pub build: String,
     pub worlds: Question,
     pub held: Vec<String>,
+    pub unproved: Vec<String>,
     pub removed: Vec<(String, String)>,
+}
+
+impl SwitchQuestion {
+    pub fn hold_lines(&self) -> impl Iterator<Item = String> + '_ {
+        self.held.iter().map(|name| trf("{mod} will be turned off. Needs an update from its author.", &[("mod", name)]))
+            .chain(self.unproved.iter().map(|name| trf("{mod} will be turned off. Fit could not be verified.", &[("mod", name)])))
+    }
 }
 
 pub enum Switched {
@@ -116,6 +124,7 @@ pub fn switch_build(
         hooks.progress,
     )?;
     let mut selected = None;
+    let mut unproved = BTreeSet::new();
     best_survivor_set(&choices, &original.mods, |set| {
         (hooks.progress)(InstallProgress::Preparing);
         let Some(enabled) = enabled_set(&set, &original.mods) else {
@@ -135,7 +144,7 @@ pub fn switch_build(
                 hooks.registry_crates,
             )
         };
-        let Some(proof) = exact_image(prove(next.path()), &set)? else {
+        let Some(proof) = exact_image(prove(next.path()), &set, &enabled, hooks.cancellation, &mut unproved)? else {
             return Ok(false);
         };
         // An intentionally off native choice still needs proof for its legitimate activation.
@@ -150,7 +159,7 @@ pub fn switch_build(
             }
             let trial = edit.candidate()?;
             apply(trial.path(), &original, &set, &activated)?;
-            if exact_image(prove(trial.path()), &set)?.is_none() {
+            if exact_image(prove(trial.path()), &set, &activated, hooks.cancellation, &mut unproved)?.is_none() {
                 return Ok(false);
             }
         }
@@ -160,6 +169,7 @@ pub fn switch_build(
     let (next, proof, set) = selected.ok_or_else(unproved_switch)?;
     let mut holds = Vec::new();
     let mut held = Vec::new();
+    let mut unknown = Vec::new();
     for (id, old) in &original.mods {
         let manifest = &old.seen.package.manifest;
         let chosen = set.get(id.as_str());
@@ -183,6 +193,13 @@ pub fn switch_build(
                     &[("mod", &manifest.name)],
                 )
             })?;
+            let reason = if unproved.contains(id) {
+                unknown.push(manifest.name.clone());
+                HeldReason::Unproved { build: tag.into() }
+            } else {
+                held.push(manifest.name.clone());
+                HeldReason::NoFit { build: tag.into() }
+            };
             holds.push(Held::new(
                 id.clone(),
                 manifest.name.replace(char::is_control, " "),
@@ -190,9 +207,8 @@ pub fn switch_build(
                 (root, leaf.into()),
                 old.source.clone(),
                 old.on,
-                HeldReason::NoFit { build: tag.into() },
+                reason,
             )?);
-            held.push(manifest.name.clone());
         }
     }
     let affected = crate::worlds::unproved_mod_effects(
@@ -228,6 +244,7 @@ pub fn switch_build(
         build: tag.into(),
         worlds,
         held,
+        unproved: unknown,
         removed: original.removed.values().cloned().collect(),
     };
     if question.worlds.needed() && !(hooks.approve)(&question)? {
@@ -378,6 +395,7 @@ struct Package {
     manifest: Manifest,
     digest: Option<String>,
     replacement: Option<(PathBuf, installed::Entry)>,
+    unlisted: bool,
 }
 
 type Choices = BTreeMap<String, Vec<Package>>;
@@ -409,36 +427,32 @@ fn choices(
             // current base can restore a prior hold.
         } else if let Some(old) = old.filter(|old| !old.seen.owned) {
             let manifest = &old.seen.package.manifest;
-            // An override may prove fit of the unchanged bytes, not their provenance.
-            // A previously claimed registry archive absent from this response isn't a no-fit.
-            let fits_claim = if old.seen.registry_claim {
+            // A complete index can prove fit for unchanged listed content. Absence of these
+            // exact bytes from a present project instead means they're a pinned local input.
+            let mut pinned = true;
+            if old.seen.registry_claim {
                 let project = catalogue.project(&id).ok_or_else(unproved_switch)?;
-                if let Some(version) = project.versions.iter().find(|version| {
+                let mut exact = project.versions.iter().filter(|version| {
                     old.seen.digest.as_deref() == Some(&version.file.sha256)
-                        && version.side != Some(Side::Server)
-                        && (manifest.native.is_some() || version.game == game)
-                }) {
-                    index::check_file_with_facts(
-                        catalogue,
-                        project,
-                        version,
-                        &old.seen.package.path,
-                    )?;
-                    true
-                } else {
-                    false
+                }).peekable();
+                pinned = exact.peek().is_none();
+                if !pinned {
+                    let release = exact.find(|version| {
+                        version.side != Some(Side::Server) && (manifest.native.is_some() || version.game == game)
+                    });
+                    let Some(version) = release else {
+                        slots.insert(id, available);
+                        continue;
+                    };
+                    index::check_file_with_facts(catalogue, project, version, &old.seen.package.path)?;
                 }
-            } else {
-                true
-            };
-            if fits_claim
-                && manifest.side != Side::Server
-                && manifest.api == sunrise_launcher_smod::manifest::API
-            {
+            }
+            if manifest.side != Side::Server && manifest.api == sunrise_launcher_smod::manifest::API {
                 available.push(Package {
                     manifest: manifest.clone(),
                     digest: old.seen.digest.clone(),
                     replacement: None,
+                    unlisted: pinned,
                 });
             }
         } else if let Some(project) = catalogue.project(&id) {
@@ -532,6 +546,7 @@ fn choices(
                     manifest,
                     digest: Some(version.file.sha256.clone()),
                     replacement,
+                    unlisted: false,
                 });
             }
         } else if old.is_some() {
@@ -759,6 +774,9 @@ fn apply(
 fn exact_image(
     result: Result<CandidateImage, native_mods::Failed>,
     set: &Set<'_>,
+    enabled: &BTreeSet<&str>,
+    cancellation: &native_mods::Cancellation,
+    unproved: &mut BTreeSet<String>,
 ) -> Result<Option<CandidateImage>, String> {
     match result {
         Ok(image) => Ok(Some(image)),
@@ -780,7 +798,18 @@ fn exact_image(
         {
             Ok(None)
         }
-        Err(error) => Err(error.into()),
+        Err(error) => {
+            cancellation.check()?;
+            // An unavailable proof does not say a pinned native mod is incompatible.
+            // Only attribute a failed native check to local inputs if no listed native
+            // is part of the failed trial. An error in a listed build still stops Switch.
+            let native: Vec<_> = enabled.iter().map(|id| set[id]).filter(|p| p.manifest.native.is_some()).collect();
+            if native.is_empty() || native.iter().any(|p| !p.unlisted) {
+                return Err(error.into());
+            }
+            unproved.extend(native.into_iter().map(|p| p.manifest.id.clone()));
+            Ok(None)
+        }
     }
 }
 

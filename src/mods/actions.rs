@@ -141,7 +141,7 @@ impl Launcher {
         };
         let (held, candidates): (Vec<_>, Vec<_>) = chosen
             .into_iter()
-            .partition(|row| snapshot.switch_held.contains(&row.id));
+            .partition(|row| snapshot.switch_held.contains_key(&row.id));
         let (go, blocked) =
             model::turn_on_plan(&candidates, self.settings.native_mods_allowed_at.is_some());
         m.errors = blocked
@@ -256,7 +256,7 @@ impl Launcher {
             .mods
             .snapshot
             .as_ref()
-            .is_some_and(|snap| snap.rows.switch_held.contains(&row.id))
+            .is_some_and(|snap| snap.rows.switch_held.contains_key(&row.id))
         {
             if let Err(error) = self.queue_registry_install(row.id.clone(), vec![row.id.clone()]) {
                 self.ui.mods.notice = Some(Err(error));

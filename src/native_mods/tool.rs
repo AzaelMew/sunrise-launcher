@@ -69,7 +69,7 @@ impl Cancellation {
         Ok(())
     }
 
-    pub(super) fn check(&self) -> Result<(), String> {
+    pub(crate) fn check(&self) -> Result<(), String> {
         self.state().check()
     }
 

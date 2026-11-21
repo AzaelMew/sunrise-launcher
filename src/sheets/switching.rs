@@ -230,12 +230,7 @@ impl Launcher {
                                 .into_iter()
                                 .map(|line| div().child(line)),
                         )
-                        .children(question.held.iter().map(|name| {
-                            div().child(trf(
-                                "{mod} will be turned off. Needs an update from its author.",
-                                &[("mod", name)],
-                            ))
-                        }))
+                        .children(question.hold_lines().map(|line| div().child(line)))
                         .children(question.removed.iter().map(|(name, reason)| {
                             div().child(if show {
                                 trf(
@@ -442,16 +437,6 @@ impl Launcher {
         let id = changes.id;
         let removed = changes.removed;
         let show = self.ui.sheets.details;
-        let held_line = |(title, enabled): (&str, bool)| {
-            trf(
-                if enabled {
-                    "{mod} was turned off. Needs an update from its author."
-                } else {
-                    "{mod} stays off. Needs an update from its author."
-                },
-                &[("mod", title)],
-            )
-        };
         let removed_line = |(name, reason): &(String, String)| {
             trf(
                 "{mod} was taken down: {reason}",
@@ -459,8 +444,7 @@ impl Launcher {
             )
         };
         let lines = changes
-            .held()
-            .map(held_line)
+            .held_lines()
             .chain(removed.iter().map(removed_line))
             .collect::<Vec<_>>();
         let report = std::sync::Arc::new(format!(
@@ -479,7 +463,7 @@ impl Launcher {
             .flex()
             .flex_col()
             .gap(px(5.))
-            .children(changes.held().map(|hold| div().child(held_line(hold))))
+            .children(changes.held_lines().map(|line| div().child(line)))
             .children(removed.iter().map(|row| {
                 div().child(if show {
                     removed_line(row)

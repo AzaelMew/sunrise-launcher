@@ -674,7 +674,10 @@ fn switch_holds_content_in_place_and_an_override_cannot_replace_it() {
             let report = updated.pending_changes().unwrap();
             assert_eq!(report.id, receipt);
             assert_eq!(report.base(), Some(OTHER));
-            assert_eq!(report.held().collect::<Vec<_>>(), [("Fireflies", true)]);
+            assert_eq!(
+                report.held().collect::<Vec<_>>(),
+                [("Fireflies", true, false)]
+            );
         } else {
             assert!(updated.pending_changes().is_none());
         }
@@ -703,6 +706,31 @@ fn switch_holds_content_in_place_and_an_override_cannot_replace_it() {
         );
         assert_eq!(fixture.pointer(), serde_json::to_vec(&updated).unwrap());
     }
+}
+
+#[test]
+fn switch_keeps_an_unlisted_exact_content_archive_that_fits() {
+    let fixture = Fixture::new();
+    let (registry, _) = fixture.content_index();
+    fixture.publish_registry(&registry);
+    fixture.other_build();
+    fixture.install_mod("extra_mod");
+    let path = fixture.home.join(mod_list::DIR).join("extra_mod.smod");
+    let private = Package::write_files(&format!("id='extra_mod'\nname='Private Fireflies'\nversion='2'\napi='{}'\ncapabilities=['registries']", manifest::API), &[]).unwrap();
+    fs::write(&path, &private).unwrap();
+    let switched = fixture
+        .registry_client(&["--json", "switch", OTHER])
+        .output()
+        .unwrap();
+    assert!(switched.status.success(), "{switched:?}");
+    let active = Active::parse(&fixture.pointer()).unwrap();
+    assert_eq!(active.base(), OTHER);
+    assert!(active.holds().next().is_none());
+    assert!(sunrise_launcher::browser::mod_list::is_enabled(
+        &fixture.home,
+        "extra_mod"
+    ));
+    assert_eq!(fs::read(path).unwrap(), private);
 }
 
 #[test]
