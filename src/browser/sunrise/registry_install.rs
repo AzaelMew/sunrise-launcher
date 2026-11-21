@@ -460,15 +460,35 @@ pub fn install_registry(
             }
             Err(error) => return Err(InstallError::Unproved(error.into())),
         };
-        // Refuse definition loss until the shared Update/Remove world approval is present.
-        guard_replacements(&instance.home, next.path(), &before, &entries)?;
+        // One-click Install cannot consent to replace definitions a saved world may use.
+        let mut replaced = entries
+            .keys()
+            .filter(|id| before.contains_key(*id))
+            .map(String::as_str)
+            .peekable();
+        let suspect = if replaced.peek().is_some() {
+            crate::worlds::unproved_mod_effects(
+                old.path(),
+                edit.active_basis(),
+                next.path(),
+                edit.active_basis(),
+                replaced,
+            )?
+        } else {
+            crate::worlds::SuspectMods::new()
+        };
+        let reviewed = guard_replacements(&instance.home, &suspect)?;
         (hooks.progress)(InstallProgress::Publishing);
         edit.publish(proof, &cancelled, || {
             let (_, current) = fetch_index(&source, local)?;
             if source_bytes != current {
                 return Err(tr("The mod registry changed while the install was being prepared. Nothing was installed.").into());
             }
-            guard_replacements(&instance.home, next.path(), &before, &entries)
+            let guard = crate::worlds::lock_reviewed(&reviewed)?;
+            if reviewed != guard_replacements(&instance.home, &suspect)? {
+                return Err(tr("The affected worlds changed after review. Nothing was changed; try again.").into());
+            }
+            Ok(guard)
         })?;
         for (id, entry) in entries {
             if let Some(previous) = before.get(&id) {
@@ -766,37 +786,20 @@ fn restore_or_disable(
 
 fn guard_replacements(
     home: &Path,
-    candidate: &Path,
-    before: &Inventory,
-    entries: &BTreeMap<String, installed::Entry>,
-) -> Result<(), String> {
-    for (id, entry) in entries {
-        let Some(old) = before.get(id) else {
-            continue;
-        };
-        let unknown = old.package.manifest.native.is_some();
-        if unknown
-            || !super::content_loss::dropped(&old.package.path, &candidate.join(&entry.file))?
-                .is_empty()
-        {
-            let saves = home.join("saves");
-            match fs::read_dir(&saves) {
-                Ok(mut rows) => {
-                    if rows
-                        .next()
-                        .transpose()
-                        .map_err(|e| at(&saves, e))?
-                        .is_some()
-                    {
-                        return Err(trf("Installing this version of {mod} could remove content from saved worlds. Nothing was installed.", &[("mod", &entry.title)]));
-                    }
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
-                Err(error) => return Err(at(&saves, error)),
-            }
-        }
+    suspect: &crate::worlds::SuspectMods,
+) -> Result<Vec<crate::worlds::WorldRisk>, String> {
+    if suspect.is_empty() {
+        return Ok(Vec::new());
     }
-    Ok(())
+    let reviewed = crate::worlds::review_risk(home, suspect)?;
+    if let Some(mods) = reviewed
+        .iter()
+        .find(|world| !world.mods.is_empty())
+        .map(|world| world.mods.join(", "))
+    {
+        return Err(trf("Installing this version of {mod} could remove content from saved worlds. Nothing was installed.", &[("mod", &mods)]));
+    }
+    Ok(reviewed)
 }
 
 struct Document {

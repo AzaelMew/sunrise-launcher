@@ -109,6 +109,14 @@ impl Edit<'_> {
         }
     }
 
+    /// A first edit has no committed comparison base; it cannot clear save risk.
+    pub(crate) fn active_basis(&self) -> Option<&Active> {
+        match &self.basis {
+            Basis::Active(active, _) => Some(active),
+            Basis::First(_) => None,
+        }
+    }
+
     fn stage(&self) -> &Staging<'_> {
         match &self.basis {
             Basis::Active(_, stage) => stage,
@@ -195,11 +203,11 @@ impl Edit<'_> {
 
     /// Keep one authoritative commit. Verify the same live and candidate bytes at cutoff,
     /// including any other approval (e.g. registry evidence or a world question).
-    pub(crate) fn publish(
+    pub(crate) fn publish<G>(
         self,
         proof: CandidateImage,
         cancellation: &native_mods::Cancellation,
-        authorize: impl FnOnce() -> Result<(), String>,
+        authorize: impl FnOnce() -> Result<G, String>,
     ) -> Result<Active, String> {
         let resources = match &self.basis {
             Basis::First(first) => Some(Resources::capture(first.base(), &first.stage)?),
@@ -243,14 +251,14 @@ impl Edit<'_> {
         let files = changed_files(&self.home, &proof.candidate)?;
         let pointer = serde_json::to_vec(&active).map_err(|e| e.to_string())?;
         stage.seal(pointer, &files)?.publish(|| {
-            authorize()?;
+            let authorization = authorize()?;
             active.verify_artifacts()?;
             if inputs(&self.home, None)? != self.before
                 || inputs(&proof.candidate, None)? != proof.inputs
             {
                 return Err(unsettled());
             }
-            cancellation.publication_guard()
+            Ok((authorization, cancellation.publication_guard()?))
         })?;
         Ok(active)
     }
