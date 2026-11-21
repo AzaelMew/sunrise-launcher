@@ -849,20 +849,21 @@ fn resolve_default_and_stale_approval_keep_exact_bytes_then_only_proved_blocker_
     let (mut registry, archives) = fixture.content_index();
     fixture.publish_registry(&registry);
     fixture.install_mod("root_mod");
-    let project = registry
-        .projects
-        .iter_mut()
-        .find(|p| p.id == "required_mod")
-        .unwrap();
-    let (row, new_core) = fixture.new_version(project, "2", "26.3", None);
-    project.versions.insert(0, row);
+    // Installing a new mod can require disabling a blocker without replacing any
+    // old archive. This fixture deliberately uses a nonofficial registry override.
     let project = registry
         .projects
         .iter_mut()
         .find(|p| p.id == "extra_mod")
         .unwrap();
-    let (row, extra) = fixture.new_version(project, "2.0.0", "26.3", Some("^2"));
-    project.versions = vec![row];
+    let row = &mut project.versions[0].file;
+    let extra = Package::write_files(
+        &format!("id='extra_mod'\nname='Fireflies'\nversion='1.0.0'\napi='{}'\nside='both'\ncapabilities=['registries']\n[incompatible]\nroot_mod='^1'", manifest::API),
+        &[],
+    ).unwrap();
+    fs::write(fixture.root.join(&row.name), &extra).unwrap();
+    row.sha256 = index::sha256(&extra);
+    row.size = extra.len() as u64;
     fixture.publish_registry(&registry);
     let world = write_world(&fixture.home, 4200);
     let saves = fs::read(&world).unwrap();
@@ -907,7 +908,10 @@ fn resolve_default_and_stale_approval_keep_exact_bytes_then_only_proved_blocker_
         fs::read(mods.join("root_mod.smod")).unwrap(),
         archives["root_mod"]
     );
-    assert_eq!(fs::read(mods.join("required_mod.smod")).unwrap(), new_core);
+    assert_eq!(
+        fs::read(mods.join("required_mod.smod")).unwrap(),
+        archives["required_mod"]
+    );
     assert_eq!(fs::read(mods.join("extra_mod.smod")).unwrap(), extra);
     assert!(!sunrise_launcher::browser::mod_list::is_enabled(
         &fixture.home,
@@ -1064,14 +1068,12 @@ fn profile_decision_worker() {
                     assert_eq!(q.requested, ["Fireflies"]);
                     assert_eq!(q.blockers.len(), 1);
                     assert_eq!(q.blockers[0].0, "Lanterns");
-                    assert!(q.blockers[0].1.contains("^1"), "{q:?}");
+                    assert!(q.blockers[0].1.contains("Fireflies 1.0.0"), "{q:?}");
                     assert_eq!(q.worlds.affected[0].world, "Glass Basin");
-                    assert!(
-                        q.worlds.affected[0]
-                            .mods
-                            .iter()
-                            .any(|m| m == "Lantern Core"),
-                        "replacement changed the bytes of an existing block definition: {q:?}"
+                    assert_eq!(
+                        q.worlds.affected[0].mods,
+                        ["Lanterns"],
+                        "unchanged independent definitions don't add to the question: {q:?}"
                     );
                     decide()
                 }),
