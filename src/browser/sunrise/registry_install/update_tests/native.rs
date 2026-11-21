@@ -151,7 +151,7 @@ fn hold_updates(fixture: &mut Fixture, succeeds: HoldCase, refusals: &[HoldCase]
             assert_eq!(fixture.snapshot(&[ARCHIVE]), before, "{case:?}");
             assert_eq!(compiled(fixture), "1.0.0\n", "{case:?}");
             assert!(
-                mutations::check_admitted_activation(
+                check_activation(
                     fixture.home(),
                     Active::read_pointer(fixture.home()).unwrap().as_ref(),
                     &[ID]
@@ -171,7 +171,7 @@ fn hold_updates(fixture: &mut Fixture, succeeds: HoldCase, refusals: &[HoldCase]
         assert_eq!(mod_list::is_enabled(fixture.home(), ID), reenables);
         assert_eq!(after.executable() != BUILD, reenables);
         assert_eq!(after.holds().count(), 0);
-        mutations::check_admitted_activation(
+        check_activation(
             fixture.home(),
             Active::read_pointer(fixture.home()).unwrap().as_ref(),
             &[ID],

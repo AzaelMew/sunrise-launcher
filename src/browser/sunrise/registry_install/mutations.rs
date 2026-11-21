@@ -218,12 +218,7 @@ impl ChangeImpact {
 
 /// The ordinary enable switch must not reactivate an exact hold or a mod missing a required
 /// dependency. Call under the game's manifest lock and write the list under the same lock.
-pub fn check_activation(home: &Path, activate: &[&str]) -> Result<(), String> {
-    let active = managed_play::Active::read_pointer(home)?;
-    check_admitted_activation(home, active.as_ref(), activate)
-}
-
-pub(super) fn check_admitted_activation(
+pub(crate) fn check_activation(
     home: &Path,
     active: Option<&managed_play::Active>,
     activate: &[&str],

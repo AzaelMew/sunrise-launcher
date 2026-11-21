@@ -321,6 +321,7 @@ impl Profile {
             }
         }
         if !go.is_empty() {
+            crate::browser::sunrise::check_activation(self.home(), active.as_ref(), &go)?;
             crate::browser::mod_list::set_all_enabled(self.home(), &go, true)?;
         }
         Ok(skipped)

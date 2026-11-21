@@ -223,11 +223,6 @@ impl Launcher {
             );
             return;
         }
-        let pending = ids.iter().map(String::as_str).collect::<Vec<_>>();
-        if let Err(error) = sunrise::check_activation(&home, &pending) {
-            self.ui.mods.notice = Some(Err(error));
-            return;
-        }
         let identity = match approved.map_or_else(|| Identity::of(&home), Ok) {
             Ok(identity) => identity,
             Err(error) => {
