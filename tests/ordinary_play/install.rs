@@ -3,6 +3,9 @@ use super::*;
 use std::collections::BTreeMap;
 use sunrise_launcher_smod::{index, Package};
 
+#[path = "install/native_retry.rs"]
+mod native_retry;
+
 impl Fixture {
     fn registry(&self) -> index::Index {
         index::Index::parse(include_str!("../../crates/smod/tests/index/index-v1.json")).unwrap()

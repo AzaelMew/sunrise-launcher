@@ -110,7 +110,11 @@ pub(super) fn resolve(
         if !supported {
             return Err(crate::i18n::tr("Unavailable on this platform").into());
         }
-        settings.allow_native_mods()?;
+        // The scoped second answer doesn't replace (or resurrect) the grant pinned by
+        // the running attempt. The worker still checks the original revision after reply.
+        if !matches!(pending, Some(PendingConsent::Registry(question, _)) if question.retry) {
+            settings.allow_native_mods()?;
+        }
         return Ok(pending.take());
     }
     if let Some(action) = pending.take() {

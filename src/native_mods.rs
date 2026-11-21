@@ -1367,7 +1367,27 @@ fn pipeline(
     // made for it exactly. Any other build tests each mod made for another build (SDK design §10).
     let sdk = if developer {
         if let Some(list) = mismatch(&mods, &revision) {
-            return Err(mismatch_error(&list).into());
+            let error = mismatch_error(&list);
+            if options.exact_home.is_some() {
+                // A local developer checkout has no alternate surface to compare. An
+                // exact revision mismatch is a proved no-fit, not a failed SDK request.
+                let unfit: Vec<_> = mods
+                    .iter()
+                    .filter(|mod_| mod_.native().sunrise != revision)
+                    .map(|mod_| LeftOut::new(mod_, isolate::Why::Unfit(error.clone())))
+                    .collect();
+                let pairs: Vec<_> = mods
+                    .iter()
+                    .zip(&declared)
+                    .map(|(bundle, dependencies)| (bundle, dependencies.as_slice()))
+                    .collect();
+                return Err(Failed::Mods {
+                    left: isolate::with_dependents(&unfit, &pairs),
+                    error,
+                    compiling: false,
+                });
+            }
+            return Err(error.into());
         }
         None
     } else {

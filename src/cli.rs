@@ -2358,6 +2358,12 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                             }
                         },
                         native: &|question| {
+                            if question.retry {
+                                return Err(trf(
+                                    "Checking a different version would also run native code from {mods}. No mods were installed. Run Install again only if you trust those mods.",
+                                    &[("mods", &question.names.join(", "))],
+                                ));
+                            }
                             eprintln!(
                                 "{}",
                                 trf(

@@ -992,9 +992,15 @@ impl Launcher {
             let provenance = if question.reviewed {
                 tr("Reviewed by the Sunrise registry and matched to its download checksums.")
             } else {
-                tr("Local registry fixture; not from the Sunrise registry.")
+                tr("Not all of these packages are verified Sunrise registry downloads.")
             };
-            fact(tr("Mods"), list.child(muted(provenance)), false)
+            let list = list.child(muted(provenance));
+            let list = if question.retry {
+                list.child(muted(tr("Sunrise is checking a different version. It needs these additional native mods.")))
+            } else {
+                list
+            };
+            fact(tr("Mods"), list, false)
         } else if rows.is_empty() {
             fact(tr("Mods"), name.clone(), false)
         } else {

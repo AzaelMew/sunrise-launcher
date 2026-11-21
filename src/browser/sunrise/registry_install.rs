@@ -63,6 +63,8 @@ impl From<String> for InstallError {
 pub struct NativeQuestion {
     pub names: Vec<String>,
     pub reviewed: bool,
+    /// A proved no-fit changed the named closure after this install's first approval.
+    pub retry: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -182,6 +184,7 @@ pub fn install_registry(
     let mut unfit = BTreeSet::new();
     let mut conflicts = Vec::new();
     let mut last_sdk_refusal = None;
+    let mut named_native: Option<BTreeSet<String>> = None;
     for _ in 0..MAX_TRIALS {
         let plan = resolve::install_whole(
             &catalogue,
@@ -223,12 +226,10 @@ pub fn install_registry(
         if versions.is_empty() {
             return Ok(InstalledBatch::default());
         }
-        let need_native: Vec<_> = versions
+        if versions
             .iter()
-            .filter(|(p, _)| p.kind == index::Kind::NativeMod)
-            .map(|(p, _)| p.name.clone())
-            .collect();
-        if !need_native.is_empty() {
+            .any(|(p, _)| p.kind == index::Kind::NativeMod)
+        {
             if let Some(error) = backend::native_mod_architecture_error() {
                 return Err(InstallError::Refused(error));
             }
@@ -276,14 +277,53 @@ pub fn install_registry(
             continue;
         }
         (hooks.progress)(InstallProgress::Preparing);
-        if !need_native.is_empty() {
-            if backend::NativeGrant::read()?.is_none()
-                && !(hooks.native)(&NativeQuestion {
-                    names: need_native,
-                    reviewed: source == super::INDEX_URL,
-                })?
-            {
-                return Err(InstallError::Cancelled);
+        let staged = inventory(next.path())?;
+        let build_packages: Vec<_> = staged
+            .values()
+            .filter(|p| {
+                p.package.manifest.native.is_some()
+                    && mod_list::is_enabled(next.path(), &p.package.manifest.id)
+            })
+            .collect();
+        if !build_packages.is_empty() {
+            let retry = named_native.is_some();
+            if retry || backend::NativeGrant::read()?.is_none() {
+                let newly_named: Vec<_> = build_packages
+                    .iter()
+                    .copied()
+                    .filter(|p| {
+                        named_native
+                            .as_ref()
+                            .is_none_or(|ids| !ids.contains(&p.package.manifest.id))
+                    })
+                    .collect();
+                if !newly_named.is_empty() {
+                    if !(hooks.native)(&NativeQuestion {
+                        names: newly_named
+                            .iter()
+                            .map(|p| p.package.manifest.name.clone())
+                            .collect(),
+                        reviewed: source == super::INDEX_URL
+                            && newly_named.iter().all(|p| {
+                                p.owned
+                                    && p.digest.as_ref().is_some_and(|hash| {
+                                        catalogue.project(&p.package.manifest.id).is_some_and(
+                                            |project| {
+                                                project.versions.iter().any(|v| {
+                                                    v.file.sha256.eq_ignore_ascii_case(hash)
+                                                })
+                                            },
+                                        )
+                                    })
+                            }),
+                        retry,
+                    })? {
+                        return Err(InstallError::Cancelled);
+                    }
+                    named_native
+                        .get_or_insert_with(BTreeSet::new)
+                        .extend(newly_named.iter().map(|p| p.package.manifest.id.clone()));
+                }
             }
             // This comes from the strict saved grant, never from the dialog reply alone.
             cancelled
