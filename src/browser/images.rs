@@ -85,7 +85,7 @@ pub fn fetch(home: &Path, url: &str, size: u32) -> Result<PathBuf, String> {
     if let Some(why) = refuse(url) {
         return Err(format!("{url}: {why}"));
     }
-    let mut request = super::download::agent(url).get(url);
+    let mut request = super::download::agent(url)?.get(url);
     if cached {
         let tags = fs::read_to_string(validators(&target)).unwrap_or_default();
         let mut tags = tags.lines();

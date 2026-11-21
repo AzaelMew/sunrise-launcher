@@ -519,16 +519,14 @@ pub(crate) const CLIENT: &str = if cfg!(windows) {
 
 /// The agent `url` is fetched with: the launcher's own user agent, through the player's proxy when
 /// one is set (`proxy`).
-pub(crate) fn agent(url: &str) -> ureq::Agent {
-    crate::proxy::agent(
-        ureq::AgentBuilder::new()
+pub(crate) fn agent(url: &str) -> Result<ureq::Agent, String> {
+    crate::proxy::agent("backend", url, |builder| {
+        builder
             .user_agent(&format!("sunrise-launcher/{VERSION}"))
             // A connection that goes quiet fails instead of waiting for ever.
             .timeout_connect(std::time::Duration::from_secs(15))
-            .timeout_read(std::time::Duration::from_secs(60)),
-        url,
-    )
-    .build()
+            .timeout_read(std::time::Duration::from_secs(60))
+    })
 }
 
 /// A file's body, from the network as the launcher reaches it.
@@ -547,7 +545,7 @@ pub(crate) fn get(url: &str) -> Result<ureq::Response, String> {
 
 /// [`get`], with `None` when the server answers 404: a file that may not exist (a prebuilt game).
 pub(crate) fn get_unless_missing(url: &str) -> Result<Option<ureq::Response>, String> {
-    let mut request = agent(url).get(url);
+    let mut request = agent(url)?.get(url);
     // CI runners share addresses and hit GitHub's anonymous rate limit; they pass their own token.
     if let Some(token) = std::env::var("SUNRISE_GITHUB_TOKEN")
         .ok()
@@ -910,22 +908,18 @@ impl Links {
 pub fn links() -> Links {
     let url = format!("https://raw.githubusercontent.com/{LAUNCHER_REPO}/main/links.json");
     // No redirect is followed: links.json comes from this host over HTTPS or not at all.
-    let agent = crate::proxy::agent(
-        ureq::AgentBuilder::new()
+    crate::proxy::agent("links", &url, |builder| {
+        builder
             .user_agent(&format!("sunrise-launcher/{VERSION}"))
             .timeout_connect(std::time::Duration::from_secs(15))
             .timeout_read(std::time::Duration::from_secs(60))
-            .redirects(0),
-        &url,
-    )
-    .build();
-    agent
-        .get(&url)
-        .call()
-        .ok()
-        .filter(|r| r.status() == 200)
-        .and_then(|r| r.into_string().ok())
-        .map_or_else(Links::default, |text| Links::parse(&text))
+            .redirects(0)
+    })
+    .ok()
+    .and_then(|agent| agent.get(&url).call().ok())
+    .filter(|r| r.status() == 200)
+    .and_then(|r| r.into_string().ok())
+    .map_or_else(Links::default, |text| Links::parse(&text))
 }
 
 /// The launcher's data folder; `SUNRISE_LAUNCHER_HOME` overrides it (for tests and scripts).

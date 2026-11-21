@@ -308,9 +308,10 @@ impl Downloader {
             let host = budget.acquire_owned().await.unwrap();
             let global = self.network.clone().acquire_owned().await.unwrap();
             let count = Count::new(&self.metrics.counters.connections);
-            let client = self.client_for_proxy(
-                crate::proxy::spec_for(url.as_str()).map(crate::proxy::address),
-            )?;
+            let proxy =
+                sunrise_launcher_proxy::address_for(&url, crate::proxy::setting().as_deref())
+                    .map_err(Failure::permanent)?;
+            let client = self.client_for_proxy(proxy.map(crate::proxy::address))?;
             let mut request = client
                 .get(url.clone())
                 .header(header::ACCEPT_ENCODING, "identity");

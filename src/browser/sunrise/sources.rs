@@ -441,7 +441,7 @@ pub fn catalogue(refresh: bool) -> Catalogue {
 
 fn fetch_catalogue(tag: Option<&str>) -> Result<Reply, String> {
     let mut request =
-        crate::net::anonymous_get_no_redirect(sunrise_launcher_addresses::MOD_SOURCES);
+        crate::net::anonymous_get_no_redirect(sunrise_launcher_addresses::MOD_SOURCES)?;
     if let Some(tag) = tag {
         request = request.set("If-None-Match", tag);
     }

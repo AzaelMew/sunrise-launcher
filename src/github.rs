@@ -257,7 +257,10 @@ fn mirror_base() -> String {
 
 /// GitHub itself, with the saved ETag when there is one.
 fn github(url: &str, etag: Option<&str>) -> Answer {
-    let mut request = backend::agent(url).get(url);
+    let mut request = match backend::agent(url) {
+        Ok(agent) => agent.get(url),
+        Err(error) => return Answer::Failed(error),
+    };
     // CI runners share addresses and hit GitHub's anonymous rate limit; they pass their own token.
     if let Some(token) = std::env::var("SUNRISE_GITHUB_TOKEN")
         .ok()
@@ -272,7 +275,10 @@ fn github(url: &str, etag: Option<&str>) -> Answer {
 }
 
 fn mirror(url: &str) -> Answer {
-    answer(url, backend::agent(url).get(url).call(), false)
+    match backend::agent(url) {
+        Ok(agent) => answer(url, agent.get(url).call(), false),
+        Err(error) => Answer::Failed(error),
+    }
 }
 
 fn answer(url: &str, response: Result<ureq::Response, ureq::Error>, direct: bool) -> Answer {

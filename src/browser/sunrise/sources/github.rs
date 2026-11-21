@@ -259,6 +259,7 @@ impl Github {
             };
         }
         let response = match crate::net::anonymous_get_no_redirect(url)
+            .map_err(Failure::Other)?
             .timeout(timeout)
             .call()
         {

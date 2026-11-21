@@ -9,11 +9,9 @@
 //! Servers page's calls to a game server's API (`servers.rs`) build their agent without it: they
 //! are on loopback and asked every second.
 //!
-//! Which hosts are reached directly, and how an address is read, are `net`'s rules, the same as the
-//! game's porter keeps: a modpack import runs it with this proxy in `HTTPS_PROXY`/`HTTP_PROXY`, so
-//! both leave the same hosts alone. This module adds what is the launcher's own — the setting in
-//! `settings.json`, kept in memory so a request doesn't read the file — and hands the address to
-//! the parts that build their agents.
+//! Proxy selection is shared with the game's porter and tools. This module keeps the launcher's
+//! own setting from `settings.json` in memory and passes it to those tools as `HTTPS_PROXY` and
+//! `HTTP_PROXY`.
 use crate::backend::Settings;
 use std::sync::Mutex;
 
@@ -21,15 +19,7 @@ use std::sync::Mutex;
 /// read `settings.json` every time, and an import fetches hundreds of jars.
 static SET: Mutex<Option<Option<String>>> = Mutex::new(None);
 
-/// The proxy address to reach `url` through: the launcher's setting, else the environment's, unless
-/// `url` is a local address or `NO_PROXY` names its host.
-pub fn spec_for(url: &str) -> Option<String> {
-    let scheme = crate::net::scheme_of(url)?;
-    if crate::net::direct(url) {
-        return None;
-    }
-    setting().or_else(|| crate::net::env_for(scheme))
-}
+pub(crate) const USER_AGENT: &str = concat!("sunrise-launcher/", env!("CARGO_PKG_VERSION"));
 
 /// Puts the launcher's network settings in `command`'s environment, as the programs it starts (the porter, the native build tool) read them: its proxy setting in `HTTPS_PROXY`/`HTTP_PROXY` (the environment's own, and `NO_PROXY`, pass through), and the GitHub mirror.
 pub fn child_env(command: &mut std::process::Command) {
@@ -53,18 +43,22 @@ pub fn address(spec: String) -> String {
     }
 }
 
-/// The proxy to reach `url` through: `spec_for`'s address, read as one.
-pub fn for_url(url: &str) -> Option<ureq::Proxy> {
-    spec_for(url).and_then(|spec| crate::net::parse(&spec))
+/// Agent for this slot's HTTP settings and the route selected for `url`.
+pub(crate) fn agent(
+    slot: &str,
+    url: &str,
+    configure: impl FnOnce(ureq::AgentBuilder) -> ureq::AgentBuilder,
+) -> Result<ureq::Agent, String> {
+    sunrise_launcher_proxy::agent(slot, url, setting().as_deref(), configure)
+        .map_err(|e| e.to_string())
 }
 
-/// `builder`, reaching `url` through the proxy when one is set. For the parts that ask for a few
-/// addresses; the ones that fetch file after file keep their agent instead (`keep`).
-pub fn agent(builder: ureq::AgentBuilder, url: &str) -> ureq::AgentBuilder {
-    match for_url(url) {
-        Some(proxy) => builder.proxy(proxy),
-        None => builder,
-    }
+/// Anonymous GET with the configured proxy, leaving redirects and status to the caller.
+pub(crate) fn anonymous_get_no_redirect(address: &str) -> Result<ureq::Request, String> {
+    let agent = agent("anonymous-get-no-redirect", address, |builder| {
+        builder.redirects(0)
+    })?;
+    Ok(agent.get(address).set("User-Agent", USER_AGENT))
 }
 
 /// Why `spec` can't be used as a proxy, or None when it can (empty means none).
@@ -73,34 +67,26 @@ pub fn refuse(spec: &str) -> Option<String> {
     if spec.is_empty() {
         return None;
     }
-    // `ureq` takes `http://` without a host, which would leave a download failing with nothing
-    // said about the proxy.
-    if crate::net::parse(spec).is_none() || crate::net::host_of(spec).is_none_or(str::is_empty) {
-        return Some(format!(
-            "{} isn't a proxy address. Write it as http://host:port or socks5://host:port.",
-            crate::net::redacted(spec)
-        ));
-    }
-    None
+    sunrise_launcher_proxy::validate(spec)
+        .err()
+        .map(|error| format!("{error}. Write it as http://host:port or socks5://host:port."))
 }
 
-/// Tells the parts that build their own agents (`net`) which proxy to use, and keeps
-/// the setting for the launcher's own requests. Called with what `settings.json` holds: at start,
-/// and whenever the player changes the setting.
-///
-/// The environment's is left to them: they read it per address (`HTTPS_PROXY` for an https jar,
-/// `HTTP_PROXY` for an http one), the way the launcher does for its own.
+/// Update the stored setting and drop pooled routes to the old proxy.
 pub fn announce(setting: Option<String>) {
     let spec = setting
         .map(|p| p.trim().to_owned())
         .filter(|p| !p.is_empty());
-    *held() = Some(spec.clone());
-    crate::net::set_proxy(spec);
+    let mut kept = held();
+    if kept.as_ref() != Some(&spec) {
+        *kept = Some(spec);
+        sunrise_launcher_proxy::clear_agents();
+    }
 }
 
 /// The launcher's setting: read from `settings.json` the first time it is needed and kept after
 /// that, so a download doesn't read the file once per file.
-fn setting() -> Option<String> {
+pub(crate) fn setting() -> Option<String> {
     let mut set = held();
     match set.clone() {
         Some(kept) => kept,
@@ -129,25 +115,6 @@ fn held() -> std::sync::MutexGuard<'static, Option<Option<String>>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_socks_proxy_is_one_the_launcher_can_reach_through() {
-        let port = std::net::TcpListener::bind("127.0.0.1:0")
-            .unwrap()
-            .local_addr()
-            .unwrap()
-            .port();
-        let proxy = crate::net::parse(&format!("socks5://127.0.0.1:{port}")).unwrap();
-        let error = ureq::AgentBuilder::new()
-            .proxy(proxy)
-            .build()
-            .get("http://example.invalid/")
-            .call()
-            .unwrap_err()
-            .to_string();
-        // The port is closed, so it fails reaching the proxy: never for want of SOCKS in the build.
-        assert!(!error.contains("SOCKS feature disabled"), "{error}");
-    }
 
     #[test]
     fn a_proxy_address_is_read_the_same_for_downloads_and_children() {
@@ -182,18 +149,6 @@ mod tests {
     }
 
     #[test]
-    fn a_local_address_takes_no_proxy() {
-        assert_eq!(spec_for("http://127.0.0.1:8130/api/v1/status"), None);
-        assert_eq!(spec_for("http://localhost/api/v1/status"), None);
-    }
-
-    /// An address the launcher knows nothing about is one nothing is written for either.
-    #[test]
-    fn a_relative_address_has_no_scheme_to_read_a_proxy_for() {
-        assert_eq!(spec_for("data/a.jar"), None);
-    }
-
-    #[test]
     fn a_proxy_address_is_checked_before_it_is_kept() {
         assert_eq!(refuse(""), None);
         assert_eq!(refuse("  "), None);
@@ -209,9 +164,14 @@ mod tests {
     /// The reason is shown under the field and printed by `sunrise-launcher settings set`.
     #[test]
     fn a_refused_address_keeps_its_credentials_to_itself() {
-        let why = refuse("socks3://user:secret@127.0.0.1:7891").unwrap();
-        assert!(why.starts_with("socks3://***@127.0.0.1:7891 "), "{why}");
-        let why = refuse("http://user:secret@").unwrap();
-        assert!(!why.contains("secret"), "{why}");
+        for spec in [
+            "socks3://user:secret@127.0.0.1:7891",
+            "http://user:secret@",
+            "http://user:secret@proxy.example:bad-port",
+        ] {
+            let why = refuse(spec).unwrap();
+            assert!(why.starts_with("Launcher proxy setting: "), "{why}");
+            assert!(!why.contains("secret"), "{why}");
+        }
     }
 }

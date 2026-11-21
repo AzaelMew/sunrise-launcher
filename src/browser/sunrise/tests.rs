@@ -99,6 +99,54 @@ fn native_install_readiness_changes_the_action_without_changing_catalogue_fit() 
 }
 
 #[test]
+fn schema_one_stable_native_records_keep_the_signed_source_on_the_install_path() {
+    let fixture = fixtures().join("stable-native");
+    let text = fs::read_to_string(fixture.join("schema-1.json")).unwrap();
+    let catalogue = Index::parse(&text).unwrap();
+    assert!(catalogue.left_out.is_empty(), "{:?}", catalogue.left_out);
+    // Switch also reads a strict index rather than using the pruned Discover catalogue.
+    serde_json::from_str::<Index>(&text)
+        .unwrap()
+        .check()
+        .unwrap();
+
+    let project = catalogue.project("release_probe").unwrap();
+    let version = newest(&catalogue, project, "26.3").unwrap();
+    let rebuilt_for = "b".repeat(40);
+    let binary = version
+        .native_binary(&rebuilt_for, "x86_64-unknown-linux-gnu")
+        .unwrap();
+    assert!(version
+        .native_binary(&rebuilt_for, "aarch64-apple-darwin")
+        .is_err());
+
+    // Even with exact binary metadata, the installer selects and verifies the .smod.
+    let offer = version_of(&catalogue, project, version);
+    assert!(offer.blocked.is_none());
+    assert_eq!(offer.files.len(), 1);
+    assert_eq!(offer.files[0].name, "release_probe-1.0.0.smod");
+    let source = fixture.join("source.smod");
+    assert_eq!(
+        index::check_file(&catalogue, project, version, &source).unwrap(),
+        Trust::Verified
+    );
+    let mut wrong_signature = version.clone();
+    wrong_signature.file.signature = binary.file.signature.clone();
+    assert!(
+        index::check_file(&catalogue, project, &wrong_signature, &source)
+            .unwrap_err()
+            .contains("signature doesn't match")
+    );
+
+    // Binary availability is not evidence that the source fits a different checkout.
+    let developer = NativeInstallReadiness {
+        host_block: None,
+        developer_revision: Some(rebuilt_for),
+    };
+    assert!(developer.block(&catalogue, &project.id, "26.3").is_some());
+}
+
+#[test]
 fn only_the_builtin_reply_can_prove_a_published_id_and_archive_hash() {
     assert!(official_endpoint(INDEX_URL, false));
     assert!(!official_endpoint(INDEX_URL, true));

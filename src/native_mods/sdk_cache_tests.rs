@@ -44,7 +44,7 @@ fn index_of(files: &[(&str, &[u8])], rust: &str) -> Index {
             date: "2026-11-13".into(),
             nightly: Some("nightly-2026-11-13".into()),
         },
-        package_format: sdk::PACKAGE_FORMAT,
+        package_format: u64::from(sdk::PACKAGE_FORMAT),
         toolchain: Toolchain { rust: rust.into() },
         content_api: sunrise_launcher_smod::manifest::API.into(),
         surface: Surface {

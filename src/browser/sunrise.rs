@@ -411,24 +411,19 @@ fn fetch_index_text(at: &str, local: bool, full: bool) -> Result<String, String>
             .timeout(Duration::from_secs(2))
             .build()
     } else {
-        let spec = crate::proxy::spec_for(at);
         let slot = if direct {
             "sunrise-index-direct"
         } else {
             "sunrise-index"
         };
-        crate::net::keep(slot, spec.as_deref(), |proxy| {
-            let mut builder = ureq::AgentBuilder::new()
-                .https_only(true)
-                .timeout(Duration::from_secs(10));
+        crate::proxy::agent(slot, at, |builder| {
+            let builder = builder.https_only(true).timeout(Duration::from_secs(10));
             if direct {
-                builder = builder.redirects(0);
+                builder.redirects(0)
+            } else {
+                builder
             }
-            match proxy {
-                Some(proxy) => builder.proxy(proxy).build(),
-                None => builder.build(),
-            }
-        })
+        })?
     };
     let response = agent.get(at).call().map_err(|e| match e {
         ureq::Error::Status(code, _) => format!("The mod registry answered {code}."),
@@ -526,15 +521,18 @@ fn refresh_ratings() {
     }
     let at = given.unwrap_or_else(|| RATINGS_URL.to_owned());
     let text = if at.starts_with("https://") {
-        download::agent(&at).get(&at).call().ok().and_then(|r| {
-            use std::io::Read;
-            let mut text = String::new();
-            r.into_reader()
-                .take(MAX_INDEX)
-                .read_to_string(&mut text)
-                .ok()
-                .map(|_| text)
-        })
+        download::agent(&at)
+            .ok()
+            .and_then(|agent| agent.get(&at).call().ok())
+            .and_then(|r| {
+                use std::io::Read;
+                let mut text = String::new();
+                r.into_reader()
+                    .take(MAX_INDEX)
+                    .read_to_string(&mut text)
+                    .ok()
+                    .map(|_| text)
+            })
     } else {
         fs::read_to_string(&at).ok()
     };

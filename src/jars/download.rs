@@ -9,6 +9,7 @@ use std::{
     path::Path,
 };
 use sunrise_launcher_smod::manifest::JarRef;
+use ureq::OrAnyStatus;
 
 use crate::browser::{download::MODRINTH_CDN, modrinth::API};
 const AGENT: &str = concat!("sunrise-launcher/", env!("CARGO_PKG_VERSION"));
@@ -19,12 +20,17 @@ const MAX_JAR: u64 = 512 << 20;
 pub fn jar_urls(jars: &[&JarRef]) -> Result<BTreeMap<String, String>, String> {
     let hashes: Vec<_> = jars.iter().map(|jar| jar.sha512()).collect();
     let url = format!("{API}/version_files");
-    let response = crate::net::agent(&url)
+    let response = crate::proxy::agent("jar-version-files", &url, |builder| builder.redirects(0))?
         .post(&url)
         .set("User-Agent", AGENT)
         .set("Content-Type", "application/json")
         .send_string(&serde_json::json!({"hashes": hashes, "algorithm": "sha512"}).to_string())
-        .map_err(|e| format!("{url}: {e}"))?;
+        .or_any_status()
+        .map_err(|e| format!("{url}: {}", e.kind()))?;
+    let status = response.status();
+    if status >= 300 {
+        return Err(format!("{url}: HTTP {status}"));
+    }
     let text = response.into_string().map_err(|e| format!("{url}: {e}"))?;
     jar_file_urls(serde_json::from_str(&text).map_err(|e| format!("{url}: {e}"))?)
 }

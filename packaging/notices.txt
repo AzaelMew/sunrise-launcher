@@ -2,6 +2,7 @@
 # route (AppImage, macOS app, ZIP and tar.gz archives, Windows Setup and self-update).
 # <file name in the LICENSES folder> <source in the repository>
 # src/notices.rs embeds the same files for Setup; its test keeps the two in step.
+PolyForm-Sunrise.txt assets/LICENSE
 MIT-Horizon.txt LICENSES/MIT-Horizon.txt
 OFL-Figtree.txt assets/fonts/OFL-Figtree.txt
 OFL-Geist.txt crates/theme/fonts/OFL-Geist.txt

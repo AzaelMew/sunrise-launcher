@@ -235,7 +235,7 @@ impl Source for Modrinth {
 }
 
 fn get(url: &str) -> Result<Value, String> {
-    let response = super::download::agent(url)
+    let response = super::download::agent(url)?
         .get(url)
         .call()
         .map_err(|e| match e {

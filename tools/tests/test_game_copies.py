@@ -48,44 +48,48 @@ SAME_BYTES = (
 # (the game's source, the launcher's copy, the edits that turn one into the other): compared as code, ignoring
 # layout, module docs and `use` items, which the launcher's edition formats and orders its own way.
 SAME_CODE = (
+    ("crates/sunrise-proxy/Cargo.toml", "crates/proxy/Cargo.toml", (
+        ('name = "sunrise-proxy"', 'name = "sunrise-launcher-proxy"'),
+        ("edition.workspace = true", 'edition = "2024"'),
+        ("license.workspace = true", 'license = "PolyForm-Shield-1.0.0"'),
+        ("rust-version.workspace = true", 'rust-version = "1.95"'),
+        ("[dependencies]", "publish = false\n[dependencies]"),
+        ("[lints]\nworkspace = true", ""),
+    )),
+    ("crates/sunrise-proxy/src/lib.rs", "crates/proxy/src/lib.rs", (
+        ("type Agents = HashMap<AgentKey, ureq::Agent>;",
+         "mod launcher;\ntype Agents = HashMap<AgentKey, ureq::Agent>;"),
+        ("/// A kept agent for `url`, using the environment unless the destination is reached directly.",
+         "/// A kept agent for `url`, using the launcher setting or the environment unless reached directly."),
+        ("url: &str, configure: impl FnOnce(ureq::AgentBuilder)",
+         "url: &str, setting: Option<&str>, configure: impl FnOnce(ureq::AgentBuilder)"),
+        ("agent_for(slot, Url::parse(url).ok().as_ref(), configure)",
+         "agent_for(slot, Url::parse(url).ok().as_ref(), setting, configure)"),
+        ("url: Option<&Url>, configure: impl FnOnce(ureq::AgentBuilder)",
+         "url: Option<&Url>, setting: Option<&str>, configure: impl FnOnce(ureq::AgentBuilder)"),
+        ('''let selected = if url.is_some_and(|url| bypasses_proxy(url, &no_proxy())) {
+        None
+    } else {
+        let scheme = url.map_or("https", Url::scheme);
+        env_proxy(scheme, |name| std::env::var_os(name))?
+    };''', "let selected = select(url, setting, &no_proxy(), |name| std::env::var_os(name))?;"),
+        ("headers: &[(&str, &str)], check: Option<&UrlCheck<'_>>",
+         "headers: &[(&str, &str)], setting: Option<&str>, check: Option<&UrlCheck<'_>>"),
+        ('agent_for("get-no-redirect", Some(current), |builder|',
+         'agent_for("get-no-redirect", Some(current), setting, |builder|'),
+        ("selected: Option<(&'static str, String)>", "selected: Selected"),
+        ("Result<Option<(&'static str, String)>, ProxyError>", "Result<Selected, ProxyError>"),
+        ('get(&format!("{origin}/start"), &headers, None)',
+         'get(&format!("{origin}/start"), &headers, None, None)'),
+        ('get(&format!("{origin}/secure"), &headers, None)',
+         'get(&format!("{origin}/secure"), &headers, None, None)'),
+        ('get(&format!("{origin}/status"), &headers, None)',
+         'get(&format!("{origin}/status"), &headers, None, None)'),
+    )),
     ("crates/sunrise-port-pack/src/net.rs", "src/net.rs", (
-        ("pub(crate) fn get_from_hosts", "pub fn get_from_hosts"),
-        # Nightly sources reuse the same proxy-aware, no-redirect request for their own fetches.
-        ("""let agent = keep(
-            "port-pack-no-redirect",
-            spec_for(address).as_deref(),
-            |proxy| {
-                let builder = ureq::AgentBuilder::new().redirects(0);
-                match proxy {
-                    Some(proxy) => builder.proxy(proxy).build(),
-                    None => builder.build(),
-                }
-            },
-        );
-        match agent
-            .get(address)
-            .set("User-Agent", crate::modrinth::AGENT)
-            .call()""", "match anonymous_get_no_redirect(address).call()"),
-        ("/// GET from allowed HTTPS hosts, validating every redirect before contacting it.",
-         """/// Anonymous GET with the configured proxy, leaving redirects and status to the caller.
-pub(crate) fn anonymous_get_no_redirect(address: &str) -> ureq::Request {
-    let agent = keep(
-        "port-pack-no-redirect",
-        spec_for(address).as_deref(),
-        |proxy| {
-            let builder = ureq::AgentBuilder::new().redirects(0);
-            match proxy {
-                Some(proxy) => builder.proxy(proxy).build(),
-                None => builder.build(),
-            }
-        },
-    );
-    agent.get(address).set("User-Agent", crate::modrinth::AGENT)
-}
-
-/// GET from allowed HTTPS hosts, validating every redirect before contacting it."""),
-        ('.set("User-Agent", crate::modrinth::AGENT)',
-         '.set("User-Agent", concat!("sunrise-launcher/", env!("CARGO_PKG_VERSION")))'),
+        ("sunrise_proxy::get(", "sunrise_launcher_proxy::get("),
+        ('&[("User-Agent", crate::modrinth::AGENT)],',
+         '&[("User-Agent", USER_AGENT)], crate::proxy::setting().as_deref(),'),
     )),
     ("crates/sunrise-port-pack/src/zip_intake.rs", "src/zip_intake.rs", (
         ("""if let Ok(directory) = zip64
@@ -207,6 +211,8 @@ SAME_FUNCTIONS = (
 SAME_ITEMS = (
     ("crates/sunrise-mod-package/src/sdk.rs", "crates/sdk/src/lib.rs", (
         ('#[cfg(feature = "prebuilt")]', ""),
+        # The standalone launcher SDK always has the xz unpacker enabled.
+        ('#[cfg(any(feature = "prebuilt", feature = "index"))]', ""),
         ("crate::manifest::revision", "revision"),
         # The direct reader is the launcher rather than cargo sunrise-mod.
         (r""", so it is older than this SDK. Update it (`cargo sunrise-mod`: run the install block of the book's \"Install the mod tool\" page), or use the tool in this SDK's own release""",
@@ -218,7 +224,7 @@ SAME_ITEMS = (
         "pub struct Route", "pub enum Refusal", "impl fmt::Display for Refusal", "impl std::error::Error for Refusal",
         "struct Written", "struct WrittenAsset", "pub const DICTIONARY_LIMIT", "pub const EXTENSION_LIMIT",
         "pub const LOCK_SUFFIX", "pub const PARTIAL_SUFFIX", "const PAX_KEYS", "struct Partial", "impl Partial",
-        "impl Drop for Partial", "pub fn read",
+        "impl Drop for Partial", "pub fn read", "pub fn read_for_fit", "fn read_with_format",
     )),
     ("crates/sunrise-native-build/src/lib.rs", "src/native_mods/bundle.rs", (
         ("sunrise_mod_package::", "sunrise_launcher_smod::"),

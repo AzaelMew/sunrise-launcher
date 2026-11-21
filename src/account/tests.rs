@@ -2084,7 +2084,9 @@ ok",
         dead(closed),
         SocketAddr::from(([127, 0, 0, 1], port)),
     ];
-    let agent = builder().resolver(Interleaved(Fixed(addrs))).build();
+    let agent = sign_in_agent(ureq::AgentBuilder::new())
+        .resolver(Interleaved(Fixed(addrs)))
+        .build();
     let body = agent
         .get("http://sunrise.test/")
         .call()

@@ -97,11 +97,10 @@ pub fn profile_face(
     let face = profile_face_with(account, cache, resources, &|url| {
         use std::io::Read;
         failed.set(true);
-        let response = crate::proxy::agent(
-            ureq::AgentBuilder::new().timeout(std::time::Duration::from_secs(10)),
-            url,
-        )
-        .build()
+        let response = crate::proxy::agent("profile-head", url, |builder| {
+            builder.timeout(std::time::Duration::from_secs(10))
+        })
+        .ok()?
         .get(url)
         .call()
         .ok()?;
