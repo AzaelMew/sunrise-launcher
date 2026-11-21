@@ -692,10 +692,10 @@ pub fn compare_versions(a: &str, b: &str) -> std::cmp::Ordering {
 /// Every published release of the repository, both kinds, as GitHub's JSON (kept on disk with its
 /// ETag, and read through a configured mirror past GitHub's rate limit: [`crate::github`]).
 fn release_list() -> Result<serde_json::Value, String> {
-    Ok(crate::github::json_optional(&format!(
-        "https://api.github.com/repos/{GAME_REPO}/releases?per_page=100"
-    ))?
-    .unwrap_or_else(|| serde_json::json!([])))
+    Ok(
+        crate::github::release_list(GAME_REPO, crate::github::CachePolicy::PreferCache)?
+            .unwrap_or_else(|| serde_json::json!([])),
+    )
 }
 
 /// The game's releases in `list` whose tag passes `keep`, with the named asset from [`GAME_REPO`].
@@ -829,10 +829,7 @@ pub fn refresh_launcher_update() -> Result<Option<Release>, String> {
 
 /// This launcher's release feed, or why it couldn't be read.
 fn launcher_releases(policy: crate::github::CachePolicy) -> Result<Vec<Release>, String> {
-    launcher_releases_from(crate::github::json_optional_with_policy(
-        &format!("https://api.github.com/repos/{LAUNCHER_REPO}/releases?per_page=100"),
-        policy,
-    ))
+    launcher_releases_from(crate::github::release_list(LAUNCHER_REPO, policy))
 }
 
 /// The releases in the launcher's release list: only a list counts as checked (a repository with no release answers an empty one), never a 404 or anything else.
