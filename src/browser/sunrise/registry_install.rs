@@ -810,8 +810,9 @@ impl SeenPackage {
             return false;
         }
         match hold.source() {
-            managed_play::HeldSource::Registry { version, .. } => {
-                self.owned && version == &self.package.manifest.version
+            managed_play::HeldSource::Registry { version, .. }
+            | managed_play::HeldSource::Local { version } => {
+                version == &self.package.manifest.version
             }
             managed_play::HeldSource::Github {
                 owner,
@@ -824,7 +825,6 @@ impl SeenPackage {
                     && &row.commit == commit
                     && &row.version == version
             }),
-            managed_play::HeldSource::Local { .. } => false,
         }
     }
 

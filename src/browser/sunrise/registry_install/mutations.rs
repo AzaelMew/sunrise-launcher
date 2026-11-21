@@ -90,9 +90,16 @@ pub struct ChangeImpact {
 pub(super) enum Change {
     Update(Vec<String>),
     Remove {
-        removed: Vec<String>,
+        removed: Vec<ReviewedArchive>,
         disabled: Vec<String>,
     },
+}
+
+#[derive(Debug)]
+pub(super) struct ReviewedArchive {
+    name: String,
+    file: String,
+    digest: String,
 }
 
 impl ChangeImpact {
@@ -130,7 +137,16 @@ impl ChangeImpact {
                 lines.push(trf("Update: {mods}.", &[("mods", &mods.join(", "))]));
             }
             Change::Remove { removed, disabled } => {
-                lines.push(trf("Remove: {mods}.", &[("mods", &removed.join(", "))]));
+                let names = removed
+                    .iter()
+                    .map(|archive| archive.name.as_str())
+                    .collect::<Vec<_>>();
+                lines.push(trf("Remove: {mods}.", &[("mods", &names.join(", "))]));
+                lines.extend(
+                    removed
+                        .iter()
+                        .map(|archive| format!("{}\nSHA-256: {}", archive.file, archive.digest)),
+                );
                 if !disabled.is_empty() {
                     lines.push(trf(
                         "These mods need the ones you are removing. They will be turned off, but their files will stay installed: {mods}.",
@@ -142,15 +158,18 @@ impl ChangeImpact {
         match self.affected().count() {
             0 => (),
             1 => lines.push(tr(
-                "Blocks and items from the affected mods will be lost when you open 1 saved world without their definitions.",
+                "You may lose blocks and items from the affected mods when you open 1 saved world without their definitions.",
             ).into()),
             n => lines.push(trf(
-                "Blocks and items from the affected mods will be lost when you open {count} saved worlds without their definitions.",
+                "You may lose blocks and items from the affected mods when you open {count} saved worlds without their definitions.",
                 &[("count", &n.to_string())],
             )),
         }
-        if self.affected().any(|world| !world.known) {
-            lines.push(tr("Sunrise couldn't check which mods some of these worlds use.").into());
+        if self.affected().next().is_some() {
+            lines.push(
+                tr("Sunrise can't tell which affected blocks and items are still in those worlds.")
+                    .into(),
+            );
         }
         lines.join("\n\n")
     }
@@ -203,7 +222,8 @@ pub fn check_activation(home: &Path, activate: &[&str]) -> Result<(), String> {
     Ok(())
 }
 
-/// Remove exact owned archive(s) and disable, rather than delete, the required dependent closure.
+/// Explicit Remove approves the displayed path and digest, independent of archive origin.
+/// The required dependent closure is turned off, not deleted.
 pub fn remove_mods(
     instance: &Instance,
     identity: Identity,
@@ -232,32 +252,54 @@ pub fn remove_mods(
     let enabled = enabled(home)?;
     let mut changed_rows = false;
     let mut retired = BTreeSet::new();
+    let mut archives = Vec::new();
+    let live_rows = Document::read(&instance.home)?;
     for id in &ids {
-        let item = present.get(id).ok_or_else(|| {
+        let unverified = || {
             trf(
                 "Couldn't verify the installed file for {mod}. Nothing was removed.",
                 &[("mod", id)],
             )
-        })?;
+        };
+        let item = present.get(id).ok_or_else(unverified)?;
+        let digest = item.digest.as_ref().ok_or_else(unverified)?;
+        let relative = item
+            .package
+            .path
+            .strip_prefix(home)
+            .map_err(|_| unverified())?;
+        let file = relative
+            .to_str()
+            .ok_or_else(unverified)?
+            .replace(std::path::MAIN_SEPARATOR, "/");
+        // The live home retains filesystem aliases which a private copy can't reproduce.
+        live_rows
+            .rows
+            .check_other_claims(&instance.home, id, &file)
+            .map_err(|error| error.render(trf))?;
         if let Some(hold) = edit.held(id) {
             if !item.matches_hold(home, edit.base(), hold) {
                 return Err(held_change_refusal(id));
             }
             retired.insert(id.clone());
         }
-        if item.owned {
+        if rows
+            .row(id)?
+            .is_some_and(|row| row["kind"] == "mod" && row["file"].as_str() == Some(file.as_str()))
+        {
             rows.remove(id)?;
             changed_rows = true;
-        } else if item.github_origin(home).is_some() {
+        }
+        if item.github_origin(home).is_some() {
             let origin = item.package.path.with_extension("origin.json");
             fs::remove_file(&origin).map_err(|e| at(&origin, e))?;
-        } else {
-            return Err(InstallError::Refused(trf(
-                "{mod} isn't an installed registry or GitHub mod. Nothing was removed.",
-                &[("mod", &item.package.manifest.name)],
-            )));
         }
         fs::remove_file(&item.package.path).map_err(|e| at(&item.package.path, e))?;
+        archives.push(ReviewedArchive {
+            name: format!("{} ({id})", item.package.manifest.name),
+            file,
+            digest: digest.clone(),
+        });
     }
     if changed_rows {
         rows.write(home)?;
@@ -293,7 +335,10 @@ pub fn remove_mods(
         return Err(InstallError::Refused(conflict.reason));
     }
     let named = |id: &String| format!("{} ({id})", present[id].package.manifest.name);
-    let removed = ids.iter().map(named).collect::<Vec<_>>();
+    let removed = archives
+        .iter()
+        .map(|archive| archive.name.clone())
+        .collect::<Vec<_>>();
     let suspect = worlds::unproved_mod_effects(
         old.path(),
         edit.active_basis(),
@@ -304,7 +349,7 @@ pub fn remove_mods(
     let impact = ChangeImpact::read(
         &instance.home,
         Change::Remove {
-            removed: removed.clone(),
+            removed: archives,
             disabled: disabled.iter().map(named).collect(),
         },
         &suspect,

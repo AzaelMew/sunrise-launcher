@@ -112,60 +112,68 @@ fn live_state(fixture: &Fixture) -> [Vec<u8>; 4] {
 }
 
 #[test]
-fn registry_update_and_remove_refuse_foreign_bytes_at_a_recorded_registry_path() {
+fn a_self_consistent_local_index_cannot_update_but_explicit_remove_can_remove_its_bytes() {
     let fixture = Fixture::new();
     let (mut registry, _) = fixture.content_index();
     install_root(&fixture, &registry);
-    release(&fixture, &mut registry, "root_mod", "1.1.0", &[]);
-    fixture.publish_registry(&registry);
-    let foreign = Package::write_files(
-        "id='root_mod'\nname='Local Lanterns'\nversion='1.0.0'\napi='0.2'\nside='both'\ncapabilities=['registries']\n[dependencies]\nrequired_mod='^1'\n",
-        &[("data/root_mod/sunrise/block/local_lamp.json", b"{}")],
-    ).unwrap();
-    fs::write(
-        fixture.home.join(mod_list::DIR).join("root_mod.smod"),
-        foreign,
-    )
-    .unwrap();
-    let old = live_state(&fixture);
-    for args in [
-        ["mods", "update", "root_mod", "--confirm-world-loss"],
-        ["mods", "remove", "root_mod", "--confirm-world-loss"],
-    ] {
-        let (ok, text) = run(&fixture, &args);
-        assert!(!ok && text.contains("registry"), "{args:?}: {text}");
-        assert_eq!(live_state(&fixture), old);
-    }
-}
-
-#[test]
-fn updating_a_dependency_warns_for_its_world_but_not_an_independent_mods_world() {
-    let fixture = Fixture::new();
-    let (mut registry, _) = fixture.content_index();
-    release(
+    let foreign = release(
         &fixture,
         &mut registry,
-        "required_mod",
+        "root_mod",
         "1.0.0",
-        &[("data/required_mod/sunrise/block/lamp.json", b"{}")],
+        &[("data/root_mod/sunrise/block/local_lamp.json", b"{}")],
     );
-    install_root(&fixture, &registry);
+    release(&fixture, &mut registry, "root_mod", "1.1.0", &[]);
+    fixture.publish_registry(&registry);
+    let archive = fixture.home.join(mod_list::DIR).join("root_mod.smod");
+    fs::write(&archive, &foreign).unwrap();
+    let digest = index::sha256(&foreign);
+    let rows = fixture.home.join(index::browser_state::MANIFEST);
+    let mut forged: serde_json::Value = serde_json::from_slice(&fs::read(&rows).unwrap()).unwrap();
+    let row = forged["entries"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|row| row["project"] == "root_mod")
+        .unwrap();
+    row["checksum"] = json!(format!("SHA-256:{digest}"));
+    fs::write(rows, serde_json::to_vec(&forged).unwrap()).unwrap();
+    let old = live_state(&fixture);
     let (ok, text) = run(
         &fixture,
-        &["mods", "install", "extra_mod", "--source", "sunrise"],
+        &["mods", "update", "root_mod", "--confirm-world-loss"],
     );
-    assert!(ok, "{text}");
-    world(&fixture.home, "Uses the dependent", &["root_mod"]);
-    world(&fixture.home, "Uses an unrelated mod", &["extra_mod"]);
-    release(&fixture, &mut registry, "required_mod", "1.1.0", &[]);
-    fixture.publish_registry(&registry);
-    let old = live_state(&fixture);
-    let (ok, text) = run(&fixture, &["mods", "update", "required_mod"]);
+    assert!(!ok && text.contains("registry"), "{text}");
+    assert_eq!(live_state(&fixture), old);
+
+    let mut mcp = Running(
+        fixture
+            .registry_client(&["mcp"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
+    let mut input = mcp.0.stdin.take().unwrap();
+    let mut output = BufReader::new(mcp.0.stdout.take().unwrap());
+    mcp_request(&mut input, &mut output, 1, "initialize", json!({}));
+    let denied = mcp_request(
+        &mut input,
+        &mut output,
+        2,
+        "tools/call",
+        json!({"name":"mods_update", "arguments":{"project":"root_mod","confirm_world_loss":true}}),
+    );
+    assert_eq!(denied["isError"], true, "{denied}");
+    assert!(denied.to_string().contains("registry"), "{denied}");
+    assert_eq!(live_state(&fixture), old);
+
+    let (ok, text) = run(&fixture, &["mods", "remove", "root_mod"]);
     assert!(
-        !ok && text.contains("1 saved world") && text.contains("--confirm-world-loss"),
+        ok && text.contains("sunrise-mods/root_mod.smod") && text.contains(&digest),
         "{text}"
     );
-    assert_eq!(live_state(&fixture), old);
+    assert!(!archive.exists());
 }
 
 #[test]
@@ -175,8 +183,6 @@ fn namespace_only_and_malformed_worlds_cannot_bypass_the_decision() {
     let defs = [("data/root_mod/sunrise/block/amber.json", b"{}".as_slice())];
     release(&fixture, &mut registry, "root_mod", "1.0.0", &defs);
     install_root(&fixture, &registry);
-    release(&fixture, &mut registry, "root_mod", "1.1.0", &[]);
-    fixture.publish_registry(&registry);
     let old = live_state(&fixture);
     for evidence in [
         Tag::compound([(
@@ -192,86 +198,88 @@ fn namespace_only_and_malformed_worlds_cannot_bypass_the_decision() {
         )]),
     ] {
         world_with_evidence(&fixture.home, "Same world", evidence);
-        for action in ["remove", "update"] {
-            let (ok, text) = run(&fixture, &["mods", action, "root_mod"]);
-            assert!(
-                !ok && text.contains("1 saved world") && text.contains("--confirm-world-loss"),
-                "{action}: {text}"
-            );
-            assert_eq!(live_state(&fixture), old);
-        }
+        let (ok, text) = run(&fixture, &["mods", "remove", "root_mod"]);
+        assert!(
+            !ok && text.contains("1 saved world") && text.contains("--confirm-world-loss"),
+            "{text}"
+        );
+        assert_eq!(live_state(&fixture), old);
     }
 }
 
 #[test]
-fn changed_world_evidence_at_cutoff_keeps_live_update_and_remove_unchanged() {
-    for (action, replace) in [
-        ("update", false),
-        ("update", true),
-        ("remove", false),
-        ("remove", true),
-    ] {
+fn explicit_remove_refuses_changed_worlds_or_archive_bytes_at_cutoff() {
+    for mode in ["add-world", "replace-world", "replace-archive"] {
         let fixture = Fixture::new();
-        let (mut registry, _) = fixture.content_index();
-        let defs: &[(&str, &[u8])] = &[("data/root_mod/sunrise/item/amber.json", b"{}")];
-        release(&fixture, &mut registry, "root_mod", "1.0.0", defs);
+        let (registry, archives) = fixture.content_index();
         install_root(&fixture, &registry);
-        release(&fixture, &mut registry, "root_mod", "1.1.0", &[]);
-        fixture.publish_registry(&registry);
         world(&fixture.home, "First world", &["root_mod"]);
         let old = live_state(&fixture);
         let required = fixture.home.join(mod_list::DIR).join("required_mod.smod");
-        let required_bytes = fs::read(&required).unwrap();
         let mut worker = Command::new(std::env::current_exe().unwrap());
         for (key, value) in fixture.registry_client(&[]).get_envs() {
             worker.env(key, value.unwrap());
         }
         let output = worker
-            .args(["--exact", "install::mutations::world_cutoff_worker"])
-            .env("FIXTURE_WORLD_CUTOFF", action)
-            .env("FIXTURE_WORLD_REPLACE", if replace { "1" } else { "0" })
+            .args(["--exact", "install::mutations::remove_cutoff_worker"])
+            .env("FIXTURE_REMOVE_CUTOFF", mode)
             .output()
             .unwrap();
-        assert!(
-            output.status.success(),
-            "{action} replace={replace}: {output:?}"
-        );
-        if replace {
-            assert_eq!(
+        assert!(output.status.success(), "{mode}: {output:?}");
+        match mode {
+            "replace-world" => assert_eq!(
                 fs::read(fixture.home.join("saves/First world/level.dat")).unwrap(),
-                fs::read(fixture.home.join("previous-world/level.dat")).unwrap()
-            );
-        } else {
-            assert!(fixture.home.join("saves/New world/level.dat").is_file());
+                fs::read(fixture.home.join("previous-world/level.dat")).unwrap(),
+            ),
+            "add-world" => assert!(fixture.home.join("saves/New world/level.dat").is_file()),
+            _ => (),
         }
         assert_eq!(live_state(&fixture), old);
-        assert_eq!(fs::read(required).unwrap(), required_bytes);
+        let expected = if mode == "replace-archive" {
+            replacement()
+        } else {
+            archives["required_mod"].clone()
+        };
+        assert_eq!(fs::read(required).unwrap(), expected);
     }
 }
 
+fn replacement() -> Vec<u8> {
+    Package::write_files(
+        "id='required_mod'\nname='A different file'\nversion='1.0.0'\napi='0.2'\nside='both'\ncapabilities=['registries']\n",
+        &[],
+    ).unwrap()
+}
+
 #[test]
-fn world_cutoff_worker() {
-    let Ok(action) = std::env::var("FIXTURE_WORLD_CUTOFF") else {
+fn remove_cutoff_worker() {
+    let Ok(mode) = std::env::var("FIXTURE_REMOVE_CUTOFF") else {
         return;
     };
     use sunrise_launcher::{browser::sunrise::*, instances, managed_play};
     let instance = instances::selection().unwrap();
     let identity = install_target(&instance).unwrap();
+    let archive = instance.home.join(mod_list::DIR).join("required_mod.smod");
+    let digest = index::sha256_file(&archive).unwrap();
     let decide = |impact: &ChangeImpact| {
         let detail = impact.detail();
         assert!(detail.contains("1 saved world"), "{detail}");
-        if action == "remove" {
-            assert!(detail.contains("Lanterns (root_mod)"), "{detail}");
-        }
-        if std::env::var("FIXTURE_WORLD_REPLACE").as_deref() == Ok("1") {
-            fs::rename(
-                instance.home.join("saves/First world"),
-                instance.home.join("previous-world"),
-            )
-            .unwrap();
-            world(&instance.home, "First world", &["root_mod"]);
-        } else {
-            world(&instance.home, "New world", &["root_mod"]);
+        assert!(detail.contains("Lanterns (root_mod)"), "{detail}");
+        assert!(
+            detail.contains("sunrise-mods/required_mod.smod") && detail.contains(&digest),
+            "{detail}"
+        );
+        match mode.as_str() {
+            "replace-archive" => fs::write(&archive, replacement()).unwrap(),
+            "replace-world" => {
+                fs::rename(
+                    instance.home.join("saves/First world"),
+                    instance.home.join("previous-world"),
+                )
+                .unwrap();
+                world(&instance.home, "First world", &["root_mod"]);
+            }
+            _ => world(&instance.home, "New world", &["root_mod"]),
         }
         true
     };
@@ -281,34 +289,21 @@ fn world_cutoff_worker() {
         registry_crates: None,
         continue_after_failure: &|_| panic!("content-only"),
     };
-    let choose = || managed_play::headless_first(&instance, None);
-    let error = if action == "remove" {
-        remove_mods(
-            &instance,
-            identity,
-            &["required_mod".into()],
-            choose,
-            hooks,
-            &decide,
-        )
-        .unwrap_err()
+    let error = remove_mods(
+        &instance,
+        identity,
+        &["required_mod".into()],
+        || managed_play::headless_first(&instance, None),
+        hooks,
+        &decide,
+    )
+    .unwrap_err();
+    let expected = if mode == "replace-archive" {
+        "Sunrise couldn't verify the profile's saved game build."
     } else {
-        update_registry(
-            &instance,
-            identity,
-            UpdateRequest::Strict(vec!["root_mod".into()]),
-            choose,
-            hooks,
-            &decide,
-        )
-        .unwrap_err()
+        "The affected worlds changed after review. Nothing was changed; try again."
     };
-    assert!(
-        error
-            .to_string()
-            .contains("The affected worlds changed after review. Nothing was changed; try again."),
-        "{error}"
-    );
+    assert!(error.to_string().contains(expected), "{error}");
 }
 
 #[test]
@@ -332,96 +327,6 @@ fn remove_names_dependents_even_without_worlds_and_requires_compatible_activatio
     let (ok, text) = run(&fixture, &["mods", "enable", "root_mod"]);
     assert!(ok && !text.contains("saved world"), "{text}");
     assert!(selection::is_enabled(&fixture.home, "root_mod"));
-}
-
-#[test]
-fn update_all_asks_once_only_for_destructive_or_unproved_definitions_and_preserves_cancel() {
-    let fixture = Fixture::new();
-    let (mut registry, _) = fixture.content_index();
-    let defs: &[(&str, &[u8])] = &[(
-        "data/root_mod/sunrise/block/amber.json",
-        br#"{"properties":{"lit":[true,false]}}"#,
-    )];
-    let first = release(&fixture, &mut registry, "root_mod", "1.0.0", defs);
-    let second_def: &[(&str, &[u8])] = &[("data/required_mod/sunrise/item/glowstone.json", b"{}")];
-    release(&fixture, &mut registry, "required_mod", "1.0.0", second_def);
-    install_root(&fixture, &registry);
-    let path = fixture.home.join(mod_list::DIR).join("root_mod.smod");
-    assert_eq!(fs::read(&path).unwrap(), first);
-    world(&fixture.home, "Uses Lantern", &["root_mod"]);
-    world(&fixture.home, "Unrelated", &["something_else"]);
-    let retained = release(&fixture, &mut registry, "root_mod", "1.1.0", defs);
-    fixture.publish_registry(&registry);
-    let (ok, text) = run(&fixture, &["mods", "update", "root_mod"]);
-    assert!(ok, "{text}");
-    assert!(!text.contains("saved world"), "{text}");
-    assert_eq!(fs::read(&path).unwrap(), retained);
-
-    let lost = release(
-        &fixture,
-        &mut registry,
-        "root_mod",
-        "1.2.0",
-        &[(defs[0].0, b"{}")],
-    );
-    let required = release(&fixture, &mut registry, "required_mod", "1.1.0", &[]);
-    fixture.publish_registry(&registry);
-    let old = live_state(&fixture);
-    let (ok, text) = run(&fixture, &["mods", "update", "root_mod"]);
-    assert!(
-        !ok && text.contains("1 saved world") && text.contains("--confirm-world-loss"),
-        "{text}"
-    );
-    assert_eq!(live_state(&fixture), old);
-
-    world(&fixture.home, "Uses Both", &["required_mod", "root_mod"]);
-    let unreadable = fixture.home.join("saves/Unreadable");
-    fs::create_dir(&unreadable).unwrap();
-    fs::write(unreadable.join("level.dat"), b"invalid data").unwrap();
-    let (ok, text) = run(&fixture, &["mods", "update"]);
-    assert!(
-        !ok && text.contains("3 saved worlds") && text.contains("couldn't check"),
-        "{text}"
-    );
-    assert_eq!(
-        text.matches("Blocks and items from the affected mods will be lost when you open 3 saved worlds without their definitions.").count(),
-        1,
-        "{text}"
-    );
-    assert_eq!(live_state(&fixture), old);
-
-    let mut mcp = Running(
-        fixture
-            .registry_client(&["mcp"])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .spawn()
-            .unwrap(),
-    );
-    let mut input = mcp.0.stdin.take().unwrap();
-    let mut output = BufReader::new(mcp.0.stdout.take().unwrap());
-    let mut rpc = |id, method, params| mcp_request(&mut input, &mut output, id, method, params);
-    rpc(1, "initialize", json!({}));
-    let denied = rpc(
-        2,
-        "tools/call",
-        json!({"name":"mods_update", "arguments":{}}),
-    );
-    assert_eq!(denied["isError"], true, "{denied}");
-    assert!(denied.to_string().contains("3 saved worlds"), "{denied}");
-    assert_eq!(live_state(&fixture), old);
-    let accepted = rpc(
-        3,
-        "tools/call",
-        json!({"name":"mods_update", "arguments":{"confirm_world_loss":true}}),
-    );
-    assert_ne!(accepted["isError"], true, "{accepted}");
-    assert_eq!(fs::read(&path).unwrap(), lost);
-    assert_eq!(
-        fs::read(fixture.home.join(mod_list::DIR).join("required_mod.smod")).unwrap(),
-        required
-    );
-    assert_ne!(fixture.pointer(), old[0]);
 }
 
 fn local(fixture: &Fixture, id: &str, required: &str, native: bool) -> (PathBuf, Vec<u8>) {

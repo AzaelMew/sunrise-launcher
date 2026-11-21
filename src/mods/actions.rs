@@ -187,7 +187,7 @@ impl Launcher {
         let chosen = self
             .rows()
             .into_iter()
-            .filter(|row| row.local.is_none() && self.ui.mods.selection.contains(&row.id))
+            .filter(|row| row.selectable_archive() && self.ui.mods.selection.contains(&row.id))
             .map(|row| row.id)
             .collect();
         self.submit_registry_change(Kind::Remove, "remove", chosen);

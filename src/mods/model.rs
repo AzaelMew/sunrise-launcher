@@ -418,7 +418,7 @@ pub(super) struct Row {
     pub(super) dependency: bool,
     /// The player chose this version (`sunrise::chosen`): a batch leaves it alone.
     pub(super) pinned: bool,
-    /// Not installed by the registry; no registry update or removal.
+    /// Not installed by the registry; no registry update.
     pub(super) local: Option<Local>,
     pub(super) icon: Option<String>,
     pub(super) entry: Option<Entry>,
@@ -716,6 +716,10 @@ pub(super) fn cells(
 impl Row {
     pub(super) fn native(&self) -> bool {
         self.make == Some(Make::Native)
+    }
+
+    pub(super) fn selectable_archive(&self) -> bool {
+        self.local.as_ref().is_none_or(|local| !local.unreadable)
     }
 }
 

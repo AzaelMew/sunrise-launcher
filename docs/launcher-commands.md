@@ -851,11 +851,11 @@ MCP: none: the player's switch.
 
 ## `sunrise-launcher mods remove`
 
-Remove a mod or pack the browser installed.
+Remove an installed mod archive or a pack the browser installed. For a mod archive, the review names its exact file and SHA-256 before removal, and any mods that need it are turned off rather than deleted.
 
     sunrise-launcher mods remove <PROJECT>
 
-- `PROJECT`
+- `PROJECT`: An installed mod ID or a project the browser installed
 - `--instance`: The profile (default: the selected one)
 - `--confirm-world-loss`: Allow removal even if it could remove content from a saved world
 

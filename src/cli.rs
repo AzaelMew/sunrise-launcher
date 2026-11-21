@@ -525,7 +525,7 @@ enum ModsCmd {
         #[arg(long)]
         trust_native_code: bool,
     },
-    /// Remove a mod or pack the browser installed
+    /// Remove an installed mod archive or a pack the browser installed
     Remove {
         project: String,
         /// The profile (default: the selected one)
@@ -2434,6 +2434,11 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                 }
                 return Ok(());
             }
+            if p.kind == Kind::Mod {
+                return Err(
+                    tr("Only Sunrise registry mods can be installed by the browser.").into(),
+                );
+            }
             let done = installed::install(&*source, &p, everything, &home, &game, &line)?;
             if as_json {
                 json(done.iter().map(entry_json).collect());
@@ -2470,6 +2475,15 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                     && e.kind == Kind::Mod
             };
             if !check {
+                if project.is_some()
+                    && chosen
+                        .iter()
+                        .all(|entry| entry.kind == Kind::Mod && !registry(entry))
+                {
+                    return Err(
+                        tr("Only Sunrise registry mods can be updated by this command.").into(),
+                    );
+                }
                 let ids = chosen
                     .iter()
                     .copied()
@@ -2505,7 +2519,7 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                     }
                 }
             }
-            for e in chosen.into_iter().filter(|e| check || !registry(e)) {
+            for e in chosen.into_iter().filter(|e| check || e.kind != Kind::Mod) {
                 let source = sunrise_launcher::browser::source(e.source);
                 let newer = installed::update_for(&*source, e, &game)?;
                 match newer {
@@ -2572,12 +2586,15 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
         } => {
             let identity = sunrise_launcher::profile_txn::Identity::of(&home);
             let list = installed::Installed::read(&home)?;
-            let registry = list
-                .lookup(&project)
-                .filter(|row| row.kind == Kind::Mod && row.source == SourceId::Sunrise);
-            let github = github_mods::origin(&home, &project).is_some();
-            if instance.kind != instances::Kind::Pack && (registry.is_some() || github) {
-                let id = registry.map_or(project, |row| row.project.clone());
+            let installed = list.lookup(&project);
+            if installed.is_some_and(|row| row.kind != Kind::Mod) {
+                let entry = installed::remove(&home, &project)?;
+                println!("Removed {} ({}).", entry.title, entry.file);
+            } else {
+                if instance.kind == instances::Kind::Pack {
+                    return Err(tr("This pack controls which mods it installs.").into());
+                }
+                let id = installed.map_or(project, |row| row.project.clone());
                 let removed = sunrise::remove_mods(
                     &instance,
                     identity?,
@@ -2597,12 +2614,6 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                         println!("{}", trf("Removed {mod}.", &[("mod", &name)]));
                     }
                 }
-            } else if github {
-                github_mods::remove(&home, &project)?;
-                println!("Removed {project} (installed from GitHub).");
-            } else {
-                let e = installed::remove(&home, &project)?;
-                println!("Removed {} ({}).", e.title, e.file);
             }
         }
         ModsCmd::Enable { project, .. } | ModsCmd::Disable { project, .. } => {

@@ -127,13 +127,13 @@ impl Launcher {
         let shown_ids: Rc<Vec<String>> = Rc::new(
             visible
                 .iter()
-                .filter(|&&i| rows[i].local.is_none())
+                .filter(|&&i| rows[i].selectable_archive())
                 .map(|&i| rows[i].id.clone())
                 .collect(),
         );
         let selected: Vec<&Row> = rows
             .iter()
-            .filter(|r| r.local.is_none() && self.ui.mods.selection.contains(&r.id))
+            .filter(|r| r.selectable_archive() && self.ui.mods.selection.contains(&r.id))
             .collect();
 
         // ---- what to show: the same row of chips Discover filters with
@@ -191,6 +191,7 @@ impl Launcher {
             .count();
         let all_on = selected_here > 0 && selected_here == shown_ids.len();
         let n_sel = selected.len();
+        let registry_selected = selected.iter().filter(|row| row.local.is_none()).count();
         let busy = self.mods_busy();
         let with_update = selected.iter().filter(|r| model::bulk_updatable(r)).count();
         let any_update = rows.iter().any(model::bulk_updatable);
@@ -237,7 +238,7 @@ impl Launcher {
                 bar = bar.child(muted(trf(
                     "{shown} of {total} mods shown",
                     &[
-                        ("shown", &shown_ids.len().to_string()),
+                        ("shown", &visible.len().to_string()),
                         ("total", &rows.len().to_string()),
                     ],
                 )));
@@ -255,14 +256,20 @@ impl Launcher {
             } else {
                 let on = bulk(
                     "alt-bulk-on",
-                    trf("Turn on {count}", &[("count", &n_sel.to_string())]),
-                    true,
+                    trf(
+                        "Turn on {count}",
+                        &[("count", &registry_selected.to_string())],
+                    ),
+                    registry_selected > 0,
                     false,
                 );
                 let off = bulk(
                     "alt-bulk-off",
-                    trf("Turn off {count}", &[("count", &n_sel.to_string())]),
-                    true,
+                    trf(
+                        "Turn off {count}",
+                        &[("count", &registry_selected.to_string())],
+                    ),
+                    registry_selected > 0,
                     false,
                 );
                 let upd = bulk(
@@ -287,7 +294,7 @@ impl Launcher {
                             ],
                         )),
                     ))
-                    .child(if !busy {
+                    .child(if !busy && registry_selected > 0 {
                         on.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                             this.bulk_on();
                             cx.notify();
@@ -295,7 +302,7 @@ impl Launcher {
                     } else {
                         on
                     })
-                    .child(if !busy {
+                    .child(if !busy && registry_selected > 0 {
                         off.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                             this.bulk_off();
                             cx.notify();
@@ -373,7 +380,7 @@ impl Launcher {
                 list = list.child(head);
             }
             let pos = position;
-            if r.local.is_none() {
+            if r.selectable_archive() {
                 position += 1;
             }
             list = list.child(self.row(n, pos, r, shown_ids.clone(), busy, cx));
@@ -647,9 +654,10 @@ impl Launcher {
                     ))
                 },
             )
-            .child(match r.local {
-                Some(_) => div().flex_none().w(px(18.)),
-                None => div().flex_none().child(check),
+            .child(if r.selectable_archive() {
+                div().flex_none().child(check)
+            } else {
+                div().flex_none().w(px(18.))
             })
             .child(tile(picture, &r.id, &r.title, 32.));
         let row = if wide {
