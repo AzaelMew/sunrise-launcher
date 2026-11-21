@@ -230,7 +230,8 @@ impl Launcher {
                 .items_center()
                 .gap(px(10.))
                 .px(px(14.))
-                .h(px(48.))
+                .min_h(px(48.))
+                .when(n_sel > 0, |bar| bar.flex_wrap().py(px(7.)).gap_y(px(6.)))
                 .border_b_1()
                 .border_color(c(palette().divider))
                 .child(select_all);
@@ -283,7 +284,8 @@ impl Launcher {
                     trf("Remove {count}…", &[("count", &n_sel.to_string())]),
                     true,
                     true,
-                );
+                )
+                .whitespace_nowrap();
                 bar =
                     bar.child(div().text_size(px(tokens::LABEL)).child(
                         crate::selectable::selectable(trf(
