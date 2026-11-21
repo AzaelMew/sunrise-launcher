@@ -698,7 +698,14 @@ fn registry_edit<'a>(
             crate::worlds::SuspectMods::new()
         };
         let reviewed_worlds = match &action {
-            Action::Install(_) => guard_replacements(&instance.home, &suspect)?,
+            Action::Install(_) => guard_replacements(
+                &instance.home,
+                &suspect,
+                entries
+                    .keys()
+                    .filter_map(|id| before.get(id.as_str()))
+                    .map(|old| old.package.manifest.name.as_str()),
+            )?,
             Action::Update(_, approve) => {
                 let reviewed = entries
                     .values()
@@ -1131,17 +1138,24 @@ fn restore_or_disable(
     Ok(changes)
 }
 
-fn guard_replacements(
+fn guard_replacements<'a>(
     home: &Path,
     suspect: &crate::worlds::SuspectMods,
+    replacements: impl Iterator<Item = &'a str>,
 ) -> Result<Vec<crate::worlds::WorldRisk>, String> {
     let reviewed = mutations::world_evidence(home, suspect)?;
-    if let Some(mods) = reviewed
-        .iter()
-        .find(|world| !world.mods.is_empty())
-        .map(|world| world.mods.join(", "))
-    {
-        return Err(trf("Installing this version of {mod} could remove content from saved worlds. Nothing was installed.", &[("mod", &mods)]));
+    if reviewed.iter().any(|world| !world.mods.is_empty()) {
+        let names: Vec<_> = replacements.collect();
+        return Err(match names.as_slice() {
+            [name] => trf(
+                "{mod} is already installed. Update it from Installed.",
+                &[("mod", name)],
+            ),
+            _ => trf(
+                "These mods are already installed: {mods}. Update them from Installed.",
+                &[("mods", &names.join(", "))],
+            ),
+        });
     }
     Ok(reviewed)
 }

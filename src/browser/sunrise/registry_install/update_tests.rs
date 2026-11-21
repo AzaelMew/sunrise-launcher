@@ -310,6 +310,41 @@ fn unchanged_leaf_advances_quietly_but_changed_definition_requires_approval() {
 }
 
 #[test]
+fn install_names_an_existing_mod_when_its_replacement_would_risk_saved_worlds() {
+    Fixture::run(
+        concat!(
+            module_path!(),
+            "::install_names_an_existing_mod_when_its_replacement_would_risk_saved_worlds"
+        ),
+        |mut fixture| {
+            fixture.project("lantern", "Amber Lanterns", index::Kind::Mod);
+            fixture.release("lantern", "1.0.0", "", &[(AMBER, EARLIER_BLOCK)]);
+            fixture.install(&["lantern"]);
+            world(fixture.home(), "Uses Lanterns", roster("lantern"));
+            fixture.release("lantern", "1.1.0", "", &[(AMBER, b"{}")]);
+            fixture.project("lamp_post", "Lamp Posts", index::Kind::Mod);
+            fixture.release(
+                "lamp_post",
+                "1.0.0",
+                "[dependencies]\nlantern='^1.1'\n",
+                &[],
+            );
+
+            let before = fixture.snapshot(&[LANTERN]);
+            let error = fixture
+                .apply(Action::Install(projects(&["lamp_post"])))
+                .unwrap_err();
+            assert_eq!(
+                error.to_string(),
+                "Amber Lanterns is already installed. Update it from Installed."
+            );
+            assert_eq!(fixture.snapshot(&[LANTERN]), before);
+            assert!(!fixture.home().join("sunrise-mods/lamp_post.smod").exists());
+        },
+    );
+}
+
+#[test]
 fn bulk_update_reviews_dependency_changes_once_for_all_worlds() {
     Fixture::run(
         concat!(
