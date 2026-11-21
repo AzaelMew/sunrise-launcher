@@ -990,18 +990,9 @@ impl Launcher {
         );
         let mut regroup = false;
         for row in &mut rows {
-            let held = snap
-                .rows
-                .managed
-                .as_ref()
-                .and_then(|managed| managed.active.holds().find(|held| held.id() == row.id));
-            if let Some(held) = held {
-                if let sunrise_launcher::managed_play::HeldReason::NoFit { build, .. }
-                | sunrise_launcher::managed_play::HeldReason::BuildFailed { build } =
-                    held.reason()
-                {
-                    row.held_for = Some(crate::sheets::build_name(build));
-                }
+            let held = snap.rows.switch_held.get(&row.id);
+            if let Some(reason) = held {
+                row.held_for = Some(crate::sheets::build_name(reason.build()));
                 row.on = false;
                 if !matches!(row.need, Some(model::Need::TakenDown(_))) {
                     row.need = None;

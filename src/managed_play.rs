@@ -290,7 +290,8 @@ pub enum HeldReason {
 }
 
 impl HeldReason {
-    pub(crate) fn build(&self) -> &str {
+    /// The build against which this hold was recorded.
+    pub fn build(&self) -> &str {
         match self {
             Self::NoFit { build, .. } | Self::Unproved { build } | Self::BuildFailed { build } => {
                 build
