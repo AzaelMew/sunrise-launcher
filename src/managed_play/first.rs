@@ -242,6 +242,7 @@ impl Profile {
         cancellation: &native_mods::Cancellation,
         progress: impl Fn(native_mods::Step),
         consent: Option<&dyn Fn(&native_mods::Consent) -> bool>,
+        registry: Option<&sunrise_launcher_smod::index::Index>,
     ) -> Result<Option<Active>, native_mods::Failed> {
         let home = self.home().to_owned();
         let (old, epoch, repair, stage) = {
@@ -252,7 +253,7 @@ impl Profile {
             };
             old.verify_artifacts()?;
             let epoch = inputs(&home, None)?;
-            let repair = super::inputs::browser_repair(&home, &scan_packages(&home)?)?;
+            let repair = super::inputs::browser_repair(&home, &scan_packages(&home)?, registry)?;
             if old.inputs == epoch && repair.is_none() {
                 super::verify_included(old.base(), old.executable(), &home)?;
                 if native_mods::is_native(old.executable()) {
@@ -531,7 +532,12 @@ impl FirstAttempt<'_> {
                 variant: self.variant().map(Box::new),
             },
         )?;
-        let repair = super::inputs::browser_repair(&self.home, &scan_packages(&self.home)?)?;
+        let registry = crate::browser::sunrise::fetched_index();
+        let repair = super::inputs::browser_repair(
+            &self.home,
+            &scan_packages(&self.home)?,
+            registry.as_deref(),
+        )?;
         publish_generation(
             self.stage,
             active,

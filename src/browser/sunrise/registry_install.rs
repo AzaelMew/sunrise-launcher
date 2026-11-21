@@ -609,13 +609,25 @@ fn registry_edit<'a>(
             }
             Err(error) => return Err(InstallError::Unproved(error.into())),
         };
-        let impact = match &action {
-            Action::Install(_) => {
-                guard_replacements(&instance.home, next.path(), &before, &entries)?;
-                None
-            }
+        let mut replaced = entries
+            .keys()
+            .filter(|id| before.contains_key(*id))
+            .map(String::as_str)
+            .peekable();
+        let suspect = if replaced.peek().is_some() {
+            crate::worlds::unproved_mod_effects(
+                old.path(),
+                edit.active_basis(),
+                next.path(),
+                edit.active_basis(),
+                replaced,
+            )?
+        } else {
+            crate::worlds::SuspectMods::new()
+        };
+        let reviewed_worlds = match &action {
+            Action::Install(_) => guard_replacements(&instance.home, &suspect)?,
             Action::Update(_, approve) => {
-                let affected = mutations::loss_ids(next.path(), &before, &entries);
                 let reviewed = entries
                     .values()
                     .map(|entry| {
@@ -635,7 +647,7 @@ fn registry_edit<'a>(
                 let impact = ChangeImpact::read(
                     &instance.home,
                     mutations::Change::Update(reviewed),
-                    &affected,
+                    &suspect,
                 )?;
                 if impact.risks_worlds() {
                     (hooks.progress)(InstallProgress::Reviewing);
@@ -643,7 +655,7 @@ fn registry_edit<'a>(
                         return Err(InstallError::Cancelled);
                     }
                 }
-                Some((impact, affected))
+                impact.into_evidence()
             }
         };
         for id in restored_holds.iter().filter(|id| entries.contains_key(*id)) {
@@ -662,10 +674,7 @@ fn registry_edit<'a>(
             if source_bytes != current {
                 return Err(tr("The mod registry changed while the install was being prepared. Nothing was installed.").into());
             }
-            match impact {
-                Some((impact, affected)) => impact.recheck(&instance.home, &affected),
-                None => guard_replacements(&instance.home, next.path(), &before, &entries),
-            }
+            mutations::bind_worlds(&instance.home, &suspect, &reviewed_worlds)
         })?;
         for (id, entry) in entries {
             if let Some(previous) = before.get(&id) {
@@ -788,17 +797,19 @@ fn inventory(home: &Path) -> Result<Inventory, String> {
             let row: Option<installed::Entry> = doc
                 .row(&id)?
                 .and_then(|row| serde_json::from_value(row.clone()).ok());
-            let owned = row.is_some_and(|row| {
+            let claim = row.as_ref().zip(digest.as_deref()).filter(|(row, _)| {
                 row.source == SourceId::Sunrise
                     && row.kind == Kind::Mod
-                    && row.project == id
-                    && row.version == p.manifest.version
                     && row.path(home).as_ref() == Some(&p.path)
-                    && digest.as_ref().is_some_and(|digest| {
-                        row.checksum
-                            .eq_ignore_ascii_case(&format!("SHA-256:{digest}"))
-                    })
             });
+            let owned = if let Some((row, digest)) = claim {
+                doc.rows
+                    .check_other_claims(home, &id, &row.file)
+                    .map_err(|error| error.render(trf))?;
+                managed_play::registry_row_matches(home, row, &p, digest)
+            } else {
+                false
+            };
             Ok((
                 id,
                 SeenPackage {
@@ -1049,37 +1060,17 @@ fn restore_or_disable(
 
 fn guard_replacements(
     home: &Path,
-    candidate: &Path,
-    before: &Inventory,
-    entries: &BTreeMap<String, installed::Entry>,
-) -> Result<(), String> {
-    for (id, entry) in entries {
-        let Some(old) = before.get(id) else {
-            continue;
-        };
-        let unknown = old.package.manifest.native.is_some();
-        if unknown
-            || !super::content_loss::dropped(&old.package.path, &candidate.join(&entry.file))?
-                .is_empty()
-        {
-            let saves = home.join("saves");
-            match fs::read_dir(&saves) {
-                Ok(mut rows) => {
-                    if rows
-                        .next()
-                        .transpose()
-                        .map_err(|e| at(&saves, e))?
-                        .is_some()
-                    {
-                        return Err(trf("Installing this version of {mod} could remove content from saved worlds. Nothing was installed.", &[("mod", &entry.title)]));
-                    }
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
-                Err(error) => return Err(at(&saves, error)),
-            }
-        }
+    suspect: &crate::worlds::SuspectMods,
+) -> Result<Vec<crate::worlds::WorldRisk>, String> {
+    let reviewed = mutations::world_evidence(home, suspect)?;
+    if let Some(mods) = reviewed
+        .iter()
+        .find(|world| !world.mods.is_empty())
+        .map(|world| world.mods.join(", "))
+    {
+        return Err(trf("Installing this version of {mod} could remove content from saved worlds. Nothing was installed.", &[("mod", &mods)]));
     }
-    Ok(())
+    Ok(reviewed)
 }
 
 struct Document {

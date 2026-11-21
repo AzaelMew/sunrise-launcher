@@ -4278,7 +4278,7 @@ fn prepare_lock_at(dir: &Path, version: &str) -> Result<crate::preparer::Prepara
         fs::TryLockError::WouldBlock => busy(),
         fs::TryLockError::Error(e) => format!("{}: {e}", path.display()),
     })?;
-    Ok(crate::preparer::Preparation(file))
+    Ok(crate::preparer::Preparation::new(file))
 }
 
 /// [`spawn`], keeping `hold` (a lock) until the program ends; a preparation's whole process group is stopped if the launcher quits first.

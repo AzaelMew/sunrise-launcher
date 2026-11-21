@@ -110,8 +110,13 @@ impl Edit<'_> {
     }
 
     pub(crate) fn held(&self, id: &str) -> Option<&crate::managed_play::Held> {
+        self.active_basis()?.holds().find(|held| held.id() == id)
+    }
+
+    /// A first edit has no committed comparison base; it cannot clear save risk.
+    pub(crate) fn active_basis(&self) -> Option<&Active> {
         match &self.basis {
-            Basis::Active(active, _) => active.holds().find(|held| held.id() == id),
+            Basis::Active(active, _) => Some(active),
             Basis::First(_) => None,
         }
     }
@@ -155,9 +160,11 @@ impl Edit<'_> {
         {
             return Err(unsettled());
         }
+        let registry = crate::browser::sunrise::fetched_index();
         if let Some(repaired) = super::super::inputs::browser_repair(
             candidate.path(),
             &scan_packages(candidate.path())?,
+            registry.as_deref(),
         )? {
             fs::write(candidate.path().join(MANIFEST), repaired)
                 .map_err(|e| at(candidate.path(), e))?;
@@ -200,12 +207,12 @@ impl Edit<'_> {
 
     /// Keep one authoritative commit. Verify the same live and candidate bytes at cutoff,
     /// including any other approval (e.g. registry evidence or a world question).
-    pub(crate) fn publish(
+    pub(crate) fn publish<G>(
         self,
         proof: CandidateImage,
         cancellation: &native_mods::Cancellation,
         retire_holds: &BTreeSet<String>,
-        authorize: impl FnOnce() -> Result<(), String>,
+        authorize: impl FnOnce() -> Result<G, String>,
     ) -> Result<Active, String> {
         let resources = match &self.basis {
             Basis::First(first) => Some(Resources::capture(first.base(), &first.stage)?),
@@ -256,14 +263,14 @@ impl Edit<'_> {
         let files = changed_files(&self.home, &proof.candidate)?;
         let pointer = serde_json::to_vec(&active).map_err(|e| e.to_string())?;
         stage.seal(pointer, &files)?.publish(|| {
-            authorize()?;
+            let authorization = authorize()?;
             active.verify_artifacts()?;
             if inputs(&self.home, None)? != self.before
                 || inputs(&proof.candidate, None)? != proof.inputs
             {
                 return Err(unsettled());
             }
-            cancellation.publication_guard()
+            Ok((authorization, cancellation.publication_guard()?))
         })?;
         Ok(active)
     }

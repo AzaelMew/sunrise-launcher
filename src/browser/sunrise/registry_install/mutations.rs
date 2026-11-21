@@ -50,32 +50,44 @@ pub(super) fn enabled(home: &Path) -> Result<BTreeSet<String>, String> {
     }
 }
 
-pub(super) fn loss_ids(
-    candidate: &Path,
-    before: &Inventory,
-    entries: &BTreeMap<String, installed::Entry>,
-) -> Vec<String> {
-    entries
-        .iter()
-        .filter_map(|(id, next)| {
-            let old = before.get(id)?;
-            let native = old.package.manifest.native.is_some()
-                || crate::native_status::is_native_file(&next.file);
-            (native
-                || !super::super::content_loss::dropped(
-                    &old.package.path,
-                    &candidate.join(&next.file),
-                )
-                .is_ok_and(|ids| ids.is_empty()))
-            .then(|| id.clone())
-        })
-        .collect()
+pub(super) fn world_evidence(
+    home: &Path,
+    suspect: &worlds::SuspectMods,
+) -> Result<Vec<worlds::WorldRisk>, String> {
+    if suspect.is_empty() {
+        return Ok(Vec::new());
+    }
+    worlds::review_risk(home, suspect)
+}
+
+pub(super) fn bind_worlds(
+    home: &Path,
+    suspect: &worlds::SuspectMods,
+    reviewed: &[worlds::WorldRisk],
+) -> Result<worlds::ReviewedWorldLocks, String> {
+    let changed = || {
+        tr("The affected worlds changed after review. Nothing was changed; try again.").to_owned()
+    };
+    let locks = match worlds::lock_reviewed(reviewed) {
+        Ok(locks) => locks,
+        Err(error) => {
+            return Err(if world_evidence(home, suspect)? != reviewed {
+                changed()
+            } else {
+                error
+            });
+        }
+    };
+    if world_evidence(home, suspect)? != reviewed {
+        return Err(changed());
+    }
+    Ok(locks)
 }
 
 #[derive(Debug)]
 pub struct ChangeImpact {
     change: Change,
-    affected: Vec<WorldUse>,
+    evidence: Vec<worlds::WorldRisk>,
 }
 
 #[derive(Debug)]
@@ -87,42 +99,28 @@ pub(super) enum Change {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-struct WorldUse {
-    path: std::path::PathBuf,
-    name: String,
-    mods: Vec<String>,
-    known: bool,
-}
-
 impl ChangeImpact {
-    pub(super) fn read(home: &Path, change: Change, ids: &[String]) -> Result<Self, String> {
+    pub(super) fn read(
+        home: &Path,
+        change: Change,
+        suspect: &worlds::SuspectMods,
+    ) -> Result<Self, String> {
         Ok(Self {
             change,
-            affected: Self::world_use(home, ids)?,
+            evidence: world_evidence(home, suspect)?,
         })
     }
 
-    fn world_use(home: &Path, ids: &[String]) -> Result<Vec<WorldUse>, String> {
-        let mut affected = if ids.is_empty() {
-            Vec::new()
-        } else {
-            worlds::at_risk(home, ids)?
-                .into_iter()
-                .map(|(world, mods, known)| WorldUse {
-                    path: world.path,
-                    name: world.name,
-                    mods,
-                    known,
-                })
-                .collect::<Vec<_>>()
-        };
-        affected.sort();
-        Ok(affected)
+    pub(super) fn into_evidence(self) -> Vec<worlds::WorldRisk> {
+        self.evidence
+    }
+
+    fn affected(&self) -> impl Iterator<Item = &worlds::WorldRisk> {
+        self.evidence.iter().filter(|world| !world.mods.is_empty())
     }
 
     pub fn risks_worlds(&self) -> bool {
-        !self.affected.is_empty()
+        self.affected().next().is_some()
     }
 
     pub fn is_removal(&self) -> bool {
@@ -147,7 +145,7 @@ impl ChangeImpact {
                 tr("removal")
             }
         };
-        match self.affected.len() {
+        match self.affected().count() {
             0 => (),
             1 => lines.push(trf(
                 "This {action} may remove modded content from 1 saved world.",
@@ -158,20 +156,10 @@ impl ChangeImpact {
                 &[("action", action), ("count", &n.to_string())],
             )),
         }
-        if self.affected.iter().any(|world| !world.known) {
+        if self.affected().any(|world| !world.known) {
             lines.push(tr("Sunrise couldn't check which mods some of these worlds use.").into());
         }
         lines.join("\n\n")
-    }
-
-    pub(super) fn recheck(&self, home: &Path, ids: &[String]) -> Result<(), String> {
-        if Self::world_use(home, ids)? != self.affected {
-            return Err(tr(
-                "The affected worlds changed after review. Nothing was changed; try again.",
-            )
-            .into());
-        }
-        Ok(())
     }
 }
 
@@ -242,6 +230,7 @@ pub fn remove_mods(
         |f| (hooks.progress)(InstallProgress::Downloading(f)),
         &|_| (hooks.progress)(InstallProgress::Preparing),
     )?;
+    let old = edit.candidate()?;
     let next = edit.candidate()?;
     let home = next.path();
     let present = inventory(home)?;
@@ -312,14 +301,20 @@ pub fn remove_mods(
     }
     let named = |id: &String| format!("{} ({id})", present[id].package.manifest.name);
     let removed = ids.iter().map(named).collect::<Vec<_>>();
-    let affected = unavailable.into_iter().collect::<Vec<_>>();
+    let suspect = worlds::unproved_mod_effects(
+        old.path(),
+        edit.active_basis(),
+        home,
+        edit.active_basis(),
+        unavailable.iter().map(String::as_str),
+    )?;
     let impact = ChangeImpact::read(
         &instance.home,
         Change::Remove {
             removed: removed.clone(),
             disabled: disabled.iter().map(named).collect(),
         },
-        &affected,
+        &suspect,
     )?;
     (hooks.progress)(InstallProgress::Reviewing);
     if !approve(&impact) {
@@ -329,8 +324,9 @@ pub fn remove_mods(
     let proof = prove_edit(&edit, home, instance, &cancellation, &hooks)
         .map_err(|e| InstallError::Unproved(e.into()))?;
     (hooks.progress)(InstallProgress::Publishing);
+    let reviewed = impact.into_evidence();
     edit.publish(proof, &cancellation, &retired, || {
-        impact.recheck(&instance.home, &affected)
+        bind_worlds(&instance.home, &suspect, &reviewed)
     })?;
     Ok(removed)
 }
