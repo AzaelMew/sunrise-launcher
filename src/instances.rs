@@ -206,22 +206,31 @@ pub enum Channel {
     Stable,
     #[default]
     Nightly,
+    Dev,
 }
 
 impl Channel {
     /// Publication channels, not a classifier for arbitrary tags the player has on disk.
     pub fn of_release(release: &backend::Release) -> Option<Self> {
+        use sunrise_launcher_release_verify::{Channel as SignedChannel, NIGHTLY};
         match release.nightly.as_deref() {
-            Some(sunrise_launcher_release_verify::NIGHTLY) => Some(Self::Nightly),
+            Some(NIGHTLY) => Some(Self::Nightly),
+            Some(tag)
+                if release.prerelease && SignedChannel::of(tag) == Some(SignedChannel::Dev) =>
+            {
+                Some(Self::Dev)
+            }
             None if !release.prerelease && backend::is_game_tag(&release.tag) => Some(Self::Stable),
             _ => None,
         }
     }
 
-    /// Installed Nightlies keep their date and optional commit in their local directory name.
+    /// Installed builds can be classified even if their releases have been pruned.
     pub fn of_build(tag: &str) -> Option<Self> {
         if crate::nightly::date_of(tag).is_some() {
             Some(Self::Nightly)
+        } else if backend::dev_date(tag).is_some() {
+            Some(Self::Dev)
         } else if backend::is_game_tag(tag) {
             Some(Self::Stable)
         } else {
@@ -255,11 +264,11 @@ impl Channel {
     ) -> Option<&'a String> {
         let latest = self.builds(releases).next().map(|release| &release.tag);
         let have = match self {
-            Self::Stable => self.newest_installed(installed),
+            Self::Stable | Self::Dev => self.newest_installed(installed),
             Self::Nightly => nightly,
         };
         match (have, latest) {
-            // The rolling build wins a same-day tie once it is actually on disk.
+            // The newest published build wins a same-day tie once it is actually on disk.
             (Some(have), Some(latest))
                 if installed.contains(latest)
                     && backend::compare_game_versions(latest, have).is_ge() =>
@@ -271,7 +280,10 @@ impl Channel {
             (None, None) if self == Self::Stable => {
                 Self::Nightly.play_target(releases, installed, nightly, selected)
             }
-            (None, None) => selected.filter(|tag| Self::of_build(tag).is_none()),
+            (None, None) if self == Self::Nightly => {
+                selected.filter(|tag| Self::of_build(tag).is_none())
+            }
+            (None, None) => None,
         }
     }
 
@@ -1246,6 +1258,7 @@ fn create_with_publish(
         name: (name != slug).then(|| name.to_string()),
         icon: from.and_then(|f| f.icon.clone()),
         group: from.and_then(|f| f.group.clone()),
+        channel: Some(Channel::Stable),
         ..Meta::default()
     };
     choose(&mut choices);

@@ -3,7 +3,7 @@ use super::compare_game_versions;
 use crate::instances::Channel;
 
 /// An unselected launcher can select its first build. Otherwise, move only from the latest
-/// install on the same channel. Legacy, imported, developer and snapshot choices stay put.
+/// install on the same channel. Legacy, imported and unsigned developer choices stay put.
 pub fn select_after_update(
     selected: Option<&str>,
     installed_before: &[String],

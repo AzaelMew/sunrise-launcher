@@ -120,6 +120,7 @@ fn build(tag: &str, day: &str, installed: bool) -> Build {
         tag: tag.to_owned(),
         name: build_name(tag),
         about: sunrise_launcher::nightly::date_of(tag)
+            .or_else(|| backend::dev_date(tag))
             .and_then(|_| tag.splitn(5, '-').nth(4))
             .map_or_else(|| day.to_owned(), sunrise_launcher::nightly::short_commit),
         installed,
@@ -134,11 +135,13 @@ fn lines(
     releases: &[Release],
     installed: &[String],
     current: Option<&str>,
+    channel: Channel,
     query: &str,
 ) -> Vec<Line> {
     let words: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
     let day_of = |tag: &str| {
         sunrise_launcher::nightly::date_of(tag)
+            .or_else(|| backend::dev_date(tag))
             .map(str::to_owned)
             .or_else(|| {
                 releases
@@ -152,8 +155,12 @@ fn lines(
         let hay = format!("{} {} {} {day}", b.tag, b.name, b.about).to_lowercase();
         words.iter().all(|w| hay.contains(w.as_str()))
     };
-    // Launcher releases come from their own repository and are never installed here, and `v2026.10.13` is also valid vX.Y.Z: only native builds are left out.
-    let game = |tag: &str| !native_mods::is_native(tag);
+    // Launcher releases are separate. Dev is opt-in, but keep a profile's exact current build
+    // visible even if it has another saved channel (for example, a copy of a Dev profile).
+    let game = |tag: &str| {
+        !native_mods::is_native(tag)
+            && (channel == Channel::Dev || Some(tag) == current || backend::dev_date(tag).is_none())
+    };
     let mut out = Vec::new();
     let mut have: Vec<&String> = installed.iter().filter(|t| game(t)).collect();
     have.sort_by(|a, b| {
@@ -171,14 +178,18 @@ fn lines(
         out.push(Line::Head(tr("Installed").to_string()));
         out.extend(have);
     }
-    for (channel, title) in [
+    for (listed, title) in [
         (Channel::Nightly, tr("Nightly")),
         (Channel::Stable, tr("Stable")),
+        (Channel::Dev, tr("Dev")),
     ] {
+        if listed == Channel::Dev && channel != Channel::Dev {
+            continue;
+        }
         let mut heading = String::new();
         for r in releases.iter().filter(|r| {
             r.asset.is_some()
-                && Channel::of_release(r) == Some(channel)
+                && Channel::of_release(r) == Some(listed)
                 && !installed.contains(&r.tag)
         }) {
             let day = day_of(&r.tag);
@@ -262,7 +273,13 @@ impl Launcher {
         };
         let current = plays.as_deref();
         let query = self.ui.sheets.versions.find.text().to_owned();
-        let list = Rc::new(lines(releases, &self.installed, current, &query));
+        let list = Rc::new(lines(
+            releases,
+            &self.installed,
+            current,
+            instance.channel,
+            &query,
+        ));
         let pick = self.ui.sheets.versions.pick.clone();
 
         let focus = self
@@ -689,13 +706,30 @@ mod tests {
             },
         ];
         assert_eq!(
-            shape(&lines(&releases, &[], None, "")),
+            shape(&lines(&releases, &[], None, Channel::Nightly, "")),
             ["# Nightly · November 2026", "nightly-2026-11-17-aaaaaaa",]
         );
         releases.push(release("26.3-0.1.0", "2026-10-01", false));
         assert_eq!(
-            shape(&lines(&releases, &[], None, "26.3-0.1.0")),
+            shape(&lines(&releases, &[], None, Channel::Nightly, "26.3-0.1.0")),
             ["# Stable · October 2026", "26.3-0.1.0"]
+        );
+    }
+
+    #[test]
+    fn dev_versions_are_listed_only_after_opt_in() {
+        let tag = "dev-2026-11-21-aaaaaaa";
+        let pruned = "dev-2026-11-20-bbbbbbb";
+        let releases = [Release {
+            prerelease: true,
+            nightly: Some(tag.into()),
+            ..release(tag, "2026-11-22", false)
+        }];
+        let installed = [pruned.to_owned()];
+        assert!(lines(&releases, &installed, None, Channel::Stable, "").is_empty());
+        assert_eq!(
+            shape(&lines(&releases, &installed, None, Channel::Dev, "")),
+            ["# Installed", pruned, "# Dev · November 2026", tag]
         );
     }
 
@@ -714,6 +748,7 @@ mod tests {
             &releases,
             &installed,
             Some("nightly-2026-11-16-bbbbbbb"),
+            Channel::Nightly,
             "",
         );
         assert_eq!(
@@ -730,13 +765,20 @@ mod tests {
             ]
         );
         // A commit or a day finds its build; a heading with nothing under it is gone.
-        let found = lines(&releases, &installed, None, "ccccccc");
+        let found = lines(&releases, &installed, None, Channel::Nightly, "ccccccc");
         assert_eq!(
             shape(&found),
             ["# Nightly · October 2026", "nightly-2026-10-30-ccccccc"]
         );
         assert_eq!(
-            shape(&lines(&releases, &installed, None, "nov 17")).len(),
+            shape(&lines(
+                &releases,
+                &installed,
+                None,
+                Channel::Nightly,
+                "nov 17"
+            ))
+            .len(),
             2
         );
     }

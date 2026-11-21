@@ -3,7 +3,7 @@
 //! verification. Updating that channel is explicit; an exact profile pin remains exact.
 use crate::backend::{self, Release};
 use std::{fs, path::Path};
-use sunrise_launcher_release_verify::NIGHTLY;
+use sunrise_launcher_release_verify::{is_nightly, NIGHTLY};
 
 /// The version a nightly installs as: `nightly-2026-10-28-0c02067`, from its title
 /// ("Nightly 2026-10-28 · 0c02067"), else its publication date.
@@ -180,7 +180,7 @@ pub(crate) const INSTALLED_TIME: &str = ".nightly-time";
 
 /// Keeps the publication time that came with an installed Nightly.
 pub(crate) fn record_install_time(dir: &Path, release: &Release) -> std::io::Result<()> {
-    if release.nightly.is_some() && !release.time.is_empty() {
+    if release.nightly.as_deref().is_some_and(is_nightly) && !release.time.is_empty() {
         fs::write(dir.join(INSTALLED_TIME), &release.time)?;
     }
     Ok(())
@@ -222,7 +222,7 @@ fn same_day_times(
 ) -> Vec<(String, String)> {
     let mut known: Vec<(&str, &str, &str)> = releases
         .iter()
-        .filter(|r| r.nightly.is_some())
+        .filter(|r| r.nightly.as_deref().is_some_and(is_nightly))
         .map(|r| (r.tag.as_str(), r.date.as_str(), r.time.as_str()))
         .collect();
     for (tag, time) in kept.iter().chain(installed) {

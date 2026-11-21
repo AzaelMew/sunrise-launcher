@@ -114,6 +114,14 @@ pub(crate) fn build_name(tag: &str) -> String {
             "{channel} · {version}",
             &[("channel", tr("Stable")), ("version", version)],
         )
+    } else if let Some(date) = backend::dev_date(tag) {
+        trf(
+            "{channel} · {version}",
+            &[
+                ("channel", tr("Dev")),
+                ("version", &sunrise_launcher::nightly::day(date)),
+            ],
+        )
     } else {
         sunrise_launcher::nightly::display_name(tag).unwrap_or_else(|| tag.to_owned())
     }
@@ -1014,6 +1022,7 @@ impl Launcher {
             WayOut::Newest(channel) => main(match channel {
                 instances::Channel::Stable => tr("Use the newest Stable").into(),
                 instances::Channel::Nightly => tr("Use the newest Nightly").into(),
+                instances::Channel::Dev => tr("Use the newest Dev").into(),
             })
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                 this.native_error = None;
@@ -1395,6 +1404,8 @@ impl Launcher {
         let stable = self.stable_available();
         let nightly_target = self.target_version(None, instances::Channel::Nightly);
         let stable_target = self.target_version(None, instances::Channel::Stable);
+        let dev_target = self.target_version(None, instances::Channel::Dev);
+        let follow_dev = pinned.is_none() && instance.channel == instances::Channel::Dev;
         let follow_nightly = pinned.is_none() && instance.channel == instances::Channel::Nightly;
         let follow_stable = pinned.is_none() && instance.channel == instances::Channel::Stable;
         let nightly_gated = instance.kind == instances::Kind::Pack;
@@ -1433,8 +1444,7 @@ impl Launcher {
                         .child(muted(sub).text_size(px(tokens::SMALL))),
                 )
         };
-        // Three choices, however many builds there are: the two that follow, and one build
-        // picked in its own sheet.
+        // Follow a channel, or choose one exact build in its own sheet.
         let mut list = div().flex().flex_col().gap(px(2.));
         list = list.child(
             option(
@@ -1456,7 +1466,7 @@ impl Launcher {
                 }))
             }),
         );
-        let stable_off = !stable || stable_gated;
+
         list = list.child(
             option(
                 "alt-build-stable",
@@ -1467,18 +1477,36 @@ impl Launcher {
                         .map(String::as_str)
                         .map(build_name)
                         .unwrap_or_else(|| tr("Only builds marked stable.").into())
-                } else if follow_stable {
-                    tr("No stable release yet. Plays Nightly for now.").into()
                 } else {
-                    tr("No stable release yet").into()
+                    tr("No stable release yet. Plays Nightly for now.").into()
                 },
             )
-            .when(stable_off, |d| {
+            .when(stable_gated, |d| {
                 d.opacity(0.5).cursor_default().tab_stop(false)
             })
-            .when(!stable_off, |d| {
+            .when(!stable_gated, |d| {
                 d.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                     this.set_build_channel(instances::Channel::Stable);
+                    cx.notify();
+                }))
+            }),
+        );
+        list = list.child(
+            option(
+                "alt-build-dev",
+                follow_dev,
+                tr("Latest Dev").into(),
+                dev_target
+                    .map(String::as_str)
+                    .map(build_name)
+                    .unwrap_or_else(|| tr("No Dev build for this platform yet.").into()),
+            )
+            .when(nightly_gated, |d| {
+                d.opacity(0.5).cursor_default().tab_stop(false)
+            })
+            .when(!nightly_gated, |d| {
+                d.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                    this.set_build_channel(instances::Channel::Dev);
                     cx.notify();
                 }))
             }),
@@ -1647,6 +1675,7 @@ mod tests {
     fn build_labels_name_the_channel_and_date_or_version() {
         assert_eq!(build_name("nightly-2026-11-17-abcdef0"), "Nightly · Nov 17");
         assert_eq!(build_name("26.3-0.1.0"), "Stable · 0.1.0");
+        assert_eq!(build_name("dev-2026-11-17-abcdef0"), "Dev · Nov 17");
         assert_eq!(build_name("v1.0.0"), "v1.0.0");
     }
 }
