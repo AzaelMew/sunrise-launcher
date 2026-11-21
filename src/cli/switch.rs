@@ -121,11 +121,19 @@ pub(super) fn run(instance: &instances::Instance, tag: &str, as_json: bool) -> R
         Switched::Changed(active) => {
             let mut report = || -> io::Result<()> {
                 writeln!(output, "{}", trf("Profile game build: {build}", &[("build", active.base())]))?;
-                if let Some(sunrise_launcher::managed_play::PendingChanges { held, removed, .. }) = active.pending_changes() {
-                    for held in held {
-                        writeln!(output, "{}", trf("{mod} was turned off. Needs an update from its author.", &[("mod", held.title())]))?;
+                if let Some(changes) = active.pending_changes() {
+                    if let Some(base) = changes.base().filter(|base| *base != active.base()) {
+                        writeln!(output, "{}", trf("Report for game build: {build}", &[("build", base)]))?;
                     }
-                    for (name, reason) in removed {
+                    for (title, enabled) in changes.held() {
+                        let line = if enabled {
+                            trf("{mod} was turned off. Needs an update from its author.", &[("mod", title)])
+                        } else {
+                            trf("{mod} stays off. Needs an update from its author.", &[("mod", title)])
+                        };
+                        writeln!(output, "{line}")?;
+                    }
+                    for (name, reason) in changes.removed {
                         writeln!(output, "{}", trf("{mod} was taken down: {reason}", &[("mod", name), ("reason", reason)]).replace(char::is_control, " "))?;
                     }
                 }

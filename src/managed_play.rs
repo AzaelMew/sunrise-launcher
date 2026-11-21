@@ -151,9 +151,54 @@ struct Receipt {
     id: [u8; 16],
     waiting_for_update: Vec<Held>,
     removed: Vec<(String, String)>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    report: Option<ReceiptReport>,
     /// Acknowledging the notice must not discard the evidence an explicit update needs.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     acknowledged: bool,
+}
+
+/// Immutable display facts. An Update may retire a live hold without rewriting history.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReceiptReport {
+    base: Option<String>,
+    held: Vec<(String, bool)>,
+}
+
+impl ReceiptReport {
+    fn new(base: Option<String>, held: &[Held]) -> Self {
+        Self {
+            base,
+            held: held
+                .iter()
+                .map(|hold| (hold.title().into(), hold.enabled_before()))
+                .collect(),
+        }
+    }
+}
+
+impl Receipt {
+    fn base(&self) -> Option<&str> {
+        if let Some(report) = &self.report {
+            return report.base.as_deref();
+        }
+        // Legacy reports with a hold recorded its target build on the hold itself.
+        let HeldReason::NoFit { build } = self.waiting_for_update.first()?.reason();
+        self.waiting_for_update
+            .iter()
+            .all(|hold| matches!(hold.reason(), HeldReason::NoFit { build: other } if other == build))
+            .then_some(build.as_str())
+    }
+
+    fn has_report(&self) -> bool {
+        !self.removed.is_empty()
+            || !self.waiting_for_update.is_empty()
+            || self
+                .report
+                .as_ref()
+                .is_some_and(|report| !report.held.is_empty())
+    }
 }
 
 /// An exact package left installed but held off by a proved no-fit on Switch.
@@ -343,10 +388,67 @@ pub fn display_active(home: &Path) -> Result<Option<Active>, String> {
         .transpose()
 }
 
+/// A paint can request an admitted read, but this hint never authorizes an action.
+#[derive(Debug, PartialEq, Eq)]
+pub enum ReceiptHint {
+    Recovery,
+    Pending { id: [u8; 16], generation: u64 },
+}
+
+pub fn build_changes_hint(home: &Path) -> Result<Option<ReceiptHint>, String> {
+    if crate::profile_txn::recovery_pending(home)? {
+        return Ok(Some(ReceiptHint::Recovery));
+    }
+    Ok(display_active(home)?.and_then(|active| {
+        active
+            .pending_changes()
+            .map(|pending| ReceiptHint::Pending {
+                id: pending.id,
+                generation: active.generation(),
+            })
+    }))
+}
+
+/// Home and the report sheet use this admitted snapshot. Settling a committed journal
+/// brings its receipt forward before the player can read or acknowledge it.
+pub fn read_build_changes(
+    home: &Path,
+) -> Result<Option<(crate::profile_txn::Identity, Active)>, String> {
+    let identity = crate::profile_txn::Identity::of(home)?;
+    let profile = Profile::open_for(home, None, Some(identity)).map_err(String::from)?;
+    Ok(profile
+        .active()?
+        .filter(|active| active.pending_changes().is_some())
+        .map(|active| (identity, active)))
+}
+
 pub struct PendingChanges<'a> {
     pub id: [u8; 16],
-    pub held: &'a [Held],
     pub removed: &'a [(String, String)],
+    receipt: &'a Receipt,
+}
+
+impl<'a> PendingChanges<'a> {
+    pub fn base(&self) -> Option<&'a str> {
+        self.receipt.base()
+    }
+
+    pub fn held(&self) -> impl Iterator<Item = (&'a str, bool)> {
+        let recorded = self.receipt.report.as_ref();
+        let original = recorded.into_iter().flat_map(|report| {
+            report
+                .held
+                .iter()
+                .map(|(title, enabled)| (title.as_str(), *enabled))
+        });
+        let legacy = recorded
+            .is_none()
+            .then_some(&self.receipt.waiting_for_update)
+            .into_iter()
+            .flatten()
+            .map(|hold| (hold.title(), hold.enabled_before()));
+        original.chain(legacy)
+    }
 }
 
 impl Active {
@@ -366,10 +468,20 @@ impl Active {
         for receipt in &value.receipts {
             if receipt.id == [0; 16]
                 || !receipts.insert(receipt.id)
-                || (receipt.waiting_for_update.is_empty()
-                    && (receipt.acknowledged || receipt.removed.is_empty()))
+                || (receipt.waiting_for_update.is_empty() && receipt.acknowledged)
+                || !receipt.has_report()
             {
                 return Err(unsettled());
+            }
+            if let Some(report) = &receipt.report {
+                if let Some(base) = &report.base {
+                    validate_tag(base)?;
+                }
+                if report.held.iter().any(|(title, _)| {
+                    title.trim().is_empty() || title.chars().any(char::is_control)
+                }) {
+                    return Err(unsettled());
+                }
             }
             for held in &receipt.waiting_for_update {
                 if !paths.insert(held.validate()?) || !holds.insert(held.id()) {
@@ -393,8 +505,8 @@ impl Active {
             .find(|receipt| !receipt.acknowledged)
             .map(|receipt| PendingChanges {
                 id: receipt.id,
-                held: &receipt.waiting_for_update,
                 removed: &receipt.removed,
+                receipt,
             })
     }
 

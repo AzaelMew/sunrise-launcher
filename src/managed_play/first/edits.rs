@@ -3,7 +3,7 @@ use super::*;
 use crate::{
     browser::installed::MANIFEST,
     i18n::tr,
-    managed_play::{digest_file, Held, Receipt},
+    managed_play::{digest_file, Held, Receipt, ReceiptReport},
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -309,6 +309,7 @@ impl Edit<'_> {
         } else {
             Some(Receipt {
                 id: profile_identity()?,
+                report: Some(ReceiptReport::new(Some(self.base().into()), &holds)),
                 waiting_for_update: holds,
                 removed: removed.into_values().collect(),
                 acknowledged: false,
@@ -398,11 +399,22 @@ impl Edit<'_> {
         };
         if !retired_holds.is_empty() {
             active.receipts.retain_mut(|receipt| {
+                if !receipt.acknowledged
+                    && receipt.report.is_none()
+                    && receipt
+                        .waiting_for_update
+                        .iter()
+                        .any(|hold| retired_holds.contains(hold.id()))
+                {
+                    receipt.report = Some(ReceiptReport::new(
+                        receipt.base().map(str::to_owned),
+                        &receipt.waiting_for_update,
+                    ));
+                }
                 receipt
                     .waiting_for_update
                     .retain(|held| !retired_holds.contains(held.id()));
-                !receipt.waiting_for_update.is_empty()
-                    || !receipt.acknowledged && !receipt.removed.is_empty()
+                !receipt.waiting_for_update.is_empty() || !receipt.acknowledged
             });
         }
         if let Some(receipt) = receipt {

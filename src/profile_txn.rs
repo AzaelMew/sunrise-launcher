@@ -625,6 +625,18 @@ pub fn references(home: &Path) -> Result<References, String> {
     Ok(refs)
 }
 
+pub(crate) fn recovery_pending(home: &Path) -> Result<bool, String> {
+    for name in [RECORD, RETIRED] {
+        let path = home.join(name);
+        match fs::symlink_metadata(&path) {
+            Ok(_) => return Ok(true),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => (),
+            Err(error) => return Err(at(&path, error)),
+        }
+    }
+    Ok(false)
+}
+
 /// A display snapshot is not permission to act. An interrupted attempt is still
 /// presented as the last settled generation until an admitter finishes recovery.
 pub(crate) fn display_pointer(home: &Path) -> Result<Option<Vec<u8>>, String> {

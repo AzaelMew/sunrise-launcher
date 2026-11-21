@@ -579,11 +579,14 @@ fn switch_holds_content_in_place_and_registry_update_restores_only_enabled_holds
             &fixture.home,
             "extra_mod"
         ));
-        fixture.decision_worker("ack");
-        assert!(Active::parse(&fixture.pointer())
-            .unwrap()
-            .pending_changes()
-            .is_none());
+        let receipt = active.pending_changes().unwrap().id;
+        if !initial_enabled {
+            fixture.decision_worker("ack");
+            assert!(Active::parse(&fixture.pointer())
+                .unwrap()
+                .pending_changes()
+                .is_none());
+        }
         assert_eq!(
             Active::parse(&fixture.pointer()).unwrap().holds().count(),
             1
@@ -601,6 +604,14 @@ fn switch_holds_content_in_place_and_registry_update_restores_only_enabled_holds
         let updated = Active::parse(&fixture.pointer()).unwrap();
         assert_eq!(updated.base(), OTHER);
         assert_eq!(updated.holds().count(), 0);
+        if initial_enabled {
+            let report = updated.pending_changes().unwrap();
+            assert_eq!(report.id, receipt);
+            assert_eq!(report.base(), Some(OTHER));
+            assert_eq!(report.held().collect::<Vec<_>>(), [("Fireflies", true)]);
+        } else {
+            assert!(updated.pending_changes().is_none());
+        }
         assert_eq!(fs::read(&package).unwrap(), replacement);
         assert_eq!(
             sunrise_launcher::browser::mod_list::is_enabled(&fixture.home, "extra_mod"),

@@ -450,8 +450,8 @@ impl Launcher {
                     .truncate()
                     .child(played),
             );
-        let receipt = sunrise_launcher::managed_play::display_active(&instance.home)
-            .is_ok_and(|active| active.is_some_and(|active| active.pending_changes().is_some()));
+        let receipt =
+            instance.kind != instances::Kind::Pack && self.check_build_changes(&instance.home, cx);
         div()
             .flex()
             .flex_col()
@@ -462,7 +462,7 @@ impl Launcher {
                     .self_start()
                     .mt(px(10.))
                     .on_click(cx.listener(|this, _, _, cx| {
-                        this.open_sheet(crate::sheets::Sheet::BuildChanges);
+                        this.open_build_changes(cx);
                         cx.notify();
                     }))
             }))

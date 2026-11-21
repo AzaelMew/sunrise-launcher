@@ -1,9 +1,14 @@
 use super::*;
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use sunrise_launcher::{
     browser::sunrise::{
         install_target, switch_build, InstallProgress, SwitchHooks, SwitchQuestion, Switched,
     },
-    managed_play::{self, Profile},
+    managed_play::{self, Active, Profile, ReceiptHint},
+    profile_txn::Identity,
 };
 
 #[derive(Default)]
@@ -11,6 +16,14 @@ pub(crate) struct State {
     pub(super) cache_download: Option<String>,
     running: Option<Running>,
     ack: bool,
+    receipt: Option<ReceiptRead>,
+}
+
+struct ReceiptRead {
+    home: PathBuf,
+    hint: Result<Option<ReceiptHint>, String>,
+    ticket: Arc<()>,
+    status: Load<Option<(Identity, Active)>>,
 }
 
 struct Running {
@@ -166,6 +179,7 @@ impl Launcher {
                     self.updates.sunrise = None;
                 }
                 if active.pending_changes().is_some() {
+                    self.ui.sheets.switching.receipt = None;
                     self.open_sheet(Sheet::BuildChanges);
                 } else if visible {
                     self.close_sheet();
@@ -310,6 +324,75 @@ impl Launcher {
         frame("switch-game", 610., body, cx)
     }
 
+    pub(crate) fn check_build_changes(&mut self, home: &Path, cx: &mut Context<Self>) -> bool {
+        self.read_receipt(home, false, cx);
+        self.receipt_status(home)
+            .is_some_and(|status| matches!(status, Load::Ready(Some(_)) | Load::Failed(_)))
+    }
+
+    pub(crate) fn open_build_changes(&mut self, cx: &mut Context<Self>) {
+        if let Some(home) = self.selected_instance().map(|profile| profile.home.clone()) {
+            self.open_sheet(Sheet::BuildChanges);
+            self.read_receipt(&home, true, cx);
+        }
+    }
+
+    fn receipt_status(&self, home: &Path) -> Option<&Load<Option<(Identity, Active)>>> {
+        self.ui
+            .sheets
+            .switching
+            .receipt
+            .as_ref()
+            .filter(|read| read.home == home)
+            .map(|read| &read.status)
+    }
+
+    fn read_receipt(&mut self, home: &Path, explicit: bool, cx: &mut Context<Self>) {
+        if !explicit && (self.launch_busy() || self.client.is_some()) {
+            return;
+        }
+        let hint = managed_play::build_changes_hint(home);
+        let read = &mut self.ui.sheets.switching.receipt;
+        if read.as_ref().is_some_and(|read| {
+            read.home == home
+                && (matches!(read.status, Load::Loading) || !explicit && read.hint == hint)
+        }) {
+            return;
+        }
+        if !explicit && hint == Ok(None) {
+            *read = None;
+            return;
+        }
+        let home = home.to_owned();
+        let ticket = Arc::new(());
+        *read = Some(ReceiptRead {
+            home: home.clone(),
+            hint,
+            ticket: ticket.clone(),
+            status: Load::Loading,
+        });
+        let work = cx
+            .background_executor()
+            .spawn(async move { managed_play::read_build_changes(&home) });
+        cx.spawn(async move |this, cx| {
+            let result = work.await;
+            let _ = this.update(cx, |this, cx| {
+                if let Some(read) = this
+                    .ui
+                    .sheets
+                    .switching
+                    .receipt
+                    .as_mut()
+                    .filter(|read| Arc::ptr_eq(&read.ticket, &ticket))
+                {
+                    read.status = result.map_or_else(Load::Failed, Load::Ready);
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
     pub(super) fn switch_receipt_sheet(&mut self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
         if self.ui.sheets.switching.ack {
             // The receipt worker owns the exclusive publication claim until its reply.
@@ -327,23 +410,46 @@ impl Launcher {
         }
         let instance = self.selected_instance()?;
         let home = instance.home.clone();
-        let active = match managed_play::display_active(&home) {
-            Ok(active) => active?,
-            Err(error) => {
+        if self.receipt_status(&home).is_none() {
+            self.read_receipt(&home, true, cx);
+        }
+        let (identity, active) = match self.receipt_status(&home)? {
+            Load::Ready(Some((identity, active))) => (*identity, active.clone()),
+            Load::Loading | Load::Ready(None) => {
+                let message = if matches!(self.receipt_status(&home), Some(Load::Loading)) {
+                    tr("Reading build changes…")
+                } else {
+                    tr("There are no pending build changes for this profile.")
+                };
+                return Some(frame(
+                    "switch-receipt",
+                    600.,
+                    div()
+                        .flex()
+                        .flex_col()
+                        .child(title(tr("Build changes").into()))
+                        .child(muted(message)),
+                    cx,
+                ));
+            }
+            Load::Failed(error) => {
+                let error = error.clone();
                 self.open_notice(error, Some(WayOut::ProfileFolder(home)));
                 return Some(self.notice_sheet(cx));
             }
         };
-        let managed_play::PendingChanges { id, held, removed } = active.pending_changes()?;
+        let changes = active.pending_changes()?;
+        let id = changes.id;
+        let removed = changes.removed;
         let show = self.ui.sheets.details;
-        let held_line = |hold: &managed_play::Held| {
+        let held_line = |(title, enabled): (&str, bool)| {
             trf(
-                if hold.enabled_before() {
+                if enabled {
                     "{mod} was turned off. Needs an update from its author."
                 } else {
                     "{mod} stays off. Needs an update from its author."
                 },
-                &[("mod", hold.title())],
+                &[("mod", title)],
             )
         };
         let removed_line = |(name, reason): &(String, String)| {
@@ -352,14 +458,17 @@ impl Launcher {
                 &[("mod", name), ("reason", reason)],
             )
         };
-        let lines = held
-            .iter()
+        let lines = changes
+            .held()
             .map(held_line)
             .chain(removed.iter().map(removed_line))
             .collect::<Vec<_>>();
         let report = std::sync::Arc::new(format!(
             "{}\n{}\n",
-            trf("Profile game build: {build}", &[("build", active.base())]),
+            changes.base().map_or_else(
+                || tr("Original game build not recorded.").to_owned(),
+                |base| trf("Profile game build: {build}", &[("build", base)]),
+            ),
             lines.join("\n")
         ));
         let copy = report.clone();
@@ -370,7 +479,7 @@ impl Launcher {
             .flex()
             .flex_col()
             .gap(px(5.))
-            .children(held.iter().map(|hold| div().child(held_line(hold))))
+            .children(changes.held().map(|hold| div().child(held_line(hold))))
             .children(removed.iter().map(|row| {
                 div().child(if show {
                     removed_line(row)
@@ -453,9 +562,11 @@ impl Launcher {
                             let (tx, home, active) =
                                 (this.tx.clone(), home.clone(), active.clone());
                             std::thread::spawn(move || {
-                                let result = Profile::open(&home, None).and_then(|mut profile| {
-                                    profile.acknowledge_receipt(&active, id)
-                                });
+                                let result = Profile::open_for(&home, None, Some(identity))
+                                    .map_err(String::from)
+                                    .and_then(|mut profile| {
+                                        profile.acknowledge_receipt(&active, id)
+                                    });
                                 let _ = tx.send(Msg::ReceiptAcknowledged(home, result));
                             });
                             cx.notify();
@@ -477,7 +588,10 @@ impl Launcher {
             return;
         }
         match result {
-            Ok(true) => self.close_sheet(),
+            Ok(true) => {
+                self.ui.sheets.switching.receipt = None;
+                self.close_sheet();
+            }
             Ok(false) => self.ui.sheets.error = Some(tr("These build changes are no longer current. Close this report and open Build changes again.").into()),
             Err(error) => self.ui.sheets.error = Some(error),
         }

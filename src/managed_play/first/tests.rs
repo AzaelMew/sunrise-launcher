@@ -363,12 +363,14 @@ fn receipt_acknowledgement_recovers_the_exact_pointer_across_all_durable_cuts() 
         Receipt {
             id: ID,
             waiting_for_update: vec![hold.clone()],
+            report: None,
             removed: Vec::new(),
             acknowledged: false,
         },
         Receipt {
             id: [8; 16],
             waiting_for_update: Vec::new(),
+            report: None,
             removed: vec![("another".into(), "Another".into())],
             acknowledged: false,
         },
@@ -449,6 +451,110 @@ fn receipt_acknowledgement_recovers_the_exact_pointer_across_all_durable_cuts() 
     assert!(!profile.acknowledge_receipt(&shown, ID).unwrap());
     assert_eq!(fs::read(mod_path).unwrap(), package);
     assert_eq!(profile.active().unwrap(), Some(after));
+}
+
+#[test]
+fn home_read_recovers_the_first_switch_receipt_after_a_killed_commit() {
+    use crate::managed_play::{
+        build_changes_hint, display_active, read_build_changes, Receipt, ReceiptHint, ReceiptReport,
+    };
+    use crate::profile_txn::Boundary;
+    use std::collections::BTreeSet;
+    const CASE: &str = "managed_play::first::tests::home_read_recovers_the_first_switch_receipt_after_a_killed_commit";
+    const ID: [u8; 16] = [6; 16];
+    let actor = |role| {
+        let mut actor = Command::new(std::env::current_exe().unwrap());
+        actor
+            .args(["--exact", CASE, "--nocapture"])
+            .env("SWITCH_RECEIPT_ACTOR", role);
+        actor
+    };
+    let Ok(role) = std::env::var("SWITCH_RECEIPT_ACTOR") else {
+        let scratch = tempfile::tempdir().unwrap();
+        let root = backend::plain(scratch.path().canonicalize().unwrap());
+        assert!(actor("scenario")
+            .env("SUNRISE_HOME", root.join("game"))
+            .env("SUNRISE_LAUNCHER_HOME", root.join("launcher"))
+            .env("XDG_CONFIG_HOME", root.join("config"))
+            .status()
+            .unwrap()
+            .success());
+        return;
+    };
+    let home = backend::game_home();
+    let ready = home.join("marker-ready");
+    if role == "publish" {
+        let profile = Profile::open(&home, None).unwrap();
+        let _references = ReferencePublication::begin(&home).unwrap();
+        let stage = profile
+            .0
+            .reserve(Intent::Switch, BTreeSet::from([BUILD.into()]))
+            .unwrap();
+        let mut pointer = Active::capture(
+            BUILD,
+            BUILD,
+            &home,
+            inputs(&home, None).unwrap(),
+            Generation::First {
+                profile: [4; 16],
+                resources: Resources::capture(BUILD, &stage).unwrap(),
+                variant: None,
+            },
+        )
+        .unwrap();
+        pointer.receipts.push(Receipt {
+            id: ID,
+            waiting_for_update: Vec::new(),
+            removed: vec![("Lamp".into(), "Taken down".into())],
+            acknowledged: false,
+            report: Some(ReceiptReport::new(Some(BUILD.into()), &[])),
+        });
+        stage
+            .seal(serde_json::to_vec(&pointer).unwrap(), &[])
+            .unwrap()
+            .publish_observed(
+                || Ok(()),
+                |_, cut| {
+                    if cut == Boundary::DurableMarker {
+                        fs::write(&ready, []).unwrap();
+                        await_fixture(|| false);
+                    }
+                    Ok(())
+                },
+            )
+            .unwrap();
+        panic!("publisher did not stop at the durable marker");
+    }
+    if role == "restart" {
+        assert_eq!(
+            build_changes_hint(&home).unwrap(),
+            Some(ReceiptHint::Recovery)
+        );
+        assert!(
+            display_active(&home).unwrap().is_none(),
+            "the repaint snapshot still sees the pre-Switch pointer"
+        );
+        let (_, active) = read_build_changes(&home).unwrap().unwrap();
+        let receipt = active.pending_changes().unwrap();
+        assert_eq!(receipt.id, ID);
+        assert_eq!(receipt.base(), Some(BUILD));
+        assert_eq!(receipt.removed[0].0, "Lamp");
+        assert!(!profile_txn::recovery_pending(&home).unwrap());
+        return;
+    }
+    assert_eq!(role, "scenario");
+    fs::create_dir_all(&home).unwrap();
+    let resources = backend::resources(BUILD);
+    fs::create_dir_all(&resources).unwrap();
+    fs::write(resources.join("sunrise-resources.json"), b"{}").unwrap();
+    let build = backend::version_dir(BUILD);
+    fs::write(build.join(".installed"), []).unwrap();
+    fs::write(build.join(backend::CLIENT), b"local executable fixture").unwrap();
+    let mut writer = Running(actor("publish").spawn().unwrap());
+    await_fixture(|| ready.is_file());
+    writer.0.kill().unwrap();
+    assert!(!writer.0.wait().unwrap().success());
+    assert!(actor("restart").status().unwrap().success());
 }
 
 #[cfg(unix)]
