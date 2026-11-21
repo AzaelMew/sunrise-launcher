@@ -83,10 +83,11 @@ const RELEASES_PER_PAGE: usize = 100;
 // well below GitHub's anonymous hourly limit without mistaking a partial feed for the whole list.
 const MAX_RELEASE_PAGES: usize = 32;
 
+/// Only a complete sequence of JSON arrays counts as a checked release feed.
 pub(crate) fn release_list(
     repo: &str,
     policy: CachePolicy,
-) -> Result<Option<serde_json::Value>, String> {
+) -> Result<Vec<serde_json::Value>, String> {
     release_list_with(repo, policy, page)
 }
 
@@ -94,7 +95,7 @@ fn release_list_with(
     repo: &str,
     policy: CachePolicy,
     fetch: impl Fn(Request<'_>) -> Result<Option<Page>, String>,
-) -> Result<Option<serde_json::Value>, String> {
+) -> Result<Vec<serde_json::Value>, String> {
     let first = format!("{API}/repos/{repo}/releases?per_page={RELEASES_PER_PAGE}");
     let mut releases = Vec::new();
     for number in 1..=MAX_RELEASE_PAGES {
@@ -102,25 +103,18 @@ fn release_list_with(
         // not the response's URL: each page keeps our configured repo, mirror path and credentials.
         let next_url = (number > 1).then(|| format!("{first}&page={number}"));
         let url = next_url.as_deref().unwrap_or(&first);
-        let Some(page) = fetch(Request {
+        let page = fetch(Request {
             url,
             policy,
             paginated: true,
         })?
-        else {
-            if number == 1 {
-                return Ok(None);
-            }
-            return Err(format!("{url} answered 404"));
+        .ok_or_else(|| format!("{url} answered 404"))?;
+        let serde_json::Value::Array(items) = page.body else {
+            return Err(format!("{url} didn't answer with a release list."));
         };
-        match page.body {
-            serde_json::Value::Array(items) => releases.extend(items),
-            // Preserve the caller's existing handling of a non-list first response.
-            body if number == 1 => return Ok(Some(body)),
-            _ => return Err(format!("{url} didn't answer with a release list.")),
-        }
+        releases.extend(items);
         if page.next != Some(true) {
-            return Ok(Some(serde_json::Value::Array(releases)));
+            return Ok(releases);
         }
     }
     Err(format!(

@@ -30,7 +30,7 @@ fn installed_fixture() -> Vec<String> {
 }
 
 // The former startup paths: each decodes its own response; the update path parses games again.
-fn baseline(load: impl Fn() -> Result<serde_json::Value, String>) -> (Vec<Release>, Updates) {
+fn baseline(load: impl Fn() -> Result<Vec<serde_json::Value>, String>) -> (Vec<Release>, Updates) {
     let releases = parse_releases(&load().unwrap(), ASSET, is_game_tag);
     let list = load().unwrap();
     let updates = Updates {
@@ -45,7 +45,9 @@ fn baseline(load: impl Fn() -> Result<serde_json::Value, String>) -> (Vec<Releas
     (releases, updates)
 }
 
-fn shared(load: impl FnOnce() -> Result<serde_json::Value, String>) -> (Vec<Release>, Updates) {
+fn shared(
+    load: impl FnOnce() -> Result<Vec<serde_json::Value>, String>,
+) -> (Vec<Release>, Updates) {
     let mut releases = None;
     let updates = releases_and_updates_with(
         load,
@@ -77,9 +79,9 @@ fn one_response_preserves_both_startup_results() {
 
 fn newer_launcher() -> Vec<Release> {
     parse_launcher_releases(
-        &serde_json::json!([{"tag_name": "v99.0.0", "assets": [{
+        &[serde_json::json!({"tag_name": "v99.0.0", "assets": [{
             "name": LAUNCHER_ASSET.unwrap_or("unsupported"), "browser_download_url": "u", "size": 1
-        }]}]),
+        }]})],
         LAUNCHER_ASSET,
     )
 }
@@ -90,6 +92,8 @@ fn a_game_list_error_still_checks_the_launcher() {
         "No connection: offline",
         "GitHub's rate limit was reached.",
         "invalid JSON",
+        "first page answered 404",
+        "first page didn't answer with a release list.",
     ] {
         let mut published = None;
         let updates = releases_and_updates_with(
@@ -111,7 +115,11 @@ fn a_game_list_error_still_checks_the_launcher() {
 fn publish_games_before_the_launcher_lookup() {
     let events = RefCell::new(Vec::new());
     let updates = releases_and_updates_with(
-        || Ok(serde_json::json!([{"tag_name": "26.3-0.1.14", "assets": []}])),
+        || {
+            Ok(vec![
+                serde_json::json!({"tag_name": "26.3-0.1.14", "assets": []}),
+            ])
+        },
         Vec::new,
         Some(Stable),
         || {
@@ -136,7 +144,9 @@ fn a_failed_launcher_list_is_reported_not_up_to_date_and_keeps_the_game_result()
         let updates = releases_and_updates_with(
             || {
                 requests.fetch_add(1, Ordering::Relaxed);
-                Ok(serde_json::json!([{"tag_name": format!("26.3-0.1.{day}")}]))
+                Ok(vec![
+                    serde_json::json!({"tag_name": format!("26.3-0.1.{day}")}),
+                ])
             },
             Vec::new,
             Some(Stable),
@@ -154,17 +164,17 @@ fn a_failed_launcher_list_is_reported_not_up_to_date_and_keeps_the_game_result()
 #[test]
 fn empty_or_prebuilt_only_fork_has_no_game_or_launcher_update() {
     for list in [
-        serde_json::json!([]),
-        serde_json::json!([{
+        vec![],
+        vec![serde_json::json!({
             "tag_name": "prebuilt-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "prerelease": true,
             "assets": [{"name": "sunrise-prebuilt-v3-x86_64-unknown-linux-gnu.tar.gz",
                         "browser_download_url": "https://example.test/sdk", "size": 9}]
-        }]),
+        })],
     ] {
         let mut games = None;
         let updates = releases_and_updates_with(
-            || Ok(list.clone()),
+            || Ok(list),
             Vec::new,
             Some(Stable),
             || Ok(Vec::new()),
@@ -204,8 +214,8 @@ fn each_platform_download_is_bound_to_the_fork_not_the_provider_url() {
             "browser_download_url": "https://github.com/horizon-rust/horizon/releases/download/wrong/file"}))
         .collect();
     // The game's list is the game repository's, the launcher's is its own repository's.
-    let game_list = serde_json::json!([{"tag_name": "26.3-0.1.0", "assets": assets}]);
-    let launcher_list = serde_json::json!([{"tag_name": "v1.0.9", "assets": assets}]);
+    let game_list = [serde_json::json!({"tag_name": "26.3-0.1.0", "assets": assets})];
+    let launcher_list = [serde_json::json!({"tag_name": "v1.0.9", "assets": assets})];
     for (os, arch, game, launcher) in platforms {
         let (game_asset, launcher_asset) = platform_assets(os, arch).unwrap();
         let games = parse_releases(&game_list, Some(game_asset), is_game_tag);
@@ -238,10 +248,12 @@ fn decoy_asset_names_never_replace_the_exact_platform_asset() {
             ("v1/../../x", "v1%2F..%2F..%2Fx"),
             ("v1%?# é", "v1%25%3F%23%20%C3%A9"),
         ] {
-            let list = serde_json::json!([{ "tag_name": tag, "html_url": "https://evil.test", "assets": [
-                {"name": decoy, "size": 1, "browser_download_url": "https://evil.test/first"},
-                {"name": asset, "size": 2, "browser_download_url": "https://evil.test/second"}
-            ]}]);
+            let list = [
+                serde_json::json!({ "tag_name": tag, "html_url": "https://evil.test", "assets": [
+                    {"name": decoy, "size": 1, "browser_download_url": "https://evil.test/first"},
+                    {"name": asset, "size": 2, "browser_download_url": "https://evil.test/second"}
+                ]}),
+            ];
             let got = parse_releases(&list, Some(asset), |_| true);
             assert_eq!(
                 got[0].asset,
@@ -256,14 +268,18 @@ fn decoy_asset_names_never_replace_the_exact_platform_asset() {
     }
     for tag in ["../x", "prebuilt-1"] {
         let got = game_releases_with(
-            &serde_json::json!([{"tag_name": tag, "prerelease": true, "assets": [{"name": asset, "size": 1}]}]),
+            &[
+                serde_json::json!({"tag_name": tag, "prerelease": true, "assets": [{"name": asset, "size": 1}]}),
+            ],
             Some(asset),
             None,
         );
         assert!(got.is_empty());
     }
     let draft = parse_releases(
-        &serde_json::json!([{"tag_name": "26.3-0.1.0", "draft": true, "assets": [{"name": asset, "size": 1}]}]),
+        &[
+            serde_json::json!({"tag_name": "26.3-0.1.0", "draft": true, "assets": [{"name": asset, "size": 1}]}),
+        ],
         Some(asset),
         is_game_tag,
     );

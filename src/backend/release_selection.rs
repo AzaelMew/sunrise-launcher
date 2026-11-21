@@ -34,14 +34,14 @@ pub(super) fn dev(tag: &str) -> Result<Option<Release>, String> {
         .map_or((super::ASSET, super::GAME_FALLBACK), |(asset, fallback)| {
             (Some(asset), fallback)
         });
-    dev_in(&serde_json::json!([release]), tag, asset, fallback)
+    dev_in(&[release], tag, asset, fallback)
         .map(Some)
         .ok_or_else(missing)
 }
 
 /// The Dev build tagged `tag` in `list` (GitHub's answer for it) with `asset`, else `fallback`.
 fn dev_in(
-    list: &serde_json::Value,
+    list: &[serde_json::Value],
     tag: &str,
     asset: Option<&str>,
     fallback: Option<&str>,
@@ -197,7 +197,7 @@ impl WorldBuildOrder {
     }
 }
 
-fn world_order_releases(list: &serde_json::Value) -> Vec<Release> {
+fn world_order_releases(list: &[serde_json::Value]) -> Vec<Release> {
     let mut releases = super::game_releases(list);
     // Use each Dev source once for provenance, independent of the picker and update filters.
     releases.retain(|r| Channel::of(&r.tag) != Some(Channel::Dev));
@@ -223,14 +223,13 @@ mod tests {
     fn a_world_saved_by_dev_gets_signed_order_against_a_nightly_target() {
         let saved = "b".repeat(40);
         let tag = "dev-2026-11-19-bbbbbbb";
-        let raw = serde_json::json!([{
+        let releases = world_order_releases(&[serde_json::json!({
             "tag_name": tag,
             "name": "Dev 2026-11-19 · bbbbbbb",
             "published_at": "2026-11-19T00:00:00Z",
             "prerelease": true,
             "assets": []
-        }]);
-        let releases = world_order_releases(&raw);
+        })]);
         assert_eq!(releases.len(), 1);
         let mut order = WorldBuildOrder {
             target: Some(SignedIdentity {
@@ -276,13 +275,13 @@ mod tests {
 
     fn published(channel: &str) -> Vec<Release> {
         game_releases_with(
-            &serde_json::json!([{
+            &[serde_json::json!({
                 "tag_name": channel,
                 "name": "Nightly 2026-11-10 · 9f13812",
                 "published_at": "2026-11-10T17:07:46Z",
                 "prerelease": true,
                 "assets": [{"name": "sunrise-linux-x86_64.tar.gz", "size": 123}]
-            }]),
+            })],
             Some("sunrise-linux-x86_64.tar.gz"),
             None,
         )
@@ -307,13 +306,13 @@ mod tests {
     fn a_dev_build_is_found_by_its_tag_and_installs_as_it() {
         const DEV: &str = "dev-2026-11-13-bbbbbbb";
         let (arm, x64) = ("sunrise-windows-arm64.zip", "sunrise-windows-x64.zip");
-        let list = serde_json::json!([{
+        let list = [serde_json::json!({
             "tag_name": DEV,
             "name": "Dev 2026-11-13 · bbbbbbb",
             "published_at": "2026-11-13T10:00:00Z",
             "prerelease": true,
             "assets": [{"name": x64, "size": 1}]
-        }]);
+        })];
         let found = dev_in(&list, DEV, Some(arm), Some(x64)).unwrap();
         assert_eq!(found.tag, DEV);
         assert_eq!(found.nightly.as_deref(), Some(DEV));
@@ -328,8 +327,10 @@ mod tests {
         let mut full_release = list;
         full_release[0]["prerelease"] = serde_json::Value::Bool(false);
         assert!(dev_in(&full_release, DEV, Some(x64), None).is_none());
-        let nightly = serde_json::json!([{"tag_name": "nightly", "name": "Nightly 2026-11-13 · bbbbbbb",
-                                           "assets": [{"name": x64, "size": 1}]}]);
+        let nightly = [
+            serde_json::json!({"tag_name": "nightly", "name": "Nightly 2026-11-13 · bbbbbbb",
+                                           "assets": [{"name": x64, "size": 1}]}),
+        ];
         assert!(dev_in(&nightly, "nightly", Some(x64), None).is_none());
         // Other tags are not looked up here; only a full Dev tag may go to GitHub.
         for tag in ["nightly", "26.3-0.1.0", "preview-2026-11-13-bbbbbbb"] {

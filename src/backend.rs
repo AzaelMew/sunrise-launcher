@@ -687,18 +687,14 @@ pub fn compare_versions(a: &str, b: &str) -> std::cmp::Ordering {
     release_order(a).cmp(&release_order(b))
 }
 
-/// Every published release of the repository, both kinds, as GitHub's JSON (kept on disk with its
-/// ETag, and read through a configured mirror past GitHub's rate limit: [`crate::github`]).
-fn release_list() -> Result<serde_json::Value, String> {
-    Ok(
-        crate::github::release_list(GAME_REPO, crate::github::CachePolicy::PreferCache)?
-            .unwrap_or_else(|| serde_json::json!([])),
-    )
+/// Every published release of the game, from GitHub or its configured mirror.
+fn release_list() -> Result<Vec<serde_json::Value>, String> {
+    crate::github::release_list(GAME_REPO, crate::github::CachePolicy::PreferCache)
 }
 
 /// The game's releases in `list` whose tag passes `keep`, with the named asset from [`GAME_REPO`].
-pub(crate) fn parse_releases(
-    list: &serde_json::Value,
+fn parse_releases(
+    list: &[serde_json::Value],
     asset: Option<&str>,
     keep: fn(&str) -> bool,
 ) -> Vec<Release> {
@@ -719,7 +715,7 @@ pub(crate) fn parse_releases(
 
 /// This launcher's releases in `list` (from [`LAUNCHER_REPO`]), newest first, with the asset named `asset`, downloaded from there.
 pub(crate) fn parse_launcher_releases(
-    list: &serde_json::Value,
+    list: &[serde_json::Value],
     asset: Option<&str>,
 ) -> Vec<Release> {
     let mut out = parse_releases_from(
@@ -733,13 +729,13 @@ pub(crate) fn parse_launcher_releases(
 }
 
 fn parse_releases_from<'a>(
-    list: &'a serde_json::Value,
+    list: &'a [serde_json::Value],
     asset: Option<&str>,
     keep: fn(&str) -> bool,
     url: fn(&str, &str) -> String,
 ) -> Vec<(Release, &'a str)> {
     let mut out = Vec::new();
-    for r in list.as_array().into_iter().flatten() {
+    for r in list {
         let tag = r["tag_name"].as_str().unwrap_or_default();
         if r["draft"].as_bool().unwrap_or(false) || !keep(tag) {
             continue;
@@ -778,7 +774,7 @@ pub fn releases() -> Result<Vec<Release>, String> {
 
 /// The game's builds in `list`, newest first. A Nightly is listed under the version it installs as
 /// ([`crate::nightly::version_of`]); only the current one (`nightly`) is an update.
-pub(crate) fn game_releases(list: &serde_json::Value) -> Vec<Release> {
+pub(crate) fn game_releases(list: &[serde_json::Value]) -> Vec<Release> {
     let settings = Settings::load();
     let assets = game_assets_for(
         std::env::consts::OS,
@@ -795,7 +791,7 @@ pub(crate) fn game_releases(list: &serde_json::Value) -> Vec<Release> {
 /// [`game_releases`] for one platform's asset, and the one it installs from a release that has
 /// none of its own ([`GAME_FALLBACK`]).
 fn game_releases_with(
-    list: &serde_json::Value,
+    list: &[serde_json::Value],
     asset: Option<&str>,
     fallback: Option<&str>,
 ) -> Vec<Release> {
@@ -841,18 +837,8 @@ pub fn refresh_launcher_update() -> Result<Option<Release>, String> {
 
 /// This launcher's release feed, or why it couldn't be read.
 fn launcher_releases(policy: crate::github::CachePolicy) -> Result<Vec<Release>, String> {
-    launcher_releases_from(crate::github::release_list(LAUNCHER_REPO, policy))
-}
-
-/// The releases in the launcher's release list: only a list counts as checked (a repository with no release answers an empty one), never a 404 or anything else.
-fn launcher_releases_from(
-    answer: Result<Option<serde_json::Value>, String>,
-) -> Result<Vec<Release>, String> {
-    match answer? {
-        Some(list) if list.is_array() => Ok(parse_launcher_releases(&list, launcher_asset())),
-        Some(_) => Err("The launcher's release list isn't a list.".into()),
-        None => Err(format!("{LAUNCHER_REPO}'s release list is missing.")),
-    }
+    let list = crate::github::release_list(LAUNCHER_REPO, policy)?;
+    Ok(parse_launcher_releases(&list, launcher_asset()))
 }
 
 /// The newest Sunrise release that has a build for this platform.
@@ -3505,7 +3491,7 @@ pub fn releases_and_updates(on_releases: impl FnOnce(Result<Vec<Release>, String
 }
 
 fn releases_and_updates_with(
-    load: impl FnOnce() -> Result<serde_json::Value, String>,
+    load: impl FnOnce() -> Result<Vec<serde_json::Value>, String>,
     installed: impl FnOnce() -> Vec<String>,
     channel: Option<crate::instances::Channel>,
     launchers: impl FnOnce() -> Result<Vec<Release>, String>,
@@ -5655,7 +5641,8 @@ pub fn {f}("
             {"tag_name": "nightly", "name": "Nightly 2026-11-12 · aaaaaaa", "prerelease": true, "assets": files},
             {"tag_name": STABLE, "assets": files}
         ]);
-        let releases = game_releases_with(&list, Some(zip), None);
+        let list = list.as_array().unwrap();
+        let releases = game_releases_with(list, Some(zip), None);
         assert_eq!(
             releases.iter().map(|r| r.tag.as_str()).collect::<Vec<_>>(),
             [NIGHTLY, "dev-2026-11-22-fffffff", NEWEST, OLDER, STABLE]
@@ -5700,7 +5687,8 @@ pub fn {f}("
                 asset(x64, "https://example.test/v2026.11.04/sunrise-windows-x64.zip")]},
             {"tag_name": "26.3-0.1.3", "assets": []},
         ]);
-        let releases = game_releases_with(&list, Some(arm), Some(x64));
+        let list = list.as_array().unwrap();
+        let releases = game_releases_with(list, Some(arm), Some(x64));
         let urls: Vec<_> = releases
             .iter()
             .map(|r| {
@@ -5717,7 +5705,7 @@ pub fn {f}("
         assert_eq!(installs, [Some(arm), Some(x64), None]);
 
         // An x64 launcher, on any Windows, never looks at the ARM64 build.
-        let x64_only = game_releases_with(&list, Some(x64), None);
+        let x64_only = game_releases_with(list, Some(x64), None);
         assert!(x64_only[..2]
             .iter()
             .all(|r| r.asset.as_ref().unwrap().0.ends_with(x64)));
@@ -5817,8 +5805,9 @@ pub fn {f}("
             {"tag_name": "26.3-0.1.4", "assets": [asset(x64)]},
             {"tag_name": "26.3-0.1.3", "assets": []}
         ]);
+        let list = list.as_array().unwrap();
 
-        let arm_choice = game_releases_with(&list, Some(arm), Some(x64));
+        let arm_choice = game_releases_with(list, Some(arm), Some(x64));
         assert_eq!(
             arm_choice
                 .iter()
@@ -5839,7 +5828,7 @@ pub fn {f}("
         );
         assert_eq!(asset_installed(&arm_choice[2], Some(arm), Some(x64)), None);
 
-        let x64_choice = game_releases_with(&list, Some(x64), None);
+        let x64_choice = game_releases_with(list, Some(x64), None);
         assert!(x64_choice.iter().take(2).all(|release| release
             .asset
             .as_ref()
@@ -6036,7 +6025,8 @@ pub fn {f}("
             {"tag_name": "v1.3.0", "assets": [asset(x64)]},
             {"tag_name": "v1.2.0", "assets": [asset(x64), asset(arm)]},
         ]);
-        let releases = parse_launcher_releases(&list, Some(arm));
+        let list = list.as_array().unwrap();
+        let releases = parse_launcher_releases(list, Some(arm));
         assert!(launcher_update_from(&releases, "v1.2.0").is_none());
         let update = launcher_update_from(&releases, "v1.1.0").unwrap();
         assert_eq!(update.tag, "v1.2.0");
@@ -6179,7 +6169,8 @@ pub fn {f}("
             {"tag_name": "v1.1.0", "assets": file("sunrise-launcher-linux-x86_64.tar.gz")},
             {"tag_name": "v1.0.9", "draft": true, "assets": []},
         ]);
-        let launcher: Vec<_> = parse_launcher_releases(&launcher_list, LAUNCHER_ASSET)
+        let launcher_list = launcher_list.as_array().unwrap();
+        let launcher: Vec<_> = parse_launcher_releases(launcher_list, LAUNCHER_ASSET)
             .into_iter()
             .map(|r| r.tag)
             .collect();
@@ -6196,7 +6187,8 @@ pub fn {f}("
             {"tag_name": "26.3-0.1.1", "assets": [{"name": asset, "browser_download_url": "good", "size": 1}]},
             {"tag_name": "26.3-0.1.0", "assets": [{"name": asset, "browser_download_url": "old", "size": 1}]},
         ]);
-        let releases = parse_releases(&list, Some(asset), is_game_tag);
+        let list = list.as_array().unwrap();
+        let releases = parse_releases(list, Some(asset), is_game_tag);
         assert!(releases.iter().all(|r| r.tag != "26.3-0.1.2"));
         assert_eq!(
             latest(&releases).map(|r| r.tag.as_str()),
@@ -6781,18 +6773,8 @@ pub fn {f}("
     }
 
     #[test]
-    fn only_a_release_list_counts_as_a_checked_launcher_feed() {
-        assert!(launcher_releases_from(Ok(Some(serde_json::json!([]))))
-            .unwrap()
-            .is_empty());
-        assert!(launcher_releases_from(Ok(None)).is_err());
-        assert!(launcher_releases_from(Ok(Some(serde_json::json!({"message": "x"})))).is_err());
-        assert!(launcher_releases_from(Err("offline".into())).is_err());
-    }
-
-    #[test]
     fn before_the_first_launcher_release_there_is_no_update() {
-        assert!(parse_launcher_releases(&serde_json::json!([]), launcher_asset()).is_empty());
+        assert!(parse_launcher_releases(&[], launcher_asset()).is_empty());
         assert!(launcher_update_from(&[], "v1.0.0").is_none());
     }
 
@@ -6804,14 +6786,14 @@ pub fn {f}("
                 {"name": asset, "browser_download_url": "u", "size": 1}
             ]})
         };
-        let list = serde_json::json!([
+        let list = [
             "v1.1.0",
             "v1.2.0-rc1",
             "v1.2",
             "v1.3.0/../x",
-            "launcher@1.4.0"
+            "launcher@1.4.0",
         ]
-        .map(release));
+        .map(release);
         let tags: Vec<_> = parse_launcher_releases(&list, launcher_asset())
             .into_iter()
             .map(|r| r.tag)
@@ -6851,22 +6833,19 @@ pub fn {f}("
         use crate::instances::Channel::{Nightly, Stable};
         let asset = "sunrise-linux-x86_64.tar.gz";
         let files = serde_json::json!([{"name": asset, "size": 1}]);
-        let releases = game_releases_with(
-            &serde_json::json!([
-                {"tag_name": "nightly", "name": "Nightly 2026-11-20 · aaaaaaa", "prerelease": true, "assets": files},
-                {"tag_name": "nightly-2026-11-19", "assets": files},
-                {"tag_name": "v2026.10.13", "assets": files},
-                {"tag_name": "v1.0.0", "assets": files},
-                {"tag_name": "launcher@0.2.21", "assets": files},
-                {"tag_name": "26.3-0.1.0", "assets": files},
-                {"tag_name": "26.3-0.1.2", "prerelease": true, "assets": files},
-                {"tag_name": "26.3-0.1.3-rc.1", "assets": files},
-                {"tag_name": "26.3-0.1.4", "draft": true, "assets": files},
-                {"tag_name": "26.3-0.1.1", "assets": files},
-            ]),
-            Some(asset),
-            None,
-        );
+        let list = serde_json::json!([
+            {"tag_name": "nightly", "name": "Nightly 2026-11-20 · aaaaaaa", "prerelease": true, "assets": files},
+            {"tag_name": "nightly-2026-11-19", "assets": files},
+            {"tag_name": "v2026.10.13", "assets": files},
+            {"tag_name": "v1.0.0", "assets": files},
+            {"tag_name": "launcher@0.2.21", "assets": files},
+            {"tag_name": "26.3-0.1.0", "assets": files},
+            {"tag_name": "26.3-0.1.2", "prerelease": true, "assets": files},
+            {"tag_name": "26.3-0.1.3-rc.1", "assets": files},
+            {"tag_name": "26.3-0.1.4", "draft": true, "assets": files},
+            {"tag_name": "26.3-0.1.1", "assets": files},
+        ]);
+        let releases = game_releases_with(list.as_array().unwrap(), Some(asset), None);
         let nightly = "nightly-2026-11-20-aaaaaaa";
         assert_eq!(
             releases.iter().map(|r| r.tag.as_str()).collect::<Vec<_>>(),

@@ -546,7 +546,10 @@ fn a_stable_profile_finds_the_release_on_page_two_even_when_offline_afterwards()
     let stable = serde_json::json!([{
         "tag_name": "26.3-0.1.0", "assets": [{"name": asset, "size": 1}],
     }]);
-    assert_eq!(Stable.following(&backend::game_releases(&first)), Nightly);
+    assert_eq!(
+        Stable.following(&backend::game_releases(first.as_array().unwrap())),
+        Nightly
+    );
 
     let fetch = |now, offline| {
         release_list_with(backend::GAME_REPO, CachePolicy::PreferCache, |request| {
@@ -564,7 +567,7 @@ fn a_stable_profile_finds_the_release_on_page_two_even_when_offline_afterwards()
             assert_eq!(url, "https://mirror.example/github/repos/sunrise-org/sunrise/releases?per_page=100&page=2");
             fresh(stable.clone(), None)
         })
-    }).unwrap().unwrap()
+    }).unwrap()
     };
 
     for list in [
@@ -635,7 +638,7 @@ fn launcher_updates_revalidate_every_page_and_do_not_accept_an_incomplete_feed()
         })
     };
     for step in [0, 1] {
-        let list = read(step).unwrap().unwrap();
+        let list = read(step).unwrap();
         assert_eq!(
             backend::parse_launcher_releases(&list, asset)[0].tag,
             "v99.0.0"
@@ -643,6 +646,38 @@ fn launcher_updates_revalidate_every_page_and_do_not_accept_an_incomplete_feed()
     }
     assert_eq!(read(2).unwrap_err(), "offline");
     assert_eq!(read(3).unwrap_err(), format!("{second} answered 404"));
+}
+
+#[test]
+fn only_an_array_counts_as_a_checked_release_feed() {
+    let cache = tempfile::tempdir().unwrap();
+    for repo in [backend::GAME_REPO, backend::LAUNCHER_REPO] {
+        let first = format!("{API}/repos/{repo}/releases?per_page=100");
+        let read = |reply: fn() -> Answer| {
+            release_list_with(repo, CachePolicy::Revalidate, |request| {
+                assert_eq!(request.url, first);
+                page_with(request, cache.path(), T0, "", |_, _| reply(), no_mirror)
+            })
+        };
+        assert_eq!(
+            read(|| Answer::NotFound).unwrap_err(),
+            format!("{first} answered 404")
+        );
+        assert_eq!(
+            read(|| Answer::Fresh(
+                Page {
+                    body: serde_json::json!({"message": "not a list"}),
+                    next: Some(true)
+                },
+                None,
+            ))
+            .unwrap_err(),
+            format!("{first} didn't answer with a release list.")
+        );
+        assert!(read(|| fresh(serde_json::json!([]), None))
+            .unwrap()
+            .is_empty());
+    }
 }
 
 #[test]
@@ -668,7 +703,7 @@ fn old_full_pages_without_link_metadata_are_refetched_unconditionally() {
             )
         })
     };
-    assert_eq!(read().unwrap(), Some(list("26.3-0.1.0")));
+    assert_eq!(read().unwrap()[0]["tag_name"], "26.3-0.1.0");
 }
 
 #[test]
@@ -707,7 +742,6 @@ fn a_json_only_mirror_does_not_hide_the_next_page_after_a_full_one() {
             },
         )
     })
-    .unwrap()
     .unwrap();
     assert_eq!(read[RELEASES_PER_PAGE]["tag_name"], "26.3-0.1.0");
 }
