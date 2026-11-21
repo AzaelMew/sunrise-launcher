@@ -26,7 +26,8 @@ thread_local! {
     static COPIED: RefCell<HashMap<SharedString, (Instant, usize)>> = RefCell::new(HashMap::new());
 }
 
-fn copied(id: &SharedString) -> Option<usize> {
+/// How many copies `id` has had, while its last one is still showing.
+pub(crate) fn copied(id: &SharedString) -> Option<usize> {
     COPIED.with_borrow(|m| {
         m.get(id)
             .filter(|(at, _)| at.elapsed() < SHOWN)
@@ -77,7 +78,7 @@ pub fn code_box(id: impl Into<SharedString>, blocks: Vec<SharedString>, max_h: O
 }
 
 /// Linear over `length`, or at its end at once under reduced motion.
-fn played(length: Duration) -> Animation {
+pub(crate) fn played(length: Duration) -> Animation {
     let a = Animation::new(length);
     match crate::motion::still() {
         true => a.with_easing(|_| 1.),
@@ -91,18 +92,7 @@ pub(crate) fn copy_button(id: SharedString, whole: String) -> impl IntoElement {
     let muted: Hsla = rgb(palette().muted).into();
     let accent: Hsla = rgb(palette().accent).into();
     let glyph = match shown {
-        // The tick pops in: from small, past its size, back to it.
-        Some(n) => crate::glass_ui::icon("tick-02", 14., accent)
-            .with_animation(
-                ElementId::named_usize(SharedString::from(format!("{id}-tick")), n),
-                played(Duration::from_millis(280)),
-                |g, t| {
-                    // An ease-out-back: overshoots by about 15 % at its height.
-                    let s = 1. + 2.7 * (t - 1.).powi(3) + 1.7 * (t - 1.).powi(2);
-                    g.size(px(14. * (0.4 + 0.6 * s))).opacity(t.min(1.))
-                },
-            )
-            .into_any_element(),
+        Some(n) => tick(&id, n, 14., accent),
         None => crate::glass_ui::icon("copy-01", 14., muted)
             .with_animation(
                 ElementId::Name(format!("{id}-copy").into()),
@@ -140,24 +130,43 @@ pub(crate) fn copy_button(id: SharedString, whole: String) -> impl IntoElement {
         })))
         .child(glyph)
         .on_click(move |_: &ClickEvent, window: &mut Window, cx| {
-            let n = COPIED.with_borrow_mut(|m| {
-                let e = m.entry(id.clone()).or_insert((Instant::now(), 0));
-                *e = (Instant::now(), e.1 + 1);
-                e.1
-            });
             crate::widgets::copy_to_clipboard(cx, gpui::ClipboardItem::new_string(whole.clone()));
-            // The view isn't known outside a draw, so redraw the window.
-            window.refresh();
-            // Back to the copy glyph once the tick has shown, unless another copy came since.
-            let id = id.clone();
-            window
-                .spawn(cx, async move |cx| {
-                    cx.background_executor().timer(SHOWN).await;
-                    let last = COPIED.with_borrow(|m| m.get(&id).map(|&(_, n)| n));
-                    if last == Some(n) {
-                        let _ = cx.update(|window, _| window.refresh());
-                    }
-                })
-                .detach();
+            note_copy(id.clone(), window, cx);
         })
+}
+
+/// The tick that pops in after copy `n` of `id`: from small, past its size, back to it.
+pub(crate) fn tick(id: &SharedString, n: usize, size: f32, color: Hsla) -> gpui::AnyElement {
+    crate::glass_ui::icon("tick-02", size, color)
+        .with_animation(
+            ElementId::named_usize(SharedString::from(format!("{id}-tick")), n),
+            played(Duration::from_millis(280)),
+            move |g, t| {
+                // An ease-out-back: overshoots by about 15 % at its height.
+                let s = 1. + 2.7 * (t - 1.).powi(3) + 1.7 * (t - 1.).powi(2);
+                g.size(px(size * (0.4 + 0.6 * s))).opacity(t.min(1.))
+            },
+        )
+        .into_any_element()
+}
+
+/// Records a copy from `id`'s button, so [`copied`] shows it, and redraws once it has shown.
+pub(crate) fn note_copy(id: SharedString, window: &mut Window, cx: &mut gpui::App) {
+    let n = COPIED.with_borrow_mut(|m| {
+        let e = m.entry(id.clone()).or_insert((Instant::now(), 0));
+        *e = (Instant::now(), e.1 + 1);
+        e.1
+    });
+    // The view isn't known outside a draw, so redraw the window.
+    window.refresh();
+    // Back to the copy glyph once the tick has shown, unless another copy came since.
+    window
+        .spawn(cx, async move |cx| {
+            cx.background_executor().timer(SHOWN).await;
+            let last = COPIED.with_borrow(|m| m.get(&id).map(|&(_, n)| n));
+            if last == Some(n) {
+                let _ = cx.update(|window, _| window.refresh());
+            }
+        })
+        .detach();
 }

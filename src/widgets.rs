@@ -330,6 +330,11 @@ pub(crate) fn copy_to_clipboard(cx: &mut App, item: gpui::ClipboardItem) {
         Some(text) => glass_toast::say_with("Copied {text}", &text),
         None => glass_toast::say(tr("Copied the picture")),
     }
+    copy_quietly(cx, item);
+}
+
+/// Copies like [`copy_to_clipboard`] without its toast, for a button that shows the copy itself.
+pub(crate) fn copy_quietly(cx: &mut App, item: gpui::ClipboardItem) {
     if let Some(file) = sunrise_launcher::desktop_seams::clipboard_file() {
         let bytes = match item.entries().first() {
             Some(gpui::ClipboardEntry::Image(image)) => image.bytes.clone(),

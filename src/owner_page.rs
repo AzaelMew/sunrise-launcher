@@ -78,7 +78,8 @@ impl Launcher {
             .rounded(crate::tokens::r(crate::tokens::R_PANEL))
             .border_1()
             .border_color(rgb(palette().line))
-            .bg(palette().card())
+            // Solid, as the other sheets are: the page behind must not read through it.
+            .bg(rgb(palette().raised))
             .text_color(rgb(palette().text))
             .child(
                 div()
@@ -151,11 +152,7 @@ impl Launcher {
                                         .child(user_code.to_string()),
                                 ),
                         )
-                        .child(
-                            button("owner-copy", tr("Copy code")).on_click(move |_, _, cx| {
-                                copy_to_clipboard(cx, gpui::ClipboardItem::new_string(copy.clone()))
-                            }),
-                        ),
+                        .child(copy_button("owner-copy", tr("Copy code"), copy)),
                 )
                 .children((!microsoft::has_private_window()).then(|| {
                     said(
@@ -165,6 +162,8 @@ impl Launcher {
                     )
                 }))
                 .child(
+                    // The three ways to open the link, at one height in one row; a long
+                    // translation wraps to a second row rather than out of the card.
                     div()
                         .flex()
                         .flex_wrap()
@@ -172,21 +171,14 @@ impl Launcher {
                         .gap(px(8.))
                         .child(
                             primary("owner-open", tr("Open link"))
-                                .h(px(tokens::ACTION))
-                                .px(px(20.))
-                                .text_size(px(tokens::BODY))
                                 .on_click(move |_, _, cx| cx.open_url(&open_uri)),
                         )
                         .child(if microsoft::has_private_window() {
                             button("owner-private", tr("Open in private window"))
                                 .on_click(move |_, _, cx| microsoft::open_private(&private_uri, cx))
+                                .into_any_element()
                         } else {
-                            button("owner-copy-link", tr("Copy link")).on_click(move |_, _, cx| {
-                                copy_to_clipboard(
-                                    cx,
-                                    gpui::ClipboardItem::new_string(link_uri.clone()),
-                                )
-                            })
+                            copy_button("owner-copy-link", tr("Copy link"), link_uri)
                         })
                         .child(
                             button("owner-other", tr("Use a different Microsoft account"))
@@ -508,6 +500,42 @@ impl Launcher {
                     .bg(ui::scrim()),
             )
             .child(card)
+    }
+}
+
+/// A copy button that shows the copy on itself (#168), not in a toast: its label turns to
+/// "Copied" on an accent tint with a tick that pops in, then goes back.
+fn copy_button(id: &'static str, label: &str, text: String) -> AnyElement {
+    let key = SharedString::from(id);
+    let accent: gpui::Hsla = rgb(palette().accent).into();
+    let shown = crate::code_box::copied(&key);
+    let base = match shown {
+        Some(n) => button(id, tr("Copied"))
+            .gap(px(6.))
+            .border_color(accent.opacity(0.5))
+            .child(crate::code_box::tick(
+                &key,
+                n,
+                16.,
+                rgb(palette().text).into(),
+            )),
+        None => button(id, label.to_string()),
+    };
+    let clicked = key.clone();
+    let base = base.on_click(move |_, window, cx| {
+        crate::widgets::copy_quietly(cx, gpui::ClipboardItem::new_string(text.clone()));
+        crate::code_box::note_copy(clicked.clone(), window, cx);
+    });
+    match shown {
+        // The tint comes up with the tick.
+        Some(n) => base
+            .with_animation(
+                ElementId::named_usize(SharedString::from(format!("{id}-tint")), n),
+                crate::code_box::played(std::time::Duration::from_millis(200)),
+                move |b, t| b.bg(accent.opacity(0.16 * t)),
+            )
+            .into_any_element(),
+        None => base.into_any_element(),
     }
 }
 
