@@ -131,6 +131,9 @@ impl Launcher {
                 )?;
                 Ok((target, candidate))
             })();
+            if let Err(error) = &candidate {
+                eprintln!("Nightly source preflight ({}): {error}", source.id());
+            }
             let _ = tx.send(super::super::Event::Nightly(Event::Detail(
                 request,
                 Box::new(Inspection { data, candidate }),
@@ -291,6 +294,9 @@ impl Launcher {
                     },
                 );
                 checked.target = Some(target);
+            }
+            for (id, error) in &checked.issues {
+                eprintln!("Nightly source update preflight ({id}): {error}");
             }
             let _ = tx.send(super::super::Event::Nightly(Event::Catalogue(catalogue)));
             let _ = tx.send(super::super::Event::Nightly(Event::Updates(Box::new(

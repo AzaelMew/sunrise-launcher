@@ -265,17 +265,25 @@ fn resolve_link(
 }
 
 fn pasted_source_error(error: SourceError) -> FormError {
-    let detail = error.to_string();
-    match error {
-        SourceError::DoesNotFit(_) => FormError::new(tr("Not available for your version"), detail),
-        SourceError::Github(Failure::NoManifest) => {
-            FormError::new(tr("No Sunrise mod at this commit."), detail)
-        }
+    eprintln!("GitHub source preflight: {error}");
+    let line = match error {
         SourceError::Github(Failure::Offline(_) | Failure::RateLimited { .. }) => {
-            FormError::transport(detail)
+            return FormError::transport(String::new());
         }
-        _ => FormError::new(tr("Couldn't check that the mods fit"), detail),
-    }
+        SourceError::DoesNotFit(_) => tr("Not available for your version").into(),
+        SourceError::Github(Failure::NoManifest) => tr("No Sunrise mod at this commit.").into(),
+        SourceError::Dependency {
+            required: Some(id), ..
+        } => trf(
+            "Needs {mod}. Install a fitting version first.",
+            &[("mod", &id)],
+        ),
+        SourceError::Dependency { required: None, .. } => {
+            tr("Can't install these mods together").into()
+        }
+        _ => tr("Couldn't check that the mods fit").into(),
+    };
+    FormError::new(&line, String::new())
 }
 
 impl Launcher {
@@ -374,7 +382,12 @@ impl Launcher {
                     if let Some(failure) = failure {
                         self.github.pending_failure = Some(failure);
                     }
-                    self.mods.message = Some(Err(format!("{line}\n{detail}")));
+                    let message = if detail.is_empty() {
+                        line
+                    } else {
+                        format!("{line}\n{detail}")
+                    };
+                    self.mods.message = Some(Err(message));
                 }
             }
         }
@@ -749,30 +762,31 @@ impl Launcher {
                 _ => None,
             };
             if let Some((error, expanded)) = error {
-                body =
-                    body.child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .gap(px(8.))
-                            .child(
-                                div()
-                                    .text_size(px(tokens::LABEL))
-                                    .text_color(rgb(palette().danger))
-                                    .child(error.line.clone()),
-                            )
-                            .child(button("github-add-details", tr("Details")).on_click(
-                                cx.listener(|this, _: &ClickEvent, _, cx| {
+                body = body.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .gap(px(8.))
+                        .child(
+                            div()
+                                .text_size(px(tokens::LABEL))
+                                .text_color(rgb(palette().danger))
+                                .child(error.line.clone()),
+                        )
+                        .children((!error.detail.is_empty()).then(|| {
+                            button("github-add-details", tr("Details")).on_click(cx.listener(
+                                |this, _: &ClickEvent, _, cx| {
                                     match &mut this.github.stage {
                                         Stage::Failed(_, expanded)
                                         | Stage::InstallFailed(_, expanded) => *expanded ^= true,
                                         _ => (),
                                     }
                                     cx.notify();
-                                }),
-                            )),
-                    );
+                                },
+                            ))
+                        })),
+                );
                 if *expanded {
                     body = body.child(
                         div()

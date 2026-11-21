@@ -511,17 +511,50 @@ pub(in crate::mods) fn source_error(
             sources::Failure::Offline(_) => {
                 tr("You're offline. Connect to check the source.").into()
             }
-            sources::Failure::Other(detail) => detail.clone(),
+            sources::Failure::Other(_) => tr("Couldn't check this source.").into(),
         },
-        SourceError::Dependency { detail, .. }
-        | SourceError::Unproved(detail)
-        | SourceError::Changed(detail) => detail.clone(),
-        SourceError::DoesNotFit(detail) => {
-            trf("Doesn't fit this build. {detail}", &[("detail", detail)])
+        SourceError::Dependency {
+            required: Some(id), ..
+        } => trf(
+            "Needs {mod}. Install a fitting version first.",
+            &[("mod", id)],
+        ),
+        SourceError::Dependency { required: None, .. } => {
+            tr("Can't install these mods together").into()
         }
+        SourceError::Unproved(_) => tr("Fit could not be verified").into(),
+        SourceError::Changed(_) => {
+            tr("The profile or game build changed. Check the source again; nothing was changed.")
+                .into()
+        }
+        SourceError::DoesNotFit(_) => tr("Doesn't fit this build.").into(),
         SourceError::Tools(_) => {
             tr("Couldn't download build tools. Check your connection and try again.").into()
         }
         SourceError::Build { .. } => tr("Couldn't build on this computer.").into(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn source_status_keeps_local_paths_out_of_regular_copy() {
+        let diagnostic = "fixture /local/private/.installed C:\\Private\\build.log";
+        for error in [
+            SourceError::Github(sources::Failure::Other(diagnostic.into())),
+            SourceError::Unproved(diagnostic.into()),
+            SourceError::Changed(diagnostic.into()),
+            SourceError::Dependency {
+                required: Some("api_mod".into()),
+                detail: diagnostic.into(),
+            },
+            SourceError::DoesNotFit(diagnostic.into()),
+        ] {
+            assert_eq!(error.to_string(), diagnostic);
+            assert!(!source_error(&error, None).unwrap().contains("Private"));
+            assert!(!source_error(&error, None).unwrap().contains("/local/"));
+        }
+    }
 }

@@ -297,6 +297,9 @@ impl Installs {
             Err(InstallError::Cancelled | InstallError::Source(SourceError::Cancelled)) => {
                 return None
             }
+            Err(error @ InstallError::Source(_)) => {
+                Err((failure_line(error).into(), String::new()))
+            }
             Err(error) => Err((failure_line(error).into(), error.to_string())),
         };
         Some(Feedback {
@@ -364,6 +367,11 @@ impl Installs {
                     return false;
                 };
                 self.source_question.take();
+                if let Err(error) = &done.sources {
+                    if !matches!(error, SourceError::Cancelled) {
+                        eprintln!("Nightly source update batch: {error}");
+                    }
+                }
                 for id in source.ids {
                     self.source_outcomes
                         .insert((run.identity, id), done.sources.clone());
@@ -413,6 +421,11 @@ impl Installs {
                 if run.source.is_some() {
                     self.source_question.take();
                     let outcome = result.map(|_| ()).map_err(SourceError::from);
+                    if let Err(error) = &outcome {
+                        if !matches!(error, SourceError::Cancelled) {
+                            eprintln!("Nightly source edit: {error}");
+                        }
+                    }
                     for id in &run.requests[0].ids {
                         self.source_outcomes
                             .insert((run.identity, id.clone()), outcome.clone());
@@ -1214,7 +1227,21 @@ fn failure_line(error: &InstallError) -> &'static str {
         InstallError::Host(_) => tr("Native mods can't build on this computer"),
         InstallError::Unproved(_) => tr("Couldn't check that the mods fit"),
         InstallError::NotForVersion(_) => tr("Not available for your version"),
-        InstallError::Source(_) => tr("Couldn’t build on this computer."),
+        InstallError::Source(SourceError::DoesNotFit(_)) => tr("Not available for your version"),
+        InstallError::Source(SourceError::Dependency { .. }) => {
+            tr("Can't install these mods together")
+        }
+        InstallError::Source(SourceError::Unproved(_) | SourceError::Github(_)) => {
+            tr("Fit could not be verified")
+        }
+        InstallError::Source(SourceError::Tools(_)) => {
+            tr("Couldn't download build tools. Check your connection and try again.")
+        }
+        InstallError::Source(SourceError::Changed(_)) => {
+            tr("The profile or game build changed. Check the source again; nothing was changed.")
+        }
+        InstallError::Source(SourceError::Cancelled) => tr("Install cancelled."),
+        InstallError::Source(SourceError::Build { .. }) => tr("Couldn't build on this computer."),
         InstallError::GithubBuild(_) => tr("Could not build the selected mods."),
         InstallError::Download(_) => tr("Download failed. Try again"),
         InstallError::Compile(_) => tr("Couldn't build on your computer"),
