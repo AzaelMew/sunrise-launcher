@@ -3,9 +3,9 @@
 The launcher for [Sunrise](https://github.com/sunrise-org/sunrise): it installs, prepares and starts Sunrise builds, and
 manages instances, mods and worlds. It moved here from the game repository with its history ([CONTRIBUTING.md](CONTRIBUTING.md#history)).
 
-**Releases:** none from this repository yet. The first waits for a Sunrise Nightly whose `sunrise-prepare` has `needs`
-and an SDK release with the native build tool (`tool`), which this launcher requires. It is also published in the game
-repository as `launcher@<version>`, so launchers installed from there update to it.
+**Releases:** [published here](https://github.com/sunrise-org/sunrise-launcher/releases) as `vX.Y.Z` and signed with
+the game repository's release key. Each is also published in the game repository as `launcher@X.Y.Z`, so launchers
+installed from there update to it.
 
 Licence: [PolyForm Shield 1.0.0](LICENSE); code from Horizon is also MIT ([LICENSES/MIT-Horizon.txt](LICENSES/MIT-Horizon.txt)).
 
@@ -40,7 +40,8 @@ malicious software. No OS trust bypass is implied by a checksum signature.
 The launcher builds one identity, Sunrise Launcher's (`src/identity.rs`), and `packaging/` holds its
 installers' files as they ship. It downloads and checks the game from
 [sunrise-org/sunrise](https://github.com/sunrise-org/sunrise) and updates itself from this
-repository's releases, which are signed with this repository's own key, never the game's.
+repository's [releases](https://github.com/sunrise-org/sunrise-launcher/releases) (`vX.Y.Z`), which the game
+repository's release key signs. Older launchers update from the game repository's `launcher@X.Y.Z` copies.
 Sunrise's packages are Linux x86_64, Windows x64 and macOS Apple Silicon.
 
 A small desktop app that installs Sunrise builds, prepares them from your own copy of
@@ -56,7 +57,7 @@ The opening, then Play ([clip](docs/opening.webm)):
 
 ## What it does
 
-- **Versions**: lists the published builds of horizon-rust/horizon (the current Nightly, the last
+- **Versions**: lists the published builds of sunrise-org/sunrise (the current Nightly, the last
   week's, then the releases from before), installs the build for this platform into its own
   folder, and removes it again. **Import a game build…** takes a `sunrise-client` you have (one
   built on your fork's Actions, or the zip holding it) and installs it as `imported-<date>-<sha>`:
@@ -104,7 +105,7 @@ The opening, then Play ([clip](docs/opening.webm)):
   registry. Modrinth is searched for those packs only: Java mods and Java modpacks are not
   offered. Install puts a file in the game folder only after its checksum matches; installed
   packs show their source and checksum, with Update, **Update all** and Remove
-  ([docs/mod-browser.md](../docs/mod-browser.md)). `sunrise-launcher modpack list` still shows
+  ([docs/mod-browser.md](https://github.com/sunrise-org/sunrise/blob/main/docs/mod-browser.md)). `sunrise-launcher modpack list` still shows
   installed Sunrise modpacks. Installing, updating, playing and removing them is paused; their
   files are unchanged.
 - **Servers**: host a world for friends with buttons. **Create a server** asks for a name, a world
@@ -121,7 +122,7 @@ The opening, then Play ([clip](docs/opening.webm)):
   list with dates and sizes, Restore with a confirmation, Back up automatically, and **Updates**:
   Check for updates, Update now with its automatic rollback, and how many older versions to
   keep). Changes the running game can take apply at once, the others say "Restart to apply".
-  Everything goes through `sunrise-server` itself ([docs/hosting.md](../docs/hosting.md)):
+  Everything goes through `sunrise-server` itself ([docs/hosting.md](https://github.com/sunrise-org/sunrise/blob/main/docs/hosting.md)):
   the launcher copies a prepared version's programs and game files into `server-runtime/` laid
   out as `install.sh` does, runs `sunrise-server init`, `config`, `start`, `backup`, `restore`,
   `update` and `service` there, and talks to a running server through its control API. Problems
@@ -200,7 +201,7 @@ The opening, then Play ([clip](docs/opening.webm)):
 - **Language**: English, French, Russian, German, Simplified Chinese, Spanish, Ukrainian and Polish.
   The window follows the system's language unless the player picks one in Settings > Launcher
   (each named in itself); a string a table lacks shows in English. The tables are
-  `launcher/lang/<code>.json`, English text to its translation, Sunrise's own; a test fails when
+  `lang/<code>.json`, English text to its translation, Sunrise's own; a test fails when
   the code asks `tr("…")` for a string a table lacks, or a table keeps one the code dropped.
   `sunrise-launcher settings language system|CODE` (a wrong code lists every one).
 - **Console**: Home's Console shows the game's output of this run as it comes: a search (every
@@ -292,7 +293,7 @@ page `servers.json` (the list), `servers/<name>/` (the servers created there) an
   Without one, `HTTPS_PROXY` and `HTTP_PROXY` are used when the launcher is started with them, and
   `NO_PROXY` names the hosts to reach directly, the jars a Sunrise mod asks for included. A server on this
   computer never goes through it.
-- **Links**: the Discord invite and the website come from `launcher/links.json` on main
+- **Links**: the Discord invite and the website come from `links.json` on main
   (`{"discord": "...", "website": "..."}`), so they change without a launcher release. Offline,
   the launcher uses the same values built in; an empty address hides its button.
 
@@ -323,8 +324,9 @@ can still play a build already installed after the release is pruned. To install
 build, use `sunrise-launcher install dev-<date>-<commit>`. Its title and signature must both name
 the exact build. Dev is distinct from a local unsigned `developer-install`.
 
-The launcher updates itself from `vX.Y.Z` releases in its own repository, separate from the game's
-Stable, Nightly and Dev tags. Older launcher builds used `launcher@X.Y.Z`; before 0.2 they used
+The launcher updates itself from the `vX.Y.Z` releases in [this repository](https://github.com/sunrise-org/sunrise-launcher/releases),
+separate from the game's Stable, Nightly and Dev tags; older launchers update from the game repository's
+`launcher@X.Y.Z` copies of them. Older launcher builds were released as `launcher@X.Y.Z`; before 0.2 they used
 `launcher-vX.Y.Z` and `vYYYY.MM.DD`:
 every 0.2 tag counts as newer than all of those (docs/versioning.md). It downloads the new build, checks it
 against the release's signed `SHA256SUMS`, and says "A new version is available" in the sidebar with
@@ -359,16 +361,20 @@ Linux packagers can set `SUNRISE_LAUNCHER_DESKTOP_EXEC` to a wrapper's absolute 
 Menu entries the launcher writes then start that wrapper, which can
 set `SUNRISE_LAUNCHER_NO_SELF_UPDATE=1` to keep launcher updates with the package manager.
 
-Launcher releases are automatic (docs/release-flow.md in the repository): when main changes the
-launcher, `sunrise-prepare` or `sunrise-theme`, the `launcher` workflow builds Linux, macOS, Windows x64 and
-Windows ARM64 and publishes `launcher-vX.Y.Z` (the next patch, or the next minor after a pull request
-labelled `feature`) with `sunrise-launcher-linux-x86_64.tar.gz`,
-`sunrise-launcher-linux-x86_64.AppImage`, `sunrise-launcher-macos-arm64.zip`,
-`sunrise-launcher-macos-x64.zip` (Intel Macs), `sunrise-launcher-windows-x64.zip` and
-`sunrise-launcher-windows-arm64.zip`, never marked latest. The version is built in from the tag
-(`SUNRISE_LAUNCHER_VERSION`); `Cargo.toml`'s version is only what local builds report.
+Launcher releases come from this repository's `release` workflow (`.github/workflows/release.yml`),
+which a maintainer starts on main. It releases the version in `Cargo.toml`'s `[package]` as `vX.Y.Z`,
+so raising that version is the first step of a release (`tools/release_notes.py decide` refuses one
+that is tagged already). It builds and checks every platform the launcher ships for
+(`python3 tools/launcher_build_matrix.py` lists them, `--assets` the files) and leaves an unsigned
+draft; by default, or off main, it is a dry run that leaves nothing, and a real run also needs the
+repository variable `LAUNCHER_RELEASES=on`. Creating the draft doesn't sign or publish it: a
+maintainer then starts sunrise-org/sunrise's `launcher-bridge.yml` separately, with dry run off, which signs
+the draft with the game repository's release key and publishes it here as `vX.Y.Z` and there as
+`launcher@X.Y.Z`, so launchers installed from the game repository update too. The notes list the
+merged pull requests, `feature` ones first and `skip-release` ones left out. The version is built in
+from the release (`SUNRISE_LAUNCHER_VERSION`); a local build reports `Cargo.toml`'s.
 
-Windows also publishes `sunrise-launcher-setup.exe` (x64) and `sunrise-launcher-setup-arm64.exe`: the launcher's own
+Windows also publishes `sunrise-launcher-setup.exe`: the launcher's own
 binary under another name, which opens
 a per-user setup instead of the window (no administrator). It copies itself to
 `%LOCALAPPDATA%\Programs\Sunrise Launcher\sunrise-launcher.exe`, makes the Start menu shortcut (and the
@@ -486,7 +492,7 @@ The same server also plays the game: `play` starts it with a local control socke
 `creative`, `join` and `offscreen` are optional), and every `sunrise-ctl` tool of the selected
 version is offered as `game_<name>`: `game_state`, `game_ui` (every widget of the open screen),
 `game_click`, `game_goto`, `game_break`, `game_inventory`, `game_screenshot` (an image) and the
-rest of [sunrise-ctl's commands](../docs/sunrise-ctl-commands.md). The launcher runs that
+rest of [sunrise-ctl's commands](https://github.com/sunrise-org/sunrise/blob/main/docs/sunrise-ctl-commands.md). The launcher runs that
 version's `sunrise-ctl mcp` and passes the calls through; while no game runs, they answer with an
 error saying to call `play`.
 
@@ -516,7 +522,7 @@ closes. When the game starts, it gets the session in a private file it
 deletes as soon as it has read it. Sign out removes the tokens.
 
 Sign-in needs an Azure app registration: its client ID is configuration, built in from
-`SUNRISE_MSA_CLIENT_ID` (the same variable at run time overrides it; empty = not configured). How it works: [docs/microsoft-account.md](../docs/microsoft-account.md).
+`SUNRISE_MSA_CLIENT_ID` (the same variable at run time overrides it; empty = not configured). How it works: [docs/microsoft-account.md](https://github.com/sunrise-org/sunrise/blob/main/docs/microsoft-account.md).
 
 ## Logs and crash reports
 
@@ -536,13 +542,13 @@ turn one on ("Send nothing" is one click). Settings → Data collection changes 
 exactly what would be sent (the JSON), and deletes everything sent from your install. It asks
 again only when what is collected changes. The game obeys the same answer, kept in
 `telemetry/consent.json` in the game folder. What waits is sent when the launcher starts and
-closes. Every field, the caps and the format: [docs/telemetry.md](../docs/telemetry.md).
+closes. Every field, the caps and the format: [docs/telemetry.md](https://github.com/sunrise-org/sunrise/blob/main/docs/telemetry.md).
 
 
 ## Performance log
 
 Each session writes its own measurements to `benchmarks/launcher-<time>-session.json` in the
-launcher's data folder, in the [benchmark report format](../docs/benchmark-report.md): start to the
+launcher's data folder, in the [benchmark report format](https://github.com/sunrise-org/sunrise/blob/main/docs/benchmark-report.md): start to the
 first frame, the release list fetch, installs and updates (download and unpack), preparing, Play to
 the game's first frame, memory, UI frame times and the binary's size, with the machine's CPU, RAM
 and OS (read on a thread after the first frame: on Windows those queries take seconds). Attach it
@@ -551,7 +557,7 @@ as the OS's file cache allows), switches pages for a few seconds in each, rests 
 measure idle CPU, fetches the release list 3 times, and writes one report there with means and
 95% confidence intervals. Its window has to be on a screen that is awake. Session logs stay on
 your machine; a `benchmark` report is uploaded, dated to the day, only if you allowed benchmark
-uploads ([data collection](../docs/telemetry.md)).
+uploads ([data collection](https://github.com/sunrise-org/sunrise/blob/main/docs/telemetry.md)).
 
 The frame intervals above stop at the display's refresh: an animation whose frames take 12 ms on a
 60 Hz screen still reads 16.7 ms. A build with `cargo build --release --features frame-stats` (never
@@ -590,16 +596,23 @@ on an interactive Windows desktop with a graphics adapter.
 
 On NixOS, `nix-shell` in this folder provides the libraries GPUI links to (Wayland, X11,
 xkbcommon, Vulkan, fontconfig) and the ALSA and libudev files a native mod build looks up, so
-start the launcher from that shell to build native mods as well (#5248). macOS needs Xcode's
-command line tools. The `launcher`
-workflow builds all three platforms on every push to the `launcher` branch (or a
-`launcher-*` one), then installs the latest Sunrise into a temporary folder and checks that the
-client starts (`--help`) and that the binaries import only system libraries (Windows).
+start the launcher from that shell to build native mods as well ([horizon-rust/horizon#5248](https://github.com/horizon-rust/horizon/issues/5248)). macOS needs Xcode's
+command line tools.
+
+CI (`.github/workflows/ci.yml`) runs `format` on every pull request. Pull requests from this
+repository's own branches, and pushes to main, also get the full checks on Linux, macOS and Windows:
+clippy with warnings denied, the unit and doc tests, and the `tests/` targets the workflow names.
+A fork's pull request gets them when a maintainer runs
+`gh workflow run ci.yml --ref main -f pr=<number>`, which posts `build` on it. The `daily` workflow
+compares the game copies with Sunrise's main ([CONTRIBUTING.md](CONTRIBUTING.md#copies-of-game-files)) and
+runs the ignored tests, except those in `tools/ci/manual-tests.txt`. Release builds also check
+that the binaries start (`versions`, `links --json`) on every platform, and on Windows and macOS
+that they import only system libraries.
 
     cargo test --lib    # tag separation, version order, update selection, notes as text,
                         # the auto-install default, the links fallback
 
-Geist and Geist Mono (SIL Open Font License, `crates/sunrise-theme/fonts/OFL-*.txt`, shared with the game's on-screen keyboard) are
+Geist and Geist Mono (SIL Open Font License, `crates/theme/fonts/OFL-*.txt`, shared with the game's on-screen keyboard) are
 bundled so the type is the same on every platform.
 
 

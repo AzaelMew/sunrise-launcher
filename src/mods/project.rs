@@ -145,7 +145,116 @@ pub(super) fn about_link(id: &'static str, key: &'static str) -> Stateful<Div> {
         )
 }
 
+fn project_frame() -> Div {
+    div()
+        .size_full()
+        .flex()
+        .flex_col()
+        .gap(px(14.))
+        .p(px(24.))
+        .text_color(c(palette().text))
+}
+
 impl Launcher {
+    pub(super) fn installed_project_controls(
+        &self,
+        row: &Row,
+        cells: &model::Cells,
+        busy: bool,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        use crate::frame::button;
+        let hold = self
+            .ui
+            .mods
+            .snapshot
+            .as_ref()
+            .and_then(|snapshot| snapshot.switch_held.get(&row.id))
+            .cloned();
+        let status = if let Some(hold) = &hold {
+            Some(note(hold.label()))
+        } else if cells.popover {
+            row.unfit
+                .clone()
+                .map(|unfit| self.unfit(0, row, unfit, busy, cx))
+        } else {
+            cells.status.as_ref().map(|status| note(status.tip.clone()))
+        };
+        let allow = (cells.action == Some(model::RowAction::Allow)).then(|| {
+            let b = button("alt-project-allow", tr("Allow…"));
+            if busy {
+                dim(b)
+            } else {
+                b.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                    this.allow();
+                    cx.notify();
+                }))
+            }
+        });
+        let toggle = ui::switch("alt-project-switch", row.on);
+        let toggle = if busy || hold.is_some() || !cells.switch {
+            dim(toggle)
+        } else {
+            let row = row.clone();
+            toggle.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                this.toggle(&row);
+                cx.notify();
+            }))
+        };
+        let github_update = row
+            .local
+            .as_ref()
+            .and_then(|local| local.github.clone())
+            .filter(|origin| origin.is_release_asset())
+            .map(|origin| {
+                if let Some(progress) = self.registry_card_control(&row.id, |label| {
+                    dim(button("alt-project-github-progress", label)).into_any_element()
+                }) {
+                    return progress;
+                }
+                let button = button("alt-project-github-update", tr("Check for update"));
+                if busy {
+                    dim(button).into_any_element()
+                } else {
+                    button
+                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            this.open_github_add(Some(origin.clone()));
+                            cx.notify();
+                        }))
+                        .into_any_element()
+                }
+            });
+        let remove = row
+            .selectable_archive()
+            .then(|| self.remove_mod_button(&row.id, busy, cx));
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(8.))
+            .children(status)
+            .children(
+                hold.as_ref()
+                    .and_then(|reason| reason.detail())
+                    .map(|detail| note(detail.to_owned())),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .items_center()
+                    .gap(px(8.))
+                    .child(toggle)
+                    .child(note(if row.on {
+                        tr("Turned on")
+                    } else {
+                        tr("Turned off")
+                    }))
+                    .children(allow)
+                    .children(github_update)
+                    .children(remove),
+            )
+    }
+
     pub(super) fn project(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let back_to = self
             .ui
@@ -178,13 +287,7 @@ impl Launcher {
                 })),
             )
             .children(self.strip(cx));
-        let page = div()
-            .size_full()
-            .flex()
-            .flex_col()
-            .gap(px(14.))
-            .p(px(24.))
-            .text_color(c(palette().text));
+        let page = project_frame();
         let Some(open) = self.ui.mods.open.as_ref() else {
             return page
                 .child(header)
@@ -205,6 +308,12 @@ impl Launcher {
                 .is_some_and(|entry| entry.project == open.id),
         });
         let installed_row = installed.map(|i| &rows[i]);
+        // These controls mutate by mod ID, so showing a specific archive mustn't choose
+        // which duplicate to mutate.
+        let conflict = installed_row.is_some_and(|row| {
+            rows.iter()
+                .any(|other| other.id == row.id && other.archive_file() != row.archive_file())
+        });
         let p = match (&open.page, installed_row) {
             (_, None) if open.installed.is_some() => {
                 return page
@@ -241,10 +350,15 @@ impl Launcher {
             .and_then(|row| row.entry.as_ref().map(|_| row.id.as_str()))
             .unwrap_or(&p.id);
         let uses_registry = !matches!(open.installed, Some(InstalledProject::Local(_)));
-        let picture = p
-            .icon
-            .clone()
-            .and_then(|u| self.mods_image(&u, images::ICON));
+        let package = installed_row
+            .and_then(|row| self.archive_display(row))
+            .and_then(|archive| archive.icon.clone());
+        let picture = mod_artwork(
+            p.icon
+                .as_ref()
+                .and_then(|url| self.mods_image(url, images::ICON)),
+            package.clone(),
+        );
         let credit = match p.authors.is_empty() {
             true => String::new(),
             false => trf("by {authors}", &[("authors", &p.authors.join(", "))]),
@@ -383,7 +497,8 @@ impl Launcher {
         }));
 
         // The right column: the action and what it changes, then the facts.
-        let busy = self.mods_busy()
+        let busy = conflict
+            || self.mods_busy()
             || self.mods_locked().is_some()
             || self
                 .ui
@@ -675,9 +790,12 @@ impl Launcher {
             .items_center()
             .gap(px(12.))
             .child(tile(
-                p.icon
-                    .clone()
-                    .and_then(|u| self.mods_image(&u, images::ROW)),
+                mod_artwork(
+                    p.icon
+                        .as_ref()
+                        .and_then(|url| self.mods_image(url, images::ROW)),
+                    package,
+                ),
                 &p.id,
                 &p.name,
                 40.,
@@ -703,116 +821,32 @@ impl Launcher {
                     })),
             );
         let installed_controls = installed_row.zip(cells.as_ref()).map(|(row, cells)| {
-            use crate::frame::button;
-            use sunrise_launcher::browser::sunrise::SourceError;
-            let origin = nightly::installed_source(row);
-            let problem = origin.and_then(|_| {
-                self.source_outcome(&row.id)
-                    .and_then(|status| status.as_ref().err())
-                    .or_else(|| self.source_update_issue(&row.id))
-            });
-            let problem_line = problem.and_then(|error| nightly::source_error(error, None));
-            let problem_log = match problem {
-                Some(SourceError::Build { log: Some(log), .. }) => Some(log.clone()),
-                _ => None,
-            };
-            let provenance = origin.map(nightly::source_provenance);
-            let release = origin
-                .and_then(|origin| origin.tag.as_deref())
-                .map(|tag| trf("Release: {tag}", &[("tag", tag)]));
-            let hold = self
-                .ui
-                .mods
-                .snapshot
-                .as_ref()
-                .and_then(|snapshot| snapshot.switch_held.get(&row.id))
-                .cloned();
-            let status = if let Some(hold) = &hold {
-                Some(note(hold.label()))
-            } else if cells.popover {
-                row.unfit
-                    .clone()
-                    .map(|unfit| self.unfit(0, row, unfit, busy, cx))
-            } else {
-                cells.status.as_ref().map(|status| note(status.tip.clone()))
-            };
-            let allow = (cells.action == Some(model::RowAction::Allow)).then(|| {
-                let b = button("alt-project-allow", tr("Allow…"));
-                if busy {
-                    dim(b)
-                } else {
-                    b.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                        this.allow();
-                        cx.notify();
-                    }))
-                }
-            });
-            let toggle = ui::switch("alt-project-switch", row.on);
-            let toggle = if busy || hold.is_some() || !cells.switch {
-                dim(toggle)
-            } else {
-                let row = row.clone();
-                toggle.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    this.toggle(&row);
-                    cx.notify();
-                }))
-            };
-            let github_update = row
-                .local
-                .as_ref()
-                .and_then(|local| local.github.clone())
-                .filter(|origin| origin.is_release_asset())
-                .map(|origin| {
-                    if let Some(progress) = self.registry_card_control(&row.id, |label| {
-                        dim(button("alt-project-github-progress", label)).into_any_element()
-                    }) {
-                        return progress;
-                    }
-                    let button = button("alt-project-github-update", tr("Check for update"));
-                    if busy {
-                        dim(button).into_any_element()
-                    } else {
-                        button
-                            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                this.open_github_add(Some(origin.clone()));
-                                cx.notify();
-                            }))
-                            .into_any_element()
-                    }
+            let refusal = nightly::installed_source(row)
+                .filter(|_| !conflict)
+                .and_then(|origin| {
+                    let problem = self
+                        .source_outcome(&row.id)
+                        .and_then(|status| status.as_ref().err())
+                        .or_else(|| self.source_update_issue(&row.id))?;
+                    let repo = format!("{}/{}", origin.owner, origin.repo);
+                    let refused =
+                        super::refused::Refused::one(&row.title, Some(repo), true, problem)?;
+                    Some(self.refused_line("alt-project-source-refused", refused, cx))
                 });
-            let remove = row
-                .selectable_archive()
-                .then(|| self.remove_mod_button(&row.id, busy, cx));
+            let origin = row.local.as_ref().and_then(|local| local.github.as_ref());
             div()
                 .flex()
                 .flex_col()
                 .gap(px(8.))
-                .children(provenance.map(note))
-                .children(release.map(note))
-                .children(problem_line.map(note))
-                .children(problem_log.map(|log| self.nightly_log_button(&row.title, log, cx)))
-                .children(status)
+                .children(origin.map(|origin| note(nightly::source_provenance(origin))))
                 .children(
-                    hold.as_ref()
-                        .and_then(|reason| reason.detail())
-                        .map(|detail| note(detail.to_owned())),
+                    origin
+                        .and_then(|origin| origin.tag.as_ref())
+                        .map(|tag| note(trf("Release: {tag}", &[("tag", tag)]))),
                 )
-                .child(
-                    div()
-                        .flex()
-                        .flex_wrap()
-                        .items_center()
-                        .gap(px(8.))
-                        .child(toggle)
-                        .child(note(if row.on {
-                            tr("Turned on")
-                        } else {
-                            tr("Turned off")
-                        }))
-                        .children(allow)
-                        .children(github_update)
-                        .children(remove),
-                )
+                .children(refusal)
+                .children(conflict.then(|| note(tr(nightly::SOURCE_ID_CONFLICT))))
+                .child(self.installed_project_controls(row, cells, busy, cx))
         });
         let source_button = match &p.source {
             Some(model::SourceLink::GitHub(url)) => {
@@ -824,7 +858,6 @@ impl Launcher {
             }
             _ => None,
         };
-        let scroll = crate::frame::scrolls("project");
         let right = div()
             .flex()
             .flex_col()
@@ -876,20 +909,53 @@ impl Launcher {
                     })
             }));
 
-        // A narrow window has one column: the action stays near the top. Beside the column, the
-        // panel stays in view while the page scrolls.
-        let (above, beside) = match self.content_width() < 860. {
-            true => (Some(right), None),
-            false => (
+        let body = (!p.description.is_empty()).then_some(about);
+        let versions = (!p.versions.is_empty()).then(|| {
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(14.))
+                .child(
+                    div()
+                        .text_size(px(tokens::HEADING))
+                        .font_weight(FontWeight::BOLD)
+                        .child(tr("Versions")),
+                )
+                .child(versions)
+                .into_any_element()
+        });
+        self.project_layout(
+            header,
+            head,
+            gallery,
+            body.into_iter().chain(versions),
+            right,
+        )
+    }
+
+    /// The one project layout for registry, source and local packages. On a narrow window the
+    /// action moves above the description; otherwise it stays beside it as the player scrolls.
+    pub(super) fn project_layout(
+        &self,
+        header: Div,
+        head: Div,
+        gallery: Option<Div>,
+        body: impl IntoIterator<Item = AnyElement>,
+        side: Div,
+    ) -> AnyElement {
+        let scroll = crate::frame::scrolls("project");
+        let (above, beside) = if self.content_width() < 860. {
+            (Some(side), None)
+        } else {
+            (
                 None,
                 Some(
-                    right
-                        .relative()
+                    side.relative()
                         .top(px(self.mods_sticky.shift(&scroll, 1, 1)))
                         .w(px(360.))
                         .flex_none(),
                 ),
-            ),
+            )
         };
         let left = div()
             .flex_1()
@@ -900,38 +966,30 @@ impl Launcher {
             .child(head)
             .children(above)
             .children(gallery)
-            .when(!p.description.is_empty(), |d| d.child(about))
-            .when(!p.versions.is_empty(), |d| {
-                d.child(
-                    div()
-                        .text_size(px(tokens::HEADING))
-                        .font_weight(FontWeight::BOLD)
-                        .child(tr("Versions")),
-                )
-                .child(versions)
-            });
-        page.child(
-            div()
-                .id("alt-project-scroll")
-                .flex_1()
-                .min_h_0()
-                .overflow_y_scroll()
-                .track_scroll(&scroll)
-                .flex()
-                .flex_col()
-                .gap(px(14.))
-                .child(header)
-                .child(
-                    div()
-                        .id("alt-project-columns")
-                        .track_scroll(self.mods_sticky.row())
-                        .flex()
-                        .gap(px(24.))
-                        .items_start()
-                        .child(left)
-                        .children(beside),
-                ),
-        )
-        .into_any_element()
+            .children(body);
+        project_frame()
+            .child(
+                div()
+                    .id("alt-project-scroll")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .track_scroll(&scroll)
+                    .flex()
+                    .flex_col()
+                    .gap(px(14.))
+                    .child(header)
+                    .child(
+                        div()
+                            .id("alt-project-columns")
+                            .track_scroll(self.mods_sticky.row())
+                            .flex()
+                            .gap(px(24.))
+                            .items_start()
+                            .child(left)
+                            .children(beside),
+                    ),
+            )
+            .into_any_element()
     }
 }

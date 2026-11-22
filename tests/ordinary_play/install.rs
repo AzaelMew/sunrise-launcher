@@ -817,6 +817,7 @@ fn switch_takedowns_never_delete_old_files_on_the_word_of_an_override() {
                 commit: "c".repeat(40),
                 asset: None,
                 source: None,
+                added_from: None,
                 sha256: index::sha256(&archives["extra_mod"]),
             })
             .unwrap();

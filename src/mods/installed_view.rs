@@ -1,6 +1,5 @@
-//! Mods › Installed (mocks 05, 05b): what needs the player first, then updates, then the rest;
-//! one switch per row; bulk actions that name their count and scope.
-use super::model::{self, Group, Make, Row, Show};
+//! Mods › Installed: collection sections, one switch per row, and scoped bulk actions.
+use super::model::{self, Row, Show};
 use super::ui::*;
 use super::*;
 use crate::paint::palette;
@@ -16,7 +15,52 @@ pub(super) fn remove_names(rows: &[Row], labels: &[Option<String>]) -> BTreeMap<
         .collect()
 }
 
+impl ModsState {
+    fn installed_filters(&mut self, rows: &[Row]) -> model::FilterCounts {
+        let before = self.row_filter.clone();
+        let counts = model::counted_filters(rows, &mut self.row_filter);
+        if rows.is_empty() || self.row_filter != before {
+            self.selection.clear();
+            self.anchor = None;
+        }
+        counts
+    }
+
+    fn select_installed_row(&mut self, file: &str, shown: &[(String, String)], shift: bool) {
+        let Some(pos) = shown.iter().position(|(path, _)| path == file) else {
+            return;
+        };
+        let anchor = self
+            .anchor
+            .as_ref()
+            .filter(|_| shift)
+            .and_then(|anchor| shown.iter().position(|(path, _)| path == anchor));
+        if let Some(anchor) = anchor {
+            self.selection.extend(
+                shown[anchor.min(pos)..=anchor.max(pos)]
+                    .iter()
+                    .map(|(_, id)| id.clone()),
+            );
+        } else {
+            let id = &shown[pos].1;
+            if !self.selection.remove(id) {
+                self.selection.insert(id.clone());
+            }
+        }
+        self.anchor = Some(file.to_owned());
+    }
+}
+
 impl Launcher {
+    pub(super) fn archive_display(&self, row: &Row) -> Option<&ArchiveDisplay> {
+        self.ui
+            .mods
+            .snapshot
+            .as_ref()?
+            .archives
+            .get(row.archive_file()?)
+    }
+
     pub(super) fn installed(
         &mut self,
         window: &mut Window,
@@ -99,10 +143,11 @@ impl Launcher {
         let refresh_ready = refresh.is_none();
         page = page.children(refresh);
         let (rows, labels) = self.labeled_installed_rows();
+        if rows.is_empty() && !refresh_ready {
+            return page.into_any_element();
+        }
+        let model::FilterCounts { shows, kinds } = self.ui.mods.installed_filters(&rows);
         if rows.is_empty() {
-            if !refresh_ready {
-                return page.into_any_element();
-            }
             return page
                 .child(
                     card()
@@ -126,46 +171,51 @@ impl Launcher {
                 .into_any_element();
         }
 
-        let filter = self.ui.mods.row_filter.clone();
-        let visible = model::visible(&rows, &filter);
-        let shown_ids: Rc<Vec<String>> = Rc::new(
+        let visible = model::visible(&rows, &self.ui.mods.row_filter);
+        let shown: Rc<Vec<_>> = Rc::new(
             visible
                 .iter()
-                .filter(|&&i| rows[i].selectable_archive())
-                .map(|&i| rows[i].id.clone())
+                .filter_map(|&i| {
+                    let row = &rows[i];
+                    let file = row.archive_file().filter(|_| row.selectable_archive())?;
+                    Some((file.to_owned(), row.id.clone()))
+                })
                 .collect(),
         );
+        let filter = self.ui.mods.row_filter.clone();
         let selected: Vec<&Row> = rows
             .iter()
             .filter(|r| r.selectable_archive() && self.ui.mods.selection.contains(&r.id))
             .collect();
 
         // ---- what to show: the same row of chips Discover filters with
-        let count = |f: &dyn Fn(&Row) -> bool| rows.iter().filter(|r| f(r)).count();
         let counted = |label: &str, n: usize| {
             trf("{label} · {n}", &[("label", label), ("n", &n.to_string())])
         };
         let mut chips = div().flex().flex_wrap().items_center().gap(px(8.));
-        let shown = [
-            (tr("All"), rows.len(), Show::All),
-            (tr("Turned on"), count(&|r| r.on), Show::On),
-            (tr("Turned off"), count(&|r| !r.on), Show::Off),
-        ]
-        .into_iter()
-        .map(|(label, n, which)| {
-            let pick: Choose = Rc::new(move |this, _| {
-                let m = &mut this.ui.mods;
-                m.row_filter.show = which;
-                m.selection.clear();
-                m.anchor = None;
-            });
-            (counted(label, n).into(), filter.show == which, pick)
-        })
-        .collect();
-        chips = chips.child(choices("alt-show", shown, cx).gap(px(8.)));
-        chips = chips.child(div().flex_none().w(px(1.)).h(px(20.)).bg(c(palette().line)));
-        for (i, make) in [Make::Native, Make::Content].into_iter().enumerate() {
-            let n = count(&|r| r.make == Some(make));
+        let show_options = shows
+            .into_iter()
+            .map(|(which, n)| {
+                let label = match which {
+                    Show::All => tr("All"),
+                    Show::On => tr("Turned on"),
+                    Show::Off => tr("Turned off"),
+                };
+                let pick: Choose = Rc::new(move |this, _| {
+                    let m = &mut this.ui.mods;
+                    m.row_filter.show = which;
+                    m.selection.clear();
+                    m.anchor = None;
+                });
+                (counted(label, n).into(), filter.show == which, pick)
+            })
+            .collect();
+        chips = chips.child(choices("alt-show", show_options, cx).gap(px(8.)));
+        if !kinds.is_empty() {
+            chips = chips.child(div().flex_none().w(px(1.)).h(px(20.)).bg(c(palette().line)));
+        }
+        for (make, n) in kinds {
+            let i = make as usize;
             chips = chips.child(
                 // Two switches, not one choice: each is its own Tab stop.
                 chip(
@@ -189,11 +239,11 @@ impl Launcher {
         page = page.child(chips);
 
         // ---- toolbar: select-all and the bulk actions, naming their scope
-        let selected_here = shown_ids
+        let selected_here = shown
             .iter()
-            .filter(|id| self.ui.mods.selection.contains(*id))
+            .filter(|(_, id)| self.ui.mods.selection.contains(id))
             .count();
-        let all_on = selected_here > 0 && selected_here == shown_ids.len();
+        let all_on = selected_here > 0 && selected_here == shown.len();
         let n_sel = selected.len();
         let registry_selected = selected.iter().filter(|row| row.local.is_none()).count();
         let busy = !refresh_ready || self.mods_busy();
@@ -227,7 +277,7 @@ impl Launcher {
             }
         };
         let toolbar = {
-            let ids = shown_ids.clone();
+            let all_shown = shown.clone();
             let select_all = checkbox("alt-select-all", all_on)
                 .when(selected_here > 0 && !all_on, |d| {
                     d.bg(c(palette().text))
@@ -236,9 +286,11 @@ impl Launcher {
                 })
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     let m = &mut this.ui.mods;
-                    match ids.iter().all(|id| m.selection.contains(id)) {
+                    match all_shown.iter().all(|(_, id)| m.selection.contains(id)) {
                         true => m.selection.clear(),
-                        false => m.selection.extend(ids.iter().cloned()),
+                        false => m
+                            .selection
+                            .extend(all_shown.iter().map(|(_, id)| id.clone())),
                     }
                     m.anchor = None;
                     cx.notify();
@@ -276,7 +328,7 @@ impl Launcher {
                         check
                     } else {
                         check.on_click(cx.listener(|this, _, _, cx| {
-                            this.check_source_updates();
+                            this.check_source_updates(None);
                             cx.notify();
                         }))
                     });
@@ -342,7 +394,7 @@ impl Launcher {
                             "{count} selected of {shown} shown",
                             &[
                                 ("count", &n_sel.to_string()),
-                                ("shown", &shown_ids.len().to_string()),
+                                ("shown", &shown.len().to_string()),
                             ],
                         )),
                     ))
@@ -387,24 +439,13 @@ impl Launcher {
             bar
         };
 
-        // ---- rows, in three groups
         let mut list = div().flex().flex_col().children(
-            self.source_update_notice()
+            self.source_update_notice(None)
                 .map(|notice| note(notice.to_owned()).p(px(10.))),
         );
-        let mut last: Option<Group> = None;
-        let mut position = 0;
-        let group_counts = |g: Group| visible.iter().filter(|&&i| rows[i].group() == g).count();
-        for (n, &i) in visible.iter().enumerate() {
-            let r = rows[i].clone();
-            let g = r.group();
-            if last != Some(g) {
-                last = Some(g);
-                let (title, count) = match g {
-                    Group::NeedsYou => (tr("NEEDS YOU"), group_counts(g)),
-                    Group::Updates => (tr("UPDATES"), group_counts(g)),
-                    Group::Rest => (tr("EVERYTHING ELSE"), group_counts(g)),
-                };
+        let mut n = 0;
+        for (collection, group) in model::installed_groups(&rows, &visible) {
+            if let Some(title) = collection {
                 let head = div()
                     .flex()
                     .items_center()
@@ -418,16 +459,19 @@ impl Launcher {
                             .text_color(c(palette().muted))
                             .child(crate::selectable::selectable(trf(
                                 "{title} · {count}",
-                                &[("title", title), ("count", &count.to_string())],
+                                &[("title", title), ("count", &group.len().to_string())],
                             ))),
                     );
                 list = list.child(head);
+            } else if n != 0 {
+                // A gap ends the previous collection without giving loose mods a heading.
+                list = list.child(div().h(px(12.)).bg(c(palette().background)));
             }
-            let pos = position;
-            if r.selectable_archive() {
-                position += 1;
+            for &i in group {
+                let r = rows[i].clone();
+                list = list.child(self.row(n, r, labels[i].clone(), shown.clone(), busy, cx));
+                n += 1;
             }
-            list = list.child(self.row(n, pos, r, labels[i].clone(), shown_ids.clone(), busy, cx));
         }
         if visible.is_empty() && refresh_ready {
             list = list.child(
@@ -463,33 +507,53 @@ impl Launcher {
 
     pub(super) fn labeled_installed_rows(&self) -> (Vec<Row>, Vec<Option<String>>) {
         let mut rows = self.rows();
+        // The same catalogue Discover displays, including a saved copy. This is display-only;
+        // `rows` uses a fetched index for registry status and update offers.
+        let registry = sunrise::known_index();
+        let registry_collections = registry
+            .as_deref()
+            .map(model::collection::part_of)
+            .unwrap_or_default();
         // Use the exact installed package's display name here, as in the Remove review.
         // Compute collisions before filtering so a row keeps its label when peers are hidden.
-        let archive_names = self.ui.mods.snapshot.as_ref().map(|s| &s.archive_names);
-        let archive_name = |r: &Row| {
-            archive_names
-                .filter(|_| r.selectable_archive())
-                .and_then(|names| names.get(&r.id))
-        };
-        let mut renamed = false;
         for row in &mut rows {
-            if let Some(version) =
-                nightly::installed_source(row).and_then(|origin| self.source_update_version(origin))
-            {
-                row.update = Some(version.to_owned());
-                renamed = true; // The new offer may move the row to the Updates group.
+            if let Some(entry) = &row.entry {
+                if let Some(project) = registry
+                    .as_ref()
+                    .and_then(|index| index.project(&entry.project))
+                {
+                    row.icon.clone_from(&project.icon);
+                    row.authors = project.authors.join(", ");
+                }
+                row.collection = registry_collections
+                    .get(entry.project.as_str())
+                    .map(|collection| (*collection).into());
             }
-            if let Some(archive) = archive_name(row).filter(|archive| row.title != archive.name) {
+            if let Some(archive) = self.archive_display(row) {
                 row.title.clone_from(&archive.name);
-                renamed = true;
+                if row.authors.is_empty() {
+                    row.authors = archive.authors.join(", ");
+                }
+            }
+            if let Some(origin) = nightly::installed_source(row) {
+                let update = self.source_update_version(origin).map(str::to_owned);
+                if let Some(source) = self.source_listing(origin) {
+                    row.authors = source.owner().to_owned();
+                    row.collection = self.source_collection_for(source).map(Into::into);
+                    row.source_listing = Some(source.clone());
+                }
+                row.update = update;
+            }
+            if let Some(origin) = row.local.as_ref().and_then(|local| local.github.as_ref()) {
+                if row.authors.is_empty() {
+                    row.authors.clone_from(&origin.owner);
+                }
             }
         }
-        if renamed {
-            model::sort(&mut rows);
-        }
+        model::group_installed(&mut rows);
         use installed::{ModLabel, ModLabelSource};
         let labels = installed::colliding_mod_labels(rows.iter().map(|row| {
-            let (authors, version) = archive_name(row).map_or_else(
+            let (authors, version) = self.archive_display(row).map_or_else(
                 || (std::slice::from_ref(&row.authors), row.version.as_str()),
                 |archive| (archive.authors.as_slice(), archive.version.as_str()),
             );
@@ -509,43 +573,47 @@ impl Launcher {
         (rows, labels)
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn row(
         &mut self,
         n: usize,
-        pos: usize,
         r: Row,
         label: Option<String>,
-        ids: Rc<Vec<String>>,
+        shown: Rc<Vec<(String, String)>>,
         busy: bool,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let selected = self.ui.mods.selection.contains(&r.id);
-        let picture = r
-            .icon
-            .clone()
-            .and_then(|u| self.mods_image(&u, images::ROW));
+        let package = self
+            .archive_display(&r)
+            .and_then(|archive| archive.icon.clone());
+        let artwork = if let Some(source) = &r.source_listing {
+            self.source_tile(
+                source,
+                None,
+                self.nightly_catalogue_current(),
+                package,
+                32.,
+                cx,
+            )
+        } else {
+            let listed = r
+                .icon
+                .as_ref()
+                .and_then(|url| self.mods_image(url, images::ROW));
+            tile(mod_artwork(listed, package), &r.id, &r.title, 32.)
+        };
         let error = self.ui.mods.errors.get(&r.id).cloned();
 
         let check = {
-            let id = r.id.clone();
+            let file = r.archive_file().map(str::to_owned);
             checkbox(("alt-row-check", n), selected).on_click(cx.listener(
                 move |this, ev: &ClickEvent, _, cx| {
                     cx.stop_propagation();
-                    let m = &mut this.ui.mods;
-                    match (ev.modifiers().shift, m.anchor) {
-                        (true, Some(a)) => {
-                            let (lo, hi) = (a.min(pos), a.max(pos));
-                            m.selection
-                                .extend(ids[lo..=hi.min(ids.len() - 1)].iter().cloned());
-                        }
-                        _ => {
-                            if !m.selection.remove(&id) {
-                                m.selection.insert(id.clone());
-                            }
-                        }
+                    if let Some(file) = &file {
+                        this.ui
+                            .mods
+                            .select_installed_row(file, &shown, ev.modifiers().shift);
                     }
-                    m.anchor = Some(pos);
                     cx.notify();
                 },
             ))
@@ -675,53 +743,33 @@ impl Launcher {
                     .on_click(|_, _, cx| cx.stop_propagation())
             }
         };
-        let title = {
-            let plain_name = label.is_none();
-            div()
-                .min_w_0()
-                .flex()
-                .items_baseline()
-                .gap(px(8.))
-                .child(
-                    div()
-                        .min_w_0()
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .truncate()
-                        .child(label.unwrap_or_else(|| r.title.clone())),
-                )
-                .children(plain_name.then(|| {
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .text_size(px(tokens::SMALL))
-                        .text_color(c(palette().muted))
-                        .truncate()
-                        .child(r.authors.clone())
-                }))
+        let source = r.source_label();
+        let byline = if label.is_some() || r.authors.is_empty() {
+            source.to_owned()
+        } else {
+            trf(
+                "{author} · {source}",
+                &[("author", &r.authors), ("source", source)],
+            )
         };
         let title = div()
             .flex()
             .flex_col()
             .min_w_0()
-            .child(title)
-            .children(
-                r.local
-                    .as_ref()
-                    .and_then(|local| local.github.as_ref())
-                    .map(|origin| {
-                        let label = if origin.source.is_some() {
-                            nightly::source_provenance(origin)
-                        } else {
-                            trf("GitHub: {source}", &[("source", &origin.label())])
-                        };
-                        div()
-                            .id(("installed-origin", n))
-                            .text_size(px(tokens::SMALL))
-                            .text_color(c(palette().muted))
-                            .truncate()
-                            .tooltip(crate::glass_ui::tip(label.clone()))
-                            .child(label)
-                    }),
+            .child(
+                div()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .truncate()
+                    .child(label.unwrap_or_else(|| r.title.clone())),
+            )
+            .child(
+                div()
+                    .id(("installed-origin", n))
+                    .text_size(px(tokens::SMALL))
+                    .text_color(c(palette().muted))
+                    .truncate()
+                    .tooltip(crate::glass_ui::tip(byline.clone()))
+                    .child(byline),
             )
             .children(
                 nightly::installed_source(&r)
@@ -806,7 +854,7 @@ impl Launcher {
             } else {
                 div().flex_none().w(px(18.))
             })
-            .child(tile(picture, &r.id, &r.title, 32.));
+            .child(artwork);
         let row = if wide {
             row.child(title.flex_1().min_w(px(140.)))
                 .child(kind(column::KIND))
@@ -868,7 +916,7 @@ impl Launcher {
     /// Where a row's switch would be, for a mod the game was made without: "Not on Nov 17" and
     /// a "?" that says why in one sentence, the changed items for its author, and the way on.
     pub(super) fn unfit(
-        &mut self,
+        &self,
         n: usize,
         r: &Row,
         unfit: model::Unfit,
@@ -995,10 +1043,11 @@ impl Launcher {
                 }
                 _ => {
                     let id = r.id.clone();
+                    let origin = nightly::installed_source(r).cloned();
                     Some(button("alt-unfit-check", tr("Check for update")).on_click(
                         cx.listener(move |this, _: &ClickEvent, _, cx| {
-                            if this.rows().iter().find(|row| row.id == id).and_then(nightly::installed_source).is_some() {
-                                this.check_source_updates();
+                            if let Some(origin) = &origin {
+                                this.check_source_updates(Some(origin));
                             } else {
                                 this.check_mod_update(&id);
                             }
@@ -1056,5 +1105,72 @@ impl Launcher {
             Ok(_) => self.reload_instances(),
             Err(e) => self.ui.mods.notice = Some(Err(e)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shift_click_resolves_its_archive_after_a_catalogue_reply_regroups_the_list() {
+        let mut mods = ModsState::default();
+        let local = ["ant", "bird", "cat", "dog"].map(|id| model::Local {
+            id: id.into(),
+            file: format!("sunrise-native-mods/{id}.smod"),
+            name: id.into(),
+            version: "1.0.0".into(),
+            github: None,
+            native: true,
+            unreadable: false,
+        });
+        let mut rows = model::rows(
+            &[],
+            &model::World {
+                index: None,
+                game: "26.3",
+                unfit_updates: &BTreeSet::new(),
+                enabled: &HashSet::new(),
+                unbuilt: &HashSet::new(),
+                native_allowed: true,
+                chosen: &BTreeMap::new(),
+                local: &local,
+            },
+        );
+        let shown = |rows: &[Row]| -> Vec<_> {
+            rows.iter()
+                .map(|row| (row.archive_file().unwrap().to_owned(), row.id.clone()))
+                .collect()
+        };
+        let before = shown(&rows);
+        mods.select_installed_row(&local[2].file, &before, false);
+        // The catalogue lists Cat in a collection after the first click.
+        rows[2].collection = Some(model::CollectionGroup {
+            id: "pets".into(),
+            name: "Pets".into(),
+        });
+        model::group_installed(&mut rows);
+        let after = shown(&rows);
+        assert_eq!(after[0].0, local[2].file);
+        mods.select_installed_row(&local[0].file, &after, true);
+        assert_eq!(mods.selection, ["ant".to_owned(), "cat".to_owned()].into());
+        // If the anchor no longer exists, treat a Shift-click like a normal click.
+        let remaining = shown(&rows[2..]);
+        mods.select_installed_row(&remaining[1].0, &remaining, true);
+        assert!(!mods.selection.contains("bird"));
+        assert!(mods.selection.contains("dog"));
+    }
+
+    #[test]
+    fn confirmed_empty_installed_resets_filters_selection_and_anchor() {
+        let mut mods = ModsState::default();
+        mods.row_filter.show = model::Show::On;
+        mods.row_filter.makes.insert(model::Make::Content);
+        mods.selection.insert("fern".into());
+        mods.anchor = Some("sunrise-mods/fern.smod".into());
+        let counts = mods.installed_filters(&[]);
+        assert!(counts.shows.is_empty() && counts.kinds.is_empty());
+        assert_eq!(mods.row_filter, model::RowFilter::default());
+        assert!(mods.selection.is_empty() && mods.anchor.is_none());
     }
 }
