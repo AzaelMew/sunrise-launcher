@@ -1585,11 +1585,32 @@ impl Launcher {
             .child(div().flex_none().h(px(1.)).bg(rgb(palette().line)))
             .child(extras.flex_none())
             .children(self.ui.sheets.error.clone().map(|e| {
+                // Pinned at the foot, so it can't scroll: at most two lines here, and a long
+                // error (one that echoes a damaged file's value, say) opens whole in the notice.
+                let whole = e.to_string();
                 div()
                     .flex_none()
-                    .text_color(rgb(palette().danger))
-                    .text_size(px(tokens::SMALL))
-                    .child(e)
+                    .flex()
+                    .items_start()
+                    .gap(px(8.))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .line_clamp(2)
+                            .text_ellipsis()
+                            .text_color(rgb(palette().danger))
+                            .text_size(px(tokens::SMALL))
+                            .child(e),
+                    )
+                    .children(error_needs_details(&whole).then(|| {
+                        button("alt-build-error-details", tr("Details")).on_click(cx.listener(
+                            move |this, _: &ClickEvent, _, cx| {
+                                this.open_notice(whole.clone(), None);
+                                cx.notify();
+                            },
+                        ))
+                    }))
             }));
         // A popover under Home's build picker: the scrim is clear.
         let (left, top) = self.ui.home.chooser_at();
@@ -1681,9 +1702,29 @@ fn consent_footer(note: &str, cancel: Stateful<Div>, go: Stateful<Div>) -> Div {
         )
 }
 
+/// Whether the build menu's pinned error may not fit its two lines: then Details opens it whole.
+/// The menu is at most 372 px wide, about 50 characters a line at its size.
+fn error_needs_details(error: &str) -> bool {
+    error.contains('\n') || error.chars().count() > 100
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_build_menu_error_too_long_for_its_two_lines_offers_details() {
+        assert!(!error_needs_details(
+            "Wait for the current operation to finish."
+        ));
+        // A damaged instances.json echoes the bad value into the error.
+        let echoed = format!(
+            "instances.json: invalid type: string \"{}\", expected u64 at line 1 column 412",
+            "x".repeat(300)
+        );
+        assert!(error_needs_details(&echoed));
+        assert!(error_needs_details("short\nbut on two lines"));
+    }
 
     #[test]
     fn build_labels_name_the_channel_and_date_or_version() {
