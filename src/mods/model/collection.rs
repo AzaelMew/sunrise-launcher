@@ -487,7 +487,11 @@ impl View {
 /// Whether a collection's card reads "Installed": every member that is picked by default and
 /// can be installed on this build is. A member left unticked by default, or one this build
 /// can't take, never keeps it from saying so.
-pub(in crate::mods) fn installed(c: &Collection, cards: &[Card], have: &HashSet<String>) -> bool {
+pub(in crate::mods) fn installed(
+    c: &Collection,
+    cards: &[Card],
+    have: impl Fn(&str) -> bool,
+) -> bool {
     let wanted: Vec<&str> = c
         .members
         .iter()
@@ -495,5 +499,5 @@ pub(in crate::mods) fn installed(c: &Collection, cards: &[Card], have: &HashSet<
         .map(|m| m.id.as_str())
         .filter(|id| cards.iter().any(|card| card.id == *id && card.fit.fits()))
         .collect();
-    !wanted.is_empty() && wanted.iter().all(|id| have.contains(*id))
+    !wanted.is_empty() && wanted.into_iter().all(have)
 }

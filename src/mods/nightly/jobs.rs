@@ -11,7 +11,6 @@ pub(in crate::mods) enum Event {
     Detail(u64, Box<Inspection>),
     Image(sources::ReadmeImage, Option<PathBuf>),
     Icon(sources::SourceIcon, Option<PathBuf>),
-    Metadata((Source, bool), Option<sources::SourceMetadata>),
     Updates(Box<CheckedUpdates>),
     Collection(Box<super::collection::PreparedCollection>),
 }
@@ -21,7 +20,6 @@ pub(in crate::mods) struct Open {
     pub(super) scope: OpenScope,
     pub(super) request: u64,
     pub(super) inspection: Option<Inspection>,
-    build_requested: bool,
 }
 
 pub(in crate::mods) struct Inspection {
@@ -41,7 +39,7 @@ pub(in crate::mods) struct CheckedUpdates {
 pub(in crate::mods) struct Work {
     pub(super) images: HashMap<sources::ReadmeImage, Option<Option<PathBuf>>>,
     pub(super) icons: HashMap<sources::SourceIcon, Option<PathBuf>>,
-    pub(super) metadata: HashMap<(Source, bool), Option<sources::SourceMetadata>>,
+    pub(super) card_pins: HashMap<Source, (String, std::time::Instant)>,
     icon_misses: sources::IconMisses,
     pub(super) release_pins: HashMap<String, sources::SourceCommit>,
     checking: bool,
@@ -60,6 +58,15 @@ impl Launcher {
                     .as_ref()
                     .is_none_or(|old| catalogue.checked_at >= old.checked_at)
                 {
+                    if state.catalogue.as_ref().is_none_or(|old| {
+                        old.sources != catalogue.sources || old.collections != catalogue.collections
+                    }) {
+                        state.browse = Browse::new(&catalogue);
+                        state
+                            .work
+                            .card_pins
+                            .retain(|source, _| catalogue.sources.contains(source));
+                    }
                     state.catalogue = Some(catalogue);
                 }
             }
@@ -75,19 +82,26 @@ impl Launcher {
                         pins.remove(open.source.id());
                     }
                 }
-                open.inspection = Some(*detail);
-                if std::mem::take(&mut open.build_requested) && self.ui.page == Page::Project {
-                    self.build_nightly();
+                if let Some(pin) = detail
+                    .data
+                    .build_pin
+                    .as_ref()
+                    .filter(|_| detail.data.error.is_none())
+                {
+                    state.work.card_pins.insert(
+                        open.source.clone(),
+                        (pin.clone(), std::time::Instant::now()),
+                    );
+                } else {
+                    state.work.card_pins.remove(&open.source);
                 }
+                open.inspection = Some(*detail);
             }
             Event::Image(image, path) => {
                 state.work.images.insert(image, Some(path));
             }
             Event::Icon(icon, path) => {
                 state.work.icons.insert(icon, path);
-            }
-            Event::Metadata(key, metadata) => {
-                state.work.metadata.insert(key, metadata);
             }
             Event::Updates(checked) => {
                 state.work.checking = false;
@@ -121,10 +135,6 @@ impl Launcher {
     }
 
     pub(in crate::mods) fn inspect_nightly(&mut self, source: Source, refresh: bool) {
-        self.check_nightly(source, refresh, false);
-    }
-
-    pub(super) fn check_nightly(&mut self, source: Source, refresh: bool, build_requested: bool) {
         let scope = self.mods_page_scope();
         let target = self.source_target();
         self.ui.page = Page::Project;
@@ -138,7 +148,6 @@ impl Launcher {
             scope,
             request,
             inspection: None,
-            build_requested,
         });
         if refresh {
             self.read_nightly_catalogue(true);
@@ -216,19 +225,6 @@ impl Launcher {
         });
     }
 
-    pub(super) fn request_nightly_metadata(&mut self, key: (Source, bool)) {
-        use std::collections::hash_map::Entry;
-        let Entry::Vacant(entry) = self.ui.mods.nightly.work.metadata.entry(key.clone()) else {
-            return;
-        };
-        entry.insert(None);
-        let tx = self.ui.mods.tx.clone();
-        std::thread::spawn(move || {
-            let metadata = sources::branch_metadata(&key.0, key.1);
-            let _ = tx.send(super::super::Event::Nightly(Event::Metadata(key, metadata)));
-        });
-    }
-
     pub(super) fn nightly_busy(&self) -> bool {
         self.mutating()
             || self.mods_locked().is_some()
@@ -240,40 +236,22 @@ impl Launcher {
                 .is_none_or(|snap| !snap.ready())
     }
 
-    pub(super) fn nightly_installed(&self, pin: &sources::SourceCommit) -> bool {
-        let source = pin.source();
-        self.ui.mods.snapshot.as_ref().is_some_and(|snapshot| {
-            snapshot
-                .rows
-                .local
-                .iter()
-                .filter_map(|local| local.github.as_ref())
-                .any(|origin| {
-                    origin.id == source.id()
-                        && origin.commit == pin.sha()
-                        && origin
-                            .source
-                            .as_ref()
-                            .is_some_and(|receipt| receipt.repo_id == source.repo_id())
-                        && origin.owner.eq_ignore_ascii_case(source.owner())
-                })
-        })
-    }
-
     pub(super) fn build_nightly(&mut self) {
         if !self.nightly_catalogue_current() || !self.guard() || self.nightly_busy() {
             return;
         }
         let scope = self.mods_page_scope();
-        let already_installed = self
+        let Some(rows) = self.discover_installed() else {
+            return;
+        };
+        if self
             .ui
             .mods
             .nightly
             .open
             .as_ref()
-            .and_then(|open| open.inspection.as_ref()?.data.commit.as_ref())
-            .is_some_and(|pin| self.nightly_installed(pin));
-        if already_installed {
+            .is_some_and(|open| rows.github_origin(open.source.id()).is_some())
+        {
             return;
         }
         let state = &mut self.ui.mods.nightly;

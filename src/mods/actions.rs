@@ -329,6 +329,28 @@ impl Launcher {
         self.turn_off(chosen);
     }
 
+    pub(super) fn remove_mod_button(
+        &self,
+        id: &str,
+        busy: bool,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let button = crate::frame::button("alt-project-remove", tr("Remove"))
+            .text_color(ui::c(palette().danger));
+        if busy {
+            ui::dim(button)
+        } else {
+            let home = self.mods_home();
+            let id = id.to_owned();
+            button.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                let (rows, labels) = this.labeled_installed_rows();
+                let names = super::installed_view::remove_names(&rows, &labels);
+                this.ask_remove(&home, vec![id.clone()], names);
+                cx.notify();
+            }))
+        }
+    }
+
     /// Submit the approved scope, not old catalogue dependents. The worker reads the exact
     /// installed package manifests and offers one combined Remove decision.
     pub(super) fn ask_remove(

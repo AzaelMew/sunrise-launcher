@@ -1259,7 +1259,7 @@ impl Launcher {
                             m.anchor = None;
                         } else {
                             m.filters.text = text;
-                            m.nightly.limit = 0;
+                            this.reset_source_results();
                         }
                     }
                     _ => {}

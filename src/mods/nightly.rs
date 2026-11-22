@@ -1,4 +1,5 @@
-//! Mods › Discover's source catalogue: only card icons load before a player opens a listing.
+//! Nightly and Dev Discover: source listings and collections, without inspecting them on scroll.
+use super::discover::{collection_install_fact, discover_filters, install_fact, PAGE};
 use super::ui::*;
 use super::*;
 use crate::frame::button;
@@ -12,7 +13,6 @@ mod project;
 pub(super) use jobs::Event;
 pub(super) use project::{short_sha, source_error};
 
-const PAGE_SIZE: usize = 48;
 const FRESH: Duration = Duration::from_secs(600);
 
 #[derive(Default)]
@@ -21,7 +21,9 @@ pub(super) struct State {
     reading: bool,
     pub(super) open: Option<jobs::Open>,
     detail_request: u64,
-    pub(super) limit: usize,
+    browse: Browse,
+    kind: SourceKind,
+    descending: bool,
     pub(super) work: jobs::Work,
     pub(super) collection: Option<collection::CollectionOpen>,
 }
@@ -80,19 +82,13 @@ impl Launcher {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         self.read_nightly_catalogue(false);
-        let header = self.mods_header(false, focus, window, cx);
-        let mut page = div()
-            .size_full()
-            .min_h_0()
-            .flex()
-            .flex_col()
-            .gap(px(14.))
-            .p(px(24.))
-            .text_color(c(palette().text))
-            .child(header)
-            .child(self.discover_profile_line(true))
-            .children(self.strip(cx));
-        let Some(catalogue) = &self.ui.mods.nightly.catalogue else {
+        let mut page = self.discover_shell(true, window, focus, cx);
+        let state = &mut self.ui.mods.nightly;
+        state
+            .browse
+            .set_query(&self.ui.mods.filters.text, state.kind);
+        let state = &self.ui.mods.nightly;
+        let Some(catalogue) = &state.catalogue else {
             return page
                 .child(muted(tr("Loading source projects…")))
                 .into_any_element();
@@ -131,192 +127,175 @@ impl Launcher {
                 return page.into_any_element();
             }
         }
-        let filter = &self.ui.mods.filters.text;
-        // With no search, a collection's card stands in for its members; a search shows both.
-        let folded: HashSet<&str> = match filter.trim().is_empty() {
-            true => catalogue
-                .collections
-                .iter()
-                .flat_map(|c| c.members.iter().map(|m| m.id.as_str()))
-                .collect(),
-            false => HashSet::new(),
-        };
-        let collections = collection_matches(&catalogue.collections, filter);
-        let shown: Vec<_> = source_matches(&catalogue.sources, filter)
-            .into_iter()
-            .filter(|source| !folded.contains(source.id()))
-            .collect();
-        let total = collections.len() + shown.len();
-        let allow_icon_fetch = catalogue.error.is_none();
-        let limit = self.ui.mods.nightly.limit.max(PAGE_SIZE);
+        let shown = &state.browse.matches;
+        let total = shown.len();
+        let visible = (0..self.ui.mods.limit.max(PAGE).min(total))
+            .map(|i| shown[if state.descending { total - i - 1 } else { i }]);
+        let allow_fetch = catalogue.error.is_none();
         let build = self.nightly_build_revision();
-        let can_start = self.nightly_catalogue_current() && !self.nightly_busy();
-        let work = &self.ui.mods.nightly.work;
-        let mut grid = div()
-            .grid()
-            .grid_cols(columns(self.content_width()))
-            .gap(px(12.));
-        for (n, collection) in collections.iter().take(limit).enumerate() {
-            let icon = sources::SourceIcon::pages(&collection.icon, allow_icon_fetch);
-            let picture = work.icons.get(&icon).cloned().flatten();
-            let load = (!work.icons.contains_key(&icon))
-                .then(|| when_visible(cx, move |this| this.request_nightly_icon(icon)));
-            let facts = vec![
-                badge(tr("Collection")),
-                muted(trf(
-                    "{count} mods",
-                    &[("count", &collection.members.len().to_string())],
-                )),
-            ];
-            let open = (*collection).clone();
-            let choose = button(("nightly-collection-choose", n), tr("Choose mods")).on_click(
-                cx.listener(move |this, _, _, cx| {
-                    cx.stop_propagation();
-                    this.open_source_collection(&open);
-                    cx.notify();
-                }),
-            );
-            let open = (*collection).clone();
-            grid = grid.child(
-                browse_card(
-                    ("nightly-collection", n),
-                    picture,
-                    &collection.id,
-                    &collection.name,
-                    &collection.owners.join(", "),
-                    &collection.summary,
-                    facts,
-                    Some(choose.into_any_element()),
-                    None,
-                )
-                .relative()
-                .children(load)
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.open_source_collection(&open);
-                    cx.notify();
-                })),
-            );
-        }
-        let limit = limit.saturating_sub(collections.len());
-        for (n, source) in shown.into_iter().take(limit).enumerate() {
-            let pin = work
-                .release_pins
-                .get(source.id())
-                .filter(|pin| pin.source() == source);
-            let icon = sources::SourceIcon::new(source, pin, allow_icon_fetch);
-            let picture = icon
-                .as_ref()
-                .and_then(|key| work.icons.get(key))
-                .cloned()
-                .flatten();
-            let icon = icon.filter(|key| !work.icons.contains_key(key));
-            let key = (source.clone(), allow_icon_fetch);
-            let metadata = work.metadata.get(&key).and_then(Option::as_ref);
-            let authors = metadata
-                .filter(|metadata| !metadata.authors.is_empty())
-                .map_or_else(
-                    || source.owner().to_owned(),
-                    |metadata| metadata.authors.join(", "),
-                );
-            let mut facts = vec![tag(model::Make::Native.label())];
-            if made_for_build(
-                build.as_deref(),
-                metadata.and_then(|m| m.build_pin.as_deref()),
-            ) {
-                facts.push(badge(tr("Made for this build")));
-            }
-            // Collection membership is another fact, not a separate card layout.
-            if let Some(collection) = catalogue
-                .collections
-                .iter()
-                .find(|c| c.members.iter().any(|m| m.id == source.id()))
-            {
-                facts.push(muted(trf(
-                    "Part of {collection}",
-                    &[("collection", &collection.name)],
-                )));
-            }
-            let metadata_request = (matches!(source.tracker(), sources::Tracker::Branch(_))
-                && !work.metadata.contains_key(&key))
-            .then_some(key);
-            let load = (icon.is_some() || metadata_request.is_some()).then(|| {
-                when_visible(cx, move |this| {
-                    if let Some(icon) = icon {
-                        this.request_nightly_icon(icon);
+        let installed = self.discover_installed();
+        let work = &state.work;
+        let mut grid = self.discover_grid();
+        for listing in visible {
+            let view = match listing {
+                Listing::Collection(i) => {
+                    let collection = &catalogue.collections[i];
+                    let icon = sources::SourceIcon::pages(&collection.icon, allow_fetch);
+                    let picture = work.icons.get(&icon).cloned().flatten();
+                    let load = (!work.icons.contains_key(&icon))
+                        .then(|| when_visible(cx, move |this| this.request_nightly_icon(icon)));
+                    let mut facts = vec![
+                        badge(tr("Collection")),
+                        muted(trf(
+                            "{count} mods",
+                            &[("count", &collection.members.len().to_string())],
+                        )),
+                    ];
+                    if let Some(rows) = installed {
+                        facts.push(collection_install_fact(collection, |id| {
+                            rows.github_origin(id).is_some()
+                        }));
                     }
-                    if let Some(key) = metadata_request {
-                        this.request_nightly_metadata(key);
+                    let collections = catalogue.collections.clone();
+                    browse_card(
+                        ("nightly-collection", i),
+                        picture,
+                        &collection.id,
+                        &collection.name,
+                        &collection.owners.join(", "),
+                        &collection.summary,
+                        facts,
+                        None,
+                        None,
+                    )
+                    .relative()
+                    .children(load)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.open_source_collection(&collections[i]);
+                        cx.notify();
+                    }))
+                }
+                Listing::Source { index: i, part_of } => {
+                    let source = &catalogue.sources[i];
+                    let pin = work
+                        .release_pins
+                        .get(source.id())
+                        .filter(|pin| pin.source() == source);
+                    let icon = sources::SourceIcon::new(source, pin, allow_fetch);
+                    let loaded = icon.as_ref().and_then(|icon| work.icons.get(icon));
+                    let load = icon
+                        .filter(|_| loaded.is_none())
+                        .map(|icon| when_visible(cx, move |this| this.request_nightly_icon(icon)));
+                    let mut facts = vec![tag(model::Make::Native.label())];
+                    // A card never makes a GitHub request just for a badge. Only a recently
+                    // verified detail supplies the pin, never a floating branch manifest.
+                    if allow_fetch
+                        && work.card_pins.get(source).is_some_and(|(pin, read)| {
+                            read.elapsed() < FRESH && made_for_build(build.as_deref(), Some(pin))
+                        })
+                    {
+                        facts.push(badge(tr("Made for this build")));
                     }
-                })
-            });
-            let action = button(("nightly-build", n), tr("Build"));
-            let action = if can_start {
-                let source = source.clone();
-                action.on_click(cx.listener(move |this, _, _, cx| {
-                    cx.stop_propagation();
-                    this.check_nightly(source.clone(), false, true);
-                    cx.notify();
-                }))
-            } else {
-                dim(action)
+                    if let Some(i) = part_of {
+                        facts.push(muted(trf(
+                            "Part of {collection}",
+                            &[("collection", &catalogue.collections[i].name)],
+                        )));
+                    }
+                    if let Some(rows) = installed {
+                        facts.push(install_fact(
+                            rows.github_origin(source.id())
+                                .map(|origin| short_sha(&origin.commit)),
+                        ));
+                    }
+                    let sources = catalogue.sources.clone();
+                    browse_card(
+                        ("nightly-card", i),
+                        loaded.cloned().flatten(),
+                        source.id(),
+                        source.name(),
+                        source.owner(),
+                        source.summary(),
+                        facts,
+                        None,
+                        None,
+                    )
+                    .relative()
+                    .children(load)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.inspect_nightly(sources[i].clone(), false);
+                        cx.notify();
+                    }))
+                }
             };
-            let open = source.clone();
-            grid = grid.child(
-                browse_card(
-                    ("nightly-card", n),
-                    picture,
-                    source.id(),
-                    source.name(),
-                    &authors,
-                    source.summary(),
-                    facts,
-                    Some(action.into_any_element()),
-                    None,
-                )
-                .relative()
-                .children(load)
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.inspect_nightly(open.clone(), false);
-                    cx.notify();
-                })),
-            );
+            grid = grid.child(view);
         }
-        let more = (total > limit).then(|| {
-            button("nightly-more", tr("Show more")).on_click(cx.listener(move |this, _, _, cx| {
-                this.ui.mods.nightly.limit = limit + PAGE_SIZE;
-                cx.notify();
-            }))
-        });
-        let results = div()
-            .flex()
-            .flex_col()
-            .gap(px(12.))
-            .child(grid)
-            .when(total == 0, |d| {
-                d.child(muted(tr("No Nightly mods match your search.")))
-            })
-            .children(more);
-        page.child(
+        let kind_options = || {
+            SourceKind::ALL
+                .into_iter()
+                .map(|kind| {
+                    (
+                        kind.label().into(),
+                        kind == state.kind,
+                        Box::new(move |this: &mut Launcher| {
+                            this.ui.mods.nightly.kind = kind;
+                            this.reset_source_results();
+                        }) as Box<dyn Fn(&mut Launcher)>,
+                    )
+                })
+                .collect()
+        };
+        let name_order = |reverse| {
+            if reverse {
+                tr("Name Z–A")
+            } else {
+                tr("Name A–Z")
+            }
+        };
+        let sort_options = || {
+            [false, true]
+                .into_iter()
+                .map(|reverse| {
+                    (
+                        name_order(reverse).into(),
+                        reverse == state.descending,
+                        Box::new(move |this: &mut Launcher| {
+                            this.ui.mods.nightly.descending = reverse;
+                            this.reset_source_results();
+                        }) as Box<dyn Fn(&mut Launcher)>,
+                    )
+                })
+                .collect()
+        };
+        let kind = self.discover_menu(state.kind.label(), Menu::Make, kind_options, cx);
+        let order = self.discover_menu(name_order(state.descending), Menu::Sort, sort_options, cx);
+        page = page.child(discover_filters(
             div()
                 .flex()
-                .justify_between()
                 .items_center()
-                .child(muted(trf(
-                    "{count} source projects",
-                    &[("count", &total.to_string())],
-                )))
-                .child(muted(tr("Name A–Z"))),
-        )
-        .child(
-            div()
-                .id("nightly-catalogue-results")
-                .flex_1()
-                .min_h_0()
-                .overflow_y_scroll()
-                .track_scroll(&crate::frame::scrolls("nightly-discover"))
-                .child(results),
-        )
-        .into_any_element()
+                .gap(px(18.))
+                .flex_wrap()
+                .child(kind)
+                .child(muted(if total == 1 {
+                    tr("1 source project").to_owned()
+                } else {
+                    trf("{count} source projects", &[("count", &total.to_string())])
+                })),
+            order,
+        ));
+        page = page.child(self.discover_results(
+            grid,
+            total,
+            "nightly-discover",
+            tr("No source projects match."),
+            cx,
+        ));
+        page.into_any_element()
+    }
+
+    pub(super) fn reset_source_results(&mut self) {
+        self.ui.mods.limit = 0;
+        crate::frame::scrolls("nightly-discover").set_offset(gpui::point(px(0.), px(0.)));
     }
 
     fn nightly_icon_tile(
@@ -370,41 +349,119 @@ fn made_for_build(profile: Option<&str>, pin: Option<&str>) -> bool {
         .is_some_and(|(profile, pin)| pin.starts_with(profile))
 }
 
-fn collection_matches<'a>(
-    collections: &'a [sunrise_launcher_smod::index::Collection],
-    filter: &str,
-) -> Vec<&'a sunrise_launcher_smod::index::Collection> {
-    let words: Vec<_> = filter.split_whitespace().map(str::to_lowercase).collect();
-    let mut shown: Vec<_> = collections
-        .iter()
-        .filter(|c| {
-            let text = format!("{} {} {}", c.name, c.id, c.summary).to_lowercase();
-            words.iter().all(|word| text.contains(word))
-        })
-        .collect();
-    shown.sort_by_key(|c| c.name.to_lowercase());
-    shown
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum SourceKind {
+    #[default]
+    Any,
+    Mods,
+    Collections,
 }
 
-fn source_matches<'a>(sources: &'a [Source], filter: &str) -> Vec<&'a Source> {
-    let words: Vec<_> = filter.split_whitespace().map(str::to_lowercase).collect();
-    let mut shown: Vec<_> = sources
-        .iter()
-        .filter(|source| {
-            let text = format!(
-                "{} {} {} {}",
+impl SourceKind {
+    const ALL: [Self; 3] = [Self::Any, Self::Mods, Self::Collections];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Any => tr("Any kind"),
+            Self::Mods => tr("Source mods"),
+            Self::Collections => tr("Collections"),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Listing {
+    Source {
+        index: usize,
+        part_of: Option<usize>,
+    },
+    Collection(usize),
+}
+
+#[derive(Default)]
+struct Browse {
+    /// Name-ordered display indexes and pre-folded search text for this catalogue.
+    listings: Vec<(Listing, String)>,
+    query: Option<(String, SourceKind)>,
+    matches: Vec<Listing>,
+}
+
+impl Browse {
+    fn new(catalogue: &Catalogue) -> Self {
+        let mut membership = HashMap::new();
+        let collections = catalogue
+            .collections
+            .iter()
+            .enumerate()
+            .map(|(index, collection)| {
+                for member in &collection.members {
+                    membership.entry(member.id.as_str()).or_insert(index);
+                }
+                (
+                    Listing::Collection(index),
+                    collection.name.as_str(),
+                    collection.id.as_str(),
+                    format!(
+                        "{} {} {}",
+                        collection.name, collection.id, collection.summary
+                    ),
+                )
+            });
+        let mut listings: Vec<_> = collections.collect();
+        listings.extend(catalogue.sources.iter().enumerate().map(|(index, source)| {
+            (
+                Listing::Source {
+                    index,
+                    part_of: membership.get(source.id()).copied(),
+                },
                 source.name(),
                 source.id(),
-                source.repo(),
-                source.summary()
+                format!(
+                    "{} {} {} {}",
+                    source.name(),
+                    source.id(),
+                    source.repo(),
+                    source.summary()
+                ),
             )
-            .to_lowercase();
-            words.iter().all(|word| text.contains(word))
-        })
-        .map(|source| (source.name().to_lowercase(), source.id(), source))
-        .collect();
-    shown.sort_by(|a, b| (&a.0, a.1).cmp(&(&b.0, b.1)));
-    shown.into_iter().map(|(_, _, source)| source).collect()
+        }));
+        listings.sort_by_cached_key(|(_, name, id, _)| (name.to_lowercase(), *id));
+        Self {
+            listings: listings
+                .into_iter()
+                .map(|(listing, _, _, text)| (listing, text.to_lowercase()))
+                .collect(),
+            ..Self::default()
+        }
+    }
+
+    fn set_query(&mut self, search: &str, kind: SourceKind) {
+        if self
+            .query
+            .as_ref()
+            .is_some_and(|(last, old_kind)| last == search && *old_kind == kind)
+        {
+            return;
+        }
+        let words: Vec<_> = search.split_whitespace().map(str::to_lowercase).collect();
+        self.matches.clear();
+        self.matches
+            .extend(self.listings.iter().filter_map(|(listing, text)| {
+                let kind_matches = match (kind, listing) {
+                    // An unfiltered browse folds members into their collection. A search, or a
+                    // deliberate choice of Source mods, finds the individual members too.
+                    (SourceKind::Any, Listing::Source { part_of, .. }) => {
+                        part_of.is_none() || !words.is_empty()
+                    }
+                    (SourceKind::Any, Listing::Collection(_)) => true,
+                    (SourceKind::Mods, Listing::Source { .. })
+                    | (SourceKind::Collections, Listing::Collection(_)) => true,
+                    _ => false,
+                };
+                (kind_matches && words.iter().all(|word| text.contains(word))).then_some(*listing)
+            }));
+        self.query = Some((search.to_owned(), kind));
+    }
 }
 
 pub(super) fn installed_source(row: &Row) -> Option<&sunrise_launcher::github_mods::Origin> {
@@ -432,6 +489,65 @@ fn source_time(time: SystemTime) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn source_kind_and_search_apply_to_the_combined_name_order() {
+        let source = |id, repo| {
+            Source::for_origin(
+                id,
+                repo,
+                42,
+                "sunrise-mod.toml",
+                sources::Tracker::Branch("main".into()),
+            )
+            .unwrap()
+        };
+        let catalogue = Catalogue {
+            sources: vec![
+                source("zebra", "Zoo/zebra"),
+                source("aardvark", "Zoo/aardvark"),
+            ]
+            .into(),
+            collections: vec![sunrise_launcher_smod::index::Collection {
+                id: "animals".into(),
+                name: "Mammals".into(),
+                summary: "Animals of the plains".into(),
+                description: String::new(),
+                icon: "icons/mammals.png".into(),
+                owners: vec!["Zoo".into()],
+                members: vec![sunrise_launcher_smod::index::Member {
+                    id: "zebra".into(),
+                    default: true,
+                }],
+            }]
+            .into(),
+            saved_at: None,
+            checked_at: SystemTime::UNIX_EPOCH,
+            error: None,
+        };
+        let collection = Listing::Collection(0);
+        let zebra = Listing::Source {
+            index: 0,
+            part_of: Some(0),
+        };
+        let aardvark = Listing::Source {
+            index: 1,
+            part_of: None,
+        };
+        let mut browse = Browse::new(&catalogue);
+        browse.set_query("", SourceKind::Any);
+        assert_eq!(browse.matches, [aardvark, collection]);
+        browse.set_query("", SourceKind::Mods);
+        assert_eq!(browse.matches, [aardvark, zebra]);
+        browse.set_query("", SourceKind::Collections);
+        assert_eq!(browse.matches, [collection]);
+        browse.set_query("ANIMALS plains", SourceKind::Collections);
+        assert_eq!(browse.matches, [collection]);
+        browse.set_query("zOo ZEBRA", SourceKind::Any);
+        assert_eq!(browse.matches, [zebra]);
+        browse.set_query("zOo ZEBRA", SourceKind::Collections);
+        assert!(browse.matches.is_empty());
+    }
 
     #[test]
     fn only_a_matching_full_build_or_valid_profile_prefix_gets_the_badge() {
