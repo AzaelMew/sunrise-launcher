@@ -48,10 +48,12 @@ pub(crate) fn source_routes(
     cancellation.check()?;
 
     let lease =
-        crate::native_cache::Cache::acquire(&backend::build_dir()).map_err(|error| match error {
-            crate::native_cache::Error::Busy => SourceCheckError::Busy,
-            error => SourceCheckError::Fit(cache_error(error).into()),
-        })?;
+        crate::native_cache::Cache::acquire(&backend::build_dir()).map_err(
+            |error| match error {
+                crate::native_cache::Error::Busy => SourceCheckError::Busy,
+                error => SourceCheckError::Fit(cache_error(error).into()),
+            },
+        )?;
     let result = classify_bundles(&folder, &found, Some(base), &lease, cancellation)
         .map_err(SourceCheckError::Fit)?;
     cancellation.check()?;
