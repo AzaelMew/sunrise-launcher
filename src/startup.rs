@@ -125,6 +125,8 @@ fn run_launcher() {
                 .expect("bundled fonts");
             cx.bind_keys(key_bindings());
             cx.on_action(|_: &Quit, cx| shut_down(cx));
+            // AppKit's Dock Quit can reach this without the cancellable window-close hook.
+            // The profile mover records its recovery location before touching the profile.
             cx.on_app_quit(|_| {
                 sunrise_launcher::process::owned::stop_all();
                 async {}
@@ -133,6 +135,9 @@ fn run_launcher() {
             // The key press is being handled inside the window, so the window can only be
             // removed once that update has finished.
             cx.on_action(|_: &CloseWindow, cx| {
+                if profile_delete::defer_shutdown(cx) {
+                    return;
+                }
                 cx.defer(|cx| {
                     for window in cx.windows() {
                         let _ = window.update(cx, |_, window, _| window.remove_window());
@@ -175,7 +180,10 @@ fn run_launcher() {
                     low_power_frame_interval: None,
                     ..Default::default()
                 },
-                |window, cx| cx.new(|cx| crate::window_root::Shell::new(window, cx)),
+                |window, cx| {
+                    window.on_window_should_close(cx, |_, cx| !profile_delete::defer_shutdown(cx));
+                    cx.new(|cx| crate::window_root::Shell::new(window, cx))
+                },
             )
             .expect("window");
             cx.on_window_closed(|cx, _| shut_down(cx)).detach();

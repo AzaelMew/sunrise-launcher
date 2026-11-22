@@ -1464,6 +1464,23 @@ pub(crate) fn switch_game_version(tag: &str) -> Result<String, String> {
     })
 }
 
+/// Hosting uses the locked version as a destination. Older builds with no lock keep the default.
+pub(crate) fn hosting_game_version(folder: &Path) -> Result<String, String> {
+    let path = folder.join("research-lock.json");
+    match fs::read_to_string(path) {
+        Ok(text) => serde_json::from_str(&text)
+            .ok()
+            .and_then(|lock| crate::sources::Pins::version_in(&lock).map(str::to_owned))
+            .ok_or_else(invalid_hosting_game_version),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(PINNED_GAME.into()),
+        Err(_) => Err(invalid_hosting_game_version()),
+    }
+}
+
+fn invalid_hosting_game_version() -> String {
+    crate::i18n::tr("Invalid Minecraft version in research-lock.json.").into()
+}
+
 fn read_json(path: &Path) -> Option<serde_json::Value> {
     serde_json::from_str(&fs::read_to_string(path).ok()?).ok()
 }
@@ -1538,7 +1555,11 @@ pub fn resources(tag: &str) -> PathBuf {
 }
 
 fn resources_at(dir: &Path) -> PathBuf {
-    dir.join(".local/sunrise-client").join(game_version_at(dir))
+    resources_for_game(dir, &game_version_at(dir))
+}
+
+pub(crate) fn resources_for_game(dir: &Path, game_version: &str) -> PathBuf {
+    dir.join(".local/sunrise-client").join(game_version)
 }
 
 const RESOURCES_MANIFEST: &str = "sunrise-resources.json";
@@ -2061,7 +2082,11 @@ const RUNTIME_REPORTS: [&str; 2] = ["registries.json", "commands.json"];
 /// the same jar serves, and no new preparation is needed. Returns whether all are there.
 fn complete_reports(versions: &Path, tag: &str) -> bool {
     let target = versions.join(tag);
-    let to = resources_at(&target);
+    complete_reports_at(versions, tag, &target, &resources_at(&target))
+}
+
+/// Complete the reports in the already resolved hosting resource folder.
+pub(crate) fn complete_reports_at(versions: &Path, tag: &str, target: &Path, to: &Path) -> bool {
     if !to.join(RESOURCES_MANIFEST).exists() {
         return false;
     }
@@ -2078,11 +2103,11 @@ fn complete_reports(versions: &Path, tag: &str) -> bool {
             pins.iter().all(|v| v.is_string()).then_some(pins)
         })
     };
-    let Some(pins) = server(&target) else {
+    let Some(pins) = server(target) else {
         return false;
     };
     let reports = |dir: &Path| dir.join(".local/datagen/out/reports");
-    let mut sources = vec![reports(&target)];
+    let mut sources = vec![reports(target)];
     let mut source_claims = Vec::new();
     for other in installed_in(versions).into_iter().filter(|t| t != tag) {
         let dir = versions.join(&other);
@@ -2105,7 +2130,7 @@ fn complete_reports(versions: &Path, tag: &str) -> bool {
         static COPIES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let n = COPIES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let partial = to.join(format!(".{name}.partial-{}-{n}", std::process::id()));
-        let copied = Resources::invalidate(&target)
+        let copied = Resources::invalidate(target)
             .and_then(|_| fs::copy(&from, &partial))
             .and_then(|_| fs::rename(&partial, to.join(name)));
         if copied.is_err() {
@@ -2567,13 +2592,7 @@ pub(crate) fn preparer_staged(
 ) -> Result<(Command, PathBuf), String> {
     set_prepare_step(PrepareStep::Files);
     // A native build reads the resources of its base, so it is the base that gets prepared.
-    let owner = resources_owner(tag);
-    if owner != tag && !version_dir(&owner).join(COMPLETE).is_file() {
-        return Err(crate::i18n::trf(
-            "This native build needs its base version {base}; reinstall it.",
-            &[("base", &owner)],
-        ));
-    }
+    let owner = installed_resources_owner(tag)?;
     let tag = owner.as_str();
     let version = game_version(tag);
     let dir = version_dir(tag);
@@ -3237,16 +3256,34 @@ pub fn server_dir(requested: Option<PathBuf>) -> PathBuf {
         .unwrap_or_else(|| data_dir().join("server"))
 }
 
-/// Whether `tag` is prepared, with the run-time reports it needs completed when another copy has them.
-pub fn need_prepared(tag: &str) -> Result<(), String> {
-    let base = resources_owner(tag);
-    if base != tag && !version_dir(&base).join(COMPLETE).is_file() {
-        return Err(crate::i18n::trf(
+/// The build holding the prepared resources, with a reinstall error if a native base is gone.
+pub(crate) fn installed_resources_owner(tag: &str) -> Result<String, String> {
+    installed_resources_root(tag).map(|(owner, _)| owner)
+}
+
+/// The verified base folder accompanies the tag so hosting can keep using the same path.
+pub(crate) fn installed_resources_root(tag: &str) -> Result<(String, PathBuf), String> {
+    let Some(about) = crate::native_mods::checked_about(tag)? else {
+        return Ok((tag.to_owned(), version_dir(tag)));
+    };
+    let base = about.base;
+    let folder = versions_dir().canonicalize().ok().and_then(|versions| {
+        versions.join(&base).canonicalize().ok().filter(|folder| {
+            folder.parent() == Some(versions.as_path()) && folder.join(COMPLETE).is_file()
+        })
+    });
+    let folder = folder.ok_or_else(|| {
+        crate::i18n::trf(
             "This native build needs its base version {base}; reinstall it.",
             &[("base", &base)],
-        ));
-    }
-    need_base_prepared(&base, None)
+        )
+    })?;
+    Ok((base, folder))
+}
+
+/// Whether `tag` is prepared, with the run-time reports it needs completed when another copy has them.
+pub fn need_prepared(tag: &str) -> Result<(), String> {
+    need_base_prepared(&installed_resources_owner(tag)?, None)
 }
 
 pub(crate) fn need_base_prepared(
@@ -4372,7 +4409,10 @@ pub fn prepare_lock(version: &str) -> Result<crate::preparer::Preparation, Strin
     prepare_lock_at(&version_dir(&owner), &owner)
 }
 
-fn prepare_lock_at(dir: &Path, version: &str) -> Result<crate::preparer::Preparation, String> {
+pub(crate) fn prepare_lock_at(
+    dir: &Path,
+    version: &str,
+) -> Result<crate::preparer::Preparation, String> {
     let path = dir.join(".preparing.lock");
     let busy = || {
         crate::i18n::trf(
