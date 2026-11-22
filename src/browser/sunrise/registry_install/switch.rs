@@ -63,6 +63,80 @@ impl SwitchQuestion {
                     .map(|name| trf("{mod} — Fit could not be verified.", &[("mod", name)])),
             )
     }
+
+    pub fn world_lines(&self) -> Vec<String> {
+        #[derive(Default)]
+        struct Summary<'a> {
+            newer: bool,
+            unknown_order: bool,
+            mods: Option<&'a [String]>,
+        }
+        let mut by_world: BTreeMap<&str, Summary<'_>> = BTreeMap::new();
+        for risk in &self.worlds.affected {
+            if !risk.mods.is_empty() {
+                by_world.entry(risk.world.as_str()).or_default().mods = Some(&risk.mods);
+            }
+        }
+        for world in &self.worlds.newer {
+            by_world.entry(world.as_str()).or_default().newer = true;
+        }
+        for world in &self.worlds.unknown_order {
+            by_world.entry(world.as_str()).or_default().unknown_order = true;
+        }
+        let omitted: BTreeSet<&str> = self
+            .held
+            .iter()
+            .chain(&self.unproved)
+            .map(String::as_str)
+            .collect();
+        by_world
+            .into_iter()
+            .filter_map(|(world, summary)| {
+                let age = if summary.newer {
+                    Some(tr("last played on a newer game"))
+                } else if summary.unknown_order {
+                    Some(tr("last game build is unknown"))
+                } else {
+                    None
+                };
+                let mods = summary.mods.map(|list| {
+                    let listed: BTreeSet<&str> = list.iter().map(String::as_str).collect();
+                    if !omitted.is_empty() && listed == omitted {
+                        tr("content from the mods above may be lost").into()
+                    } else if !omitted.is_empty() && omitted.is_subset(&listed) {
+                        let extra: Vec<_> = list
+                            .iter()
+                            .map(String::as_str)
+                            .filter(|name| !omitted.contains(*name))
+                            .collect();
+                        trf(
+                            "content from the mods above and {mods} may be lost",
+                            &[("mods", &extra.join(", "))],
+                        )
+                    } else {
+                        trf(
+                            "content from these mods may be lost: {mods}",
+                            &[("mods", &list.join(", "))],
+                        )
+                    }
+                });
+                match (age, mods) {
+                    (Some(age), Some(mods)) => Some(trf(
+                        "{world}: {age}; {mods}.",
+                        &[("world", world), ("age", age), ("mods", &mods)],
+                    )),
+                    (Some(age), None) => {
+                        Some(trf("{world}: {age}.", &[("world", world), ("age", age)]))
+                    }
+                    (None, Some(mods)) => Some(trf(
+                        "{world}: {mods}.",
+                        &[("world", world), ("mods", &mods)],
+                    )),
+                    (None, None) => None,
+                }
+            })
+            .collect()
+    }
 }
 
 pub enum Switched {
@@ -344,7 +418,7 @@ fn switch_in(
             )?);
         }
     }
-    let (held, unknown) = omission_labels(&holds);
+    let (held, unknown, hold_labels) = omission_labels(&holds);
     let affected = crate::worlds::unproved_mod_effects(
         old.path(),
         edit.current(),
@@ -369,7 +443,12 @@ fn switch_in(
     let (fence, worlds) = Fence::hold(
         &instance.home,
         affected,
-        |id| &original.mods[id].seen.package.manifest.name,
+        |id| {
+            hold_labels
+                .get(id)
+                .map(String::as_str)
+                .unwrap_or(&original.mods[id].seen.package.manifest.name)
+        },
         Some(TargetAge {
             data_version: backend::prepared_world_version(&resources),
             compare_saved: &mut compare,
@@ -773,26 +852,28 @@ pub(super) fn sha256_bytes(hex: &str) -> Result<[u8; 32], String> {
     Ok(bytes)
 }
 
-fn omission_labels(holds: &[Held]) -> (Vec<String>, Vec<String>) {
+fn omission_labels(holds: &[Held]) -> (Vec<String>, Vec<String>, BTreeMap<String, String>) {
     let mut counts: BTreeMap<String, usize> = BTreeMap::new();
     for hold in holds {
         *counts.entry(hold.title().to_lowercase()).or_default() += 1;
     }
     let mut held = Vec::new();
     let mut unproved = Vec::new();
+    let mut labels = BTreeMap::new();
     for hold in holds {
         let label = if counts[&hold.title().to_lowercase()] > 1 {
             format!("{} ({})", hold.title(), hold.id())
         } else {
             hold.title().to_owned()
         };
+        labels.insert(hold.id().to_owned(), label.clone());
         if hold.reason().unproved() {
             unproved.push(label);
         } else {
             held.push(label);
         }
     }
-    (held, unproved)
+    (held, unproved, labels)
 }
 
 // A bare native archive pinned to a different build has no cross-build proof to try.
@@ -1587,7 +1668,7 @@ mod tests {
             hold("beetles", "Beetles", true),
             hold("beta_lantern", "lanterns", true),
         ];
-        let (held, unproved) = omission_labels(&holds);
+        let (held, unproved, _) = omission_labels(&holds);
         assert_eq!(held, ["Lanterns (alpha_lantern)"]);
         assert_eq!(unproved, ["Beetles", "lanterns (beta_lantern)"]);
         let question = SwitchQuestion {
@@ -1604,5 +1685,48 @@ mod tests {
             "{lines:?}"
         );
         assert!(lines[2].contains("lanterns (beta_lantern)"), "{lines:?}");
+    }
+
+    #[test]
+    fn world_lines_group_per_world_and_refer_to_omitted_mods_above() {
+        use crate::worlds::switch::WorldRisk;
+        let question = SwitchQuestion {
+            build: "dev-2026-11-22-bbbbbbb".into(),
+            worlds: Question {
+                affected: vec![
+                    WorldRisk {
+                        world: "Exact Match".into(),
+                        mods: vec!["Beetles".into(), "Creature Library".into()],
+                    },
+                    WorldRisk {
+                        world: "Glass Basin".into(),
+                        mods: vec![
+                            "Creature Library".into(),
+                            "Beetles".into(),
+                            "Fireflies".into(),
+                        ],
+                    },
+                    WorldRisk {
+                        world: "Subset Only".into(),
+                        mods: vec!["Fireflies".into()],
+                    },
+                ],
+                newer: vec!["Glass Basin".into(), "Newer Only".into()],
+                unknown_order: vec!["Unknown Build".into()],
+            },
+            held: vec!["Creature Library".into()],
+            unproved: vec!["Beetles".into()],
+            removed: Vec::new(),
+        };
+        assert_eq!(
+            question.world_lines(),
+            [
+                "Exact Match: content from the mods above may be lost.",
+                "Glass Basin: last played on a newer game; content from the mods above and Fireflies may be lost.",
+                "Newer Only: last played on a newer game.",
+                "Subset Only: content from these mods may be lost: Fireflies.",
+                "Unknown Build: last game build is unknown.",
+            ]
+        );
     }
 }

@@ -342,58 +342,85 @@ impl Launcher {
                     cx.notify();
                 })
             };
+            let has_mod_block = omissions || !question.removed.is_empty();
+            let mod_block = has_mod_block.then(|| {
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(6.))
+                    .children(omissions.then(|| muted(question.omission_summary())))
+                    .child(
+                        div()
+                            .id("switch-mods")
+                            .max_h(px(184.))
+                            .overflow_y_scroll()
+                            .flex()
+                            .flex_col()
+                            .gap(px(5.))
+                            .children((omissions && !show).then(|| {
+                                let mut names: Vec<_> = question
+                                    .held
+                                    .iter()
+                                    .chain(&question.unproved)
+                                    .map(String::as_str)
+                                    .collect();
+                                names.sort_unstable();
+                                div().child(names.join(", "))
+                            }))
+                            .children(
+                                show.then(|| question.hold_lines().map(|line| div().child(line)))
+                                    .into_iter()
+                                    .flatten(),
+                            )
+                            .children(question.removed.iter().map(|(name, reason)| {
+                                div().child(if show {
+                                    trf(
+                                        "{mod} was taken down: {reason}",
+                                        &[("mod", name), ("reason", reason)],
+                                    )
+                                } else {
+                                    trf(
+                                        "{mod} was taken down and will be removed.",
+                                        &[("mod", name)],
+                                    )
+                                })
+                            })),
+                    )
+            });
+            let world_block = question.worlds.needed().then(|| {
+                let mut block = div().flex().flex_col().gap(px(6.));
+                if has_mod_block {
+                    block = block
+                        .pt(px(12.))
+                        .border_t_1()
+                        .border_color(rgb(palette().line));
+                }
+                block
+                    .child(muted(tr(
+                        "Your worlds stay in place. Check what could change before you switch.",
+                    )))
+                    .child(
+                        div()
+                            .id("switch-worlds")
+                            .max_h(px(150.))
+                            .overflow_y_scroll()
+                            .flex()
+                            .flex_col()
+                            .gap(px(5.))
+                            .children(
+                                question
+                                    .world_lines()
+                                    .into_iter()
+                                    .map(|line| div().child(line)),
+                            ),
+                    )
+            });
             div()
                 .flex()
                 .flex_col()
                 .child(title(trf("Switch to {build}?", &[("build", &build)])))
-                .children(omissions.then(|| muted(question.omission_summary())))
-                .children(question.worlds.needed().then(|| {
-                    muted(tr(
-                        "Your worlds stay in place. Check what could change before you switch.",
-                    ))
-                }))
-                .child(
-                    div()
-                        .id("switch-worlds")
-                        .max_h(px(208.))
-                        .overflow_y_scroll()
-                        .gap(px(5.))
-                        .children(
-                            question
-                                .worlds
-                                .lines()
-                                .into_iter()
-                                .map(|line| div().child(line)),
-                        )
-                        .children((omissions && !show).then(|| {
-                            let mut names: Vec<_> = question
-                                .held
-                                .iter()
-                                .chain(&question.unproved)
-                                .map(String::as_str)
-                                .collect();
-                            names.sort_unstable();
-                            div().child(names.join(", "))
-                        }))
-                        .children(
-                            show.then(|| question.hold_lines().map(|line| div().child(line)))
-                                .into_iter()
-                                .flatten(),
-                        )
-                        .children(question.removed.iter().map(|(name, reason)| {
-                            div().child(if show {
-                                trf(
-                                    "{mod} was taken down: {reason}",
-                                    &[("mod", name), ("reason", reason)],
-                                )
-                            } else {
-                                trf(
-                                    "{mod} was taken down and will be removed.",
-                                    &[("mod", name)],
-                                )
-                            })
-                        })),
-                )
+                .children(mod_block)
+                .children(world_block)
                 .child(
                     div()
                         .flex()
