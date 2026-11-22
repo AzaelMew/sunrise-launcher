@@ -94,15 +94,15 @@ impl Launcher {
         let busy = self.nightly_busy();
         let build = if busy || current.is_some() {
             dim(build)
+        } else if !offline && listed && failed_job.is_some() {
+            let source = source.clone();
+            build.on_click(cx.listener(move |this, _, _, cx| {
+                this.reread_and_add(source.clone());
+                cx.notify();
+            }))
         } else if can_build {
             build.on_click(cx.listener(|this, _, _, cx| {
                 this.build_nightly();
-                cx.notify();
-            }))
-        } else if !offline && failed_job.is_some() {
-            let source = source.clone();
-            build.on_click(cx.listener(move |this, _, _, cx| {
-                this.inspect_nightly(source.clone(), true);
                 cx.notify();
             }))
         } else {
@@ -160,33 +160,28 @@ impl Launcher {
         } else {
             None
         };
-        let failure_panel = failed_job.or(failure).and_then(|error| {
-            let dependency = match error {
-                SourceError::Dependency { required: Some(id), .. } => state.catalogue.as_ref()
-                    .and_then(|list| list.sources.iter().find(|source| source.id() == id)).cloned(),
-                _ => None,
-            };
-            let log = match error {
-                SourceError::Build { log: Some(log), .. } => Some(log.clone()),
-                _ => None,
-            };
+        // An Add or Update this mod was refused: said once by the modal when it happened, and
+        // reopened from one line under the button.
+        let refused_line = failed_job
+            .map(|error| (error, installed.is_some()))
+            .or_else(|| installed.and(failure).map(|error| (error, true)))
+            .and_then(|(error, update)| {
+                let refused = crate::mods::refused::Refused::one(
+                    source.name(),
+                    Some(source.repo().to_owned()),
+                    update,
+                    error,
+                )?;
+                Some(self.refused_line("nightly-refused", refused, cx))
+            });
+        // Reading the source itself failed: what to do about it, in place.
+        let failure_panel = (!installed.is_some()).then_some(failure).flatten().and_then(|error| {
             let words = source_error(error, Some(source))?;
             Some(div().flex().flex_col().items_start().gap(px(7.))
                 .child(note(words))
-                .children(dependency.map(|source| button("nightly-find-dependency", tr("Find dependency"))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.inspect_nightly(source.clone(), false);
-                        cx.notify();
-                    }))))
-                .children(log.map(|log| self.nightly_log_button(source.name(), log, cx)))
                 .children(matches!(error, SourceError::Github(_) | SourceError::Changed(_))
                     .then(|| if busy || matches!(error, SourceError::Github(sources::Failure::RateLimited { retry_at: Some(at) }) if *at > SystemTime::now()) {
                         dim(button("nightly-detail-retry", tr("Try again")))
-                    } else if installed.is_some() {
-                        button("nightly-detail-retry", tr("Try again")).on_click(cx.listener(|this, _, _, cx| {
-                            this.check_source_updates();
-                            cx.notify();
-                        }))
                     } else { retry("nightly-detail-retry", cx) })))
         });
         let tracking = match source.tracker() {
@@ -247,6 +242,7 @@ impl Launcher {
                     .child(source.name().to_owned()),
             )
             .children(missing.then_some(build))
+            .children(refused_line)
             .children(conflict.then(|| note(tr(SOURCE_ID_CONFLICT))))
             .children(installed_actions)
             .child(super::super::project::about_row(tr("Source"), pin))
@@ -574,7 +570,10 @@ pub(in crate::mods) fn source_error(
         SourceError::Dependency { required: None, .. } => {
             tr("Can't install these mods together").into()
         }
-        SourceError::Unproved(_) => tr("Fit could not be verified").into(),
+        SourceError::Unproved(_) => tr("Couldn't add this mod").into(),
+        SourceError::Busy => {
+            tr("Sunrise is building mods right now. Try again when that finishes.").into()
+        }
         SourceError::Changed(_) => {
             tr("The profile or game build changed. Check the source again; nothing was changed.")
                 .into()

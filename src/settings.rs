@@ -503,39 +503,50 @@ impl Launcher {
                     cx.notify();
                 }))
             });
+            // As in `row`: when the head and name would get narrower than a short line, the
+            // buttons go under them instead of squeezing the name to a letter a line.
+            let who = div()
+                .flex_1()
+                .min_w(px(160. + 36. + 12.))
+                .flex()
+                .items_center()
+                .gap(px(12.))
+                .child(
+                    div()
+                        .flex_none()
+                        .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
+                        .overflow_hidden()
+                        .child(
+                            self.profile_heads
+                                .draw(Some(&a.uuid), 36., self.scale, &theme),
+                        ),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .gap(px(2.))
+                        .child(
+                            div()
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .child(a.name.clone()),
+                        )
+                        .child(if needs_sign_in {
+                            warning(said)
+                        } else {
+                            hint(said)
+                        }),
+                );
             rows.push(
                 div()
                     .flex()
+                    .flex_wrap()
                     .items_center()
-                    .gap(px(12.))
-                    .child(
-                        div()
-                            .flex_none()
-                            .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
-                            .overflow_hidden()
-                            .child(
-                                self.profile_heads
-                                    .draw(Some(&a.uuid), 36., self.scale, &theme),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .flex()
-                            .flex_col()
-                            .gap(px(2.))
-                            .child(
-                                div()
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .child(a.name.clone()),
-                            )
-                            .child(if needs_sign_in {
-                                warning(said)
-                            } else {
-                                hint(said)
-                            }),
-                    )
+                    .gap_x(px(16.))
+                    .gap_y(px(10.))
+                    .child(who)
                     .child(actions.flex_none().flex().items_center().gap(px(6.))),
             );
         }
