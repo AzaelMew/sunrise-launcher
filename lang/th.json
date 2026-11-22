@@ -1592,5 +1592,6 @@
   "Turn off this mod and play": "Turn off this mod and play",
   "Turn off {count} mods and play": "Turn off {count} mods and play",
   "Sunrise couldn't check the saved worlds. No mods were turned off.": "Sunrise couldn't check the saved worlds. No mods were turned off.",
-  "Turning off these mods could remove content from: {worlds}. No mods were turned off.": "Turning off these mods could remove content from: {worlds}. No mods were turned off."
+  "Turning off these mods could remove content from: {worlds}. No mods were turned off.": "Turning off these mods could remove content from: {worlds}. No mods were turned off.",
+  "This folder was prepared for a dedicated server and cannot be used to play.": "This folder was prepared for a dedicated server and cannot be used to play."
 }

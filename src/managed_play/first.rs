@@ -467,6 +467,14 @@ impl Profile {
             return Err(unsettled().into());
         }
         active.verify_artifacts()?;
+        backend::check_play_output(
+            &backend::version_dir(active.base()),
+            &active.resource_path(),
+        )
+        .map_err(|issue| match issue {
+            backend::Unprepared::ServerOnly => backend::server_only_resources(),
+            backend::Unprepared::Incomplete => unsettled(),
+        })?;
         super::verify_included(active.base(), active.executable(), home)?;
         if native_mods::is_native(active.executable()) {
             cancellation.admit_native_work().map_err(String::from)?;

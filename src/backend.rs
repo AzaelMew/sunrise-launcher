@@ -1596,6 +1596,7 @@ pub(crate) fn resources_for_game(dir: &Path, game_version: &str) -> PathBuf {
 }
 
 const RESOURCES_MANIFEST: &str = "sunrise-resources.json";
+const PREPARATION_STAMP: &str = "sunrise-prepare.json";
 
 /// The target preparation records the world format of the verified client JAR it used.
 pub(crate) fn prepared_world_version(resources: &Path) -> Option<i32> {
@@ -1653,29 +1654,36 @@ pub fn is_prepared(tag: &str) -> bool {
         &PREPARED,
         &version_dir(tag),
         std::time::Instant::now(),
-        || prepared_at(&resources(tag)),
+        || {
+            let root = version_dir(&resources_owner(tag));
+            check_play_resources(&root, &resources_at(&root)).is_ok()
+        },
     )
 }
 
-/// Whether `tag` is prepared, checked on the disk now: `research-lock.json`, the manifest and
-/// every prepared table are read. The answer replaces the one [`is_prepared`] keeps.
+/// Whether `tag` is prepared, checked on the disk now. The answer replaces the one
+/// [`is_prepared`] keeps.
 pub fn check_prepared(tag: &str) -> bool {
+    check_build_preparation(tag).is_ok()
+}
+
+fn check_build_preparation(tag: &str) -> Result<(), Unprepared> {
     checked_prepared(
         &PREPARED,
         &version_dir(tag),
-        &resources(tag),
+        &version_dir(&resources_owner(tag)),
         std::time::Instant::now(),
     )
 }
 
 fn checked_prepared(
     cache: &Mutex<PreparedCache>,
-    dir: &Path,
-    resources: &Path,
+    key: &Path,
+    root: &Path,
     now: std::time::Instant,
-) -> bool {
-    let prepared = prepared_at(resources);
-    lock_prepared(cache).put(dir, prepared, now);
+) -> Result<(), Unprepared> {
+    let prepared = check_play_resources(root, &resources_at(root));
+    lock_prepared(cache).put(key, prepared.is_ok(), now);
     prepared
 }
 
@@ -1684,14 +1692,55 @@ pub fn forget_prepared() {
     lock_prepared(&PREPARED).0.clear();
 }
 
-/// Whether the prepared folder `resources` is usable: its manifest is a JSON
-/// document and no top-level table a killed preparation or an interrupted
-/// copy left empty. Such a folder used to count as prepared, so Play started
-/// the game on it and the loader crashed on the empty file.
-pub(crate) fn prepared_at(resources: &Path) -> bool {
-    if read_json(&resources.join(RESOURCES_MANIFEST)).is_none() {
-        return false;
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Unprepared {
+    Incomplete,
+    ServerOnly,
+}
+
+pub(crate) fn server_only_resources() -> String {
+    crate::i18n::tr("This folder was prepared for a dedicated server and cannot be used to play.")
+        .into()
+}
+
+fn server_profile(manifest: &serde_json::Value) -> bool {
+    manifest["profile"] == "server"
+}
+
+fn play_manifest(resources: &Path, required: Option<u32>) -> Result<serde_json::Value, Unprepared> {
+    let manifest = read_json(&resources.join(RESOURCES_MANIFEST)).ok_or(Unprepared::Incomplete)?;
+    if server_profile(&manifest) {
+        return Err(Unprepared::ServerOnly);
     }
+    if let Some(required) = required {
+        let stamped = read_json(&resources.join(PREPARATION_STAMP))
+            .and_then(|stamp| stamp["output_version"].as_u64());
+        if stamped != Some(u64::from(required)) {
+            return Err(Unprepared::Incomplete);
+        }
+    }
+    Ok(manifest)
+}
+
+/// Check profile and stamp on a sealed tree, whose files are verified separately by digest.
+pub(crate) fn check_play_output(root: &Path, resources: &Path) -> Result<(), Unprepared> {
+    play_manifest(resources, output_version_at(root)).map(drop)
+}
+
+/// A full, current preparation whose top-level tables were not left empty by an interrupted run.
+pub(crate) fn check_play_resources(root: &Path, resources: &Path) -> Result<(), Unprepared> {
+    check_play_output(root, resources)?;
+    prepared_tables_present(resources)
+        .then_some(())
+        .ok_or(Unprepared::Incomplete)
+}
+
+/// The manifest and tables are present, without checking for a playable profile or stamp.
+pub(crate) fn prepared_at(resources: &Path) -> bool {
+    read_json(&resources.join(RESOURCES_MANIFEST)).is_some() && prepared_tables_present(resources)
+}
+
+fn prepared_tables_present(resources: &Path) -> bool {
     let Ok(entries) = fs::read_dir(resources) else {
         return false;
     };
@@ -1738,7 +1787,7 @@ pub fn resources_summary(prepared: bool, sounds: bool, version: &str) -> String 
 /// (tools/prepare_output.py), so a release that changes the preparer's code but not its output
 /// keeps the resources. Preparers from before the number are known by their sources
 /// (`LEGACY_OUTPUT_VERSIONS`); older ones still are compared file by file (`same_preparer`).
-fn resources_compatible(from: &Path, to: &Path, manifest: &serde_json::Value) -> bool {
+fn resources_compatible(from: &Path, to: &Path, resources: &Path) -> bool {
     let pins = |dir: &Path| {
         read_json(&dir.join("research-lock.json")).map(|lock| {
             ["version", "client_sha1", "server_sha1"].map(|k| lock["minecraft"][k].clone())
@@ -1750,32 +1799,37 @@ fn resources_compatible(from: &Path, to: &Path, manifest: &serde_json::Value) ->
     if a != b || a.iter().any(|v| !v.is_string()) {
         return false;
     }
-    match (output_version_at(from), output_version_at(to)) {
+    let required = output_version_at(to);
+    let Ok(manifest) = play_manifest(resources, required) else {
+        return false;
+    };
+    let compat_version = |dir, declared: Option<u32>| {
+        declared.or_else(|| legacy_output_version(dir, &LEGACY_OUTPUT_VERSIONS))
+    };
+    match (
+        compat_version(from, output_version_at(from)),
+        compat_version(to, required),
+    ) {
         (Some(a), Some(b)) => a == b,
-        (None, None) => same_preparer(from, to, manifest),
+        (None, None) => same_preparer(from, to, &manifest),
         _ => false,
     }
 }
 
-/// The `OUTPUT_VERSION` of a version folder's preparer: the constant in its sources, or for a
-/// preparer from before it, the number `LEGACY_OUTPUT_VERSIONS` gives its fingerprint. None for
-/// an unknown older preparer.
+/// The build's own preparer declares the output version it records in its stamp.
 fn output_version_at(dir: &Path) -> Option<u32> {
-    output_version_in(dir, &LEGACY_OUTPUT_VERSIONS)
-}
-
-fn output_version_in(dir: &Path, legacy: &[(&str, u32)]) -> Option<u32> {
-    let crate_dir = dir.join(PREPARER_CRATE);
-    let lib = fs::read_to_string(crate_dir.join("src/lib.rs")).ok()?;
-    let declared = lib.lines().find_map(|line| {
+    let lib = fs::read_to_string(dir.join(PREPARER_CRATE).join("src/lib.rs")).ok()?;
+    lib.lines().find_map(|line| {
         line.strip_prefix("pub const OUTPUT_VERSION: u32 = ")?
             .strip_suffix(';')?
             .parse()
             .ok()
-    });
-    if declared.is_some() {
-        return declared;
-    }
+    })
+}
+
+/// Fingerprints let two preparers agree where older builds did not declare a version or write a
+/// stamp. Use them for comparing preparers, not for requiring a stamp that was never written.
+fn legacy_output_version(dir: &Path, legacy: &[(&str, u32)]) -> Option<u32> {
     let fingerprint = legacy_fingerprint(dir)?;
     legacy
         .iter()
@@ -1981,10 +2035,7 @@ pub(crate) fn reuse_prepared(versions: &Path, tag: &str) -> Option<String> {
             continue;
         };
         let from = resources_at(&source);
-        let Some(manifest) = read_json(&from.join(RESOURCES_MANIFEST)) else {
-            continue;
-        };
-        if !resources_compatible(&source, &target, &manifest) {
+        if !resources_compatible(&source, &target, &from) {
             continue;
         }
         // Copied beside it and renamed when complete: an interrupted copy is never "prepared".
@@ -2048,7 +2099,9 @@ pub(crate) fn reuse_prepared_for(tag: &str) {
 /// after every update. After `complete_assets`, as the file answers "missing" for what it lacks.
 /// The version's own preparer writes it (`data-file`); the game still writes it when this didn't, or the preparer is too old to. Only looks for the file, as the game keeps it open for the whole run, which would stop a removal on Windows.
 fn write_data_file(root: &Path, resources: &Path) -> Result<(), String> {
-    if !prepared_at(resources) || resources.join(crate::preparer::DATA_FILE).exists() {
+    if resources.join(crate::preparer::DATA_FILE).exists()
+        || check_play_resources(root, resources).is_err()
+    {
         return Ok(());
     }
     let version = root.file_name().unwrap_or_default().to_string_lossy();
@@ -2629,6 +2682,10 @@ pub(crate) fn preparer_staged(
     let tag = owner.as_str();
     let version = game_version(tag);
     let dir = version_dir(tag);
+    let resources = resources_for_game(&dir, &version);
+    if read_json(&resources.join(RESOURCES_MANIFEST)).is_some_and(|m| server_profile(&m)) {
+        return Err(server_only_resources());
+    }
     let binary = crate::preparer::binary(&dir).ok_or_else(|| crate::preparer::too_old(tag))?;
     // The version's own answer: a sibling's verified import is linked in when found, and whether its exporters ship.
     let needs = crate::preparer::needs(&binary, &dir, log, Some(handoff))?
@@ -3323,20 +3380,22 @@ pub(crate) fn need_base_prepared(
     tag: &str,
     preparation: Option<&crate::preparer::Preparation>,
 ) -> Result<(), String> {
-    if check_prepared(tag) {
-        let _owned = preparation
-            .is_none()
-            .then(|| prepare_lock(tag))
-            .transpose()?;
-        complete_reports(&versions_dir(), tag);
-        Ok(())
-    } else {
-        Err(format!(
+    match check_build_preparation(tag) {
+        Ok(()) => {
+            let _owned = preparation
+                .is_none()
+                .then(|| prepare_lock(tag))
+                .transpose()?;
+            complete_reports(&versions_dir(), tag);
+            Ok(())
+        }
+        Err(Unprepared::ServerOnly) => Err(server_only_resources()),
+        Err(Unprepared::Incomplete) => Err(format!(
             "{tag} is not prepared yet. Prepare it first: `sunrise-launcher prepare --version {tag}` \
              uses your own Minecraft {v}, or downloads it from Mojang for the signed-in account \
              that owns it.",
             v = game_version(tag)
-        ))
+        )),
     }
 }
 
@@ -7052,21 +7111,20 @@ pub fn {f}("
     #[test]
     fn a_drawn_page_asks_the_disk_once_and_the_launch_check_asks_again() {
         use std::time::{Duration, Instant};
-        let dir =
-            std::env::temp_dir().join(format!("sunrise-launcher-cached-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
+        let temp = tempfile::tempdir().unwrap();
+        let version = temp.path();
+        let dir = resources_at(version);
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join(RESOURCES_MANIFEST), "{}").unwrap();
         fs::write(dir.join("items.json"), "{}").unwrap();
-        let version = dir.join("version-folder");
         let cache = Mutex::new(PreparedCache::default());
         let t0 = Instant::now();
         // The page's question: without the cache each of these would run the check.
         let disk_reads = std::cell::Cell::new(0);
         let draw = |now| {
-            cached_prepared(&cache, &version, now, || {
+            cached_prepared(&cache, version, now, || {
                 disk_reads.set(disk_reads.get() + 1);
-                prepared_at(&dir)
+                check_play_resources(version, &dir).is_ok()
             })
         };
         assert!(draw(t0), "a complete folder is prepared");
@@ -7081,7 +7139,7 @@ pub fn {f}("
 
         // Before a launch the folder is checked on the disk, and finds the empty table.
         assert!(
-            !checked_prepared(&cache, &version, &dir, t0),
+            checked_prepared(&cache, version, version, t0).is_err(),
             "an empty table is caught"
         );
         // ... and the pages then show it without checking again.
@@ -7101,7 +7159,6 @@ pub fn {f}("
             "past the time limit a change made by another process shows"
         );
         assert_eq!(disk_reads.get(), 3);
-        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
@@ -7368,6 +7425,11 @@ pub fn {f}("
             "v0.3.1",
             "pub const OUTPUT_VERSION: u32 = 1;\nfn prepare() { faster() }",
         );
+        write(
+            "v0.3.0",
+            &format!(".local/sunrise-client/26.3/{PREPARATION_STAMP}"),
+            r#"{"output_version":1}"#,
+        );
         assert_eq!(reuse_prepared(&versions, "v0.3.1"), Some("v0.3.0".into()));
         assert_eq!(facts("v0.3.1").as_deref(), Some("v0.3.0"));
         // Its output changed, so the number did: prepare again.
@@ -7390,7 +7452,10 @@ pub fn {f}("
         release("v0.2.64", "fn prepare() {}");
         let fingerprint = legacy_fingerprint(&versions.join("v0.2.64")).unwrap();
         let legacy = [(fingerprint.as_str(), 1)];
-        let at = |tag: &str| output_version_in(&versions.join(tag), &legacy);
+        let at = |tag: &str| {
+            let root = versions.join(tag);
+            output_version_at(&root).or_else(|| legacy_output_version(&root, &legacy))
+        };
         assert_eq!(at("v0.2.64"), Some(1));
         assert_eq!(at("v0.3.2"), Some(2));
         // Line endings as checked out don't count; an exporter's or the sources' change does.
@@ -7409,8 +7474,58 @@ pub fn {f}("
         release("v0.2.65", "fn prepare() { changed() }");
         assert_eq!(at("v0.2.65"), None);
         // A folder without the preparer's sources has no number.
-        assert_eq!(output_version_in(&versions.join("missing"), &legacy), None);
+        assert_eq!(at("missing"), None);
         let _ = fs::remove_dir_all(&versions);
+    }
+
+    #[test]
+    fn reuse_checks_the_source_stamp_even_when_both_preparers_declare_the_same_version() {
+        let temp = tempfile::tempdir().unwrap();
+        let versions = temp.path();
+        let (source, target) = (versions.join("v0.1.0"), versions.join("v0.1.1"));
+        for root in [&source, &target] {
+            let lib = root.join(PREPARER_CRATE).join("src/lib.rs");
+            fs::create_dir_all(lib.parent().unwrap()).unwrap();
+            fs::write(lib, "pub const OUTPUT_VERSION: u32 = 8;\n").unwrap();
+            fs::write(root.join(COMPLETE), "").unwrap();
+            fs::write(
+                root.join("research-lock.json"),
+                r#"{"minecraft":{"version":"26.3","client_sha1":"c","server_sha1":"s"}}"#,
+            )
+            .unwrap();
+        }
+        let from = resources_at(&source);
+        let to = resources_at(&target);
+        fs::create_dir_all(&from).unwrap();
+        fs::write(from.join(RESOURCES_MANIFEST), "{}").unwrap();
+
+        let stamp = from.join(PREPARATION_STAMP);
+        assert_eq!(reuse_prepared(versions, "v0.1.1"), None);
+        for invalid in [
+            "{",
+            "{}",
+            r#"{"output_version":"8"}"#,
+            r#"{"output_version":7}"#,
+            r#"{"output_version":9}"#,
+        ] {
+            fs::write(&stamp, invalid).unwrap();
+            assert_eq!(reuse_prepared(versions, "v0.1.1"), None, "{invalid}");
+            assert!(!to.exists());
+        }
+
+        let current = r#"{"output_version":8}"#;
+        fs::write(&stamp, current).unwrap();
+        fs::write(from.join(RESOURCES_MANIFEST), r#"{"profile":"server"}"#).unwrap();
+        assert_eq!(reuse_prepared(versions, "v0.1.1"), None);
+        fs::write(from.join(RESOURCES_MANIFEST), "{}").unwrap();
+        assert_eq!(
+            reuse_prepared(versions, "v0.1.1").as_deref(),
+            Some("v0.1.0")
+        );
+        assert_eq!(
+            fs::read_to_string(to.join(PREPARATION_STAMP)).unwrap(),
+            current
+        );
     }
 
     #[test]

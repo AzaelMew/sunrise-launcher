@@ -143,10 +143,11 @@ pub(crate) fn reuse_checkout_resources(checkout: &Path, tag: &str) -> std::io::R
         return Ok(false);
     };
     let from = checkout.join(CHECKOUT_RESOURCES).join(version);
-    if !backend::prepared_at(&from) {
+    let root = backend::version_dir(tag);
+    if backend::check_play_resources(&root, &from).is_err() {
         return Ok(false);
     }
-    crate::managed_play::Resources::invalidate(&backend::version_dir(tag))?;
+    crate::managed_play::Resources::invalidate(&root)?;
     let copied = copy_prepared(&from, &to)?;
     backend::forget_prepared();
     Ok(copied)

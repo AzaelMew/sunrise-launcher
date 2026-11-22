@@ -37,7 +37,9 @@ impl Resources {
     fn current(root: &Path) -> Result<Option<Self>, String> {
         Ok(optional_bytes(&receipt(root)?)?
             .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-            .filter(|resources: &Self| resources.path_at(root).is_dir()))
+            .filter(|resources: &Self| {
+                backend::check_play_output(root, &resources.path_at(root)).is_ok()
+            }))
     }
 
     /// Finish the shared preparation under its existing lock, before a profile needs it.
@@ -278,6 +280,32 @@ mod tests {
             assert_eq!(Resources::seal(root, &source, |_| None).unwrap(), prepared);
             assert_eq!(Resources::current(root).unwrap().as_ref(), Some(&prepared));
         }
+    }
+
+    #[test]
+    fn a_receipt_cannot_select_stale_or_server_preparation() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let source = root.join(".local/prepared");
+        fs::create_dir_all(&source).unwrap();
+        let lib = root.join("crates/sunrise-prepare/src/lib.rs");
+        fs::create_dir_all(lib.parent().unwrap()).unwrap();
+        fs::write(lib, "pub const OUTPUT_VERSION: u32 = 8;\n").unwrap();
+        let manifest = source.join("sunrise-resources.json");
+        let stamp = source.join("sunrise-prepare.json");
+        fs::write(&manifest, "{}").unwrap();
+        fs::write(&stamp, r#"{"output_version":7}"#).unwrap();
+        Resources::seal(root, &source, |_| None).unwrap();
+        assert_eq!(Resources::current(root).unwrap(), None);
+
+        fs::write(&stamp, r#"{"output_version":8}"#).unwrap();
+        fs::write(&manifest, r#"{"profile":"server"}"#).unwrap();
+        Resources::seal(root, &source, |_| None).unwrap();
+        assert_eq!(Resources::current(root).unwrap(), None);
+
+        fs::write(&manifest, "{}").unwrap();
+        let full = Resources::seal(root, &source, |_| None).unwrap();
+        assert_eq!(Resources::current(root).unwrap(), Some(full));
     }
 
     #[test]

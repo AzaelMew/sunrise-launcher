@@ -358,10 +358,7 @@ fn replace_installed(
     if completion_marker(target).map_err(|e| e.to_string())? {
         let from = resources_at(target);
         let to = resources_at(top);
-        if !to.exists()
-            && read_json(&from.join(RESOURCES_MANIFEST))
-                .is_some_and(|manifest| resources_compatible(target, top, &manifest))
-        {
+        if !to.exists() && resources_compatible(target, top, &from) {
             copy_dir_except(&from, &to, Some(&from.join(crate::preparer::DATA_FILE)))
                 .map_err(|e| e.to_string())?;
         }

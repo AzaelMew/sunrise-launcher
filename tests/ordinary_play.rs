@@ -81,6 +81,10 @@ exit 7
         fixture
     }
 
+    fn build(&self) -> PathBuf {
+        self.data.join("versions").join(BUILD)
+    }
+
     fn configure(&self, launch: Value) {
         fs::write(
             self.data.join("instances.json"),
@@ -495,6 +499,101 @@ fn cli_persists_its_first_build_before_the_registry_replies() {
     assert_resource_args(&fixture, &fixture.game_arguments());
     let committed: Value = serde_json::from_slice(&fixture.pointer()).unwrap();
     assert_eq!(committed["base"]["tag"], BUILD);
+}
+
+#[test]
+fn cli_prepares_a_stale_full_folder_before_starting_the_game() {
+    use sha1::{Digest, Sha1};
+    let fixture = Fixture::new();
+    let build = fixture.build();
+    let lib = build.join("crates/sunrise-prepare/src/lib.rs");
+    fs::create_dir_all(lib.parent().unwrap()).unwrap();
+    fs::write(lib, "pub const OUTPUT_VERSION: u32 = 8;\n").unwrap();
+    let stamp = "sunrise-prepare.json";
+    fs::write(
+        build.join(".local/sunrise-client/26.3").join(stamp),
+        r#"{"output_version":7}"#,
+    )
+    .unwrap();
+
+    // The preparer's queries and its Minecraft and Java inputs are fixtures, not downloads.
+    let minecraft = fixture.root.join("minecraft");
+    let inputs = minecraft.join("versions/26.3");
+    fs::create_dir_all(&inputs).unwrap();
+    let (jar, manifest) = (b"client fixture", b"{}");
+    fs::write(inputs.join("26.3.jar"), jar).unwrap();
+    fs::write(inputs.join("26.3.json"), manifest).unwrap();
+    fs::write(
+        build.join("research-lock.json"),
+        json!({"minecraft": {
+            "version": "26.3", "java_major": 25,
+            "client_sha1": format!("{:x}", Sha1::digest(jar)),
+            "manifest_sha1": format!("{:x}", Sha1::digest(manifest)),
+        }})
+        .to_string(),
+    )
+    .unwrap();
+    let java = fixture.root.join("java");
+    fs::create_dir_all(java.join("bin")).unwrap();
+    script(
+        &java.join("bin/java"),
+        "#!/bin/sh\nprintf '%s\\n' 'openjdk version \"25\"'\n",
+    );
+    script(
+        &build.join("sunrise-prepare"),
+        r#"#!/bin/sh
+set -eu
+case "$1" in
+  needs) echo '{"format":1,"server_jar":false,"jdk":false}';;
+  missing-extras) echo '{"format":1,"missing":[]}';;
+  data-file) echo '{"format":1,"written":false}';;
+  sounds) ;;
+  --root) echo '{"output_version":8}' > .local/sunrise-client/26.3/sunrise-prepare.json;;
+  *) exit 2;;
+esac
+"#,
+    );
+    fs::write(fixture.home.join("finish"), []).unwrap();
+    let played = fixture
+        .launcher(&["play"])
+        .env("JAVA_HOME", java)
+        .env("SUNRISE_MINECRAFT_DIR", minecraft)
+        .output()
+        .unwrap();
+    assert_eq!(
+        played.status.code(),
+        Some(7),
+        "{}",
+        String::from_utf8_lossy(&played.stderr)
+    );
+    let args = fixture.game_arguments();
+    assert_resource_args(&fixture, &args);
+    let used = args
+        .windows(2)
+        .find(|pair| pair[0] == "--resources")
+        .unwrap();
+    assert_eq!(
+        fs::read_to_string(Path::new(&used[1]).join(stamp))
+            .unwrap()
+            .trim(),
+        r#"{"output_version":8}"#
+    );
+}
+
+#[test]
+fn cli_never_plays_a_server_only_preparation() {
+    let fixture = Fixture::new();
+    let manifest = fixture
+        .build()
+        .join(".local/sunrise-client/26.3/sunrise-resources.json");
+    let server = r#"{"profile":"server"}"#;
+    fs::write(&manifest, server).unwrap();
+    let refused = fixture.launcher(&["play"]).output().unwrap();
+    assert!(!refused.status.success());
+    let error = String::from_utf8_lossy(&refused.stderr);
+    assert!(error.contains("prepared for a dedicated server"), "{error}");
+    assert!(!fixture.home.join("args").exists());
+    assert_eq!(fs::read_to_string(manifest).unwrap(), server);
 }
 
 #[test]
