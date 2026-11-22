@@ -523,6 +523,7 @@ mod tests {
         );
     }
 
+    #[cfg(debug_assertions)]
     /// Runs `test` again in a child process with scratch homes, as the other window tests do:
     /// `None` here, the scratch root in the child.
     fn scratch_child(test: &str) -> Option<std::path::PathBuf> {
@@ -556,6 +557,10 @@ mod tests {
         None
     }
 
+    // GPUI Fast records `debug_selector` bounds only with debug assertions: the release
+    // workflow's `cargo test --release` has none to find, so it leaves this test out. Every
+    // debug test run (ci.yml, on each platform) runs it.
+    #[cfg(debug_assertions)]
     #[test]
     fn the_actions_button_takes_presses_settled_and_leaves_the_mark_alone_while_hidden() {
         if scratch_child(
