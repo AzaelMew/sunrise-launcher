@@ -147,6 +147,19 @@ fn the_default_policy_is_limited_for_shared_friends_only() {
     let both = json!({ "acls": [{ "action": "accept", "src": ["*"], "dst": ["*:*"] }], "grants": [{ "src": ["*"], "dst": ["*"], "ip": ["*"] }] });
     assert_eq!(reach(&both, ip, 25565), Reach::Custom);
     assert!(snippet(ip, 25565).contains("\"dst\": [\"100.101.102.103:25565\"]"));
+
+    // A rule opening every port to shared friends reaches all of the computer too.
+    let shared_all = json!({ "acls": [
+        { "action": "accept", "src": ["autogroup:member"], "dst": ["*:*"] },
+        { "action": "accept", "src": ["autogroup:shared"], "dst": ["*:*"] }
+    ] });
+    assert!(shares_entire_computer(&shared_all));
+    let shared_grant =
+        json!({ "grants": [{ "src": ["autogroup:shared"], "dst": ["*"], "ip": ["*"] }] });
+    assert!(shares_entire_computer(&shared_grant));
+    let members_only =
+        json!({ "acls": [{ "action": "accept", "src": ["autogroup:member"], "dst": ["*:*"] }] });
+    assert!(!shares_entire_computer(&members_only));
 }
 
 /// What the stand-in API saw: request line, headers, body.
