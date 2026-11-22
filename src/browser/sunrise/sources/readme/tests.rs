@@ -134,6 +134,25 @@ fn only_real_img_elements_count_and_a_block_tag_may_span_lines() {
 }
 
 #[test]
+fn crlf_lines_and_text_only_elements_keep_html_whole() {
+    let markdown = "<p>\r\n<img\r\n  src=\"media/crlf.png\"\r\n  alt=\"crlf\">\r\n</p>\r\n\r\n\
+                    <!--\r\n<img src=\"media/commented.png\">\r\n-->\r\n\r\n\
+                    <textarea><img src=\"media/textarea.png\"></textarea>\r\n"
+        .to_owned();
+    let readme = Saved {
+        path: "README.md".into(),
+        markdown,
+    }
+    .parse(REPO, SHA, true);
+    let found: Vec<_> = readme
+        .images()
+        .iter()
+        .map(|i| (i.alt(), &i.location))
+        .collect();
+    assert_eq!(found, [("crlf", &repo("media/crlf.png"))]);
+}
+
+#[test]
 fn only_github_attachment_ids_are_attachments() {
     let at = |dest: &str| image_location(REPO, SHA, "README.md", dest);
     assert_eq!(

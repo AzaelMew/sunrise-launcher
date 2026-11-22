@@ -226,8 +226,13 @@ fn strip_html(markdown: String) -> String {
             _ => continue,
         };
         if next < span.start {
-            push_images(&mut clean, &mut fragment);
-            clean.push_str(&markdown[next..span.start]);
+            // Only text ends the fragment: the parser leaves out a CRLF's `\r`, and a blank line
+            // between HTML lines changes nothing.
+            let gap = &markdown[next..span.start];
+            if !gap.trim().is_empty() {
+                push_images(&mut clean, &mut fragment);
+            }
+            clean.push_str(gap);
         }
         next = next.max(span.end);
         fragment.push_str(html);
@@ -290,7 +295,7 @@ fn html_images(html: &str) -> Vec<(String, String)> {
                     found.push((value("alt").unwrap_or_default(), src));
                 }
             }
-            "script" | "style" => {
+            "script" | "style" | "textarea" | "title" => {
                 // Raw text through the matching end tag, `</script` followed by the name's end.
                 // ASCII lowercasing keeps every byte offset.
                 let close = format!("</{name}");
