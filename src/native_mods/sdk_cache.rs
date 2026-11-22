@@ -1139,4 +1139,4 @@ fn signed_game_index(
 
 #[cfg(test)]
 #[path = "sdk_cache_tests.rs"]
-mod tests;
+pub(crate) mod tests;

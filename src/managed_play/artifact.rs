@@ -298,8 +298,10 @@ mod tests {
         fs::write(dir.join(backend::CLIENT), b"game").unwrap();
         fs::write(dir.join(".installed"), []).unwrap();
         fs::create_dir(dir.join("native-data")).unwrap();
+        fs::create_dir_all(dir.join("deps/nested")).unwrap();
         let paths = [
             "native.dll",
+            "deps/nested/libsdk.so",
             "native-data/data.json",
             backend::GAME_BUILD_ARCHITECTURE,
         ];

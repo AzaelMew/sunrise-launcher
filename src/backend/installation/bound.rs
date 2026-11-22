@@ -559,6 +559,8 @@ pub(in crate::backend) fn sdk_target(requested: Option<GameArchitecture>) -> Opt
 mod tests {
     use super::*;
 
+    mod sdk_install;
+
     const TAG: &str = "26.3-0.1.7";
 
     #[test]
@@ -602,6 +604,10 @@ mod tests {
             .env(ACTOR, "1")
             .env("SUNRISE_HOME", root.path().join("game"))
             .env("SUNRISE_LAUNCHER_HOME", root.path().join("launcher"))
+            .env(
+                crate::native_mods::sdk_cache::BASE_VAR,
+                root.path().join("sdk-mirror")
+            )
             .status()
             .unwrap()
             .success());
@@ -612,7 +618,7 @@ mod tests {
         asset: &str,
         client: &[u8],
     ) -> (GameDownload, GameProof, String, std::thread::JoinHandle<()>) {
-        use std::io::{Read, Write};
+        use std::io::Write;
         let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
         zip.start_file(CLIENT, zip::write::SimpleFileOptions::default())
             .unwrap();
@@ -629,6 +635,12 @@ mod tests {
             size: bytes.len() as u64,
             time: String::new(),
         };
+        let (url, serve) = serve_archive(asset, bytes);
+        (download, proof, url, serve)
+    }
+
+    fn serve_archive(asset: &str, bytes: Vec<u8>) -> (String, std::thread::JoinHandle<()>) {
+        use std::io::{Read, Write};
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}/{asset}", listener.local_addr().unwrap());
         let serve = std::thread::spawn(move || {
@@ -642,7 +654,7 @@ mod tests {
             .unwrap();
             stream.write_all(&bytes).unwrap();
         });
-        (download, proof, url, serve)
+        (url, serve)
     }
 
     #[test]
