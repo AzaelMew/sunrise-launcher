@@ -149,12 +149,16 @@ impl Launcher {
             },
         );
         let repo_url = format!("https://github.com/{}", source.repo());
+        let allow_icon_fetch = !offline
+            && details
+                .and_then(|details| details.error.as_ref())
+                .is_none_or(|error| *error == sources::Failure::NoManifest);
         let title = div()
             .flex()
             .items_center()
             .min_w_0()
             .gap(px(12.))
-            .child(tile(None::<PathBuf>, source.id(), source.name(), 56.))
+            .child(self.nightly_icon_tile(source, commit, allow_icon_fetch, 56., cx))
             .child(
                 div()
                     .flex_1()

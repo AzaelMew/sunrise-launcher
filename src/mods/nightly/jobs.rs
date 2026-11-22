@@ -10,6 +10,7 @@ pub(in crate::mods) enum Event {
     Catalogue(Catalogue),
     Detail(u64, Box<Inspection>),
     Image(sources::ReadmeImage, Option<PathBuf>),
+    Icon(sources::SourceIcon, Option<PathBuf>),
     Updates(Box<CheckedUpdates>),
 }
 
@@ -36,6 +37,9 @@ pub(in crate::mods) struct CheckedUpdates {
 #[derive(Default)]
 pub(in crate::mods) struct Work {
     pub(super) images: HashMap<sources::ReadmeImage, Option<Option<PathBuf>>>,
+    pub(super) icons: HashMap<sources::SourceIcon, Option<PathBuf>>,
+    icon_misses: sources::IconMisses,
+    pub(super) release_pins: HashMap<String, sources::SourceCommit>,
     checking: bool,
     updates: Option<CheckedUpdates>,
     pub(super) log: Option<(String, std::sync::Arc<str>)>,
@@ -57,11 +61,22 @@ impl Launcher {
             }
             Event::Detail(request, detail) => {
                 if let Some(open) = state.open.as_mut().filter(|open| open.request == request) {
+                    if matches!(open.source.tracker(), sources::Tracker::Release) {
+                        let pins = &mut state.work.release_pins;
+                        if let Some(pin) = &detail.data.commit {
+                            pins.insert(open.source.id().to_owned(), pin.clone());
+                        } else {
+                            pins.remove(open.source.id());
+                        }
+                    }
                     open.inspection = Some(*detail);
                 }
             }
             Event::Image(image, path) => {
                 state.work.images.insert(image, Some(path));
+            }
+            Event::Icon(icon, path) => {
+                state.work.icons.insert(icon, path);
             }
             Event::Updates(checked) => {
                 state.work.checking = false;
@@ -166,6 +181,20 @@ impl Launcher {
         std::thread::spawn(move || {
             let path = sources::readme_image(&image).ok();
             let _ = tx.send(super::super::Event::Nightly(Event::Image(image, path)));
+        });
+    }
+
+    pub(super) fn request_nightly_icon(&mut self, icon: sources::SourceIcon) {
+        use std::collections::hash_map::Entry;
+        let Entry::Vacant(entry) = self.ui.mods.nightly.work.icons.entry(icon.clone()) else {
+            return;
+        };
+        entry.insert(None);
+        let tx = self.ui.mods.tx.clone();
+        let misses = self.ui.mods.nightly.work.icon_misses.clone();
+        std::thread::spawn(move || {
+            let path = icon.load(&misses);
+            let _ = tx.send(super::super::Event::Nightly(Event::Icon(icon, path)));
         });
     }
 

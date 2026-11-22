@@ -1,4 +1,4 @@
-//! Mods › Discover's source catalogue: no GitHub work until a player opens a listing or checks updates.
+//! Mods › Discover's source catalogue: only card icons load before a player opens a listing.
 use super::ui::*;
 use super::*;
 use crate::frame::button;
@@ -130,6 +130,7 @@ impl Launcher {
             }
         }
         let shown = source_matches(&catalogue.sources, &self.ui.mods.filters.text);
+        let allow_icon_fetch = catalogue.error.is_none();
         let limit = self.ui.mods.nightly.limit.max(PAGE_SIZE);
         let mut grid = div()
             .grid()
@@ -137,6 +138,15 @@ impl Launcher {
             .gap(px(12.));
         for (n, source) in shown.iter().take(limit).enumerate() {
             let source = (*source).clone();
+            let pin = self
+                .ui
+                .mods
+                .nightly
+                .work
+                .release_pins
+                .get(source.id())
+                .filter(|pin| pin.source() == &source);
+            let icon = self.nightly_icon_tile(&source, pin, allow_icon_fetch, 40., cx);
             let actions = div()
                 .flex()
                 .flex_wrap()
@@ -170,7 +180,7 @@ impl Launcher {
                             .items_start()
                             .gap(px(10.))
                             .min_w_0()
-                            .child(tile(None::<PathBuf>, source.id(), source.name(), 40.))
+                            .child(icon)
                             .child(
                                 div()
                                     .min_w_0()
@@ -236,6 +246,40 @@ impl Launcher {
                 .child(results),
         )
         .into_any_element()
+    }
+
+    fn nightly_icon_tile(
+        &self,
+        source: &Source,
+        commit: Option<&sources::SourceCommit>,
+        allow_fetch: bool,
+        side: f32,
+        cx: &Context<Self>,
+    ) -> Div {
+        let icon = sources::SourceIcon::new(source, commit, allow_fetch);
+        let icons = &self.ui.mods.nightly.work.icons;
+        let loaded = icon.as_ref().and_then(|icon| icons.get(icon));
+        let tile = tile(loaded.cloned().flatten(), source.id(), source.name(), side);
+        let Some(icon) = icon.filter(|_| loaded.is_none()) else {
+            return tile;
+        };
+        let entity = cx.entity().downgrade();
+        tile.relative().child(
+            gpui::canvas(
+                move |bounds, window, cx| {
+                    if window.content_mask().bounds.intersects(&bounds) {
+                        cx.defer(move |cx| {
+                            entity
+                                .update(cx, |this, _| this.request_nightly_icon(icon))
+                                .ok();
+                        });
+                    }
+                },
+                |_, _, _, _| {},
+            )
+            .absolute()
+            .inset_0(),
+        )
     }
 }
 
