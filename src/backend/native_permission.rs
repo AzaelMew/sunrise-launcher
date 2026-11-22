@@ -108,7 +108,7 @@ impl Settings {
         self.save_to(&data_dir())
     }
 
-    fn save_to(&self, data: &Path) -> Result<(), String> {
+    pub(crate) fn save_to(&self, data: &Path) -> Result<(), String> {
         let file = PermissionFence::open(data)?;
         let live: Map<String, Value> = file.read()?;
         let Value::Object(mut now) = serde_json::to_value(self).map_err(|e| e.to_string())? else {

@@ -822,27 +822,51 @@ fn find_in(all: &[Instance], query: &str) -> Result<Instance, String> {
 /// and forgets it: its choices, and the selection when Play started it. Sunrise's own instance,
 /// the game's home, stays.
 pub fn delete(query: &str) -> Result<Instance, String> {
-    let (gone, saved) = delete_with_selection(query)?;
+    let (gone, saved) = delete_with_selection(DeleteTarget::Query(query))?;
     saved?;
     Ok(gone)
 }
 
+pub enum DeleteTarget<'a> {
+    /// CLI lookup by id or name.
+    Query(&'a str),
+    /// The exact folder shown in the window's confirmation, not a fresh lookup by slug.
+    Confirmed(&'a Instance),
+}
+
 /// A completed deletion stays completed even if saving the new selection fails.
-pub fn delete_with_selection(query: &str) -> Result<(Instance, Result<(), String>), String> {
-    let gone = delete_in(
+pub fn delete_with_selection(
+    target: DeleteTarget<'_>,
+) -> Result<(Instance, Result<(), String>), String> {
+    let deleted = delete_with_selection_in(
         &backend::game_home(),
         &backend::data_dir(),
-        query,
+        target,
         &crate::desktop_seams::to_trash,
     )?;
-    let mut settings = backend::Settings::load();
+    crate::storage::eviction::request_cleanup();
+    Ok(deleted)
+}
+
+fn delete_with_selection_in(
+    game_home: &Path,
+    data: &Path,
+    target: DeleteTarget<'_>,
+    trash: &dyn Fn(&Path) -> Result<(), String>,
+) -> Result<(Instance, Result<(), String>), String> {
+    let gone = match target {
+        DeleteTarget::Query(query) => delete_in(game_home, data, query, trash),
+        DeleteTarget::Confirmed(instance) => {
+            delete_selected(game_home, data, instance.clone(), trash)
+        }
+    }?;
+    let mut settings = backend::Settings::load_from(data);
     let saved = if settings.instance.as_ref() == Some(&gone.id) {
         settings.instance = None;
-        settings.save()
+        settings.save_to(data)
     } else {
         Ok(())
     };
-    crate::storage::eviction::request_cleanup();
     Ok((gone, saved))
 }
 
@@ -853,15 +877,6 @@ fn delete_in(
     trash: &dyn Fn(&Path) -> Result<(), String>,
 ) -> Result<Instance, String> {
     let instance = find_in(&list_with_snapshot(game_home, data, false, || {}), query)?;
-    if instance.kind == Kind::Pack {
-        return Err(registry_pack::remove_unavailable());
-    }
-    if instance.kind == Kind::Default {
-        return Err(crate::i18n::trf(
-            "{name} is the game's own folder: it can't be deleted.",
-            &[("name", &instance.name)],
-        ));
-    }
     delete_selected(game_home, data, instance, trash)
 }
 
@@ -871,6 +886,15 @@ fn delete_selected(
     instance: Instance,
     trash: &dyn Fn(&Path) -> Result<(), String>,
 ) -> Result<Instance, String> {
+    if instance.kind == Kind::Pack {
+        return Err(registry_pack::remove_unavailable());
+    }
+    if instance.kind == Kind::Default {
+        return Err(crate::i18n::trf(
+            "{name} is the game's own folder: it can't be deleted.",
+            &[("name", &instance.name)],
+        ));
+    }
     delete_selected_at(
         game_home,
         data,

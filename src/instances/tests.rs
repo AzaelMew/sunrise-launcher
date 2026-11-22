@@ -439,6 +439,70 @@ fn deleted_instances_go_to_the_trash_and_are_forgotten() {
 }
 
 #[test]
+fn a_confirmed_delete_leaves_the_profile_selected_until_it_reaches_trash() {
+    let root = tempfile::tempdir().unwrap();
+    let (game, data, trash) = (
+        root.path().join("game"),
+        root.path().join("data"),
+        root.path().join("trash"),
+    );
+    let profile = create_in(&game, &data, "Survival", None).unwrap();
+    put(&profile.home.join("saves/Base/level.dat"), "base");
+    backend::Settings {
+        instance: Some(profile.id.clone()),
+        ..Default::default()
+    }
+    .save_to(&data)
+    .unwrap();
+    let owner = ManagedProfile::open_instance(&game, &data, &profile).unwrap();
+    let target = || DeleteTarget::Confirmed(&profile);
+    let to_trash = |p: &Path| crate::desktop_seams::to_folder(p, &trash);
+    assert!(delete_with_selection_in(&game, &data, target(), &to_trash).is_err());
+    assert!(!trash.exists());
+    assert_eq!(
+        backend::Settings::load_from(&data).instance.as_deref(),
+        Some(profile.id.as_str())
+    );
+    drop(owner);
+
+    let (gone, saved) = delete_with_selection_in(&game, &data, target(), &to_trash).unwrap();
+    saved.unwrap();
+    assert_eq!(gone.id, profile.id);
+    assert!(trash.join("survival/saves/Base/level.dat").is_file());
+    assert!(backend::Settings::load_from(&data).instance.is_none());
+}
+
+#[test]
+fn a_failed_selection_save_does_not_undo_the_confirmed_delete() {
+    let root = tempfile::tempdir().unwrap();
+    let (game, data, trash) = (
+        root.path().join("game"),
+        root.path().join("data"),
+        root.path().join("trash"),
+    );
+    let profile = create_in(&game, &data, "Survival", None).unwrap();
+    backend::Settings {
+        instance: Some(profile.id.clone()),
+        ..Default::default()
+    }
+    .save_to(&data)
+    .unwrap();
+    // Leave the old selection readable but make the fenced write fail.
+    let gate = data.join(".settings.json.lock");
+    fs::remove_file(&gate).unwrap();
+    fs::create_dir(&gate).unwrap();
+    let (gone, saved) =
+        delete_with_selection_in(&game, &data, DeleteTarget::Confirmed(&profile), &|path| {
+            crate::desktop_seams::to_folder(path, &trash)
+        })
+        .unwrap();
+    assert_eq!(gone.id, profile.id);
+    assert!(saved.is_err());
+    assert!(trash.join("survival").is_dir());
+    assert!(!profile.home.exists());
+}
+
+#[test]
 fn a_profile_lookup_pairs_its_old_row_with_its_old_directory() {
     let root = scratch("lookup-snapshot");
     let (game, cache, trash) = (root.join("game"), root.join("cache"), root.join("trash"));
@@ -470,9 +534,12 @@ fn a_profile_lookup_pairs_its_old_row_with_its_old_directory() {
         "replacement",
     );
     assert_eq!(
-        delete_selected(&game, &cache, selected, &|_| panic!(
-            "replacement reached Trash"
-        ))
+        delete_with_selection_in(
+            &game,
+            &cache,
+            DeleteTarget::Confirmed(&selected),
+            &|_| panic!("replacement reached Trash")
+        )
         .unwrap_err(),
         lifecycle::changed()
     );

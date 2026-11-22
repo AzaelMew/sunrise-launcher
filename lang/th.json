@@ -1491,5 +1491,15 @@
   "Sign in": "Sign in",
   "Finishing the previous download…": "Finishing the previous download…",
   "The launcher update could not be verified.": "The launcher update could not be verified.",
-  "This account was signed out. Add it again to sign in.": "This account was signed out. Add it again to sign in."
+  "This account was signed out. Add it again to sign in.": "This account was signed out. Add it again to sign in.",
+  "Delete {name}?": "Delete {name}?",
+  "This profile and its worlds and mods will move to the Trash.": "This profile and its worlds and mods will move to the Trash.",
+  "Delete profile": "Delete profile",
+  "Delete profile…": "Delete profile…",
+  "{name} is in the Trash.": "{name} is in the Trash.",
+  "The new profile selection could not be saved.": "The new profile selection could not be saved.",
+  "Couldn't move {name} to the Trash": "Couldn't move {name} to the Trash",
+  "Moving {name} to the Trash…": "Moving {name} to the Trash…",
+  "Profile actions": "Profile actions",
+  "Selected profile: {name}": "Selected profile: {name}"
 }

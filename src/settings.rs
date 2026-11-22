@@ -674,13 +674,32 @@ impl Launcher {
                 .child(setup)
                 .child(hint(note));
         }
+        let mut profiles = vec![setup];
+        if let Some(profile) = self
+            .selected_instance()
+            .filter(|p| p.kind == instances::Kind::Own && !self.location_unavailable)
+        {
+            let target = profile.clone();
+            profiles.push(row(
+                trf("Selected profile: {name}", &[("name", &target.name)]),
+                "",
+                div().child(
+                    danger(button("settings-delete-profile", tr("Delete profile…"))).on_click(
+                        cx.listener(move |this, _, _, cx| {
+                            this.confirm_profile_delete(&target);
+                            cx.notify();
+                        }),
+                    ),
+                ),
+            ));
+        }
         div()
             .flex()
             .flex_col()
             .gap(px(14.))
             .child(group(vec![while_playing, args]))
             .child(group(vec![source]))
-            .child(group(vec![setup]))
+            .child(group(profiles))
     }
 
     fn settings_mods(&mut self, cx: &mut Context<Self>) -> Div {

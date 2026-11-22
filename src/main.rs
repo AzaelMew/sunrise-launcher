@@ -67,6 +67,7 @@ mod paint;
 mod perf;
 mod picture_cache;
 mod plate;
+mod profile_delete;
 mod profile_dialog;
 mod profile_heads;
 mod rail;

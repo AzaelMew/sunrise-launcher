@@ -38,6 +38,8 @@ pub(crate) enum Sheet {
     BuildChanges,
     /// Who plays, under the account chip (`account_chip`).
     AccountMenu,
+    /// Profile switcher menu, then the confirmation or the result of deleting a profile.
+    ProfileActions,
     LauncherUpdate,
     Search,
     /// The build window (`mods::build_modal`): closing it leaves the build running.
@@ -81,6 +83,7 @@ pub(crate) struct SheetsState {
     way_out: Option<WayOut>,
     versions: versions::State,
     pub(super) switching: switching::State,
+    pub(super) profile_action: Option<crate::profile_delete::Action>,
 }
 
 /// A held update as the bottom bar and the Resolve sheet read it.
@@ -282,6 +285,7 @@ impl Launcher {
             || self.mods.installs.world.is_some()
             || self.owner_screen_open
             || self.instances.dialog.is_some()
+            || self.ui.sheet == Some(Sheet::ProfileActions)
             || (self.ui.page == crate::frame::Page::Hosting && self.servers.create.is_some())
     }
 
@@ -319,6 +323,15 @@ impl Launcher {
     /// built or changed by it: a pending permission is declined, a pending library question is
     /// answered no, a held update stays held.
     pub(crate) fn close_sheet(&mut self) {
+        if self.ui.sheet == Some(Sheet::ProfileActions) {
+            if matches!(
+                self.ui.sheets.profile_action,
+                Some(crate::profile_delete::Action::Deleting(_))
+            ) {
+                return;
+            }
+            self.ui.sheets.profile_action = None;
+        }
         if self.ui.sheet == Some(Sheet::GithubAdd) {
             self.github.close();
         }
@@ -532,6 +545,7 @@ impl Launcher {
             Some(Sheet::Switching) => Some(self.switch_sheet(cx)),
             Some(Sheet::BuildChanges) => self.switch_receipt_sheet(cx),
             Some(Sheet::AccountMenu) => self.account_menu(cx),
+            Some(Sheet::ProfileActions) => self.profile_action_sheet(cx),
             Some(Sheet::LauncherUpdate) => self.launcher_update_sheet(cx),
             Some(Sheet::Search) => Some(self.command_search(cx)),
             Some(Sheet::RegistryPlay) => match self.registry_stage() {
