@@ -23,6 +23,68 @@ fn home_finds_resource_packs_after_leaving_a_different_installed_shelf() {
     );
 }
 
+#[test]
+fn home_labels_follow_installed_replies_with_the_same_inventory_and_registry() {
+    in_scratch_launcher(
+        "mods::home_tests::home_labels_follow_installed_replies_with_the_same_inventory_and_registry",
+        |launcher| {
+            let home = launcher.mods_home();
+            let key = native_status::fingerprint(&home, None);
+            // The registry is already fetched, but the first Installed read has not answered.
+            let index = Some(Arc::new(Index::default()));
+            let inventory = 1;
+            launcher.ui.mods.snapshot = Some(Snapshot {
+                home,
+                key: key.clone(),
+                rows: InstalledRows::default(),
+                reading: true,
+                error: None,
+                backup_notice: None,
+            });
+            launcher.ui.mods.catalog_game = Some(launcher.mods_game());
+            launcher.ui.mods.catalog = Catalog::Loading;
+            launcher.settings.native_mods_allowed_at = None;
+            let id = "lantern";
+            let installed = || InstalledRows {
+                local: vec![model::Local {
+                    id: id.into(),
+                    file: "lantern.smod".into(),
+                    name: "Lantern".into(),
+                    version: "1.0.0".into(),
+                    github: None,
+                    native: true,
+                    unreadable: false,
+                }],
+                enabled: HashSet::from([id.into()]),
+                ..Default::default()
+            };
+            assert!(launcher.home_mod_facts(inventory, index.clone()).is_empty());
+            // No forwarding thread: every injected worker reply is available for this drain.
+            let (tx, rx) = std::sync::mpsc::channel();
+            launcher.ui.mods.rx = rx;
+            tx.send(Event::Local("old fingerprint".into(), Ok(Some((installed(), None)))))
+                .unwrap();
+            launcher.mods_drain();
+            assert!(launcher.home_mod_facts(inventory, index.clone()).is_empty());
+            tx.send(Event::Local(key.clone(), Ok(Some((installed(), None)))))
+                .unwrap();
+            launcher.mods_drain();
+            let facts = launcher.home_mod_facts(inventory, index.clone());
+            assert_eq!(facts[id].kind, tr("Native"));
+            assert_eq!(facts[id].status.as_deref(), Some(tr("Needs permission")));
+
+            let mut updated = installed();
+            updated.local[0].native = false;
+            tx.send(Event::Local(key, Ok(Some((updated, None)))))
+                .unwrap();
+            launcher.mods_drain();
+            let facts = launcher.home_mod_facts(inventory, index);
+            assert_eq!(facts[id].kind, tr("Content"));
+            assert!(facts[id].status.is_none());
+        },
+    );
+}
+
 // Launcher startup uses process settings and starts workers. Run it with its own folders,
 // no keychain, and a proxy that can't reach the registry or update services.
 fn in_scratch_launcher(test: &str, run: impl FnOnce(&mut Launcher)) {

@@ -327,12 +327,13 @@ pub(crate) struct Inventory {
     snapshot: Option<Arc<Snapshot>>,
     stamp: String,
     generation: u64,
+    /// Changes only when Home publishes a new inventory.
+    revision: u64,
     reading: bool,
     /// Something may have changed: check the stamp, in the background, when Home next draws.
     stale: bool,
     drawn: Option<Instant>,
     watched: bool,
-    mod_facts: Option<ModFacts>,
 }
 
 /// Home drawn again after this long checks the files once more: the player was elsewhere.
@@ -375,6 +376,7 @@ impl Inventory {
         self.reading = false;
         match read {
             Some((stamp, snapshot)) => {
+                self.revision += 1;
                 self.stamp = stamp;
                 self.snapshot.replace(Arc::new(snapshot))
             }
@@ -398,13 +400,6 @@ fn retire(snapshot: &Snapshot, pictures: &mut crate::picture_cache::Pictures) {
 }
 
 const PICTURE: f32 = 30.;
-
-struct ModFacts {
-    source: Arc<Snapshot>,
-    index: Option<Arc<sunrise_launcher_smod::index::Index>>,
-    native_allowed: bool,
-    rows: HashMap<String, crate::mods::HomeModFacts>,
-}
 
 impl Launcher {
     fn open_home_item(&mut self, open: Open) {
@@ -567,28 +562,8 @@ impl Launcher {
                 items,
             };
         }
-        if !packs {
-            let index = sunrise::fetched_index();
-            let native_allowed = self.settings.native_mods_allowed_at.is_some();
-            let facts = &self.ui.home.mods.mod_facts;
-            if facts.as_ref().is_none_or(|facts| {
-                !Arc::ptr_eq(&facts.source, &snapshot)
-                    || native_allowed != facts.native_allowed
-                    || match (&facts.index, &index) {
-                        (Some(a), Some(b)) => !Arc::ptr_eq(a, b),
-                        (None, None) => false,
-                        _ => true,
-                    }
-            }) {
-                let rows = self.home_mod_facts();
-                self.ui.home.mods.mod_facts = Some(ModFacts {
-                    source: snapshot.clone(),
-                    index,
-                    native_allowed,
-                    rows,
-                });
-            }
-        }
+        let mod_facts = (!packs)
+            .then(|| self.home_mod_facts(self.ui.home.mods.revision, sunrise::fetched_index()));
         let (built, place) = self.home_installed_list(packs, list.len());
         let index = (!packs).then(sunrise::known_index).flatten();
         let mut rows = div().flex().flex_col();
@@ -640,15 +615,12 @@ impl Launcher {
                 };
                 (None, Some(status))
             } else {
-                let fact = self
-                    .ui
-                    .home
-                    .mods
-                    .mod_facts
-                    .as_ref()
-                    .and_then(|facts| facts.rows.get(&item.id));
-                let kind = fact.map_or(tr("Content"), |fact| fact.kind);
-                (Some(kind.into()), fact.and_then(|fact| fact.status.clone()))
+                let fact = mod_facts.as_ref().and_then(|facts| facts.get(&item.id));
+                let kind = fact.map(|fact| fact.kind).filter(|kind| !kind.is_empty());
+                (
+                    kind.map(str::to_owned),
+                    fact.and_then(|fact| fact.status.clone()),
+                )
             };
             let open = item.open.clone();
             rows = rows.child(self.home_overview_row(

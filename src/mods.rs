@@ -48,7 +48,8 @@ mod ui;
 pub(crate) use data_packs::names;
 pub(crate) use search::Installed;
 mod viewer;
-use std::rc::Rc;
+use std::{rc::Rc, sync::Arc};
+use sunrise_launcher_smod::index::Index;
 pub(crate) use ui::{
     checkbox, choices, empty_state, field_theme, reveal, segmented, switch, Choose,
 };
@@ -345,6 +346,7 @@ pub(crate) struct ModsState {
     /// The last clicked archive path, resolved in the current list for Shift-click.
     anchor: Option<String>,
     snapshot: Option<Snapshot>,
+    home_mod_labels: Option<HomeModLabels>,
     open: Option<Open>,
     page_request: u64,
     nightly: nightly::State,
@@ -413,6 +415,7 @@ impl Default for ModsState {
             selection: BTreeSet::new(),
             anchor: None,
             snapshot: None,
+            home_mod_labels: None,
             open: None,
             page_request: 0,
             nightly: Default::default(),
@@ -499,6 +502,13 @@ impl crate::instances_page::Instances {
 pub(crate) struct HomeModFacts {
     pub(crate) kind: &'static str,
     pub(crate) status: Option<String>,
+}
+
+struct HomeModLabels {
+    inventory: u64,
+    index: Option<Arc<Index>>,
+    native_allowed: bool,
+    rows: Arc<HashMap<String, HomeModFacts>>,
 }
 
 impl Launcher {
@@ -682,28 +692,54 @@ impl Launcher {
         }
     }
 
-    pub(crate) fn home_mod_facts(&mut self) -> std::collections::HashMap<String, HomeModFacts> {
+    /// Home's inventory can finish before Installed's worker. Leave the labels blank until the
+    /// current setup has confirmed rows, and rebuild them on the worker's next publication.
+    pub(crate) fn home_mod_facts(
+        &mut self,
+        inventory: u64,
+        index: Option<Arc<Index>>,
+    ) -> Arc<HashMap<String, HomeModFacts>> {
+        let native_allowed = self.settings.native_mods_allowed_at.is_some();
+        if let Some(labels) = &self.ui.mods.home_mod_labels {
+            let same_index = match (&labels.index, &index) {
+                (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+                (None, None) => true,
+                _ => false,
+            };
+            if labels.inventory == inventory
+                && labels.native_allowed == native_allowed
+                && same_index
+            {
+                return labels.rows.clone();
+            }
+        }
         self.mods_refresh();
-        self.rows()
-            .into_iter()
-            .filter(|row| row.on)
-            .map(|row| {
+        let mut labels = HashMap::new();
+        if self.ui.mods.snapshot.as_ref().is_some_and(Snapshot::ready) {
+            for row in self
+                .rows_with_index(index.as_deref())
+                .into_iter()
+                .filter(|row| row.on)
+            {
                 let error = self.ui.mods.errors.get(&row.id).map(String::as_str);
-                let cells = model::cells(
-                    &row,
-                    error,
-                    None,
-                    self.settings.native_mods_allowed_at.is_some(),
+                let cells = model::cells(&row, error, None, native_allowed);
+                labels.insert(
+                    row.id,
+                    HomeModFacts {
+                        kind: cells.kind,
+                        status: cells.status.map(|state| state.label),
+                    },
                 );
-                let kind = if cells.kind.is_empty() {
-                    tr("Content")
-                } else {
-                    cells.kind
-                };
-                let status = cells.status.map(|state| state.label);
-                (row.id, HomeModFacts { kind, status })
-            })
-            .collect()
+            }
+        }
+        let rows = Arc::new(labels);
+        self.ui.mods.home_mod_labels = Some(HomeModLabels {
+            inventory,
+            index,
+            native_allowed,
+            rows: rows.clone(),
+        });
+        rows
     }
 
     pub(crate) fn show_resource_pack_discover(&mut self) {
@@ -841,7 +877,9 @@ impl Launcher {
                 }
                 Event::Local(key, result) => {
                     if let Some(snap) = m.snapshot.as_mut().filter(|s| s.key == key) {
-                        if snap.finish(result) {
+                        let ready = snap.finish(result);
+                        m.home_mod_labels = None;
+                        if ready {
                             let rows: HashSet<String> =
                                 self.rows().into_iter().map(|r| r.id).collect();
                             self.ui.mods.selection.retain(|id| rows.contains(id));
@@ -918,6 +956,7 @@ impl Launcher {
             self.pack_setup_moved();
         }
         if self.ui.mods.snapshot.as_ref().is_none_or(|s| s.key != key) {
+            self.ui.mods.home_mod_labels = None;
             // Keep the same profile's confirmed rows and advisory until the worker answers.
             let (rows, backup_notice) = self
                 .ui
@@ -1060,10 +1099,13 @@ impl Launcher {
     /// The installed mods as rows. Uses only the index served over HTTPS this run for registry
     /// names and statuses. Never asks the network or writes.
     fn rows(&self) -> Vec<Row> {
+        self.rows_with_index(sunrise::fetched_index().as_deref())
+    }
+
+    fn rows_with_index(&self, index: Option<&Index>) -> Vec<Row> {
         let Some(snap) = &self.ui.mods.snapshot else {
             return Vec::new();
         };
-        let index = sunrise::fetched_index();
         let game = snap.rows.managed.as_ref().map_or_else(
             || self.mods_game(),
             |managed| sunrise_launcher::backend::game_version(managed.base()),
@@ -1083,7 +1125,7 @@ impl Launcher {
         let mut rows = model::rows(
             &snap.rows.entries,
             &model::World {
-                index: index.as_deref(),
+                index,
                 game: &game,
                 unfit_updates: &unfit_updates,
                 enabled: &snap.rows.enabled,
@@ -1105,15 +1147,13 @@ impl Launcher {
                 regroup = true;
             }
             // An unsigned developer catalogue can offer an action, not vouch for an archive.
-            if let Some((offers, project)) =
-                local_offers.as_ref().or(index.as_ref()).and_then(|offers| {
-                    row.entry.as_ref().and_then(|entry| {
-                        offers
-                            .project(&entry.project)
-                            .map(|project| (offers, project))
-                    })
+            if let Some((offers, project)) = local_offers.as_deref().or(index).and_then(|offers| {
+                row.entry.as_ref().and_then(|entry| {
+                    offers
+                        .project(&entry.project)
+                        .map(|project| (offers, project))
                 })
-            {
+            }) {
                 if local_offers.is_some() {
                     row.title.clone_from(&project.name);
                     row.update = model::newer(offers, project, &row.version, &game, &unfit_updates);
