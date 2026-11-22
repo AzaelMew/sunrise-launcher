@@ -2363,7 +2363,9 @@ fn refill_own_store(tag: &str, handoff: &crate::preparer::Handoff<'_>) {
             .map_err(|e| e.to_string())?;
         Ok(body)
     };
-    if let Err(e) = download_for_owner(&pins, &own, &fetch, &|line| eprintln!("{line}")) {
+    if let Err(e) = download_for_owner(&pins, &own, &fetch, &mojang::CANCEL, &|line| {
+        eprintln!("{line}")
+    }) {
         eprintln!("{tag}: the missing assets were not downloaded: {e}");
     }
 }
@@ -2464,15 +2466,6 @@ fn download_for_owner(
     pins: &sources::Pins,
     dir: &Path,
     fetch: sources::Fetch,
-    log: &dyn Fn(String),
-) -> Result<(), String> {
-    download_for_owner_cancellable(pins, dir, fetch, &mojang::CANCEL, log)
-}
-
-fn download_for_owner_cancellable(
-    pins: &sources::Pins,
-    dir: &Path,
-    fetch: sources::Fetch,
     cancel: &std::sync::atomic::AtomicBool,
     log: &dyn Fn(String),
 ) -> Result<(), String> {
@@ -2516,7 +2509,7 @@ pub fn download_version_for_owner(
         Ok(body)
     };
     let pins = sources::Pins::for_version(id, manifest_sha1);
-    download_for_owner(&pins, &dir, &fetch, log)
+    download_for_owner(&pins, &dir, &fetch, &mojang::CANCEL, log)
         .map_err(|e| e.trim_start_matches("\n  • ").to_string())?;
     Ok(dir)
 }
@@ -2835,7 +2828,7 @@ pub(crate) fn preparer_staged(
         let linked = data_dir().join("linked-minecraft");
         if from == MinecraftFrom::Mojang {
             // Straight from Mojang (what is already there and whole is kept), for an owner only.
-            download_for_owner_cancellable(&pins, &own, &fetch, cancel, log)
+            download_for_owner(&pins, &own, &fetch, cancel, log)
                 .map_err(|e| e.trim_start_matches("\n  • ").to_string())?;
             own
         } else {
@@ -2847,7 +2840,7 @@ pub(crate) fn preparer_staged(
                     sources::Resolved::Folder(dir) => dir,
                     sources::Resolved::NotFound(checked) => {
                         let not_found = sources::not_found(&version, &checked, minecraft);
-                        download_for_owner_cancellable(&pins, &own, &fetch, cancel, log)
+                        download_for_owner(&pins, &own, &fetch, cancel, log)
                             .map_err(|e| not_found + &e)?;
                         own
                     }
