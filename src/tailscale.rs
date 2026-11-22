@@ -410,6 +410,17 @@ fn allow_all(rule: &Value, grant: bool) -> bool {
     }
 }
 
+/// An explicit allow-all rule exposes the node even when the Minecraft port is unknown.
+pub fn shares_entire_computer(policy: &Value) -> bool {
+    [("acls", false), ("grants", true)]
+        .into_iter()
+        .any(|(key, grant)| {
+            policy[key]
+                .as_array()
+                .is_some_and(|rules| rules.iter().any(|rule| allow_all(rule, grant)))
+        })
+}
+
 fn members_all(rule: &Value, grant: bool) -> bool {
     if grant {
         is_members(&rule["src"]) && is_star(&rule["dst"]) && is_star(&rule["ip"])

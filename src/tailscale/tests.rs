@@ -95,6 +95,7 @@ fn default_acls() -> Value {
 fn the_default_policy_is_limited_for_shared_friends_only() {
     let ip = "100.101.102.103";
     let policy = default_acls();
+    assert!(shares_entire_computer(&policy));
     assert_eq!(reach(&policy, ip, 25565), Reach::Everything);
     let limited = limit_shared(&policy, ip, 25565).unwrap();
     assert_eq!(
@@ -108,6 +109,7 @@ fn the_default_policy_is_limited_for_shared_friends_only() {
     assert_eq!(limited["ssh"], policy["ssh"]);
     assert_eq!(limited["tagOwners"], policy["tagOwners"]);
     assert_eq!(reach(&limited, ip, 25565), Reach::ServerOnly);
+    assert!(!shares_entire_computer(&limited));
     // Another port: not the launcher's rule for this server.
     assert_eq!(reach(&limited, ip, 25566), Reach::Custom);
     assert!(limit_shared(&limited, ip, 25565).is_none());
@@ -118,11 +120,13 @@ fn the_default_policy_is_limited_for_shared_friends_only() {
 
     // The older form of the default rule.
     let old = json!({ "acls": [{ "action": "accept", "users": ["*"], "ports": ["*:*"] }] });
+    assert!(shares_entire_computer(&old));
     assert_eq!(reach(&old, ip, 25565), Reach::Everything);
     assert!(limit_shared(&old, ip, 25565).is_some());
 
     // Grants.
     let grants = json!({ "grants": [{ "src": ["*"], "dst": ["*"], "ip": ["*"] }] });
+    assert!(shares_entire_computer(&grants));
     let limited = limit_shared(&grants, ip, 25570).unwrap();
     assert_eq!(
         limited["grants"][1],
@@ -137,6 +141,7 @@ fn the_default_policy_is_limited_for_shared_friends_only() {
         { "action": "accept", "src": ["*"], "dst": ["*:*"] }
     ] });
     assert_eq!(reach(&custom, ip, 25565), Reach::Custom);
+    assert!(shares_entire_computer(&custom));
     assert!(limit_shared(&custom, ip, 25565).is_none());
     assert!(unlimit_shared(&custom, ip, 25565).is_none());
     let both = json!({ "acls": [{ "action": "accept", "src": ["*"], "dst": ["*:*"] }], "grants": [{ "src": ["*"], "dst": ["*"], "ip": ["*"] }] });

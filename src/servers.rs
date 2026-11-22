@@ -19,6 +19,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
+pub mod network;
+
 const PROGRAM: &str = if cfg!(windows) {
     "sunrise-server.exe"
 } else {
@@ -1173,9 +1175,9 @@ impl Api {
     }
 
     pub fn status(&self) -> Option<Status> {
-        self.call("GET", "/api/v1/status", None)
-            .ok()
-            .map(|v| Status::parse(&v))
+        let reply = self.call("GET", "/api/v1/status", None).ok()?;
+        reply["phase"].as_str()?;
+        Some(Status::parse(&reply))
     }
 
     /// The log lines after `since`, and the number to ask from next time.
@@ -1225,6 +1227,8 @@ pub struct Player {
 pub struct Status {
     /// starting, running, stopping or restarting (stopped when nothing answers).
     pub phase: String,
+    pub listener: Option<std::net::SocketAddr>,
+    pub processes: Option<(u64, u64)>,
     pub uptime: Option<u64>,
     pub crashes: u64,
     pub last_crash: Option<String>,
@@ -1253,11 +1257,20 @@ impl Status {
         }
     }
 
+    pub fn unknown() -> Self {
+        Self {
+            phase: "unknown".into(),
+            ..Self::default()
+        }
+    }
+
     pub fn parse(v: &Value) -> Self {
         let game = &v["sample"]["game"];
         let update = &v["update"];
         Self {
             phase: v["phase"].as_str().unwrap_or("stopped").to_string(),
+            listener: None,
+            processes: v["pid"].as_u64().zip(v["engine_pid"].as_u64()),
             uptime: v["engine_uptime_seconds"].as_u64(),
             crashes: v["crashes"].as_u64().unwrap_or(0),
             last_crash: v["last_crash"].as_str().map(str::to_string),
@@ -1287,7 +1300,7 @@ impl Status {
     }
 
     pub fn running(&self) -> bool {
-        self.phase != "stopped"
+        !matches!(self.phase.as_str(), "stopped" | "unknown")
     }
 }
 
@@ -1296,6 +1309,88 @@ pub fn status(dir: &Path) -> Status {
     Api::open(dir)
         .and_then(|api| api.status())
         .unwrap_or_else(Status::stopped)
+}
+
+/// Polls the server selected in Hosting. An unavailable supervisor is distinct from one
+/// that has stopped; the latter can show its saved settings for a future start.
+pub fn poll_hosting(
+    dir: &Path,
+    previous: Option<&Status>,
+    since: u64,
+) -> (Status, Option<(u64, Vec<String>)>) {
+    let Some(api) = Api::open(dir) else {
+        let lock_free = match fs::File::open(dir.join(".sunrise/lock")) {
+            Ok(lock) => lock.try_lock_shared().is_ok(),
+            Err(error) => error.kind() == std::io::ErrorKind::NotFound,
+        };
+        let stopped = lock_free && matches!(dir.join(".sunrise/api.json").try_exists(), Ok(false));
+        return (
+            if stopped {
+                Status::stopped()
+            } else {
+                Status::unknown()
+            },
+            None,
+        );
+    };
+    let Some(mut status) = api.status() else {
+        return (Status::unknown(), None);
+    };
+    let mut logs = api.logs(since);
+    if status.phase != "running" || status.processes.is_none() {
+        return (status, logs);
+    }
+
+    let same_engine =
+        |other: &Status| other.phase == "running" && other.processes == status.processes;
+    if let Some(listener) = previous
+        .filter(|other| same_engine(other) && status.uptime >= other.uptime)
+        .and_then(|other| other.listener)
+    {
+        status.listener = Some(listener);
+        return (status, logs);
+    }
+
+    // The game announces the actual bind it starts with. The supervisor's start marker
+    // and the game's Done line bracket the startup in its log. Read that section once
+    // per engine and verify that a restart did not overtake the log request.
+    if since != 0 {
+        let finished_startup = logs
+            .as_ref()
+            .is_some_and(|(_, lines)| lines.iter().any(|line| network::startup_done(line)));
+        if previous.is_some_and(|other| same_engine(other) && status.uptime >= other.uptime)
+            && !finished_startup
+        {
+            return (status, logs);
+        }
+        logs = api.logs(0).or(logs);
+    }
+    let listener = logs
+        .as_ref()
+        .and_then(|(_, lines)| network::listener_from_startup(lines));
+    if let Some(listener) = listener {
+        let Some(verified) = api.status() else {
+            return (Status::unknown(), None);
+        };
+        if !same_engine(&verified) || verified.uptime < status.uptime {
+            return (verified, None);
+        }
+        status = verified;
+        status.listener = Some(listener);
+    }
+    // Keep showing the incremental console rather than replaying the startup at every poll.
+    if since != 0 {
+        if let Some((next, lines)) = &mut logs {
+            let first = next.saturating_sub(lines.len() as u64);
+            let skip = if since <= *next {
+                since.saturating_sub(first).min(lines.len() as u64) as usize
+            } else {
+                0
+            };
+            lines.drain(..skip);
+        }
+    }
+    (status, logs)
 }
 
 #[cfg(test)]

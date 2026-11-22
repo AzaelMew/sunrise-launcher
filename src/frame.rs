@@ -425,6 +425,9 @@ impl Launcher {
             _ => self.ui.page = page,
         }
         if self.ui.page != before {
+            if before == Page::Hosting {
+                self.servers.reset_public_lookup();
+            }
             self.storage_builds.confirm = None;
             self.refresh_open_storage_builds();
         }
