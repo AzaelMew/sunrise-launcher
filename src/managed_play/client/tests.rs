@@ -200,8 +200,10 @@ fn a_failed_first_download_can_be_followed_by_a_mod_change_and_play() {
             .unwrap(),
         )
         .unwrap();
+        // libtest names omit the crate prefix included by module_path!().
+        let test = TEST.split_once("::").unwrap().1;
         let output = Command::new(std::env::current_exe().unwrap())
-            .args(["--exact", TEST, "--nocapture"])
+            .args(["--exact", test, "--nocapture"])
             .env("PLAY_DOWNLOAD_FIXTURE", "1")
             .env("SUNRISE_HOME", root.path().join("game"))
             .env("SUNRISE_LAUNCHER_HOME", root.path().join("launcher"))
@@ -210,12 +212,17 @@ fn a_failed_first_download_can_be_followed_by_a_mod_change_and_play() {
             .env("XDG_CONFIG_HOME", root.path().join("config"))
             .output()
             .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let passed = stdout
+            .lines()
+            .find(|line| line.starts_with("test result: ok. 1 passed;"));
         assert!(
-            output.status.success(),
+            output.status.success() && passed.is_some(),
             "{}\n{}",
-            String::from_utf8_lossy(&output.stdout),
+            stdout,
             String::from_utf8_lossy(&output.stderr)
         );
+        println!("Isolated download fixture: {}", passed.unwrap());
         return;
     }
 
@@ -378,7 +385,7 @@ fn windows_bound_x64_fallback_survives_pending_retry_and_committed_replay() {
     };
     install_candidate(&archive, "x64");
     assert!(backend::check_game_architecture(BUILD, None, Arm64).is_some());
-    {
+    let interrupt_after_proof = || {
         let mut admission = Admission::open(&home, None).unwrap();
         admission
             .bind_bootstrap(
@@ -400,7 +407,8 @@ fn windows_bound_x64_fallback_survives_pending_retry_and_committed_replay() {
         admission
             .prove_bootstrap(|_| Ok(json!({"archive":archive, "facts":null})))
             .unwrap();
-    }
+    };
+    interrupt_after_proof();
     let instance = instances::selection().unwrap();
     let client = Client {
         instance: &instance,
@@ -428,12 +436,26 @@ fn windows_bound_x64_fallback_survives_pending_retry_and_committed_replay() {
     };
     let mut profile = Profile::open(&home, None).unwrap();
     install_candidate(&"b".repeat(64), "x64");
-    assert!(
-        retry(&mut profile).is_err(),
-        "accepted an unrelated cached x64 archive"
+    let error = retry(&mut profile).expect_err("accepted an unrelated cached x64 archive");
+    assert_eq!(
+        String::from(error),
+        crate::i18n::trf(
+            "A different installation already occupies {build}. It was not replaced.",
+            &[("build", BUILD)],
+        )
     );
     assert!(profile.active().unwrap().is_none());
+    assert!(crate::profile_txn::references(&home)
+        .unwrap()
+        .targets
+        .is_empty());
+    drop(profile);
+
+    // A returned refusal releases the choice. Seed a separate interrupted Play to
+    // verify that a pending proof (rather than a settled failure) resumes exactly.
     install_candidate(&archive, "x64");
+    interrupt_after_proof();
+    let mut profile = Profile::open(&home, None).unwrap();
     let (active, _) = retry(&mut profile).unwrap();
     drop(profile);
     let mut reopened = Profile::open(&home, None).unwrap();
