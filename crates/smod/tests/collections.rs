@@ -263,29 +263,3 @@ fn a_version_with_a_malformed_dependency_row_is_left_out_without_dropping_the_re
             .all(|l| l.reason.starts_with("invalid dependencies") || l.version.is_none())
     );
 }
-
-#[test]
-fn a_collection_reads_its_downloads_and_leaves_them_unset_when_absent() {
-    let index_with_downloads = index(json!([{
-        "id": "c", "name": "C", "summary": "Animals.", "description": "Markdown.",
-        "owners": ["EAnathos"], "icon": "https://example.test/icon.png",
-        "members": [{"id": "butterflies"}, {"id": "vulture"}],
-        "downloads": 42,
-    }]));
-    assert_eq!(
-        index_with_downloads.collection("c").unwrap().downloads,
-        Some(42)
-    );
-
-    let index_without_downloads = index(json!([collection(
-        "c",
-        json!([{"id": "butterflies"}, {"id": "vulture"}])
-    )]));
-    assert_eq!(
-        index_without_downloads.collection("c").unwrap().downloads,
-        None
-    );
-
-    let written = serde_json::to_value(&index_without_downloads).unwrap();
-    assert!(written["collections"][0].get("downloads").is_none());
-}

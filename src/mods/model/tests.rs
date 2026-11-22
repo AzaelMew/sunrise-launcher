@@ -938,6 +938,23 @@ fn a_collection_shows_its_own_downloads_once_the_registry_counts_them() {
 }
 
 #[test]
+fn a_members_sum_that_passes_u64_max_stops_there() {
+    let mut idx = zoo();
+    assert_eq!(idx.collections[0].downloads, None);
+    for id in ["cow", "pig"] {
+        idx.projects
+            .iter_mut()
+            .find(|p| p.id == id)
+            .unwrap()
+            .downloads = u64::MAX;
+    }
+    assert_eq!(collection::downloads(&idx.collections[0], &idx), u64::MAX);
+    let all = cards(&idx, GAME);
+    let farm = all.iter().find(|c| c.id == "farm").unwrap();
+    assert_eq!(farm.downloads, u64::MAX, "neither a panic nor a wrap");
+}
+
+#[test]
 fn a_member_says_which_collection_it_is_part_of() {
     let idx = zoo();
     let all = cards(&idx, GAME);
