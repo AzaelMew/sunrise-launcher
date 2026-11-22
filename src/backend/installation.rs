@@ -7,6 +7,7 @@ use sunrise_launcher_smod::{
 };
 
 mod bound;
+pub(super) use bound::sdk_target;
 pub use bound::NightlyReceiptWarning;
 pub(crate) use bound::{BoundVariant, GameDownload, GameProof};
 
@@ -183,14 +184,80 @@ pub(crate) fn install_as(
 ) -> Result<Option<ReceiptFailure>, String> {
     let (url, size) = release
         .asset
-        .clone()
+        .as_ref()
         .ok_or_else(|| format!("{tag} has no build for this platform."))?;
+    install_image(
+        release,
+        tag,
+        intent,
+        &progress,
+        |target| Artifact::matches_archive(target, tag, sha256),
+        |stage| {
+            let archive = stage.join("download");
+            download(url, *size, sha256, &archive, &progress)?;
+            let unpacked = stage.join("unpacked");
+            unpack(&archive, url, &unpacked)?;
+            progress(0.97);
+            // The archives usually hold one top folder; install its contents.
+            let entries: Vec<_> = fs::read_dir(&unpacked)
+                .and_then(|entries| entries.collect::<std::io::Result<_>>())
+                .map_err(|e| e.to_string())?;
+            let top = match entries.as_slice() {
+                [only] if only.path().is_dir() => only.path(),
+                _ => unpacked,
+            };
+            let architecture = requested_architecture
+                .zip(architecture_for_asset(url))
+                .map(|(requested, binary)| InstalledGameArchitecture { requested, binary });
+            finish_image(&top, architecture, release_facts)?;
+            Artifact::record_archive(&top, tag, sha256)?;
+            Ok(top)
+        },
+    )
+}
+
+fn finish_image(
+    top: &Path,
+    architecture: Option<InstalledGameArchitecture>,
+    release_facts: Option<(&[u8], &str)>,
+) -> Result<(), String> {
+    if !fs::symlink_metadata(top)
+        .is_ok_and(|meta| meta.is_dir() && !crate::native_cache::linked(&meta))
+        || !fs::symlink_metadata(top.join(CLIENT))
+            .is_ok_and(|meta| meta.is_file() && !crate::native_cache::linked(&meta))
+    {
+        return Err(format!("The download has no {CLIENT}"));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(top.join(CLIENT), fs::Permissions::from_mode(0o755))
+            .map_err(|e| e.to_string())?;
+    }
+    if let Some(architecture) = architecture {
+        let mut marker =
+            fs::File::create_new(top.join(GAME_BUILD_ARCHITECTURE)).map_err(|e| e.to_string())?;
+        serde_json::to_writer(&mut marker, &architecture).map_err(|e| e.to_string())?;
+    }
+    if let Some((bytes, sha256)) = release_facts {
+        keep_release_file(top, bytes, sha256)?;
+    }
+    Ok(())
+}
+
+fn install_image(
+    release: &Release,
+    tag: &str,
+    intent: InstallIntent,
+    progress: &impl Fn(f32),
+    matches: impl Fn(&Path) -> bool,
+    stage_tree: impl FnOnce(&Path) -> Result<PathBuf, String>,
+) -> Result<Option<ReceiptFailure>, String> {
     let root = versions_dir();
     let target = version_dir(tag);
-    let matches_archive = || Artifact::matches_archive(&target, tag, sha256);
     if intent == InstallIntent::Exact {
         match fs::symlink_metadata(&target) {
-            Ok(_) if matches_archive() => {
+            Ok(_) if matches(&target) => {
                 progress(1.0);
                 return Ok(None);
             }
@@ -204,46 +271,7 @@ pub(crate) fn install_as(
         .prefix(STAGE_PREFIX)
         .tempdir_in(&root)
         .map_err(|e| e.to_string())?;
-    let archive = stage.path().join("download");
-    download(&url, size, sha256, &archive, &progress)?;
-    let unpacked = stage.path().join("unpacked");
-    unpack(&archive, &url, &unpacked)?;
-    progress(0.97);
-    // The archives hold one top folder (sunrise-linux-x86_64/...); the version folder is its contents.
-    let entries: Vec<_> = fs::read_dir(&unpacked)
-        .and_then(|entries| entries.collect::<std::io::Result<_>>())
-        .map_err(|e| e.to_string())?;
-    let top = match entries.as_slice() {
-        [only] if only.path().is_dir() => only.path(),
-        _ => unpacked.clone(),
-    };
-    if !fs::symlink_metadata(&top)
-        .is_ok_and(|meta| meta.is_dir() && !crate::native_cache::linked(&meta))
-        || !fs::symlink_metadata(top.join(CLIENT))
-            .is_ok_and(|meta| meta.is_file() && !crate::native_cache::linked(&meta))
-    {
-        return Err(format!("The download has no {CLIENT}"));
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(top.join(CLIENT), fs::Permissions::from_mode(0o755))
-            .map_err(|e| e.to_string())?;
-    }
-    if let (Some(requested), Some(binary)) = (requested_architecture, architecture_for_asset(&url))
-    {
-        let mut marker =
-            fs::File::create_new(top.join(GAME_BUILD_ARCHITECTURE)).map_err(|e| e.to_string())?;
-        serde_json::to_writer(
-            &mut marker,
-            &InstalledGameArchitecture { requested, binary },
-        )
-        .map_err(|e| e.to_string())?;
-    }
-    if let Some((bytes, sha256)) = release_facts {
-        keep_release_file(&top, bytes, sha256)?;
-    }
-    Artifact::record_archive(&top, tag, sha256)?;
+    let top = stage_tree(stage.path())?;
     intent.download().mark(&top)?;
     crate::nightly::record_install_time(&top, release).map_err(|e| e.to_string())?;
     // Transfer and unpack privately. Only the visibility boundary fences readers.
@@ -259,7 +287,7 @@ pub(crate) fn install_as(
         .map_err(|e| crate::native_mods::cache_error(e.into()))?;
     let replaced = if intent == InstallIntent::Repair {
         // A pending First Play can reserve this name before its tree exists.
-        // Only the exact managed path may publish its frozen archive in that case.
+        // Only the exact managed path may publish its frozen game image in that case.
         crate::managed_play::require_unreferenced_build(tag)
             .map_err(crate::native_mods::cache_error)?;
         replace_installed(
@@ -278,7 +306,7 @@ pub(crate) fn install_as(
             Err(crate::native_cache::Error::Io(ref e))
                 if e.kind() == std::io::ErrorKind::AlreadyExists =>
             {
-                if !matches_archive() {
+                if !matches(&target) {
                     return Err(existing_build(tag));
                 }
                 if intent == InstallIntent::Repair {

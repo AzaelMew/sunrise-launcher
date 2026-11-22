@@ -2,7 +2,7 @@ use super::*;
 use sunrise_launcher_release_verify::{sha256_hex, sums_file, SigningKey};
 use sunrise_launcher_sdk::{Build, Mixins, Surface, Toolchain};
 
-const COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
+pub(crate) const COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
 const TRIPLE: &str = "x86_64-unknown-linux-gnu";
 /// An xz tar the packager wrote, holding `deps/a.rmeta`.
 const SLICE: &[u8] = include_bytes!("../../crates/sdk/src/sdk/fixture.tar.xz");
@@ -20,7 +20,7 @@ fn engine() -> String {
 }
 
 /// An index for [`COMMIT`] listing `files`, made with this launcher's Rust.
-fn index_of(files: &[(&str, &[u8])], rust: &str) -> Index {
+pub(crate) fn index_of(files: &[(&str, &[u8])], rust: &str) -> Index {
     let assets = files
         .iter()
         .map(|(name, bytes)| {
@@ -65,7 +65,7 @@ fn index_of(files: &[(&str, &[u8])], rust: &str) -> Index {
 
 /// A release folder `tag` under `base` holding `files` and an index whose checksums `key` signs
 /// for `signed_for`.
-fn publish(
+pub(crate) fn publish(
     base: &Path,
     tag: &str,
     signed_for: &str,

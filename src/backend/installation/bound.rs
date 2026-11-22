@@ -1,10 +1,16 @@
-//! The archive a deferred first Play resolved before any full download.
+//! The game image a deferred first Play resolved before any full download.
 use super::{
     super::*, InstallIntent, InstallOutcome, LockMode, LockRelease, ReceiptFailure, Registry,
 };
-use crate::managed_play::Artifact;
+use crate::{
+    managed_play::Artifact,
+    native_mods::sdk_cache::{stage_game, Base, Refusal},
+};
 use std::sync::Arc;
-use sunrise_launcher_release_verify::{is_build, Channel, NIGHTLY, SIGNATURE, SIGNATURE_V2, SUMS};
+use sunrise_launcher_release_verify::{
+    is_build, Channel, PublicKey, NIGHTLY, SIGNATURE, SIGNATURE_V2, SUMS,
+};
+use sunrise_launcher_sdk::INDEX;
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -16,8 +22,8 @@ pub(crate) struct GameDownload {
     time: String,
 }
 
-/// Both digests come from the same verified checksum list. The launcher can retry the transfer
-/// without resolving the channel again or fetching different proof for the saved archive.
+/// Both digests come from the same verified checksum list. The `archive` field in the saved
+/// proof binds either the player archive or the SDK index, according to the bound download.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct GameProof {
@@ -111,10 +117,7 @@ pub(crate) struct BoundVariant {
 
 impl BoundVariant {
     pub(crate) fn architecture(&self) -> Option<InstalledGameArchitecture> {
-        Some(InstalledGameArchitecture {
-            requested: self.download.requested?,
-            binary: architecture_for_asset(&self.download.file)?,
-        })
+        self.download.architecture()
     }
 
     pub(crate) fn verify(&self, tag: &str) -> Result<Artifact, String> {
@@ -125,8 +128,18 @@ impl BoundVariant {
 }
 
 impl GameDownload {
+    fn architecture(&self) -> Option<InstalledGameArchitecture> {
+        let requested = self.requested?;
+        let binary = if self.file == INDEX {
+            GameArchitecture::X64
+        } else {
+            architecture_for_asset(&self.file)?
+        };
+        Some(InstalledGameArchitecture { requested, binary })
+    }
+
     pub(crate) fn variant(&self, proof: &GameProof) -> Option<BoundVariant> {
-        architecture_for_asset(&self.file)?;
+        self.architecture()?;
         Some(BoundVariant {
             download: self.clone(),
             proof: proof.clone(),
@@ -145,12 +158,18 @@ impl GameDownload {
             (Some(asset), fallback)
         });
         let tag = &release.tag;
-        let file = asset_installed(release, asset, fallback).ok_or_else(|| {
-            crate::i18n::trf(
-                "{tag} has no build for the selected game architecture.",
-                &[("tag", tag)],
-            )
-        })?;
+        let requested = selected_game_architecture(&settings);
+        let file = asset_installed(release, asset, fallback)
+            .or_else(|| {
+                let (url, _) = release.asset.as_ref()?;
+                (url.rsplit('/').next() == Some(INDEX)).then_some(INDEX)
+            })
+            .ok_or_else(|| {
+                crate::i18n::trf(
+                    "{tag} has no build for the selected game architecture.",
+                    &[("tag", tag)],
+                )
+            })?;
         let source = release.nightly.as_deref().unwrap_or(tag);
         if release.nightly.is_some()
             && crate::signed::title_version(source, &release.name).as_deref() != Some(tag.as_str())
@@ -170,7 +189,7 @@ impl GameDownload {
             source: source.into(),
             file: file.into(),
             size,
-            requested: selected_game_architecture(&settings),
+            requested,
             time: release.time.clone(),
         };
         binding.validate(tag)?;
@@ -192,13 +211,17 @@ impl GameDownload {
                     }
             },
         );
-        let asset_ok = game_assets_for(
-            std::env::consts::OS,
-            native_windows_architecture(),
-            std::env::consts::ARCH,
-            self.requested.unwrap_or_default(),
-        )
-        .is_some_and(|(primary, fallback)| self.file == primary || fallback == Some(&self.file));
+        let asset_ok = if self.file == INDEX {
+            sdk_target(self.requested).is_some()
+        } else {
+            game_assets_for(
+                std::env::consts::OS,
+                native_windows_architecture(),
+                std::env::consts::ARCH,
+                self.requested.unwrap_or_default(),
+            )
+            .is_some_and(|(primary, fallback)| self.file == primary || fallback == Some(&self.file))
+        };
         let platform_ok = if cfg!(windows) {
             matches!(
                 self.requested,
@@ -217,19 +240,35 @@ impl GameDownload {
     }
 
     pub(crate) fn prove(&self, tag: &str) -> Result<GameProof, String> {
+        let keys = sunrise_launcher_release_verify::trusted_keys_for(GAME_REPO);
+        if self.file == INDEX {
+            let base = Base::from_env();
+            self.prove_with(tag, &keys, |name| {
+                base.release_file(&self.source, tag, name)
+                    .map_err(|error| error.to_string())
+            })
+        } else {
+            self.prove_with(tag, &keys, |name| {
+                fetch_small(&crate::signed::asset_url(&self.source, name))
+            })
+        }
+    }
+
+    fn prove_with(
+        &self,
+        tag: &str,
+        keys: &[PublicKey],
+        fetch: impl Fn(&str) -> Result<Option<Vec<u8>>, String>,
+    ) -> Result<GameProof, String> {
         use sunrise_launcher_release_verify as verify;
         let channel = Channel::of(&self.source);
-        let sums = fetch_small(&crate::signed::asset_url(&self.source, SUMS))?;
-        let signature = fetch_small(&crate::signed::asset_url(
-            &self.source,
-            if channel.is_some() {
-                SIGNATURE_V2
-            } else {
-                SIGNATURE
-            },
-        ))?
+        let sums = fetch(SUMS)?;
+        let signature = fetch(if channel.is_some() {
+            SIGNATURE_V2
+        } else {
+            SIGNATURE
+        })?
         .map(|bytes| String::from_utf8_lossy(&bytes).into_owned());
-        let keys = verify::trusted_keys_for(GAME_REPO);
         let digest = |file: &str| match channel {
             Some(channel) => verify::build_digest(
                 channel,
@@ -237,14 +276,17 @@ impl GameDownload {
                 file,
                 sums.as_deref(),
                 signature.as_deref(),
-                &keys,
+                keys,
             ),
-            None => verify::signed_digest(tag, file, sums.as_deref(), signature.as_deref(), &keys),
+            None => verify::signed_digest(tag, file, sums.as_deref(), signature.as_deref(), keys),
         };
-        Ok(GameProof {
-            archive: digest(&self.file)?,
-            facts: digest(RELEASE_FILE).ok(),
-        })
+        let archive = digest(&self.file)?;
+        let facts = if self.file == INDEX {
+            Some(digest(RELEASE_FILE)?)
+        } else {
+            digest(RELEASE_FILE).ok()
+        };
+        Ok(GameProof { archive, facts })
     }
 
     pub(crate) fn install(
@@ -308,6 +350,28 @@ impl GameDownload {
         progress: impl Fn(f32),
         asset_url: impl Fn(&str, &str) -> String,
     ) -> Result<InstallOutcome, String> {
+        self.publish_with(
+            tag,
+            proof,
+            intent,
+            progress,
+            asset_url,
+            (
+                &Base::from_env(),
+                &sunrise_launcher_release_verify::trusted_keys_for(GAME_REPO),
+            ),
+        )
+    }
+
+    fn publish_with(
+        &self,
+        tag: &str,
+        proof: &GameProof,
+        intent: InstallIntent,
+        progress: impl Fn(f32),
+        asset_url: impl Fn(&str, &str) -> String,
+        (base, keys): (&Base, &[PublicKey]),
+    ) -> Result<InstallOutcome, String> {
         // A saved binding can reuse an archive regardless of which preference previously
         // installed it. Repair is explicit: it must also prove the new request marker.
         if intent == InstallIntent::Exact && self.is_installed(tag, proof) {
@@ -353,26 +417,74 @@ impl GameDownload {
             body: String::new(),
             date: String::new(),
             time: self.time.clone(),
-            asset: Some((asset_url(&self.source, &self.file), self.size)),
+            asset: (self.file != INDEX).then(|| (asset_url(&self.source, &self.file), self.size)),
             prerelease: false,
             nightly: Channel::of(&self.source).map(|_| self.source.clone()),
         };
-        let facts = if let Some(sha) = proof.facts.as_deref() {
-            let bytes = fetch_small(&asset_url(&self.source, RELEASE_FILE))?
-                .ok_or_else(|| format!("{RELEASE_FILE}: signed build facts are missing"))?;
-            Some((bytes, sha))
-        } else {
-            None
+        let sdk_file = |name| {
+            base.release_file(&self.source, tag, name)
+                .map_err(|error| error.to_string())?
+                .ok_or_else(|| format!("{name}: {}", std::io::ErrorKind::NotFound))
         };
-        let receipt_failure = super::install_as(
-            &release,
-            tag,
-            &proof.archive,
-            self.requested,
-            facts.as_ref().map(|(bytes, sha)| (bytes.as_slice(), *sha)),
-            intent,
-            progress,
-        )?;
+        let receipt_failure = if self.file == INDEX {
+            let triple = sdk_target(self.requested).expect("the target of a validated download");
+            let facts_sha = proof.facts.as_deref().ok_or_else(|| {
+                crate::i18n::tr("The saved game download proof is invalid.").to_owned()
+            })?;
+            super::install_image(
+                &release,
+                tag,
+                intent,
+                &progress,
+                |target| self.installed_at(target, tag, proof, intent).is_ok(),
+                |stage| {
+                    let game_index = sdk_file(INDEX)?;
+                    sunrise_launcher_release_verify::check(
+                        INDEX,
+                        &proof.archive,
+                        &sunrise_launcher_release_verify::sha256_hex(&game_index),
+                    )?;
+                    let facts = sdk_file(RELEASE_FILE)?;
+                    let (top, slices) = stage_game(
+                        stage,
+                        tag,
+                        triple,
+                        (&game_index, &proof.archive),
+                        base,
+                        keys,
+                        &progress,
+                    )
+                    .map_err(|error| match error {
+                        Refusal::Host => crate::i18n::trf(
+                            "{tag} has no build for the selected game architecture.",
+                            &[("tag", tag)],
+                        ),
+                        other => other.to_string(),
+                    })?;
+                    progress(0.97);
+                    super::finish_image(&top, self.architecture(), Some((&facts, facts_sha)))?;
+                    Artifact::record_sdk(&top, tag, slices)?;
+                    Ok(top)
+                },
+            )?
+        } else {
+            let facts = if let Some(sha) = proof.facts.as_deref() {
+                let bytes = fetch_small(&asset_url(&self.source, RELEASE_FILE))?
+                    .ok_or_else(|| format!("{RELEASE_FILE}: signed build facts are missing"))?;
+                Some((bytes, sha))
+            } else {
+                None
+            };
+            super::install_as(
+                &release,
+                tag,
+                &proof.archive,
+                self.requested,
+                facts.as_ref().map(|(bytes, sha)| (bytes.as_slice(), *sha)),
+                intent,
+                progress,
+            )?
+        };
         self.installed_at(&home, tag, proof, intent)?;
         Ok(InstallOutcome::Installed(
             receipt_failure.map(|failure| self.receipt_warning(tag, proof, failure)),
@@ -395,7 +507,14 @@ impl GameDownload {
             fs::symlink_metadata(home.join(name))
                 .is_ok_and(|meta| meta.is_file() && !crate::native_cache::linked(&meta))
         };
-        let image = Artifact::from_archive(home, tag, &proof.archive)?;
+        let image = if self.file == INDEX {
+            if proof.facts.is_none() {
+                return Err(super::existing_build(tag));
+            }
+            Artifact::from_sdk(home, tag, &proof.archive)?
+        } else {
+            Artifact::from_archive(home, tag, &proof.archive)?
+        };
         let facts_match = proof.facts.as_deref().is_none_or(|sha| {
             regular(RELEASE_FILE)
                 && fs::read(home.join(RELEASE_FILE))
@@ -403,7 +522,7 @@ impl GameDownload {
         });
         // A cache-only download may have reached the same signed archive as a native
         // request falling back to x64. Its preference is not part of binary identity.
-        let binary_matches = architecture_for_asset(&self.file).is_none_or(|binary| {
+        let binary_matches = self.architecture().is_none_or(|architecture| {
             if !regular(GAME_BUILD_ARCHITECTURE) {
                 return false;
             }
@@ -411,9 +530,9 @@ impl GameDownload {
                 .ok()
                 .and_then(|bytes| serde_json::from_slice::<InstalledGameArchitecture>(&bytes).ok())
                 .is_some_and(|actual| {
-                    actual.binary == binary
+                    actual.binary == architecture.binary
                         && (intent == InstallIntent::Exact
-                            || Some(actual.requested) == self.requested)
+                            || actual.requested == architecture.requested)
                 })
         });
         if !facts_match || !binary_matches {
@@ -423,9 +542,24 @@ impl GameDownload {
     }
 }
 
+pub(in crate::backend) fn sdk_target(requested: Option<GameArchitecture>) -> Option<&'static str> {
+    match crate::rust_toolchain::host()?.target {
+        target @ ("x86_64-unknown-linux-gnu" | "aarch64-apple-darwin") => Some(target),
+        target @ crate::rust_toolchain::WINDOWS_X64_TARGET
+            if requested == Some(GameArchitecture::X64)
+                && native_windows_architecture() != Some("aarch64") =>
+        {
+            Some(target)
+        }
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    mod sdk_install;
 
     const TAG: &str = "26.3-0.1.7";
 
@@ -470,6 +604,10 @@ mod tests {
             .env(ACTOR, "1")
             .env("SUNRISE_HOME", root.path().join("game"))
             .env("SUNRISE_LAUNCHER_HOME", root.path().join("launcher"))
+            .env(
+                crate::native_mods::sdk_cache::BASE_VAR,
+                root.path().join("sdk-mirror")
+            )
             .status()
             .unwrap()
             .success());
@@ -480,7 +618,7 @@ mod tests {
         asset: &str,
         client: &[u8],
     ) -> (GameDownload, GameProof, String, std::thread::JoinHandle<()>) {
-        use std::io::{Read, Write};
+        use std::io::Write;
         let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
         zip.start_file(CLIENT, zip::write::SimpleFileOptions::default())
             .unwrap();
@@ -497,6 +635,12 @@ mod tests {
             size: bytes.len() as u64,
             time: String::new(),
         };
+        let (url, serve) = serve_archive(asset, bytes);
+        (download, proof, url, serve)
+    }
+
+    fn serve_archive(asset: &str, bytes: Vec<u8>) -> (String, std::thread::JoinHandle<()>) {
+        use std::io::{Read, Write};
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}/{asset}", listener.local_addr().unwrap());
         let serve = std::thread::spawn(move || {
@@ -510,7 +654,7 @@ mod tests {
             .unwrap();
             stream.write_all(&bytes).unwrap();
         });
-        (download, proof, url, serve)
+        (url, serve)
     }
 
     #[test]

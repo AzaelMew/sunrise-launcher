@@ -31,11 +31,11 @@ fn installed_fixture() -> Vec<String> {
 
 // The former startup paths: each decodes its own response; the update path parses games again.
 fn baseline(load: impl Fn() -> Result<Vec<serde_json::Value>, String>) -> (Vec<Release>, Updates) {
-    let releases = parse_releases(&load().unwrap(), ASSET, is_game_tag);
+    let releases = parse_releases(&load().unwrap(), &[ASSET], is_game_tag);
     let list = load().unwrap();
     let updates = Updates {
         sunrise: sunrise_update(
-            &parse_releases(&list, ASSET, is_game_tag),
+            &parse_releases(&list, &[ASSET], is_game_tag),
             &installed_fixture(),
             Stable,
         )
@@ -302,7 +302,7 @@ fn each_platform_download_is_bound_to_the_fork_not_the_provider_url() {
     let launcher_list = [serde_json::json!({"tag_name": "v1.0.9", "assets": assets})];
     for (os, arch, game, launcher) in platforms {
         let (game_asset, launcher_asset) = platform_assets(os, arch).unwrap();
-        let games = parse_releases(&game_list, Some(game_asset), is_game_tag);
+        let games = parse_releases(&game_list, &[Some(game_asset)], is_game_tag);
         let launchers = parse_launcher_releases(&launcher_list, Some(launcher_asset));
         for (parsed, repository, tag, expected) in [
             (games, "sunrise", "26.3-0.1.0", game),
@@ -338,7 +338,7 @@ fn decoy_asset_names_never_replace_the_exact_platform_asset() {
                     {"name": asset, "size": 2, "browser_download_url": "https://evil.test/second"}
                 ]}),
             ];
-            let got = parse_releases(&list, Some(asset), |_| true);
+            let got = parse_releases(&list, &[Some(asset)], |_| true);
             assert_eq!(
                 got[0].asset,
                 Some((
@@ -355,8 +355,7 @@ fn decoy_asset_names_never_replace_the_exact_platform_asset() {
             &[
                 serde_json::json!({"tag_name": tag, "prerelease": true, "assets": [{"name": asset, "size": 1}]}),
             ],
-            Some(asset),
-            None,
+            &[Some(asset)],
         );
         assert!(got.is_empty());
     }
@@ -364,7 +363,7 @@ fn decoy_asset_names_never_replace_the_exact_platform_asset() {
         &[
             serde_json::json!({"tag_name": "26.3-0.1.0", "draft": true, "assets": [{"name": asset, "size": 1}]}),
         ],
-        Some(asset),
+        &[Some(asset)],
         is_game_tag,
     );
     assert!(draft.is_empty());
@@ -395,13 +394,17 @@ fn benchmark_shared_startup_response() {
     let concurrent_old = || {
         std::thread::scope(|scope| {
             let releases = scope.spawn(|| {
-                parse_releases(&load(Duration::from_millis(5)).unwrap(), ASSET, is_game_tag)
+                parse_releases(
+                    &load(Duration::from_millis(5)).unwrap(),
+                    &[ASSET],
+                    is_game_tag,
+                )
             });
             let updates = scope.spawn(|| {
                 let list = load(Duration::from_millis(5)).unwrap();
                 Updates {
                     sunrise: sunrise_update(
-                        &parse_releases(&list, ASSET, is_game_tag),
+                        &parse_releases(&list, &[ASSET], is_game_tag),
                         &installed_fixture(),
                         Stable,
                     )
