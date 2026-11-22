@@ -5,8 +5,8 @@ use std::{
 };
 use sunrise_launcher::{
     browser::sunrise::{
-        install_target, switch_build, InstallProgress, SwitchDecision, SwitchHooks, SwitchQuestion,
-        Switched,
+        install_target, switch_profile_build, BuildChoice, InstallProgress, SwitchDecision,
+        SwitchHooks, SwitchQuestion, Switched,
     },
     managed_play::{self, Active, Profile, ReceiptHint},
     profile_txn::Identity,
@@ -29,9 +29,18 @@ struct ReceiptRead {
 
 struct Running {
     tag: String,
+    back: Option<Sheet>,
+    pending: Option<Pending>,
     progress: InstallProgress,
     stop: native_mods::Cancellation,
     question: Option<(Box<SwitchQuestion>, Sender<SwitchDecision>)>,
+}
+
+/// The selected profile and build survive download and preparation, not a new read of Home.
+struct Pending {
+    instance: instances::Instance,
+    identity: Identity,
+    choice: Option<BuildChoice>,
 }
 
 impl Launcher {
@@ -62,16 +71,35 @@ impl Launcher {
         {
             return false;
         }
-        self.ui.sheets.error = result.as_ref().err().cloned();
+        if let Some(running) = &self.ui.sheets.switching.running {
+            let pending = running.pending.as_ref().expect("switch download is queued");
+            if running.stop.is_stopped() {
+                let home = pending.instance.home.clone();
+                self.switch_finished(&home, Ok(Switched::Stayed));
+            } else if let Err(error) = result {
+                let home = pending.instance.home.clone();
+                self.switch_finished(&home, Err(error.clone()));
+            } else {
+                self.prepare_switch();
+            }
+        } else {
+            self.ui.sheets.error = result.as_ref().err().cloned();
+        }
         true
+    }
+
+    pub(crate) fn switch_download_progress(&mut self, tag: &str, fraction: f32) {
+        if self.ui.sheets.switching.cache_download.as_deref() == Some(tag) {
+            self.switch_progress(InstallProgress::Downloading(fraction));
+        }
     }
 
     pub(crate) fn switch_busy(&self) -> bool {
         self.ui.sheets.switching.running.is_some() || self.ui.sheets.switching.ack
     }
 
-    pub(super) fn begin_switch(&mut self, tag: String) {
-        if self.launch_busy() || self.client.is_some() {
+    pub(super) fn begin_switch(&mut self, tag: String, choice: Option<BuildChoice>) {
+        if self.launch_busy() || self.client.is_some() || self.removing.contains(&tag) {
             return;
         }
         let Some(instance) = self.selected_instance().cloned() else {
@@ -84,20 +112,86 @@ impl Launcher {
                 return;
             }
         };
-        let stop = native_mods::Cancellation::default();
+        let release = self.release_to_install(&tag);
         self.ui.sheets.switching.running = Some(Running {
             tag: tag.clone(),
+            back: self.ui.sheet,
+            pending: Some(Pending {
+                instance,
+                identity,
+                choice,
+            }),
             progress: InstallProgress::PreparingBuild,
-            stop: stop.clone(),
+            stop: native_mods::Cancellation::default(),
             question: None,
         });
         self.open_sheet(Sheet::Switching);
+        if let Some(release) = release {
+            self.ui.sheets.switching.cache_download = Some(tag);
+            self.switch_progress(InstallProgress::Downloading(0.));
+            self.install(&release);
+        } else {
+            self.prepare_switch();
+        }
+    }
+
+    fn prepare_switch(&mut self) {
+        let running = self
+            .ui
+            .sheets
+            .switching
+            .running
+            .as_ref()
+            .expect("switch queued");
+        if backend::check_prepared(&running.tag) {
+            self.start_switch_worker();
+        } else {
+            let tag = running.tag.clone();
+            self.switch_progress(InstallProgress::PreparingBuild);
+            self.prepare_version(tag, backend::MinecraftFrom::Install);
+        }
+    }
+
+    pub(crate) fn finish_switch_preparation(&mut self) {
+        let Some(running) = self.ui.sheets.switching.running.as_ref() else {
+            return;
+        };
+        let Some(pending) = running.pending.as_ref() else {
+            return;
+        };
+        let error = self.prepare_error.take();
+        if running.stop.is_stopped() {
+            let home = pending.instance.home.clone();
+            self.switch_finished(&home, Ok(Switched::Stayed));
+        } else if let Some(error) = error {
+            let home = pending.instance.home.clone();
+            self.switch_finished(&home, Err(error));
+        } else {
+            self.start_switch_worker();
+        }
+    }
+
+    fn start_switch_worker(&mut self) {
+        let running = self
+            .ui
+            .sheets
+            .switching
+            .running
+            .as_mut()
+            .expect("switch queued");
+        let Pending {
+            instance,
+            identity,
+            choice,
+        } = running.pending.take().expect("switch queued");
+        let (tag, stop) = (running.tag.clone(), running.stop.clone());
         let tx = self.tx.clone();
         std::thread::spawn(move || {
-            let outcome = switch_build(
+            let outcome = switch_profile_build(
                 &instance,
                 identity,
                 &tag,
+                choice,
                 SwitchHooks {
                     cancellation: &stop,
                     progress: &|stage| {
@@ -165,8 +259,17 @@ impl Launcher {
         home: &std::path::Path,
         result: Result<Switched, String>,
     ) {
-        self.ui.sheets.switching.running = None;
-        self.installed = backend::installed();
+        let back = self
+            .ui
+            .sheets
+            .switching
+            .running
+            .take()
+            .and_then(|run| run.back);
+        self.refresh_installed();
+        if matches!(result, Ok(Switched::Changed(_) | Switched::AlreadySelected)) {
+            self.refresh_instances_list();
+        }
         if self.selected_instance().is_none_or(|i| i.home != home) {
             return;
         }
@@ -188,9 +291,18 @@ impl Launcher {
                     self.close_sheet();
                 }
             }
-            Ok(Switched::Stayed | Switched::AlreadySelected) => {
+            Ok(Switched::Stayed) => {
                 if visible {
-                    self.open_sheet(Sheet::Versions);
+                    if let Some(back) = back {
+                        self.open_sheet(back);
+                    } else {
+                        self.close_sheet();
+                    }
+                }
+            }
+            Ok(Switched::AlreadySelected) => {
+                if visible {
+                    self.close_sheet();
                 }
             }
             Err(error) if visible => {

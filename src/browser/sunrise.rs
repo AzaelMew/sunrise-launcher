@@ -1749,11 +1749,11 @@ pub(crate) use registry_install::check_activation;
 pub use registry_install::{
     add_github, add_sources, apply_sources, checked_switch_fit, install_registry, install_target,
     known_unfit_updates, pack_sources, prepare_pasted_sources, prepare_source, read_pasted_sources,
-    remove_mods, switch_build, update_github, update_registry, update_registry_and_sources,
-    BuildNotice, ChangeImpact, CombinedUpdate, InstallError, InstallHooks, InstallProgress,
-    InstalledBatch, NativeQuestion, PastedSource, PreparedSource, ResolveQuestion, SourceError,
-    SourceHooks, SourceRequest, SwitchDecision, SwitchHooks, SwitchQuestion, Switched,
-    UpdateRequest,
+    remove_mods, switch_build, switch_profile_build, update_github, update_registry,
+    update_registry_and_sources, BuildChoice, BuildNotice, ChangeImpact, CombinedUpdate,
+    InstallError, InstallHooks, InstallProgress, InstalledBatch, NativeQuestion, PastedSource,
+    PreparedSource, ResolveQuestion, SourceError, SourceHooks, SourceRequest, SwitchDecision,
+    SwitchHooks, SwitchQuestion, Switched, UpdateRequest,
 };
 #[cfg(test)]
 mod tests;

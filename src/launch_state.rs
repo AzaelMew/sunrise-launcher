@@ -448,7 +448,7 @@ impl Launcher {
             building: self.native_step.is_some(),
             starting: self.starting_client.is_some() || self.play_admission.is_some(),
             step: self.play_step,
-            mutating: self.mutating() || self.pinning_build || self.switch_busy(),
+            mutating: self.mutating() || self.switch_busy(),
             registry: self.registry_stage(),
             registry_accepts_play: self.registry_accepts_play(),
             running: self.client.is_some(),

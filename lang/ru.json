@@ -1655,5 +1655,11 @@
   "[y] Switch and turn them off, [r] Switch and remove them, [N] Cancel": "[y] Switch and turn them off, [r] Switch and remove them, [N] Cancel",
   "{mod} was removed: {reason}": "{mod} was removed: {reason}",
   "{mod} was removed.": "{mod} was removed.",
-  "There are too many possible mod combinations to check. Remove mods you no longer need from this profile, then try switching again. Nothing was switched.": "There are too many possible mod combinations to check. Remove mods you no longer need from this profile, then try switching again. Nothing was switched."
+  "There are too many possible mod combinations to check. Remove mods you no longer need from this profile, then try switching again. Nothing was switched.": "There are too many possible mod combinations to check. Remove mods you no longer need from this profile, then try switching again. Nothing was switched.",
+  "Dev": "Dev",
+  "No Nightly build yet.": "No Nightly build yet.",
+  "No Dev build yet.": "No Dev build yet.",
+  "Switch to {build}": "Switch to {build}",
+  "This profile stays on this build until you change it.": "This profile stays on this build until you change it.",
+  "The build is ready, but the profile choice could not be saved: {error}": "The build is ready, but the profile choice could not be saved: {error}"
 }

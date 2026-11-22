@@ -2,8 +2,8 @@
 //!
 //! One list, drawn only where it is on screen: what is installed first (the build kept or played
 //! leading), then every build that can be downloaded, by channel and month, newest first. The
-//! field narrows it by date, name or commit. A row is only chosen; "Keep this build" is what
-//! starts the staged Switch. Download and Prepare do not change the playing build.
+//! field narrows it by date, name or commit. A row only chooses; confirming starts the
+//! staged switch. Download and Prepare do not change the playing build.
 use super::*;
 use crate::line_edit::{self, LineEdit};
 use crate::paint::palette;
@@ -12,7 +12,7 @@ use std::{
     rc::Rc,
     sync::{Arc, OnceLock},
 };
-use sunrise_launcher::{backend::Release, instances::Channel};
+use sunrise_launcher::{backend::Release, browser::sunrise::BuildChoice, instances::Channel};
 
 /// The height of every line of the list, headings included.
 const LINE_H: f32 = 40.;
@@ -31,6 +31,8 @@ pub(crate) struct State {
     focused: bool,
     /// The build chosen in the list, before it is kept.
     pick: Option<String>,
+    /// The same-channel update that opened the list, if any. It does not pin the chosen build.
+    update: Option<String>,
     preview: Option<FitPreview>,
     /// The list's scroll, which the arrow keys move to the row they land on.
     scroll: gpui::UniformListScrollHandle,
@@ -77,7 +79,15 @@ struct Build {
 enum VersionAction {
     Download,
     Prepare,
-    Keep,
+    Choose,
+}
+
+fn confirm_label(tag: &str, current: Option<&str>) -> String {
+    if Some(tag) == current {
+        tr("Keep this build").into()
+    } else {
+        trf("Switch to {build}", &[("build", &build_name(tag))])
+    }
 }
 
 fn version_action(
@@ -90,7 +100,7 @@ fn version_action(
     } else if !prepared() {
         Some(VersionAction::Prepare)
     } else {
-        can_switch.then_some(VersionAction::Keep)
+        can_switch.then_some(VersionAction::Choose)
     }
 }
 
@@ -229,6 +239,7 @@ impl Launcher {
         let v = &mut self.ui.sheets.versions;
         v.find.set(String::new());
         v.pick = pinned;
+        v.update = None;
         v.preview = None;
         v.rows.clear();
     }
@@ -246,6 +257,7 @@ impl Launcher {
 
     pub(crate) fn open_update_picker(&mut self, tag: String) {
         self.open_versions();
+        self.ui.sheets.versions.update = Some(tag.clone());
         self.ui.sheets.versions.pick = Some(tag);
     }
 
@@ -293,6 +305,9 @@ impl Launcher {
         let list = Rc::new(self.version_lines(instance, current));
         let list_height = self.versions_list_height(list.len());
         let pick = self.ui.sheets.versions.pick.clone();
+        let is_update = pick.is_some() && pick == self.ui.sheets.versions.update;
+        let choice = (!is_update || instance.version.is_some()).then_some(BuildChoice::Keep);
+        let already_kept = instance.version.as_deref() == current;
 
         let focus = self
             .ui
@@ -472,11 +487,6 @@ impl Launcher {
                 button.opacity(0.45).cursor_default().tab_stop(false)
             })
         });
-        let keep = crate::frame::button_base("alt-versions-keep", tr("Keep this build"))
-            .bg(rgb(palette().text))
-            .border_color(rgb(palette().text))
-            .text_color(rgb(palette().background))
-            .hover(|s| s.bg(rgb(palette().accent_on)));
         let idle = !self.launch_busy() && self.client.is_none();
         let mut cache_action = None;
         let mut plan = None;
@@ -485,40 +495,44 @@ impl Launcher {
             match version_action(
                 self.installed.contains(tag),
                 || backend::is_prepared(tag),
-                !is_pack && Some(tag.as_str()) != current,
+                !(is_pack || already_kept && Some(tag.as_str()) == current),
             ) {
-                Some(VersionAction::Keep) => {
+                Some(VersionAction::Choose) => {
                     if idle {
                         keep_tag = Some(tag.clone());
                     }
-                    let request = &mut self.ui.sheets.versions.preview;
-                    if request
-                        .as_ref()
-                        .is_none_or(|preview| preview.home != home || preview.tag != *tag)
-                    {
-                        let checked = Arc::new(OnceLock::new());
-                        *request = Some(FitPreview {
-                            home: home.clone(),
-                            tag: tag.clone(),
-                            checked: checked.clone(),
-                        });
-                        let target = tag.clone();
-                        let work = cx.background_executor().spawn(async move {
-                            sunrise_launcher::browser::sunrise::checked_switch_fit(&home, &target)
-                        });
-                        cx.spawn(async move |this, cx| {
-                            let _ = checked.set(work.await);
-                            let _ = this.update(cx, |_, cx| cx.notify());
-                        })
-                        .detach();
+                    if Some(tag.as_str()) != current {
+                        let request = &mut self.ui.sheets.versions.preview;
+                        if request
+                            .as_ref()
+                            .is_none_or(|preview| preview.home != home || preview.tag != *tag)
+                        {
+                            let checked = Arc::new(OnceLock::new());
+                            *request = Some(FitPreview {
+                                home: home.clone(),
+                                tag: tag.clone(),
+                                checked: checked.clone(),
+                            });
+                            let target = tag.clone();
+                            let work = cx.background_executor().spawn(async move {
+                                sunrise_launcher::browser::sunrise::checked_switch_fit(
+                                    &home, &target,
+                                )
+                            });
+                            cx.spawn(async move |this, cx| {
+                                let _ = checked.set(work.await);
+                                let _ = this.update(cx, |_, cx| cx.notify());
+                            })
+                            .detach();
+                        }
+                        plan = Some(
+                            if request.as_ref().and_then(|p| p.checked.get()) == Some(&true) {
+                                tr("The installed mod files fit this build.")
+                            } else {
+                                tr("The mod changes aren't known until Sunrise checks this build.")
+                            },
+                        );
                     }
-                    plan = Some(
-                        if request.as_ref().and_then(|p| p.checked.get()) == Some(&true) {
-                            tr("The installed mod files fit this build.")
-                        } else {
-                            tr("The mod changes aren't known until Sunrise checks this build.")
-                        },
-                    );
                 }
                 Some(VersionAction::Prepare) => {
                     plan = Some(tr("Prepare this build before switching. Your profile stays on its current build."));
@@ -552,13 +566,20 @@ impl Launcher {
                 None => (),
             }
         }
-        let keep = match keep_tag {
-            Some(tag) => keep.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                this.begin_switch(tag.clone());
-                cx.notify();
-            })),
-            None => keep.opacity(0.45).cursor_default().tab_stop(false),
-        };
+        let keep = pick.as_deref().map(|tag| {
+            let keep = crate::frame::button_base("alt-versions-keep", confirm_label(tag, current))
+                .bg(rgb(palette().text))
+                .border_color(rgb(palette().text))
+                .text_color(rgb(palette().background))
+                .hover(|s| s.bg(rgb(palette().accent_on)));
+            match keep_tag {
+                Some(tag) => keep.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    this.begin_switch(tag.clone(), choice);
+                    cx.notify();
+                })),
+                None => keep.opacity(0.45).cursor_default().tab_stop(false),
+            }
+        });
         let all = Rc::clone(&list);
         let body = div()
             .flex()
@@ -598,6 +619,10 @@ impl Launcher {
                     .child(rows)
                     .children(nothing),
             )
+            .children(
+                (!is_pack && !is_update && pick.is_some())
+                    .then(|| muted(tr("This profile stays on this build until you change it."))),
+            )
             .children(plan.map(muted))
             .children(self.prepare_error.as_ref().map(|e| muted(e.clone())))
             .children(
@@ -625,7 +650,7 @@ impl Launcher {
                     .children(reinstall)
                     .child(cancel)
                     .children(cache_action)
-                    .child(keep),
+                    .children(keep),
             );
         body
     }
@@ -723,6 +748,17 @@ fn bench_wheel_event(bounds: gpui::Bounds<gpui::Pixels>, step: f32) -> gpui::Pla
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn confirmation_names_the_picked_build_only_when_switching() {
+        let current = "dev-2026-11-22-7cfdf81";
+        let picked = "nightly-2026-11-20-aaaaaaa";
+        assert_eq!(confirm_label(current, Some(current)), "Keep this build");
+        assert_eq!(
+            confirm_label(picked, Some(current)),
+            "Switch to Nightly · Nov 20"
+        );
+    }
 
     /// `sunrise-launcher benchmark`'s scroll phase in a real launcher window: the pump's tick
     /// opens the build picker and schedules the wheel (`Launcher::drain`), the release list
@@ -879,7 +915,7 @@ mod tests {
         assert_eq!(version_action(true, || true, false), None);
         assert_eq!(
             version_action(true, || true, true),
-            Some(VersionAction::Keep)
+            Some(VersionAction::Choose)
         );
     }
 

@@ -392,10 +392,15 @@ fn cutoff_worker() {
 }
 
 const OTHER: &str = "developer-other";
+const NIGHTLY: &str = "nightly-2026-11-20-aaaaaaa";
 
 impl Fixture {
     fn other_build(&self) {
-        let folder = self.data.join("versions").join(OTHER);
+        self.switch_target(OTHER);
+    }
+
+    fn switch_target(&self, tag: &str) {
+        let folder = self.data.join("versions").join(tag);
         let resources = folder.join(".local/sunrise-client/26.4");
         fs::create_dir_all(&resources).unwrap();
         fs::write(folder.join(".installed"), []).unwrap();
@@ -1024,6 +1029,31 @@ fn resolve_default_and_stale_approval_keep_exact_bytes_then_only_proved_blocker_
 }
 
 #[test]
+fn channel_choice_is_committed_after_the_same_fit_check_but_not_after_cancel() {
+    let fixture = Fixture::new();
+    let (registry, _) = fixture.content_index();
+    fixture.publish_registry(&registry);
+    fixture.switch_target(NIGHTLY);
+    fixture.install_mod("extra_mod");
+    let prefs = fixture.data.join("instances.json");
+    let mut saved: Value = serde_json::from_slice(&fs::read(&prefs).unwrap()).unwrap();
+    saved["instances"]["sunrise"]["channel"] = "stable".into();
+    let previous = serde_json::to_vec(&saved).unwrap();
+    fs::write(&prefs, &previous).unwrap();
+    let pointer = fixture.pointer();
+
+    fixture.decision_worker("channel-cancel");
+    assert_eq!(fs::read(&prefs).unwrap(), previous);
+    assert_eq!(fixture.pointer(), pointer);
+
+    fixture.decision_worker("channel-accept");
+    let saved: Value = serde_json::from_slice(&fs::read(&prefs).unwrap()).unwrap();
+    assert_eq!(saved["instances"]["sunrise"]["channel"], "nightly");
+    assert!(saved["instances"]["sunrise"].get("version").is_none());
+    assert_eq!(Active::parse(&fixture.pointer()).unwrap().base(), NIGHTLY);
+}
+
+#[test]
 fn queued_switch_refuses_a_replaced_profile_before_recovery() {
     let fixture = Fixture::new();
     fixture.decision_worker("switch-replaced-profile");
@@ -1038,6 +1068,44 @@ fn profile_decision_worker() {
     };
     let instance = instances::selection().unwrap();
     let identity = install_target(&instance).unwrap();
+    if mode.starts_with("channel-") {
+        let cancel = mode == "channel-cancel";
+        let checked = std::cell::Cell::new(false);
+        let result = switch_profile_build(
+            &instance,
+            identity,
+            NIGHTLY,
+            Some(BuildChoice::Follow(instances::Channel::Nightly)),
+            SwitchHooks {
+                cancellation: &Cancellation::default(),
+                progress: &|_| {},
+                registry_crates: None,
+                approve: &|question| {
+                    checked.set(true);
+                    assert_eq!(question.build, NIGHTLY);
+                    assert_eq!(question.held, ["Fireflies"]);
+                    let saved = instances::selection().unwrap();
+                    assert_eq!(saved.channel, instances::Channel::Stable);
+                    assert_eq!(saved.version.as_deref(), Some(BUILD));
+                    Ok(if cancel {
+                        SwitchDecision::Cancel
+                    } else {
+                        SwitchDecision::TurnOff
+                    })
+                },
+                at_cutoff: &|| {
+                    assert!(!cancel);
+                    Ok(())
+                },
+            },
+        );
+        assert!(checked.get());
+        match (cancel, result.unwrap()) {
+            (true, Switched::Stayed) | (false, Switched::Changed(_)) => (),
+            _ => panic!("the worker did not respect the picker decision"),
+        }
+        return;
+    }
     if mode == "switch-replaced-profile" {
         fs::rename(&instance.home, instance.home.with_extension("old")).unwrap();
         fs::create_dir(&instance.home).unwrap();

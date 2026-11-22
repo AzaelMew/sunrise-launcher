@@ -84,26 +84,28 @@ fn home_update<'a>(
     // Compare only a settled base, never a legacy pin, derived executable, or cache guess.
     let active = read_active(&profile.home).ok()??;
     let base = active.base();
-    let base_channel = Channel::of_build(base);
-    let follow = profile.channel;
-    let release = follow.builds(releases).next()?;
-    // Stable can start on Nightly before its first release. The channel picker also clears
-    // the pin when opting into or out of Dev. Never change the committed base implicitly.
-    let entered_or_left_dev = profile.version.is_none()
-        && base_channel != Some(follow)
-        && (follow == Channel::Dev || base_channel == Some(Channel::Dev));
-    if (follow, base_channel) == (Channel::Stable, Some(Channel::Nightly)) || entered_or_left_dev {
-        return Some(release);
-    }
-    if release.tag == base || base_channel != Some(profile.channel) {
+    let channel = profile.channel;
+    if Channel::of_build(base) != Some(channel) {
         return None;
     }
-    let newer = backend::compare_game_versions(&release.tag, base);
-    match profile.channel {
-        Channel::Stable => newer.is_gt(),
-        Channel::Nightly | Channel::Dev => newer.is_ge(),
+    let release = channel.builds(releases).next()?;
+    match backend::compare_game_versions(&release.tag, base) {
+        std::cmp::Ordering::Greater => Some(release),
+        std::cmp::Ordering::Equal
+            if channel != Channel::Stable && release.tag != base && !release.time.is_empty() =>
+        {
+            // Different commits on the same day are not necessarily newer. Compare their
+            // publication times, including Nightly's saved time for the previous rolling build.
+            let nightly_time = sunrise_launcher::nightly::same_day_time(base);
+            let old_time = releases
+                .iter()
+                .find(|row| row.tag == base && !row.time.is_empty())
+                .map(|row| row.time.as_str())
+                .or(nightly_time.as_deref())?;
+            (release.time.as_str() > old_time).then_some(release)
+        }
+        _ => None,
     }
-    .then_some(release)
 }
 
 /// Pick one tag for both the Home picker and Play. A pin is never replaced by another
@@ -225,7 +227,7 @@ mod tests {
     }
 
     #[test]
-    fn home_offers_stable_but_not_a_new_nightly_to_a_committed_stable_fallback() {
+    fn home_does_not_offer_an_update_to_a_committed_stable_fallback() {
         let fallback = "nightly-2026-11-18-aaaaaaa";
         let stable = "26.3-0.1.0";
         let profile = home_profile("fallback", Channel::Stable, None);
@@ -239,12 +241,12 @@ mod tests {
                 .map(|release| release.tag.clone())
         };
         assert_eq!(offer(&releases[..2], fallback), None);
-        assert_eq!(offer(&releases, fallback).as_deref(), Some(stable));
+        assert_eq!(offer(&releases, fallback), None);
         assert_eq!(offer(&releases, "imported-2026-11-18"), None);
     }
 
     #[test]
-    fn home_offers_dev_only_after_the_profile_opts_in_and_lets_it_opt_out() {
+    fn home_offers_dev_only_within_an_active_dev_profile() {
         let stable = "26.3-0.1.0";
         let nightly = "nightly-2026-11-20-ccccccc";
         let old_dev = "dev-2026-11-20-aaaaaaa";
@@ -269,11 +271,11 @@ mod tests {
                 .map(|release| release.tag.as_str())
         };
         assert_eq!(offer(Channel::Stable, stable, None, true), None);
-        assert_eq!(offer(Channel::Dev, stable, None, true), Some(new_dev));
+        assert_eq!(offer(Channel::Dev, stable, None, true), None);
         assert_eq!(offer(Channel::Dev, stable, Some(stable), true), None);
         assert_eq!(offer(Channel::Dev, old_dev, None, true), Some(new_dev));
-        assert_eq!(offer(Channel::Stable, new_dev, None, true), Some(stable));
-        assert_eq!(offer(Channel::Nightly, new_dev, None, true), Some(nightly));
+        assert_eq!(offer(Channel::Stable, new_dev, None, true), None);
+        assert_eq!(offer(Channel::Nightly, new_dev, None, true), None);
         assert_eq!(offer(Channel::Stable, new_dev, None, false), None);
         // A feed with only Dev still cannot offer an update to either ordinary channel.
         for (channel, base) in [(Channel::Stable, stable), (Channel::Nightly, nightly)] {
@@ -282,6 +284,31 @@ mod tests {
                 home_update(&profile, &releases[..1], |_| Ok(Some(active(base, base)))).is_none()
             );
         }
+    }
+
+    #[test]
+    fn home_offers_a_same_day_build_only_when_it_was_published_later() {
+        let old = "dev-2026-11-22-aaaaaaa";
+        let other = "dev-2026-11-22-bbbbbbb";
+        let profile = home_profile("dev", Channel::Dev, None);
+        let dev = |tag: &str, time: &str| Release {
+            prerelease: true,
+            nightly: Some(tag.into()),
+            time: time.into(),
+            ..release(tag, false, true)
+        };
+        let offer = |releases: &[Release]| {
+            home_update(&profile, releases, |_| Ok(Some(active(old, old))))
+                .map(|release| release.tag.clone())
+        };
+        let previous = dev(old, "12:30");
+        assert_eq!(offer(&[dev(other, "12:20"), previous.clone()]), None);
+        assert_eq!(offer(&[dev(other, "12:30"), previous.clone()]), None);
+        assert_eq!(offer(&[dev(other, "12:40")]), None);
+        assert_eq!(
+            offer(&[dev(other, "12:40"), previous]).as_deref(),
+            Some(other)
+        );
     }
 
     #[test]

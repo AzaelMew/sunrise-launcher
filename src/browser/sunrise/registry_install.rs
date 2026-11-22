@@ -37,7 +37,8 @@ pub use source::{
     SourceError, SourceHooks, SourceRequest,
 };
 pub use switch::{
-    checked_switch_fit, switch_build, SwitchDecision, SwitchHooks, SwitchQuestion, Switched,
+    checked_switch_fit, switch_build, switch_profile_build, BuildChoice, SwitchDecision,
+    SwitchHooks, SwitchQuestion, Switched,
 };
 
 // Advisory only. Never use these in place of a fresh, admitted worker proof. Key by the

@@ -69,7 +69,7 @@ impl Launcher {
             || self.installing.is_some()
             || self.play_when_prepared.is_some()
             || self.play_after_build.is_some()
-            || self.pinning_build
+            || self.switch_busy()
         {
             Some(tr(
                 "Sunrise is getting ready to play. Wait for it to finish before changing mods.",

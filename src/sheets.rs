@@ -4,7 +4,7 @@
 //! * **Resolve** handles the same-base native build’s world stop; Stay writes nothing.
 //! * **Consent** is the real `pending_consent` and `native_consent::resolve`; the registry-crate
 //!   permission is the worker's own mid-build question (`Msg::NativeRegistryConsent`).
-//! * **Build** edits the channel preference. Switch is the only route that changes a committed base.
+//! * **Build** picks a channel or an exact build. Both use the staged switch.
 use super::*;
 use crate::frame::button;
 use crate::frame::Reach as _;
@@ -117,22 +117,56 @@ pub(crate) fn build_name(tag: &str) -> String {
             return build_name(&base);
         }
     }
-    if let Some(version) = backend::stable_version(tag) {
-        trf(
-            "{channel} · {version}",
-            &[("channel", tr("Stable")), ("version", version)],
-        )
-    } else if let Some(date) = backend::dev_date(tag) {
-        trf(
-            "{channel} · {version}",
-            &[
-                ("channel", tr("Dev")),
-                ("version", &sunrise_launcher::nightly::day(date)),
-            ],
-        )
-    } else {
-        sunrise_launcher::nightly::display_name(tag).unwrap_or_else(|| tag.to_owned())
+    channel_build(tag).map_or_else(
+        || tag.to_owned(),
+        |(channel, version)| {
+            trf(
+                "{channel} · {version}",
+                &[("channel", channel_name(channel)), ("version", &version)],
+            )
+        },
+    )
+}
+
+fn channel_name(channel: instances::Channel) -> &'static str {
+    match channel {
+        instances::Channel::Nightly => tr("Nightly"),
+        instances::Channel::Stable => tr("Stable"),
+        instances::Channel::Dev => tr("Dev"),
     }
+}
+
+/// The version part of the build label, shared with the picker row whose heading is its channel.
+fn channel_build(tag: &str) -> Option<(instances::Channel, String)> {
+    use instances::Channel;
+    use sunrise_launcher::nightly::{date_of, day};
+    if let Some(version) = backend::stable_version(tag) {
+        Some((Channel::Stable, version.to_owned()))
+    } else if let Some(date) = backend::dev_date(tag) {
+        Some((Channel::Dev, day(date)))
+    } else {
+        date_of(tag).map(|date| (Channel::Nightly, day(date)))
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn dated_game_builds_share_the_button_and_picker_labels() {
+    use instances::Channel;
+    let dev = "dev-2026-11-22-7cfdf81";
+    let nightly = "nightly-2026-11-20-aaaaaaa";
+    assert_eq!(build_name(dev), "Dev · Nov 22");
+    assert_eq!(build_name(nightly), "Nightly · Nov 20");
+    assert_eq!(build_name("26.3-0.1.0"), "Stable · 0.1.0");
+    assert_eq!(channel_build(dev), Some((Channel::Dev, "Nov 22".into())));
+    assert_eq!(
+        channel_build(nightly),
+        Some((Channel::Nightly, "Nov 20".into()))
+    );
+    assert_eq!(
+        channel_build("26.3-0.1.0"),
+        Some((Channel::Stable, "0.1.0".into()))
+    );
 }
 
 fn card() -> Div {
@@ -1043,7 +1077,6 @@ impl Launcher {
                     glass_toast::open(cx, &home);
                 })
             }
-            // One press follows the channel again, and the build sheet opens on what that chose.
             WayOut::Newest(channel) => main(match channel {
                 instances::Channel::Stable => tr("Use the newest Stable").into(),
                 instances::Channel::Nightly => tr("Use the newest Nightly").into(),
@@ -1051,10 +1084,10 @@ impl Launcher {
             })
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                 this.native_error = None;
-                this.set_build_channel(channel);
-                // The chooser opens under Home's build picker.
+                // The chooser opens under Home's build picker if this switch is canceled.
                 this.navigate(crate::frame::Page::Home);
                 this.open_sheet(Sheet::Build);
+                this.switch_channel(channel);
                 cx.notify();
             })),
         });
@@ -1367,44 +1400,24 @@ impl Launcher {
 
     // ---- Game build ----
 
-    /// The Build sheet's native-mod compatibility section: the explicit check and where it stands.
-    pub(crate) fn set_build_channel(&mut self, channel: instances::Channel) {
-        if self.launch_busy() || self.client.is_some() {
-            self.ui.sheets.error = Some(tr("Wait for the current operation to finish.").into());
-            return;
-        }
-        let Some(instance) = self.selected_instance() else {
-            return;
-        };
-        let (id, home) = (instance.id.clone(), instance.home.clone());
-        self.pinning_build = true;
-        self.ui.sheets.error = None;
-        let tx = self.tx.clone();
-        std::thread::spawn(move || {
-            use sunrise_launcher::browser::{installed, lock_home};
-            let publish = || -> Result<(), String> {
-                let _lock = lock_home(&home).map_err(|error| error.to_string())?;
-                installed::recover_game_install(&home)
-                    .map_err(|problem| problem.summary().to_owned())?;
-                instances::edit(&id, |m| {
-                    m.version = None;
-                    m.channel = Some(channel);
-                })?;
-                Ok(())
-            };
-            let result = publish();
-            let _ = tx.send(Msg::PinnedBuild { home, result });
-        });
+    /// The latest published build, or the latest installed one when the channel is offline.
+    fn channel_switch_target(&self, channel: instances::Channel) -> Option<&String> {
+        channel
+            .builds(self.game_releases())
+            .next()
+            .map(|release| &release.tag)
+            .or_else(|| match channel {
+                instances::Channel::Nightly => self.known_nightly.as_ref(),
+                _ => channel.newest_installed(&self.installed),
+            })
     }
 
-    pub(super) fn finish_build_pin(&mut self, home: &std::path::Path, result: Result<(), String>) {
-        self.pinning_build = false;
-        if result.is_ok() {
-            self.reload_instances();
-        }
-        if self.selected_instance().is_some_and(|i| i.home == home) {
-            self.ui.sheets.error = result.err();
-        }
+    fn switch_channel(&mut self, channel: instances::Channel) {
+        use sunrise_launcher::browser::sunrise::BuildChoice;
+        let Some(target) = self.channel_switch_target(channel).cloned() else {
+            return;
+        };
+        self.begin_switch(target, Some(BuildChoice::Follow(channel)));
     }
 
     fn build_sheet(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
@@ -1426,17 +1439,12 @@ impl Launcher {
         } else {
             None
         };
-        let stable = self.stable_available();
-        let nightly_target = self.target_version(None, instances::Channel::Nightly);
-        let stable_target = self.target_version(None, instances::Channel::Stable);
-        let dev_target = self.target_version(None, instances::Channel::Dev);
-        let follow_dev = pinned.is_none() && instance.channel == instances::Channel::Dev;
-        let follow_nightly = pinned.is_none() && instance.channel == instances::Channel::Nightly;
-        let follow_stable = pinned.is_none() && instance.channel == instances::Channel::Stable;
-        let nightly_gated = instance.kind == instances::Kind::Pack;
-        // A channel with no build to follow can't be chosen.
-        let stable_gated = nightly_gated || !stable;
-        let dev_gated = nightly_gated || dev_target.is_none();
+        let playing_target = self.profile_target(instance);
+        let active_channel = playing_target
+            .as_deref()
+            .and_then(instances::Channel::of_build);
+        let follows = pinned.is_none().then_some(instance.channel);
+        let is_pack = instance.kind == instances::Kind::Pack;
         let option = |id: &'static str, on: bool, head: String, sub: String| {
             div()
                 .id(id)
@@ -1477,73 +1485,50 @@ impl Launcher {
                         ),
                 )
         };
-        // Follow a channel, or choose one exact build in its own sheet.
+        use instances::Channel;
         let mut list = div().flex().flex_col().gap(px(2.));
-        list = list.child(
-            option(
+        for (id, channel, unavailable) in [
+            (
                 "alt-build-nightly",
-                follow_nightly,
-                tr("Latest Nightly").into(),
-                nightly_target
-                    .map(String::as_str)
-                    .map(build_name)
-                    .unwrap_or_else(|| tr("The newest build each day.").into()),
-            )
-            .when(nightly_gated, |d| {
-                d.opacity(0.5).cursor_default().tab_stop(false)
-            })
-            .when(!nightly_gated, |d| {
-                d.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                    this.set_build_channel(instances::Channel::Nightly);
-                    cx.notify();
-                }))
-            }),
-        );
-
-        list = list.child(
-            option(
+                Channel::Nightly,
+                tr("No Nightly build yet."),
+            ),
+            (
                 "alt-build-stable",
-                follow_stable,
-                tr("Latest Stable").into(),
-                if stable {
-                    stable_target
-                        .map(String::as_str)
-                        .map(build_name)
-                        .unwrap_or_else(|| tr("Only builds marked stable.").into())
-                } else {
-                    tr("No Stable build yet.").into()
-                },
-            )
-            .when(stable_gated, |d| {
-                d.opacity(0.5).cursor_default().tab_stop(false)
-            })
-            .when(!stable_gated, |d| {
-                d.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                    this.set_build_channel(instances::Channel::Stable);
-                    cx.notify();
-                }))
-            }),
-        );
-        list = list.child(
-            option(
-                "alt-build-dev",
-                follow_dev,
-                tr("Latest Dev").into(),
-                dev_target
-                    .map(String::as_str)
-                    .map(build_name)
-                    .unwrap_or_else(|| tr("No Dev build yet.").into()),
-            )
-            .when(dev_gated, |d| {
-                d.opacity(0.5).cursor_default().tab_stop(false)
-            })
-            .when(!dev_gated, |d| {
-                d.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                    this.set_build_channel(instances::Channel::Dev);
-                    cx.notify();
-                }))
-            }),
-        );
+                Channel::Stable,
+                tr("No Stable build yet."),
+            ),
+            ("alt-build-dev", Channel::Dev, tr("No Dev build yet.")),
+        ] {
+            let selected = follows == Some(channel);
+            // Updating a channel already in use is the job of Update game, not this row.
+            let current = selected && active_channel == Some(channel) && plays.is_some();
+            let tag = if current {
+                playing_target.as_ref()
+            } else {
+                self.channel_switch_target(channel)
+            };
+            let version = tag.and_then(|tag| channel_build(tag).map(|(_, version)| version));
+            let unavailable_row = is_pack || version.is_none();
+            list = list.child(
+                option(
+                    id,
+                    selected,
+                    channel_name(channel).into(),
+                    version.unwrap_or_else(|| unavailable.into()),
+                )
+                .when(unavailable_row, |d| d.opacity(0.5))
+                .when(unavailable_row || current, |d| {
+                    d.cursor_default().tab_stop(false)
+                })
+                .when(!unavailable_row && !current, |d| {
+                    d.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        this.switch_channel(channel);
+                        cx.notify();
+                    }))
+                }),
+            );
+        }
         list = list.child(
             option(
                 "alt-build-keep",
