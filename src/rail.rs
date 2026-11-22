@@ -63,8 +63,6 @@ impl Launcher {
             .is_some_and(|i| i.id == instance.id)
         {
             self.select_instance(instance);
-            self.quick_play = None;
-            self.joining = None;
             self.client_error = None;
             self.prepare_error = None;
             self.install_error = None;

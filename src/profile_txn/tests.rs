@@ -212,30 +212,32 @@ fn first_binding_and_signed_proof_survive_an_abandoned_prepare_and_pointer_undo(
 }
 
 #[test]
-fn cancelling_first_play_at_the_publication_cutoff_releases_the_bootstrap() {
+fn settling_a_failed_first_play_keeps_an_unresolved_publication() {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path();
     let mut owner = Admission::open(home, None).unwrap();
     owner
         .bind_bootstrap(|| Ok(first_binding()), |_| Ok(()))
         .unwrap();
-    owner
+    let proof = owner
         .prove_bootstrap(|_| Ok(serde_json::json!({"fixture": 1})))
         .unwrap();
-    let error = owner
+    let _sealed = owner
         .resume_bootstrap()
         .unwrap()
         .seal(FIRST_POINTER.to_vec(), &[])
-        .unwrap()
-        .publish_or_abandon(
-            || Err::<(), _>("cancelled".into()),
-            |reason| reason == "cancelled",
-        )
-        .unwrap_err();
-    assert_eq!(error, "cancelled");
-    assert!(!owner.has_bootstrap().unwrap());
-    assert!(pointer_bytes(home).unwrap().is_none());
-    assert!(references(home).unwrap().targets.is_empty());
+        .unwrap();
+    owner.release_failed_bootstrap().unwrap();
+    let refs = references(home).unwrap();
+    assert_eq!(refs.after.as_deref(), Some(FIRST_POINTER));
+    assert!(refs.pointer.is_none());
+    drop(owner);
+    let mut next = Admission::open(home, None).unwrap();
+    assert_eq!(
+        next.prove_bootstrap(|_| panic!("kept exact proof"))
+            .unwrap(),
+        proof
+    );
 }
 
 #[test]
@@ -644,7 +646,6 @@ fn journal_actor() {
             let last = disk.operation().unwrap().ready.as_ref().unwrap().steps() - 1;
             disk.complete(
                 &home,
-                true,
                 |i| {
                     if (action == "undo-pointer" && i == last)
                         || (action == "undo-list" && i == last - 1)
@@ -906,11 +907,11 @@ fn directory_restore_does_not_replace_an_occupied_stage_destination() {
     drop(slots);
     durable::move_new_directory(&src, &dst).unwrap();
     fs::create_dir(&src).unwrap();
-    assert!(record.complete(home, true, |_| {}, || {}).is_err());
+    assert!(record.complete(home, |_| {}, || {}).is_err());
     assert!(Identity::of(&dst).unwrap() == id);
     assert!(Identity::of(&src).unwrap() != id);
     fs::remove_dir(&src).unwrap();
-    assert!(!record.complete(home, true, |_| {}, || {}).unwrap());
+    assert!(!record.complete(home, |_| {}, || {}).unwrap());
     pair(home, true, false);
 }
 
@@ -935,7 +936,7 @@ fn interrupted_private_directory_replay_recovers_only_its_recorded_identity() {
     // Recreate a process killed during the private barrier's first rename.
     durable::move_new_directory(&src, &replay).unwrap();
     assert!(absent(&dst).unwrap() && Identity::of(&replay).unwrap() == id);
-    assert!(!record.complete(home, true, |_| {}, || {}).unwrap());
+    assert!(!record.complete(home, |_| {}, || {}).unwrap());
     assert!(absent(&replay).unwrap());
     pair(home, true, false);
 }
@@ -984,7 +985,7 @@ fn retirement_retries_a_failed_post_rename_barrier_before_erasing_preimages() {
     record.publish_at(home, || Ok(()), |_, _| Ok(())).unwrap();
     durable::fail_next_retirement_barrier(&retired);
     assert!(record
-        .complete(home, true, |_| {}, || {})
+        .complete(home, |_| {}, || {})
         .unwrap_err()
         .contains("retirement barrier failure"));
     assert!(retired.is_file() && !home.join(RECORD).exists());

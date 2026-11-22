@@ -75,6 +75,9 @@ pub(crate) struct Run {
     pub end: Option<End>,
     /// Whether Details is open.
     pub details: bool,
+    /// Managed Play snapshots the producer's log while it still holds the build lease.
+    pub log: Option<std::sync::Arc<str>>,
+    pub log_open: bool,
     /// Play started it; keep that identity until its worker reports the result.
     pub for_play: bool,
     pub stop_requested: bool,
@@ -117,6 +120,8 @@ impl Run {
             first_build: None,
             end: None,
             details: false,
+            log: None,
+            log_open: false,
             for_play,
             stop_requested: false,
             said_at: None,
@@ -631,6 +636,7 @@ mod tests {
             instance: "autumn".into(),
             incarnation: None,
             account: Some("original-account".into()),
+            destination: Default::default(),
         };
         let built = Ok("native-abc".to_owned());
         let version = Some("native-abc");

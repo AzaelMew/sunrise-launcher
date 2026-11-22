@@ -7,28 +7,47 @@ pub(crate) struct PlayIntent {
     pub instance: String,
     pub incarnation: Option<instances::Incarnation>,
     pub account: Option<String>,
+    pub destination: PlayDestination,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) enum PlayDestination {
+    #[default]
+    Home,
+    Quick(&'static str, String),
+    Invite(String),
+}
+
+impl PlayDestination {
+    pub(super) fn apply(self, cmd: &mut std::process::Command) -> Result<(), String> {
+        match self {
+            Self::Home => (),
+            Self::Quick(flag, value) => {
+                cmd.arg(flag).arg(value);
+            }
+            Self::Invite(code) => backend::join_friend(cmd, &code)?,
+        }
+        Ok(())
+    }
 }
 
 impl PlayIntent {
-    pub fn new(instance: &instances::Instance, selected: Option<&account::Account>) -> Self {
+    pub fn new(
+        instance: &instances::Instance,
+        selected: Option<&account::Account>,
+        destination: PlayDestination,
+    ) -> Self {
         Self {
             instance: instance.id.clone(),
             incarnation: instance.incarnation,
             account: selected.map(|a| a.uuid.clone()),
+            destination,
         }
     }
 
     pub(super) fn matches_profile(&self, current: &instances::Instance) -> bool {
         current.id == self.instance && current.incarnation == self.incarnation
     }
-}
-
-/// The accepted profile, account and arguments of one managed Play attempt.
-#[derive(Clone)]
-pub(crate) struct PlayRetry {
-    pub intent: PlayIntent,
-    destination: Option<(&'static str, String)>,
-    invite: Option<String>,
 }
 
 impl Launcher {
@@ -38,15 +57,13 @@ impl Launcher {
         }
         let Some(request) = self.play_retry.clone().filter(|request| {
             self.selected_instance()
-                .is_some_and(|current| request.intent.matches_profile(current))
+                .is_some_and(|current| request.matches_profile(current))
         }) else {
             return;
         };
-        self.quick_play = request.destination;
-        self.joining = request.invite;
         self.client_error = None;
         self.prepare_error = None;
-        self.resume_play(request.intent);
+        self.resume_play(request);
     }
 }
 
@@ -258,13 +275,7 @@ impl Launcher {
                 tr("No downloadable build matches this profile. Choose a game build.").into()
             }
         };
-        let destination = self.quick_play.take();
-        let invite = self.joining.take();
-        self.play_retry = Some(PlayRetry {
-            intent: intent.clone(),
-            destination: destination.clone(),
-            invite: invite.clone(),
-        });
+        self.play_retry = Some(intent.clone());
         if self.ui.mods.build.as_ref().is_some_and(|run| run.for_play) {
             self.ui.mods.build = None;
         }
@@ -301,12 +312,7 @@ impl Launcher {
                     }
                 },
                 |cmd| {
-                    if let Some(code) = invite {
-                        backend::join_friend(cmd, &code)?;
-                    }
-                    if let Some((flag, value)) = destination {
-                        cmd.arg(flag).arg(value);
-                    }
+                    intent.destination.apply(cmd)?;
                     backend::append_game_args(cmd);
                     Ok(())
                 },
@@ -336,6 +342,7 @@ impl Launcher {
                             mods,
                         },
                         Progress::Native(step) => Msg::NativeProgress(step),
+                        Progress::NativeLog(output) => Msg::ManagedBuildLog(output),
                         Progress::SignIn => Msg::PlayStep(backend::PlayStep::SignIn),
                         Progress::Line(line) | Progress::HookLine(line) => {
                             Msg::Line(Job::Prepare, line)
@@ -371,8 +378,6 @@ impl Launcher {
         if let Some(error) = refusal {
             self.client_error = Some(error);
             self.starting_pack = None;
-            self.joining = None;
-            self.quick_play = None;
             return;
         }
         self.prepare_log.clear();
@@ -516,10 +521,7 @@ impl Launcher {
     }
 
     pub(crate) fn cancel_sign_in(&mut self) {
-        if self.ui.after_sign_in.take().is_some() {
-            self.quick_play = None;
-            self.joining = None;
-        }
+        self.ui.after_sign_in = None;
         if let Some(old) = self.sign_in.take() {
             old.cancel();
         }
@@ -627,6 +629,7 @@ mod tests {
             instance: "sunrise".into(),
             incarnation: None,
             account: accounts.selected().map(|a| a.uuid.clone()),
+            destination: PlayDestination::Home,
         };
         // A sign-out in flight when Play was pressed completes during preparation.
         accounts.accounts.remove(0);

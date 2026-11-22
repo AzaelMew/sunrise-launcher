@@ -176,10 +176,11 @@ impl Launcher {
         for (n, line) in run.lines.iter().enumerate() {
             list = list.child(self.build_line_of(n, line, run.details, !running));
         }
+        let log_height = if run.log_open { 165. } else { 0. };
         let list = card().overflow_hidden().child(
             div()
                 .id("build-lines")
-                .max_h(px((self.window_height - 330.).max(120.)))
+                .max_h(px((self.window_height - 330. - log_height).max(96.)))
                 .overflow_y_scroll()
                 .track_scroll(&crate::frame::scrolls("build-lines"))
                 .child(list),
@@ -217,21 +218,31 @@ impl Launcher {
                     cx.notify();
                 }))
         });
-        // A build that stopped always offers its log: one that names no mod has no Details.
+        // Managed Play only offers the log of this attempt, never the latest on disk.
         let stopped = matches!(run.end, Some(End::Stopped(_)));
-        let log = (!running && (run.details || stopped)).then(|| {
-            button("build-log", tr("Open the build log")).on_click(cx.listener(
-                |this, _: &ClickEvent, _, cx| {
-                    let _ = this;
-                    crate::glass_toast::open(cx, &native_mods::log_path());
-                },
-            ))
-        });
+        let log = (!running && (run.details || stopped) && (!run.for_play || run.log.is_some()))
+            .then(|| {
+                let label = if run.log_open {
+                    tr("Hide build log")
+                } else {
+                    tr("Open the build log")
+                };
+                button("build-log", label).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                    if let Some(run) = &mut this.ui.mods.build {
+                        if run.for_play {
+                            run.log_open = !run.log_open;
+                            cx.notify();
+                        } else {
+                            crate::glass_toast::open(cx, &native_mods::log_path());
+                        }
+                    }
+                }))
+            });
         let retry = stopped
             && run.for_play
             && self.play_retry.as_ref().is_some_and(|request| {
                 self.selected_instance()
-                    .is_some_and(|instance| request.intent.matches_profile(instance))
+                    .is_some_and(|instance| request.matches_profile(instance))
             });
         let foot = if running {
             div()
@@ -286,6 +297,13 @@ impl Launcher {
             .child(head)
             .child(top)
             .child(list)
+            .children(run.log.filter(|_| run.log_open).map(|log| {
+                crate::code_box::code_box(
+                    "managed-build-log",
+                    vec![log.to_string().into()],
+                    Some(150.),
+                )
+            }))
             .child(foot);
         Some(crate::sheets::frame("build-window", 600., body, cx))
     }

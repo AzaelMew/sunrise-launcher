@@ -234,6 +234,9 @@ impl Launcher {
         };
         let title = installed.map_or(&p.name, |i| labels[i].as_ref().unwrap_or(&rows[i].title));
         let installed_here = installed_row.map(|row| row.version.as_str());
+        let pending = self
+            .discover_installed()
+            .is_some_and(|rows| rows.registry_pending(&p.id));
         let registry_card = installed_row
             .and_then(|row| row.entry.as_ref().map(|_| row.id.as_str()))
             .unwrap_or(&p.id);
@@ -354,6 +357,9 @@ impl Launcher {
                         .flex_1()
                         .min_w_0()
                         .child(match (&v.fit.reason(), installed, will) {
+                            (_, true, _) if pending => {
+                                super::discover::install_fact(&v.number, true)
+                            }
                             (_, true, _) => div()
                                 .text_color(c(palette().success))
                                 .child(tr("Installed")),
@@ -448,11 +454,7 @@ impl Launcher {
                     .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
                     .border_1()
                     .border_color(c(palette().divider))
-                    .child(super::discover::install_fact(
-                        version,
-                        self.discover_installed()
-                            .is_some_and(|rows| rows.registry_pending(&p.id)),
-                    ))
+                    .child(super::discover::install_fact(version, pending))
                     .into_any_element(),
                 (None, _, fit, Some(_)) if fit.fits() && can_install => {
                     let b = primary("alt-project-add", self.registry_install_label())

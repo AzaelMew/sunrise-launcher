@@ -216,7 +216,14 @@ impl Fixture {
         let cancel = native_mods::Cancellation::default();
         let mut profile = Profile::open(self.home(), None).unwrap();
         if profile
-            .refresh(self.instance.native_profile, &cancel, |_| {}, None, None)
+            .refresh(
+                self.instance.native_profile,
+                &cancel,
+                |_| {},
+                None,
+                None,
+                None,
+            )
             .unwrap()
             .is_some()
         {
@@ -227,7 +234,7 @@ impl Fixture {
             .unwrap();
         first.prepare(&|_| {}).unwrap();
         let image = first
-            .exact_image(self.instance.native_profile, &cancel, |_| {}, None)
+            .exact_image(self.instance.native_profile, &cancel, |_| {}, None, None)
             .unwrap();
         first.commit(&image, &cancel).unwrap();
     }

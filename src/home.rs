@@ -2,13 +2,13 @@
 //! worlds to continue.
 //!
 //! Everything shown is read from the player's real launcher data, and nothing is written until
-//! the player acts. Play sets `quick_play` and calls `play_game`, which owns the sign-in,
+//! the player acts. `play_game` takes the destination and owns the sign-in,
 //! install, prepare, build and trust gates:
 //! - the header: the profile's mark and name, how long it was played and when last
 //!   (`instances.json`), Play in every state `launch_state` knows with its one action beside
 //!   it, and the build the profile plays, which opens the build chooser;
 //! - worlds: `worlds::list` of the selected profile's `saves/` (`level.dat` and `icon.png`, read
-//!   only), newest first; Play starts the game straight into one (`quick_play`), and the box
+//!   only), newest first; Play starts the game straight into one, and the box
 //!   opens its data packs;
 //! - the shared artwork worker reads and decodes world pictures in the background, for rows
 //!   and tile bands near the view; a world without `icon.png` uses `dirt.png` of the player's own
@@ -1080,8 +1080,7 @@ impl Launcher {
     /// Every destination goes through `play_game`, which runs the sign-in, install, prepare,
     /// build and trust gates before the game starts.
     pub(crate) fn play_to(&mut self, flag: &'static str, value: String) {
-        self.quick_play = Some((flag, value));
-        self.play_game();
+        self.play_game(launcher_play::PlayDestination::Quick(flag, value));
     }
 
     /// The first start: signed out, nothing to play yet. Nothing is read from outside the

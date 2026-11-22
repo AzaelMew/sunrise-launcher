@@ -17,6 +17,7 @@ pub enum Progress {
         mods: Vec<crate::native_status::Mod>,
     },
     Native(native_mods::Step),
+    NativeLog(std::sync::Arc<str>),
     SignIn,
     Line(String),
     HookLine(String),
@@ -210,6 +211,7 @@ impl Client<'_> {
             }
             progress(Progress::Native(step));
         };
+        let log = |output| progress(Progress::NativeLog(output));
         if let Some(old) = profile.active()? {
             check_build(old.base(), old.variant.as_deref())?;
             // Legacy writers still use the game lock, not profile admission. Keep
@@ -225,51 +227,45 @@ impl Client<'_> {
                     |step| native(old.base(), step),
                     native_consent,
                     registry.as_deref(),
+                    Some(&log),
                 )
                 .map_err(StartError::Native)?
                 .ok_or_else(unsettled)?;
             return Ok((active, notices));
         }
 
-        let first = profile.begin_first(choose, |fraction| {
-            progress(Progress::Download(fraction));
-        })?;
         let ready = (|| {
+            let first = profile.begin_first(choose, |fraction| {
+                progress(Progress::Download(fraction));
+            })?;
             check_build(first.base(), first.variant().as_ref())?;
             progress(Progress::Prepare);
             first.prepare(&|line| progress(Progress::Line(line)))?;
-            let _manifest = game_lock(&home)?;
-            crate::browser::installed::recover_game_install(&home).map_err(StartError::Journal)?;
-            first.verify_inputs()?;
-            let notices = catalogue::inspect(&home, load_catalogue)?;
-            let image = first
-                .exact_image(
-                    mode,
-                    cancellation,
-                    |step| native(first.base(), step),
-                    native_consent,
-                )
-                .map_err(StartError::Native)?;
-            Ok((image, notices))
-        })();
-        match ready {
+            let (image, notices) = {
+                let _manifest = game_lock(&home)?;
+                crate::browser::installed::recover_game_install(&home)
+                    .map_err(StartError::Journal)?;
+                first.verify_inputs()?;
+                let notices = catalogue::inspect(&home, load_catalogue)?;
+                let image = first
+                    .exact_image(
+                        mode,
+                        cancellation,
+                        |step| native(first.base(), step),
+                        native_consent,
+                        Some(&log),
+                    )
+                    .map_err(StartError::Native)?;
+                (image, notices)
+            };
             // Resource preparation takes a version lock. Don't take it under the game
             // manifest lock; commit rechecks the frozen input epoch before publication.
-            Ok((image, notices)) => first
-                .commit(&image, cancellation)
-                .map(|active| (active, notices))
-                .map_err(|error| {
-                    if error == native_mods::CANCELLED {
-                        StartError::Native(native_mods::Failed::Other(error))
-                    } else {
-                        StartError::Other(error)
-                    }
-                }),
-            Err(error) => {
-                first.abandon()?;
-                Err(error)
-            }
+            Ok((first.commit(&image, cancellation)?, notices))
+        })();
+        if ready.is_err() {
+            profile.release_failed_first_play()?;
         }
+        ready
     }
 }
 

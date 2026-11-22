@@ -194,8 +194,6 @@ impl Launcher {
             window_long_side: 0.,
             scale_factor: 1.,
             friend_focus: cx.focus_handle().tab_index(0).tab_stop(true),
-            joining: None,
-            quick_play: None,
             client_run: None,
             collection: collection::Collection::load(),
             playing: None,

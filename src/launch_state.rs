@@ -497,9 +497,7 @@ impl Launcher {
         if let Some(client) = &self.client {
             client.kill();
         } else {
-            self.quick_play = None;
-            self.joining = None;
-            self.play_game();
+            self.play_game(crate::launcher_play::PlayDestination::Home);
         }
     }
 

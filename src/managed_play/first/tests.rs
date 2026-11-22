@@ -111,7 +111,13 @@ fn interrupted_prepare_retains_the_same_build_and_profile_exclusion() {
                 .unwrap();
             let cancellation = native_mods::Cancellation::default();
             let image = attempt
-                .exact_image(native_mods::Profile::Optimized, &cancellation, |_| {}, None)
+                .exact_image(
+                    native_mods::Profile::Optimized,
+                    &cancellation,
+                    |_| {},
+                    None,
+                    None,
+                )
                 .unwrap();
             let active = attempt.commit(&image, &cancellation).unwrap();
             assert_eq!(profile.active().unwrap(), Some(active.clone()));
@@ -199,6 +205,7 @@ fn game_replacements_repair_only_owned_row_fields_and_advance_the_same_base() {
                 |_| {},
                 None,
                 None,
+                None,
             )
             .unwrap()
             .unwrap();
@@ -223,6 +230,7 @@ fn game_replacements_repair_only_owned_row_fields_and_advance_the_same_base() {
                 |_| {},
                 None,
                 Some(&registry),
+                None,
             )
             .unwrap()
             .unwrap();
@@ -256,7 +264,8 @@ fn game_replacements_repair_only_owned_row_fields_and_advance_the_same_base() {
             &cancellation,
             |_| {},
             None,
-            None
+            None,
+            None,
         )
         .is_err());
     assert_eq!(profile.active().unwrap(), Some(previous));

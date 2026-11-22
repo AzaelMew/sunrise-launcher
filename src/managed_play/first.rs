@@ -401,6 +401,7 @@ impl Profile {
         progress: impl Fn(native_mods::Step),
         consent: Option<&dyn Fn(&native_mods::Consent) -> bool>,
         registry: Option<&sunrise_launcher_smod::index::Index>,
+        log: Option<&dyn Fn(std::sync::Arc<str>)>,
     ) -> Result<Option<Active>, native_mods::Failed> {
         let home = self.home().to_owned();
         let (old, epoch, repair, stage) = {
@@ -434,7 +435,7 @@ impl Profile {
             cancellation,
             progress,
             consent,
-            None,
+            log,
         )?;
         let _manifest = game_lock(&home)?;
         crate::browser::installed::recover_game_install(&home).map_err(String::from)?;
@@ -471,6 +472,13 @@ impl Profile {
         }
         let _permission = cancellation.publication_guard()?;
         spawn(self.handoff())
+    }
+
+    pub(super) fn release_failed_first_play(&self) -> Result<(), String> {
+        let home = self.home();
+        let _manifest = game_lock(home)?;
+        let _references = ReferencePublication::begin(home)?;
+        self.0.release_failed_bootstrap()
     }
 
     pub fn begin_first(
@@ -623,6 +631,7 @@ impl FirstAttempt<'_> {
         cancellation: &native_mods::Cancellation,
         progress: impl Fn(native_mods::Step),
         consent: Option<&dyn Fn(&native_mods::Consent) -> bool>,
+        log: Option<&dyn Fn(std::sync::Arc<str>)>,
     ) -> Result<String, native_mods::Failed> {
         image_for_stage(
             self.base(),
@@ -633,15 +642,8 @@ impl FirstAttempt<'_> {
             cancellation,
             progress,
             consent,
-            None,
+            log,
         )
-    }
-
-    /// Allow edits after an observed failure, without altering interrupted publications.
-    pub(super) fn abandon(self) -> Result<(), String> {
-        let _manifest = game_lock(&self.home)?;
-        let _references = ReferencePublication::begin(&self.home)?;
-        self.stage.abandon_bootstrap()
     }
 
     /// No failed or partially compiled output enters a generation. Keep the worker's
@@ -651,16 +653,10 @@ impl FirstAttempt<'_> {
         image: &str,
         cancellation: &native_mods::Cancellation,
     ) -> Result<Active, String> {
-        let admitted = if native_mods::is_native(image) {
-            cancellation.admit_native_work().map_err(String::from)
+        if native_mods::is_native(image) {
+            cancellation.admit_native_work().map_err(String::from)?;
         } else {
-            cancellation.check()
-        };
-        if let Err(error) = admitted {
-            if error == native_mods::CANCELLED {
-                self.abandon()?;
-            }
-            return Err(error);
+            cancellation.check()?;
         }
         // The pending binding already reserves the base. Do not hold the cache-wide
         // publication fence while waiting on a preparer child for this one version.
@@ -720,16 +716,13 @@ fn publish_generation(
         ));
     }
     let pointer = serde_json::to_vec(&active).map_err(|e| e.to_string())?;
-    stage.seal(pointer, &files)?.publish_or_abandon(
-        || {
-            active.verify_artifacts()?;
-            if inputs(home, None)? != epoch {
-                return Err(unsettled());
-            }
-            cancellation.publication_guard()
-        },
-        |reason| reason == native_mods::CANCELLED,
-    )?;
+    stage.seal(pointer, &files)?.publish(|| {
+        active.verify_artifacts()?;
+        if inputs(home, None)? != epoch {
+            return Err(unsettled());
+        }
+        cancellation.publication_guard()
+    })?;
     Ok(active)
 }
 

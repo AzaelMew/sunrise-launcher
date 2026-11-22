@@ -92,6 +92,7 @@ fn disabled_pointer(fixture: &Fixture) -> PathBuf {
             |_| {},
             None,
             None,
+            None,
         )
         .unwrap()
         .unwrap();

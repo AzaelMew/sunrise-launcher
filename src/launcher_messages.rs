@@ -130,6 +130,11 @@ impl Launcher {
                     ));
                     self.open_sheet(crate::sheets::Sheet::ModBuild);
                 }
+                Msg::ManagedBuildLog(output) => {
+                    if let Some(run) = self.ui.mods.build.as_mut().filter(|run| run.for_play) {
+                        run.log = Some(output);
+                    }
+                }
                 Msg::ManagedClient { instance, result } => {
                     use sunrise_launcher::managed_play::StartError;
                     self.native_cancellation = None;
@@ -138,6 +143,7 @@ impl Launcher {
                     let cancelled = matches!(result.as_ref(),
                         Err(StartError::Native(native_mods::Failed::Other(detail)) | StartError::Other(detail))
                             if detail == native_mods::CANCELLED);
+                    let mut captured_build_error = false;
                     if let (Some(run), Err(error)) = (&mut self.ui.mods.build, result.as_ref()) {
                         if run.for_play && run.running() {
                             match error {
@@ -160,7 +166,10 @@ impl Launcher {
                                     }
                                 }
                                 StartError::Native(error) => run.stopped(error.to_string(), &[]),
-                                StartError::Other(error) => run.stopped(error.clone(), &[]),
+                                StartError::Other(error) => {
+                                    run.stopped(error.clone(), &[]);
+                                    captured_build_error = true;
+                                }
                                 StartError::Journal(error) => {
                                     run.stopped(error.summary().into(), &[])
                                 }
@@ -225,6 +234,7 @@ impl Launcher {
                             self.native_failed(error.to_string(), &[]);
                         }
                         Err(StartError::Hook(error)) => self.client_error = Some(error.to_string()),
+                        Err(StartError::Other(_)) if captured_build_error => (),
                         Err(StartError::UnknownSpawn(error) | StartError::Other(error)) => {
                             self.client_error = Some(error);
                         }

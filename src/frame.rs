@@ -275,7 +275,7 @@ pub(crate) fn input(focused: bool) -> Div {
 impl Launcher {
     /// Also called for world and server destinations. Never send a destination through the
     /// legacy shortcuts, which skip some of the checks on the main Play action.
-    pub(super) fn play_game(&mut self) {
+    pub(super) fn play_game(&mut self, destination: launcher_play::PlayDestination) {
         if self.client.is_some() || (self.launch_busy() && !self.registry_accepts_play()) {
             return;
         }
@@ -288,16 +288,13 @@ impl Launcher {
             return;
         };
         let kind = instance.kind;
-        let intent = launcher_play::PlayIntent::new(instance, self.accounts.selected());
+        let intent =
+            launcher_play::PlayIntent::new(instance, self.accounts.selected(), destination);
         if self.refuse_pack_play(kind) {
             return;
         }
         if intent.account.is_none() && !sunrise_launcher::developer_offline::selected() {
-            let destination = self.quick_play.take();
-            let invite = self.joining.take();
             self.sign_in_to_play();
-            self.quick_play = destination;
-            self.joining = invite;
             self.ui.after_sign_in = Some(intent);
             return;
         }
@@ -331,8 +328,6 @@ impl Launcher {
             return false;
         }
         self.client_error = Some(sunrise_launcher::browser::sunrise::pack::play_unavailable());
-        self.quick_play = None;
-        self.joining = None;
         true
     }
 
