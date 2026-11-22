@@ -10,7 +10,7 @@ use std::{
     sync::{Arc, Mutex},
     time::{Duration, Instant, SystemTime},
 };
-use sunrise_launcher_smod::{index, manifest};
+use sunrise_launcher_smod::manifest;
 
 mod github;
 mod readme;
@@ -233,24 +233,6 @@ fn parse(bytes: &[u8]) -> Result<Arc<[Source]>, String> {
         last = Some(source.id());
     }
     Ok(sources.into())
-}
-
-/// Pair only a listed, non-revoked artifact for the requested Stable line and the same mod/repo.
-/// This describes the Stable package, never the trust or fit of a tracked commit.
-pub fn also_on_stable<'a>(
-    source: &Source,
-    index: &'a index::Index,
-    game: &str,
-) -> Option<&'a index::Version> {
-    let project = index.project(source.id())?;
-    if !matches!(project.kind, index::Kind::Mod | index::Kind::NativeMod) {
-        return None;
-    }
-    let pair = super::github_repo(&project.source)?;
-    pair.strip_prefix("https://github.com/")?
-        .eq_ignore_ascii_case(source.repo())
-        .then(|| index.installable(project, game))
-        .flatten()
 }
 
 #[derive(Clone)]

@@ -139,7 +139,7 @@ fn invalid_or_offline_refresh_keeps_the_etag_and_last_good_snapshot() {
 }
 
 #[test]
-fn discover_and_stable_pairing_need_only_the_two_catalogues() {
+fn discover_needs_only_the_source_catalogue() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("mod-browser/sources");
     let requests = github::test_requests();
@@ -157,36 +157,6 @@ fn discover_and_stable_pairing_need_only_the_two_catalogues() {
         Ok(Reply::New(wire(sources), None))
     });
     assert_eq!(view.sources.len(), 1000);
-    let checked = view
-        .sources
-        .iter()
-        .find(|source| source.id() == "trail_atlas")
-        .unwrap();
-    let mut index: index::Index = serde_json::from_value(json!({
-        "schema": 1,
-        "projects": [{
-            "id": "trail_atlas", "kind": "native-mod", "name": "Trail Atlas", "summary": "Atlas",
-            "license": "MIT", "source": "https://github.com/driftwood/Trail-Atlas.git/tree/main/mods/trail_atlas",
-            "versions": [{ "version": "0.1", "api": "native-1", "game": "26.3", "file": {
-                "name": "trail_atlas.smod", "url": "https://example.test/a.smod", "size": 99, "sha256": "123"
-            }}]
-        }]
-    })).unwrap();
-    assert_eq!(
-        also_on_stable(checked, &index, "26.3").unwrap().version,
-        "0.1"
-    );
-    assert!(also_on_stable(checked, &index, "26.2").is_none());
-    index.projects[0].source = "https://github.com/someone-else/trail-atlas".into();
-    assert!(also_on_stable(checked, &index, "26.3").is_none());
-    index.projects[0].source = "https://github.com/driftwood/trail-atlas".into();
-    index.revoked.push(index::Revoked {
-        id: "trail_atlas".into(),
-        sha256: None,
-        reason: "test".into(),
-        date: "".into(),
-    });
-    assert!(also_on_stable(checked, &index, "26.3").is_none());
     assert_eq!(
         github::test_requests(),
         requests,

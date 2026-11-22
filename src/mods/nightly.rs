@@ -131,35 +131,18 @@ impl Launcher {
         }
         let shown = source_matches(&catalogue.sources, &self.ui.mods.filters.text);
         let limit = self.ui.mods.nightly.limit.max(PAGE_SIZE);
-        let index = sunrise::known_index();
-        let game = self.mods_game();
         let mut grid = div()
             .grid()
             .grid_cols(nightly_columns(self.content_width()))
             .gap(px(12.));
         for (n, source) in shown.iter().take(limit).enumerate() {
             let source = (*source).clone();
-            let also = index
-                .as_ref()
-                .and_then(|index| sources::also_on_stable(&source, index, &game));
             let actions = div()
                 .flex()
                 .flex_wrap()
                 .justify_end()
                 .items_center()
                 .gap(px(6.))
-                .children(also.map(|v| {
-                    let id = source.id().to_owned();
-                    button(
-                        ("also-on-stable", n),
-                        trf("Also on Stable {version}", &[("version", &v.version)]),
-                    )
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        cx.stop_propagation();
-                        this.mods_show_project(id.clone());
-                        cx.notify();
-                    }))
-                }))
                 .child(
                     button(("nightly-details", n), tr("Details")).on_click(cx.listener({
                         let source = source.clone();
