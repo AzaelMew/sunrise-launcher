@@ -76,6 +76,122 @@ fn recovery_refuses_a_required_dependent_but_keeps_an_optional_one() {
     assert_eq!(fs::read(&list).unwrap(), original);
 }
 
+fn write_recovery_world(home: &Path, saved_mod: &str) {
+    use sunrise_launcher_nbt::{self as nbt, Limits, Tag};
+    let dir = home.join("saves/world");
+    fs::create_dir_all(&dir).unwrap();
+    let root = Tag::compound([
+        (
+            "Data",
+            Tag::compound([("LevelName", Tag::String("Lantern Lake".into()))]),
+        ),
+        (
+            "sunrise",
+            Tag::compound([(
+                "ContentModList",
+                Tag::List(vec![Tag::compound([
+                    ("ModId", Tag::String(saved_mod.into())),
+                    ("ModVersion", Tag::String("1.0.1".into())),
+                ])]),
+            )]),
+        ),
+    ]);
+    fs::write(
+        dir.join("level.dat"),
+        nbt::write_named(
+            &nbt::NamedTag {
+                name: "".into(),
+                tag: root,
+            },
+            Limits::default(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+}
+
+#[test]
+fn recovery_refuses_a_saved_world_and_never_begins_play() {
+    const TEST: &str =
+        "managed_play::client::tests::recovery_refuses_a_saved_world_and_never_begins_play";
+    const FIXTURE: &str = "PLAY_SAVED_WORLD_RECOVERY_FIXTURE";
+    const BUILD: &str = "v0.1.2";
+    if std::env::var_os(FIXTURE).is_none() {
+        let root = tempfile::tempdir().unwrap();
+        assert!(Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", TEST, "--nocapture"])
+            .env(FIXTURE, "1")
+            .env("SUNRISE_HOME", root.path().join("game"))
+            .env("SUNRISE_LAUNCHER_HOME", root.path().join("launcher"))
+            .env(
+                "SUNRISE_LAUNCHER_LOCATION_FILE",
+                root.path().join("location")
+            )
+            .env("SUNRISE_NO_KEYCHAIN", "1")
+            .status()
+            .unwrap()
+            .success());
+        return;
+    }
+    let home = backend::game_home();
+    let list = home.join(mod_list::FILE);
+    let original = b"mod.blur:true\nkey.blur.toggle:key.keyboard.x\n";
+    recovery_mod(&home, "blur", "Motion Blur", true, "");
+    fs::write(&list, original).unwrap();
+    write_recovery_world(&home, "blur");
+    let install = backend::version_dir(BUILD);
+    fs::create_dir_all(&install).unwrap();
+    fs::write(install.join(".installed"), []).unwrap();
+    fs::write(install.join(backend::CLIENT), b"not a game").unwrap();
+    let instance = instances::selection().unwrap();
+    let recover = || {
+        Client {
+            instance: &instance,
+            accepted_account: Some("fixture"),
+            explicit_account: false,
+            piped: false,
+        }
+        .start_with_recovery(
+            Some(ModRecovery {
+                build: Arc::new(FailedBuild(Build::First(
+                    FirstBuild::installed(BUILD).unwrap(),
+                ))),
+                mods: off(),
+            }),
+            || FirstBuild::installed(BUILD),
+            |_| unreachable!("recovery must not start a game"),
+            |_| unreachable!(),
+            (&native_mods::Cancellation::default(), None),
+            |_| unreachable!("recovery must stop before preparing or starting the game"),
+        )
+    };
+    assert!(
+        matches!(recover(), Err(StartError::Other(detail)) if detail ==
+        "Turning off these mods could remove content from: Lantern Lake. No mods were turned off.")
+    );
+    assert_eq!(fs::read(&list).unwrap(), original);
+    // A broken roster is also a refusal, not proof that no world is at risk.
+    fs::remove_dir_all(home.join("saves")).unwrap();
+    fs::write(home.join("saves"), b"not a directory").unwrap();
+    assert!(
+        matches!(recover(), Err(StartError::Other(detail)) if detail ==
+        "Sunrise couldn't check the saved worlds. No mods were turned off.")
+    );
+    assert_eq!(fs::read(&list).unwrap(), original);
+}
+
+#[test]
+fn recovery_proceeds_when_no_saved_world_uses_the_mod() {
+    let scratch = tempfile::tempdir().unwrap();
+    let home = scratch.path();
+    let list = home.join(mod_list::FILE);
+    write_recovery_world(home, "map");
+    recovery_mod(home, "blur", "Motion Blur", true, "");
+    fs::write(&list, b"mod.blur:true\nmod.map:true\n").unwrap();
+    turn_off_mods(home, &off(), |mut file, bytes| file.write_all(bytes)).unwrap();
+    assert_eq!(fs::read(&list).unwrap(), b"mod.map:true\n");
+}
+
 #[test]
 fn a_failed_enable_list_write_does_not_replace_the_original() {
     let scratch = tempfile::tempdir().unwrap();

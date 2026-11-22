@@ -407,6 +407,24 @@ fn turn_off_mods(
             }
         }
     }
+    let ids = mods.iter().map(|(id, _)| id.clone()).collect::<Vec<_>>();
+    let mut worlds = crate::worlds::at_risk(home, &ids)
+        .map_err(|error| {
+            eprintln!("checking saved worlds before turning off mods: {error}");
+            crate::i18n::tr("Sunrise couldn't check the saved worlds. No mods were turned off.")
+                .to_owned()
+        })?
+        .into_iter()
+        .map(|(world, _, _)| world.name)
+        .collect::<Vec<_>>();
+    if !worlds.is_empty() {
+        worlds.sort();
+        worlds.dedup();
+        return Err(crate::i18n::trf(
+            "Turning off these mods could remove content from: {worlds}. No mods were turned off.",
+            &[("worlds", &worlds.join(", "))],
+        ));
+    }
     // Keep the unrelated lines byte for byte, including key bindings and line endings.
     let mut next = String::with_capacity(text.len());
     for line in text.split_inclusive('\n') {
