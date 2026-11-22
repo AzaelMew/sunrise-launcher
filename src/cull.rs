@@ -5,6 +5,7 @@ use gpui::{
 };
 use std::{cell::RefCell, rc::Rc};
 
+/// A row's height before any row of the list has been measured.
 const ESTIMATED_HEIGHT: f32 = 96.;
 /// Until the enclosing scroll area completes its first layout.
 const INITIAL_VIEW_HEIGHT: f32 = 800.;
@@ -15,9 +16,19 @@ pub struct Cull(Rc<RefCell<Drawn>>);
 #[derive(Default)]
 struct Drawn {
     heights: Vec<Pixels>,
+    /// Which of `heights` were measured; the rest are the list's estimate.
+    measured: Vec<bool>,
     top: Pixels,
     offset: Pixels,
     width: Pixels,
+    /// What the list held when it was measured ([`Cull::items`]).
+    items: Option<u64>,
+    /// The row the keyboard's focus was in when last drawn: it stays built, so Tab goes on
+    /// from it however far the list has scrolled.
+    focused: Option<usize>,
+    /// Whether the last frame left anything to correct (tests).
+    #[cfg(test)]
+    unsettled: bool,
 }
 
 #[derive(Debug)]
@@ -33,7 +44,21 @@ impl Cull {
         *self.0.borrow_mut() = Drawn::default();
     }
 
-    /// Render nearby rows plus those retained by `keep` (such as active confirmations).
+    /// Forget the measurements when the list now holds other items than when they were taken:
+    /// `items` names what it holds, in order (a hash of their identities). A heading where a row
+    /// was, or another row, would otherwise inherit that one's height.
+    pub fn items(&self, items: u64) {
+        let mut drawn = self.0.borrow_mut();
+        if drawn.items != Some(items) {
+            *drawn = Drawn {
+                items: Some(items),
+                ..Drawn::default()
+            };
+        }
+    }
+
+    /// Render nearby rows plus those retained by `keep` (such as active confirmations, or a row
+    /// another page asked to reveal) and the one the keyboard's focus is in.
     /// `gap` is the bottom margin already supplied by each row.
     pub fn column<E: IntoElement>(
         &self,
@@ -52,10 +77,13 @@ impl Cull {
             // results deliberately leaves the current viewport in place instead.
             handle.scroll_to_bottom();
         }
-        let spans = self
-            .0
-            .borrow_mut()
-            .plan(handle.bounds(), handle.offset().y, rows, gap, keep);
+        let spans = {
+            let mut drawn = self.0.borrow_mut();
+            let focused = drawn.focused;
+            drawn.plan(handle.bounds(), handle.offset().y, rows, gap, |index| {
+                keep(index) || focused == Some(index)
+            })
+        };
         let children = spans
             .iter()
             .map(|span| match span {
@@ -76,18 +104,59 @@ impl Cull {
             .flex()
             .flex_col()
             .children(children)
-            .on_children_prepainted(move |bounds, window, _| {
-                if state
-                    .borrow_mut()
-                    .record(&spans, &bounds, scroll.bounds(), scroll.offset().y)
+            .on_children_prepainted(move |bounds, window, cx| {
+                let mut drawn = state.borrow_mut();
+                drawn.focused = crate::frame::focused_bounds().and_then(|focus| {
+                    spans
+                        .iter()
+                        .zip(&bounds)
+                        .find_map(|(span, bounds)| match span {
+                            Span::Row(index) if bounds.contains(&focus.center()) => Some(*index),
+                            _ => None,
+                        })
+                });
+                let unsettled = drawn.record(&spans, &bounds, scroll.bounds(), scroll.offset().y);
+                #[cfg(test)]
                 {
-                    window.refresh();
+                    drawn.unsettled = unsettled;
+                }
+                if unsettled {
+                    // A frame being drawn can't ask for the next one itself: ask right after.
+                    let window = window.window_handle();
+                    cx.defer(move |cx| {
+                        window.update(cx, |_, window, _| window.refresh()).ok();
+                    });
                 }
             })
+    }
+
+    /// Whether the last frame drew the list with nothing left to correct (tests).
+    #[cfg(test)]
+    pub(crate) fn settled(&self) -> bool {
+        !self.0.borrow().unsettled
     }
 }
 
 impl Drawn {
+    /// What a row not yet measured is taken to be: the mean of those measured, else
+    /// [`ESTIMATED_HEIGHT`]. Rows of one list are much alike, so a row far down lands near where
+    /// it will be once the rows above it are drawn.
+    fn estimate(&self, gap: f32) -> Pixels {
+        let (sum, count) = self
+            .heights
+            .iter()
+            .zip(&self.measured)
+            .filter(|(_, measured)| **measured)
+            .fold((px(0.), 0usize), |(sum, count), (height, _)| {
+                (sum + *height, count + 1)
+            });
+        if count == 0 {
+            px(ESTIMATED_HEIGHT + gap)
+        } else {
+            sum / count as f32
+        }
+    }
+
     fn plan(
         &mut self,
         mut view: Bounds<Pixels>,
@@ -96,12 +165,19 @@ impl Drawn {
         gap: f32,
         keep: impl Fn(usize) -> bool,
     ) -> Vec<Span> {
-        let estimate = px(ESTIMATED_HEIGHT + gap);
         if self.width != view.size.width {
             // A resize changes wrapping, including in rows currently off screen.
-            self.heights.fill(estimate);
+            self.measured.fill(false);
         }
+        self.heights.truncate(rows);
+        self.measured.resize(rows, false);
+        let estimate = self.estimate(gap);
         self.heights.resize(rows, estimate);
+        for (height, measured) in self.heights.iter_mut().zip(&self.measured) {
+            if !measured {
+                *height = estimate;
+            }
+        }
         if view.size.height <= px(0.) {
             view.size.height = px(INITIAL_VIEW_HEIGHT);
         }
@@ -137,6 +213,7 @@ impl Drawn {
                     let height = &mut self.heights[*index];
                     changed |= (*height - bounds.size.height).abs() > px(0.5);
                     *height = bounds.size.height;
+                    self.measured[*index] = true;
                 }
                 Span::Space(_) => changed |= !away(*bounds, view),
             }
@@ -225,6 +302,63 @@ mod tests {
     }
 
     #[test]
+    fn unmeasured_rows_are_taken_to_be_as_tall_as_the_measured_ones() {
+        let mut state = Drawn::default();
+        let view = at(0., 500., 600.);
+        state.plan(view, px(0.), 1_000, 0., |_| false);
+        assert_eq!(
+            state.heights[500],
+            px(ESTIMATED_HEIGHT),
+            "nothing measured yet"
+        );
+        let spans: Vec<_> = (0..4).map(Span::Row).collect();
+        let drawn: Vec<_> = (0..4).map(|n| at(n as f32 * 53., 53., 600.)).collect();
+        state.record(&spans, &drawn, view, px(0.));
+        state.plan(view, px(0.), 1_000, 0., |_| false);
+        // A row far down lands about where it will be once the rows above it are drawn.
+        assert_eq!(state.heights[500], px(53.));
+        let top_of_500: Pixels = state.heights[..500].iter().copied().sum();
+        assert_eq!(top_of_500, px(500. * 53.));
+    }
+
+    #[test]
+    fn other_items_forget_the_measurements_and_the_same_keep_them() {
+        let list = Cull::default();
+        list.items(1);
+        list.0.borrow_mut().heights = vec![px(53.); 10];
+        list.items(1);
+        assert_eq!(
+            list.0.borrow().heights.len(),
+            10,
+            "the same items keep them"
+        );
+        list.items(2);
+        assert!(
+            list.0.borrow().heights.is_empty(),
+            "a heading may now be where a row was"
+        );
+    }
+
+    #[test]
+    fn the_row_with_the_keyboards_focus_stays_built_far_from_view() {
+        let list = Cull::default();
+        list.0.borrow_mut().focused = Some(9_000);
+        let mut built = Vec::new();
+        list.column(
+            &ScrollHandle::new(),
+            10_000,
+            8.,
+            |_| false,
+            |index| {
+                built.push(index);
+                div().h(px(96.))
+            },
+        );
+        assert!(built.contains(&9_000), "Tab goes on from the focused row");
+        assert!(built.len() <= 18, "built {} rows", built.len());
+    }
+
+    #[test]
     fn measurements_include_wrapping_and_reveal_spacers_after_headers_move() {
         let mut state = Drawn::default();
         let view = at(0., 500., 600.);
@@ -242,6 +376,68 @@ mod tests {
         list.0.borrow_mut().heights = vec![px(400.); 100];
         list.reset();
         assert!(list.0.borrow().heights.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod window_tests {
+    use super::*;
+    use gpui::{prelude::*, Context, Render, Window};
+
+    /// A list and nothing else: no animation of its own asks for frames, so a frame that leaves
+    /// something to correct gets the next one only if it asks.
+    struct List {
+        list: Cull,
+        scroll: ScrollHandle,
+    }
+
+    impl Render for List {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let rows = self.list.column(
+                &self.scroll,
+                2_000,
+                8.,
+                |_| false,
+                |index| {
+                    div()
+                        .h(px(if index % 2 == 0 { 72. } else { 180. }))
+                        .child(format!("Row {index}"))
+                },
+            );
+            div()
+                .id("viewport")
+                .size_full()
+                .overflow_y_scroll()
+                .track_scroll(&self.scroll)
+                .child(rows)
+        }
+    }
+
+    #[test]
+    fn a_jump_with_one_refresh_settles_with_no_further_input() {
+        let mut app = gpui::TestAppContext::single();
+        let (view, cx) = app.add_window_view(|_, _| List {
+            list: Cull::default(),
+            scroll: ScrollHandle::new(),
+        });
+        let frames = |cx: &mut gpui::VisualTestContext| {
+            for _ in 0..8 {
+                cx.update(|window, cx| window.simulate_next_frame(cx));
+                cx.run_until_parked();
+            }
+        };
+        frames(cx);
+        let (list, scroll) = view.read_with(cx, |v, _| (v.list.clone(), v.scroll.clone()));
+        assert!(list.settled(), "the first screen settles");
+        // A jump to the middle, as a drag of the scrollbar makes it: one refresh, no more. The
+        // rows there were never measured, so the first frame lays them out at the estimate.
+        scroll.set_offset(point(px(0.), -(scroll.max_offset().y / 2.)));
+        cx.update(|window, _| window.refresh());
+        frames(cx);
+        assert!(
+            list.settled(),
+            "a spacer or a mismeasured row stayed in view"
+        );
     }
 }
 

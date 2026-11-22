@@ -480,12 +480,32 @@ impl Launcher {
             }
         }
         let cull = self.mods.installed_list.clone();
+        // Measurements belong to the items they were taken of.
+        cull.items({
+            use std::hash::{Hash, Hasher};
+            let mut hash = std::collections::hash_map::DefaultHasher::new();
+            for item in &items {
+                match item {
+                    Item::Head(title, _) => (0u8, *title).hash(&mut hash),
+                    Item::Gap => 1u8.hash(&mut hash),
+                    Item::Row(i, _) => (2u8, rows[*i].id.as_str()).hash(&mut hash),
+                }
+            }
+            hash.finish()
+        });
+        // The row another page opened Installed at stays built until it has been scrolled to.
+        let reveal = match &self.ui.mods.reveal {
+            Some(search::Reveal::Mod(id)) if !self.ui.mods.revealed.get() => items
+                .iter()
+                .position(|item| matches!(item, Item::Row(i, _) if rows[*i].id == *id)),
+            _ => None,
+        };
         let scroll = crate::frame::scrolls("installed");
         list = list.child(cull.column(
             &scroll,
             items.len(),
             0.,
-            |_| false,
+            |k| Some(k) == reveal,
             |k| {
                 match items[k] {
                     Item::Head(title, count) => div()
@@ -1172,6 +1192,98 @@ impl Launcher {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Runs `test` again in a child process with scratch homes, as the other window tests do:
+    /// `None` here, the scratch root in the child.
+    fn scratch_child(test: &str) -> Option<std::path::PathBuf> {
+        const CHILD: &str = "SUNRISE_INSTALLED_VIEW_TEST";
+        if let Some(root) = std::env::var_os(CHILD) {
+            return Some(root.into());
+        }
+        let scratch = tempfile::tempdir().unwrap();
+        let root = scratch.path();
+        let nowhere = "http://127.0.0.1:9";
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", &format!("mods::installed_view::tests::{test}")])
+            .env(CHILD, root)
+            .env("SUNRISE_HOME", root.join("game"))
+            .env("SUNRISE_LAUNCHER_HOME", root.join("launcher"))
+            .env("SUNRISE_LAUNCHER_LOCATION_FILE", root.join("location.json"))
+            .env("SUNRISE_NO_KEYCHAIN", "1")
+            .env("SUNRISE_LAUNCHER_NO_SELF_UPDATE", "1")
+            .env("SUNRISE_TELEMETRY_URL", "off")
+            .env("XDG_DATA_HOME", root.join("data"))
+            .env("XDG_CONFIG_HOME", root.join("config"))
+            .env("HTTP_PROXY", nowhere)
+            .env("HTTPS_PROXY", nowhere)
+            .env("ALL_PROXY", nowhere)
+            .env_remove("NO_PROXY")
+            .env_remove("SUNRISE_GITHUB_MIRROR")
+            .env_remove("SUNRISE_LAUNCHER_BENCH")
+            .status()
+            .unwrap();
+        assert!(status.success(), "{test} failed in its child process");
+        None
+    }
+
+    #[test]
+    fn a_mod_far_down_the_list_is_built_and_revealed() {
+        if scratch_child("a_mod_far_down_the_list_is_built_and_revealed").is_none() {
+            return;
+        }
+        // A profile with 300 mods, far more than a screen.
+        let profile = sunrise_launcher::instances::create("Pack", None).unwrap();
+        std::fs::create_dir_all(profile.home.join("sunrise-mods")).unwrap();
+        let entries: Vec<_> = (0..300)
+            .map(|n| {
+                let id = format!("mod-{n:03}");
+                let file = format!("sunrise-mods/{id}.smod");
+                std::fs::write(profile.home.join(&file), b"").unwrap();
+                serde_json::json!({
+                    "source": "sunrise", "project": id, "slug": id, "title": format!("Mod {n}"),
+                    "kind": "mod", "version": "1.0.0", "number": "1.0.0", "file": file,
+                    "checksum": format!("SHA-256:{}", "0".repeat(64)), "page": ""
+                })
+            })
+            .collect();
+        std::fs::write(
+            profile.home.join("mod-browser.json"),
+            serde_json::json!({ "entries": entries }).to_string(),
+        )
+        .unwrap();
+        let mut settings = sunrise_launcher::backend::Settings::load();
+        settings.instance = Some(profile.id.clone());
+        settings.save().unwrap();
+
+        let mut app = gpui::TestAppContext::single();
+        let (shell, cx) = app.add_window_view(crate::window_root::Shell::new);
+        let launcher = shell.read_with(cx, |shell, _| shell.launcher());
+        // Opened at the 251st mod, as Home's mod count opens it at one.
+        launcher.update(cx, |l, cx| {
+            l.open_installed(super::super::search::Installed::Mod("mod-250".into()));
+            cx.notify();
+        });
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        let frame = |cx: &mut gpui::VisualTestContext| {
+            launcher.update(cx, |_, cx| cx.notify());
+            cx.run_until_parked();
+        };
+        while !launcher.read_with(cx, |l, _| l.ui.mods.revealed.get()) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the mod was never scrolled to"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            frame(cx);
+        }
+        let scroll = cx
+            .update(|_, _| crate::frame::drawn_scroll("installed"))
+            .unwrap();
+        let (view, offset) = (scroll.bounds(), f32::from(scroll.offset().y));
+        assert!(view.size.height > px(0.));
+        // 250 rows of about 53 px sit above it: the list moved well down, to it.
+        assert!(offset < -5_000., "the list stayed near the top: {offset}");
+    }
 
     #[test]
     fn shift_click_resolves_its_archive_after_a_catalogue_reply_regroups_the_list() {
