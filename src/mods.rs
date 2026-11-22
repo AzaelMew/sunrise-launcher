@@ -708,7 +708,8 @@ impl Launcher {
 
     pub(crate) fn show_resource_pack_discover(&mut self) {
         self.leave_section(true);
-        self.pack_scope(pack_discover::Scope::Resource);
+        // Enter Discover with the requested kind, not the shelf we last left open.
+        self.ui.mods.shelf = Shelf::Resource;
         self.choose_view(Page::PackFind);
     }
 
@@ -1522,6 +1523,10 @@ mod enabled_tests {
         assert_eq!(got, HashSet::from(["kept".to_string()]));
     }
 }
+
+#[cfg(test)]
+#[path = "mods/home_tests.rs"]
+mod home_tests;
 
 #[cfg(test)]
 mod installed_refresh_tests {
