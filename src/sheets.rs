@@ -1409,7 +1409,9 @@ impl Launcher {
         let follow_nightly = pinned.is_none() && instance.channel == instances::Channel::Nightly;
         let follow_stable = pinned.is_none() && instance.channel == instances::Channel::Stable;
         let nightly_gated = instance.kind == instances::Kind::Pack;
-        let stable_gated = nightly_gated;
+        // A channel with no build to follow can't be chosen.
+        let stable_gated = nightly_gated || !stable;
+        let dev_gated = nightly_gated || dev_target.is_none();
         let option = |id: &'static str, on: bool, head: String, sub: String| {
             div()
                 .id(id)
@@ -1478,7 +1480,7 @@ impl Launcher {
                         .map(build_name)
                         .unwrap_or_else(|| tr("Only builds marked stable.").into())
                 } else {
-                    tr("No stable release yet. Plays Nightly for now.").into()
+                    tr("No Stable build yet.").into()
                 },
             )
             .when(stable_gated, |d| {
@@ -1499,12 +1501,12 @@ impl Launcher {
                 dev_target
                     .map(String::as_str)
                     .map(build_name)
-                    .unwrap_or_else(|| tr("No Dev build for this platform yet.").into()),
+                    .unwrap_or_else(|| tr("No Dev build yet.").into()),
             )
-            .when(nightly_gated, |d| {
+            .when(dev_gated, |d| {
                 d.opacity(0.5).cursor_default().tab_stop(false)
             })
-            .when(!nightly_gated, |d| {
+            .when(!dev_gated, |d| {
                 d.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                     this.set_build_channel(instances::Channel::Dev);
                     cx.notify();

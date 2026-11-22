@@ -69,8 +69,15 @@ pub(super) fn picture_size(path: &std::path::Path) -> Option<(u32, u32)> {
     })
 }
 
+/// A gallery picture: an address the image cache fetches, or a source's pinned README image.
+#[derive(Clone)]
+pub(super) enum Picture {
+    Url(String),
+    Readme(sunrise_launcher::browser::sunrise::sources::ReadmeImage),
+}
+
 pub(super) struct Viewer {
-    urls: Rc<[String]>,
+    urls: Rc<[Picture]>,
     at: usize,
     closing: bool,
     /// Counts opens and closes, so each plays its own animation.
@@ -132,8 +139,16 @@ fn icon(name: &'static str) -> gpui::Svg {
 }
 
 impl Launcher {
+    /// The picture's file once it has loaded, asking for it the first time.
+    pub(super) fn picture(&mut self, picture: &Picture, size: u32) -> Option<PathBuf> {
+        match picture {
+            Picture::Url(url) => self.mods_image(url, size),
+            Picture::Readme(image) => self.readme_picture(image),
+        }
+    }
+
     /// Opens the gallery `urls` at picture `at`, growing it out of its tile.
-    pub(super) fn viewer_open(&mut self, urls: Rc<[String]>, at: usize) {
+    pub(super) fn viewer_open(&mut self, urls: Rc<[Picture]>, at: usize) {
         let turn = self.ui.mods.viewer.as_ref().map_or(0, |v| v.turn + 1);
         self.ui.mods.viewer = Some(Viewer {
             urls,
@@ -189,10 +204,10 @@ impl Launcher {
     ) -> Option<AnyElement> {
         let v = self.ui.mods.viewer.as_ref()?;
         let (at, count) = (v.at, v.urls.len());
-        let url = v.urls.get(at)?.clone();
+        let picture = v.urls.get(at)?.clone();
         let (closing, turn, many) = (v.closing, v.turn, count > 1);
         let (zoomed, (fx, fy), zoom_turn) = (v.zoomed, v.focus, v.zoom_turn);
-        let path = self.mods_image(&url, images::GALLERY);
+        let path = self.picture(&picture, images::GALLERY);
         let size = path.as_deref().and_then(picture_size);
         let full = fitted(size, window.viewport_size());
         // A picture past the tiles, or a tile never drawn: it grows from the middle.

@@ -2,7 +2,9 @@
 use super::{bounded, digest, readme, safe_path, safe_ref, Source, Tracker, FRESH};
 use crate::i18n::tr;
 
+mod icon;
 mod pasted;
+pub use icon::{IconMisses, SourceIcon};
 pub(crate) use pasted::{branch_ahead, pasted_source};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
@@ -116,6 +118,8 @@ impl SourceCommit {
 pub struct Details {
     pub commit: Option<SourceCommit>,
     pub readme: Option<readme::Readme>,
+    /// The `[native]` Sunrise build pinned by this exact source commit.
+    pub build_pin: Option<String>,
     /// A saved commit and README can still be shown, but cannot authorize a new build.
     pub error: Option<Failure>,
 }
@@ -131,7 +135,7 @@ struct Lookup {
 pub(super) struct State {
     backoff: HashMap<PathBuf, (SystemTime, Option<SystemTime>)>,
     resolves: HashMap<PathBuf, Lookup>,
-    manifests: HashMap<(PathBuf, String, String), bool>,
+    manifests: HashMap<(PathBuf, String, String), Option<String>>,
     missing_readmes: HashSet<(PathBuf, String)>,
 }
 
@@ -384,6 +388,56 @@ impl Github {
         )
     }
 
+    /// A README attachment, `https://github.com/user-attachments/assets/<uuid>`. GitHub answers
+    /// with one redirect to a short-lived signed address on its asset host; that one redirect is
+    /// followed when it stays on GitHub's asset hosts, and nothing else is.
+    pub(super) fn attachment(
+        &self,
+        state: &mut State,
+        uuid: &str,
+        max: u64,
+    ) -> Result<Option<Vec<u8>>, Failure> {
+        let url = format!("https://github.com/user-attachments/assets/{uuid}");
+        if self.fixture.is_some() {
+            let fixture = Path::new("user-attachments").join(uuid);
+            return self.fetch(state, &url, &fixture, max);
+        }
+        self.ready(state, SystemTime::now())?;
+        let get = |url: &str| -> Result<ureq::Response, Failure> {
+            match crate::net::anonymous_get_no_redirect(url)
+                .map_err(Failure::Other)?
+                .timeout(REQUEST_TIMEOUT)
+                .call()
+            {
+                Ok(response) | Err(ureq::Error::Status(_, response)) => Ok(response),
+                Err(error) => Err(Failure::Offline(error.to_string())),
+            }
+        };
+        let first = get(&url)?;
+        if !matches!(first.status(), 301 | 302 | 303 | 307 | 308) {
+            // A rate limit starts the same cooldown as any other GitHub request.
+            return self
+                .status(
+                    state,
+                    first.status(),
+                    |name| first.header(name),
+                    unexpected_status,
+                )
+                .map(|()| None);
+        }
+        let Some(location) = first
+            .header("location")
+            .filter(|location| readme::asset_redirect(location))
+        else {
+            return Ok(None);
+        };
+        let asset = get(location)?;
+        if asset.status() != 200 {
+            return Ok(None);
+        }
+        bounded(asset.into_reader(), max).map(Some).map_err(other)
+    }
+
     fn repository(&self, state: &mut State, repo: &str) -> Result<Repository, Failure> {
         let shown: Repository = self
             .api(state, repo, &[], None)?
@@ -475,16 +529,28 @@ impl Github {
         Err(Failure::RefUnavailable)
     }
 
-    fn lookup(&self, state: &mut State, source: &Source, refresh: Option<Instant>) -> Lookup {
-        let key = match source.tracker() {
-            Tracker::Branch(branch) => {
-                format!("{}:{}:heads:{branch}", source.repo_id(), source.repo())
-            }
-            Tracker::Release => format!("{}:{}:releases", source.repo_id(), source.repo()),
+    fn ref_cache_path(&self, repo: &str, repo_id: u64, tracker: &Tracker) -> PathBuf {
+        let key = match tracker {
+            Tracker::Branch(branch) => format!("{repo_id}:{repo}:heads:{branch}"),
+            Tracker::Release => format!("{repo_id}:{repo}:releases"),
         };
-        let path = self
-            .cache
-            .join(format!("ref-{}.json", digest(key.as_bytes())));
+        self.cache
+            .join(format!("ref-{}.json", digest(key.as_bytes())))
+    }
+
+    fn saved_pin(path: &Path) -> Option<Pin> {
+        let bytes = bounded(fs::File::open(path).ok()?, 4096).ok()?;
+        let pin: Pin = serde_json::from_slice(&bytes).ok()?;
+        (manifest::revision(&pin.sha)
+            && pin.release.as_ref().is_none_or(|release| {
+                safe_ref(&release.tag)
+                    && chrono::DateTime::parse_from_rfc3339(&release.published_at).is_ok()
+            }))
+        .then_some(pin)
+    }
+
+    fn lookup(&self, state: &mut State, source: &Source, refresh: Option<Instant>) -> Lookup {
+        let path = self.ref_cache_path(source.repo(), source.repo_id(), source.tracker());
         let last = state.resolves.get(&path);
         if let Some(last) = last.filter(|last| {
             last.when.elapsed() < FRESH
@@ -508,17 +574,7 @@ impl Github {
                 (None, Some(problem))
             }
             Err(problem) => {
-                let cached = cached.or_else(|| {
-                    let bytes = bounded(fs::File::open(&path).ok()?, 4096).ok()?;
-                    let pin: Pin = serde_json::from_slice(&bytes).ok()?;
-                    (manifest::revision(&pin.sha)
-                        && pin.release.as_ref().is_none_or(|release| {
-                            safe_ref(&release.tag)
-                                && chrono::DateTime::parse_from_rfc3339(&release.published_at)
-                                    .is_ok()
-                        }))
-                    .then_some(pin)
-                });
+                let cached = cached.or_else(|| Self::saved_pin(&path));
                 (cached, Some(problem))
             }
         };
@@ -531,24 +587,69 @@ impl Github {
         lookup
     }
 
-    fn manifest(&self, state: &mut State, source: &Source, sha: &str) -> Result<(), Failure> {
+    fn manifest(
+        &self,
+        state: &mut State,
+        source: &Source,
+        sha: &str,
+        allow_fetch: bool,
+    ) -> Result<String, Failure> {
         let key = (
             self.cache.clone(),
             format!("{}/{sha}/{}", source.repo(), source.manifest()),
             source.id().to_owned(),
         );
-        if let Some(&found) = state.manifests.get(&key) {
-            return found.then_some(()).ok_or(Failure::NoManifest);
+        if let Some(found) = state.manifests.get(&key) {
+            return found.clone().ok_or(Failure::NoManifest);
         }
-        let found = match self.raw(state, source.repo(), sha, source.manifest(), MAX_MANIFEST)? {
-            Some(bytes) => std::str::from_utf8(&bytes)
-                .ok()
-                .and_then(|text| Manifest::parse(text).ok())
-                .is_some_and(|m| m.id == source.id() && m.native.is_some()),
-            None => false,
+        if !allow_fetch {
+            return Err(Failure::NoManifest);
+        }
+        let found = self
+            .raw(state, source.repo(), sha, source.manifest(), MAX_MANIFEST)?
+            .and_then(|bytes| {
+                source_manifest(source, &bytes)?
+                    .native
+                    .map(|native| native.sunrise)
+            });
+        state.manifests.insert(key, found.clone());
+        found.ok_or(Failure::NoManifest)
+    }
+
+    fn branch_metadata(&self, source: &Source, allow_fetch: bool) -> Option<SourceMetadata> {
+        let Tracker::Branch(branch) = source.tracker() else {
+            return None;
         };
-        state.manifests.insert(key, found);
-        found.then_some(()).ok_or(Failure::NoManifest)
+        let repo = source.repo();
+        let path = source.manifest();
+        let key = digest(format!("{repo}\0{branch}\0{path}").as_bytes());
+        let target = self.cache.join(format!("manifest-{key}.toml"));
+        let cached = cached_bytes(&target, MAX_MANIFEST).and_then(|(bytes, fresh)| {
+            source_manifest(source, &bytes).map(|manifest| (manifest, fresh))
+        });
+        let manifest = match cached {
+            Some((manifest, true)) => manifest,
+            saved if !allow_fetch => saved?.0,
+            saved => match self.raw(
+                &mut State::default(),
+                repo,
+                &format!("refs/heads/{branch}"),
+                path,
+                MAX_MANIFEST,
+            ) {
+                Ok(Some(bytes)) => {
+                    let manifest = source_manifest(source, &bytes)?;
+                    let _ = self.save(&target, &bytes);
+                    manifest
+                }
+                Ok(None) => return None,
+                Err(_) => saved?.0,
+            },
+        };
+        Some(SourceMetadata {
+            authors: manifest.authors,
+            build_pin: manifest.native.map(|native| native.sunrise),
+        })
     }
 
     fn readme(
@@ -585,6 +686,32 @@ impl Github {
         state.missing_readmes.insert(key);
         Ok(None)
     }
+}
+
+/// Display metadata, separate from the pinned inspection that authorizes a build.
+pub struct SourceMetadata {
+    pub authors: Vec<String>,
+    pub build_pin: Option<String>,
+}
+
+pub fn branch_metadata(source: &Source, allow_fetch: bool) -> Option<SourceMetadata> {
+    Github::current().branch_metadata(source, allow_fetch)
+}
+
+fn source_manifest(source: &Source, bytes: &[u8]) -> Option<Manifest> {
+    let manifest = Manifest::parse(std::str::from_utf8(bytes).ok()?).ok()?;
+    (manifest.id == source.id()).then_some(manifest)
+}
+
+fn cached_bytes(path: &Path, max: u64) -> Option<(Vec<u8>, bool)> {
+    let file = fs::File::open(path).ok()?;
+    let fresh = file
+        .metadata()
+        .and_then(|metadata| metadata.modified())
+        .ok()
+        .and_then(|time| time.elapsed().ok())
+        .is_some_and(|age| age < FRESH);
+    Some((bounded(file, max).ok()?, fresh))
 }
 
 fn other(error: impl std::fmt::Display) -> Failure {
@@ -634,15 +761,24 @@ fn inspect(
         return Details {
             commit: None,
             readme: None,
+            build_pin: None,
             error: failure,
         };
     };
-    if failure.is_none() {
-        failure = github
+    let build_pin = if failure.is_none() {
+        match github
             .ready(&mut state, SystemTime::now())
-            .and_then(|()| github.manifest(&mut state, source, &pin.sha))
-            .err();
-    }
+            .and_then(|()| github.manifest(&mut state, source, &pin.sha, true))
+        {
+            Ok(build_pin) => Some(build_pin),
+            Err(error) => {
+                failure = Some(error);
+                None
+            }
+        }
+    } else {
+        github.manifest(&mut state, source, &pin.sha, false).ok()
+    };
     let readme = if include_readme {
         // Never make extra requests from a saved ref. A missing/invalid manifest is different:
         // the commit is current and its README can still be read.
@@ -670,6 +806,7 @@ fn inspect(
             github_url,
         }),
         readme,
+        build_pin,
         error: failure,
     }
 }

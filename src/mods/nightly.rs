@@ -1,4 +1,4 @@
-//! Mods › Discover's source catalogue: no GitHub work until a player opens a listing or checks updates.
+//! Mods › Discover's source catalogue: only card icons load before a player opens a listing.
 use super::ui::*;
 use super::*;
 use crate::frame::button;
@@ -130,77 +130,90 @@ impl Launcher {
             }
         }
         let shown = source_matches(&catalogue.sources, &self.ui.mods.filters.text);
+        let total = shown.len();
+        let allow_icon_fetch = catalogue.error.is_none();
         let limit = self.ui.mods.nightly.limit.max(PAGE_SIZE);
+        let build = self.nightly_build_revision();
+        let can_start = self.nightly_catalogue_current() && !self.nightly_busy();
+        let work = &self.ui.mods.nightly.work;
         let mut grid = div()
             .grid()
-            .grid_cols(nightly_columns(self.content_width()))
+            .grid_cols(columns(self.content_width()))
             .gap(px(12.));
-        for (n, source) in shown.iter().take(limit).enumerate() {
-            let source = (*source).clone();
-            let actions = div()
-                .flex()
-                .flex_wrap()
-                .justify_end()
-                .items_center()
-                .gap(px(6.))
-                .child(
-                    button(("nightly-details", n), tr("Details")).on_click(cx.listener({
-                        let source = source.clone();
-                        move |this, _, _, cx| {
-                            cx.stop_propagation();
-                            this.inspect_nightly(source.clone(), false);
-                            cx.notify();
-                        }
-                    })),
+        for (n, source) in shown.into_iter().take(limit).enumerate() {
+            let pin = work
+                .release_pins
+                .get(source.id())
+                .filter(|pin| pin.source() == source);
+            let icon = sources::SourceIcon::new(source, pin, allow_icon_fetch);
+            let picture = icon
+                .as_ref()
+                .and_then(|key| work.icons.get(key))
+                .cloned()
+                .flatten();
+            let icon = icon.filter(|key| !work.icons.contains_key(key));
+            let key = (source.clone(), allow_icon_fetch);
+            let metadata = work.metadata.get(&key).and_then(Option::as_ref);
+            let authors = metadata
+                .filter(|metadata| !metadata.authors.is_empty())
+                .map_or_else(
+                    || source.owner().to_owned(),
+                    |metadata| metadata.authors.join(", "),
                 );
+            let mut facts = vec![tag(model::Make::Native.label())];
+            if made_for_build(
+                build.as_deref(),
+                metadata.and_then(|m| m.build_pin.as_deref()),
+            ) {
+                facts.push(badge(tr("Made for this build")));
+            }
+            // Collection membership is another fact, not a separate card layout.
+            let metadata_request = (matches!(source.tracker(), sources::Tracker::Branch(_))
+                && !work.metadata.contains_key(&key))
+            .then_some(key);
+            let load = (icon.is_some() || metadata_request.is_some()).then(|| {
+                when_visible(cx, move |this| {
+                    if let Some(icon) = icon {
+                        this.request_nightly_icon(icon);
+                    }
+                    if let Some(key) = metadata_request {
+                        this.request_nightly_metadata(key);
+                    }
+                })
+            });
+            let action = button(("nightly-build", n), tr("Build"));
+            let action = if can_start {
+                let source = source.clone();
+                action.on_click(cx.listener(move |this, _, _, cx| {
+                    cx.stop_propagation();
+                    this.check_nightly(source.clone(), false, true);
+                    cx.notify();
+                }))
+            } else {
+                dim(action)
+            };
+            let open = source.clone();
             grid = grid.child(
-                card()
-                    .id(("nightly-card", n))
-                    .reach()
-                    .min_w_0()
-                    .cursor_pointer()
-                    .hover(|style| style.border_color(c(palette().muted)))
-                    .p(px(12.))
-                    .flex()
-                    .flex_col()
-                    .gap(px(8.))
-                    .child(
-                        div()
-                            .flex()
-                            .items_start()
-                            .gap(px(10.))
-                            .min_w_0()
-                            .child(tile(None::<PathBuf>, source.id(), source.name(), 40.))
-                            .child(
-                                div()
-                                    .min_w_0()
-                                    .flex_1()
-                                    .flex()
-                                    .flex_col()
-                                    .gap(px(3.))
-                                    .child(
-                                        div()
-                                            .font_weight(FontWeight::SEMIBOLD)
-                                            .child(source.name().to_owned()),
-                                    )
-                                    .child(muted(source.repo().to_owned()).truncate()),
-                            ),
-                    )
-                    .child(
-                        muted(source.summary().to_owned())
-                            .line_clamp(2)
-                            .text_ellipsis(),
-                    )
-                    .child(div().flex_1())
-                    .tooltip(crate::glass_ui::tip(source.name().to_owned()))
-                    .child(actions)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.inspect_nightly(source.clone(), false);
-                        cx.notify();
-                    })),
+                browse_card(
+                    ("nightly-card", n),
+                    picture,
+                    source.id(),
+                    source.name(),
+                    &authors,
+                    source.summary(),
+                    facts,
+                    Some(action.into_any_element()),
+                    None,
+                )
+                .relative()
+                .children(load)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.inspect_nightly(open.clone(), false);
+                    cx.notify();
+                })),
             );
         }
-        let more = (shown.len() > limit).then(|| {
+        let more = (total > limit).then(|| {
             button("nightly-more", tr("Show more")).on_click(cx.listener(move |this, _, _, cx| {
                 this.ui.mods.nightly.limit = limit + PAGE_SIZE;
                 cx.notify();
@@ -211,7 +224,7 @@ impl Launcher {
             .flex_col()
             .gap(px(12.))
             .child(grid)
-            .when(shown.is_empty(), |d| {
+            .when(total == 0, |d| {
                 d.child(muted(tr("No Nightly mods match your search.")))
             })
             .children(more);
@@ -222,7 +235,7 @@ impl Launcher {
                 .items_center()
                 .child(muted(trf(
                     "{count} source projects",
-                    &[("count", &shown.len().to_string())],
+                    &[("count", &total.to_string())],
                 )))
                 .child(muted(tr("Name A–Z"))),
         )
@@ -237,6 +250,56 @@ impl Launcher {
         )
         .into_any_element()
     }
+
+    fn nightly_icon_tile(
+        &self,
+        source: &Source,
+        commit: Option<&sources::SourceCommit>,
+        allow_fetch: bool,
+        side: f32,
+        cx: &Context<Self>,
+    ) -> Div {
+        let icon = sources::SourceIcon::new(source, commit, allow_fetch);
+        let icons = &self.ui.mods.nightly.work.icons;
+        let loaded = icon.as_ref().and_then(|icon| icons.get(icon));
+        let tile = tile(loaded.cloned().flatten(), source.id(), source.name(), side);
+        let Some(icon) = icon.filter(|_| loaded.is_none()) else {
+            return tile;
+        };
+        tile.relative().child(when_visible(cx, move |this| {
+            this.request_nightly_icon(icon)
+        }))
+    }
+
+    fn nightly_build_revision(&self) -> Option<String> {
+        backend::build_revision(&self.profile_target(self.selected_instance()?)?)
+    }
+}
+
+fn when_visible(
+    cx: &Context<Launcher>,
+    load: impl FnOnce(&mut Launcher) + 'static,
+) -> impl IntoElement + 'static {
+    let entity = cx.entity().downgrade();
+    gpui::canvas(
+        move |bounds, window, cx| {
+            if window.content_mask().bounds.intersects(&bounds) {
+                cx.defer(move |cx| {
+                    entity.update(cx, |this, _| load(this)).ok();
+                });
+            }
+        },
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .inset_0()
+}
+
+fn made_for_build(profile: Option<&str>, pin: Option<&str>) -> bool {
+    // The manifest validated a full pin; the profile returned its full commit or a valid prefix.
+    profile
+        .zip(pin)
+        .is_some_and(|(profile, pin)| pin.starts_with(profile))
 }
 
 fn source_matches<'a>(sources: &'a [Source], filter: &str) -> Vec<&'a Source> {
@@ -258,10 +321,6 @@ fn source_matches<'a>(sources: &'a [Source], filter: &str) -> Vec<&'a Source> {
         .collect();
     shown.sort_by(|a, b| (&a.0, a.1).cmp(&(&b.0, b.1)));
     shown.into_iter().map(|(_, _, source)| source).collect()
-}
-
-fn nightly_columns(width: f32) -> u16 {
-    (((width + 12.) / 274.).floor() as u16).clamp(1, 3)
 }
 
 pub(super) fn installed_source(row: &Row) -> Option<&sunrise_launcher::github_mods::Origin> {
@@ -291,8 +350,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn compact_and_wide_catalogues_keep_card_width() {
-        assert_eq!(nightly_columns(660.), 2);
-        assert_eq!(nightly_columns(1120.), 3);
+    fn only_a_matching_full_build_or_valid_profile_prefix_gets_the_badge() {
+        let pin = "9425651aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let other = "9425651bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        assert!(made_for_build(Some(pin), Some(pin)));
+        assert!(made_for_build(Some("9425651"), Some(pin)));
+        assert!(!made_for_build(Some(other), Some(pin)));
+        assert!(!made_for_build(Some("1234567"), Some(pin)));
+        assert!(!made_for_build(Some(pin), None));
+        assert!(!made_for_build(None, Some(pin)));
     }
 }

@@ -19,8 +19,10 @@ fn wire(sources: Vec<Value>) -> Vec<u8> {
 
 #[test]
 fn registry_shape_supports_release_and_branch_in_the_same_repository() {
-    let a = entry();
+    let mut a = entry();
+    a["icon"] = json!("icons/trail_atlas.png");
     let mut b = a.clone();
+    b.as_object_mut().unwrap().remove("icon");
     b["track"] = json!({ "release": true });
     b["id"] = json!("camps");
     b["manifest"] = json!("sunrise-mod.toml");
@@ -29,6 +31,8 @@ fn registry_shape_supports_release_and_branch_in_the_same_repository() {
     assert_eq!(parsed[0].owner(), "Driftwood");
     assert_eq!(parsed[0].id(), "camps");
     assert_eq!(parsed[0].tracker(), &Tracker::Release);
+    assert_eq!(parsed[0].icon(), None);
+    assert_eq!(parsed[1].icon(), Some("icons/trail_atlas.png"));
     assert_eq!(
         parsed[1].tracker(),
         &Tracker::Branch("feature/camps".into())
@@ -59,6 +63,12 @@ fn source_catalogue_refuses_ambiguous_or_unsafe_boundary_values() {
         ("manifest", json!("mods/%2e%2e/sunrise-mod.toml")),
         ("manifest", json!("/sunrise-mod.toml")),
         ("manifest", json!("x\nsunrise-mod.toml")),
+        ("icon", json!("art/icon.png")),
+        ("icon", json!("icons/../icon.png")),
+        ("icon", json!("icons/%2e%2e/icon.png")),
+        ("icon", json!("icons/")),
+        ("icon", json!("/icons/icon.png")),
+        ("icon", json!("https://example.test/icons/icon.png")),
         ("name", json!(" ")),
         ("name", json!("🌻".repeat(81))),
         ("summary", json!("x".repeat(161))),
@@ -69,7 +79,6 @@ fn source_catalogue_refuses_ambiguous_or_unsafe_boundary_values() {
         ("track", json!({ "branch": "topic/.lock" })),
         ("track", json!({ "branch": "https://github.com" })),
         ("track", json!({ "branch": "topic%2Fmain" })),
-        ("unexpected_url", json!("https://example.test")),
     ] {
         let mut source = entry();
         source[key] = value;
@@ -79,10 +88,25 @@ fn source_catalogue_refuses_ambiguous_or_unsafe_boundary_values() {
         );
     }
     assert!(parse(br#"{"format":2,"sources":[]}"#).is_err());
-    assert!(parse(br#"{"format":1,"sources":[],"extra":0}"#).is_err());
     assert!(parse(br#"{"format":1,"format":1,"sources":[]}"#).is_err());
     assert!(parse(&vec![b' '; MAX_CATALOG as usize + 1]).is_err());
     assert!(parse(&[b"{\"format\":1,\"sources\":[".as_slice(), &wire(vec![])].concat()).is_err());
+}
+
+#[test]
+fn fields_added_to_the_feed_later_are_ignored() {
+    let mut source = entry();
+    source["added_later"] = json!({ "any": "shape" });
+    let mut feed: Value = serde_json::from_slice(&wire(vec![source])).unwrap();
+    feed["also_added_later"] = json!([1, 2]);
+    let parsed = parse(&serde_json::to_vec(&feed).unwrap()).unwrap();
+    assert_eq!(parsed.len(), 1);
+    let mut missing = entry();
+    missing.as_object_mut().unwrap().remove("repo_id");
+    assert!(
+        parse(&wire(vec![missing])).is_err(),
+        "required keys stay required"
+    );
 }
 
 #[test]

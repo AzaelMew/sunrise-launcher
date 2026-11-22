@@ -6,6 +6,39 @@ use sunrise_launcher::browser::sunrise::SourceError;
 impl Launcher {
     pub(in crate::mods) fn nightly_project(&mut self, cx: &mut Context<Self>) -> AnyElement {
         self.ui.mods.build_button_drawn = false;
+        // A mod the registry lists shows the registry's description and screenshots; otherwise
+        // its README. Pictures go in the same gallery and viewer as a registry mod's.
+        let registry_page = self.ui.mods.nightly.open.as_ref().and_then(|open| {
+            let index = sunrise::known_index()?;
+            let project = index.project(open.source.id())?;
+            (!project.description.trim().is_empty())
+                .then(|| (project.description.clone(), project.screenshots.clone()))
+        });
+        // A registry entry without screenshots keeps the README's pictures.
+        let pictures = match &registry_page {
+            Some((_, screenshots)) if !screenshots.is_empty() => screenshots
+                .iter()
+                .cloned()
+                .map(super::super::viewer::Picture::Url)
+                .collect(),
+            _ => self
+                .ui
+                .mods
+                .nightly
+                .open
+                .as_ref()
+                .and_then(|open| open.inspection.as_ref()?.data.readme.as_ref())
+                .map(|readme| {
+                    readme
+                        .images()
+                        .iter()
+                        .cloned()
+                        .map(super::super::viewer::Picture::Readme)
+                        .collect()
+                })
+                .unwrap_or_default(),
+        };
+        let gallery = self.gallery(pictures, cx);
         let state = &self.ui.mods.nightly;
         let open = state.open.as_ref().expect("a Nightly detail is open");
         let source = &open.source;
@@ -28,24 +61,7 @@ impl Launcher {
                 cx.notify();
             }))
         };
-        let worked = commit.is_some_and(|pin| {
-            self.ui.mods.snapshot.as_ref().is_some_and(|snapshot| {
-                snapshot
-                    .rows
-                    .local
-                    .iter()
-                    .filter_map(|local| local.github.as_ref())
-                    .any(|origin| {
-                        origin.id == source.id()
-                            && origin.commit == pin.sha()
-                            && origin
-                                .source
-                                .as_ref()
-                                .is_some_and(|receipt| receipt.repo_id == source.repo_id())
-                            && origin.owner.eq_ignore_ascii_case(source.owner())
-                    })
-            })
-        });
+        let worked = commit.is_some_and(|pin| self.nightly_installed(pin));
         let build_label = if let Some(activity) = current.as_ref() {
             if activity.progress == sunrise::InstallProgress::Publishing {
                 tr("Finishing…").into()
@@ -67,14 +83,7 @@ impl Launcher {
             .as_ref()
             .is_some_and(|list| list.sources.contains(source));
         let can_build = !offline && listed && inspection.is_some_and(|i| i.candidate.is_ok());
-        let busy = self.mutating()
-            || self.mods_locked().is_some()
-            || self
-                .ui
-                .mods
-                .snapshot
-                .as_ref()
-                .is_none_or(|snap| !snap.ready());
+        let busy = self.nightly_busy();
         let build = if busy || worked {
             dim(build)
         } else if can_build {
@@ -131,12 +140,21 @@ impl Launcher {
             },
         );
         let repo_url = format!("https://github.com/{}", source.repo());
+        let allow_icon_fetch = !offline
+            && details
+                .and_then(|details| details.error.as_ref())
+                .is_none_or(|error| *error == sources::Failure::NoManifest);
+        let badge = made_for_build(
+            self.nightly_build_revision().as_deref(),
+            details.and_then(|detail| detail.build_pin.as_deref()),
+        )
+        .then(|| div().flex().child(badge(tr("Made for this build"))));
         let title = div()
             .flex()
             .items_center()
             .min_w_0()
             .gap(px(12.))
-            .child(tile(None::<PathBuf>, source.id(), source.name(), 56.))
+            .child(self.nightly_icon_tile(source, commit, allow_icon_fetch, 56., cx))
             .child(
                 div()
                     .flex_1()
@@ -150,7 +168,8 @@ impl Launcher {
                             .font_weight(FontWeight::BOLD)
                             .child(crate::selectable::selectable(source.name().to_owned())),
                     )
-                    .child(muted(source.repo().to_owned())),
+                    .child(muted(source.repo().to_owned()))
+                    .children(badge),
             );
         let panel = card()
             .p(px(14.))
@@ -210,60 +229,24 @@ impl Launcher {
                 ),
             )
         };
-        left = left.children(above);
+        left = left.children(above).children(gallery);
         let saved_readme = readme.is_some()
             && matches!(
                 details.and_then(|details| details.error.as_ref()),
                 Some(sources::Failure::Offline(_) | sources::Failure::RateLimited { .. })
             );
-        left = left.child(muted(if saved_readme {
-            tr("README from the repository · saved copy")
-        } else {
-            tr("README from the repository")
-        }));
-        let body = if let Some(readme) = readme {
-            let entity = cx.entity().downgrade();
-            let compact = self.content_width() < 860.;
-            crate::markdown::render_pinned(readme, &self.theme, |image| {
-                let placeholder = || note(image.alt().to_owned());
-                match state.work.images.get(image) {
-                    Some(Some(Some(path))) => gpui::img(path.clone())
-                        .max_w_full()
-                        .max_h(px(if compact { 180. } else { 240. }))
-                        .object_fit(gpui::ObjectFit::ScaleDown)
-                        .into_any_element(),
-                    Some(_) => placeholder().into_any_element(),
-                    None => {
-                        let image = image.clone();
-                        let entity = entity.clone();
-                        div()
-                            .relative()
-                            .min_h(px(24.))
-                            .child(placeholder())
-                            .child(
-                                gpui::canvas(
-                                    move |bounds, window, cx| {
-                                        if window.content_mask().bounds.intersects(&bounds) {
-                                            let image = image.clone();
-                                            let entity = entity.clone();
-                                            cx.defer(move |cx| {
-                                                entity
-                                                    .update(cx, |this, _| {
-                                                        this.request_nightly_image(image)
-                                                    })
-                                                    .ok();
-                                            });
-                                        }
-                                    },
-                                    |_, _, _, _| {},
-                                )
-                                .absolute()
-                                .inset_0(),
-                            )
-                            .into_any_element()
-                    }
-                }
-            })
+        if registry_page.is_none() {
+            left = left.child(muted(if saved_readme {
+                tr("README from the repository · saved copy")
+            } else {
+                tr("README from the repository")
+            }));
+        }
+        let body = if let Some((description, _)) = &registry_page {
+            super::super::project::prose(self.theme, description)
+        } else if let Some(readme) = readme {
+            // Its pictures are in the gallery above.
+            crate::markdown::render_pinned(readme, &self.theme, |_| div().into_any_element())
         } else if inspection.is_none() {
             note(tr("Checking the pinned source…")).into_any_element()
         } else {

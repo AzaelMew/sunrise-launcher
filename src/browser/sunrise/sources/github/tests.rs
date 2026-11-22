@@ -54,6 +54,56 @@ impl Sandbox {
 }
 
 #[test]
+fn branch_display_metadata_is_bounded_to_the_raw_manifest_and_cached_offline() {
+    let s = Sandbox::new();
+    let source = Sandbox::source(42);
+    let path = format!("raw/{REPO}/refs/heads/topic/camps/{MANIFEST}");
+    let start = test_requests();
+    assert!(s.github.branch_metadata(&source, false).is_none());
+    assert_eq!(test_requests(), start);
+    let common = "id='trail_atlas'\nname='Trail Atlas'\nversion='0.1.0'\napi='0.2'\nauthors=['Atlas Authors']\n";
+    s.put(&path, "not TOML [[");
+    assert!(s.github.branch_metadata(&source, true).is_none());
+    s.put(&path, common);
+    let no_native = s.github.branch_metadata(&source, true).unwrap();
+    assert_eq!(no_native.build_pin, None);
+    assert_eq!(no_native.authors, ["Atlas Authors"]);
+
+    // The online cache only refreshes after the same freshness window as branch icons.
+    let saved = fs::read_dir(&s.github.cache)
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    fs::OpenOptions::new()
+        .write(true)
+        .open(saved)
+        .unwrap()
+        .set_modified(SystemTime::now() - FRESH)
+        .unwrap();
+    s.put(
+        &path,
+        format!("{common}[native]\ngame='26.3'\nsunrise='{SHA}'\n"),
+    );
+    let metadata = s.github.branch_metadata(&source, true).unwrap();
+    assert_eq!(metadata.build_pin.as_deref(), Some(SHA));
+    assert_eq!(
+        s.github
+            .branch_metadata(&source, false)
+            .unwrap()
+            .build_pin
+            .as_deref(),
+        Some(SHA)
+    );
+    assert_eq!(
+        test_requests() - start,
+        3,
+        "the only requests were the raw manifest reads"
+    );
+}
+
+#[test]
 fn a_branch_must_match_public_identity_and_exact_heads_ref() {
     let s = Sandbox::new();
     let bad = resolve_checked(&s.github, &Sandbox::source(43), None);
@@ -133,6 +183,7 @@ fn repository_and_ref_collapse_across_mods_and_cached_readme_works_offline() {
     let epoch = Some(Instant::now());
     let details = inspect(&s.github, &Sandbox::source(42), epoch, true);
     assert!(details.error.is_none(), "{:?}", details.error);
+    assert_eq!(details.build_pin.as_deref(), Some(SHA));
     let other = Source::for_origin(
         "other",
         REPO,
@@ -151,6 +202,7 @@ fn repository_and_ref_collapse_across_mods_and_cached_readme_works_offline() {
     s.put(&format!("api/repos/{REPO}.status"), "offline\n");
     let stale = inspect(&s.github, &Sandbox::source(42), Some(Instant::now()), true);
     assert!(matches!(stale.error, Some(Failure::Offline(_))));
+    assert_eq!(stale.build_pin.as_deref(), Some(SHA));
     assert_eq!(
         stale.readme.unwrap().markdown(),
         "# Trail Atlas\n\nOld notes."

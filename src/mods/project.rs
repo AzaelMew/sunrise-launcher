@@ -8,11 +8,15 @@ use sunrise_launcher::browser::images;
 /// Show every registry screenshot. Pack feeds can list many more: the full-size viewer steps
 /// through those too, without fetching all of a large pack gallery on opening its page.
 impl Launcher {
-    pub(super) fn gallery(&mut self, urls: Vec<String>, cx: &mut Context<Self>) -> Option<Div> {
+    pub(super) fn gallery(
+        &mut self,
+        urls: Vec<super::viewer::Picture>,
+        cx: &mut Context<Self>,
+    ) -> Option<Div> {
         if urls.is_empty() {
             return None;
         }
-        let urls: Rc<[String]> = urls.into();
+        let urls: Rc<[super::viewer::Picture]> = urls.into();
         const PREVIEWS: usize = sunrise_launcher_smod::index::page::MAX_SCREENSHOTS;
         let count = urls.len().min(PREVIEWS);
         let columns = if self.window_width < 950. { 3 } else { 4 };
@@ -20,7 +24,7 @@ impl Launcher {
         // A tile's tooltip would float over its own picture once that is open.
         let viewing = self.ui.mods.viewer.is_some();
         let mut tiles = urls.iter().take(PREVIEWS).enumerate().map(|(i, url)| {
-            let photo = self.mods_image(url, images::GALLERY);
+            let photo = self.picture(url, images::GALLERY);
             // No wider than the picture's own shape at the row's height: a wide window would
             // otherwise blow it up and crop it.
             let ratio = photo
@@ -295,7 +299,14 @@ impl Launcher {
                     ),
             );
 
-        let gallery = self.gallery(p.screenshots.clone(), cx);
+        let gallery = self.gallery(
+            p.screenshots
+                .iter()
+                .cloned()
+                .map(super::viewer::Picture::Url)
+                .collect(),
+            cx,
+        );
         let about = prose(self.theme, &p.description);
 
         let unavailable =
