@@ -406,53 +406,6 @@ impl Launcher {
 }
 
 impl Launcher {
-    /// Takes the pending set through Play, or reopens its running build.
-    pub(super) fn build_button(&mut self, busy: bool, cx: &mut Context<Self>) -> Stateful<Div> {
-        let running = self.build_here().filter(|run| run.running());
-        let label = match running.map(Run::at) {
-            Some(Some((at, total))) => trf(
-                "Building · {at} of {total}",
-                &[("at", &at.to_string()), ("total", &total.to_string())],
-            ),
-            Some(None) => tr("Building…").into(),
-            None => crate::launch_state::Main::BuildAndPlay.label().to_string(),
-        };
-        let fill = running.map(|run| {
-            div()
-                .absolute()
-                .left_0()
-                .right_0()
-                .bottom_0()
-                .h(px(3.))
-                .bg(c(palette().line))
-                .child(
-                    div()
-                        .h(px(3.))
-                        .bg(c(palette().accent))
-                        .w(relative(run.fraction().clamp(0.02, 1.))),
-                )
-        });
-        let b = match fill {
-            Some(fill) => crate::frame::button("alt-build-all", label)
-                .relative()
-                .overflow_hidden()
-                .child(fill),
-            None => primary("alt-build-all", label),
-        };
-        // Another change holds the folder, or another profile's build runs: one at a time.
-        if running.is_none() && (busy || self.native_step.is_some()) {
-            return dim(b);
-        }
-        b.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-            if this.build_here().is_some_and(Run::running) {
-                this.open_sheet(crate::sheets::Sheet::ModBuild);
-            } else {
-                this.play_game();
-            }
-            cx.notify();
-        }))
-    }
-
     /// Build: starts the selected profile's build and opens its window. While a build runs it
     /// only opens the window again, wherever it is pressed (Mods, the strip, Home).
     pub(crate) fn build_all(&mut self) {

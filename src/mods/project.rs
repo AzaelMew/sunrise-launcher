@@ -147,7 +147,6 @@ pub(super) fn about_link(id: &'static str, key: &'static str) -> Stateful<Div> {
 
 impl Launcher {
     pub(super) fn project(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        self.ui.mods.build_button_drawn = false;
         let back_to = self
             .ui
             .mods

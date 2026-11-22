@@ -5,7 +5,6 @@ use sunrise_launcher::browser::sunrise::SourceError;
 
 impl Launcher {
     pub(in crate::mods) fn nightly_project(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        self.ui.mods.build_button_drawn = false;
         // A mod the registry lists shows the registry's description and screenshots; otherwise
         // its README. Pictures go in the same gallery and viewer as a registry mod's.
         let registry_page = self.ui.mods.nightly.open.as_ref().and_then(|open| {

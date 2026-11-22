@@ -19,10 +19,8 @@ impl Launcher {
             .filter(|run| run.instance == selected.id)
     }
 
-    /// The line while a build runs: how far it is, over its bar (`bar`: a page that shows the
-    /// bar itself draws the line without one, so one build never has two bars). A press opens
-    /// the build window.
-    pub(crate) fn build_line(&self, bar: bool, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+    /// The running build's progress. Pressing it opens the build window.
+    pub(crate) fn build_line(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
         let run = self.ui.mods.build.as_ref().filter(|run| run.running())?;
         self.native_step.as_ref()?;
         let fraction = run.fraction();
@@ -37,7 +35,7 @@ impl Launcher {
                 .cursor_pointer()
                 .tooltip(crate::glass_ui::tip(tr("Show the build")))
                 .child(div().truncate().child(run.line()))
-                .when(bar, |d| d.child(progress_bar(fraction)))
+                .child(progress_bar(fraction))
                 .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                     this.build_all();
                     cx.notify();

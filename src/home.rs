@@ -608,7 +608,7 @@ impl Launcher {
             // Two lines fit beside Play; a longer message is cut, never drawn outside the row.
             .line_clamp(2)
             .text_ellipsis()
-            .children(self.build_line(true, cx))
+            .children(self.build_line(cx))
             .children(self.build_said())
             .children(other_running)
             .children(view.said.filter(|_| !recovering))
