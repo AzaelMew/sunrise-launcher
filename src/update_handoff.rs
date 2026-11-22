@@ -1,6 +1,6 @@
-//! The launcher's own update from its window (#9287). The window downloads and checks the new
-//! launcher in the background ([`backend::stage_update`]) and says "A new version is available".
-//! Update starts this launcher's file again as the installer and quits:
+//! The launcher's own update from its window (#9287). When the player chooses Update, the
+//! launcher downloads and checks the release ([`backend::stage_update`]). Once no game or
+//! launcher work needs the window to stay open, it starts its own file as the installer and quits:
 //! `sunrise-launcher apply-update <tag> <staged file> [--restart [-- <the window's arguments>]]`.
 //! The installer waits until the window's process has exited (its stdin is a pipe only that
 //! process holds, which closes with it). If the launcher in place is already that version or newer

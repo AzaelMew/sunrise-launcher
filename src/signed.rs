@@ -68,15 +68,45 @@ pub fn digest(
     )
 }
 
+/// Whether a check couldn't reach the release or actually rejected its manifest.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LauncherCheckError {
+    Unavailable(String),
+    Rejected { tag: String, reason: String },
+}
+
+impl LauncherCheckError {
+    pub fn message(&self) -> &str {
+        match self {
+            Self::Unavailable(reason) | Self::Rejected { reason, .. } => reason,
+        }
+    }
+}
+
+impl std::fmt::Display for LauncherCheckError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.message())
+    }
+}
+
+impl serde::Serialize for LauncherCheckError {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        // Keep the CLI's launcher_error JSON value a message, not an enum.
+        serializer.serialize_str(self.message())
+    }
+}
+
 /// The signed SHA-256 of `asset` in this launcher's own release `tag` ([`LAUNCHER_REPO`]), signed for the launcher's releases only ([`sunrise_launcher_release_verify::launcher_message`]), or why the update must be refused.
 pub fn launcher_digest(
     tag: &str,
     asset: &str,
     keys: &[PublicKey],
     fetch: impl Fn(&str) -> Result<Option<Vec<u8>>, String>,
-) -> Result<String, String> {
-    let sums = fetch(&asset_url_in(LAUNCHER_REPO, tag, SUMS))?;
-    let signature = fetch(&asset_url_in(LAUNCHER_REPO, tag, SIGNATURE))?
+) -> Result<String, LauncherCheckError> {
+    let sums =
+        fetch(&asset_url_in(LAUNCHER_REPO, tag, SUMS)).map_err(LauncherCheckError::Unavailable)?;
+    let signature = fetch(&asset_url_in(LAUNCHER_REPO, tag, SIGNATURE))
+        .map_err(LauncherCheckError::Unavailable)?
         .map(|bytes| String::from_utf8_lossy(&bytes).into_owned());
     sunrise_launcher_release_verify::launcher_digest(
         tag,
@@ -85,6 +115,10 @@ pub fn launcher_digest(
         signature.as_deref(),
         keys,
     )
+    .map_err(|reason| LauncherCheckError::Rejected {
+        tag: tag.to_owned(),
+        reason,
+    })
 }
 
 /// The version the title of the build published under `tag` names, on `tag`'s channel only
