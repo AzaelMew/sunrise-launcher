@@ -307,7 +307,7 @@ pub(crate) struct SkinsPages {
     /// Skin files read, added and kept.
     disk: Queue,
     /// Skins being added or kept on disk now: a data move waits for them.
-    writing: usize,
+    disk_writes: usize,
     /// Whether the page was last opened in the offline developer view: drawn in the other
     /// mode, it is opened anew.
     opened_offline: Option<bool>,
@@ -383,10 +383,11 @@ impl SkinsPages {
         }
     }
 
-    /// A Save or a skin written to disk is under way, for any account, shown or not: a data
-    /// move would cut it off.
-    pub(crate) fn location_busy(&self) -> bool {
-        self.writing > 0
+    /// A Save or a skin being written to disk is under way, for any account, shown or not: a
+    /// data move or a launcher restart would cut it off (a Mojang change left without its
+    /// record in accounts.json, a skin half added).
+    pub(crate) fn writing(&self) -> bool {
+        self.disk_writes > 0
             || self.current.saving.is_some()
             || self.parked.values().any(|page| page.saving.is_some())
     }
@@ -469,6 +470,14 @@ impl Skins {
         if worn.cape.is_some() && self.edit.cape == worn.cape {
             self.edit.cape = None;
         }
+    }
+
+    /// Chooses `change` of the look, the account wearing `worn`: what the last Save said gives
+    /// way to the choice, but not the files the last import couldn't add.
+    fn choose(&mut self, change: impl FnOnce(&mut Edit), worn: &Worn) {
+        change(&mut self.edit);
+        self.settle(worn);
+        self.said.clear();
     }
 
     /// A reading asked for.
@@ -856,8 +865,14 @@ impl Launcher {
         }
     }
 
+    /// Reads what the shown page's account wears, on a thread of its own: one reading at a
+    /// time for a page, so asking again while one is under way (Try again, the page opened
+    /// again) waits for that one's answer instead of starting another.
     fn profile_read(&mut self, account: &account::Account) {
-        if offline_now() || self.skins.uuid.as_deref() != Some(&account.uuid) {
+        if offline_now()
+            || self.skins.uuid.as_deref() != Some(&account.uuid)
+            || self.skins.reading.is_some()
+        {
             return;
         }
         let id = self.skins.read_asked();
@@ -961,11 +976,15 @@ impl Launcher {
         self.skins.worn(recorded.as_ref(), default_slim)
     }
 
+    /// Settles the shown page's edits against what its own account wears (not the account
+    /// that plays, which a switch may have changed before the page is drawn again).
     fn settle_edits(&mut self) {
-        if let Some(account) = self.look_account() {
-            let worn = self.worn_look(&account);
-            self.skins.settle(&worn);
-        }
+        let Some(uuid) = self.skins.uuid.clone() else {
+            return;
+        };
+        let (recorded, default_slim) = self.worn_inputs(&uuid);
+        let worn = self.skins.worn(recorded.as_ref(), default_slim);
+        self.skins.settle(&worn);
     }
 
     /// A picture from the texture server arrived (`Msg::Picture`), or couldn't be had.
@@ -979,11 +998,15 @@ impl Launcher {
         self.skins.file_read(&key, png);
     }
 
-    /// The skin worn now, as the profile says (else accounts.json).
+    /// The skin the shown page's account wears now, as its profile says (else accounts.json).
     fn worn_skin(&self) -> Option<(String, String)> {
         match &self.skins.profile {
             Some(Ok(profile)) => profile.skin.clone(),
-            _ => self.look_account()?.skin,
+            _ => {
+                let uuid = self.skins.uuid.as_deref()?;
+                let account = self.accounts.accounts.iter().find(|a| a.uuid == uuid)?;
+                account.skin.clone()
+            }
         }
     }
 
@@ -1012,7 +1035,7 @@ impl Launcher {
         match self.skins.disk.push("skins-files", job) {
             Ok(()) => {
                 self.skins.keeping.insert(url);
-                self.skins.writing += 1;
+                self.skins.disk_writes += 1;
             }
             Err(_) => {
                 self.skins.library_error = Some(
@@ -1025,7 +1048,7 @@ impl Launcher {
 
     /// The skin worn was kept, or couldn't be (`Msg::SkinKept`).
     pub(crate) fn skins_kept(&mut self, uuid: String, url: String, kept: Result<Saved, String>) {
-        self.skins.writing = self.skins.writing.saturating_sub(1);
+        self.skins.disk_writes = self.skins.disk_writes.saturating_sub(1);
         let (recorded, default_slim) = self.worn_inputs(&uuid);
         let shown = self.skins.uuid.as_deref() == Some(&uuid);
         let Some(page) = self.skins.page_mut(&uuid) else {
@@ -1050,12 +1073,15 @@ impl Launcher {
 
     /// Chooses `change` of the look; an edit that asks for what is worn is forgotten.
     fn choose(&mut self, change: impl FnOnce(&mut Edit)) {
+        let Some(uuid) = self.skins.uuid.clone() else {
+            return;
+        };
         if offline_now() {
             return;
         }
-        change(&mut self.skins.edit);
-        self.settle_edits();
-        self.skins.said.clear();
+        let (recorded, default_slim) = self.worn_inputs(&uuid);
+        let worn = self.skins.worn(recorded.as_ref(), default_slim);
+        self.skins.choose(change, &worn);
     }
 
     /// The key and picture of `skin` with wide or slim arms, for account `uuid`.
@@ -1335,7 +1361,7 @@ impl Launcher {
             let _ = tx.send(Msg::SkinsAdded(account, added));
         });
         match self.skins.disk.push("skins-files", job) {
-            Ok(()) => self.skins.writing += 1,
+            Ok(()) => self.skins.disk_writes += 1,
             Err(_) => {
                 if let Some(page) = self.skins.page_mut(&uuid) {
                     page.added =
@@ -1352,7 +1378,7 @@ impl Launcher {
     /// skins, and the last one added is chosen, if the page still shows the account they were
     /// added for.
     pub(crate) fn skins_added(&mut self, uuid: String, added: Vec<Result<Saved, String>>) {
-        self.skins.writing = self.skins.writing.saturating_sub(1);
+        self.skins.disk_writes = self.skins.disk_writes.saturating_sub(1);
         let shown = self.skins.uuid.as_deref() == Some(&uuid);
         let Some(page) = self.skins.page_mut(&uuid) else {
             return;
@@ -2030,6 +2056,10 @@ impl Launcher {
                 Vec::new(),
                 Some(crate::settings::hint(tr("Looking up your capes…"))),
             ),
+            Some(Err(_)) if self.skins.reading.is_some() => (
+                Vec::new(),
+                Some(crate::settings::hint(tr("Looking up your capes…"))),
+            ),
             Some(Err(why)) => (
                 Vec::new(),
                 Some(
@@ -2147,9 +2177,8 @@ mod tests {
 
     /// Chooses on the page the way a tile does: the edit, then forgetting what is worn already.
     fn choose(skins: &mut Skins, change: impl FnOnce(&mut Edit)) {
-        change(&mut skins.edit);
         let worn = worn(skins);
-        skins.settle(&worn);
+        skins.choose(change, &worn);
     }
 
     fn pick(skins: &mut Skins, skin: SkinPick) {
@@ -2551,12 +2580,12 @@ mod tests {
         assert!(!pages.read_answered("b", read, Ok(profile(SKIN, false, None)), false));
         // The Save ends while B is shown: A's page is reconciled, B's left alone.
         pages.show("b", signed_in);
-        assert!(pages.location_busy(), "A's Save, though B is shown");
+        assert!(pages.writing(), "A's Save, though B is shown");
         let after = profile(ALEX, false, Some("c1"));
         let done = outcome(Some(Change::Done), None, Some(after.clone()));
         assert!(!pages.save_answered(save.id, &done), "not B's Save");
         assert!(answer(pages.page_mut("a").unwrap(), save.id, &done));
-        assert!(!pages.location_busy());
+        assert!(!pages.writing());
         assert!(
             pages.profile.is_none(),
             "B's page knows nothing of A's profile"
@@ -2572,13 +2601,13 @@ mod tests {
     fn a_data_move_waits_for_skins_being_written() {
         let mut pages = SkinsPages::default();
         pages.show("a", |_| true);
-        assert!(!pages.location_busy());
-        pages.writing += 1;
-        assert!(pages.location_busy(), "an import or a kept skin");
-        pages.writing -= 1;
+        assert!(!pages.writing());
+        pages.disk_writes += 1;
+        assert!(pages.writing(), "an import or a kept skin");
+        pages.disk_writes -= 1;
         pick(&mut pages, SkinPick::Default("alex"));
         pages.submit(false).unwrap();
-        assert!(pages.location_busy(), "a Save");
+        assert!(pages.writing(), "a Save");
     }
 
     #[test]
