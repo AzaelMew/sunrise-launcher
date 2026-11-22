@@ -17,7 +17,9 @@ mod readme;
 #[cfg(debug_assertions)]
 pub(crate) use github::fixture_link_api;
 pub(crate) use github::{branch_ahead, github_archive, pasted_source};
-pub use github::{details, resolve, resolve_batch, Details, Failure, SourceCommit};
+pub use github::{
+    details, resolve, resolve_batch, Details, Failure, IconMisses, SourceCommit, SourceIcon,
+};
 pub use readme::{readme_image, Readme, ReadmeImage};
 
 /// Proven origin of a manual GitHub source install, separate from release assets.
@@ -43,6 +45,7 @@ pub struct Source {
     repo_id: u64,
     manifest: String,
     tracker: Tracker,
+    icon: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -56,6 +59,7 @@ struct WireSource {
     manifest: String,
     #[serde(deserialize_with = "tracker")]
     track: Tracker,
+    icon: Option<String>,
 }
 
 impl TryFrom<WireSource> for Source {
@@ -81,6 +85,7 @@ impl TryFrom<WireSource> for Source {
             repo_id: wire.repo_id,
             manifest: wire.manifest,
             tracker: wire.track,
+            icon: wire.icon,
         };
         source.validate_identity()?;
         Ok(source)
@@ -134,6 +139,7 @@ impl Source {
             repo_id,
             manifest: manifest.into(),
             tracker,
+            icon: None,
         };
         source.validate_identity().map_err(Failure::Other)?;
         Ok(source)
@@ -145,6 +151,10 @@ impl Source {
             || !github::valid_repo(&self.repo)
             || !safe_path(&self.manifest)
             || self.manifest.rsplit('/').next() != Some(manifest::MANIFEST)
+            || self
+                .icon
+                .as_ref()
+                .is_some_and(|path| !path.starts_with("icons/") || !safe_path(path))
             || matches!(&self.tracker, Tracker::Branch(branch) if !safe_ref(branch) || branch.starts_with('-'))
         {
             return Err(trf(
@@ -178,6 +188,9 @@ impl Source {
     }
     pub fn tracker(&self) -> &Tracker {
         &self.tracker
+    }
+    fn icon(&self) -> Option<&str> {
+        self.icon.as_deref()
     }
 }
 

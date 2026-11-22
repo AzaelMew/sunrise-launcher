@@ -2,7 +2,9 @@
 use super::{bounded, digest, readme, safe_path, safe_ref, Source, Tracker, FRESH};
 use crate::i18n::tr;
 
+mod icon;
 mod pasted;
+pub use icon::{IconMisses, SourceIcon};
 pub(crate) use pasted::{branch_ahead, pasted_source};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
@@ -475,16 +477,28 @@ impl Github {
         Err(Failure::RefUnavailable)
     }
 
-    fn lookup(&self, state: &mut State, source: &Source, refresh: Option<Instant>) -> Lookup {
-        let key = match source.tracker() {
-            Tracker::Branch(branch) => {
-                format!("{}:{}:heads:{branch}", source.repo_id(), source.repo())
-            }
-            Tracker::Release => format!("{}:{}:releases", source.repo_id(), source.repo()),
+    fn ref_cache_path(&self, repo: &str, repo_id: u64, tracker: &Tracker) -> PathBuf {
+        let key = match tracker {
+            Tracker::Branch(branch) => format!("{repo_id}:{repo}:heads:{branch}"),
+            Tracker::Release => format!("{repo_id}:{repo}:releases"),
         };
-        let path = self
-            .cache
-            .join(format!("ref-{}.json", digest(key.as_bytes())));
+        self.cache
+            .join(format!("ref-{}.json", digest(key.as_bytes())))
+    }
+
+    fn saved_pin(path: &Path) -> Option<Pin> {
+        let bytes = bounded(fs::File::open(path).ok()?, 4096).ok()?;
+        let pin: Pin = serde_json::from_slice(&bytes).ok()?;
+        (manifest::revision(&pin.sha)
+            && pin.release.as_ref().is_none_or(|release| {
+                safe_ref(&release.tag)
+                    && chrono::DateTime::parse_from_rfc3339(&release.published_at).is_ok()
+            }))
+        .then_some(pin)
+    }
+
+    fn lookup(&self, state: &mut State, source: &Source, refresh: Option<Instant>) -> Lookup {
+        let path = self.ref_cache_path(source.repo(), source.repo_id(), source.tracker());
         let last = state.resolves.get(&path);
         if let Some(last) = last.filter(|last| {
             last.when.elapsed() < FRESH
@@ -508,17 +522,7 @@ impl Github {
                 (None, Some(problem))
             }
             Err(problem) => {
-                let cached = cached.or_else(|| {
-                    let bytes = bounded(fs::File::open(&path).ok()?, 4096).ok()?;
-                    let pin: Pin = serde_json::from_slice(&bytes).ok()?;
-                    (manifest::revision(&pin.sha)
-                        && pin.release.as_ref().is_none_or(|release| {
-                            safe_ref(&release.tag)
-                                && chrono::DateTime::parse_from_rfc3339(&release.published_at)
-                                    .is_ok()
-                        }))
-                    .then_some(pin)
-                });
+                let cached = cached.or_else(|| Self::saved_pin(&path));
                 (cached, Some(problem))
             }
         };
