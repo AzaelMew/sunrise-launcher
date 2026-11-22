@@ -1483,5 +1483,21 @@
   "Sign in": "Sign in",
   "Finishing the previous download…": "Finishing the previous download…",
   "The launcher update could not be verified.": "The launcher update could not be verified.",
-  "This account was signed out. Add it again to sign in.": "This account was signed out. Add it again to sign in."
+  "This account was signed out. Add it again to sign in.": "This account was signed out. Add it again to sign in.",
+  "Address to share": "Адрес для подключения",
+  "Local network": "Локальная сеть",
+  "Internet": "Интернет",
+  "Last detected public address": "Последний определённый внешний адрес",
+  "Public IP not detected": "Внешний IP ещё не определён",
+  "Finding public IP…": "Определяем внешний IP…",
+  "Public IP unavailable": "Внешний IP недоступен",
+  "Server port unavailable": "Порт сервера недоступен",
+  "Last detected public IP: {ip}.": "Последний определённый внешний IP: {ip}.",
+  "Detecting your public IPv4 sends a direct request to ipify outside the launcher proxy. ipify sees this connection's IP address. The request does not check whether your server is reachable.": "Для определения внешнего IPv4 лаунчер обращается к ipify напрямую, в обход прокси. Сервис увидит IP-адрес этого подключения. Доступность сервера при этом не проверяется.",
+  "Refresh public IP": "Обновить внешний IP",
+  "Detect public IP": "Определить внешний IP",
+  "Could not find your public IP. Check your internet connection and try again.": "Не удалось определить внешний IP. Проверьте подключение к интернету и повторите попытку.",
+  "Forward TCP port {port} on your router to this computer and allow it through your firewall. If your provider uses CGNAT, you need a public IP or a tunnel.": "Пробросьте TCP-порт {port} на роутере на этот компьютер и разрешите его в брандмауэре. Если провайдер использует CGNAT, нужен публичный IP или туннель.",
+  "No local network address was found. localhost works only on this computer.": "Адрес локальной сети не найден. localhost работает только на этом компьютере.",
+  "The server is running on port {running}. Restart to use saved port {saved}.": "Сервер работает на порту {running}. Чтобы применить сохранённый порт {saved}, перезапустите сервер."
 }

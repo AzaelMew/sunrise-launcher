@@ -103,6 +103,10 @@ const DIFFICULTIES: [(&str, &str); 4] = [
 
 /// What the background work reports.
 pub(super) enum Event {
+    PublicAddress {
+        request: u64,
+        result: Result<std::net::Ipv4Addr, String>,
+    },
     Polled {
         dir: PathBuf,
         status: Box<Status>,
@@ -118,6 +122,7 @@ pub(super) enum Event {
     },
     Details {
         dir: PathBuf,
+        request: u64,
         config: Option<Value>,
         backups: Vec<Backup>,
         service: bool,
@@ -129,6 +134,14 @@ pub(super) enum Event {
     Pvp(Option<bool>),
     UpdateCheck(Result<Value, Problem>),
     Failed(String),
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PublicLookup {
+    Idle,
+    Loading(u64),
+    Detected,
+    Failed,
 }
 
 /// The Create dialog's answers.
@@ -153,6 +166,12 @@ pub(super) struct Create {
 struct SettingsBatch {
     dir: PathBuf,
     changes: Vec<(String, String)>,
+}
+
+impl SettingsBatch {
+    fn changes_port(&self) -> bool {
+        self.changes.iter().any(|(key, _)| key == "server.port")
+    }
 }
 
 #[derive(Default)]
@@ -266,6 +285,7 @@ pub(super) struct Servers {
     pub(super) create: Option<Create>,
     creating: bool,
     config: Option<Value>,
+    details_request: u64,
     /// Settings waiting for `config set`, and whether one runs.
     queued: VecDeque<SettingsBatch>,
     applying: Option<SettingsBatch>,
@@ -289,6 +309,10 @@ pub(super) struct Servers {
     /// A field whose value was refused, and why: shown under it until it's edited.
     invalid: Option<(Field, &'static str)>,
     copied: Option<Instant>,
+    internet_address: bool,
+    last_public_address: Option<std::net::Ipv4Addr>,
+    public_lookup: PublicLookup,
+    public_lookup_request: u64,
     faces: HashMap<String, Option<Vec<[u8; 4]>>>,
     tx: Sender<Event>,
     rx: Receiver<Event>,
@@ -318,6 +342,7 @@ impl Servers {
             create: None,
             creating: false,
             config: None,
+            details_request: 0,
             queued: VecDeque::new(),
             applying: None,
             settings_outcomes: HashMap::new(),
@@ -335,6 +360,10 @@ impl Servers {
             selected: None,
             invalid: None,
             copied: None,
+            internet_address: false,
+            last_public_address: None,
+            public_lookup: PublicLookup::Idle,
+            public_lookup_request: 0,
             faces: HashMap::new(),
             tx,
             rx,
@@ -382,6 +411,34 @@ impl Servers {
             .as_ref()
             .map(|c| &c[section][key])
             .filter(|v| !v.is_null())
+    }
+
+    fn address_ports(&self, status: &Status) -> (Option<u16>, Option<u16>) {
+        let saved = self
+            .setting("server", "port")
+            .and_then(Value::as_u64)
+            .and_then(|port| u16::try_from(port).ok())
+            .filter(|port| *port != 0);
+        let has_status = self
+            .open
+            .as_ref()
+            .is_some_and(|dir| self.statuses.contains_key(dir));
+        let saving_port = self
+            .applying
+            .iter()
+            .chain(&self.queued)
+            .any(|batch| self.open.as_ref() == Some(&batch.dir) && batch.changes_port());
+        let port = match (saved, has_status, status.phase.as_str()) {
+            (Some(port), true, "stopped") if !saving_port => Some(port),
+            (Some(_), true, "running") => status.running_port,
+            _ => None,
+        };
+        (port, saved)
+    }
+
+    fn reset_public_lookup(&mut self) {
+        self.public_lookup = PublicLookup::Idle;
+        self.copied = None;
     }
 
     /// A setting as shown: what was just asked for, else what server.toml holds.
@@ -524,10 +581,12 @@ impl Launcher {
     }
 
     /// Reads the open server's settings, backups and service state again.
-    fn load_details(&self) {
+    fn load_details(&mut self) {
         let Some(dir) = self.servers.open.clone() else {
             return;
         };
+        self.servers.details_request += 1;
+        let request = self.servers.details_request;
         let tx = self.servers.tx.clone();
         std::thread::spawn(move || {
             let config = servers::config(&dir);
@@ -535,6 +594,7 @@ impl Launcher {
             let service = servers::service_installed(&dir);
             let _ = tx.send(Event::Details {
                 dir,
+                request,
                 config,
                 backups,
                 service,
@@ -548,6 +608,8 @@ impl Launcher {
         }
         let s = &mut self.servers;
         s.open = Some(dir);
+        s.internet_address = false;
+        s.reset_public_lookup();
         // Its settings may have changed while it was open.
         s.modes.clear();
         s.tab = Tab::Overview;
@@ -574,6 +636,10 @@ impl Launcher {
         let showing = self.ui.page == crate::frame::Page::Hosting;
         let overview = showing && self.servers.open.is_some() && self.servers.tab == Tab::Overview;
         let mut changed = self.internet_tick(overview);
+        if !overview && self.servers.public_lookup != PublicLookup::Idle {
+            self.servers.reset_public_lookup();
+            changed = true;
+        }
         while let Ok(event) = self.servers.rx.try_recv() {
             changed |= self.servers_event(event);
         }
@@ -632,6 +698,19 @@ impl Launcher {
     fn servers_event(&mut self, event: Event) -> bool {
         let s = &mut self.servers;
         match event {
+            Event::PublicAddress { request, result } => {
+                if s.public_lookup != PublicLookup::Loading(request) {
+                    return false;
+                }
+                s.public_lookup = match result {
+                    Ok(ip) => {
+                        s.last_public_address = Some(ip);
+                        PublicLookup::Detected
+                    }
+                    Err(_) => PublicLookup::Failed,
+                };
+                true
+            }
             Event::Polled { dir, status, logs } => {
                 s.polling = false;
                 let mut changed = false;
@@ -698,11 +777,12 @@ impl Launcher {
             }
             Event::Details {
                 dir,
+                request,
                 config,
                 backups,
                 service,
             } => {
-                if s.open.as_ref() == Some(&dir) {
+                if s.open.as_ref() == Some(&dir) && s.details_request == request {
                     s.config = config;
                     s.backups = backups;
                     s.service = Some(service);
@@ -733,6 +813,17 @@ impl Launcher {
                 true
             }
             Event::Applied { dir, result } => {
+                if result.is_ok()
+                    && s.open.as_ref() == Some(&dir)
+                    && s.applying.as_ref().is_some_and(SettingsBatch::changes_port)
+                {
+                    s.details_request += 1;
+                    if let Some(server) =
+                        s.config.as_mut().and_then(|c| c["server"].as_object_mut())
+                    {
+                        server.remove("port");
+                    }
+                }
                 let refresh = s.finish_settings(&dir, result);
                 self.apply_settings();
                 if refresh {
@@ -757,6 +848,22 @@ impl Launcher {
                 true
             }
         }
+    }
+
+    fn find_server_public_address(&mut self) {
+        let s = &mut self.servers;
+        if !s.internet_address || matches!(s.public_lookup, PublicLookup::Loading(_)) {
+            return;
+        }
+        s.public_lookup_request += 1;
+        let request = s.public_lookup_request;
+        s.public_lookup = PublicLookup::Loading(request);
+        s.copied = None;
+        let tx = s.tx.clone();
+        std::thread::spawn(move || {
+            let result = servers::network::public_ipv4();
+            let _ = tx.send(Event::PublicAddress { request, result });
+        });
     }
 
     /// The `pvp` game rule, asked of the running game (it's a rule of the world, not a setting).
@@ -1392,6 +1499,46 @@ fn setting_name(key: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sharing_waits_for_the_selected_server_and_uses_its_engine_port() {
+        let mut servers = Servers::new();
+        let first = PathBuf::from("first");
+        let second = PathBuf::from("second");
+        servers.open = Some(first.clone());
+        servers.config = Some(serde_json::json!({"server": {"port": 25567}}));
+        let running = Status {
+            phase: "running".into(),
+            running_port: Some(25566),
+            ..Status::default()
+        };
+        assert_eq!(
+            servers.address_ports(&servers.status()),
+            (None, Some(25567))
+        );
+        servers.note_status(first, running);
+        assert_eq!(
+            servers.address_ports(&servers.status()),
+            (Some(25566), Some(25567))
+        );
+
+        servers.open = Some(second.clone());
+        servers.config = None;
+        servers.note_status(second.clone(), Status::stopped());
+        assert_eq!(servers.address_ports(&servers.status()), (None, None));
+        servers.config = Some(serde_json::json!({"server": {"port": 65536}}));
+        assert_eq!(servers.address_ports(&servers.status()), (None, None));
+        servers.config = Some(serde_json::json!({"server": {"port": 25568}}));
+        assert_eq!(
+            servers.address_ports(&servers.status()),
+            (Some(25568), Some(25568))
+        );
+        servers.queue_setting(second, "server.port", "25569".into());
+        assert_eq!(
+            servers.address_ports(&servers.status()),
+            (None, Some(25568))
+        );
+    }
 
     #[test]
     fn a_running_server_is_not_a_launcher_write_but_its_hosting_workers_are() {

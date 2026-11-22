@@ -19,6 +19,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
+pub mod network;
+
 const PROGRAM: &str = if cfg!(windows) {
     "sunrise-server.exe"
 } else {
@@ -1086,6 +1088,7 @@ fn service_suffix(dir: &Path) -> String {
 /// The running supervisor's control API (`.sunrise/api.json`: its address and token).
 #[derive(Clone, Debug)]
 pub struct Api {
+    dir: PathBuf,
     address: String,
     token: String,
 }
@@ -1096,6 +1099,7 @@ impl Api {
         let text = fs::read_to_string(dir.join(".sunrise/api.json")).ok()?;
         let v: Value = serde_json::from_str(&text).ok()?;
         Some(Self {
+            dir: dir.to_path_buf(),
             address: v["address"].as_str()?.to_string(),
             token: v["token"].as_str()?.to_string(),
         })
@@ -1128,9 +1132,14 @@ impl Api {
     }
 
     pub fn status(&self) -> Option<Status> {
-        self.call("GET", "/api/v1/status", None)
-            .ok()
-            .map(|v| Status::parse(&v))
+        let mut status = Status::parse(&self.call("GET", "/api/v1/status", None).ok()?);
+        if status.phase == "running" {
+            // The supervisor writes server.properties at engine startup. Settings saved in
+            // server.toml while it runs take effect only when the next engine starts.
+            let properties = fs::read_to_string(self.dir.join("server.properties")).ok();
+            status.running_port = properties.as_deref().and_then(network::properties_port);
+        }
+        Some(status)
     }
 
     /// The log lines after `since`, and the number to ask from next time.
@@ -1180,6 +1189,7 @@ pub struct Player {
 pub struct Status {
     /// starting, running, stopping or restarting (stopped when nothing answers).
     pub phase: String,
+    pub running_port: Option<u16>,
     pub uptime: Option<u64>,
     pub crashes: u64,
     pub last_crash: Option<String>,
@@ -1213,6 +1223,7 @@ impl Status {
         let update = &v["update"];
         Self {
             phase: v["phase"].as_str().unwrap_or("stopped").to_string(),
+            running_port: None,
             uptime: v["engine_uptime_seconds"].as_u64(),
             crashes: v["crashes"].as_u64().unwrap_or(0),
             last_crash: v["last_crash"].as_str().map(str::to_string),
