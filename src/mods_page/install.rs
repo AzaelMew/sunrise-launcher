@@ -328,8 +328,8 @@ impl Installs {
             Err(InstallError::Cancelled | InstallError::Source(SourceError::Cancelled)) => {
                 return None
             }
-            Err(error @ InstallError::Source(_)) => {
-                Err((failure_line(error).into(), String::new()))
+            Err(error @ InstallError::Source(source)) => {
+                Err((failure_line(error).into(), refusal_detail(source)))
             }
             Err(error) => Err((failure_line(error).into(), error.to_string())),
         };
@@ -375,12 +375,16 @@ impl Installs {
             ) {
                 return None;
             }
+            let why = match error {
+                InstallError::Source(error) => {
+                    Some(refusal_detail(error)).filter(|d| !d.is_empty())
+                }
+                _ => None,
+            }
+            .unwrap_or_else(|| failure_line(error).to_owned());
             return Some(trf(
                 "Couldn't add {mods}. {why}",
-                &[
-                    ("mods", &crate::mods::names(&source.names)),
-                    ("why", &error.to_string()),
-                ],
+                &[("mods", &crate::mods::names(&source.names)), ("why", &why)],
             ));
         }
         if matches!(
@@ -1456,6 +1460,17 @@ pub(crate) fn stage_fraction(step: InstallProgress) -> Option<f32> {
     }
 }
 
+/// The checker's own words for a refusal the player can read and act on. Compiler output and
+/// download errors stay in the log and the build log, as the headline already says what failed.
+fn refusal_detail(error: &SourceError) -> String {
+    match error {
+        SourceError::Unproved(detail)
+        | SourceError::DoesNotFit(detail)
+        | SourceError::Dependency { detail, .. } => detail.clone(),
+        _ => String::new(),
+    }
+}
+
 fn failure_line(error: &InstallError) -> &'static str {
     match error {
         InstallError::Refused(_) => tr("Can't install these mods together"),
@@ -1575,6 +1590,37 @@ mod tests {
             "fixture version refusal".into(),
         )));
         assert!(installs.github_feedback(&wrong).unwrap().retry.is_none());
+    }
+
+    #[test]
+    fn refused_source_add_says_which_mod_and_why_but_keeps_compiler_output_out() {
+        let root = homes();
+        let mut installs = with_running(root.path());
+        installs.running.as_mut().unwrap().source = Some(RunningSource {
+            ids: vec!["jade".into()],
+            visible: true,
+            names: vec!["Jade".into()],
+            cancellation: Default::default(),
+            rejected: BTreeMap::new(),
+        });
+        let refused = Worker::Done(Err(InstallError::Source(SourceError::Unproved(
+            "Its author can commit the list.".into(),
+        ))));
+        assert_eq!(
+            installs.mutation_failure(&refused).as_deref(),
+            Some("Couldn't add Jade. Its author can commit the list.")
+        );
+        let built = Worker::Done(Err(InstallError::Source(SourceError::Build {
+            detail: "error[E0425]: cannot find value".into(),
+            log: None,
+            failed: Vec::new(),
+        })));
+        assert_eq!(
+            installs.mutation_failure(&built).as_deref(),
+            Some("Couldn't add Jade. Couldn't build on this computer.")
+        );
+        let cancelled = Worker::Done(Err(InstallError::Source(SourceError::Cancelled)));
+        assert_eq!(installs.mutation_failure(&cancelled), None);
     }
 
     #[test]
