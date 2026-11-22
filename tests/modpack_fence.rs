@@ -246,6 +246,9 @@ fn ordinary_pack_installs_reuse_the_only_successful_registry_reply() {
                 while !finished.load(Ordering::Relaxed) {
                     match listener.accept() {
                         Ok((mut stream, _)) => {
+                            // On macOS and Windows an accepted socket inherits the listener's
+                            // non-blocking mode, so a read before the request arrives would fail.
+                            stream.set_nonblocking(false).unwrap();
                             stream.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
                             let mut headers = BufReader::new(&stream);
                             let mut line = String::new();

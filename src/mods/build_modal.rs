@@ -1,7 +1,7 @@
 //! The build window: one line per mod with where it stands, how far the whole build is, and a
 //! calm summary when it ends. Closing it never stops the build: the status strip on every tab
 //! keeps showing it. What it draws is `build_run::Run`.
-use super::build_run::{End, Line, Run, State};
+use super::build_run::{End, Line, Recovery, Run, State};
 use super::ui::*;
 use super::*;
 use crate::frame::button;
@@ -16,6 +16,10 @@ impl Launcher {
         let run = self.ui.mods.build.clone()?;
         let running = run.running();
         let counts = run.counts();
+        let stop = match &run.end {
+            Some(End::Stopped(stop)) => Some(stop),
+            _ => None,
+        };
 
         // ---- the head: what this is, for whom, and the way to put it aside
         let close = div()
@@ -154,11 +158,7 @@ impl Launcher {
                         )),
                 )
                 .children(match &run.end {
-                    Some(End::Stopped(said)) => {
-                        // The tool's own words can run long: the first lines here, all of it
-                        // in the build log.
-                        Some(div().text_size(px(tokens::LABEL)).line_clamp(4).child(said.clone()))
-                    }
+                    Some(End::Stopped(stop)) => Some(muted(stop.summary.clone())),
                     Some(End::Cancelled) => Some(
                         div().text_size(px(tokens::LABEL)).child(tr("The game does not start. Build again when you are ready.")),
                     ),
@@ -176,7 +176,15 @@ impl Launcher {
         for (n, line) in run.lines.iter().enumerate() {
             list = list.child(self.build_line_of(n, line, run.details, !running));
         }
-        let log_height = if run.log_open { 165. } else { 0. };
+        let error = stop
+            .map(|stop| stop.error.as_str())
+            .filter(|s| !s.is_empty());
+        let diagnostic = if run.log_open {
+            run.log.as_deref()
+        } else {
+            error.filter(|_| run.details)
+        };
+        let log_height = if diagnostic.is_some() { 165. } else { 0. };
         let list = card().overflow_hidden().child(
             div()
                 .id("build-lines")
@@ -187,10 +195,10 @@ impl Launcher {
         );
 
         // ---- the foot: stop it, or put it aside
-        let has_details = run
-            .lines
-            .iter()
-            .any(|l| matches!(&l.state, State::NeedsUpdate { details, .. } if !details.is_empty()));
+        let has_details = error.is_some()
+            || run.lines.iter().any(
+                |l| matches!(&l.state, State::NeedsUpdate { details, .. } if !details.is_empty()),
+            );
         let details = (!running && has_details).then(|| {
             div()
                 .id("build-details")
@@ -210,40 +218,91 @@ impl Launcher {
                     12.,
                     c(palette().muted),
                 ))
-                .child(tr("Details"))
+                .child(if run.details {
+                    tr("Hide details")
+                } else {
+                    tr("Show details")
+                })
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     if let Some(run) = &mut this.ui.mods.build {
                         run.details = !run.details;
+                        run.log_open = false;
                     }
                     cx.notify();
                 }))
         });
         // Managed Play only offers the log of this attempt, never the latest on disk.
-        let stopped = matches!(run.end, Some(End::Stopped(_)));
-        let log = (!running && (run.details || stopped) && (!run.for_play || run.log.is_some()))
-            .then(|| {
-                let label = if run.log_open {
-                    tr("Hide build log")
-                } else {
-                    tr("Open the build log")
-                };
-                button("build-log", label).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                    if let Some(run) = &mut this.ui.mods.build {
-                        if run.for_play {
-                            run.log_open = !run.log_open;
-                            cx.notify();
-                        } else {
-                            crate::glass_toast::open(cx, &native_mods::log_path());
-                        }
+        let log = (!running
+            && (run.details || stop.is_some())
+            && (!run.for_play || run.log.is_some()))
+        .then(|| {
+            let label = if run.log_open {
+                tr("Hide build log")
+            } else {
+                tr("Open the build log")
+            };
+            button("build-log", label).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                if let Some(run) = &mut this.ui.mods.build {
+                    if run.for_play {
+                        run.log_open = !run.log_open;
+                        run.details = false;
+                        cx.notify();
+                    } else {
+                        crate::glass_toast::open(cx, &native_mods::log_path());
                     }
-                }))
-            });
-        let retry = stopped
-            && run.for_play
-            && self.play_retry.as_ref().is_some_and(|request| {
-                self.selected_instance()
+                }
+            }))
+        });
+        let request = self.play_retry.as_ref().filter(|request| {
+            request.instance == run.instance
+                && self
+                    .selected_instance()
                     .is_some_and(|instance| request.matches_profile(instance))
-            });
+        });
+        let (recovery, refusal) = match (stop.and_then(|stop| stop.action.clone()), request) {
+            (Some(Recovery::Retry), Some(_)) => (Some((tr("Try again").to_owned(), None)), None),
+            (Some(Recovery::TurnOff { label, mods }), Some(request)) => {
+                match request.destination.check_mod_recovery() {
+                    Err(reason) => (None, Some(reason)),
+                    Ok(()) => (
+                        run.failed_build.clone().map(|build| {
+                            (
+                                label,
+                                Some(sunrise_launcher::managed_play::ModRecovery { build, mods }),
+                            )
+                        }),
+                        None,
+                    ),
+                }
+            }
+            _ => (None, None),
+        };
+        let copy = diagnostic.map(|diagnostic| {
+            let diagnostic = diagnostic.to_owned();
+            let copy_id: SharedString = if run.log_open {
+                "copy-build-log"
+            } else {
+                "copy-build-error"
+            }
+            .into();
+            button(
+                copy_id.clone(),
+                if crate::code_box::copied(&copy_id).is_some() {
+                    tr("Copied")
+                } else if run.log_open {
+                    tr("Copy")
+                } else {
+                    tr("Copy error")
+                },
+            )
+            .on_click(move |_, window, cx| {
+                crate::widgets::copy_quietly(
+                    cx,
+                    gpui::ClipboardItem::new_string(diagnostic.clone()),
+                );
+                crate::code_box::note_copy(copy_id.clone(), window, cx);
+            })
+        });
         let foot = if running {
             div()
                 .flex()
@@ -267,18 +326,16 @@ impl Launcher {
                     ),
                 )
         } else {
-            div()
+            let finish = div()
+                .ml_auto()
                 .flex()
-                .items_center()
+                .flex_wrap()
+                .justify_end()
                 .gap(px(10.))
-                .children(details)
-                .child(div().flex_1())
-                .children(log)
-                .children(retry.then(|| {
-                    button("play-build-retry", tr("Try again")).on_click(cx.listener(
-                        |this, _, _, cx| {
-                            this.close_sheet();
-                            this.retry_managed_play();
+                .children(recovery.map(|(label, recovery)| {
+                    button("play-build-retry", label).on_click(cx.listener(
+                        move |this, _, _, cx| {
+                            this.retry_managed_play(recovery.clone());
                             cx.notify();
                         },
                     ))
@@ -288,7 +345,23 @@ impl Launcher {
                         this.close_sheet();
                         cx.notify();
                     },
-                )))
+                )));
+            div()
+                .flex()
+                .flex_wrap()
+                .items_center()
+                .gap(px(10.))
+                .child(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .items_center()
+                        .gap(px(10.))
+                        .children(details)
+                        .children(copy)
+                        .children(log),
+                )
+                .child(finish)
         };
 
         let body = div()
@@ -296,12 +369,31 @@ impl Launcher {
             .flex_col()
             .child(head)
             .child(top)
+            .children(refusal.map(muted))
             .child(list)
-            .children(run.log.filter(|_| run.log_open).map(|log| {
-                crate::code_box::code_box(
-                    "managed-build-log",
-                    vec![log.to_string().into()],
-                    Some(150.),
+            .children(diagnostic.map(|text| {
+                card().min_w_0().overflow_hidden().child(
+                    div()
+                        .id(if run.log_open {
+                            "build-log-pane"
+                        } else {
+                            "build-error-pane"
+                        })
+                        .max_h(px(150.))
+                        .min_w_0()
+                        .overflow_y_scroll()
+                        .on_scroll(|_, _, cx| cx.stop_propagation())
+                        .p(px(12.))
+                        .font_family(crate::theme::MONO)
+                        .text_size(px(tokens::SMALL))
+                        .whitespace_normal()
+                        .child(
+                            crate::selectable::Selectable::styled(
+                                "build-diagnostic-text",
+                                gpui::StyledText::new(text.to_owned()),
+                            )
+                            .without_copy_preview(),
+                        ),
                 )
             }))
             .child(foot);
@@ -387,7 +479,9 @@ impl Launcher {
                                     .child(
                                         div()
                                             .min_w_0()
-                                            .truncate()
+                                            .when(!matches!(line.state, State::Failed(_)), |d| {
+                                                d.truncate()
+                                            })
                                             .font_weight(FontWeight::SEMIBOLD)
                                             .when(waiting, |d| d.text_color(c(palette().muted)))
                                             .child(line.title.clone()),

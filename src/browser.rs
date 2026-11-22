@@ -436,11 +436,13 @@ pub fn plain_name(name: &str) -> String {
     name.replace([':', '*', '?', '"', '<', '>', '|'], "-")
 }
 
+pub(crate) const MAX_SAFE_NAME_BYTES: usize = 200;
+
 /// A file name from a source, kept only when it is one plain name: no folders, no `..`, no
 /// hidden file, nothing a file system would read as something else.
 pub fn safe_name(name: &str) -> Option<&str> {
     let ok = !name.is_empty()
-        && name.len() <= 200
+        && name.len() <= MAX_SAFE_NAME_BYTES
         && !name.starts_with('.')
         && !name.ends_with(['.', ' '])
         && name.chars().all(|c| {

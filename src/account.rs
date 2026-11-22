@@ -13,7 +13,10 @@
 //! The Azure app (client ID) is configuration read at build time: `SUNRISE_MSA_CLIENT_ID`
 //! (release builds take it from the repository variable), which the same variable at run time
 //! overrides. Without one, sign-in says it is not configured.
+pub mod capes;
+pub mod look;
 pub mod session;
+pub mod skins;
 
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -67,11 +70,17 @@ impl Endpoints {
             .ok()
             .filter(|_| cfg!(debug_assertions))
             .unwrap_or_else(|| "https://login.microsoftonline.com/consumers/oauth2/v2.0".into());
+        // The same for the Minecraft services (the profile, its skin and capes), to see and
+        // screenshot the Skins tab against a local mock.
+        let minecraft = std::env::var("SUNRISE_MINECRAFT_SERVICES_ENDPOINT")
+            .ok()
+            .filter(|_| cfg!(debug_assertions))
+            .unwrap_or_else(|| "https://api.minecraftservices.com".into());
         Self {
             microsoft,
             xbox_user: "https://user.auth.xboxlive.com/user/authenticate".into(),
             xsts: "https://xsts.auth.xboxlive.com/xsts/authorize".into(),
-            minecraft: "https://api.minecraftservices.com".into(),
+            minecraft,
         }
     }
 }
@@ -1865,6 +1874,38 @@ impl Accounts {
         }
         saved.save_to(path)
     }
+    /// Records what a Save on the Skins tab left account `uuid` wearing, in `accounts.json` as it
+    /// is now and under the accounts' lock: only the fields that Save changed (`skin`, `cape`;
+    /// none leaves a field as it is), so nothing else about that account or any other is
+    /// written back from an older copy.
+    pub fn save_look(
+        uuid: &str,
+        skin: Option<Option<(String, String)>>,
+        cape: Option<Option<String>>,
+    ) -> Result<(), String> {
+        Self::save_look_to(store(), &Self::path(), uuid, skin, cape)
+    }
+    pub(crate) fn save_look_to(
+        store: &dyn SecretStore,
+        path: &Path,
+        uuid: &str,
+        skin: Option<Option<(String, String)>>,
+        cape: Option<Option<String>>,
+    ) -> Result<(), String> {
+        let _operation = session::lock(store)?;
+        let mut saved = Self::load_from(path);
+        // Signed out meanwhile: there is nothing left to record it on.
+        let Some(account) = saved.accounts.iter_mut().find(|a| a.uuid == uuid) else {
+            return Ok(());
+        };
+        if let Some(skin) = skin {
+            account.skin = skin;
+        }
+        if let Some(cape) = cape {
+            account.cape = cape;
+        }
+        saved.save_to(path)
+    }
     pub fn selected(&self) -> Option<&Account> {
         let uuid = self.selected.as_ref()?;
         self.accounts.iter().find(|a| &a.uuid == uuid)
@@ -2005,6 +2046,52 @@ pub struct Launch {
 
 /// The last [`Launch::unsaved`], for the window or the terminal to show once.
 static UNSAVED: Mutex<Option<String>> = Mutex::new(None);
+
+/// A Minecraft token for the signed-in `account` with at least [`RENEW_BEFORE`] left: the one
+/// the keychain keeps, or one renewed through the refresh token (and kept) when it runs out.
+/// For the profile's own changes (its cape), never for the game.
+pub fn token_for(
+    ep: &Endpoints,
+    client_id: Option<&str>,
+    store: &dyn SecretStore,
+    account: &Account,
+) -> Result<String, String> {
+    let _operation = session::lock(store)?;
+    let secrets = store
+        .get(&account.uuid)?
+        .and_then(|s| serde_json::from_str::<Secrets>(&s).ok())
+        .ok_or_else(|| {
+            format!(
+                "{} is no longer signed in on this computer. Sign in again.",
+                account.name
+            )
+        })?;
+    if secrets.sign_in_required {
+        return Err(SIGN_IN_AGAIN.into());
+    }
+    if secrets.minecraft_expires_at > now() + RENEW_BEFORE {
+        return Ok(secrets.minecraft_token);
+    }
+    let keep = |secrets: &Secrets| {
+        serde_json::to_string(secrets)
+            .map_err(|e| e.to_string())
+            .and_then(|text| store.set(&account.uuid, &text))
+    };
+    match check(ep, client_id, account, secrets) {
+        Check::Owns(_, secrets) => {
+            keep(&secrets)?;
+            Ok(secrets.minecraft_token)
+        }
+        Check::DoesNot(secrets) => {
+            let _ = keep(&secrets);
+            Err(DOES_NOT_OWN.into())
+        }
+        Check::NoAnswer(e, secrets) => {
+            let _ = keep(&secrets);
+            Err(e)
+        }
+    }
+}
 
 /// What the last launch couldn't save in the keychain, once.
 pub fn take_unsaved() -> Option<String> {
