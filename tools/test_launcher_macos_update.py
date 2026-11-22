@@ -33,8 +33,14 @@ except ImportError:
 
 ROOT = Path(__file__).resolve().parents[1]
 MODULE = ROOT / 'src/mac_update.rs'
+# `mac_update` names the executable through `crate::identity`, which takes its about page from
+# the addresses crate, so the scratch crate carries both.
+IDENTITY = ROOT / 'src/identity.rs'
+ADDRESSES = ROOT / 'crates/addresses'
 LOCK = ROOT / 'Cargo.lock'
 PROBE = r'''
+#[allow(dead_code)]
+mod identity;
 #[allow(dead_code)]
 mod mac_update;
 use std::{io::{self, BufRead, Write}, path::PathBuf, process::Command};
@@ -233,8 +239,9 @@ def main():
         return
     if sys.platform != 'darwin':
         parser.error('macOS is required')
-    sources = [MODULE, MODULE.parent / 'mac_update/tests.rs', LOCK, Path(__file__).resolve(),
-               Path(lab.__file__).resolve()]
+    sources = [MODULE, MODULE.parent / 'mac_update/tests.rs', IDENTITY, LOCK, Path(__file__).resolve(),
+               Path(lab.__file__).resolve(), ADDRESSES / 'Cargo.toml',
+               *sorted((ADDRESSES / 'src').rglob('*.rs'))]
     before = {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in sources}
     lock = LOCK.read_text()
     print(json.dumps({'starting_snapshot_sha256': before}), flush=True)
@@ -252,7 +259,8 @@ def main():
         # Normal `mod mac_update;` resolves its children under src/mac_update/.
         # An absolute #[path] would instead make `mod tests;` seek a sibling tests.rs.
         for source, target in [(MODULE, work / 'src/mac_update.rs'),
-                               (sources[1], work / 'src/mac_update/tests.rs')]:
+                               (sources[1], work / 'src/mac_update/tests.rs'),
+                               (IDENTITY, work / 'src/identity.rs')]:
             target.write_bytes(source.read_bytes())
             expected = before[str(source.relative_to(ROOT))]
             assert hashlib.sha256(target.read_bytes()).hexdigest() == expected, \
@@ -266,7 +274,8 @@ edition = "2021"
 [dependencies]
 getrandom = "=0.3.4"
 keyring = { version = "=3.6.3", features = ["apple-native"] }
-''')
+sunrise-launcher-addresses = { path = %s }
+''' % json.dumps(str(ADDRESSES)))
         (work / 'Cargo.lock').write_text(lock)
         # Resolve only, offline; reject ANY transitive version/checksum drift before compiling.
         subprocess.run(['cargo', 'metadata', '--offline', '--format-version', '1',

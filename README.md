@@ -3,9 +3,9 @@
 The launcher for [Sunrise](https://github.com/sunrise-org/sunrise): it installs, prepares and starts Sunrise builds, and
 manages instances, mods and worlds. It moved here from the game repository with its history ([CONTRIBUTING.md](CONTRIBUTING.md#history)).
 
-**Releases:** none from this repository yet. The first waits for a Sunrise Nightly whose `sunrise-prepare` has `needs`
-and an SDK release with the native build tool (`tool`), which this launcher requires. It is also published in the game
-repository as `launcher@<version>`, so launchers installed from there update to it.
+**Releases:** [published here](https://github.com/sunrise-org/sunrise-launcher/releases) as `vX.Y.Z` and signed with
+the game repository's release key. Each is also published in the game repository as `launcher@X.Y.Z`, so launchers
+installed from there update to it.
 
 Licence: [PolyForm Shield 1.0.0](LICENSE); code from Horizon is also MIT ([LICENSES/MIT-Horizon.txt](LICENSES/MIT-Horizon.txt)).
 
@@ -40,7 +40,8 @@ malicious software. No OS trust bypass is implied by a checksum signature.
 The launcher builds one identity, Sunrise Launcher's (`src/identity.rs`), and `packaging/` holds its
 installers' files as they ship. It downloads and checks the game from
 [sunrise-org/sunrise](https://github.com/sunrise-org/sunrise) and updates itself from this
-repository's releases, which are signed with this repository's own key, never the game's.
+repository's [releases](https://github.com/sunrise-org/sunrise-launcher/releases) (`vX.Y.Z`), which the game
+repository's release key signs. Older launchers update from the game repository's `launcher@X.Y.Z` copies.
 Sunrise's packages are Linux x86_64, Windows x64 and macOS Apple Silicon.
 
 A small desktop app that installs Sunrise builds, prepares them from your own copy of
@@ -56,7 +57,7 @@ The opening, then Play ([clip](docs/opening.webm)):
 
 ## What it does
 
-- **Versions**: lists the published builds of horizon-rust/horizon (the current Nightly, the last
+- **Versions**: lists the published builds of sunrise-org/sunrise (the current Nightly, the last
   week's, then the releases from before), installs the build for this platform into its own
   folder, and removes it again. **Import a game build…** takes a `sunrise-client` you have (one
   built on your fork's Actions, or the zip holding it) and installs it as `imported-<date>-<sha>`:
@@ -323,8 +324,9 @@ can still play a build already installed after the release is pruned. To install
 build, use `sunrise-launcher install dev-<date>-<commit>`. Its title and signature must both name
 the exact build. Dev is distinct from a local unsigned `developer-install`.
 
-The launcher updates itself from `vX.Y.Z` releases in its own repository, separate from the game's
-Stable, Nightly and Dev tags. Older launcher builds used `launcher@X.Y.Z`; before 0.2 they used
+The launcher updates itself from the `vX.Y.Z` releases in [this repository](https://github.com/sunrise-org/sunrise-launcher/releases),
+separate from the game's Stable, Nightly and Dev tags; older launchers update from the game repository's
+`launcher@X.Y.Z` copies of them. Older launcher builds were released as `launcher@X.Y.Z`; before 0.2 they used
 `launcher-vX.Y.Z` and `vYYYY.MM.DD`:
 every 0.2 tag counts as newer than all of those (docs/versioning.md). It downloads the new build, checks it
 against the release's signed `SHA256SUMS`, and says "A new version is available" in the sidebar with
@@ -365,7 +367,8 @@ so raising that version is the first step of a release (`tools/release_notes.py 
 that is tagged already). It builds and checks every platform the launcher ships for
 (`python3 tools/launcher_build_matrix.py` lists them, `--assets` the files) and leaves an unsigned
 draft; by default, or off main, it is a dry run that leaves nothing, and a real run also needs the
-repository variable `LAUNCHER_RELEASES=on`. sunrise-org/sunrise's `launcher-bridge.yml` then signs
+repository variable `LAUNCHER_RELEASES=on`. Creating the draft doesn't sign or publish it: a
+maintainer then starts sunrise-org/sunrise's `launcher-bridge.yml` separately, with dry run off, which signs
 the draft with the game repository's release key and publishes it here as `vX.Y.Z` and there as
 `launcher@X.Y.Z`, so launchers installed from the game repository update too. The notes list the
 merged pull requests, `feature` ones first and `skip-release` ones left out. The version is built in
@@ -593,7 +596,7 @@ on an interactive Windows desktop with a graphics adapter.
 
 On NixOS, `nix-shell` in this folder provides the libraries GPUI links to (Wayland, X11,
 xkbcommon, Vulkan, fontconfig) and the ALSA and libudev files a native mod build looks up, so
-start the launcher from that shell to build native mods as well ([sunrise-org/sunrise#5248](https://github.com/sunrise-org/sunrise/issues/5248)). macOS needs Xcode's
+start the launcher from that shell to build native mods as well ([horizon-rust/horizon#5248](https://github.com/horizon-rust/horizon/issues/5248)). macOS needs Xcode's
 command line tools.
 
 CI (`.github/workflows/ci.yml`) runs `format` on every pull request. Pull requests from this
@@ -603,7 +606,8 @@ A fork's pull request gets them when a maintainer runs
 `gh workflow run ci.yml --ref main -f pr=<number>`, which posts `build` on it. The `daily` workflow
 compares the game copies with Sunrise's main ([CONTRIBUTING.md](CONTRIBUTING.md#copies-of-game-files)) and
 runs the ignored tests, except those in `tools/ci/manual-tests.txt`. Release builds also check
-that the binaries import only system libraries and start (`versions`, `links --json`).
+that the binaries start (`versions`, `links --json`) on every platform, and on Windows and macOS
+that they import only system libraries.
 
     cargo test --lib    # tag separation, version order, update selection, notes as text,
                         # the auto-install default, the links fallback
