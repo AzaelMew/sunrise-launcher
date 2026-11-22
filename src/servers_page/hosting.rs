@@ -413,8 +413,12 @@ impl Launcher {
                 this.stop_server()
             })
         } else {
+            // Only a server the engine reported stopped: an unknown status (not polled yet, or a
+            // failed poll) may be a server started elsewhere, which Start would claim as this
+            // launcher's and stop when it quits.
+            let stopped = status.phase == "stopped";
             primary(
-                self.host_button("host-start", tr("Start"), idle, cx, |this, _| {
+                self.host_button("host-start", tr("Start"), idle && stopped, cx, |this, _| {
                     this.start_server()
                 }),
             )
