@@ -128,19 +128,8 @@ impl SourceIcon {
         let target = github
             .cache
             .join(format!("icon-{}.png", digest(key.as_bytes())));
-        let cached = (|| {
-            let file = fs::File::open(&target).ok()?;
-            let fresh = !mutable
-                || file
-                    .metadata()
-                    .ok()?
-                    .modified()
-                    .ok()?
-                    .elapsed()
-                    .is_ok_and(|age| age < FRESH);
-            Icon::parse(bounded(file, MAX_ICON as u64).ok()?).ok()?;
-            Some(fresh)
-        })();
+        let cached = cached_bytes(&target, MAX_ICON as u64)
+            .and_then(|(bytes, fresh)| Icon::parse(bytes).ok().map(|_| !mutable || fresh));
         if !self.allow_fetch || cached == Some(true) {
             return cached.map(|_| target);
         }

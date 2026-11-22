@@ -18,7 +18,8 @@ mod readme;
 pub(crate) use github::fixture_link_api;
 pub(crate) use github::{branch_ahead, github_archive, pasted_source};
 pub use github::{
-    details, resolve, resolve_batch, Details, Failure, IconMisses, SourceCommit, SourceIcon,
+    branch_metadata, details, resolve, resolve_batch, Details, Failure, IconMisses, SourceCommit,
+    SourceIcon, SourceMetadata,
 };
 pub use readme::{readme_image, Readme, ReadmeImage};
 
@@ -35,7 +36,7 @@ const FRESH: Duration = Duration::from_secs(600);
 const MAX_CATALOG: u64 = 2 << 20;
 
 /// A validated listing. Its tracker is a hint for discovery, not evidence of fit or authority.
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Hash)]
 #[serde(try_from = "WireSource")]
 pub struct Source {
     id: String,

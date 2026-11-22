@@ -3314,6 +3314,7 @@ pub fn server(tag: &str, folder: &Path, accept_eula: bool) -> Result<Command, St
 }
 
 mod release_selection;
+pub use release_selection::build_revision;
 pub(crate) use release_selection::WorldBuildOrder;
 
 /// One release's notes: the tag given, or the newest.

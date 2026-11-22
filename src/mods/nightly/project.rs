@@ -46,24 +46,7 @@ impl Launcher {
                 cx.notify();
             }))
         };
-        let worked = commit.is_some_and(|pin| {
-            self.ui.mods.snapshot.as_ref().is_some_and(|snapshot| {
-                snapshot
-                    .rows
-                    .local
-                    .iter()
-                    .filter_map(|local| local.github.as_ref())
-                    .any(|origin| {
-                        origin.id == source.id()
-                            && origin.commit == pin.sha()
-                            && origin
-                                .source
-                                .as_ref()
-                                .is_some_and(|receipt| receipt.repo_id == source.repo_id())
-                            && origin.owner.eq_ignore_ascii_case(source.owner())
-                    })
-            })
-        });
+        let worked = commit.is_some_and(|pin| self.nightly_installed(pin));
         let build_label = if let Some(activity) = current.as_ref() {
             if activity.progress == sunrise::InstallProgress::Publishing {
                 tr("Finishing…").into()
@@ -85,14 +68,7 @@ impl Launcher {
             .as_ref()
             .is_some_and(|list| list.sources.contains(source));
         let can_build = !offline && listed && inspection.is_some_and(|i| i.candidate.is_ok());
-        let busy = self.mutating()
-            || self.mods_locked().is_some()
-            || self
-                .ui
-                .mods
-                .snapshot
-                .as_ref()
-                .is_none_or(|snap| !snap.ready());
+        let busy = self.nightly_busy();
         let build = if busy || worked {
             dim(build)
         } else if can_build {
@@ -153,6 +129,11 @@ impl Launcher {
             && details
                 .and_then(|details| details.error.as_ref())
                 .is_none_or(|error| *error == sources::Failure::NoManifest);
+        let badge = made_for_build(
+            self.nightly_build_revision().as_deref(),
+            details.and_then(|detail| detail.build_pin.as_deref()),
+        )
+        .then(|| div().flex().child(badge(tr("Made for this build"))));
         let title = div()
             .flex()
             .items_center()
@@ -172,7 +153,8 @@ impl Launcher {
                             .font_weight(FontWeight::BOLD)
                             .child(crate::selectable::selectable(source.name().to_owned())),
                     )
-                    .child(muted(source.repo().to_owned())),
+                    .child(muted(source.repo().to_owned()))
+                    .children(badge),
             );
         let panel = card()
             .p(px(14.))

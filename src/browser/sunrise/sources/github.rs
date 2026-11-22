@@ -118,6 +118,8 @@ impl SourceCommit {
 pub struct Details {
     pub commit: Option<SourceCommit>,
     pub readme: Option<readme::Readme>,
+    /// The `[native]` Sunrise build pinned by this exact source commit.
+    pub build_pin: Option<String>,
     /// A saved commit and README can still be shown, but cannot authorize a new build.
     pub error: Option<Failure>,
 }
@@ -133,7 +135,7 @@ struct Lookup {
 pub(super) struct State {
     backoff: HashMap<PathBuf, (SystemTime, Option<SystemTime>)>,
     resolves: HashMap<PathBuf, Lookup>,
-    manifests: HashMap<(PathBuf, String, String), bool>,
+    manifests: HashMap<(PathBuf, String, String), Option<String>>,
     missing_readmes: HashSet<(PathBuf, String)>,
 }
 
@@ -585,24 +587,69 @@ impl Github {
         lookup
     }
 
-    fn manifest(&self, state: &mut State, source: &Source, sha: &str) -> Result<(), Failure> {
+    fn manifest(
+        &self,
+        state: &mut State,
+        source: &Source,
+        sha: &str,
+        allow_fetch: bool,
+    ) -> Result<String, Failure> {
         let key = (
             self.cache.clone(),
             format!("{}/{sha}/{}", source.repo(), source.manifest()),
             source.id().to_owned(),
         );
-        if let Some(&found) = state.manifests.get(&key) {
-            return found.then_some(()).ok_or(Failure::NoManifest);
+        if let Some(found) = state.manifests.get(&key) {
+            return found.clone().ok_or(Failure::NoManifest);
         }
-        let found = match self.raw(state, source.repo(), sha, source.manifest(), MAX_MANIFEST)? {
-            Some(bytes) => std::str::from_utf8(&bytes)
-                .ok()
-                .and_then(|text| Manifest::parse(text).ok())
-                .is_some_and(|m| m.id == source.id() && m.native.is_some()),
-            None => false,
+        if !allow_fetch {
+            return Err(Failure::NoManifest);
+        }
+        let found = self
+            .raw(state, source.repo(), sha, source.manifest(), MAX_MANIFEST)?
+            .and_then(|bytes| {
+                source_manifest(source, &bytes)?
+                    .native
+                    .map(|native| native.sunrise)
+            });
+        state.manifests.insert(key, found.clone());
+        found.ok_or(Failure::NoManifest)
+    }
+
+    fn branch_metadata(&self, source: &Source, allow_fetch: bool) -> Option<SourceMetadata> {
+        let Tracker::Branch(branch) = source.tracker() else {
+            return None;
         };
-        state.manifests.insert(key, found);
-        found.then_some(()).ok_or(Failure::NoManifest)
+        let repo = source.repo();
+        let path = source.manifest();
+        let key = digest(format!("{repo}\0{branch}\0{path}").as_bytes());
+        let target = self.cache.join(format!("manifest-{key}.toml"));
+        let cached = cached_bytes(&target, MAX_MANIFEST).and_then(|(bytes, fresh)| {
+            source_manifest(source, &bytes).map(|manifest| (manifest, fresh))
+        });
+        let manifest = match cached {
+            Some((manifest, true)) => manifest,
+            saved if !allow_fetch => saved?.0,
+            saved => match self.raw(
+                &mut State::default(),
+                repo,
+                &format!("refs/heads/{branch}"),
+                path,
+                MAX_MANIFEST,
+            ) {
+                Ok(Some(bytes)) => {
+                    let manifest = source_manifest(source, &bytes)?;
+                    let _ = self.save(&target, &bytes);
+                    manifest
+                }
+                Ok(None) => return None,
+                Err(_) => saved?.0,
+            },
+        };
+        Some(SourceMetadata {
+            authors: manifest.authors,
+            build_pin: manifest.native.map(|native| native.sunrise),
+        })
     }
 
     fn readme(
@@ -639,6 +686,32 @@ impl Github {
         state.missing_readmes.insert(key);
         Ok(None)
     }
+}
+
+/// Display metadata, separate from the pinned inspection that authorizes a build.
+pub struct SourceMetadata {
+    pub authors: Vec<String>,
+    pub build_pin: Option<String>,
+}
+
+pub fn branch_metadata(source: &Source, allow_fetch: bool) -> Option<SourceMetadata> {
+    Github::current().branch_metadata(source, allow_fetch)
+}
+
+fn source_manifest(source: &Source, bytes: &[u8]) -> Option<Manifest> {
+    let manifest = Manifest::parse(std::str::from_utf8(bytes).ok()?).ok()?;
+    (manifest.id == source.id()).then_some(manifest)
+}
+
+fn cached_bytes(path: &Path, max: u64) -> Option<(Vec<u8>, bool)> {
+    let file = fs::File::open(path).ok()?;
+    let fresh = file
+        .metadata()
+        .and_then(|metadata| metadata.modified())
+        .ok()
+        .and_then(|time| time.elapsed().ok())
+        .is_some_and(|age| age < FRESH);
+    Some((bounded(file, max).ok()?, fresh))
 }
 
 fn other(error: impl std::fmt::Display) -> Failure {
@@ -688,15 +761,24 @@ fn inspect(
         return Details {
             commit: None,
             readme: None,
+            build_pin: None,
             error: failure,
         };
     };
-    if failure.is_none() {
-        failure = github
+    let build_pin = if failure.is_none() {
+        match github
             .ready(&mut state, SystemTime::now())
-            .and_then(|()| github.manifest(&mut state, source, &pin.sha))
-            .err();
-    }
+            .and_then(|()| github.manifest(&mut state, source, &pin.sha, true))
+        {
+            Ok(build_pin) => Some(build_pin),
+            Err(error) => {
+                failure = Some(error);
+                None
+            }
+        }
+    } else {
+        github.manifest(&mut state, source, &pin.sha, false).ok()
+    };
     let readme = if include_readme {
         // Never make extra requests from a saved ref. A missing/invalid manifest is different:
         // the commit is current and its README can still be read.
@@ -724,6 +806,7 @@ fn inspect(
             github_url,
         }),
         readme,
+        build_pin,
         error: failure,
     }
 }

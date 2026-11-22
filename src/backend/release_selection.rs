@@ -66,6 +66,28 @@ pub(super) fn by_tag<'a>(releases: &'a [Release], tag: &str) -> Option<&'a Relea
         .find(|release| release.tag == tag || release.nightly.as_deref() == Some(tag))
 }
 
+/// Best local commit identity for a Nightly or Dev build. Without installed facts, the
+/// version tag supplies only its validated prefix. This is for display, not admission.
+pub fn build_revision(tag: &str) -> Option<String> {
+    build_revision_in(&super::versions_dir(), tag)
+}
+
+fn build_revision_in(versions: &std::path::Path, tag: &str) -> Option<String> {
+    let channel = Channel::of(tag)?;
+    if !sunrise_launcher_release_verify::is_build(channel, tag) {
+        return None;
+    }
+    let (_, prefix) = tag.rsplit_once('-')?;
+    Some(if full_commit(prefix) {
+        prefix.to_owned()
+    } else {
+        std::fs::read(versions.join(tag).join(RELEASE_FILE))
+            .ok()
+            .and_then(|bytes| SignedIdentity::decode(tag, &bytes))
+            .map_or_else(|| prefix.to_owned(), |facts| facts.commit)
+    })
+}
+
 /// The signed build name covers the UTC build day, not a mutable GitHub publication time.
 struct SignedIdentity {
     commit: String,
@@ -218,6 +240,27 @@ fn world_order_releases(list: &[serde_json::Value]) -> Vec<Release> {
 mod tests {
     use super::*;
     use crate::backend::game_releases_with;
+
+    #[test]
+    fn build_revision_prefers_saved_full_facts_to_the_validated_tag_prefix() {
+        let versions = tempfile::tempdir().unwrap();
+        let tag = "nightly-2026-11-20-9425651";
+        let commit = format!("9425651{}", "a".repeat(33));
+        assert_eq!(
+            build_revision_in(versions.path(), tag).as_deref(),
+            Some("9425651")
+        );
+        assert!(build_revision_in(versions.path(), "nightly-2026-11-20-942565").is_none());
+        assert!(build_revision_in(versions.path(), "nightly-2026-11-20").is_none());
+        let dir = versions.path().join(tag);
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::write(
+            dir.join(RELEASE_FILE),
+            serde_json::json!({"contract": 1, "build": tag, "commit": commit}).to_string(),
+        )
+        .unwrap();
+        assert_eq!(build_revision_in(versions.path(), tag), Some(commit));
+    }
 
     #[test]
     fn a_world_saved_by_dev_gets_signed_order_against_a_nightly_target() {
