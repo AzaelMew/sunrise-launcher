@@ -21,6 +21,10 @@ pub struct Pins {
 }
 
 impl Pins {
+    pub(crate) fn version_in(lock: &Value) -> Option<&str> {
+        crate::browser::safe_name(lock["minecraft"]["version"].as_str()?)
+    }
+
     pub fn read(lock: &Value) -> Option<Pins> {
         let game = &lock["minecraft"];
         let text = |key: &str| game[key].as_str().map(String::from);
@@ -29,7 +33,7 @@ impl Pins {
             manifests.extend(list.iter().filter_map(Value::as_str).map(String::from));
         }
         Some(Pins {
-            version: text("version")?,
+            version: Self::version_in(lock)?.to_owned(),
             client_sha1: text("client_sha1")?,
             manifests,
         })

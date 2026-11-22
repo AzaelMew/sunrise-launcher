@@ -1449,9 +1449,7 @@ fn game_version_at(dir: &Path) -> String {
 }
 
 fn locked_game(dir: &Path) -> Option<String> {
-    read_json(&dir.join("research-lock.json"))?["minecraft"]["version"]
-        .as_str()
-        .map(String::from)
+    crate::sources::Pins::version_in(&read_json(&dir.join("research-lock.json"))?).map(String::from)
 }
 
 /// The Minecraft version played when no installed build says (the game's `VERSION_ID`).
@@ -2083,8 +2081,8 @@ fn complete_reports(versions: &Path, tag: &str) -> bool {
         static COPIES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let n = COPIES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let partial = to.join(format!(".{name}.partial-{}-{n}", std::process::id()));
-        let copied = fs::copy(&from, &partial)
-            .and_then(|_| Resources::invalidate(&target))
+        let copied = Resources::invalidate(&target)
+            .and_then(|_| fs::copy(&from, &partial))
             .and_then(|_| fs::rename(&partial, to.join(name)));
         if copied.is_err() {
             let _ = fs::remove_file(&partial);
@@ -2196,16 +2194,14 @@ fn complete_assets_in(
     if tried.contains(&root) {
         return;
     }
+    if let Err(error) = Resources::invalidate(&root) {
+        return log(format!("{tag}: {error}"));
+    }
     tried.push(root.clone());
     let kinds: Vec<String> = lacking.iter().map(|(kind, _)| kind.clone()).collect();
     match crate::preparer::add_extras(&binary, &root, &resources, &kinds, &folders(), log, handoff)
     {
         Ok(Some(added)) => {
-            if !added.added.is_empty() {
-                if let Err(error) = Resources::invalidate(&root) {
-                    log(format!("{tag}: {error}"));
-                }
-            }
             for (kind, error) in added.failed {
                 let what = lacking
                     .iter()
@@ -2659,6 +2655,8 @@ pub(crate) fn preparer_staged(
         cmd.args(["--prepare", "--server-jar"]).arg(&jar);
     }
     cmd.arg("--minecraft-dir").arg(&minecraft);
+    // This also precedes the sounds pass shared by GUI, CLI and staged Prepare.
+    Resources::invalidate(&dir).map_err(|e| e.to_string())?;
     Ok((cmd, minecraft))
 }
 
@@ -7467,7 +7465,70 @@ esac"#
             );
         }
         assert!(lines.borrow().is_empty(), "{:?}", lines.borrow());
+
+        // An interrupted writer can change the preparation before it reports what it added.
+        let interrupted = version(
+            "interrupted",
+            true,
+            &format!(
+                r#"case "$1" in
+missing-extras) printf '%s\n' '{lacking}' ;;
+extras) test ! -e .local/launcher-prepared/current.json || exit 2
+        printf changed > "$6/writer-proof"; exit 1 ;;
+esac"#
+            ),
+        );
+        let store = interrupted.join(".local/launcher-prepared");
+        let snapshot = store.join("0".repeat(64)).join("resources");
+        fs::create_dir_all(&snapshot).unwrap();
+        fs::write(snapshot.join("writer-proof"), b"original").unwrap();
+        let receipt = store.join("current.json");
+        let before = serde_json::json!({"primary": vec![0; 32], "accelerator": null});
+        fs::write(&receipt, before.to_string()).unwrap();
+        let preparation = prepare_lock_at(&interrupted, "interrupted").unwrap();
+        complete_assets_in(
+            &versions,
+            "interrupted",
+            folders,
+            &log,
+            Some(&preparation.handoff(None)),
+        );
+        assert!(!receipt.exists());
+        assert_eq!(
+            fs::read(resources_at(&interrupted).join("writer-proof")).unwrap(),
+            b"changed"
+        );
+        assert_eq!(
+            fs::read(snapshot.join("writer-proof")).unwrap(),
+            b"original"
+        );
+        drop(preparation);
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_research_pin_can_only_name_one_prepared_version_component() {
+        let dir = tempfile::tempdir().unwrap();
+        let pin = dir.path().join("research-lock.json");
+        for version in [
+            "..",
+            "../prepared",
+            "/prepared",
+            "a/b",
+            "a\\b",
+            "C:prepared",
+        ] {
+            fs::write(
+                &pin,
+                serde_json::json!({"minecraft": {"version": version}}).to_string(),
+            )
+            .unwrap();
+            assert_eq!(locked_game(dir.path()), None);
+            assert_eq!(
+                resources_at(dir.path()),
+                dir.path().join(".local/sunrise-client").join(PINNED_GAME)
+            );
+        }
     }
 
     #[test]

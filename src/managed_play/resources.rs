@@ -35,7 +35,9 @@ impl Resources {
     }
 
     fn current(root: &Path) -> Result<Option<Self>, String> {
-        Ok(optional_bytes(&receipt(root)?)?.and_then(|bytes| serde_json::from_slice(&bytes).ok()))
+        Ok(optional_bytes(&receipt(root)?)?
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .filter(|resources: &Self| resources.path_at(root).is_dir()))
     }
 
     /// Finish the shared preparation under its existing lock, before a profile needs it.
@@ -64,16 +66,15 @@ impl Resources {
     }
 
     pub(crate) fn invalidate(root: &Path) -> io::Result<()> {
-        match fs::remove_file(receipt(root).map_err(io::Error::other)?) {
-            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
-            result => result,
-        }
+        durable::retire(&receipt(root).map_err(io::Error::other)?)
     }
 
     pub(super) fn path(&self, base: &str) -> PathBuf {
-        parent(&backend::version_dir(base))
-            .join(key(self.primary))
-            .join("resources")
+        self.path_at(&backend::version_dir(base))
+    }
+
+    fn path_at(&self, root: &Path) -> PathBuf {
+        parent(root).join(key(self.primary)).join("resources")
     }
 
     pub(super) fn verify(&self, base: &str) -> Result<(), String> {
@@ -110,6 +111,14 @@ impl Resources {
         source: &Path,
         accelerator: impl FnOnce(&Path) -> Option<[u8; 32]>,
     ) -> Result<Self, String> {
+        let relative = source.strip_prefix(root).map_err(|_| setup_error(source))?;
+        if relative.as_os_str().is_empty()
+            || relative
+                .components()
+                .any(|part| !matches!(part, std::path::Component::Normal(_)))
+        {
+            return Err(setup_error(source));
+        }
         for ancestor in source.ancestors().take_while(|path| *path != root) {
             require_dir(ancestor)?;
         }
@@ -121,9 +130,13 @@ impl Resources {
         fs::create_dir_all(&parent).map_err(|e| at(&parent, e))?;
         require_dir(&parent)?;
         let snapshot = parent.join(key(primary));
+        let resources = snapshot.join("resources");
         let evidence = snapshot.join(EVIDENCE);
-        let accelerator = if snapshot.exists() {
+        let exists = snapshot.exists();
+        if exists {
             require_dir(&snapshot)?;
+        }
+        let accelerator = if resources.is_dir() {
             optional_bytes(&evidence)?.and_then(|bytes| serde_json::from_slice(&bytes).ok())
         } else {
             // A move from .local flushes both directories, including the new store's entry.
@@ -134,8 +147,13 @@ impl Resources {
             let candidate = stage.path().join("resources");
             copy_tree(source, &candidate, true, 0)?;
             durable::flush_tree(&candidate).map_err(|e| at(&candidate, e))?;
-            durable::move_new_directory(stage.path(), &snapshot).map_err(|e| at(&snapshot, e))?;
-            let digest = accelerator(&snapshot.join("resources"));
+            let (from, to) = if exists {
+                (candidate.as_path(), &resources)
+            } else {
+                (stage.path(), &snapshot)
+            };
+            durable::move_new_directory(from, to).map_err(|e| at(to, e))?;
+            let digest = accelerator(&resources);
             if let Some(digest) = digest {
                 write_receipt(&evidence, &digest)?;
             }
@@ -230,6 +248,37 @@ fn at(path: &Path, error: io::Error) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cannot_seal_a_prepared_tree_outside_the_install() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("version");
+        let source = temp.path().join("prepared");
+        fs::create_dir_all(root.join(".local")).unwrap();
+        fs::create_dir(&source).unwrap();
+        fs::write(source.join("sunrise-resources.json"), "{}").unwrap();
+        for source in [source, root.join("../prepared")] {
+            assert!(Resources::seal(&root, &source, |_| None).is_err());
+        }
+        assert!(!parent(&root).exists());
+    }
+
+    #[test]
+    fn missing_snapshot_uses_the_same_seal_path_as_first_preparation() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let source = root.join(".local/prepared");
+        fs::create_dir_all(&source).unwrap();
+        fs::write(source.join("sunrise-resources.json"), "{}").unwrap();
+        let prepared = Resources::seal(root, &source, |_| None).unwrap();
+        let path = prepared.path_at(root);
+        for missing in [&path, path.parent().unwrap()] {
+            fs::remove_dir_all(missing).unwrap();
+            assert_eq!(Resources::current(root).unwrap(), None);
+            assert_eq!(Resources::seal(root, &source, |_| None).unwrap(), prepared);
+            assert_eq!(Resources::current(root).unwrap().as_ref(), Some(&prepared));
+        }
+    }
 
     #[test]
     fn prepared_snapshot_does_not_read_a_cache_from_a_different_tree() {

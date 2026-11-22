@@ -225,7 +225,7 @@ pub(super) fn replace_at(
     }
 }
 
-pub(super) fn retire(record: &Path) -> io::Result<()> {
+pub(crate) fn retire(record: &Path) -> io::Result<()> {
     #[cfg(not(windows))]
     {
         // On macOS the device flush after the directory sync uses the still-open file.
