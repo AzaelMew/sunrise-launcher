@@ -738,6 +738,7 @@ mod tests {
             commit: pin,
             asset: None,
             source: None,
+            added_from: None,
             sha256: sunrise_launcher_smod::index::sha256_file(
                 &home.join(native_mods::INSTALLED).join("github.smod"),
             )

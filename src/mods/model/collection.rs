@@ -9,12 +9,12 @@ use sunrise_launcher_smod::index::resolve::{self, InstallPlan, InstalledMod, Req
 use sunrise_launcher_smod::index::{Collection, Index};
 use sunrise_launcher_smod::manifest::Side;
 
-/// The first collection that lists each member, by name: what a member's card says it is part of.
-pub(in crate::mods) fn part_of(index: &Index) -> HashMap<&str, &str> {
+/// The first collection that lists each member.
+pub(in crate::mods) fn part_of(index: &Index) -> HashMap<&str, &Collection> {
     let mut of = HashMap::new();
     for c in &index.collections {
         for m in &c.members {
-            of.entry(m.id.as_str()).or_insert(c.name.as_str());
+            of.entry(m.id.as_str()).or_insert(c);
         }
     }
     of

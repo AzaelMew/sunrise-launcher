@@ -82,10 +82,10 @@ impl Launcher {
             checked: None,
             checking_updates: false,
             launcher_checked_now: None,
-            launcher_notice_hidden: false,
             // The installer the last Update started could not put the new launcher in place.
             self_update: sunrise_launcher::update_handoff::take_failure()
                 .map_or(SelfUpdate::Idle, |e| SelfUpdate::Stuck(Some(e))),
+            restart_for_launcher_update: false,
             architecture_reinstall: None,
             instance_install: None,
             install_next: None,
@@ -155,6 +155,7 @@ impl Launcher {
             log_revision: 0,
             prepare_error: None,
             client: None,
+            finishing_game: 0,
             client_error: None,
             play_admission: None,
             play_retry: None,
@@ -408,47 +409,6 @@ impl Launcher {
 
     pub(crate) fn launcher_download_available(&self) -> bool {
         !backend::package_managed_launcher()
-    }
-
-    pub(crate) fn update_launcher(&mut self, release: Release) {
-        if !backend::self_update_allowed()
-            || matches!(
-                self.self_update,
-                SelfUpdate::Downloading(..) | SelfUpdate::Ready(_) | SelfUpdate::Stuck(_)
-            )
-        {
-            return;
-        }
-        if backend::cannot_replace_itself() {
-            self.self_update = SelfUpdate::Stuck(None);
-            return;
-        }
-        let version = backend::launcher_version(&release.tag)
-            .unwrap_or_default()
-            .to_string();
-        self.self_update = SelfUpdate::Downloading(version, 0.);
-        let tx = self.tx.clone();
-        std::thread::spawn(move || {
-            let progress = |p| {
-                let _ = tx.send(Msg::LauncherProgress(p));
-            };
-            let _ = tx.send(Msg::LauncherUpdated(backend::stage_update(
-                &release, progress,
-            )));
-        });
-    }
-
-    /// Update: the window closes, the installer puts the new launcher in place and starts it.
-    /// When another launcher already put it there, this one only restarts.
-    pub(crate) fn apply_launcher_update(&mut self, cx: &mut App) {
-        match sunrise_launcher::update_handoff::start_now() {
-            Ok(true) => {
-                servers_page::keep_running_through_update();
-                shut_down(cx)
-            }
-            Ok(false) => self.self_update = SelfUpdate::Failed(backend::restart()),
-            Err(e) => self.self_update = SelfUpdate::Failed(e),
-        }
     }
 
     /// What installed native build `version` was made from (`native_status::Build`), read once.

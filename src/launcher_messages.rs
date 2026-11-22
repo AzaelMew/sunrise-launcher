@@ -247,6 +247,7 @@ impl Launcher {
                     }
                 }
                 Msg::PlayRecorded => self.reload_instances(),
+                Msg::GameExitSettled => self.finishing_game -= 1,
                 Msg::PlayAdmission(home, result) => {
                     let Some(intent) = self.play_admission.take() else {
                         continue;
@@ -404,29 +405,17 @@ impl Launcher {
                 Msg::Updates(updates) => {
                     self.checking_updates = false;
                     self.launcher_checked_now = None;
-                    if let Some(error) = &updates.launcher_error {
-                        settings::log_launcher_check_failure(error, |line| eprintln!("{line}"));
-                    }
-                    self.updates = *updates;
-                    if let Some(release) = self.updates.launcher.clone() {
-                        self.update_launcher(release);
-                    }
+                    let updates = *updates;
+                    self.updates.sunrise = updates.sunrise;
+                    self.updates.sunrise_error = updates.sunrise_error;
+                    self.note_launcher_check(
+                        updates.launcher_error.map_or(Ok(updates.launcher), Err),
+                    );
                 }
                 Msg::LauncherChecked(result) => {
                     self.checking_updates = false;
                     self.launcher_checked_now = result.is_ok().then(Instant::now);
-                    match *result {
-                        Ok(release) => {
-                            self.updates.launcher = release;
-                            self.updates.launcher_error = None;
-                        }
-                        Err(error) => {
-                            settings::log_launcher_check_failure(&error, |line| {
-                                eprintln!("{line}")
-                            });
-                            self.updates.launcher_error = Some(error)
-                        }
-                    }
+                    self.note_launcher_check(*result);
                 }
                 Msg::NativeConsentRead(read, inputs) => {
                     if let Some(pending) = &mut self.pending_consent {
@@ -453,6 +442,10 @@ impl Launcher {
                     // have been picked, or its version changed, meanwhile).
                     let wanted = self.play_after_build.take();
                     let cancelled = matches!(&result, Err(native_mods::Failed::Other(error)) if error == native_mods::CANCELLED);
+                    // Keep the window and its diagnostic when a build needs the player's attention.
+                    if result.is_err() && !cancelled {
+                        self.cancel_launcher_restart();
+                    }
                     self.refresh_installed();
                     self.reload_instances();
                     // No permission: the question is the answer, not the refusal's words.
@@ -519,19 +512,7 @@ impl Launcher {
                         *f = p;
                     }
                 }
-                Msg::LauncherUpdated(result) => {
-                    let version = match &self.self_update {
-                        SelfUpdate::Downloading(v, _) => v.clone(),
-                        _ => String::new(),
-                    };
-                    self.self_update = match result {
-                        Ok(staged) => {
-                            sunrise_launcher::update_handoff::set_pending(staged);
-                            SelfUpdate::Ready(version)
-                        }
-                        Err(e) => SelfUpdate::Failed(e),
-                    };
-                }
+                Msg::LauncherUpdated(result) => self.launcher_update_finished(result),
                 // Old versions log their session; it never reaches the window.
                 Msg::Line(_, line) if line.contains("Session ID is") => {}
                 Msg::Line(job, line) => {
@@ -552,6 +533,7 @@ impl Launcher {
                     }
                 }
                 Msg::ClientObservationLost(error) => {
+                    self.cancel_launcher_restart();
                     self.client = None;
                     self.client_run = None;
                     self.client_started = None;
@@ -603,6 +585,7 @@ impl Launcher {
                             self.game_packs.stale();
                             let mut other_profile = None;
                             if let Some((played, started)) = self.client_run.take() {
+                                self.finishing_game += 1;
                                 if self.selected_instance().is_some_and(|selected| {
                                     selected.id != played.id
                                         || selected.incarnation != played.incarnation
@@ -631,6 +614,7 @@ impl Launcher {
                                         );
                                         let _ = tx.send(Msg::PlayRecorded);
                                     }
+                                    let _ = tx.send(Msg::GameExitSettled);
                                 });
                             }
                             // The run's own game folder: an instance's or a pack's keeps its reports.
@@ -639,6 +623,10 @@ impl Launcher {
                                 .client_started
                                 .take()
                                 .and_then(|since| backend::crash_report_since(&home, since));
+                            // Don't restart over a crash report (even if the download is still running).
+                            if error.is_some() || report.is_some() {
+                                self.cancel_launcher_restart();
+                            }
                             let switched = if error.is_some() && report.is_none() {
                                 self.switched_from_vulkan()
                             } else {
@@ -725,6 +713,7 @@ impl Launcher {
             self.check_updates(UpdateCheck::Scheduled);
             changed = true;
         }
+        self.restart_launcher_if_ready(cx);
         if changed {
             cx.notify();
         }

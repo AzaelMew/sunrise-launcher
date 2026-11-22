@@ -487,6 +487,8 @@ impl Launcher {
                     })),
             );
         }
+        let update = self.launcher_update_control(cx);
+        let compact_account = self.window_width < 970. && update.is_some();
         div()
             .flex()
             .flex_none()
@@ -506,7 +508,8 @@ impl Launcher {
                     .items_center()
                     .gap(px(10.))
                     .child(self.search_button(cx))
-                    .child(self.account_chip(cx)),
+                    .children(update)
+                    .child(self.account_chip(compact_account, cx)),
             )
     }
 

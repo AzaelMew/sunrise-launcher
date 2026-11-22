@@ -63,7 +63,10 @@ impl Launcher {
             || self.registry_stage().is_some()
             || !self.auth_busy.is_empty()
             || (self.sign_in.is_some() && !matches!(self.sign_in_state, Some(SignInState::Done(_))))
-            || matches!(self.self_update, SelfUpdate::Downloading(..))
+            || matches!(
+                self.self_update,
+                SelfUpdate::Downloading(..) | SelfUpdate::Discarding
+            )
             || self.servers.location_busy()
             || self.github.busy()
             || self.instances.dialog.as_ref().is_some_and(|d| d.busy)

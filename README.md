@@ -336,19 +336,24 @@ The launcher updates itself from the `vX.Y.Z` releases in [this repository](http
 separate from the game's Stable, Nightly and Dev tags; older launchers update from the game repository's
 `launcher@X.Y.Z` copies of them. Older launcher builds were released as `launcher@X.Y.Z`; before 0.2 they used
 `launcher-vX.Y.Z` and `vYYYY.MM.DD`:
-every 0.2 tag counts as newer than all of those (docs/versioning.md). It downloads the new build, checks it
-against the release's signed `SHA256SUMS`, and says "A new version is available" in the sidebar with
-**Update**: the window closes, the launcher's own file runs again as the installer (`apply-update`,
-`src/update_handoff.rs`), which waits for the window's process to exit, puts the new launcher in place (the
-binary, the `.app` bundle or the AppImage) and starts it. Nothing goes in without **Update**: closing the window
-drops a downloaded update, and the next start checks again. When the installer can't put it in place, the old
-launcher starts again and says why. Each process stages in its own folder, and the installer checks the signed
-SHA-256 again before anything goes in; when the launcher in place is already that version or newer, it changes
-nothing. Servers keep running through **Update**. A copy that can't replace itself says so at once and offers
-**Download again** (the website's install page): one in a read-only folder (the disk image, or the read-only copy
-macOS runs a downloaded app from until it is moved to Applications), or on Windows one running from the temporary
-folder, as a program opened inside a `.zip` does. `sunrise-launcher update` replaces it at once. Development builds and
-`SUNRISE_LAUNCHER_NO_SELF_UPDATE=1` never replace themselves.
+every 0.2 tag counts as newer than all of those (docs/versioning.md).
+
+A newer signed release puts **Update to …** beside the account chip on every page. **What's new** shows a short
+summary and links to the full release notes. **Hide for this version** leaves a dot there until a different version
+is available. The same update action is in **Settings → Launcher**. Pressing Update downloads the release, verifies it
+against the signed `SHA256SUMS` and restarts the launcher. If you're playing or the launcher is writing data, such as
+creating a server or importing a build, it waits until the game or task finishes. You can cancel the queued restart.
+Dedicated servers that are already running stay up.
+
+The launcher's own file runs again as the installer (`apply-update`, `src/update_handoff.rs`). It waits for the
+window's process to exit, checks the signed SHA-256 again, replaces the binary, `.app` bundle or AppImage, and starts
+it. If another process already installed that version or a newer one, it only restarts. If installation fails, the old
+launcher starts again and says why. Closing the window drops a downloaded update without installing it.
+
+A copy that can't replace itself says how to update. This includes package-managed installs, read-only folders such
+as a disk image, and Windows launchers opened inside a `.zip` instead of unpacked. Development builds and builds run
+with `SUNRISE_LAUNCHER_NO_SELF_UPDATE=1` still show release information but never replace themselves.
+`sunrise-launcher update` replaces a self-updating copy at once.
 
 On Linux the release also comes as an AppImage, `sunrise-launcher-linux-x86_64.AppImage`: one file
 to download, make executable and run, with no installation and no `libfuse2` (its runtime mounts

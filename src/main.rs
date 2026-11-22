@@ -12,6 +12,7 @@ mod launcher_messages;
 mod launcher_play;
 mod launcher_render;
 mod launcher_setup;
+mod launcher_update;
 pub(crate) use widgets::*;
 mod backdrop;
 mod blocks;
@@ -147,19 +148,19 @@ impl Page {
     ];
 }
 
-/// The launcher's own update, as the footer and Settings show it.
-#[derive(Clone, PartialEq)]
+/// The launcher's own update, shared by the top bar and Settings.
 enum SelfUpdate {
     Idle,
-    Downloading(String, f32),
-    /// Downloaded and checked: "A new version is available" and Update, which hands it to the
-    /// installer (`update_handoff`). Closing the window hands it over too.
-    Ready(String),
+    Downloading(Release, f32),
+    /// A rejected manifest invalidated the download; its worker still owns the stage.
+    Discarding,
+    /// Downloaded and checked. Only an explicit update request hands it to the installer.
+    Ready(Release),
     /// A newer launcher can't go in here: this copy can't replace itself
     /// (`backend::cannot_replace_itself`), or the installer said why (the error). The player
     /// follows the recovery advice for its install location.
     Stuck(Option<String>),
-    Failed(String),
+    Failed(Release, String),
 }
 
 #[derive(Clone, Copy)]
@@ -207,9 +208,8 @@ struct Launcher {
     checked: Option<Instant>,
     checking_updates: bool,
     launcher_checked_now: Option<Instant>,
-    /// Home's launcher-update notice was dismissed: it stays away until the launcher restarts.
-    launcher_notice_hidden: bool,
     self_update: SelfUpdate,
+    restart_for_launcher_update: bool,
     /// An explicit same-build repair must not select or prune a build.
     architecture_reinstall: Option<String>,
     /// The Sunrise version being installed because an instance was made or saved to play it: it
@@ -297,6 +297,8 @@ struct Launcher {
     log_revision: u64,
     prepare_error: Option<String>,
     client: Option<Running>,
+    /// Game exits still recording play time or running a profile's post-exit command.
+    finishing_game: usize,
     client_error: Option<String>,
     play_admission: Option<launcher_play::PlayIntent>,
     play_retry: Option<launcher_play::PlayIntent>,

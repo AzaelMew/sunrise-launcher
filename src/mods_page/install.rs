@@ -11,7 +11,7 @@ use sunrise_launcher::{
         BuildNotice, ChangeImpact, CombinedUpdate, InstallError, InstallHooks, InstallProgress,
         InstalledBatch, NativeQuestion, PreparedSource, ResolveQuestion, SourceError, SourceHooks,
     },
-    github_mods::Origin,
+    github_mods::{AddedFrom, Origin},
     managed_play::FirstBuild,
     native_mods::Cancellation,
     profile_txn::Identity,
@@ -22,14 +22,18 @@ use sunrise_launcher::browser::sunrise::sources::{self, Source, SourceCommit};
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) enum SourcePicks {
     One(Box<SourceCommit>),
-    Collection(Vec<Source>),
+    Collection {
+        id: String,
+        name: String,
+        sources: Vec<Source>,
+    },
 }
 
 impl SourcePicks {
     pub(crate) fn listings(&self) -> &[Source] {
         match self {
             Self::One(pin) => std::slice::from_ref(pin.source()),
-            Self::Collection(sources) => sources,
+            Self::Collection { sources, .. } => sources,
         }
     }
 
@@ -38,7 +42,7 @@ impl SourcePicks {
     ) -> impl Iterator<Item = Result<SourceCommit, sources::Failure>> + '_ {
         let (one, collection) = match self {
             Self::One(pin) => (Some(Ok((**pin).clone())), &[][..]),
-            Self::Collection(sources) => (None, sources.as_slice()),
+            Self::Collection { sources, .. } => (None, sources.as_slice()),
         };
         one.into_iter().chain(sources::resolve_each(collection))
     }
@@ -131,6 +135,19 @@ pub(crate) struct SourceTarget {
     profile: instances::Instance,
     identity: Identity,
     base: String,
+}
+
+#[cfg(test)]
+impl SourceTarget {
+    /// The profile in `home` (an existing folder) on build `base`.
+    pub(crate) fn fixture(home: &Path, base: &str) -> Self {
+        let request = tests::request(home, "fixture", base);
+        Self {
+            profile: request.profile,
+            identity: request.identity,
+            base: base.into(),
+        }
+    }
 }
 
 impl SourceTarget {
@@ -1447,7 +1464,14 @@ impl Launcher {
                                     }
                                 }
                             }
-                            let packed = sunrise::pack_sources(&pins, &cancellation);
+                            let added_from = match picks {
+                                SourcePicks::One(_) => AddedFrom::Discover,
+                                SourcePicks::Collection { id, name, .. } => AddedFrom::Collection {
+                                    id: id.clone(),
+                                    name: name.clone(),
+                                },
+                            };
+                            let packed = sunrise::pack_sources(&pins, added_from, &cancellation);
                             if cancellation.is_stopped() {
                                 return Err(SourceError::Cancelled);
                             }
@@ -1610,7 +1634,7 @@ fn failure_line(error: &InstallError) -> &'static str {
 mod tests {
     use super::*;
 
-    fn request(home: &Path, id: &str, target: &str) -> Request {
+    pub(super) fn request(home: &Path, id: &str, target: &str) -> Request {
         let slug = home.file_name().unwrap().to_str().unwrap();
         Request {
             identity: Identity::of(home).unwrap(),

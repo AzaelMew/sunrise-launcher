@@ -1,6 +1,6 @@
 //! A checked paste can offer choices before their exact selected set is proved.
 use super::*;
-use crate::github_mods::{self, Resolved};
+use crate::github_mods::{self, AddedFrom, Resolved, SourceTrack};
 
 #[test]
 fn pasted_sources_prove_only_the_selected_packages_together() {
@@ -70,7 +70,15 @@ fn pasted_sources_prove_only_the_selected_packages_together() {
                 json!({"ref":"refs/heads/main","object":{"type":"commit","sha":&sha}}).to_string(),
             )
             .unwrap();
-            let link = github_mods::parse("https://github.com/Fixture/Pair").unwrap();
+            let commits = api.join("Pair/git/commits");
+            fs::create_dir_all(&commits).unwrap();
+            fs::write(
+                commits.join(format!("{sha}.json")),
+                json!({"sha": &sha}).to_string(),
+            )
+            .unwrap();
+            let link = github_mods::parse(&format!("https://github.com/Fixture/Pair/commit/{sha}"))
+                .unwrap();
             let found = Resolved {
                 owner: "Fixture".into(),
                 repo: "Pair".into(),
@@ -87,7 +95,12 @@ fn pasted_sources_prove_only_the_selected_packages_together() {
                     .collect::<Vec<_>>(),
                 ["helper_mod", "main_mod", "unfit_mod"]
             );
-            assert!(packages.iter().all(|row| row.origin().commit == sha));
+            assert!(packages.iter().all(|row| {
+                let origin = row.origin();
+                origin.commit == sha
+                    && origin.source.as_ref().unwrap().track == SourceTrack::Pinned
+                    && origin.added_from == Some(AddedFrom::Github)
+            }));
             let identity = install_target(&fixture.instance).unwrap();
             let check = |ids: &[&str]| {
                 prepare_pasted_sources(
@@ -117,8 +130,32 @@ fn pasted_sources_prove_only_the_selected_packages_together() {
                     .collect::<Vec<_>>(),
                 ["helper_mod", "main_mod"]
             );
+            // The paste goes through real deferred publication and leaves a readable receipt.
+            backend::Settings::default().allow_native_mods().unwrap();
+            apply_sources(
+                &fixture.instance,
+                identity,
+                &offered,
+                || FirstBuild::installed(BUILD),
+                SourceHooks {
+                    install: InstallHooks {
+                        progress: &|_| {},
+                        native: &|_| panic!("source permission has its own gate"),
+                        registry_crates: None,
+                        continue_after_failure: &|_| false,
+                        resolve: None,
+                    },
+                    cancellation: &cancel,
+                    authorize: &|_| Ok(true),
+                    approve_worlds: &|_| false,
+                },
+            )
+            .unwrap();
+            for source in &offered {
+                let recorded = github_mods::origin(fixture.home(), &source.origin().id).unwrap();
+                assert_eq!(&recorded, source.origin());
+            }
             assert!(!fixture.home().join(crate::profile_txn::POINTER).exists());
-            assert!(!fixture.home().join(native_mods::INSTALLED).exists());
             assert!(!fixture.root.join("compiled").exists());
         },
     );
