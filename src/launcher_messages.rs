@@ -60,6 +60,8 @@ impl Launcher {
                 Msg::Picture(url, png) => self.skins_picture(url, png),
                 Msg::LookSaved(uuid, id, outcome) => self.look_saved(uuid, id, *outcome),
                 Msg::SkinsAdded(uuid, added) => self.skins_added(uuid, added),
+                Msg::SkinFile(key, png) => self.skins_file(key, png),
+                Msg::SkinKept(uuid, url, kept) => self.skins_kept(uuid, url, kept),
                 Msg::AccountProgress(uuid, generation, phase) => {
                     if self.auth_busy.get(&uuid) == Some(&generation) {
                         self.auth_progress.insert(uuid, phase);

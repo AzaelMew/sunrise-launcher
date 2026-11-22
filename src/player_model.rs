@@ -17,22 +17,6 @@ pub fn decode(png: &[u8], max_w: u32, max_h: u32) -> Option<image::RgbaImage> {
     Some(reader.decode().ok()?.to_rgba8())
 }
 
-/// A skin's texels as its file has them, uncompleted: 64 by 64 or 64 by 32. What tells two
-/// skins apart ([`crate::skin_library::id_of`]), since completing makes texels the file left
-/// clear opaque.
-pub fn raw_skin(png: &[u8]) -> Option<Texture> {
-    let image = decode(png, 64, 64)?;
-    let (w, h) = (image.width() as usize, image.height() as usize);
-    if w != 64 || (h != 64 && h != 32) {
-        return None;
-    }
-    Some(Texture {
-        texels: image.pixels().map(|p| p.0).collect(),
-        w,
-        h,
-    })
-}
-
 /// A skin picture as the model wears it, completed as vanilla's
 /// `SkinTextureDownloader.processLegacySkin` does: 64 by 64, or an old 64 by 32 skin given its
 /// left arm and leg. None for any other shape (the only two the services take) or something

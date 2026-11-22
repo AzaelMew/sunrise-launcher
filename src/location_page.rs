@@ -68,6 +68,7 @@ impl Launcher {
             || self.github.busy()
             || self.instances.dialog.as_ref().is_some_and(|d| d.busy)
             || self.internet.location_busy()
+            || self.skins.location_busy()
     }
 
     fn location_blocked(&self) -> Option<String> {

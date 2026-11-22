@@ -69,24 +69,59 @@ fn folder_in(data: &Path, uuid: &str) -> Result<PathBuf, String> {
 /// yet is no saved skins; an index that can't be read or understood is an error, and nothing
 /// here writes over it.
 pub fn list(dir: &Path) -> Result<Vec<Saved>, String> {
-    let text = match std::fs::read_to_string(dir.join("index.json")) {
-        Ok(text) => text,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(e) => return Err(format!("The saved skins couldn't be read: {e}")),
-    };
-    let all: Vec<Saved> = serde_json::from_str(&text)
-        .map_err(|e| format!("The saved skins' list is damaged ({e}), so it was left as it is."))?;
-    Ok(all
+    Ok(list_all(dir)?
         .into_iter()
         .filter(|s| valid_id(&s.id) && png_path(dir, &s.id).is_file())
         .collect())
 }
 
+/// Every entry of the index in `dir`, those whose picture is gone included: what a change
+/// writes back, so it leaves the entries it doesn't touch as they were.
+fn list_all(dir: &Path) -> Result<Vec<Saved>, String> {
+    let text = match std::fs::read_to_string(dir.join("index.json")) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(format!("The saved skins couldn't be read: {e}")),
+    };
+    serde_json::from_str(&text)
+        .map_err(|e| format!("The saved skins' list is damaged ({e}), so it was left as it is."))
+}
+
 /// A saved skin's picture.
 pub fn png(dir: &Path, id: &str) -> Option<Vec<u8>> {
     valid_id(id)
-        .then(|| std::fs::read(png_path(dir, id)).ok())
+        .then(|| read_skin_file(&png_path(dir, id)).ok())
         .flatten()
+}
+
+/// The file at `path`, if it is a regular file no bigger than a skin
+/// ([`crate::account::skins::MAX_SKIN`]): nothing larger is read into memory, whatever its length
+/// claims, and a pipe put in its place is never waited on.
+pub fn read_skin_file(path: &Path) -> Result<Vec<u8>, String> {
+    use std::io::Read as _;
+    let max = crate::account::skins::MAX_SKIN as u64;
+    let mut open = std::fs::OpenOptions::new();
+    open.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        open.custom_flags(libc::O_NONBLOCK);
+    }
+    let file = open.open(path).map_err(|e| e.to_string())?;
+    let meta = file.metadata().map_err(|e| e.to_string())?;
+    if !meta.is_file() {
+        return Err(crate::i18n::tr("Only a PNG file can be added as a skin.").to_string());
+    }
+    let mut bytes = Vec::new();
+    if meta.len() <= max {
+        file.take(max + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|e| e.to_string())?;
+    }
+    if meta.len() > max || bytes.len() as u64 > max {
+        return Err(crate::i18n::tr("This picture is too big for a skin.").to_string());
+    }
+    Ok(bytes)
 }
 
 fn png_path(dir: &Path, id: &str) -> PathBuf {
@@ -104,23 +139,34 @@ fn save(dir: &Path, list: &[Saved]) -> Result<(), String> {
     write_whole(&dir.join("index.json"), (text + "\n").as_bytes())
 }
 
-/// Saves the skin `png` as `name`, its arms as the picture suggests
-/// ([`crate::player_model::looks_slim`]) unless `slim` says; the one already saved when the same
-/// skin is.
+/// Saves the skin `png` as `name`, its arms as `slim` says, else as the picture suggests
+/// ([`crate::player_model::looks_slim`]). When the same skin is saved already, it keeps its name,
+/// and its arms unless `slim` says otherwise; but its picture is checked, and written anew when
+/// it is gone, damaged or another skin's, so the saved skin returned is always there to wear
+/// again.
 pub fn add(dir: &Path, png: &[u8], name: &str, slim: Option<bool>) -> Result<Saved, String> {
     if png.len() > crate::account::skins::MAX_SKIN {
         return Err("This picture is too big for a skin.".into());
     }
-    let skin = crate::player_model::raw_skin(png)
-        .ok_or("This isn't a Minecraft skin: it must be a 64×64 or 64×32 PNG.")?;
-    let id = id_of(&skin);
+    let id =
+        id_of_png(png).ok_or("This isn't a Minecraft skin: it must be a 64×64 or 64×32 PNG.")?;
     let _changing = changing();
-    let mut all = list(dir)?;
-    if let Some(known) = all.iter().find(|s| s.id == id) {
-        return Ok(known.clone());
-    }
+    let mut all = list_all(dir)?;
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    write_whole(&png_path(dir, &id), png)?;
+    let path = png_path(dir, &id);
+    let there = read_skin_file(&path).ok().and_then(|p| id_of_png(&p));
+    if there.as_deref() != Some(id.as_str()) {
+        write_whole(&path, png)?;
+    }
+    if let Some(known) = all.iter_mut().find(|s| s.id == id) {
+        if slim.is_none_or(|slim| slim == known.slim) {
+            return Ok(known.clone());
+        }
+        known.slim = slim.unwrap_or(known.slim);
+        let known = known.clone();
+        save(dir, &all)?;
+        return Ok(known);
+    }
     let name: String = name.trim().chars().take(40).collect();
     let saved = Saved {
         id,
@@ -132,10 +178,12 @@ pub fn add(dir: &Path, png: &[u8], name: &str, slim: Option<bool>) -> Result<Sav
     Ok(saved)
 }
 
-/// A skin's id: the first 16 hex digits of the SHA-1 of its texels as its file has them
-/// ([`crate::player_model::raw_skin`]), the clear ones all alike. The texels, not the file:
-/// Mojang's texture server sends a skin back in another PNG than the one worn, and it must
-/// still be the same saved skin.
+/// A skin's id: the first 16 hex digits of the SHA-1 of its texels as the player model wears
+/// them ([`crate::player_model::skin`], completed as the game completes it), the colour of those
+/// still clear then ignored. Not the file's bytes: Mojang's texture server sends a skin back in
+/// another PNG than the one worn, and it must still be the same saved skin. Nor the texels as
+/// the file has them: the game draws some texels opaque that a file may leave clear, and two
+/// files that differ in their colour there show two different skins.
 pub fn id_of(skin: &crate::player_model::Texture) -> String {
     use sha1::Digest;
     let mut sha = sha1::Sha1::new();
@@ -150,16 +198,21 @@ pub fn id_of(skin: &crate::player_model::Texture) -> String {
         .collect()
 }
 
-/// The saved skin whose texels `png` has, if one has.
+/// The id of the skin `png` ([`id_of`]); none when it isn't a skin.
+pub fn id_of_png(png: &[u8]) -> Option<String> {
+    Some(id_of(&crate::player_model::skin(png)?))
+}
+
+/// The saved skin `png` is, if it is one.
 pub fn find(dir: &Path, png: &[u8]) -> Option<Saved> {
-    let id = id_of(&crate::player_model::raw_skin(png)?);
+    let id = id_of_png(png)?;
     list(dir).ok()?.into_iter().find(|s| s.id == id)
 }
 
 /// Gives the saved skin `id` slim or classic arms.
 pub fn set_slim(dir: &Path, id: &str, slim: bool) -> Result<(), String> {
     let _changing = changing();
-    let mut all = list(dir)?;
+    let mut all = list_all(dir)?;
     match all.iter_mut().find(|s| s.id == id) {
         Some(s) if s.slim != slim => s.slim = slim,
         _ => return Ok(()),
@@ -170,7 +223,7 @@ pub fn set_slim(dir: &Path, id: &str, slim: bool) -> Result<(), String> {
 /// Forgets the saved skin `id` and deletes its picture.
 pub fn remove(dir: &Path, id: &str) -> Result<(), String> {
     let _changing = changing();
-    let mut all = list(dir)?;
+    let mut all = list_all(dir)?;
     all.retain(|s| s.id != id);
     save(dir, &all)?;
     if valid_id(id) {
@@ -233,28 +286,102 @@ mod tests {
     #[test]
     fn the_same_skin_in_another_png_is_the_same_saved_skin() {
         let dir = tempfile::tempdir().unwrap();
-        let worn = add(dir.path(), &picture(64, 64, true), "Worn", Some(false)).unwrap();
-        assert!(
-            !worn.slim,
-            "the arms the account wears it with win over the guess"
-        );
-        // The texture server's copy: other PNG bytes, other colours under the clear texels.
-        let image = image::RgbaImage::from_fn(64, 64, |x, y| {
-            let clear = x == 54 && (20..32).contains(&y);
-            image::Rgba(if clear {
-                [99, 1, 2, 0]
-            } else {
-                [x as u8, y as u8, 3, 255]
+        // A clear hat, and the texture server's copy of it: other PNG bytes, other colours
+        // under the texels the game leaves clear.
+        let hat = |colour: [u8; 4]| {
+            png_of(move |x, y, texel| {
+                if (40..48).contains(&x) && y < 8 {
+                    colour
+                } else {
+                    texel
+                }
             })
-        });
-        let mut copy = std::io::Cursor::new(Vec::new());
-        image.write_to(&mut copy, image::ImageFormat::Png).unwrap();
-        let copy = copy.into_inner();
-        assert_ne!(copy, picture(64, 64, true));
+        };
+        let worn = add(dir.path(), &hat([1, 2, 3, 0]), "Worn", None).unwrap();
+        let copy = hat([99, 1, 2, 0]);
+        assert_ne!(copy, hat([1, 2, 3, 0]));
         assert_eq!(find(dir.path(), &copy), Some(worn.clone()));
         assert_eq!(add(dir.path(), &copy, "Again", None).unwrap(), worn);
         assert_eq!(list(dir.path()).unwrap().len(), 1);
         assert!(find(dir.path(), &picture(64, 64, false)).is_none());
+    }
+
+    /// `picture(64, 64, true)` with each texel as `f` makes it.
+    fn png_of(f: impl Fn(u32, u32, [u8; 4]) -> [u8; 4]) -> Vec<u8> {
+        let base = image::load_from_memory(&picture(64, 64, true))
+            .unwrap()
+            .to_rgba8();
+        let image =
+            image::RgbaImage::from_fn(64, 64, |x, y| image::Rgba(f(x, y, base.get_pixel(x, y).0)));
+        let mut out = std::io::Cursor::new(Vec::new());
+        image.write_to(&mut out, image::ImageFormat::Png).unwrap();
+        out.into_inner()
+    }
+
+    #[test]
+    fn skins_that_look_different_are_different_saved_skins() {
+        // The texel the slim arm leaves clear is drawn opaque, in its own colour: a file with
+        // another colour there is another skin, though both files leave it clear.
+        let red = png_of(|x, y, texel| {
+            if x == 54 && (20..32).contains(&y) {
+                [200, 0, 0, 0]
+            } else {
+                texel
+            }
+        });
+        assert_ne!(id_of_png(&red), id_of_png(&picture(64, 64, true)));
+        let dir = tempfile::tempdir().unwrap();
+        add(dir.path(), &picture(64, 64, true), "", None).unwrap();
+        add(dir.path(), &red, "", None).unwrap();
+        assert_eq!(list(dir.path()).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn a_saved_skin_added_again_gets_back_its_picture_and_the_arms_given() {
+        let dir = tempfile::tempdir().unwrap();
+        let skin = picture(64, 64, false);
+        let saved = add(dir.path(), &skin, "Knight", Some(false)).unwrap();
+        let file = dir.path().join(format!("{}.png", saved.id));
+        // Damaged, then another skin's picture under its name, then gone.
+        for broken in [
+            Some(b"not a png".to_vec()),
+            Some(picture(64, 64, true)),
+            None,
+        ] {
+            match broken {
+                Some(bytes) => std::fs::write(&file, bytes).unwrap(),
+                None => std::fs::remove_file(&file).unwrap(),
+            }
+            let again = add(dir.path(), &skin, "", Some(true)).unwrap();
+            assert_eq!(again.id, saved.id);
+            assert_eq!(again.name, "Knight", "its name kept");
+            assert!(again.slim, "the arms it was worn with");
+            assert_eq!(png(dir.path(), &saved.id), Some(skin.clone()));
+            assert_eq!(list(dir.path()).unwrap(), std::slice::from_ref(&again));
+            set_slim(dir.path(), &saved.id, false).unwrap();
+        }
+        // No arms given: the ones it has stay.
+        assert!(!add(dir.path(), &skin, "", None).unwrap().slim);
+    }
+
+    #[test]
+    fn a_skin_file_is_read_only_when_it_is_a_small_regular_file() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(read_skin_file(dir.path()).is_err(), "a folder");
+        let big = dir.path().join("big.png");
+        std::fs::write(&big, vec![0; crate::account::skins::MAX_SKIN + 1]).unwrap();
+        assert!(read_skin_file(&big).is_err());
+        let small = dir.path().join("small.png");
+        std::fs::write(&small, picture(64, 64, false)).unwrap();
+        assert_eq!(read_skin_file(&small).unwrap(), picture(64, 64, false));
+        #[cfg(unix)]
+        {
+            // A pipe is refused at once, not waited on for a writer.
+            let fifo = dir.path().join("fifo.png");
+            let path = std::ffi::CString::new(fifo.to_str().unwrap()).unwrap();
+            assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o600) }, 0);
+            assert!(read_skin_file(&fifo).is_err());
+        }
     }
 
     #[test]
