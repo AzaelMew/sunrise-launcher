@@ -407,15 +407,20 @@ fn turn_off_mods(
             }
         }
     }
-    let ids = mods.iter().map(|(id, _)| id.clone()).collect::<Vec<_>>();
-    let mut worlds = crate::worlds::at_risk(home, &ids)
+    // Switch's review: neither level file can rule a mod out, since older chunks keep its blocks
+    // and items, so every save in the profile counts as using the mods turned off.
+    let suspects = mods
+        .iter()
+        .map(|(id, _)| (id.clone(), std::collections::BTreeSet::new()))
+        .collect();
+    let mut worlds = crate::worlds::review_risk(home, &suspects)
         .map_err(|error| {
             eprintln!("checking saved worlds before turning off mods: {error}");
             crate::i18n::tr("Sunrise couldn't check the saved worlds. No mods were turned off.")
                 .to_owned()
         })?
         .into_iter()
-        .map(|(world, _, _)| world.name)
+        .map(|world| world.name)
         .collect::<Vec<_>>();
     if !worlds.is_empty() {
         worlds.sort();

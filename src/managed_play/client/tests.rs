@@ -181,15 +181,36 @@ fn recovery_refuses_a_saved_world_and_never_begins_play() {
 }
 
 #[test]
-fn recovery_proceeds_when_no_saved_world_uses_the_mod() {
+fn recovery_proceeds_in_a_profile_with_no_saved_worlds() {
     let scratch = tempfile::tempdir().unwrap();
     let home = scratch.path();
     let list = home.join(mod_list::FILE);
-    write_recovery_world(home, "map");
     recovery_mod(home, "blur", "Motion Blur", true, "");
     fs::write(&list, b"mod.blur:true\nmod.map:true\n").unwrap();
     turn_off_mods(home, &off(), |mut file, bytes| file.write_all(bytes)).unwrap();
     assert_eq!(fs::read(&list).unwrap(), b"mod.map:true\n");
+}
+
+#[test]
+fn recovery_refuses_a_save_whose_last_load_did_not_list_the_mod() {
+    // level.dat names only another mod, but level.dat_old and older chunks can still hold this
+    // one: a last-loaded list never rules a mod out.
+    let scratch = tempfile::tempdir().unwrap();
+    let home = scratch.path();
+    let list = home.join(mod_list::FILE);
+    write_recovery_world(home, "blur");
+    let world = home.join("saves/world");
+    fs::rename(world.join("level.dat"), world.join("level.dat_old")).unwrap();
+    write_recovery_world(home, "map");
+    recovery_mod(home, "blur", "Motion Blur", true, "");
+    let original = b"mod.blur:true\nmod.map:true\n";
+    fs::write(&list, original).unwrap();
+    let error = turn_off_mods(home, &off(), |_, _| unreachable!("nothing is written")).unwrap_err();
+    assert_eq!(
+        error,
+        "Turning off these mods could remove content from: Lantern Lake. No mods were turned off."
+    );
+    assert_eq!(fs::read(&list).unwrap(), original);
 }
 
 #[test]
