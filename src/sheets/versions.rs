@@ -750,6 +750,7 @@ mod tests {
                 .env("SUNRISE_HOME", root.join("game"))
                 .env("SUNRISE_LAUNCHER_LOCATION_FILE", root.join("location.json"))
                 .env("SUNRISE_NO_KEYCHAIN", "1")
+                .env("SUNRISE_TELEMETRY_URL", "off")
                 .env("SUNRISE_LAUNCHER_NO_SELF_UPDATE", "1")
                 .env("XDG_DATA_HOME", root.join("data"))
                 .env("XDG_CONFIG_HOME", root.join("config"))

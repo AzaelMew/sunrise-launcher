@@ -309,6 +309,8 @@ struct Scroll {
     /// Why nothing was scrolled, once that is known.
     skipped: Option<Skip>,
     ended: bool,
+    /// A wheel event was sent and is waiting for its frame.
+    wheel_in_flight: bool,
     /// Heading for the bottom of the list, else back to the top.
     down: bool,
     /// The list's offset after the last frame, to tell a frame that moved it.
@@ -326,6 +328,7 @@ impl Scroll {
             waiting: Target::Loading,
             skipped: None,
             ended: false,
+            wheel_in_flight: false,
             down: true,
             last_offset: None,
             pending: None,
@@ -336,6 +339,7 @@ impl Scroll {
     fn skip(&mut self, why: Skip) {
         self.skipped.get_or_insert(why);
         self.ended = true;
+        self.wheel_in_flight = false;
     }
 }
 
@@ -451,7 +455,7 @@ impl Bench {
                 };
                 self.pages_ms.push(sample.as_secs_f32() * 1000.0);
             }
-            Some(scroll) if !scroll.ended && scroll.began.is_some() => {
+            Some(scroll) if !scroll.ended && scroll.wheel_in_flight => {
                 scroll.pending = Some(gap);
             }
             _ => {}
@@ -469,6 +473,7 @@ impl Bench {
     /// while waiting for the rows, or when not scrolling.
     pub fn after_frame(&mut self, now: Instant, target: Target) -> Option<f32> {
         let scroll = self.scroll.as_mut().filter(|s| !s.ended)?;
+        let wheel_in_flight = std::mem::take(&mut scroll.wheel_in_flight);
         let (offset, max) = match target {
             Target::Laid { offset, max } => (offset, max),
             Target::Loading | Target::LayingOut => {
@@ -499,11 +504,20 @@ impl Bench {
         let moved = scroll
             .last_offset
             .is_some_and(|was| (was - offset).abs() >= 0.5);
-        if let Some(gap) = scroll.pending.take().filter(|_| moved) {
+        if let Some(gap) = scroll.pending.take().filter(|_| wheel_in_flight && moved) {
             self.scroll_ms.push(gap.as_secs_f32() * 1000.0);
         }
+        if scroll
+            .began
+            .is_some_and(|began| now.duration_since(began) >= SCROLLING)
+        {
+            scroll.ended = true;
+            return None;
+        }
         scroll.last_offset = Some(offset);
-        wheel_step(offset, max, &mut scroll.down)
+        let step = wheel_step(offset, max, &mut scroll.down);
+        scroll.wheel_in_flight = step.is_some();
+        step
     }
 
     pub fn tick(&mut self, perf: &Perf) -> Step {
@@ -539,6 +553,13 @@ impl Bench {
                     _ => Skip::NotLaidOut,
                 }),
                 Some(began) if began.elapsed() < SCROLLING => return Step::Wait,
+                // Stop sending input at the deadline, but finish measuring the event we
+                // sent before it. Bound the wait if the window stops drawing altogether.
+                Some(began)
+                    if scroll.wheel_in_flight && began.elapsed() < SCROLLING + LIST_WAIT =>
+                {
+                    return Step::Wait;
+                }
                 Some(_) => scroll.ended = true,
             },
             Some(_) => {}
@@ -806,7 +827,11 @@ mod tests {
     fn finish(bench: &mut Bench, perf: &Perf) -> serde_json::Value {
         let scroll = bench.scroll.as_mut().unwrap();
         if !scroll.ended {
-            scroll.began = Some(Instant::now() - SCROLLING);
+            let now = Instant::now();
+            scroll.began = Some(now - SCROLLING);
+            if let Some(offset) = scroll.last_offset {
+                assert_eq!(bench.after_frame(now, laid(offset, 100.)), None);
+            }
             assert!(matches!(bench.tick(perf), Step::Wait), "scrolling ends");
         }
         assert!(!bench.scrolling());
@@ -930,6 +955,30 @@ mod tests {
         assert!(result["scroll_skipped"].is_null());
         assert_eq!(result["pages_ms"], serde_json::json!([]));
         assert!(result["first_frame_epoch_ms"].as_f64().is_some());
+    }
+
+    #[test]
+    fn a_wheel_step_in_flight_at_the_deadline_is_measured_once() {
+        let perf = drawn();
+        let mut bench = Bench::new(out("last-wheel-step"));
+        to_scrolling(&mut bench, &perf);
+        let now = Instant::now();
+        assert_eq!(bench.after_frame(now, laid(0., 100.)), Some(-24.));
+        bench.scroll.as_mut().unwrap().began = Some(now - SCROLLING);
+        assert!(matches!(bench.tick(&perf), Step::Wait));
+        assert!(
+            bench.scrolling(),
+            "the dispatched wheel step still owes a frame"
+        );
+
+        bench.frame(now, Some(ms(400)));
+        assert_eq!(bench.after_frame(now, laid(-24., 100.)), None);
+        assert_eq!(bench.scroll_samples(), [400.]);
+        assert!(!bench.scrolling());
+
+        bench.frame(now + ms(16), Some(ms(16)));
+        assert_eq!(bench.after_frame(now + ms(16), laid(-48., 100.)), None);
+        assert_eq!(bench.scroll_samples(), [400.]);
     }
 
     #[test]
