@@ -713,14 +713,13 @@ impl Launcher {
         scroll_key: &'static str,
         empty: AnyElement,
         cx: &mut Context<Self>,
-    ) -> Stateful<Div> {
+    ) -> Div {
         let limit = self.ui.mods.limit.max(PAGE).min(total);
-        div()
+        let results = div()
             .id("mods-discover-results")
             .flex_1()
             .min_h_0()
             .overflow_y_scroll()
-            .track_scroll(&crate::frame::scrolls(scroll_key))
             .child(
                 div()
                     .flex()
@@ -748,7 +747,10 @@ impl Launcher {
                             ),
                         )
                     }),
-            )
+            );
+        crate::scrollbar::Scrollbar::page(scroll_key)
+            .wrap(results, &self.theme)
+            .flex_1()
     }
 
     fn discover_menu(
