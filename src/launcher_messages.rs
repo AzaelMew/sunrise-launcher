@@ -56,10 +56,10 @@ impl Launcher {
                 Msg::AccountHead(uuid, url, face, failed) => {
                     self.profile_heads.loaded(&uuid, &url, face, failed)
                 }
-                Msg::Capes(uuid, asked, result) => self.capes_answered(uuid, asked, result),
+                Msg::SkinsProfile(uuid, id, result) => self.skins_profile(uuid, id, result),
                 Msg::Picture(url, png) => self.skins_picture(url, png),
-                Msg::OptifineCape(name, png) => self.skins.optifine_cape(&name, png),
-                Msg::LookSaved(uuid, asked, result) => self.look_saved(uuid, asked, *result),
+                Msg::LookSaved(uuid, id, outcome) => self.look_saved(uuid, id, *outcome),
+                Msg::SkinsAdded(uuid, added) => self.skins_added(uuid, added),
                 Msg::AccountProgress(uuid, generation, phase) => {
                     if self.auth_busy.get(&uuid) == Some(&generation) {
                         self.auth_progress.insert(uuid, phase);

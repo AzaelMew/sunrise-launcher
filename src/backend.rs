@@ -7758,4 +7758,4 @@ esac"#
 }
 
 mod messages;
-pub use messages::{Msg, SavedLook};
+pub use messages::{LookOutcome, Msg};

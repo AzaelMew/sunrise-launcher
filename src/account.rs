@@ -1867,6 +1867,38 @@ impl Accounts {
         }
         saved.save_to(path)
     }
+    /// Records what a Save on the Skins tab left account `uuid` wearing, in `accounts.json` as it
+    /// is now and under the accounts' lock: only the fields that Save changed (`skin`, `cape`;
+    /// none leaves a field as it is), so nothing else about that account or any other is
+    /// written back from an older copy.
+    pub fn save_look(
+        uuid: &str,
+        skin: Option<Option<(String, String)>>,
+        cape: Option<Option<String>>,
+    ) -> Result<(), String> {
+        Self::save_look_to(store(), &Self::path(), uuid, skin, cape)
+    }
+    pub(crate) fn save_look_to(
+        store: &dyn SecretStore,
+        path: &Path,
+        uuid: &str,
+        skin: Option<Option<(String, String)>>,
+        cape: Option<Option<String>>,
+    ) -> Result<(), String> {
+        let _operation = session::lock(store)?;
+        let mut saved = Self::load_from(path);
+        // Signed out meanwhile: there is nothing left to record it on.
+        let Some(account) = saved.accounts.iter_mut().find(|a| a.uuid == uuid) else {
+            return Ok(());
+        };
+        if let Some(skin) = skin {
+            account.skin = skin;
+        }
+        if let Some(cape) = cape {
+            account.cape = cape;
+        }
+        saved.save_to(path)
+    }
     pub fn selected(&self) -> Option<&Account> {
         let uuid = self.selected.as_ref()?;
         self.accounts.iter().find(|a| &a.uuid == uuid)

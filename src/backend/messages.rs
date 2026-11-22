@@ -1,10 +1,16 @@
 use super::*;
 
-/// What the Skins tab's Save left the account wearing.
-pub struct SavedLook {
-    /// The skin's URL and model ("classic" or "slim"), when the services said.
-    pub skin: Option<(String, String)>,
-    pub capes: Vec<crate::account::capes::Cape>,
+/// How a Save on the Skins tab went, each change on its own: a skin can be worn while the cape
+/// change after it is refused, and the page then knows which one is still to do.
+pub struct LookOutcome {
+    /// The skin sent: its picture, its arms, and the saved skin it was, if it was one.
+    pub sent: Option<(Vec<u8>, bool, Option<String>)>,
+    /// The skin change: the profile after it, or why not. None when the skin wasn't changed.
+    pub skin: Option<Result<crate::account::capes::Profile, String>>,
+    /// The cape change after it, the same way.
+    pub cape: Option<Result<crate::account::capes::Profile, String>>,
+    /// Keeping the skin worn before among the saved skins failed: why.
+    pub kept: Option<String>,
 }
 
 pub enum Msg {
@@ -41,20 +47,15 @@ pub enum Msg {
     AccountProgress(String, u64, crate::account::session::Phase),
     AccountHead(String, Option<String>, Option<Vec<[u8; 4]>>, bool),
     AccountRemoved(String, u64, Result<bool, String>),
-    /// The capes account `.0` owns, from the request numbered `.1` (a listing or a change).
-    Capes(
-        String,
-        u64,
-        Result<Vec<crate::account::capes::Cape>, String>,
-    ),
+    /// What account `.0` wears, read for the Skins tab by the request numbered `.1`.
+    SkinsProfile(String, u64, Result<crate::account::capes::Profile, String>),
     /// A skin's or cape's picture from Mojang's texture server, by its URL (none: it couldn't be
     /// had).
     Picture(String, Option<Vec<u8>>),
-    /// The OptiFine cape of a name: its picture, or none (no cape, or the server couldn't say).
-    OptifineCape(String, Option<Vec<u8>>),
-    /// A Save on the Skins tab for account `.0`, numbered `.1`, ended: what the account wears
-    /// after it, or why it stopped.
-    LookSaved(String, u64, Box<Result<SavedLook, String>>),
+    /// A Save on the Skins tab for account `.0`, numbered `.1`, ended.
+    LookSaved(String, u64, Box<LookOutcome>),
+    /// Skin files added to account `.0`'s saved skins: each one, or why not.
+    SkinsAdded(String, Vec<Result<crate::skin_library::Saved, String>>),
     /// The owner gate's answer for the game about to start: the selected account's session
     /// file (none = offline) and why it plays offline, if it does.
     Session(Result<Option<crate::account::GameSession>, crate::account::NoOwner>),

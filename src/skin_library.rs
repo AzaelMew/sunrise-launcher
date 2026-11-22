@@ -16,26 +16,35 @@ pub struct Saved {
 }
 
 /// The folder the account `uuid` keeps its saved skins in: another account never sees them.
-pub fn folder(uuid: &str) -> PathBuf {
+pub fn folder(uuid: &str) -> Result<PathBuf, String> {
     folder_in(&crate::backend::data_dir(), uuid)
 }
 
-fn folder_in(data: &Path, uuid: &str) -> PathBuf {
-    // Only a profile UUID (32 hex digits) names a folder; anything else gets none of them.
-    let valid = uuid.len() == 32 && uuid.bytes().all(|b| b.is_ascii_hexdigit());
-    data.join("saved-skins")
-        .join(if valid { uuid } else { "no-account" })
+fn folder_in(data: &Path, uuid: &str) -> Result<PathBuf, String> {
+    // Only a profile UUID (32 hex digits) names a folder: an account record without one has no
+    // saved skins, rather than a folder it would share with every other such record.
+    if uuid.len() == 32 && uuid.bytes().all(|b| b.is_ascii_hexdigit()) {
+        Ok(data.join("saved-skins").join(uuid))
+    } else {
+        Err("This account has no valid profile id, so it can't keep saved skins.".into())
+    }
 }
 
-/// The saved skins in `dir`, oldest first; those whose picture is gone are left out.
-pub fn list(dir: &Path) -> Vec<Saved> {
-    std::fs::read_to_string(dir.join("index.json"))
-        .ok()
-        .and_then(|text| serde_json::from_str::<Vec<Saved>>(&text).ok())
-        .unwrap_or_default()
+/// The saved skins in `dir`, oldest first; those whose picture is gone are left out. No index
+/// yet is no saved skins; an index that can't be read or understood is an error, and nothing
+/// here writes over it.
+pub fn list(dir: &Path) -> Result<Vec<Saved>, String> {
+    let text = match std::fs::read_to_string(dir.join("index.json")) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(format!("The saved skins couldn't be read: {e}")),
+    };
+    let all: Vec<Saved> = serde_json::from_str(&text)
+        .map_err(|e| format!("The saved skins' list is damaged ({e}), so it was left as it is."))?;
+    Ok(all
         .into_iter()
         .filter(|s| valid_id(&s.id) && png_path(dir, &s.id).is_file())
-        .collect()
+        .collect())
 }
 
 /// A saved skin's picture.
@@ -72,10 +81,10 @@ pub fn add(dir: &Path, png: &[u8], name: &str, slim: Option<bool>) -> Result<Sav
     if png.len() > crate::account::skins::MAX_SKIN {
         return Err("This picture is too big for a skin.".into());
     }
-    let skin = crate::player_model::skin(png)
+    let skin = crate::player_model::raw_skin(png)
         .ok_or("This isn't a Minecraft skin: it must be a 64×64 or 64×32 PNG.")?;
     let id = id_of(&skin);
-    let mut all = list(dir);
+    let mut all = list(dir)?;
     if let Some(known) = all.iter().find(|s| s.id == id) {
         return Ok(known.clone());
     }
@@ -85,16 +94,17 @@ pub fn add(dir: &Path, png: &[u8], name: &str, slim: Option<bool>) -> Result<Sav
     let saved = Saved {
         id,
         name,
-        slim: slim.unwrap_or_else(|| crate::player_model::looks_slim(&skin)),
+        slim: slim.unwrap_or_else(|| crate::player_model::looks_slim(png)),
     };
     all.push(saved.clone());
     save(dir, &all)?;
     Ok(saved)
 }
 
-/// A skin's id: the first 16 hex digits of the SHA-1 of its texels, the clear ones all alike. The
-/// texels, not the file: Mojang's texture server sends a skin back in another PNG than the one
-/// worn, and it must still be the same saved skin.
+/// A skin's id: the first 16 hex digits of the SHA-1 of its texels as its file has them
+/// ([`crate::player_model::raw_skin`]), the clear ones all alike. The texels, not the file:
+/// Mojang's texture server sends a skin back in another PNG than the one worn, and it must
+/// still be the same saved skin.
 pub fn id_of(skin: &crate::player_model::Texture) -> String {
     use sha1::Digest;
     let mut sha = sha1::Sha1::new();
@@ -111,13 +121,13 @@ pub fn id_of(skin: &crate::player_model::Texture) -> String {
 
 /// The saved skin whose texels `png` has, if one has.
 pub fn find(dir: &Path, png: &[u8]) -> Option<Saved> {
-    let id = id_of(&crate::player_model::skin(png)?);
-    list(dir).into_iter().find(|s| s.id == id)
+    let id = id_of(&crate::player_model::raw_skin(png)?);
+    list(dir).ok()?.into_iter().find(|s| s.id == id)
 }
 
 /// Gives the saved skin `id` slim or classic arms.
 pub fn set_slim(dir: &Path, id: &str, slim: bool) -> Result<(), String> {
-    let mut all = list(dir);
+    let mut all = list(dir)?;
     match all.iter_mut().find(|s| s.id == id) {
         Some(s) if s.slim != slim => s.slim = slim,
         _ => return Ok(()),
@@ -127,7 +137,7 @@ pub fn set_slim(dir: &Path, id: &str, slim: bool) -> Result<(), String> {
 
 /// Forgets the saved skin `id` and deletes its picture.
 pub fn remove(dir: &Path, id: &str) -> Result<(), String> {
-    let mut all = list(dir);
+    let mut all = list(dir)?;
     all.retain(|s| s.id != id);
     save(dir, &all)?;
     if valid_id(id) {
@@ -158,7 +168,7 @@ mod tests {
     fn skins_are_saved_once_listed_changed_and_removed() {
         let dir = tempfile::tempdir().unwrap();
         let dir = dir.path().join("saved-skins");
-        assert!(list(&dir).is_empty());
+        assert!(list(&dir).unwrap().is_empty());
         let first = add(&dir, &picture(64, 64, false), "  Knight  ", None).unwrap();
         assert_eq!((first.name.as_str(), first.slim), ("Knight", false));
         let slim = add(&dir, &picture(64, 64, true), "", None).unwrap();
@@ -168,12 +178,12 @@ mod tests {
             add(&dir, &picture(64, 64, false), "Again", None).unwrap(),
             first
         );
-        assert_eq!(list(&dir), [first.clone(), slim.clone()]);
+        assert_eq!(list(&dir).unwrap(), [first.clone(), slim.clone()]);
         assert_eq!(png(&dir, &first.id), Some(picture(64, 64, false)));
         set_slim(&dir, &first.id, true).unwrap();
-        assert!(list(&dir)[0].slim);
+        assert!(list(&dir).unwrap()[0].slim);
         remove(&dir, &first.id).unwrap();
-        assert_eq!(list(&dir), [slim]);
+        assert_eq!(list(&dir).unwrap(), [slim]);
         assert!(png(&dir, &first.id).is_none());
     }
 
@@ -184,7 +194,7 @@ mod tests {
         assert!(add(dir.path(), b"text", "Text", None).is_err());
         assert!(png(dir.path(), "../../etc/passwd").is_none());
         assert!(remove(dir.path(), "../x").is_ok());
-        assert!(list(dir.path()).is_empty());
+        assert!(list(dir.path()).unwrap().is_empty());
     }
 
     #[test]
@@ -210,7 +220,7 @@ mod tests {
         assert_ne!(copy, picture(64, 64, true));
         assert_eq!(find(dir.path(), &copy), Some(worn.clone()));
         assert_eq!(add(dir.path(), &copy, "Again", None).unwrap(), worn);
-        assert_eq!(list(dir.path()).len(), 1);
+        assert_eq!(list(dir.path()).unwrap().len(), 1);
         assert!(find(dir.path(), &picture(64, 64, false)).is_none());
     }
 
@@ -218,15 +228,44 @@ mod tests {
     fn each_account_keeps_its_own_skins() {
         let data = tempfile::tempdir().unwrap();
         let (a, b) = (
-            folder_in(data.path(), "069a79f444e94726a5befca90e38aaf5"),
-            folder_in(data.path(), "b09600dff4354d4fb56776eec1e55083"),
+            folder_in(data.path(), "069a79f444e94726a5befca90e38aaf5").unwrap(),
+            folder_in(data.path(), "b09600dff4354d4fb56776eec1e55083").unwrap(),
         );
         add(&a, &picture(64, 64, false), "Mine", None).unwrap();
-        assert_eq!(list(&a).len(), 1);
-        assert!(list(&b).is_empty(), "another account sees none of them");
-        assert_eq!(
-            folder_in(data.path(), "../../x"),
-            data.path().join("saved-skins").join("no-account")
+        assert_eq!(list(&a).unwrap().len(), 1);
+        assert!(
+            list(&b).unwrap().is_empty(),
+            "another account sees none of them"
+        );
+        // A malformed account record gets no folder, rather than one shared with others.
+        for bad in [
+            "../../x",
+            "",
+            "no-account",
+            "069a79f444e94726a5befca90e38aaf",
+        ] {
+            assert!(folder_in(data.path(), bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn a_damaged_index_is_reported_and_never_written_over() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = add(dir.path(), &picture(64, 64, false), "First", None).unwrap();
+        let index = dir.path().join("index.json");
+        std::fs::write(&index, "{ not json").unwrap();
+        assert!(list(dir.path()).is_err());
+        for refused in [
+            add(dir.path(), &picture(64, 64, true), "Second", None).map(|_| ()),
+            set_slim(dir.path(), &first.id, true),
+            remove(dir.path(), &first.id),
+        ] {
+            assert!(refused.is_err());
+        }
+        assert_eq!(std::fs::read_to_string(&index).unwrap(), "{ not json");
+        assert!(
+            png(dir.path(), &first.id).is_some(),
+            "its picture is still there"
         );
     }
 }
