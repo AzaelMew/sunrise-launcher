@@ -504,6 +504,37 @@ fn registry_installed_rows_use_live_names_and_statuses_or_ids_and_not_checked() 
 }
 
 #[test]
+fn versionless_registry_project_stays_on_in_installed_without_an_update() {
+    let mut published = index(
+        vec![project(
+            "zoom",
+            "mod",
+            &[("2.0.0", GAME, B), ("1.0.0", GAME, A)],
+            serde_json::json!({}),
+        )],
+        vec![],
+    );
+    let installed = [entry("zoom", "1.0.0", false, A)];
+    let on = HashSet::from(["zoom".into()]);
+    let unbuilt = HashSet::new();
+    let loaded = Index::parse(&serde_json::to_string(&published).unwrap()).unwrap();
+    let before = rows(&installed, &world(&loaded, &on, &unbuilt, true));
+    assert_eq!(before[0].update.as_deref(), Some("2.0.0"));
+
+    published.projects[0].versions.clear();
+    let loaded = Index::parse(&serde_json::to_string(&published).unwrap()).unwrap();
+    assert!(loaded.project("zoom").is_none());
+    let after = rows(&installed, &world(&loaded, &on, &unbuilt, true));
+    assert_eq!(after.len(), 1);
+    let row = &after[0];
+    assert_eq!(row.id, "zoom");
+    assert_eq!(row.version, "1.0.0");
+    assert!(row.on && !row.registry_unchecked);
+    assert!(row.need.is_none());
+    assert!(row.update.is_none());
+}
+
+#[test]
 fn native_code_that_is_on_without_permission_says_so_instead_of_asking_to_build() {
     let (idx, entries) = pack();
     let enabled: HashSet<String> = ["deep".to_string()].into();

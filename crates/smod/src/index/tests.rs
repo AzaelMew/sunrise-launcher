@@ -217,6 +217,53 @@ fn a_project_with_no_usable_version_is_left_out_and_the_rest_loads() {
 }
 
 #[test]
+fn versionless_registry_projects_are_left_out_even_when_none_have_versions() {
+    let mut published = sample();
+    let mut second = published.projects[0].clone();
+    second.id = "coords_hud_two".into();
+    published.projects.push(second);
+    published.collections = vec![serde_json::from_value(serde_json::json!({
+        "id": "hud_pack", "name": "HUD pack", "summary": "Overlays.",
+        "description": "Markdown.", "owners": ["Someone"],
+        "icon": "https://example.test/icon.png", "members": [{"id": "coords_hud"}, {"id": "coords_hud_two"}],
+    }))
+    .unwrap()];
+    assert!(reread(&published).collection("hud_pack").is_some());
+
+    published.projects[0].versions.clear();
+    let partial = reread(&published);
+    assert!(partial.project("coords_hud").is_none());
+    assert!(partial.project("coords_hud_two").is_some());
+    assert!(partial.collection("hud_pack").is_none());
+    assert!(partial.left_out.iter().any(|row| {
+        row.id == "coords_hud"
+            && row.version.is_none()
+            && row.reason == "coords_hud: has no version this Sunrise can use"
+    }));
+    assert_eq!(published.check().unwrap_err(), "coords_hud: has no version");
+
+    for project in &mut published.projects {
+        project.versions.clear();
+    }
+    let all = reread(&published);
+    assert!(all.projects.is_empty());
+    assert!(all.collections.is_empty());
+    assert_eq!(all.revoked, published.revoked);
+    assert_eq!(all.left_out.len(), published.projects.len() + 1);
+
+    published.projects.clear();
+    let omitted = reread(&published);
+    assert!(omitted.projects.is_empty());
+    assert!(omitted.collections.is_empty());
+    assert_eq!(omitted.left_out.len(), 1);
+    assert_eq!(omitted.left_out[0].id, "hud_pack");
+    assert!(published.check().is_err(), "dangling collection members");
+    published.collections.clear();
+    assert!(published.check().is_ok(), "empty index is valid");
+    assert!(reread(&published).left_out.is_empty());
+}
+
+#[test]
 fn a_bad_version_is_left_out_and_its_project_keeps_the_others() {
     let mut index = with_hnmod();
     let native = index.projects.last_mut().unwrap();

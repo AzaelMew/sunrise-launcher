@@ -473,6 +473,36 @@ fn play_checks_hash_only_takedowns_after_proving_the_actual_package() {
     // the current archive's ID and path can turn those new bytes into registry origin.
     assert_eq!(fs::read_to_string(&row_path).unwrap(), recorded);
 
+    let cleared = index::Index::parse(
+        r#"{
+            "schema": 1, "revoked": [], "projects": [{
+                "id": "lantern", "kind": "mod", "name": "Lantern", "summary": "A light",
+                "authors": ["Someone"], "source": "https://github.com/example/lantern",
+                "license": "MIT", "versions": []
+            }]
+        }"#,
+    )
+    .unwrap();
+    assert!(cleared.project("lantern").is_none());
+    assert_eq!(
+        cleared.left_out[0].reason,
+        "lantern: has no version this Sunrise can use"
+    );
+    let (same, notices) = client
+        .ready(
+            &mut profile,
+            || panic!("already bound"),
+            |_, _| Ok(()),
+            (&cancellation, None),
+            |_| {},
+            || Some(Arc::new(cleared)),
+        )
+        .unwrap();
+    assert_eq!(same, active);
+    assert!(notices.is_empty());
+    assert!(crate::browser::mod_list::is_enabled(&home, "lantern"));
+    assert_eq!(fs::read_to_string(&row_path).unwrap(), recorded);
+
     let replaced = write_package("3.0.0");
     let error = client
         .ready(

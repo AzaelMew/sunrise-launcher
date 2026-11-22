@@ -168,13 +168,20 @@ fn only_the_builtin_reply_can_prove_a_published_id_and_archive_hash() {
     previous.version = "0.1.1".into();
     previous.file.sha256 = old.into();
     project.versions = vec![newest, previous];
-    let authority = OfficialRegistry::fixture(&Index {
+    let mut published = Index {
+        schema: index::SCHEMA,
         projects: vec![project],
         ..Index::default()
-    });
+    };
+    let authority = OfficialRegistry::fixture(&published);
     assert!(authority.proves_archive("vanilla_bestiary", old));
     assert!(!authority.proves_archive("foreign_bestiary", old));
     assert!(!authority.proves_archive("vanilla_bestiary", &"7".repeat(64)));
+
+    published.projects[0].versions.clear();
+    let parsed = Index::parse(&serde_json::to_string(&published).unwrap()).unwrap();
+    let cleared = OfficialRegistry::fixture(&parsed);
+    assert!(!cleared.proves_archive("vanilla_bestiary", old));
 }
 
 #[test]

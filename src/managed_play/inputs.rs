@@ -221,6 +221,56 @@ pub(super) fn browser_repair(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn versionless_registry_cannot_repair_a_stale_installed_row() {
+        use crate::browser::installed::MANIFEST;
+        use serde_json::json;
+
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path();
+        let file = format!("{}/coords_hud.smod", mod_list::DIR);
+        let archive = home.join(&file);
+        fs::create_dir_all(archive.parent().unwrap()).unwrap();
+        let mut published =
+            index::Index::parse(include_str!("../../crates/smod/tests/index/index-v1.json"))
+                .unwrap();
+        let release = &published.project("coords_hud").unwrap().versions[0];
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("crates/smod/tests/index")
+            .join(&release.file.name);
+        fs::copy(fixture, &archive).unwrap();
+        let path = home.join(MANIFEST);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let recorded = json!({"entries":[{
+            "source":"sunrise", "project":"coords_hud", "slug":"coords_hud", "title":"HUD",
+            "kind":"mod", "version":"0.0.9", "number":"0.0.9", "file":file,
+            "checksum":format!("SHA-256:{}", "0".repeat(64)), "page":"",
+        }]})
+        .to_string();
+        fs::write(&path, &recorded).unwrap();
+        let packages = scan_packages(home).unwrap();
+        let repaired = browser_repair(home, &packages, Some(&published))
+            .unwrap()
+            .expect("the exact release corroborates repair");
+        let repaired: serde_json::Value = serde_json::from_slice(&repaired).unwrap();
+        assert_eq!(repaired["entries"][0]["version"], release.version.as_str());
+        assert_eq!(
+            repaired["entries"][0]["checksum"],
+            format!("SHA-256:{}", release.file.sha256)
+        );
+
+        for project in &mut published.projects {
+            project.versions.clear();
+        }
+        let loaded = index::Index::parse(&serde_json::to_string(&published).unwrap()).unwrap();
+        assert!(loaded.projects.is_empty());
+        assert!(browser_repair(home, &packages, Some(&loaded))
+            .unwrap()
+            .is_none());
+        assert_eq!(fs::read_to_string(&path).unwrap(), recorded);
+    }
+
     #[test]
     fn manifest_ids_detect_a_collision_between_unpacked_and_archived_content() {
         let root = tempfile::tempdir().unwrap();
