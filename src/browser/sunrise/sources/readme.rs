@@ -266,8 +266,9 @@ fn html_images(html: &str) -> Vec<(String, String)> {
             rest = comment.find("-->").map_or("", |end| &comment[end + 3..]);
             continue;
         }
+        // The whole tag name: `img-preview` is not `img`.
         let name_end = rest
-            .find(|c: char| !c.is_ascii_alphanumeric())
+            .find(|c: char| c.is_ascii_whitespace() || c == '/' || c == '>')
             .unwrap_or(rest.len());
         let name = rest[..name_end].to_ascii_lowercase();
         let (attributes, after) = tag_attributes(&rest[name_end..]);
@@ -290,12 +291,15 @@ fn html_images(html: &str) -> Vec<(String, String)> {
                 }
             }
             "script" | "style" => {
+                // Raw text through the matching end tag, `</script` followed by the name's end.
                 // ASCII lowercasing keeps every byte offset.
                 let close = format!("</{name}");
-                rest = rest
-                    .to_ascii_lowercase()
-                    .find(&close)
-                    .map_or("", |end| &rest[end..]);
+                let lower = rest.to_ascii_lowercase();
+                let end = lower.match_indices(&close).map(|(at, _)| at).find(|&at| {
+                    lower[at + close.len()..]
+                        .starts_with(|c: char| c.is_ascii_whitespace() || c == '/' || c == '>')
+                });
+                rest = end.map_or("", |end| &rest[end..]);
             }
             _ => (),
         }

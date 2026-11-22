@@ -48,8 +48,9 @@ pub struct Source {
     icon: Option<String>,
 }
 
+/// A listing as published. Fields added to the feed later are ignored, so a newer list never
+/// stops an older launcher from reading the fields it knows.
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct WireSource {
     id: String,
     name: String,
@@ -218,7 +219,6 @@ fn safe_ref(name: &str) -> bool {
 
 fn parse(bytes: &[u8]) -> Result<Arc<[Source]>, String> {
     #[derive(Deserialize)]
-    #[serde(deny_unknown_fields)]
     struct Wire {
         format: u32,
         sources: Vec<Source>,

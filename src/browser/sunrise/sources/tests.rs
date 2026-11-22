@@ -79,7 +79,6 @@ fn source_catalogue_refuses_ambiguous_or_unsafe_boundary_values() {
         ("track", json!({ "branch": "topic/.lock" })),
         ("track", json!({ "branch": "https://github.com" })),
         ("track", json!({ "branch": "topic%2Fmain" })),
-        ("unexpected_url", json!("https://example.test")),
     ] {
         let mut source = entry();
         source[key] = value;
@@ -89,10 +88,25 @@ fn source_catalogue_refuses_ambiguous_or_unsafe_boundary_values() {
         );
     }
     assert!(parse(br#"{"format":2,"sources":[]}"#).is_err());
-    assert!(parse(br#"{"format":1,"sources":[],"extra":0}"#).is_err());
     assert!(parse(br#"{"format":1,"format":1,"sources":[]}"#).is_err());
     assert!(parse(&vec![b' '; MAX_CATALOG as usize + 1]).is_err());
     assert!(parse(&[b"{\"format\":1,\"sources\":[".as_slice(), &wire(vec![])].concat()).is_err());
+}
+
+#[test]
+fn fields_added_to_the_feed_later_are_ignored() {
+    let mut source = entry();
+    source["added_later"] = json!({ "any": "shape" });
+    let mut feed: Value = serde_json::from_slice(&wire(vec![source])).unwrap();
+    feed["also_added_later"] = json!([1, 2]);
+    let parsed = parse(&serde_json::to_vec(&feed).unwrap()).unwrap();
+    assert_eq!(parsed.len(), 1);
+    let mut missing = entry();
+    missing.as_object_mut().unwrap().remove("repo_id");
+    assert!(
+        parse(&wire(vec![missing])).is_err(),
+        "required keys stay required"
+    );
 }
 
 #[test]
