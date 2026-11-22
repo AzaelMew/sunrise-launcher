@@ -6,23 +6,38 @@ use sunrise_launcher::browser::sunrise::SourceError;
 impl Launcher {
     pub(in crate::mods) fn nightly_project(&mut self, cx: &mut Context<Self>) -> AnyElement {
         self.ui.mods.build_button_drawn = false;
-        // The README's pictures show in the same gallery and viewer as a registry mod's.
-        let pictures = self
-            .ui
-            .mods
-            .nightly
-            .open
-            .as_ref()
-            .and_then(|open| open.inspection.as_ref()?.data.readme.as_ref())
-            .map(|readme| {
-                readme
-                    .images()
-                    .iter()
-                    .cloned()
-                    .map(super::super::viewer::Picture::Readme)
-                    .collect()
-            })
-            .unwrap_or_default();
+        // A mod the registry lists shows the registry's description and screenshots; otherwise
+        // its README. Pictures go in the same gallery and viewer as a registry mod's.
+        let registry_page = self.ui.mods.nightly.open.as_ref().and_then(|open| {
+            let index = sunrise::known_index()?;
+            let project = index.project(open.source.id())?;
+            (!project.description.trim().is_empty())
+                .then(|| (project.description.clone(), project.screenshots.clone()))
+        });
+        // A registry entry without screenshots keeps the README's pictures.
+        let pictures = match &registry_page {
+            Some((_, screenshots)) if !screenshots.is_empty() => screenshots
+                .iter()
+                .cloned()
+                .map(super::super::viewer::Picture::Url)
+                .collect(),
+            _ => self
+                .ui
+                .mods
+                .nightly
+                .open
+                .as_ref()
+                .and_then(|open| open.inspection.as_ref()?.data.readme.as_ref())
+                .map(|readme| {
+                    readme
+                        .images()
+                        .iter()
+                        .cloned()
+                        .map(super::super::viewer::Picture::Readme)
+                        .collect()
+                })
+                .unwrap_or_default(),
+        };
         let gallery = self.gallery(pictures, cx);
         let state = &self.ui.mods.nightly;
         let open = state.open.as_ref().expect("a Nightly detail is open");
@@ -220,12 +235,16 @@ impl Launcher {
                 details.and_then(|details| details.error.as_ref()),
                 Some(sources::Failure::Offline(_) | sources::Failure::RateLimited { .. })
             );
-        left = left.child(muted(if saved_readme {
-            tr("README from the repository · saved copy")
-        } else {
-            tr("README from the repository")
-        }));
-        let body = if let Some(readme) = readme {
+        if registry_page.is_none() {
+            left = left.child(muted(if saved_readme {
+                tr("README from the repository · saved copy")
+            } else {
+                tr("README from the repository")
+            }));
+        }
+        let body = if let Some((description, _)) = &registry_page {
+            super::super::project::prose(self.theme, description)
+        } else if let Some(readme) = readme {
             // Its pictures are in the gallery above.
             crate::markdown::render_pinned(readme, &self.theme, |_| div().into_any_element())
         } else if inspection.is_none() {
