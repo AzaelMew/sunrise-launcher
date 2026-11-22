@@ -1464,6 +1464,23 @@ pub(crate) fn switch_game_version(tag: &str) -> Result<String, String> {
     })
 }
 
+/// Hosting uses the locked version as a destination. Older builds with no lock keep the default.
+pub(crate) fn hosting_game_version(tag: &str) -> Result<String, String> {
+    let path = version_dir(tag).join("research-lock.json");
+    match fs::read_to_string(path) {
+        Ok(text) => serde_json::from_str(&text)
+            .ok()
+            .and_then(|lock| crate::sources::Pins::version_in(&lock).map(str::to_owned))
+            .ok_or_else(invalid_hosting_game_version),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(PINNED_GAME.into()),
+        Err(_) => Err(invalid_hosting_game_version()),
+    }
+}
+
+pub(crate) fn invalid_hosting_game_version() -> String {
+    crate::i18n::tr("Invalid Minecraft version in research-lock.json.").into()
+}
+
 fn read_json(path: &Path) -> Option<serde_json::Value> {
     serde_json::from_str(&fs::read_to_string(path).ok()?).ok()
 }
@@ -1538,7 +1555,11 @@ pub fn resources(tag: &str) -> PathBuf {
 }
 
 fn resources_at(dir: &Path) -> PathBuf {
-    dir.join(".local/sunrise-client").join(game_version_at(dir))
+    resources_for_game(dir, &game_version_at(dir))
+}
+
+pub(crate) fn resources_for_game(dir: &Path, game_version: &str) -> PathBuf {
+    dir.join(".local/sunrise-client").join(game_version)
 }
 
 const RESOURCES_MANIFEST: &str = "sunrise-resources.json";
@@ -2567,13 +2588,7 @@ pub(crate) fn preparer_staged(
 ) -> Result<(Command, PathBuf), String> {
     set_prepare_step(PrepareStep::Files);
     // A native build reads the resources of its base, so it is the base that gets prepared.
-    let owner = resources_owner(tag);
-    if owner != tag && !version_dir(&owner).join(COMPLETE).is_file() {
-        return Err(crate::i18n::trf(
-            "This native build needs its base version {base}; reinstall it.",
-            &[("base", &owner)],
-        ));
-    }
+    let owner = installed_resources_owner(tag)?;
     let tag = owner.as_str();
     let version = game_version(tag);
     let dir = version_dir(tag);
@@ -3237,8 +3252,8 @@ pub fn server_dir(requested: Option<PathBuf>) -> PathBuf {
         .unwrap_or_else(|| data_dir().join("server"))
 }
 
-/// Whether `tag` is prepared, with the run-time reports it needs completed when another copy has them.
-pub fn need_prepared(tag: &str) -> Result<(), String> {
+/// The build holding the prepared resources, with a reinstall error if a native base is gone.
+pub(crate) fn installed_resources_owner(tag: &str) -> Result<String, String> {
     let base = resources_owner(tag);
     if base != tag && !version_dir(&base).join(COMPLETE).is_file() {
         return Err(crate::i18n::trf(
@@ -3246,7 +3261,12 @@ pub fn need_prepared(tag: &str) -> Result<(), String> {
             &[("base", &base)],
         ));
     }
-    need_base_prepared(&base, None)
+    Ok(base)
+}
+
+/// Whether `tag` is prepared, with the run-time reports it needs completed when another copy has them.
+pub fn need_prepared(tag: &str) -> Result<(), String> {
+    need_base_prepared(&installed_resources_owner(tag)?, None)
 }
 
 pub(crate) fn need_base_prepared(

@@ -89,7 +89,7 @@ fn programs_are_laid_out_as_install_sh_does() {
         fs::read_to_string(game_files(&rt, "26.3").join("sunrise-resources.json")).unwrap(),
         "{\"new\":1}"
     );
-    assert!(!game_files(&rt, "26.3").with_extension("old").exists());
+    assert!(!game_files(&rt, "26.3").with_file_name(".26.3.old").exists());
     fs::remove_dir_all(&root).unwrap();
 }
 
@@ -125,6 +125,12 @@ fn native_server_setup_uses_base_resources_and_native_programs() {
         json!({"base": base, "sunrise": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "target": "client"}).to_string(),
     )
     .unwrap();
+    let lock = base_dir.join("research-lock.json");
+    fs::write(
+        &lock,
+        json!({"minecraft": {"version": "26.3-pre-1"}}).to_string(),
+    )
+    .unwrap();
     // Only the base has resources; the native build need not duplicate them.
     assert!(can_host(native).is_err());
     let resources = backend::resources(base);
@@ -151,9 +157,39 @@ fn native_server_setup_uses_base_resources_and_native_programs() {
         fs::read_to_string(copied.join("nested/data")).unwrap(),
         "updated resources"
     );
-    assert!(!copied.with_extension("old").exists());
-    // A missing base still produces the actionable reinstall message.
+    assert!(!copied
+        .with_file_name(format!(".{}.old", backend::game_version(base)))
+        .exists());
+
+    // A malformed game version stops setup before it modifies the runtime.
+    let sibling = runtime_root().join("unrelated");
+    fs::create_dir_all(&sibling).unwrap();
+    let marker = sibling.join("keep");
+    fs::write(&marker, "unrelated data").unwrap();
+    for invalid in [
+        "../../unrelated",
+        sibling.to_str().unwrap(),
+        r"..\..\unrelated",
+    ] {
+        fs::write(
+            &lock,
+            json!({"minecraft": {"version": invalid}}).to_string(),
+        )
+        .unwrap();
+        assert!(can_host(native).unwrap_err().contains("research-lock.json"));
+        assert!(set_up(native).unwrap_err().contains("research-lock.json"));
+        assert_eq!(fs::read_to_string(&marker).unwrap(), "unrelated data");
+        assert_eq!(
+            fs::read_to_string(copied.join("nested/data")).unwrap(),
+            "updated resources"
+        );
+    }
+
+    // Both an incomplete install and an entirely missing base call for reinstalling it.
     fs::remove_file(base_dir.join(".installed")).unwrap();
+    assert!(set_up(native).unwrap_err().contains("reinstall"));
+    fs::remove_dir_all(&base_dir).unwrap();
+    assert!(can_host(native).unwrap_err().contains("reinstall"));
     assert!(set_up(native).unwrap_err().contains("reinstall"));
 }
 

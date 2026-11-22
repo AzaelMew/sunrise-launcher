@@ -229,34 +229,40 @@ pub fn game_files_ready() -> bool {
 
 /// Whether an installed version can host: it ships `sunrise-server` and is prepared.
 pub fn can_host(tag: &str) -> Result<(), String> {
+    host_resources(tag).map(|_| ())
+}
+
+fn host_resources(tag: &str) -> Result<(String, String), String> {
     if !backend::version_dir(tag).join(PROGRAM).is_file() {
         return Err(trf(
             "Sunrise {tag} has no server program. Install a newer game build first.",
             &[("tag", tag)],
         ));
     }
-    let owner = backend::resources_owner(tag);
+    let owner = backend::installed_resources_owner(tag)?;
+    let game_version = backend::hosting_game_version(&owner)?;
     if !backend::check_prepared(&owner) {
         return Err(format!(
             "Sunrise {tag} isn't prepared yet: press Prepare on the Play page (it uses your own Minecraft {})",
-            backend::game_version(&owner)
+            game_version
         ));
     }
-    Ok(())
+    Ok((owner, game_version))
 }
 
 /// Sets up the servers' programs from the installed version `tag` (if none are yet) and copies its
 /// prepared game files for them. Safe to run again: it only refreshes the game files.
 pub fn set_up(tag: &str) -> Result<(), String> {
-    can_host(tag)?;
+    let (owner, game_version) = host_resources(tag)?;
     // The data generator's reports the game reads at run time, as Play checks them.
-    backend::need_prepared(tag)?;
+    backend::need_base_prepared(&owner, None)?;
+    let resources = backend::resources_for_game(&backend::version_dir(&owner), &game_version);
     set_up_in(
         &runtime_root(),
         &backend::version_dir(tag),
         tag,
-        &backend::game_version(&backend::resources_owner(tag)),
-        &backend::resources(tag),
+        &game_version,
+        &resources,
     )
 }
 
@@ -268,6 +274,7 @@ pub fn set_up_in(
     game_version: &str,
     resources: &Path,
 ) -> Result<(), String> {
+    crate::browser::safe_name(game_version).ok_or_else(backend::invalid_hosting_game_version)?;
     let releases = root.join("releases");
     fs::create_dir_all(&releases).map_err(|e| format!("{}: {e}", releases.display()))?;
     let release = releases.join(tag);
@@ -294,7 +301,7 @@ pub fn set_up_in(
     // programs above come from the selected build.
     let from = resources;
     let to = game_files(root, game_version);
-    let fresh = to.with_extension("copying");
+    let fresh = to.with_file_name(format!(".{game_version}.copying"));
     let _ = fs::remove_dir_all(&fresh);
     copy_dir(from, &fresh).map_err(|e| {
         format!(
@@ -303,7 +310,7 @@ pub fn set_up_in(
             fresh.display()
         )
     })?;
-    let old = to.with_extension("old");
+    let old = to.with_file_name(format!(".{game_version}.old"));
     let _ = fs::remove_dir_all(&old);
     if to.exists() {
         fs::rename(&to, &old).map_err(|e| e.to_string())?;
