@@ -2,7 +2,7 @@
 //! updates. The GUI, the CLI and the MCP server all go through this module. Functions here
 //! block; the GUI runs them on threads and reads their messages.
 use crate::process::child::Child;
-use crate::{account, mojang, sources};
+use crate::{account, managed_play::Resources, mojang, sources};
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
@@ -1449,9 +1449,7 @@ fn game_version_at(dir: &Path) -> String {
 }
 
 fn locked_game(dir: &Path) -> Option<String> {
-    read_json(&dir.join("research-lock.json"))?["minecraft"]["version"]
-        .as_str()
-        .map(String::from)
+    crate::sources::Pins::version_in(&read_json(&dir.join("research-lock.json"))?).map(String::from)
 }
 
 /// The Minecraft version played when no installed build says (the game's `VERSION_ID`).
@@ -1888,8 +1886,8 @@ pub(crate) fn copy_dir_except(from: &Path, to: &Path, skip: Option<&Path>) -> st
 /// After an install: when `tag` is not prepared but another installed version made the same
 /// resources, copies them (not hard links: preparing again rewrites files in place, which would
 /// change both). The player then needs neither their Minecraft folder nor a new preparation to
-/// play a release that only changed Sunrise. Returns the version they came from.
-fn reuse_prepared(versions: &Path, tag: &str) -> Option<String> {
+/// play a release that only changed Sunrise. The caller holds the target's preparation lock.
+pub(crate) fn reuse_prepared(versions: &Path, tag: &str) -> Option<String> {
     let target = versions.join(tag);
     let to = resources_at(&target);
     if to.join(RESOURCES_MANIFEST).exists() {
@@ -1923,6 +1921,7 @@ fn reuse_prepared(versions: &Path, tag: &str) -> Option<String> {
             if to.join(RESOURCES_MANIFEST).exists() {
                 return Ok(false); // Prepared meanwhile, by another copy or the player.
             }
+            Resources::invalidate(&target)?;
             let _ = fs::remove_dir_all(&to);
             fs::rename(&partial, &to).map(|_| true)
         });
@@ -1936,15 +1935,6 @@ fn reuse_prepared(versions: &Path, tag: &str) -> Option<String> {
     None
 }
 
-/// A first Play already owns the preparation lock. Reuse compatible resources but leave
-/// preparer children to the staged path; they must retain its profile admission.
-pub(crate) fn reuse_prepared_for_play(tag: &str) {
-    let versions = versions_dir();
-    reuse_prepared(&versions, tag);
-    complete_reports(&versions, tag);
-    forget_prepared();
-}
-
 /// What an install does once its folder is in place (an imported build's too, `build_import`):
 /// another installed version's resources if it has none, whatever its resources lack, then its
 /// data file.
@@ -1956,14 +1946,11 @@ pub(crate) fn reuse_prepared_for(tag: &str) {
     };
     let versions = versions_dir();
     reuse_prepared(&versions, tag);
-    complete_assets_in(
-        &versions,
-        tag,
-        minecraft_folders,
-        &|line| eprintln!("{line}"),
-        Some(&preparation.handoff(None)),
-    );
-    forget_prepared();
+    if check_prepared(tag) {
+        if let Err(error) = finish_preparation(tag, &preparation) {
+            eprintln!("{tag}: {error}");
+        }
+    }
     drop(preparation);
     let (root, resources) = (version_dir(tag), resources(tag));
     let spawned = std::thread::Builder::new()
@@ -2014,13 +2001,13 @@ pub fn reuse_prepared_everywhere() -> Vec<(String, String)> {
         };
         let handoff = preparation.handoff(None);
         refill_own_store(&tag, &handoff);
-        complete_assets_in(
-            &versions,
-            &tag,
-            minecraft_folders,
-            &|line| eprintln!("{line}"),
-            Some(&handoff),
-        );
+        if reused.iter().any(|(prepared, _)| prepared == &tag) {
+            if let Err(error) = finish_preparation(&tag, &preparation) {
+                eprintln!("{tag}: {error}");
+            }
+        } else {
+            complete_assets_staged(&tag, &handoff);
+        }
     }
     reused
 }
@@ -2094,7 +2081,9 @@ fn complete_reports(versions: &Path, tag: &str) -> bool {
         static COPIES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let n = COPIES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let partial = to.join(format!(".{name}.partial-{}-{n}", std::process::id()));
-        let copied = fs::copy(&from, &partial).and_then(|_| fs::rename(&partial, to.join(name)));
+        let copied = Resources::invalidate(&target)
+            .and_then(|_| fs::copy(&from, &partial))
+            .and_then(|_| fs::rename(&partial, to.join(name)));
         if copied.is_err() {
             let _ = fs::remove_file(&partial);
             complete = false;
@@ -2204,6 +2193,9 @@ fn complete_assets_in(
     let mut tried = TRIED.lock().unwrap_or_else(|e| e.into_inner());
     if tried.contains(&root) {
         return;
+    }
+    if let Err(error) = Resources::invalidate(&root) {
+        return log(format!("{tag}: {error}"));
     }
     tried.push(root.clone());
     let kinds: Vec<String> = lacking.iter().map(|(kind, _)| kind.clone()).collect();
@@ -2663,7 +2655,17 @@ pub(crate) fn preparer_staged(
         cmd.args(["--prepare", "--server-jar"]).arg(&jar);
     }
     cmd.arg("--minecraft-dir").arg(&minecraft);
+    // This also precedes the sounds pass shared by GUI, CLI and staged Prepare.
+    Resources::invalidate(&dir).map_err(|e| e.to_string())?;
     Ok((cmd, minecraft))
+}
+
+/// Complete resources and publish their managed-Play snapshot while Prepare still holds its lock.
+pub fn finish_preparation(
+    tag: &str,
+    preparation: &crate::preparer::Preparation,
+) -> Result<(), String> {
+    Resources::prepare(&resources_owner(tag), preparation, None).map(drop)
 }
 
 /// Makes sure `jar` holds the server jar `manifest` names: one already cached whose sha1 is not
@@ -3213,36 +3215,25 @@ pub fn server_dir(requested: Option<PathBuf>) -> PathBuf {
 
 /// Whether `tag` is prepared, with the run-time reports it needs completed when another copy has them.
 pub fn need_prepared(tag: &str) -> Result<(), String> {
-    need_prepared_inner(tag, None)
+    let base = resources_owner(tag);
+    if base != tag && !version_dir(&base).join(COMPLETE).is_file() {
+        return Err(crate::i18n::trf(
+            "This native build needs its base version {base}; reinstall it.",
+            &[("base", &base)],
+        ));
+    }
+    need_base_prepared(&base, None)
 }
 
-pub(crate) fn need_prepared_locked(
-    tag: &str,
-    preparation: &crate::preparer::Preparation,
-) -> Result<(), String> {
-    need_prepared_inner(tag, Some(preparation))
-}
-
-fn need_prepared_inner(
+pub(crate) fn need_base_prepared(
     tag: &str,
     preparation: Option<&crate::preparer::Preparation>,
 ) -> Result<(), String> {
-    let about = crate::native_mods::about(tag);
-    if let Some(about) = &about {
-        if !version_dir(&about.base).join(COMPLETE).is_file() {
-            return Err(crate::i18n::trf(
-                "This native build needs its base version {base}; reinstall it.",
-                &[("base", &about.base)],
-            ));
-        }
-    }
-    let tag = about.as_ref().map_or(tag, |about| about.base.as_str());
     if check_prepared(tag) {
-        let _owned = if preparation.is_none() {
-            Some(prepare_lock(tag)?)
-        } else {
-            None
-        };
+        let _owned = preparation
+            .is_none()
+            .then(|| prepare_lock(tag))
+            .transpose()?;
         complete_reports(&versions_dir(), tag);
         Ok(())
     } else {
@@ -4362,10 +4353,10 @@ pub fn spawn_holding(
     job: Job,
     cmd: Command,
     tx: Sender<Msg>,
-    hold: Option<crate::preparer::Preparation>,
+    prepare: Option<(String, crate::preparer::Preparation)>,
 ) -> Result<Running, String> {
     let (cmd, runtime) = prepare_command(cmd)?;
-    spawn_prepared(job, cmd, runtime, tx, hold)
+    spawn_prepared(job, cmd, runtime, tx, prepare)
 }
 
 fn spawn_prepared(
@@ -4373,14 +4364,14 @@ fn spawn_prepared(
     mut cmd: Command,
     runtime: RuntimeGuard,
     tx: Sender<Msg>,
-    hold: Option<crate::preparer::Preparation>,
+    prepare: Option<(String, crate::preparer::Preparation)>,
 ) -> Result<Running, String> {
-    if let Some(preparation) = &hold {
+    if let Some((_, preparation)) = &prepare {
         let child = preparation
             .handoff(None)
             .spawn(cmd, true)
             .map_err(|e| e.to_string())?;
-        return Ok(monitor(job, child, tx, runtime, hold));
+        return Ok(monitor(job, child, tx, runtime, prepare));
     }
     #[cfg(unix)]
     {
@@ -4392,7 +4383,7 @@ fn spawn_prepared(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let child = play_log::spawn(&mut cmd)?.into();
-    Ok(monitor(job, child, tx, runtime, hold))
+    Ok(monitor(job, child, tx, runtime, None))
 }
 
 /// Use the same streams, process monitor and crash reporting for an admitted game's child.
@@ -4405,7 +4396,7 @@ fn monitor(
     mut child: Child,
     tx: Sender<Msg>,
     runtime: RuntimeGuard,
-    hold: Option<crate::preparer::Preparation>,
+    prepare: Option<(String, crate::preparer::Preparation)>,
 ) -> Running {
     let pid = child.id();
     let group = matches!(job, Job::Prepare);
@@ -4466,21 +4457,18 @@ fn monitor(
                 return;
             }
         }
-        let result = match status {
-            Ok(s) => {
-                runtime.game_exited();
-                if s.success() {
-                    Ok(())
-                } else {
-                    Err(format!("Exited with {s}"))
-                }
-            }
-            Err(e) => Err(e.to_string()),
-        };
         if group {
             crate::process::owned::CHILDREN.release(pid);
         }
-        drop(hold);
+        let result = status.map_err(|e| e.to_string()).and_then(|s| {
+            let result = match prepare {
+                Some((tag, preparation)) if s.success() => finish_preparation(&tag, &preparation),
+                _ if s.success() => Ok(()),
+                _ => Err(format!("Exited with {s}")),
+            };
+            runtime.game_exited();
+            result
+        });
         let _ = tx.send(Msg::Exit(job, result));
     });
     Running { child, stdin }
@@ -7478,7 +7466,70 @@ esac"#
             );
         }
         assert!(lines.borrow().is_empty(), "{:?}", lines.borrow());
+
+        // An interrupted writer can change the preparation before it reports what it added.
+        let interrupted = version(
+            "interrupted",
+            true,
+            &format!(
+                r#"case "$1" in
+missing-extras) printf '%s\n' '{lacking}' ;;
+extras) test ! -e .local/launcher-prepared/current.json || exit 2
+        printf changed > "$6/writer-proof"; exit 1 ;;
+esac"#
+            ),
+        );
+        let store = interrupted.join(".local/launcher-prepared");
+        let snapshot = store.join("0".repeat(64)).join("resources");
+        fs::create_dir_all(&snapshot).unwrap();
+        fs::write(snapshot.join("writer-proof"), b"original").unwrap();
+        let receipt = store.join("current.json");
+        let before = serde_json::json!({"primary": vec![0; 32], "accelerator": null});
+        fs::write(&receipt, before.to_string()).unwrap();
+        let preparation = prepare_lock_at(&interrupted, "interrupted").unwrap();
+        complete_assets_in(
+            &versions,
+            "interrupted",
+            folders,
+            &log,
+            Some(&preparation.handoff(None)),
+        );
+        assert!(!receipt.exists());
+        assert_eq!(
+            fs::read(resources_at(&interrupted).join("writer-proof")).unwrap(),
+            b"changed"
+        );
+        assert_eq!(
+            fs::read(snapshot.join("writer-proof")).unwrap(),
+            b"original"
+        );
+        drop(preparation);
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_research_pin_can_only_name_one_prepared_version_component() {
+        let dir = tempfile::tempdir().unwrap();
+        let pin = dir.path().join("research-lock.json");
+        for version in [
+            "..",
+            "../prepared",
+            "/prepared",
+            "a/b",
+            "a\\b",
+            "C:prepared",
+        ] {
+            fs::write(
+                &pin,
+                serde_json::json!({"minecraft": {"version": version}}).to_string(),
+            )
+            .unwrap();
+            assert_eq!(locked_game(dir.path()), None);
+            assert_eq!(
+                resources_at(dir.path()),
+                dir.path().join(".local/sunrise-client").join(PINNED_GAME)
+            );
+        }
     }
 
     #[test]

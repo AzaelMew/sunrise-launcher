@@ -1192,6 +1192,7 @@ impl Launcher {
 
 pub(crate) fn stage_label(step: InstallProgress) -> String {
     match step {
+        InstallProgress::PreparingBuild => tr("Getting the build ready…").into(),
         InstallProgress::Checking => tr("Checking the mod set…").into(),
         InstallProgress::Downloading(f) => trf(
             "Downloading {percent}%",

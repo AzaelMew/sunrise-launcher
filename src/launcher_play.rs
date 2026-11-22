@@ -150,20 +150,13 @@ impl Launcher {
             let log = |line| {
                 let _ = tx.send(Msg::Line(Job::Prepare, line));
             };
-            let lock = match backend::prepare_lock(&tag) {
-                Ok(lock) => lock,
-                Err(e) => {
-                    let _ = tx.send(Msg::Exit(Job::Prepare, Err(e)));
-                    return;
-                }
-            };
-            let result = backend::preparer(&tag, &minecraft, from, &log, &lock)
-                .inspect(|(_, minecraft)| backend::sounds(&tag, minecraft, &log, &lock))
-                .map(|(p, _)| {
-                    backend::set_prepare_step(backend::PrepareStep::Prepare);
-                    p
-                })
-                .and_then(|cmd| backend::spawn_holding(Job::Prepare, cmd, tx.clone(), Some(lock)));
+            let result = (|| {
+                let lock = backend::prepare_lock(&tag)?;
+                let (cmd, minecraft) = backend::preparer(&tag, &minecraft, from, &log, &lock)?;
+                backend::sounds(&tag, &minecraft, &log, &lock);
+                backend::set_prepare_step(backend::PrepareStep::Prepare);
+                backend::spawn_holding(Job::Prepare, cmd, tx.clone(), Some((tag, lock)))
+            })();
             // A running preparer sends its own Exit when it ends.
             if let Err(e) = result {
                 let _ = tx.send(Msg::Exit(Job::Prepare, Err(e)));

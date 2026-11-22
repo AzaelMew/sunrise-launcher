@@ -133,6 +133,7 @@ fn copy_prepared(from: &Path, to: &Path) -> std::io::Result<bool> {
 /// or a `prepare` that has no Minecraft install to read (#4315). Does nothing when the base has
 /// resources already, or when the checkout has none prepared. Returns whether it copied them.
 pub(crate) fn reuse_checkout_resources(checkout: &Path, tag: &str) -> std::io::Result<bool> {
+    let _preparation = backend::prepare_lock(tag).map_err(std::io::Error::other)?;
     let to = backend::resources(tag);
     if backend::prepared_at(&to) {
         return Ok(false);
@@ -145,6 +146,7 @@ pub(crate) fn reuse_checkout_resources(checkout: &Path, tag: &str) -> std::io::R
     if !backend::prepared_at(&from) {
         return Ok(false);
     }
+    crate::managed_play::Resources::invalidate(&backend::version_dir(tag))?;
     let copied = copy_prepared(&from, &to)?;
     backend::forget_prepared();
     Ok(copied)

@@ -86,7 +86,7 @@ impl Launcher {
         let stop = native_mods::Cancellation::default();
         self.ui.sheets.switching.running = Some(Running {
             tag: tag.clone(),
-            progress: InstallProgress::Checking,
+            progress: InstallProgress::PreparingBuild,
             stop: stop.clone(),
             question: None,
         });
