@@ -59,6 +59,8 @@ pub(crate) enum Action {
     PlayAs(String),
     Add,
     Manage,
+    /// The Skins tab, where the account's cape is chosen.
+    Skins,
     Settings,
 }
 
@@ -248,6 +250,7 @@ impl Launcher {
                 self.settings_open(Section::Account);
                 self.navigate(Page::Settings);
             }
+            Action::Skins => self.navigate(Page::Skins),
             Action::Settings => self.navigate(Page::Settings),
         }
     }
@@ -373,6 +376,12 @@ impl Launcher {
                 Action::Manage,
             ))
             .child(act(
+                "account-menu-skins",
+                "t-shirt",
+                tr("Skins and capes"),
+                Action::Skins,
+            ))
+            .child(act(
                 "account-menu-settings",
                 "sliders-horizontal",
                 tr("Settings"),
@@ -460,6 +469,7 @@ mod tests {
         for closes in [
             Action::PlayAs("a1".into()),
             Action::Manage,
+            Action::Skins,
             Action::Settings,
         ] {
             assert_eq!(sheet_after(&closes), None, "{closes:?}");

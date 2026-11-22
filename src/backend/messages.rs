@@ -34,6 +34,42 @@ pub enum Msg {
     AccountProgress(String, u64, crate::account::session::Phase),
     AccountHead(String, Option<String>, Option<Vec<[u8; 4]>>, bool),
     AccountRemoved(String, u64, Result<bool, String>),
+    /// What account `.0` wears, read for the Skins tab by the request numbered `.1`.
+    SkinsProfile(String, u64, Result<crate::account::capes::Profile, String>),
+    /// A skin's or cape's picture from Mojang's texture server, by its URL (none: it couldn't be
+    /// had).
+    Picture(String, Option<Vec<u8>>),
+    /// A Save on the Skins tab for account `.0`, numbered `.1`, ended.
+    LookSaved(String, u64, Box<crate::account::look::Outcome>),
+    /// Skin files added to account `.0`'s saved skins: each one, or why not.
+    SkinsAdded(
+        String,
+        Vec<Result<crate::skin_library::Saved, String>>,
+        crate::skin_library::Listing,
+    ),
+    /// Account `.0`'s saved skins, listed.
+    SkinsListed(String, crate::skin_library::Listing),
+    /// What a later profile confirmed of account `.0`'s last Save, recorded in accounts.json, or
+    /// why not.
+    LookRecorded(String, crate::account::look::Record, Result<(), String>),
+    /// The saved skin `.1` of account `.0` removed, or why not, and the list after.
+    SkinRemoved(
+        String,
+        String,
+        Result<(), String>,
+        crate::skin_library::Listing,
+    ),
+    /// A saved or default skin's file for the Skins tab, by the page's key for it and the
+    /// number of the read that asked for it (none: it couldn't be read).
+    SkinFile(String, u64, Option<Vec<u8>>),
+    /// The skin account `.0` wears, at URL `.1`, kept among its saved skins, or why not, and the
+    /// list after.
+    SkinKept(
+        String,
+        String,
+        Result<crate::skin_library::Saved, String>,
+        crate::skin_library::Listing,
+    ),
     /// The owner gate's answer for the game about to start: the selected account's session
     /// file (none = offline) and why it plays offline, if it does.
     Session(Result<Option<crate::account::GameSession>, crate::account::NoOwner>),

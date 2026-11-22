@@ -20,14 +20,58 @@ pub fn enabled(tag: &str) -> bool {
     let native = crate::native_mods::about(tag);
     let base = native
         .as_ref()
-        .map(|a| a.base.clone())
-        .or_else(|| crate::build_import::about(tag).map(|a| a.base))
-        .unwrap_or_else(|| tag.to_owned());
+        .map_or_else(|| base(tag), |a| a.base.clone());
     eligible(
         &base,
         &crate::backend::version_dir(&base),
         native.as_ref().map(|a| a.sunrise.as_str()),
     )
+}
+
+/// A file's time and size, if it is there.
+pub type Stamp = Option<(std::time::SystemTime, u64)>;
+
+/// `path` with its time and size.
+pub fn stamp(path: std::path::PathBuf) -> (std::path::PathBuf, Stamp) {
+    let meta = std::fs::metadata(&path).ok();
+    let stamp = meta.and_then(|m| Some((m.modified().ok()?, m.len())));
+    (path, stamp)
+}
+
+/// The lineage records [`enabled`] reads for `tag`: a native build's `native-mods.json`, an
+/// imported build's record. They name its base build ([`base`]).
+pub fn records(tag: &str) -> [std::path::PathBuf; 2] {
+    let own = crate::backend::version_dir(tag);
+    [
+        own.join(crate::native_mods::RECORD),
+        own.join(crate::build_import::RECORD),
+    ]
+}
+
+/// The build `tag` is made from, as its lineage records say ([`records`]), else itself: the
+/// build whose records [`enabled`] checks.
+pub fn base(tag: &str) -> String {
+    crate::native_mods::about(tag)
+        .map(|a| a.base)
+        .or_else(|| crate::build_import::about(tag).map(|a| a.base))
+        .unwrap_or_else(|| tag.to_owned())
+}
+
+/// The base build's records [`enabled`] reads: its install mark and developer record.
+pub fn base_records(base: &str) -> [std::path::PathBuf; 2] {
+    let dir = crate::backend::version_dir(base);
+    [dir.join(".installed"), dir.join("developer.json")]
+}
+
+/// Every file [`enabled`] reads for `tag`, with its time and size: [`records`], then the
+/// [`base_records`] of its [`base`]. While these stay the same, so does [`enabled`]'s answer for
+/// `tag`, so a caller can keep it instead of asking at every frame.
+pub fn inputs(tag: &str) -> Vec<(std::path::PathBuf, Stamp)> {
+    records(tag)
+        .into_iter()
+        .chain(base_records(&base(tag)))
+        .map(stamp)
+        .collect()
 }
 
 fn eligible(base: &str, directory: &std::path::Path, native_revision: Option<&str>) -> bool {
@@ -140,6 +184,39 @@ pub fn selected() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_inputs_are_the_files_eligibility_reads_the_base_builds_included() {
+        // An imported build of a developer base: its own record, then the base's install mark
+        // and developer record, as `enabled` reads them.
+        let tag = "imported-inputs-test";
+        let own = crate::backend::version_dir(tag);
+        std::fs::create_dir_all(&own).unwrap();
+        std::fs::write(
+            own.join(crate::build_import::RECORD),
+            r#"{"base": "developer-inputs-base", "file": "x.jar"}"#,
+        )
+        .unwrap();
+        let base = crate::backend::version_dir("developer-inputs-base");
+        let paths: Vec<_> = inputs(tag).into_iter().map(|(path, _)| path).collect();
+        assert_eq!(
+            paths,
+            [
+                own.join(crate::native_mods::RECORD),
+                own.join(crate::build_import::RECORD),
+                base.join(".installed"),
+                base.join("developer.json"),
+            ]
+        );
+        // The base reinstalled under the same tag: the inputs change.
+        let before = inputs(tag);
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::write(base.join(".installed"), "").unwrap();
+        assert_ne!(inputs(tag), before);
+        std::fs::remove_dir_all(&own).unwrap();
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
     #[test]
     fn startup_failure_bounds_unicode_details_without_changing_short_diagnostics() {
         let short = "dyld[4321]: Library not loaded: @rpath/libsunrise_mod_host.dylib";

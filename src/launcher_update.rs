@@ -321,7 +321,8 @@ impl Launcher {
                 || self.finishing_game > 0
                 || !self.auth_busy.is_empty()
                 || (self.sign_in.is_some()
-                    && !matches!(self.sign_in_state, Some(SignInState::Done(_)))),
+                    && !matches!(self.sign_in_state, Some(SignInState::Done(_))))
+                || self.skins.writing(),
         )
     }
 
