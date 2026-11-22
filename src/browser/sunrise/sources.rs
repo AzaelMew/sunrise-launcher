@@ -18,8 +18,8 @@ mod readme;
 pub(crate) use github::fixture_link_api;
 pub(crate) use github::{branch_ahead, github_archive, pasted_source};
 pub use github::{
-    branch_metadata, details, resolve, resolve_batch, resolve_each, Details, Failure, IconMisses,
-    SourceCommit, SourceIcon, SourceMetadata,
+    details, resolve, resolve_batch, resolve_each, Details, Failure, IconMisses, SourceCommit,
+    SourceIcon,
 };
 pub use readme::{readme_image, Readme, ReadmeImage};
 

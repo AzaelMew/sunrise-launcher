@@ -41,6 +41,17 @@ impl Sandbox {
         fs::write(path, bytes).unwrap();
     }
 
+    fn readme(&self, path: &str, text: &str) {
+        use base64::{engine::general_purpose::STANDARD, Engine as _};
+        // The real API inserts line breaks between base64 blocks.
+        let content = STANDARD.encode(text);
+        let content = format!("{}\n{}", &content[..8], &content[8..]);
+        self.put(
+            &format!("api/repos/{REPO}/readme/{SHA}.json"),
+            serde_json::json!({"path":path,"size":text.len(),"type":"file","encoding":"base64","content":content}).to_string(),
+        );
+    }
+
     fn source(repo_id: u64) -> Source {
         Source::for_origin(
             "trail_atlas",
@@ -51,56 +62,6 @@ impl Sandbox {
         )
         .unwrap()
     }
-}
-
-#[test]
-fn branch_display_metadata_is_bounded_to_the_raw_manifest_and_cached_offline() {
-    let s = Sandbox::new();
-    let source = Sandbox::source(42);
-    let path = format!("raw/{REPO}/refs/heads/topic/camps/{MANIFEST}");
-    let start = test_requests();
-    assert!(s.github.branch_metadata(&source, false).is_none());
-    assert_eq!(test_requests(), start);
-    let common = "id='trail_atlas'\nname='Trail Atlas'\nversion='0.1.0'\napi='0.2'\nauthors=['Atlas Authors']\n";
-    s.put(&path, "not TOML [[");
-    assert!(s.github.branch_metadata(&source, true).is_none());
-    s.put(&path, common);
-    let no_native = s.github.branch_metadata(&source, true).unwrap();
-    assert_eq!(no_native.build_pin, None);
-    assert_eq!(no_native.authors, ["Atlas Authors"]);
-
-    // The online cache only refreshes after the same freshness window as branch icons.
-    let saved = fs::read_dir(&s.github.cache)
-        .unwrap()
-        .next()
-        .unwrap()
-        .unwrap()
-        .path();
-    fs::OpenOptions::new()
-        .write(true)
-        .open(saved)
-        .unwrap()
-        .set_modified(SystemTime::now() - FRESH)
-        .unwrap();
-    s.put(
-        &path,
-        format!("{common}[native]\ngame='26.3'\nsunrise='{SHA}'\n"),
-    );
-    let metadata = s.github.branch_metadata(&source, true).unwrap();
-    assert_eq!(metadata.build_pin.as_deref(), Some(SHA));
-    assert_eq!(
-        s.github
-            .branch_metadata(&source, false)
-            .unwrap()
-            .build_pin
-            .as_deref(),
-        Some(SHA)
-    );
-    assert_eq!(
-        test_requests() - start,
-        3,
-        "the only requests were the raw manifest reads"
-    );
 }
 
 #[test]
@@ -148,14 +109,7 @@ fn a_missing_or_mismatched_manifest_disables_build_without_hiding_the_pinned_rea
     let s = Sandbox::new();
     let path = format!("raw/{REPO}/{SHA}/{MANIFEST}");
     s.put(&path, b"id='mismatch'\n");
-    s.put(
-        &format!("api/repos/{REPO}/readme/{SHA}.json"),
-        br#"{"path":"docs/README.md","size":110,"type":"file"}"#,
-    );
-    s.put(
-        &format!("raw/{REPO}/{SHA}/docs/README.md"),
-        "# Pinned\n\n![Atlas](media/atlas.png)",
-    );
+    s.readme("docs/README.md", "# Pinned\n\n![Atlas](media/atlas.png)");
     let start = test_requests();
     let details = inspect(&s.github, &Sandbox::source(42), None, true);
     assert_eq!(details.error, Some(Failure::NoManifest));
@@ -163,22 +117,15 @@ fn a_missing_or_mismatched_manifest_disables_build_without_hiding_the_pinned_rea
     assert_eq!(details.readme.unwrap().images().len(), 1);
     assert_eq!(
         test_requests() - start,
-        5,
-        "only repo, ref, manifest and README metadata/content; no image"
+        4,
+        "one pinned README request, with no raw README or image request"
     );
 }
 
 #[test]
 fn repository_and_ref_collapse_across_mods_and_cached_readme_works_offline() {
     let s = Sandbox::new();
-    s.put(
-        &format!("api/repos/{REPO}/readme/{SHA}.json"),
-        br#"{"path":"README.md","size":24,"type":"file"}"#,
-    );
-    s.put(
-        &format!("raw/{REPO}/{SHA}/README.md"),
-        "# Trail Atlas\n\nOld notes.",
-    );
+    s.readme("README.md", "# Trail Atlas\n\nOld notes.");
     let start = test_requests();
     let epoch = Some(Instant::now());
     let details = inspect(&s.github, &Sandbox::source(42), epoch, true);
@@ -196,7 +143,7 @@ fn repository_and_ref_collapse_across_mods_and_cached_readme_works_offline() {
     assert_eq!(bad, Failure::NoManifest);
     assert_eq!(
         test_requests() - start,
-        6,
+        5,
         "the second mod only checks its manifest"
     );
     s.put(&format!("api/repos/{REPO}.status"), "offline\n");
@@ -209,7 +156,7 @@ fn repository_and_ref_collapse_across_mods_and_cached_readme_works_offline() {
     );
     assert_eq!(
         test_requests() - start,
-        7,
+        6,
         "only one attempt while recovering the saved README"
     );
 }
@@ -290,13 +237,15 @@ fn an_archive_rate_limit_pauses_archive_and_metadata_requests_until_reset() {
 #[test]
 fn active_cooldown_preserves_cached_details_but_does_not_authorize_builds() {
     let s = Sandbox::new();
-    s.put(
-        &format!("api/repos/{REPO}/readme/{SHA}.json"),
-        br#"{"path":"README.md","size":24,"type":"file"}"#,
-    );
-    s.put(&format!("raw/{REPO}/{SHA}/README.md"), "# Trail Atlas");
+    s.readme("README.md", "# Trail Atlas");
     let source = Sandbox::source(42);
-    assert_eq!(inspect(&s.github, &source, None, true).checked_commit().unwrap().sha(), SHA);
+    assert_eq!(
+        inspect(&s.github, &source, None, true)
+            .checked_commit()
+            .unwrap()
+            .sha(),
+        SHA
+    );
     s.put(
         &format!("api/repos/{REPO}.status"),
         "429\nRetry-After: 500\n",
