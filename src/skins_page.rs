@@ -66,14 +66,14 @@ fn request_id() -> u64 {
     NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
-/// A file's time and size, if it is there.
-type Stamp = Option<(std::time::SystemTime, u64)>;
-
 /// What decides whether the offline developer view is on, besides the environment: the build
-/// the selected profile plays, that profile, the builds installed, and the played build's
-/// install and developer records (`.installed`, `developer.json`). The answer is kept while
-/// these stay the same, so drawing the page reads no profile files.
-type OfflineKey = (Option<String>, Option<String>, Vec<String>, [Stamp; 2]);
+/// the selected profile plays, and every file `developer_offline::enabled` reads for it
+/// (`developer_offline::inputs`). The answer is kept while these stay the same, so drawing the
+/// page reads no profile files.
+type OfflineKey = (
+    Option<String>,
+    Vec<(PathBuf, sunrise_launcher::developer_offline::Stamp)>,
+);
 
 /// Runs `work` on a thread of its own: false when no thread could be started (the caller says
 /// so), rather than a panic on the UI thread.
@@ -91,6 +91,20 @@ fn answer(tx: &Sender<Msg>, work: impl FnOnce() -> Msg, fallback: impl FnOnce() 
     let msg =
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(work)).unwrap_or_else(|_| fallback());
     let _ = tx.send(msg);
+}
+
+/// A queued texture job's picture: `offline` is asked again as the job starts (from the files,
+/// on the worker), and if the offline developer view came on since the job was queued, nothing
+/// is fetched. That counts as a picture not had, asked for again once online.
+fn picture_unless_offline(
+    url: &str,
+    offline: impl FnOnce() -> bool,
+    fetch: impl FnOnce(&str) -> Option<Vec<u8>>,
+) -> Option<Vec<u8>> {
+    if offline() {
+        return None;
+    }
+    fetch(url)
 }
 
 /// What a job that stopped unexpectedly says.
@@ -229,6 +243,21 @@ enum SkinSent {
     Picture(SkinPick),
 }
 
+/// Changes the services took that no profile has shown yet, as they were sent. Each profile
+/// read after them is checked: what it shows is recorded in accounts.json (as the Save itself
+/// records a change it saw take), and what it doesn't is dropped, the profile being what the
+/// account wears.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Awaited {
+    /// The skin uploaded (its id, [`skin_library::id_of_png`]) and its arms.
+    skin: Option<(String, bool)>,
+    /// The skin a profile then showed with those arms (its URL and model): whether it is the
+    /// one uploaded is known once its picture is here.
+    skin_at: Option<(String, String)>,
+    /// The cape asked for, by id, or none.
+    cape: Option<Option<String>>,
+}
+
 /// A Save under way: its number and what it sent.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Submitted {
@@ -247,6 +276,12 @@ pub(crate) struct Skins {
     /// Changes the services accepted that no profile has shown yet: the account is taken to
     /// wear them over `profile` until the next reading says what it wears.
     unconfirmed: Edit,
+    /// The same changes as they were sent, checked against each profile read after them.
+    awaited: Awaited,
+    /// What later profiles showed of them, to record in accounts.json.
+    confirmed: look::Record,
+    /// Those being recorded now: a Save waits for them, so records are written in Save order.
+    recording: usize,
     /// The reading whose answer counts.
     reading: Option<u64>,
     /// The Save under way.
@@ -294,6 +329,9 @@ impl Default for Skins {
             uuid: None,
             profile: None,
             unconfirmed: Edit::default(),
+            awaited: Awaited::default(),
+            confirmed: look::Record::default(),
+            recording: 0,
             reading: None,
             saving: None,
             edit: Edit::default(),
@@ -528,7 +566,7 @@ impl Skins {
         id
     }
 
-    /// A reading answered: kept when it is for the account shown and the last one asked, the
+    /// A reading answered: kept when it is for this page's account and the last one asked, the
     /// page isn't `offline` now, and no Save is under way (its answer is newer than any
     /// reading made before it ends).
     fn read_answered(
@@ -538,15 +576,18 @@ impl Skins {
         result: Result<Profile, String>,
         offline: bool,
     ) -> bool {
-        if offline || self.uuid.as_deref() != Some(uuid) || self.reading != Some(id) {
+        if self.uuid.as_deref() != Some(uuid) || self.reading != Some(id) {
             return false;
         }
         self.reading = None;
-        if self.saving.is_some() {
+        // Answered: in the offline view it is taken in no more than during a Save, and a later
+        // opening reads again.
+        if offline || self.saving.is_some() {
             return false;
         }
-        if result.is_ok() {
+        if let Ok(profile) = &result {
             // The reading says what is worn: accepted changes are in it, or didn't take.
+            self.profile_seen(profile);
             self.unconfirmed = Edit::default();
         }
         // A reading that failed after one that worked keeps what was known.
@@ -554,6 +595,51 @@ impl Skins {
             self.profile = Some(result);
         }
         true
+    }
+
+    /// Checks the changes still awaited against `profile`: a cape it wears as asked is
+    /// confirmed (to record); a skin it wears with the arms sent is compared with the one
+    /// uploaded once its picture is here ([`Self::skin_checked`]); anything it doesn't show is
+    /// dropped, the profile being what the account wears.
+    fn profile_seen(&mut self, profile: &Profile) {
+        if let Some(cape) = self.awaited.cape.take() {
+            let worn = profile.worn_cape();
+            if worn.map(|c| &c.id) == cape.as_ref() {
+                self.confirmed.cape = Some(worn.map(|c| c.url.clone()));
+            }
+        }
+        if let Some((_, slim)) = &self.awaited.skin {
+            match &profile.skin {
+                Some((url, model)) if (model == "slim") == *slim => {
+                    self.awaited.skin_at = Some((url.clone(), model.clone()));
+                }
+                _ => {
+                    self.awaited.skin = None;
+                    self.awaited.skin_at = None;
+                }
+            }
+        }
+        self.skin_checked();
+    }
+
+    /// Compares the skin awaited with the one a profile showed, once that one's picture is
+    /// here: the same skin is confirmed (to record); another, or a picture that couldn't be
+    /// had, is dropped.
+    fn skin_checked(&mut self) {
+        let (Some((id, _)), Some((url, model))) = (&self.awaited.skin, &self.awaited.skin_at)
+        else {
+            return;
+        };
+        let same = match self.pictures.get(url) {
+            Some(Picture::Ready(png)) => skin_library::id_of_png(png).as_ref() == Some(id),
+            Some(Picture::Failed) => false,
+            Some(Picture::Pending) | None => return,
+        };
+        if same {
+            self.confirmed.skin = Some(Some((url.clone(), model.clone())));
+        }
+        self.awaited.skin = None;
+        self.awaited.skin_at = None;
     }
 
     /// Asks for a picture from Mojang's texture server: true when it is to be fetched (not
@@ -574,8 +660,16 @@ impl Skins {
 
     /// A Save of the edits asked for.
     fn submit(&mut self, offline: bool) -> Option<Submitted> {
-        if offline || self.edit.is_empty() || self.saving.is_some() {
+        if offline || self.edit.is_empty() || self.saving.is_some() || self.recording > 0 {
             return None;
+        }
+        // A change this Save makes again is no longer one to record from an earlier Save.
+        if self.edit.touches_skin() {
+            self.awaited.skin = None;
+            self.awaited.skin_at = None;
+        }
+        if self.edit.cape.is_some() {
+            self.awaited.cape = None;
         }
         let submitted = Submitted {
             id: request_id(),
@@ -601,6 +695,8 @@ impl Skins {
         // A reading asked before this Save ended may say what was worn before it.
         self.reading = None;
         if let Some(profile) = &outcome.profile {
+            // A change an earlier Save left unconfirmed may show in it.
+            self.profile_seen(profile);
             self.profile = Some(Ok(profile.clone()));
             self.unconfirmed = Edit::default();
         }
@@ -612,9 +708,15 @@ impl Skins {
         if matches!(outcome.skin, Some(Change::Unconfirmed(_))) {
             self.unconfirmed.skin = submitted.skin.clone();
             self.unconfirmed.slim = submitted.slim;
+            self.awaited.skin = outcome.uploaded.clone();
+            self.awaited.skin_at = None;
         }
         if matches!(outcome.cape, Some(Change::Unconfirmed(_))) {
             self.unconfirmed.cape = submitted.cape.clone();
+            self.awaited.cape = submitted.cape.clone().map(|cape| match cape {
+                CapePick::Minecraft(id) => Some(id),
+                CapePick::None => None,
+            });
         }
         if accepted(&outcome.skin) {
             if self.edit.skin == submitted.skin {
@@ -649,6 +751,7 @@ impl Skins {
         self.forget(&url);
         self.pictures
             .insert(url, png.map_or(Picture::Failed, Picture::Ready));
+        self.skin_checked();
     }
 
     fn picture_png(&self, url: &str) -> Png {
@@ -873,6 +976,7 @@ fn stopped_outcome((skin, cape): (bool, bool)) -> look::Outcome {
         profile: None,
         arms: None,
         recorded: None,
+        uploaded: None,
     }
 }
 
@@ -931,8 +1035,9 @@ impl Launcher {
     /// Whether the page is in the offline developer view now: the mode in force, not the one
     /// the page was opened in, since another profile can be chosen while it is open. The
     /// environment is checked first, so a launcher not started for offline play reads no files
-    /// for it; in one that was, the answer is worked out again only when the build played, the
-    /// profile, the builds installed or the played build's records change ([`OfflineKey`]).
+    /// for it. In one that was, the build the selected profile plays is asked
+    /// (`developer_offline::enabled`) again only when that build, or a file `enabled` reads for
+    /// it (`developer_offline::inputs`), changed.
     fn skins_offline(&self) -> bool {
         #[cfg(test)]
         if let Some(offline) = self.skins.offline_for_test {
@@ -941,26 +1046,24 @@ impl Launcher {
         if !sunrise_launcher::developer_offline::requested() {
             return false;
         }
-        self.offline_cached(sunrise_launcher::developer_offline::selected)
+        self.offline_cached(sunrise_launcher::developer_offline::enabled)
     }
 
-    /// The offline developer mode as `work_out` says, asked only when what it depends on
-    /// ([`OfflineKey`]) changed since it was last asked.
-    fn offline_cached(&self, work_out: impl FnOnce() -> bool) -> bool {
+    /// The offline developer mode for the build played, as `enabled` says, asked only when what
+    /// it depends on ([`OfflineKey`]) changed since it was last asked.
+    fn offline_cached(&self, enabled: impl FnOnce(&str) -> bool) -> bool {
         let played = self.selected().cloned();
-        let stamp = |name: &str| -> Stamp {
-            let meta = std::fs::metadata(backend::version_dir(played.as_ref()?).join(name)).ok()?;
-            Some((meta.modified().ok()?, meta.len()))
-        };
-        let records = [stamp(".installed"), stamp("developer.json")];
-        let profile = self.selected_instance().map(|i| i.id.clone());
-        let key = (played, profile, self.installed.clone(), records);
+        let inputs = played
+            .as_deref()
+            .map(sunrise_launcher::developer_offline::inputs)
+            .unwrap_or_default();
+        let key = (played, inputs);
         if let Some((known, offline)) = &*self.skins.offline.borrow() {
             if *known == key {
                 return *offline;
             }
         }
-        let offline = work_out();
+        let offline = key.0.as_deref().is_some_and(enabled);
         *self.skins.offline.borrow_mut() = Some((key, offline));
         offline
     }
@@ -1101,7 +1204,17 @@ impl Launcher {
         let job = Box::new(move || {
             answer(
                 &tx,
-                || Msg::Picture(address.clone(), capes::picture(&address)),
+                || {
+                    let png = picture_unless_offline(
+                        &address,
+                        || {
+                            sunrise_launcher::developer_offline::requested()
+                                && sunrise_launcher::developer_offline::selected()
+                        },
+                        capes::picture,
+                    );
+                    Msg::Picture(address.clone(), png)
+                },
                 || Msg::Picture(address.clone(), None),
             )
         });
@@ -1110,13 +1223,97 @@ impl Launcher {
         }
     }
 
-    /// A reading answered (`Msg::SkinsProfile`): the pictures it names are asked for.
+    /// A reading answered (`Msg::SkinsProfile`): taken in by the page that asked for it, shown
+    /// or not, and what it confirmed is recorded; only the shown page, online, asks for the
+    /// pictures it names.
     pub(crate) fn skins_profile(&mut self, uuid: String, id: u64, result: Result<Profile, String>) {
         let offline = self.skins_offline();
-        if !self.skins.read_answered(&uuid, id, result, offline) {
+        let shown = self.skins.uuid.as_deref() == Some(&uuid);
+        let Some(page) = self.skins.page_mut(&uuid) else {
+            return;
+        };
+        if !page.read_answered(&uuid, id, result, offline) {
             return;
         }
-        self.after_profile();
+        self.record_confirmed(&uuid);
+        if shown {
+            self.after_profile();
+        }
+    }
+
+    /// Records in accounts.json what profiles read after a Save showed of the changes it left
+    /// unconfirmed ([`Skins::confirmed`]): only those fields, on the writes queue, and the
+    /// page's next Save waits until they are written, so an account's records stay in the order
+    /// of its Saves. The account chip shows them at once.
+    fn record_confirmed(&mut self, uuid: &str) {
+        let offline = self.skins_offline();
+        let Some(page) = self.skins.page_mut(uuid) else {
+            return;
+        };
+        let record = std::mem::take(&mut page.confirmed);
+        if record == look::Record::default() {
+            return;
+        }
+        let (tx, account, job_record) = (self.tx.clone(), uuid.to_owned(), record.clone());
+        let job = Box::new(move || {
+            answer(
+                &tx,
+                || {
+                    let saved = account::Accounts::save_look(
+                        &account,
+                        job_record.skin.clone(),
+                        job_record.cape.clone(),
+                    );
+                    Msg::LookRecorded(account.clone(), saved)
+                },
+                || Msg::LookRecorded(account.clone(), Err(stopped())),
+            )
+        });
+        match self.skins.writes.push("skins-index", job) {
+            Ok(()) => {
+                self.skins.disk_writes += 1;
+                if let Some(page) = self.skins.page_mut(uuid) {
+                    page.recording += 1;
+                }
+            }
+            Err(_) => {
+                if let Some(page) = self.skins.page_mut(uuid) {
+                    page.said.push(Err(tr(
+                        "The launcher is busy with your saved skins. Open Skins again in a moment.",
+                    )
+                    .to_string()));
+                }
+                return;
+            }
+        }
+        if let Some(a) = self.accounts.accounts.iter_mut().find(|a| a.uuid == uuid) {
+            if let Some(skin) = record.skin {
+                a.skin = skin;
+            }
+            if let Some(cape) = record.cape {
+                a.cape = cape;
+            }
+        }
+        if offline {
+            self.skins.heads_stale = true;
+        } else {
+            self.load_profile_heads();
+        }
+    }
+
+    /// What a later profile confirmed was recorded, or couldn't be (`Msg::LookRecorded`).
+    pub(crate) fn look_recorded(&mut self, uuid: String, recorded: Result<(), String>) {
+        self.skins.disk_writes = self.skins.disk_writes.saturating_sub(1);
+        let Some(page) = self.skins.page_mut(&uuid) else {
+            return;
+        };
+        page.recording = page.recording.saturating_sub(1);
+        if let Err(why) = recorded {
+            page.said.push(Err(trf(
+                "The launcher couldn't note down what was saved: {why}",
+                &[("why", &why)],
+            )));
+        }
     }
 
     fn after_profile(&mut self) {
@@ -1178,6 +1375,15 @@ impl Launcher {
     /// A picture from the texture server arrived (`Msg::Picture`), or couldn't be had.
     pub(crate) fn skins_picture(&mut self, url: String, png: Option<Vec<u8>>) {
         self.skins.picture(&url, png);
+        // A picture can confirm a skin a Save left unconfirmed, on any page that waits for it.
+        let pages: Vec<String> = std::iter::once(&self.skins.current)
+            .chain(self.skins.parked.values())
+            .filter(|page| page.confirmed != look::Record::default())
+            .filter_map(|page| page.uuid.clone())
+            .collect();
+        for uuid in pages {
+            self.record_confirmed(&uuid);
+        }
         self.remember_worn();
     }
 
@@ -1220,7 +1426,7 @@ impl Launcher {
                 || {
                     // Kept without a name: its tile shows the skin alone.
                     let kept = skin_library::folder(&uuid)
-                        .and_then(|dir| skin_library::add(&dir, &png, "", Some(model == "slim")));
+                        .and_then(|dir| skin_library::keep_seen(&dir, &png, model == "slim"));
                     Msg::SkinKept(uuid.clone(), address.clone(), kept, listing(&uuid, id))
                 },
                 || {
@@ -1540,6 +1746,7 @@ impl Launcher {
         }
         let worn = page.worn(recorded.as_ref(), default_slim);
         page.settle(&worn);
+        self.record_confirmed(&uuid);
         if offline || self.skins.uuid.as_deref() != Some(&uuid) {
             // Shown again later, online, the page reads the profile and the saved skins anew.
             return;
@@ -1999,7 +2206,8 @@ impl Launcher {
                 }))
         };
         let changed = !self.skins.edit.is_empty();
-        let saving = self.skins.saving.is_some();
+        // A Save also waits while what an earlier one confirmed is being recorded.
+        let saving = self.skins.saving.is_some() || self.skins.recording > 0;
         let actions = div()
             .flex()
             .gap(px(8.))
@@ -2487,6 +2695,7 @@ mod tests {
             profile,
             arms: None,
             recorded: None,
+            uploaded: None,
         }
     }
 
@@ -3300,6 +3509,18 @@ mod tests {
 
     const UUID: &str = "069a79f444e94726a5befca90e38aaf5";
 
+    /// The launcher's next message that `wanted` picks, the others (release lists, heads) let go.
+    fn next(l: &mut Launcher, wanted: impl Fn(&Msg) -> bool) -> Msg {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        loop {
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            let msg = l.rx.recv_timeout(left).expect("the message came");
+            if wanted(&msg) {
+                return msg;
+            }
+        }
+    }
+
     #[test]
     fn a_save_on_any_page_holds_off_a_data_move_and_a_launcher_restart() {
         in_a_scratch_launcher(
@@ -3337,18 +3558,18 @@ mod tests {
                 };
                 pin(l, "developer-a");
                 assert_eq!(l.selected().map(String::as_str), Some("developer-a"));
-                assert!(l.offline_cached(|| true), "worked out");
-                assert!(l.offline_cached(|| false), "kept while nothing changed");
+                assert!(l.offline_cached(|_| true), "worked out");
+                assert!(l.offline_cached(|_| false), "kept while nothing changed");
                 // The profile now plays another build: the mode is worked out again.
                 pin(l, "26.3-0.1.20261101");
-                assert!(!l.offline_cached(|| false));
+                assert!(!l.offline_cached(|_| false));
                 pin(l, "developer-a");
-                assert!(l.offline_cached(|| true));
+                assert!(l.offline_cached(|_| true));
                 // The played build's install record changes (reinstalled, removed).
                 let dir = backend::version_dir("developer-a");
                 std::fs::create_dir_all(&dir).unwrap();
                 std::fs::write(dir.join(".installed"), "").unwrap();
-                assert!(!l.offline_cached(|| false));
+                assert!(!l.offline_cached(|_| false));
             },
         );
     }
@@ -3396,6 +3617,240 @@ mod tests {
                 assert!(l.skins.saving.is_none(), "nothing sent");
                 l.skins_add_for(UUID.into(), vec![PathBuf::from("x.png")]);
                 assert_eq!(l.skins.disk_writes, 0, "nothing added");
+            },
+        );
+    }
+
+    /// A 64 by 64 skin, one texel of it `n`.
+    fn skin_png(n: u8) -> Vec<u8> {
+        let image = image::RgbaImage::from_fn(64, 64, |x, y| {
+            image::Rgba(if (x, y) == (0, 0) {
+                [n, 1, 1, 255]
+            } else {
+                [x as u8, y as u8, 7, 255]
+            })
+        });
+        let mut out = std::io::Cursor::new(Vec::new());
+        image.write_to(&mut out, image::ImageFormat::Png).unwrap();
+        out.into_inner()
+    }
+
+    const NEW: &str = "http://textures.minecraft.net/texture/new";
+
+    /// A Save the services took, whose own profile was the one from before it.
+    fn unconfirmed_save(skins: &mut Skins) {
+        pick(skins, SkinPick::Default("alex"));
+        choose(skins, |edit| {
+            edit.cape = Some(CapePick::Minecraft("c1".into()))
+        });
+        let submitted = skins.submit(false).unwrap();
+        let mut stale = outcome(
+            Some(Change::Unconfirmed("old".into())),
+            Some(Change::Unconfirmed("old".into())),
+            Some(profile(SKIN, false, Some("c2"))),
+        );
+        stale.uploaded = Some((skin_library::id_of_png(&skin_png(5)).unwrap(), true));
+        answer_save(skins, submitted.id, &stale);
+        assert_eq!(
+            skins.confirmed,
+            look::Record::default(),
+            "nothing shown yet"
+        );
+    }
+
+    #[test]
+    fn a_change_a_later_profile_shows_is_recorded_and_not_sent_again() {
+        let mut skins = Skins::new_for("a");
+        read(&mut skins, profile(SKIN, false, Some("c2")));
+        unconfirmed_save(&mut skins);
+        // The next reading shows the cape and the skin, with the arms sent; the skin's picture
+        // is still on its way.
+        read(&mut skins, profile(NEW, true, Some("c1")));
+        assert_eq!(
+            skins.confirmed.cape,
+            Some(Some("http://textures.minecraft.net/texture/c1".into()))
+        );
+        assert_eq!(
+            skins.confirmed.skin, None,
+            "not before its picture is checked"
+        );
+        skins.pictures.insert(NEW.into(), Picture::Pending);
+        skins.picture(NEW.into(), Some(skin_png(5)));
+        assert_eq!(
+            skins.confirmed.skin,
+            Some(Some((NEW.into(), "slim".into()))),
+            "the picture served is the one uploaded"
+        );
+        assert!(skins.submit(false).is_none(), "nothing sent again");
+    }
+
+    #[test]
+    fn a_later_profile_that_doesnt_show_the_change_records_nothing() {
+        // Another skin at a new URL, or the arms not sent: dropped, nothing recorded.
+        for (url, slim, png) in [(NEW, true, skin_png(6)), (NEW, false, skin_png(5))] {
+            let mut skins = Skins::new_for("a");
+            read(&mut skins, profile(SKIN, false, Some("c2")));
+            unconfirmed_save(&mut skins);
+            read(&mut skins, profile(url, slim, Some("c2")));
+            skins.picture(url.into(), Some(png));
+            assert_eq!(skins.confirmed, look::Record::default());
+            assert_eq!(
+                skins.awaited,
+                Awaited::default(),
+                "the profile is the truth"
+            );
+        }
+        // A Save that changes the cape again: the earlier one's cape is not recorded after it.
+        let mut skins = Skins::new_for("a");
+        read(&mut skins, profile(SKIN, false, Some("c2")));
+        unconfirmed_save(&mut skins);
+        choose(&mut skins, |edit| edit.cape = Some(CapePick::None));
+        skins.submit(false).unwrap();
+        assert_eq!(skins.awaited.cape, None);
+    }
+
+    #[test]
+    fn a_save_waits_for_what_an_earlier_one_confirmed_to_be_recorded() {
+        let mut skins = Skins::new_for("a");
+        skins.recording = 1;
+        choose(&mut skins, |edit| edit.cape = Some(CapePick::None));
+        assert!(skins.submit(false).is_none());
+        skins.recording = 0;
+        assert!(skins.submit(false).is_some());
+    }
+
+    #[test]
+    fn a_queued_texture_job_fetches_nothing_once_offline() {
+        let fetched = std::cell::Cell::new(0);
+        let fetch = |_: &str| {
+            fetched.set(fetched.get() + 1);
+            Some(vec![1])
+        };
+        assert_eq!(picture_unless_offline(SKIN, || true, fetch), None);
+        assert_eq!(fetched.get(), 0, "no request");
+        assert_eq!(picture_unless_offline(SKIN, || false, fetch), Some(vec![1]));
+    }
+
+    #[test]
+    fn a_confirmed_change_is_written_to_accounts_json_and_shown() {
+        in_a_scratch_launcher(
+            "skins_page::tests::a_confirmed_change_is_written_to_accounts_json_and_shown",
+            |l| {
+                l.skins.offline_for_test = Some(false);
+                l.accounts.save().unwrap();
+                l.skins.show(UUID, |_| true);
+                l.skins.profile = Some(Ok(profile(SKIN, false, Some("c2"))));
+                pick(&mut l.skins, SkinPick::Default("alex"));
+                l.skins.edit.cape = Some(CapePick::Minecraft("c1".into()));
+                let save = l.skins.submit(false).unwrap();
+                let mut stale = outcome(
+                    Some(Change::Unconfirmed("old".into())),
+                    Some(Change::Unconfirmed("old".into())),
+                    Some(profile(SKIN, false, Some("c2"))),
+                );
+                stale.uploaded = Some((skin_library::id_of_png(&skin_png(5)).unwrap(), true));
+                l.look_saved(UUID.into(), save.id, stale);
+                assert_eq!(l.accounts.accounts[0].skin, None, "not confirmed yet");
+                // The picture at the new URL is here; the next reading shows both changes.
+                l.skins.reading = None;
+                l.skins
+                    .pictures
+                    .insert(NEW.into(), Picture::Ready(skin_png(5)));
+                let reading = l.skins.read_asked();
+                l.skins_profile(UUID.into(), reading, Ok(profile(NEW, true, Some("c1"))));
+                assert_eq!(
+                    l.accounts.accounts[0].skin,
+                    Some((NEW.into(), "slim".into())),
+                    "the chip shows it"
+                );
+                assert_eq!(l.skins.recording, 1, "being recorded");
+                assert!(l.skins.writing());
+                let Msg::LookRecorded(uuid, recorded) =
+                    next(l, |msg| matches!(msg, Msg::LookRecorded(..)))
+                else {
+                    unreachable!()
+                };
+                l.look_recorded(uuid, recorded);
+                assert_eq!(l.skins.recording, 0);
+                let on_disk = account::Accounts::load();
+                assert_eq!(on_disk.accounts[0].skin, Some((NEW.into(), "slim".into())));
+                assert_eq!(
+                    on_disk.accounts[0].cape.as_deref(),
+                    Some("http://textures.minecraft.net/texture/c1")
+                );
+                assert!(l.skins.edit.is_empty() && l.skins.submit(false).is_none());
+            },
+        );
+    }
+
+    #[test]
+    fn a_skin_kept_after_a_save_gave_it_other_arms_keeps_them() {
+        in_a_scratch_launcher(
+            "skins_page::tests::a_skin_kept_after_a_save_gave_it_other_arms_keeps_them",
+            |l| {
+                l.skins.offline_for_test = Some(false);
+                let dir = skin_library::folder(UUID).unwrap();
+                // An arm-only Save gave the worn skin slim arms ...
+                let saved = skin_library::add(&dir, &skin_png(3), "", Some(true)).unwrap();
+                // ... and a keep queued before it ends after it, with the classic arms the page
+                // saw then.
+                l.skins.show(UUID, |_| true);
+                l.skins.profile = Some(Ok(profile(SKIN, false, None)));
+                l.skins
+                    .pictures
+                    .insert(SKIN.into(), Picture::Ready(skin_png(3)));
+                l.remember_worn();
+                let Msg::SkinKept(uuid, url, kept, listed) =
+                    next(l, |msg| matches!(msg, Msg::SkinKept(..)))
+                else {
+                    unreachable!()
+                };
+                l.skins_kept(uuid, url, kept, listed);
+                let listed = skin_library::list(&dir).unwrap();
+                assert_eq!(listed.len(), 1);
+                assert_eq!(listed[0].id, saved.id);
+                assert!(listed[0].slim, "the arms the Save gave it");
+            },
+        );
+    }
+
+    #[test]
+    fn a_reading_for_an_account_not_shown_settles_on_its_own_page() {
+        in_a_scratch_launcher(
+            "skins_page::tests::a_reading_for_an_account_not_shown_settles_on_its_own_page",
+            |l| {
+                l.skins.offline_for_test = Some(false);
+                l.skins.show(UUID, |_| true);
+                let reading = l.skins.read_asked();
+                let other = "b09600dff4354d4fb56776eec1e55083";
+                l.skins.show(other, |_| true);
+                l.skins_profile(UUID.into(), reading, Ok(profile(SKIN, false, Some("c1"))));
+                let page = l.skins.page_mut(UUID).unwrap();
+                assert_eq!(page.reading, None, "answered: the next opening reads again");
+                assert!(matches!(page.profile, Some(Ok(_))));
+                assert!(
+                    page.pictures.is_empty(),
+                    "nothing asked for a page not shown"
+                );
+                assert_eq!(l.skins.profile, None, "the page shown is left alone");
+                // In the offline view an answer is not taken in, but the reading is over.
+                l.skins.offline_for_test = Some(true);
+                l.skins.show(UUID, |_| true);
+                let reading = l.skins.read_asked();
+                l.skins_profile(UUID.into(), reading, Ok(profile(ALEX, false, None)));
+                assert_eq!(l.skins.reading, None);
+            },
+        );
+    }
+
+    #[test]
+    fn a_restart_waits_for_a_skin_being_written() {
+        in_a_scratch_launcher(
+            "skins_page::tests::a_restart_waits_for_a_skin_being_written",
+            |l| {
+                assert!(l.restart_blocked_by_skins().is_none());
+                l.skins.disk_writes += 1;
+                assert!(l.restart_blocked_by_skins().is_some());
             },
         );
     }

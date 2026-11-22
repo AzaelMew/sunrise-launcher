@@ -103,6 +103,9 @@ pub struct Outcome {
     pub arms: Option<String>,
     /// Why accounts.json couldn't be told, if it couldn't.
     pub recorded: Option<String>,
+    /// The skin the services took, when they did: its id ([`skin_library::id_of_png`]) and its
+    /// arms. What a profile read later is checked against, while the change is unconfirmed.
+    pub uploaded: Option<(String, bool)>,
 }
 
 /// What accounts.json is told a Save left the account wearing: each field none when the Save
@@ -154,6 +157,7 @@ pub fn save(request: &Request, tools: &Tools) -> Outcome {
         profile: None,
         arms: None,
         recorded: None,
+        uploaded: None,
     };
     // The token's profile, read before anything is written: whose it is, and what it wears.
     let token_and_profile = tools.token.clone().and_then(|token| {
@@ -198,6 +202,7 @@ pub fn save(request: &Request, tools: &Tools) -> Outcome {
                             }
                             Err(why) => Change::Unconfirmed(why),
                         };
+                        out.uploaded = skin_library::id_of_png(&png).map(|id| (id, sent.slim));
                         uploaded = Some((png, sent.slim));
                         change
                     }

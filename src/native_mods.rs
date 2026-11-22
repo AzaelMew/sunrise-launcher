@@ -555,9 +555,12 @@ fn checked_about(version: &str) -> Result<Option<About>, String> {
 }
 
 /// The build record (`native-mods.json`) in version folder `dir`, if it parses.
+/// A native build's record of what it was built from, in its folder.
+pub const RECORD: &str = "native-mods.json";
+
 fn about_in(dir: &Path) -> Option<About> {
     let json: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(dir.join("native-mods.json")).ok()?).ok()?;
+        serde_json::from_str(&fs::read_to_string(dir.join(RECORD)).ok()?).ok()?;
     let field = |name: &str| json[name].as_str().map(str::to_owned);
     Some(About {
         base: field("base")?,

@@ -30,6 +30,33 @@ pub fn enabled(tag: &str) -> bool {
     )
 }
 
+/// A file's time and size, if it is there.
+pub type Stamp = Option<(std::time::SystemTime, u64)>;
+
+/// Every file [`enabled`] reads for `tag`, with its time and size: the build's own lineage
+/// records (a native build's `native-mods.json`, an imported build's record), then the base
+/// build's install mark and developer record. While these stay the same, so does [`enabled`]'s
+/// answer for `tag`, so a caller can keep it instead of asking at every frame.
+pub fn inputs(tag: &str) -> Vec<(std::path::PathBuf, Stamp)> {
+    let stamp = |path: std::path::PathBuf| {
+        let meta = std::fs::metadata(&path).ok();
+        let stamp = meta.and_then(|m| Some((m.modified().ok()?, m.len())));
+        (path, stamp)
+    };
+    let own = crate::backend::version_dir(tag);
+    let base = crate::native_mods::about(tag)
+        .map(|a| a.base)
+        .or_else(|| crate::build_import::about(tag).map(|a| a.base))
+        .unwrap_or_else(|| tag.to_owned());
+    let base = crate::backend::version_dir(&base);
+    vec![
+        stamp(own.join(crate::native_mods::RECORD)),
+        stamp(own.join(crate::build_import::RECORD)),
+        stamp(base.join(".installed")),
+        stamp(base.join("developer.json")),
+    ]
+}
+
 fn eligible(base: &str, directory: &std::path::Path, native_revision: Option<&str>) -> bool {
     developer_install::is_developer(base)
         && directory.join(".installed").is_file()
@@ -140,6 +167,39 @@ pub fn selected() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_inputs_are_the_files_eligibility_reads_the_base_builds_included() {
+        // An imported build of a developer base: its own record, then the base's install mark
+        // and developer record, as `enabled` reads them.
+        let tag = "imported-inputs-test";
+        let own = crate::backend::version_dir(tag);
+        std::fs::create_dir_all(&own).unwrap();
+        std::fs::write(
+            own.join(crate::build_import::RECORD),
+            r#"{"base": "developer-inputs-base", "file": "x.jar"}"#,
+        )
+        .unwrap();
+        let base = crate::backend::version_dir("developer-inputs-base");
+        let paths: Vec<_> = inputs(tag).into_iter().map(|(path, _)| path).collect();
+        assert_eq!(
+            paths,
+            [
+                own.join(crate::native_mods::RECORD),
+                own.join(crate::build_import::RECORD),
+                base.join(".installed"),
+                base.join("developer.json"),
+            ]
+        );
+        // The base reinstalled under the same tag: the inputs change.
+        let before = inputs(tag);
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::write(base.join(".installed"), "").unwrap();
+        assert_ne!(inputs(tag), before);
+        std::fs::remove_dir_all(&own).unwrap();
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
     #[test]
     fn startup_failure_bounds_unicode_details_without_changing_short_diagnostics() {
         let short = "dyld[4321]: Library not loaded: @rpath/libsunrise_mod_host.dylib";

@@ -80,14 +80,18 @@ pub fn list(dir: &Path) -> Result<Vec<Saved>, String> {
 /// so the page takes in only the latest.
 pub type Listing = (u64, Result<Vec<Saved>, String>);
 
-/// The most an index may weigh: a thousand saved skins take about a tenth of it.
+/// The most an index may grow to: a thousand saved skins take about a tenth of it.
 const MAX_INDEX: u64 = 1 << 20;
+/// The most an index is read up to: more than it may grow to, so one already bigger (written
+/// by hand, or by an older launcher) is still listed, and can be made smaller, rather than
+/// locking its skins away.
+const MAX_INDEX_READ: u64 = 16 << 20;
 
 /// Every entry of the index in `dir`, those whose picture is gone included: what a change
 /// writes back, so it leaves the entries it doesn't touch as they were. The index is read as
-/// [`read_bounded`] reads a file: a regular file of at most [`MAX_INDEX`] bytes.
+/// [`read_bounded`] reads a file: a regular file of at most [`MAX_INDEX_READ`] bytes.
 fn list_all(dir: &Path) -> Result<Vec<Saved>, String> {
-    let bytes = match read_bounded(&dir.join("index.json"), MAX_INDEX) {
+    let bytes = match read_bounded(&dir.join("index.json"), MAX_INDEX_READ) {
         Ok(bytes) => bytes,
         Err(Unread::Missing) => return Ok(Vec::new()),
         Err(why) => {
@@ -183,11 +187,41 @@ fn valid_id(id: &str) -> bool {
     id.len() == 16 && id.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
+/// The index `list` as written: refused when it would weigh more than [`MAX_INDEX`] and more
+/// than the index in `dir` does now. A change that would make it too big is refused before
+/// anything is written, so the saved skins stay as they were and can still be listed; one that
+/// doesn't make it bigger (a removal, other arms) still goes through on an index already over
+/// it, so an older, bigger one can be made smaller.
+fn index_bytes(dir: &Path, list: &[Saved]) -> Result<Vec<u8>, String> {
+    let text = serde_json::to_string_pretty(list).map_err(|e| e.to_string())? + "\n";
+    let now = std::fs::metadata(dir.join("index.json")).map_or(0, |m| m.len());
+    let len = text.len() as u64;
+    if len > MAX_INDEX && len > now {
+        return Err(
+            tr("There are too many saved skins. Remove some, then add this one again.").into(),
+        );
+    }
+    Ok(text.into_bytes())
+}
+
 /// Writes the index; only ever called under [`changing`].
 fn save(dir: &Path, list: &[Saved]) -> Result<(), String> {
+    let bytes = index_bytes(dir, list)?;
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    let text = serde_json::to_string_pretty(list).map_err(|e| e.to_string())?;
-    write_whole(&dir.join("index.json"), (text + "\n").as_bytes())
+    write_whole(&dir.join("index.json"), &bytes)
+}
+
+/// The arms a skin is saved with.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Arms {
+    /// As the picture suggests ([`crate::player_model::looks_slim`]), for a skin not saved yet;
+    /// those it has for one that is.
+    Guess,
+    /// These, for a skin not saved yet; those it has for one that is: a skin kept because it was
+    /// seen worn never changes the arms saved for it, which a Save may have set since.
+    IfNew(bool),
+    /// These, whether it is saved already or not: the arms it is worn with as it is replaced.
+    Worn(bool),
 }
 
 /// Saves the skin `png` as `name`, its arms as `slim` says, else as the picture suggests
@@ -196,6 +230,17 @@ fn save(dir: &Path, list: &[Saved]) -> Result<(), String> {
 /// it is gone, damaged or another skin's, so the saved skin returned is always there to wear
 /// again.
 pub fn add(dir: &Path, png: &[u8], name: &str, slim: Option<bool>) -> Result<Saved, String> {
+    add_with(dir, png, name, slim.map_or(Arms::Guess, Arms::Worn))
+}
+
+/// Keeps the skin `png`, seen worn with slim or classic arms, among the saved skins: as
+/// [`add`] does, but a skin saved already keeps the arms it has, so a keep that ends after a
+/// Save gave it other arms never puts the old ones back.
+pub fn keep_seen(dir: &Path, png: &[u8], slim: bool) -> Result<Saved, String> {
+    add_with(dir, png, "", Arms::IfNew(slim))
+}
+
+fn add_with(dir: &Path, png: &[u8], name: &str, arms: Arms) -> Result<Saved, String> {
     if png.len() > crate::account::skins::MAX_SKIN {
         return Err(tr("This picture is too big for a skin.").into());
     }
@@ -204,29 +249,41 @@ pub fn add(dir: &Path, png: &[u8], name: &str, slim: Option<bool>) -> Result<Sav
     ))?;
     let _changing = changing();
     let mut all = list_all(dir)?;
+    // What the index becomes, worked out (and refused when too big) before anything is written.
+    let (saved, changed) = match all.iter_mut().find(|s| s.id == id) {
+        Some(known) => {
+            let changed = match arms {
+                Arms::Worn(slim) if slim != known.slim => {
+                    known.slim = slim;
+                    true
+                }
+                _ => false,
+            };
+            (known.clone(), changed)
+        }
+        None => {
+            let saved = Saved {
+                id: id.clone(),
+                name: name.trim().chars().take(40).collect(),
+                slim: match arms {
+                    Arms::Guess => crate::player_model::looks_slim(png),
+                    Arms::IfNew(slim) | Arms::Worn(slim) => slim,
+                },
+            };
+            all.push(saved.clone());
+            (saved, true)
+        }
+    };
+    let index = changed.then(|| index_bytes(dir, &all)).transpose()?;
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let path = png_path(dir, &id);
     let there = read_skin_file(&path).ok().and_then(|p| id_of_png(&p));
     if there.as_deref() != Some(id.as_str()) {
         write_whole(&path, png)?;
     }
-    if let Some(known) = all.iter_mut().find(|s| s.id == id) {
-        if slim.is_none_or(|slim| slim == known.slim) {
-            return Ok(known.clone());
-        }
-        known.slim = slim.unwrap_or(known.slim);
-        let known = known.clone();
-        save(dir, &all)?;
-        return Ok(known);
+    if let Some(index) = index {
+        write_whole(&dir.join("index.json"), &index)?;
     }
-    let name: String = name.trim().chars().take(40).collect();
-    let saved = Saved {
-        id,
-        name,
-        slim: slim.unwrap_or_else(|| crate::player_model::looks_slim(png)),
-    };
-    all.push(saved.clone());
-    save(dir, &all)?;
     Ok(saved)
 }
 
@@ -526,6 +583,103 @@ mod tests {
         assert!(
             png(dir.path(), &first.id).is_some(),
             "its picture is still there"
+        );
+    }
+
+    #[test]
+    fn an_add_that_would_make_the_index_too_big_is_refused_and_leaves_it_usable() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = add(dir.path(), &picture(64, 64, false), "First", None).unwrap();
+        // An entry with a long name brings the index to just under the cap.
+        let filler = |name: String| Saved {
+            id: "ffffffffffffffff".into(),
+            name,
+            slim: false,
+        };
+        let len = |all: &[Saved]| serde_json::to_string_pretty(all).unwrap().len() as u64 + 1;
+        let base = len(&[first.clone(), filler(String::new())]);
+        let all = [
+            first.clone(),
+            filler("x".repeat((MAX_INDEX - 10 - base) as usize)),
+        ];
+        std::fs::write(
+            dir.path().join("index.json"),
+            serde_json::to_string_pretty(&all).unwrap() + "\n",
+        )
+        .unwrap();
+        let before = std::fs::read(dir.path().join("index.json")).unwrap();
+        assert_eq!(before.len() as u64, MAX_INDEX - 10);
+        let refused = add(dir.path(), &picture(64, 64, true), "One more", None);
+        assert!(refused.is_err(), "{refused:?}");
+        assert_eq!(
+            std::fs::read(dir.path().join("index.json")).unwrap(),
+            before,
+            "the index as it was"
+        );
+        let id = id_of_png(&picture(64, 64, true)).unwrap();
+        assert!(
+            !dir.path().join(format!("{id}.png")).exists(),
+            "and no picture written for it"
+        );
+        // Still listed, and a removal still works; then the add fits.
+        assert_eq!(list(dir.path()).unwrap(), std::slice::from_ref(&first));
+        remove(dir.path(), "ffffffffffffffff").unwrap();
+        add(dir.path(), &picture(64, 64, true), "One more", None).unwrap();
+    }
+
+    #[test]
+    fn an_index_already_too_big_is_still_listed_and_can_be_made_smaller() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = add(dir.path(), &picture(64, 64, false), "First", None).unwrap();
+        let mut all = list_all(dir.path()).unwrap();
+        all.extend((0..20_000).map(|i| Saved {
+            id: format!("{i:016x}"),
+            name: "x".repeat(40),
+            slim: false,
+        }));
+        std::fs::write(
+            dir.path().join("index.json"),
+            serde_json::to_string_pretty(&all).unwrap() + "\n",
+        )
+        .unwrap();
+        assert!(
+            std::fs::metadata(dir.path().join("index.json"))
+                .unwrap()
+                .len()
+                > MAX_INDEX
+        );
+        assert_eq!(
+            list(dir.path()).unwrap(),
+            std::slice::from_ref(&first),
+            "listed"
+        );
+        assert!(
+            add(dir.path(), &picture(64, 64, true), "", None).is_err(),
+            "no bigger"
+        );
+        remove(dir.path(), "0000000000000000").unwrap();
+        assert_eq!(
+            list_all(dir.path()).unwrap().len(),
+            20_000,
+            "smaller by one"
+        );
+        remove(dir.path(), &first.id).unwrap();
+        assert!(list(dir.path()).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_skin_kept_as_seen_never_changes_the_arms_saved_for_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let skin = picture(64, 64, false);
+        let saved = add(dir.path(), &skin, "Knight", Some(true)).unwrap();
+        assert!(keep_seen(dir.path(), &skin, false).unwrap().slim);
+        assert!(list(dir.path()).unwrap()[0].slim, "the arms it was given");
+        assert_eq!(list(dir.path()).unwrap()[0].id, saved.id);
+        // A skin not saved yet takes the arms it was seen with.
+        assert!(
+            !keep_seen(dir.path(), &picture(64, 64, true), false)
+                .unwrap()
+                .slim
         );
     }
 }
