@@ -363,6 +363,7 @@ impl Edit<'_> {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn publish_switch(
         self,
         proof: CandidateImage,
