@@ -1643,5 +1643,13 @@
   "Public IPv4 unavailable for this listener": "Подключение по внешнему IPv4 недоступно",
   "No game address is available through Tailscale.": "Адрес игрового сервера в Tailscale недоступен.",
   "Friends you share this computer with can reach all of it, not only Minecraft.": "Друзья, которым вы предоставите доступ к этому компьютеру, смогут подключаться к любым его портам, включая порты других приложений.",
-  "The game port is unavailable, so Sunrise can't check access to that port.": "Игровой порт недоступен, поэтому Sunrise не может проверить доступ к нему."
+  "The game port is unavailable, so Sunrise can't check access to that port.": "Игровой порт недоступен, поэтому Sunrise не может проверить доступ к нему.",
+  "{mod} {version}": "{mod} {version}",
+  "{mod} needs {dependency}. Add both?": "{mod} needs {dependency}. Add both?",
+  "Add both": "Add both",
+  "Add these mods and their required dependencies?": "Add these mods and their required dependencies?",
+  "Add mods": "Add mods",
+  "Required mod {mod} is installed but off. Enable it first.": "Required mod {mod} is installed but off. Enable it first.",
+  "Connect to check the source catalogue for required mods.": "Connect to check the source catalogue for required mods.",
+  "Required mod {mod} isn't listed in this profile's catalogue.": "Required mod {mod} isn't listed in this profile's catalogue."
 }

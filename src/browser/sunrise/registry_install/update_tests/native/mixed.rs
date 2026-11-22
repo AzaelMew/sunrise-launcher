@@ -118,7 +118,7 @@ fn exercise(test: &str, case: Case) {
             SourceHooks {
                 install: hooks,
                 cancellation: &Cancellation::default(),
-                authorize: &|_| Ok(true),
+                authorize: &|_, _| Ok(true),
                 approve_worlds: &no_world_question,
             },
         )

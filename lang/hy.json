@@ -1620,5 +1620,13 @@
   "Search your shader packs…": "Search your shader packs…",
   "Search your data packs…": "Search your data packs…",
   "Search pages, profiles, worlds, mods, settings and shortcuts…": "Search pages, profiles, worlds, mods, settings and shortcuts…",
-  "Search by date or commit…": "Search by date or commit…"
+  "Search by date or commit…": "Search by date or commit…",
+  "{mod} {version}": "{mod} {version}",
+  "{mod} needs {dependency}. Add both?": "{mod} needs {dependency}. Add both?",
+  "Add both": "Add both",
+  "Add these mods and their required dependencies?": "Add these mods and their required dependencies?",
+  "Add mods": "Add mods",
+  "Required mod {mod} is installed but off. Enable it first.": "Required mod {mod} is installed but off. Enable it first.",
+  "Connect to check the source catalogue for required mods.": "Connect to check the source catalogue for required mods.",
+  "Required mod {mod} isn't listed in this profile's catalogue.": "Required mod {mod} isn't listed in this profile's catalogue."
 }

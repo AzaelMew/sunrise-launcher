@@ -34,7 +34,7 @@ use source::MixedSources;
 pub use source::{
     add_sources, apply_sources, pack_sources, prepare_pasted_sources, prepare_source,
     read_pasted_sources, update_registry_and_sources, CombinedUpdate, PastedSource, PreparedSource,
-    SourceError, SourceHooks, SourceRequest,
+    SourceDependency, SourceError, SourceHooks, SourceRequest,
 };
 pub use switch::{checked_switch_fit, switch_build, SwitchHooks, SwitchQuestion, Switched};
 
@@ -404,15 +404,7 @@ fn registry_edit<'a>(
                     .iter()
                     .map(|row| (row.id.as_str(), row.to.as_str())),
             )
-            .map(|(id, version)| {
-                let project = catalogue.project(id).ok_or_else(unproved_mods)?;
-                let version = project
-                    .versions
-                    .iter()
-                    .find(|v| v.version == version && fits_game(v, &game))
-                    .ok_or_else(unproved_mods)?;
-                Ok((project, version))
-            })
+            .map(|(id, version)| planned_version(&catalogue, id, version, &game))
             .collect::<Result<Vec<_>, String>>()?;
         if versions.is_empty() {
             return Ok(InstalledBatch::default());
@@ -1053,6 +1045,21 @@ fn inventory(home: &Path, authority: Option<&OfficialRegistry>) -> Result<Invent
             ))
         })
         .collect()
+}
+
+fn planned_version<'a>(
+    catalogue: &'a index::Index,
+    id: &str,
+    version: &str,
+    game: &str,
+) -> Result<(&'a index::Project, &'a index::Version), String> {
+    let project = catalogue.project(id).ok_or_else(unproved_mods)?;
+    let release = project
+        .versions
+        .iter()
+        .find(|v| v.version == version && fits_game(v, game))
+        .ok_or_else(unproved_mods)?;
+    Ok((project, release))
 }
 
 fn stage_package(

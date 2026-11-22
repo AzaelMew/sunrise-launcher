@@ -442,7 +442,7 @@ impl Launcher {
 
     pub(crate) fn source_already_allowed(&self, question: &SourceQuestion) -> bool {
         self.settings.native_mods_allowed_at.is_some()
-            && question.mods.iter().all(|(_, origin)| {
+            && question.sources().all(|(_, origin)| {
                 source_grant(origin)
                     .is_some_and(|grant| self.settings.source_mod_grants.contains(&grant))
             })
@@ -451,8 +451,36 @@ impl Launcher {
     pub(crate) fn source_consent_body(&self, cx: &mut Context<Self>) -> Option<Div> {
         let question = self.source_question()?;
         let base = crate::sheets::build_name(&question.base);
+        let dependency_label = |name: &str, version: &str| {
+            trf("{mod} {version}", &[("mod", name), ("version", version)])
+        };
+        let (heading, accept) = match (question.mods.as_slice(), question.dependencies.as_slice()) {
+            (_, []) => (tr("Allow unreviewed source code?").into(), tr("Allow")),
+            ([(name, _)], [dependency]) => (
+                trf(
+                    "{mod} needs {dependency}. Add both?",
+                    &[
+                        ("mod", name),
+                        (
+                            "dependency",
+                            &dependency_label(&dependency.name, &dependency.version),
+                        ),
+                    ],
+                ),
+                tr("Add both"),
+            ),
+            _ => (
+                tr("Add these mods and their required dependencies?").into(),
+                tr("Add mods"),
+            ),
+        };
         let mut list = div().flex().flex_col().gap(px(8.));
-        for (n, (name, origin)) in question.mods.iter().enumerate() {
+        for (n, (name, origin)) in question.sources().enumerate() {
+            let label = if question.dependencies.is_empty() {
+                name.to_owned()
+            } else {
+                dependency_label(name, &origin.version)
+            };
             let url = origin.source_url();
             list = list.child(
                 card()
@@ -468,7 +496,7 @@ impl Launcher {
                             .flex()
                             .flex_col()
                             .gap(px(3.))
-                            .child(div().font_weight(FontWeight::SEMIBOLD).child(name.clone()))
+                            .child(div().font_weight(FontWeight::SEMIBOLD).child(label))
                             .child(note(format!(
                                 "{}/{} @ {}",
                                 origin.owner, origin.repo, origin.commit
@@ -480,14 +508,24 @@ impl Launcher {
                     ),
             );
         }
-        let approve = primary("nightly-consent-build", tr("Allow")).on_click(cx.listener(
-            |this, _, _, cx| {
+        for dependency in question
+            .dependencies
+            .iter()
+            .filter(|dep| dep.origin.is_none())
+        {
+            list = list.child(
+                card()
+                    .p(px(9.))
+                    .child(dependency_label(&dependency.name, &dependency.version)),
+            );
+        }
+        let approve =
+            primary("nightly-consent-build", accept).on_click(cx.listener(|this, _, _, cx| {
                 let Some(question) = this.source_question() else {
                     return;
                 };
                 let grants: Option<Vec<_>> = question
-                    .mods
-                    .iter()
+                    .sources()
                     .map(|(_, origin)| source_grant(origin))
                     .collect();
                 let answer = grants
@@ -496,11 +534,10 @@ impl Launcher {
                     .map(|()| true);
                 this.answer_source_question(answer);
                 cx.notify();
-            },
-        ));
+            }));
         Some(div().flex().flex_col().gap(px(12.))
             .child(div().text_size(px(tokens::HEADING)).font_weight(FontWeight::BOLD)
-                .child(tr("Allow unreviewed source code?")))
+                .child(heading))
             .child(note(trf("Game build: {build}", &[("build", &base)])))
             .child(div().id("nightly-consent-mods").max_h(px(185.)).overflow_y_scroll().child(list))
             .child(note(tr("Sunrise hasn't reviewed this code. Building and playing run the author's code on your computer.")))
@@ -578,6 +615,7 @@ pub(in crate::mods) fn source_error(
         SourceError::Dependency { required: None, .. } => {
             tr("Can't install these mods together").into()
         }
+        SourceError::Catalogue(why) => why.clone(),
         SourceError::Unproved(_) => tr("Couldn't add this mod").into(),
         SourceError::Busy => {
             tr("Sunrise is building mods right now. Try again when that finishes.").into()

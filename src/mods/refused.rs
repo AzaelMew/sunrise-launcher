@@ -26,6 +26,11 @@ impl Refusal {
                 named("{mod} isn't ready for your game version yet. Its author needs to update it for this build."),
                 None,
             ),
+            SourceError::Catalogue(why) => return Some(Self {
+                said: why.clone(),
+                details: String::new(),
+                log: None,
+            }),
             SourceError::Dependency { .. } => (
                 named("{mod} can't be added together with the mods this profile has."),
                 None,
