@@ -770,7 +770,11 @@ fn a_trash_failure_preserves_the_whole_detached_profile() {
     let mut notices = deletion_recovery::interrupted_in(&game);
     assert_eq!(notices.len(), 1);
     let notice = notices.pop().unwrap();
-    assert_eq!(notice.folder(), kept);
+    // The worker canonicalizes its root; startup can see a Windows short-name alias.
+    assert_eq!(
+        notice.folder().canonicalize().unwrap(),
+        kept.canonicalize().unwrap()
+    );
     assert_eq!(notice.id(), selected.id);
     notice.acknowledge();
     assert!(deletion_recovery::interrupted_in(&game).is_empty());
