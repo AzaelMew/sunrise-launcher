@@ -160,7 +160,7 @@ impl Launcher {
             }))
         };
         let body = match action {
-            Action::Menu { target, top } => return Some(self.profile_menu(target, *top, cx)),
+            Action::Menu { target, top } => return Some(self.profile_actions_menu(target, *top, cx)),
             Action::Confirm(target) => body
                 .child(title(trf("Delete {name}?", &[("name", &target.name)])))
                 .child(tr(
@@ -226,7 +226,12 @@ impl Launcher {
         ))
     }
 
-    fn profile_menu(&self, target: &Instance, top: f32, cx: &mut Context<Self>) -> Stateful<Div> {
+    fn profile_actions_menu(
+        &self,
+        target: &Instance,
+        top: f32,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
         let p = palette();
         let at = tokens::FRAME_INSET + crate::rail::rail_width(self.settings.sidebar_expanded) + 8.;
         let name = target.name.clone();
