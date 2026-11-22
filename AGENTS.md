@@ -57,13 +57,22 @@ Follow the PR template (`.github/pull_request_template.md`):
 
 ## Running the launcher
 
-- Point test runs at scratch folders, never the player's real data:
-  `SUNRISE_LAUNCHER_HOME` and `SUNRISE_HOME` each set to a fresh temp dir,
-  `SUNRISE_LAUNCHER_LOCATION_FILE` set to a scratch path, plus
-  `SUNRISE_LAUNCHER_NO_SELF_UPDATE=1`. With only the launcher home set, the game folder still
-  resolves to the player's (No AI writes its `sunrise-extras.txt` there), and startup takes the
-  migration lock beside the real location file. `tools/lab.py` (`game_env`) sets up a scratch
-  environment for scripts, but it keeps home overrides you've already exported.
+- Point test runs at scratch folders, never the player's real data. Set all of these:
+  - `SUNRISE_LAUNCHER_HOME` and `SUNRISE_HOME`, each to a fresh temp dir. With only the
+    launcher home set, the game folder still resolves to the player's (No AI writes its
+    `sunrise-extras.txt` there).
+  - `SUNRISE_LAUNCHER_LOCATION_FILE` to a scratch path, or startup takes the migration lock
+    beside the real location file.
+  - `SUNRISE_NO_KEYCHAIN=1`. The scratch homes keep `accounts.json` apart, but the OS keychain
+    is shared: signing in and out of an account in a test run can delete the regular launcher's
+    saved sign-in for it. With this set, test credentials stay in memory.
+  - `SUNRISE_LAUNCHER_NO_SELF_UPDATE=1`.
+  - On Linux, `XDG_DATA_HOME` to an absolute scratch path, at least for release builds. A
+    release build repairs the applications-menu entry under it on startup (`src/desktop.rs`),
+    and a relative or unset value falls back to the real `~/.local/share`.
+
+  `tools/lab.py` (`game_env`) sets up a scratch environment for scripts, but it keeps home
+  overrides you've already exported.
 - Judge performance only in a release build (`cargo build --release`). A debug build stutters on
   its own.
 - To measure frames: `cargo build --release --features frame-stats`, then run with
