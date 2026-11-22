@@ -145,6 +145,9 @@ fn classify_bundles(
                     fit::Verdict::Fits { .. } => Route::Fits {
                         line: fit::line(&id, &verdict, &shown),
                     },
+                    fit::Verdict::NoList { .. } => Route::Unchecked {
+                        reason: fit::line(&id, &verdict, &shown),
+                    },
                     _ => Route::Unfit {
                         headline: fit::headline(&id, &verdict),
                         line: fit::line(&id, &verdict, &shown),

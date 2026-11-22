@@ -581,6 +581,22 @@ impl Installs {
             .is_some_and(|run| run.profile.id == instance.id && run.profile.home == instance.home)
     }
 
+    fn accepts_play(&self, instance: &instances::Instance) -> bool {
+        self.play.is_none() && self.runs_for(instance)
+    }
+
+    fn defer_play(
+        &mut self,
+        instance: &instances::Instance,
+        intent: launcher_play::PlayIntent,
+    ) -> bool {
+        if !self.accepts_play(instance) {
+            return false;
+        }
+        self.play = Some((instance.home.clone(), intent));
+        true
+    }
+
     pub(super) fn take_play(&mut self) -> Option<(PathBuf, launcher_play::PlayIntent)> {
         let (home, intent) = self.play.as_ref()?;
         if self
@@ -860,8 +876,7 @@ impl Launcher {
 
     pub(crate) fn registry_accepts_play(&self) -> bool {
         self.selected_instance()
-            .is_some_and(|instance| self.mods.installs.runs_for(instance))
-            && self.mods.installs.play.is_none()
+            .is_some_and(|instance| self.mods.installs.accepts_play(instance))
     }
 
     pub(crate) fn defer_registry_play(
@@ -869,8 +884,9 @@ impl Launcher {
         instance: &instances::Instance,
         intent: launcher_play::PlayIntent,
     ) {
-        self.mods.installs.play = Some((instance.home.clone(), intent));
-        self.open_sheet(crate::sheets::Sheet::RegistryPlay);
+        if self.mods.installs.defer_play(instance, intent) {
+            self.open_sheet(crate::sheets::Sheet::RegistryPlay);
+        }
     }
 
     pub(crate) fn registry_stage(&self) -> Option<InstallProgress> {
@@ -1627,6 +1643,37 @@ mod tests {
     }
 
     #[test]
+    fn a_later_click_cannot_change_the_destination_of_a_queued_retry() {
+        use launcher_play::{PlayDestination, PlayIntent};
+        let root = homes();
+        let mut installs = with_running(root.path());
+        let profile = installs.running.as_ref().unwrap().profile.clone();
+        let retry = PlayIntent {
+            instance: profile.id.clone(),
+            incarnation: profile.incarnation,
+            account: Some("accepted".into()),
+            destination: PlayDestination::Quick("--world", "original world".into()),
+        };
+        assert!(installs.defer_play(&profile, retry.clone()));
+        assert!(!installs.defer_play(
+            &profile,
+            PlayIntent {
+                destination: PlayDestination::Quick("--world", "other world".into()),
+                ..retry
+            }
+        ));
+        installs.handle(Worker::Done(Ok(InstalledBatch::default())));
+        let (_, accepted) = installs.take_play().unwrap();
+        let mut cmd = std::process::Command::new("sunrise-client");
+        accepted.destination.apply(&mut cmd).unwrap();
+        assert_eq!(
+            cmd.get_args().collect::<Vec<_>>(),
+            ["--world", "original world"]
+        );
+        assert_eq!(accepted.account.as_deref(), Some("accepted"));
+    }
+
+    #[test]
     fn deferred_play_is_kept_only_for_success_and_failure_is_scoped_to_its_profile() {
         let root = homes();
         for (home, pass, kept) in [("A", true, true), ("A", false, false), ("B", false, true)] {
@@ -1637,6 +1684,7 @@ mod tests {
                     instance: home.into(),
                     incarnation: None,
                     account: Some("accepted".into()),
+                    destination: launcher_play::PlayDestination::Home,
                 },
             ));
             installs.handle(Worker::Done(if pass {

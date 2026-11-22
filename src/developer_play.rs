@@ -20,8 +20,6 @@ impl Launcher {
                     }
                     self.client_error = Some(refused.in_window());
                     self.starting_pack = None;
-                    self.joining = None;
-                    self.quick_play = None;
                     return;
                 }
             };
@@ -38,8 +36,6 @@ impl Launcher {
                 if let Err(error) = sunrise_launcher::developer_offline::require_capability(&tag) {
                     self.client_error = Some(error);
                     self.starting_pack = None;
-                    self.joining = None;
-                    self.quick_play = None;
                     return;
                 }
                 sunrise_launcher::developer_offline::mark(&mut cmd);
@@ -59,8 +55,6 @@ impl Launcher {
                             tr("This profile no longer exists. Choose another profile to play.")
                                 .into(),
                         );
-                        self.joining = None;
-                        self.quick_play = None;
                         account::discard_launch_session(session_file);
                         return;
                     };
@@ -72,13 +66,8 @@ impl Launcher {
                 account::discard_launch_session(session_file);
                 return;
             }
-            if let Some(code) = self.joining.take() {
-                if let Err(e) = backend::join_friend(&mut cmd, &code) {
-                    self.client_error = Some(e);
-                }
-            }
-            if let Some((flag, value)) = self.quick_play.take() {
-                cmd.arg(flag).arg(value);
+            if let Err(error) = intent.destination.apply(&mut cmd) {
+                self.client_error = Some(error);
             }
             backend::append_game_args(&mut cmd);
             // Last, around every argument: the instance's pre-launch command,

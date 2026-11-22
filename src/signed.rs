@@ -7,7 +7,20 @@ use sunrise_launcher_release_verify::{Channel, PublicKey, SIGNATURE, SIGNATURE_V
 
 /// Where a game release's attached file downloads from (GitHub's fixed address for it).
 pub fn asset_url(tag: &str, name: &str) -> String {
+    #[cfg(test)]
+    if let Some(url) = TEST_GAME_ASSET_ORIGIN.with_borrow(|origin| {
+        origin
+            .as_ref()
+            .map(|origin| format!("{origin}/{tag}/{name}"))
+    }) {
+        return url;
+    }
     asset_url_in(GAME_REPO, tag, name)
+}
+
+#[cfg(test)]
+thread_local! {
+    pub(crate) static TEST_GAME_ASSET_ORIGIN: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
 }
 
 /// Where this launcher's own release's attached file downloads from ([`LAUNCHER_REPO`]).

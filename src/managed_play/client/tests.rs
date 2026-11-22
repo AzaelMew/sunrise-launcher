@@ -175,6 +175,168 @@ fn play_checks_hash_only_takedowns_after_proving_the_actual_package() {
     assert_eq!(profile.active().unwrap(), Some(active));
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn a_failed_first_download_can_be_followed_by_a_mod_change_and_play() {
+    use crate::profile_txn::{Admission, Bootstrap};
+    use std::io::{Read, Write};
+    use std::os::unix::fs::PermissionsExt;
+
+    const TEST: &str = concat!(
+        module_path!(),
+        "::a_failed_first_download_can_be_followed_by_a_mod_change_and_play"
+    );
+    const BUILD: &str = "developer-download-recovery";
+    const UNAVAILABLE: &str = "26.3-0.1.7";
+    if std::env::var_os("PLAY_DOWNLOAD_FIXTURE").is_none() {
+        let root = tempfile::tempdir().unwrap();
+        let registry = root.path().join("index.json");
+        fs::write(
+            &registry,
+            serde_json::to_vec(&index::Index {
+                schema: index::SCHEMA,
+                ..Default::default()
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        // libtest names omit the crate prefix included by module_path!().
+        let test = TEST.split_once("::").unwrap().1;
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", test, "--nocapture"])
+            .env("PLAY_DOWNLOAD_FIXTURE", "1")
+            .env("SUNRISE_HOME", root.path().join("game"))
+            .env("SUNRISE_LAUNCHER_HOME", root.path().join("launcher"))
+            .env("SUNRISE_LAUNCHER_DEVELOPER_OFFLINE", "1")
+            .env("SUNRISE_MOD_INDEX", registry)
+            .env("XDG_CONFIG_HOME", root.path().join("config"))
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let passed = stdout
+            .lines()
+            .find(|line| line.starts_with("test result: ok. 1 passed;"));
+        assert!(
+            output.status.success() && passed.is_some(),
+            "{}\n{}",
+            stdout,
+            String::from_utf8_lossy(&output.stderr)
+        );
+        println!("Isolated download fixture: {}", passed.unwrap());
+        return;
+    }
+
+    let home = backend::game_home();
+    fs::create_dir_all(home.join(mod_list::DIR)).unwrap();
+    let manifest = format!(
+        "id='lantern'\nname='Lantern'\nversion='1.0.0'\napi='{}'\ncapabilities=['registries']\n",
+        manifest::API
+    );
+    fs::write(
+        home.join(mod_list::DIR).join("lantern.smod"),
+        manifest::Package::write_files(&manifest, &[]).unwrap(),
+    )
+    .unwrap();
+    fs::write(home.join(mod_list::FILE), b"mod.lantern:true\n").unwrap();
+    let asset = backend::ASSET.unwrap();
+    let archive = backend::installation::GameDownload::select(&backend::Release {
+        tag: UNAVAILABLE.into(),
+        name: String::new(),
+        body: String::new(),
+        date: String::new(),
+        time: String::new(),
+        asset: Some((crate::signed::asset_url(UNAVAILABLE, asset), 42)),
+        prerelease: false,
+        nightly: None,
+    })
+    .unwrap();
+    // Resume an already-verified choice and fail the actual archive request before staging.
+    let mut ticket = Admission::open(&home, None).unwrap();
+    ticket
+        .bind_bootstrap(
+            || {
+                Ok(Bootstrap::new(
+                    UNAVAILABLE.into(),
+                    UNAVAILABLE.into(),
+                    [1; 16],
+                    super::super::inputs(&home, None)?,
+                    json!({"kind":"download", "archive":archive}),
+                ))
+            },
+            |_| Ok(()),
+        )
+        .unwrap();
+    ticket
+        .prove_bootstrap(|_| Ok(json!({"archive":"a".repeat(64),"facts":null})))
+        .unwrap();
+    drop(ticket);
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    crate::signed::TEST_GAME_ASSET_ORIGIN
+        .set(Some(format!("http://{}", listener.local_addr().unwrap())));
+    let http = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut request = [0; 4096];
+        let count = stream.read(&mut request).unwrap();
+        assert!(String::from_utf8_lossy(&request[..count])
+            .starts_with(&format!("GET /{UNAVAILABLE}/{asset} ")));
+        stream
+            .write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            .unwrap();
+    });
+    let instance = instances::selection().unwrap();
+    let client = || Client {
+        instance: &instance,
+        accepted_account: None,
+        explicit_account: false,
+        piped: false,
+    };
+    let stop = native_mods::Cancellation::default();
+    let Err(error) = client().start(
+        || panic!("resuming a saved choice"),
+        |_| Ok(()),
+        |_| Ok(()),
+        (&stop, None),
+        |_| {},
+    ) else {
+        panic!("the unavailable download launched");
+    };
+    crate::signed::TEST_GAME_ASSET_ORIGIN.set(None);
+    assert!(String::from(error).contains("404"));
+    http.join().unwrap();
+    assert!(!home.join(crate::profile_txn::POINTER).exists());
+    assert!(crate::profile_txn::references(&home)
+        .unwrap()
+        .targets
+        .is_empty());
+
+    fs::write(home.join(mod_list::FILE), []).unwrap();
+    let base = backend::version_dir(BUILD);
+    let resources = backend::resources(BUILD);
+    fs::create_dir_all(&resources).unwrap();
+    fs::write(resources.join("sunrise-resources.json"), b"{}").unwrap();
+    fs::write(base.join(".installed"), []).unwrap();
+    fs::write(
+        base.join("developer.json"),
+        json!({"revision": "b".repeat(40)}).to_string(),
+    )
+    .unwrap();
+    let executable = base.join(backend::CLIENT);
+    fs::write(&executable, "#!/bin/sh\nif [ \"$1\" = --launch-api ]; then\n  echo '{\"options\":[{\"name\":\"--developer-single-player\"}]}'\nelse\n  touch \"$SUNRISE_HOME/started\"\nfi\n").unwrap();
+    fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
+    let mut started = client()
+        .start(
+            || FirstBuild::installed(BUILD),
+            |_| Ok(()),
+            |_| Ok(()),
+            (&stop, None),
+            |_| {},
+        )
+        .unwrap();
+    assert!(started.child.wait().unwrap().success());
+    assert_eq!(started.executable, BUILD);
+    assert!(home.join("started").is_file());
+}
+
 #[cfg(windows)]
 #[test]
 fn windows_bound_x64_fallback_survives_pending_retry_and_committed_replay() {
@@ -223,7 +385,7 @@ fn windows_bound_x64_fallback_survives_pending_retry_and_committed_replay() {
     };
     install_candidate(&archive, "x64");
     assert!(backend::check_game_architecture(BUILD, None, Arm64).is_some());
-    {
+    let interrupt_after_proof = || {
         let mut admission = Admission::open(&home, None).unwrap();
         admission
             .bind_bootstrap(
@@ -245,7 +407,8 @@ fn windows_bound_x64_fallback_survives_pending_retry_and_committed_replay() {
         admission
             .prove_bootstrap(|_| Ok(json!({"archive":archive, "facts":null})))
             .unwrap();
-    }
+    };
+    interrupt_after_proof();
     let instance = instances::selection().unwrap();
     let client = Client {
         instance: &instance,
@@ -273,12 +436,26 @@ fn windows_bound_x64_fallback_survives_pending_retry_and_committed_replay() {
     };
     let mut profile = Profile::open(&home, None).unwrap();
     install_candidate(&"b".repeat(64), "x64");
-    assert!(
-        retry(&mut profile).is_err(),
-        "accepted an unrelated cached x64 archive"
+    let error = retry(&mut profile).expect_err("accepted an unrelated cached x64 archive");
+    assert_eq!(
+        String::from(error),
+        crate::i18n::trf(
+            "A different installation already occupies {build}. It was not replaced.",
+            &[("build", BUILD)],
+        )
     );
     assert!(profile.active().unwrap().is_none());
+    assert!(crate::profile_txn::references(&home)
+        .unwrap()
+        .targets
+        .is_empty());
+    drop(profile);
+
+    // A returned refusal releases the choice. Seed a separate interrupted Play to
+    // verify that a pending proof (rather than a settled failure) resumes exactly.
     install_candidate(&archive, "x64");
+    interrupt_after_proof();
+    let mut profile = Profile::open(&home, None).unwrap();
     let (active, _) = retry(&mut profile).unwrap();
     drop(profile);
     let mut reopened = Profile::open(&home, None).unwrap();

@@ -5,6 +5,7 @@ use sha2::{Digest, Sha256};
 use std::os::unix::fs::PermissionsExt;
 
 mod mixed;
+mod pending_play;
 mod switch;
 
 const ID: &str = "native_lantern";
@@ -89,6 +90,7 @@ fn disabled_pointer(fixture: &Fixture) -> PathBuf {
             fixture.instance.native_profile,
             &native_mods::Cancellation::default(),
             |_| {},
+            None,
             None,
             None,
         )
@@ -394,6 +396,7 @@ fn bulk_update_refuses_no_list_without_excluding_that_offer() {
             fixture
                 .apply_on(SIGNED_BUILD, Action::Install(projects(&["extra_mod"])))
                 .unwrap();
+            fixture.play_on(SIGNED_BUILD);
             fixture.project(ID, "Native Lantern", index::Kind::NativeMod);
             let original = release(&mut fixture, "1.0.0", 'a', SOURCE);
             let archive = fixture.home().join(ARCHIVE);
@@ -416,6 +419,12 @@ fn bulk_update_refuses_no_list_without_excluding_that_offer() {
                 &fixture,
                 'a',
                 json!({"kind": "no-list", "made_for": "b".repeat(40), "why": "newer-schema"}),
+            );
+            let routes = native_mods::routes(fixture.home(), Some(SIGNED_BUILD)).unwrap();
+            assert!(
+                matches!(routes.mods.as_slice(), [(id, native_mods::Route::Unchecked { reason })]
+                if id == ID && reason.contains("newer tool")),
+                "{routes:?}"
             );
             let before = fixture.snapshot(&[ARCHIVE, EXTRA]);
             let unknown = fixture

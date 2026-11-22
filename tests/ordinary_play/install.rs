@@ -1008,8 +1008,6 @@ fn resolve_default_and_stale_approval_keep_exact_bytes_then_only_proved_blocker_
         fixture.publish_registry(&registry);
     }
     fixture.decision_worker("resolve-accept");
-    assert_eq!(fixture.pointer(), pointer);
-    fixture.commit_play();
     let active = Active::parse(&fixture.pointer()).unwrap();
     assert_eq!(active.base(), BUILD);
     assert_eq!(active.generation(), 2);

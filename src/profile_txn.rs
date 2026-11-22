@@ -249,6 +249,33 @@ impl Admission {
         }
     }
 
+    /// Release a failed first Play's choice only when nothing was published. A sealed
+    /// operation still needs journal recovery; an unsealed stage can still have a worker.
+    pub(crate) fn release_failed_bootstrap(&self) -> Result<(), String> {
+        let Some(mut record) = read(&self.home)? else {
+            return Ok(());
+        };
+        if record.bootstrap.is_none()
+            || record
+                .operation
+                .as_ref()
+                .is_some_and(|op| op.ready.is_some())
+        {
+            return Ok(());
+        }
+        if pointer_bytes(&self.home)?.is_some() {
+            return Err(unsettled());
+        }
+        if record.operation.is_some() {
+            record.bootstrap = None;
+            write(&self.home, &record)
+        } else {
+            record.clean_binding_stage(&self.home)?;
+            let path = self.home.join(RECORD);
+            durable::retire(&path).map_err(|e| at(&path, e))
+        }
+    }
+
     /// Resolve first Play once. A pending binding, with its exact inputs and proof, wins
     /// over a subsequent change to the release feed or profile defaults.
     pub fn bind_bootstrap<G>(

@@ -130,19 +130,24 @@ impl Launcher {
                     ));
                     self.open_sheet(crate::sheets::Sheet::ModBuild);
                 }
+                Msg::ManagedBuildLog(output) => {
+                    if let Some(run) = self.ui.mods.build.as_mut().filter(|run| run.for_play) {
+                        run.log = Some(output);
+                    }
+                }
                 Msg::ManagedClient { instance, result } => {
                     use sunrise_launcher::managed_play::StartError;
                     self.native_cancellation = None;
                     self.native_step = None;
                     self.native_progress = None;
+                    let cancelled = matches!(result.as_ref(),
+                        Err(StartError::Native(native_mods::Failed::Other(detail)) | StartError::Other(detail))
+                            if detail == native_mods::CANCELLED);
+                    let mut captured_build_error = false;
                     if let (Some(run), Err(error)) = (&mut self.ui.mods.build, result.as_ref()) {
                         if run.for_play && run.running() {
                             match error {
-                                StartError::Native(native_mods::Failed::Other(detail))
-                                    if detail == native_mods::CANCELLED =>
-                                {
-                                    run.cancelled()
-                                }
+                                _ if cancelled => run.cancelled(),
                                 StartError::Native(native_mods::Failed::Mods {
                                     left,
                                     error,
@@ -161,7 +166,10 @@ impl Launcher {
                                     }
                                 }
                                 StartError::Native(error) => run.stopped(error.to_string(), &[]),
-                                StartError::Other(error) => run.stopped(error.clone(), &[]),
+                                StartError::Other(error) => {
+                                    run.stopped(error.clone(), &[]);
+                                    captured_build_error = true;
+                                }
                                 StartError::Journal(error) => {
                                     run.stopped(error.summary().into(), &[])
                                 }
@@ -170,6 +178,12 @@ impl Launcher {
                                 }
                             }
                         }
+                    }
+                    if !self.ui.mods.build.as_ref().is_some_and(|run| {
+                        run.for_play
+                            && matches!(run.end, Some(crate::mods::build_run::End::Stopped(_)))
+                    }) {
+                        self.play_retry = None;
                     }
                     self.starting_client = None;
                     self.play_step = None;
@@ -211,6 +225,7 @@ impl Launcher {
                             }
                             self.client_error = Some(refused.in_window());
                         }
+                        Err(_) if cancelled => (),
                         Err(StartError::Native(native_mods::Failed::NoConsent)) => {
                             self.request_native_build_consent();
                         }
@@ -219,6 +234,7 @@ impl Launcher {
                             self.native_failed(error.to_string(), &[]);
                         }
                         Err(StartError::Hook(error)) => self.client_error = Some(error.to_string()),
+                        Err(StartError::Other(_)) if captured_build_error => (),
                         Err(StartError::UnknownSpawn(error) | StartError::Other(error)) => {
                             self.client_error = Some(error);
                         }

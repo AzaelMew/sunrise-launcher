@@ -212,6 +212,35 @@ fn first_binding_and_signed_proof_survive_an_abandoned_prepare_and_pointer_undo(
 }
 
 #[test]
+fn settling_a_failed_first_play_keeps_an_unresolved_publication() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let mut owner = Admission::open(home, None).unwrap();
+    owner
+        .bind_bootstrap(|| Ok(first_binding()), |_| Ok(()))
+        .unwrap();
+    let proof = owner
+        .prove_bootstrap(|_| Ok(serde_json::json!({"fixture": 1})))
+        .unwrap();
+    let _sealed = owner
+        .resume_bootstrap()
+        .unwrap()
+        .seal(FIRST_POINTER.to_vec(), &[])
+        .unwrap();
+    owner.release_failed_bootstrap().unwrap();
+    let refs = references(home).unwrap();
+    assert_eq!(refs.after.as_deref(), Some(FIRST_POINTER));
+    assert!(refs.pointer.is_none());
+    drop(owner);
+    let mut next = Admission::open(home, None).unwrap();
+    assert_eq!(
+        next.prove_bootstrap(|_| panic!("kept exact proof"))
+            .unwrap(),
+        proof
+    );
+}
+
+#[test]
 fn candidate_targets_are_durable_before_sealing_and_rollback_retires_only_those_targets() {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path();

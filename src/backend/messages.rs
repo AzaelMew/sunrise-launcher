@@ -45,6 +45,7 @@ pub enum Msg {
         base: String,
         mods: Vec<crate::native_status::Mod>,
     },
+    ManagedBuildLog(std::sync::Arc<str>),
     ManagedClient {
         instance: Box<crate::instances::Instance>,
         result: Box<Result<crate::managed_play::Started, crate::managed_play::StartError>>,

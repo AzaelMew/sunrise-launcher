@@ -162,6 +162,9 @@ pub(super) fn edit_github(
     }
     let home = next.path();
     let staged = stage_entries(home, packages, &previous, edit.current(), edit.base())?;
+    if let Some(error) = native_mods::known_host_block(Some(edit.base())) {
+        return Err(InstallError::Host(error));
+    }
     let catalogue = super::super::fetched_index();
     let check_graph = || match manifest_conflict(home, catalogue.as_deref(), None, |_| false)? {
         Some(conflict) => Err(InstallError::Refused(conflict.reason)),

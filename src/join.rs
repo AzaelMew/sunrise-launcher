@@ -2,7 +2,7 @@
 //! list.
 //!
 //! Everything shown is read from the player's real launcher data, and nothing is written until
-//! the player acts (Save, Remove, Join). Join sets `quick_play` or `joining` and calls
+//! the player acts (Save, Remove, Join). Join passes the destination to
 //! `play_game`, which owns the sign-in, install, prepare, build and trust gates:
 //! - servers: the game's own `servers.dat` (`server_list`) with the status ping the Multiplayer
 //!   screen sends, Join, Save and Remove; an invite code joins through `join_friend`;
@@ -503,8 +503,9 @@ impl Launcher {
     fn join_typed(&mut self) {
         match entry(self.friend_code.text()) {
             Entry::Invite => {
-                self.joining = Some(self.friend_code.text().to_string());
-                self.play_game();
+                self.play_game(launcher_play::PlayDestination::Invite(
+                    self.friend_code.text().to_string(),
+                ));
             }
             Entry::Address(address) => self.play_to("--server", address),
             Entry::Empty | Entry::Unusable => {}

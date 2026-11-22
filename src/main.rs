@@ -298,6 +298,7 @@ struct Launcher {
     client: Option<Running>,
     client_error: Option<String>,
     play_admission: Option<launcher_play::PlayIntent>,
+    play_retry: Option<launcher_play::PlayIntent>,
     play_install_recovery: Option<(std::path::PathBuf, String)>,
     pinning_build: bool,
     /// The latest Play's registry warnings, shown until dismissed or a new Play is accepted.
@@ -346,8 +347,7 @@ struct Launcher {
     starting_play: Option<launcher_play::PlayIntent>,
     /// Play was pressed on a version not prepared yet: it starts once this preparation ends well.
     play_when_prepared: Option<(String, launcher_play::PlayIntent)>,
-    /// Join a friend: the code typed on the Play page, and the one the game
-    /// starting now joins.
+    /// Join a friend: the code typed on the Play page.
     friend_code: line_edit::LineEdit,
     friend_focused: bool,
     friend_focus: FocusHandle,
@@ -357,9 +357,6 @@ struct Launcher {
     /// are made at (`picture_cache`).
     window_long_side: f32,
     scale_factor: f32,
-    joining: Option<String>,
-    /// Where the next start goes at once: `--world <folder>` or `--server <address>`.
-    quick_play: Option<(&'static str, String)>,
     /// The instance the running game plays and when it started: its play time grows on exit.
     client_run: Option<(instances::Instance, Instant)>,
     /// Settings' Game arguments field: the line, whether it has focus, and its focus handle.

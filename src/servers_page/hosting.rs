@@ -274,7 +274,7 @@ impl Launcher {
                 self.servers.problem = None;
                 self.servers.create = None;
                 self.ui.page = crate::frame::Page::Home;
-                self.play_game();
+                self.play_game(crate::launcher_play::PlayDestination::Home);
             }
             fix => self.fix(fix, cx),
         }

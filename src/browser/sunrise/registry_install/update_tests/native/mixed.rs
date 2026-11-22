@@ -123,6 +123,7 @@ fn exercise(test: &str, case: Case) {
             },
         )
         .unwrap();
+        fixture.first_play();
         assert_eq!(compiled(&fixture), "1.0.0\n");
         let old_origin = github_mods::origin(home, ID).unwrap();
         let origin = "sunrise-native-mods/native_lantern.origin.json";

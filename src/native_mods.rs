@@ -684,6 +684,7 @@ pub fn version_for(
 /// Where a build is.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Step {
+    Starting,
     Rust(f32),
     Tool,
     Source(String),
@@ -767,7 +768,8 @@ impl Step {
     pub fn progress(&self) -> Progress {
         let (stage, fraction) = match self {
             Self::Rust(done) => (Stage::Prepare, Some(*done)),
-            Self::Tool
+            Self::Starting
+            | Self::Tool
             | Self::Source(_)
             | Self::Mixins
             | Self::CachedMixins
@@ -797,6 +799,7 @@ impl Step {
 
     pub fn label(&self) -> String {
         match self {
+            Self::Starting => tr("Starting the build").into(),
             Self::Rust(done) => trf(
                 "Downloading Rust {version} (once): {done}%",
                 &[
@@ -2064,12 +2067,13 @@ pub(crate) fn build_exact_client(
     registry_consent: Option<&dyn Fn(&Consent) -> bool>,
     log: Option<&dyn Fn(std::sync::Arc<str>)>,
 ) -> Result<String, Failed> {
-    cancellation.admit_native_work()?;
-    if let Some(error) = backend::native_mod_architecture_error() {
-        return Err(Failed::Other(error));
-    }
+    progress(Step::Starting);
     logged_then(
         |cache| {
+            cancellation.admit_native_work()?;
+            if let Some(error) = backend::native_mod_architecture_error() {
+                return Err(Failed::Other(error));
+            }
             let cache = cache.map_err(|error| Failed::Other(error.into()))?;
             fs::create_dir_all(root()).map_err(|e| e.to_string())?;
             let input = tempfile::Builder::new()
