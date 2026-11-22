@@ -438,7 +438,13 @@ impl Launcher {
         if let Some(why) = line.refused.as_ref().or(line.conflict.as_ref()) {
             text = text.child(div().truncate().child(muted(why.clone())));
         }
-        let right = if line.installed {
+        let right = if line.installed
+            && self
+                .discover_installed()
+                .is_some_and(|rows| rows.registry_pending(&line.id))
+        {
+            status("clock", tr(ADDED_PENDING), palette().warning)
+        } else if line.installed {
             status("check", tr("Installed"), palette().success)
         } else {
             div()

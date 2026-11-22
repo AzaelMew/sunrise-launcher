@@ -80,7 +80,7 @@ impl Launcher {
             .gap_y(px(4.))
             .when(show_source_warning, |line| {
                 line.child(muted(tr(
-                    "Build directly from GitHub. Listed source code is not reviewed.",
+                    "Add from GitHub. Unreviewed source code builds when you play.",
                 )))
             })
             .child(div().flex_1())
@@ -192,17 +192,21 @@ impl Launcher {
                         )),
                     ];
                     if let Some(rows) = installed {
-                        facts.extend(collection_install_fact(collection, |id| {
-                            catalogue
-                                .sources
-                                .binary_search_by(|source| source.id().cmp(id))
-                                .is_ok_and(|i| {
-                                    matches!(
-                                        rows.source_presence(&catalogue.sources[i]),
-                                        SourcePresence::Installed(_)
-                                    )
-                                })
-                        }));
+                        facts.extend(collection_install_fact(
+                            collection,
+                            |id| {
+                                catalogue
+                                    .sources
+                                    .binary_search_by(|source| source.id().cmp(id))
+                                    .is_ok_and(|i| {
+                                        matches!(
+                                            rows.source_presence(&catalogue.sources[i]),
+                                            SourcePresence::Installed(_)
+                                        )
+                                    })
+                            },
+                            |id| rows.unbuilt.contains(id),
+                        ));
                     }
                     let collections = catalogue.collections.clone();
                     browse_card(
@@ -252,9 +256,10 @@ impl Launcher {
                     }
                     if let Some(rows) = installed {
                         match rows.source_presence(source) {
-                            SourcePresence::Installed(origin) => {
-                                facts.push(install_fact(short_sha(&origin.commit)))
-                            }
+                            SourcePresence::Installed(origin) => facts.push(install_fact(
+                                short_sha(&origin.commit),
+                                rows.unbuilt.contains(source.id()),
+                            )),
                             SourcePresence::Conflict => facts.push(status(
                                 "information-circle",
                                 tr(SOURCE_ID_CONFLICT),
@@ -530,7 +535,7 @@ pub(super) fn installed_source(row: &Row) -> Option<&sunrise_launcher::github_mo
 pub(super) fn source_provenance(origin: &sunrise_launcher::github_mods::Origin) -> String {
     let repo = format!("{}/{}", origin.owner, origin.repo);
     trf(
-        "Built from source · {repo} @ {sha}",
+        "Source · {repo} @ {sha}",
         &[("repo", &repo), ("sha", short_sha(&origin.commit))],
     )
 }

@@ -44,7 +44,7 @@ impl Launcher {
         );
         let mut memo = self.mods.native_state.borrow_mut();
         match memo.as_ref() {
-            Some((k, state, _)) if *k == key => *state,
+            Some((k, state)) if *k == key => *state,
             _ => {
                 let built = version.as_deref().and_then(native_status::built);
                 let enabled = native_status::enabled(&home);
@@ -64,27 +64,9 @@ impl Launcher {
                         profile,
                     )
                 };
-                // A build in another mode rebuilds every mod; otherwise only the changed ones.
-                let unbuilt = match state {
-                    _ if plain => Vec::new(),
-                    native_status::State::NotBuilt => enabled.into_iter().map(|m| m.0).collect(),
-                    _ => native_status::unbuilt(&enabled, built.as_deref()),
-                };
-                *memo = Some((key, state, unbuilt));
+                *memo = Some((key, state));
                 state
             }
         }
-    }
-
-    /// Whether native mod `id` of the selected instance waits for a build ([`Self::native_state_of`]).
-    pub(super) fn native_mod_unbuilt(&self, id: &str) -> bool {
-        if let Some(instance) = self.selected_instance() {
-            self.native_state_of(instance);
-        }
-        self.mods
-            .native_state
-            .borrow()
-            .as_ref()
-            .is_some_and(|(_, _, unbuilt)| unbuilt.iter().any(|u| u == id))
     }
 }

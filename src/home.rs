@@ -479,7 +479,7 @@ impl Launcher {
         cx: &mut Context<Self>,
     ) -> Div {
         let view = self.launch_facts().view();
-        let idle = view.main == Main::Play;
+        let idle = matches!(view.main, Main::Play | Main::BuildAndPlay);
         let p = palette();
         let on = rgb(p.accent_on);
         // Xmilon's accent halo sits outside the button. Hover strengthens it without putting
@@ -608,7 +608,7 @@ impl Launcher {
             // Two lines fit beside Play; a longer message is cut, never drawn outside the row.
             .line_clamp(2)
             .text_ellipsis()
-            .children(self.build_line(true, cx))
+            .children(self.build_line(cx))
             .children(self.build_said())
             .children(other_running)
             .children(view.said.filter(|_| !recovering))

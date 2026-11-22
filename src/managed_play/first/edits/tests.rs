@@ -82,7 +82,7 @@ fn world_locks_span_live_publication_and_undo() {
 
     for undo in [true, false] {
         let edit = profile
-            .begin_edit(|| panic!("must use active base"), |_| {}, &|_| {})
+            .begin_edit(|| panic!("must use active base"), |_| {})
             .unwrap();
         let candidate = edit.candidate().unwrap();
         fs::write(candidate.path().join(MANIFEST), POSTIMAGE).unwrap();

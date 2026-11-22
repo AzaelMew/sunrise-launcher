@@ -44,7 +44,6 @@ impl Profile {
         &mut self,
         choose: impl FnOnce() -> Result<FirstBuild, String>,
         download: impl Fn(f32),
-        log: &dyn Fn(String),
     ) -> Result<Edit<'_>, String> {
         let home = self.home().to_owned();
         let manifest = game_lock(&home)?;
@@ -107,7 +106,6 @@ impl Profile {
                 if before != first.bound.inputs {
                     return Err(unsettled());
                 }
-                first.prepare(log)?;
                 Basis::First(first)
             }
         };
@@ -246,6 +244,54 @@ impl Edit<'_> {
             return Err(unsettled());
         }
         Ok(candidate)
+    }
+
+    pub(crate) fn prepare_first(&self, log: &dyn Fn(String)) -> Result<(), String> {
+        if let Basis::First(first) = &self.basis {
+            first.prepare(log)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn publish_pending<G>(
+        self,
+        candidate: &Path,
+        checked_inputs: [u8; 32],
+        cancellation: &native_mods::Cancellation,
+        authorize: impl FnOnce() -> Result<G, String>,
+    ) -> Result<(), String> {
+        let _manifest = game_lock(&self.home)?;
+        crate::browser::installed::recover_game_install(&self.home)?;
+        let _references = ReferencePublication::begin(&self.home)?;
+        let stage = match self.basis {
+            Basis::Active(_, stage) => stage,
+            Basis::First(first) => {
+                if first.stage.resumes_bootstrap() {
+                    return Err(unsettled());
+                }
+                first.bound.verify_image()?;
+                first.stage
+            }
+            Basis::Switch { .. } => return Err(unsettled()),
+        };
+        if inputs(&self.home, None)? != self.before || inputs(candidate, None)? != checked_inputs {
+            return Err(unsettled());
+        }
+        let files = changed_files(&self.home, candidate)?;
+        if files.is_empty() {
+            return Ok(());
+        }
+        // Hold world evidence through the renames and through any journal undo.
+        let mut authorization = None;
+        stage.seal_files(None, &files)?.publish(|| {
+            authorization = Some(authorize()?);
+            if inputs(&self.home, None)? != self.before
+                || inputs(candidate, None)? != checked_inputs
+            {
+                return Err(unsettled());
+            }
+            cancellation.begin_publication()
+        })
     }
 
     pub(crate) fn prove(

@@ -100,6 +100,12 @@ pub fn unbuilt(enabled: &[Mod], built: Option<&[Mod]>) -> Vec<String> {
         .collect()
 }
 
+/// Enabled native packages not in the profile's active executable, or waiting for first Play.
+pub fn pending(home: &Path, active: Option<&crate::managed_play::Active>) -> Vec<String> {
+    let compiled = active.and_then(|active| built(active.executable()));
+    unbuilt(&enabled(home), compiled.as_deref())
+}
+
 /// What a native build was made from, as the Mods page and the instance list show it.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Build {

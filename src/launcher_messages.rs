@@ -100,9 +100,77 @@ impl Launcher {
                     if self.starting_client.is_some() {
                         self.play_step = Some(step);
                     }
+                    if step == backend::PlayStep::SignIn && self.native_step.take().is_some() {
+                        self.native_progress = None;
+                        if let Some(run) = &mut self.ui.mods.build {
+                            run.done();
+                        }
+                        if self.ui.sheet == Some(crate::sheets::Sheet::ModBuild) {
+                            self.close_sheet();
+                        }
+                        self.refresh_installed();
+                    }
+                }
+                Msg::ManagedBuild {
+                    instance,
+                    profile,
+                    base,
+                    mods,
+                } => {
+                    let selected = self.selected_instance().is_some_and(|i| i.id == instance);
+                    let lines = self.build_lines(mods, selected);
+                    self.native_for = Some(instance.clone());
+                    self.native_failed_mods.clear();
+                    self.ui.mods.build = Some(crate::mods::build_run::Run::start(
+                        instance,
+                        profile,
+                        crate::sheets::build_name(&base),
+                        lines,
+                        true,
+                    ));
+                    self.open_sheet(crate::sheets::Sheet::ModBuild);
                 }
                 Msg::ManagedClient { instance, result } => {
                     use sunrise_launcher::managed_play::StartError;
+                    self.native_cancellation = None;
+                    self.native_step = None;
+                    self.native_progress = None;
+                    if let (Some(run), Err(error)) = (&mut self.ui.mods.build, result.as_ref()) {
+                        if run.for_play && run.running() {
+                            match error {
+                                StartError::Native(native_mods::Failed::Other(detail))
+                                    if detail == native_mods::CANCELLED =>
+                                {
+                                    run.cancelled()
+                                }
+                                StartError::Native(native_mods::Failed::Mods {
+                                    left,
+                                    error,
+                                    compiling,
+                                    ..
+                                }) => {
+                                    let summary = if *compiling && !left.is_empty() {
+                                        tr("A mod couldn't be built. See the build log for details.")
+                                            .to_owned()
+                                    } else {
+                                        error.clone()
+                                    };
+                                    run.stopped(summary, &[]);
+                                    for mod_error in left {
+                                        run.mark_left_out(mod_error);
+                                    }
+                                }
+                                StartError::Native(error) => run.stopped(error.to_string(), &[]),
+                                StartError::Other(error) => run.stopped(error.clone(), &[]),
+                                StartError::Journal(error) => {
+                                    run.stopped(error.summary().into(), &[])
+                                }
+                                _ => {
+                                    run.stopped(tr("The build could not be published.").into(), &[])
+                                }
+                            }
+                        }
+                    }
                     self.starting_client = None;
                     self.play_step = None;
                     self.accounts = Accounts::load();

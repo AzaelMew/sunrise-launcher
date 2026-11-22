@@ -272,10 +272,8 @@ fn prepare_packages(
     Ok(result)
 }
 
-/// The queued selection enters the install transaction directly. Fit is checked once against
-/// that transaction's exact staged set, before consent or compilation. Read-only previews
-/// still use `prepare_packages` so their answers come from an isolated copy.
-pub fn apply_queued_sources(
+/// Install exact source bytes after one fit check and consent, leaving the build for Play.
+pub fn add_sources(
     instance: &Instance,
     identity: Identity,
     base: &str,
@@ -336,7 +334,7 @@ fn bind_packages(
         let before = managed_play::inputs(&instance.home, None)?;
         let selected = packages
             .into_iter()
-            // An earlier request only satisfies a queued pick after publishing these exact bytes.
+            // An earlier Add only satisfies a pick after publishing these exact bytes.
             // A checked preview/update has predecessor rules of its own and never skips here.
             .filter(|(pasted, _)| {
                 copy_to.is_some() || !source_is_published(instance, active.as_ref(), &pasted.origin)
@@ -379,9 +377,7 @@ fn source_is_published(
 ) -> bool {
     let home = &instance.home;
     github_mods::origin(home, &origin.id).as_ref() == Some(origin)
-        && active.is_some_and(|active| {
-            active.holds().all(|held| held.id() != origin.id) && active.matches_inputs(home)
-        })
+        && active.is_none_or(|active| active.holds().all(|held| held.id() != origin.id))
         && github::installed_origin(home, &origin.id, |installed| installed == origin).is_ok()
 }
 
@@ -390,8 +386,6 @@ pub struct SourceHooks<'a> {
     pub cancellation: &'a native_mods::Cancellation,
     pub authorize: &'a dyn Fn(&[PreparedSource]) -> Result<bool, String>,
     pub approve_worlds: &'a dyn Fn(&ChangeImpact) -> bool,
-    pub step: Option<&'a dyn Fn(&native_mods::Step)>,
-    pub log: Option<&'a dyn Fn(Arc<str>)>,
 }
 
 pub fn apply_sources(
@@ -442,8 +436,6 @@ pub fn apply_sources(
             active: first.active.as_ref(),
             cancellation,
             authorize: &|| (hooks.authorize)(prepared),
-            step: hooks.step,
-            log: hooks.log,
         }),
     )
     .map_err(SourceError::from);

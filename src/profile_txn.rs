@@ -514,7 +514,7 @@ struct Operation {
 struct Ready {
     directories: BTreeMap<PathBuf, Identity>,
     files: Vec<Step>,
-    next_pointer: Vec<u8>,
+    next_pointer: Option<Vec<u8>>,
     pointer_after: Image,
 }
 
@@ -529,7 +529,7 @@ struct Step {
 
 impl Ready {
     fn steps(&self) -> usize {
-        self.directories.len() + self.files.len() + 1
+        self.directories.len() + self.files.len() + usize::from(self.next_pointer.is_some())
     }
 
     fn directory(
@@ -544,17 +544,23 @@ impl Ready {
 
     fn validate(&self, op: &Operation) -> Result<(), String> {
         let mut names = BTreeSet::new();
-        if self
-            .directories
-            .iter()
-            .any(|(name, id)| !mod_root(name) || id.volume != op.stage.id.volume)
+        if self.steps() == 0
+            || self
+                .directories
+                .iter()
+                .any(|(name, id)| !mod_root(name) || id.volume != op.stage.id.volume)
             || self.files.iter().any(|step| {
                 !valid_destination(&step.name)
                     || !names.insert((step.parent, destination_key(&step.name)))
                     || step.parent.volume != op.stage.id.volume
             })
-            || self.next_pointer.is_empty()
-            || self.pointer_after.digest() != Some(Sha256::digest(&self.next_pointer).into())
+            || match &self.next_pointer {
+                Some(bytes) => {
+                    bytes.is_empty()
+                        || self.pointer_after.digest() != Some(Sha256::digest(bytes).into())
+                }
+                None => self.pointer_after != op.before,
+            }
         {
             return Err(unsettled());
         }
@@ -638,7 +644,7 @@ pub fn references(home: &Path) -> Result<References, String> {
         refs.targets = record.targets;
         if let Some(operation) = record.operation {
             refs.before = operation.previous_pointer;
-            refs.after = operation.ready.map(|ready| ready.next_pointer);
+            refs.after = operation.ready.and_then(|ready| ready.next_pointer);
             if refs.pointer != refs.before && (refs.after.is_none() || refs.pointer != refs.after) {
                 return Err(unsettled());
             }
@@ -728,6 +734,10 @@ impl<'a> Staging<'a> {
         &self.path
     }
 
+    pub(crate) fn resumes_bootstrap(&self) -> bool {
+        self.record.bootstrap.is_some()
+    }
+
     /// Borrow this stage's existing admission for a preparation or native worker. The
     /// worker may outlive the launcher, but only the launcher may seal proved output.
     pub fn handoff(&self) -> crate::process::leases::ProfileHandoff<'_> {
@@ -777,8 +787,17 @@ impl<'a> Staging<'a> {
     /// Bind exact preimages and candidates under the caller's reference guard, while only
     /// private files exist. A `None` source removes a file. Accept only launcher-managed names.
     pub fn seal(
-        mut self,
+        self,
         pointer_bytes: Vec<u8>,
+        files: &[(PathBuf, Option<PathBuf>)],
+    ) -> Result<Sealed<'a>, String> {
+        self.seal_files(Some(pointer_bytes), files)
+    }
+
+    /// A files-only edit does not create or replace the active image pointer.
+    pub(crate) fn seal_files(
+        mut self,
+        pointer_bytes: Option<Vec<u8>>,
         files: &[(PathBuf, Option<PathBuf>)],
     ) -> Result<Sealed<'a>, String> {
         self.record = self.live_record()?;
@@ -792,13 +811,18 @@ impl<'a> Staging<'a> {
         }
         let older = stage.join("pointer-old");
         snapshot(&pointer, &older, before)?;
-        let newer = stage.join("pointer-new");
-        durable::replace(stage, &newer, &pointer_bytes).map_err(|e| at(&newer, e))?;
+        let pointer_after = if let Some(bytes) = &pointer_bytes {
+            let newer = stage.join("pointer-new");
+            durable::replace(stage, &newer, bytes).map_err(|e| at(&newer, e))?;
+            Image::at(&newer)?
+        } else {
+            before
+        };
         let mut plan = Ready {
             directories: BTreeMap::new(),
             files: Vec::new(),
             next_pointer: pointer_bytes,
-            pointer_after: Image::at(&newer)?,
+            pointer_after,
         };
         let mut entries = BTreeSet::new();
         for (i, (name, source)) in files.iter().enumerate() {
@@ -1112,7 +1136,8 @@ impl Record {
         let next = plan.pointer_after;
         if Image::at(&pointer)? != op.before
             || Image::at(&stage.join("pointer-old"))? != op.before
-            || Image::at(&stage.join("pointer-new"))? != next
+            || Image::at(&stage.join("pointer-new"))?
+                != plan.next_pointer.as_ref().map_or(Image::Missing, |_| next)
         {
             return Err(at(&pointer, unsettled()));
         }
@@ -1157,7 +1182,7 @@ impl Record {
             let after_rename = || {
                 fault = boundary(i, Boundary::Renamed);
             };
-            if i == plan.steps() - 1 {
+            if plan.next_pointer.is_some() && i == plan.steps() - 1 {
                 durable::restore_move_at(&stage.join("pointer-new"), &pointer, after_rename)
                     .map_err(|e| at(&pointer, e))?;
             } else if i < directories {
@@ -1251,7 +1276,7 @@ impl Record {
                     let directories = plan.directories.len();
                     while slots.current().frontier > 0 {
                         let step = slots.current().frontier - 1;
-                        if step == plan.steps() - 1 {
+                        if plan.next_pointer.is_some() && step == plan.steps() - 1 {
                             restore(
                                 &pointer,
                                 &stage.join("pointer-old"),

@@ -133,14 +133,12 @@ struct InstalledRows {
     enabled: HashSet<String>,
     chosen: std::collections::BTreeMap<String, String>,
     local: Vec<model::Local>,
-    managed: Option<Box<ManagedRows>>,
+    managed: Option<Box<sunrise_launcher::managed_play::Active>>,
+    unbuilt: HashSet<String>,
     switch_held: std::collections::HashMap<String, sunrise_launcher::managed_play::HeldReason>,
 }
 
-struct ManagedRows {
-    active: sunrise_launcher::managed_play::Active,
-    unbuilt: HashSet<String>,
-}
+const ADDED_PENDING: &str = "Added · builds when you play";
 
 #[derive(Debug)]
 enum InstalledReadError {
@@ -194,13 +192,9 @@ impl InstalledRows {
             .flat_map(|active| active.holds())
             .map(|hold| (hold.id().to_owned(), hold.reason().clone()))
             .collect();
-        let managed = active.map(|active| {
-            let built = native_status::built(active.executable());
-            let unbuilt = native_status::unbuilt(&native_status::enabled(home), built.as_deref())
-                .into_iter()
-                .collect();
-            Box::new(ManagedRows { active, unbuilt })
-        });
+        let unbuilt = native_status::pending(home, active.as_ref())
+            .into_iter()
+            .collect();
         Ok(Some((
             Self {
                 entries,
@@ -208,7 +202,8 @@ impl InstalledRows {
                 enabled,
                 chosen,
                 local,
-                managed,
+                managed: active.map(Box::new),
+                unbuilt,
                 switch_held,
             },
             backup_notice,
@@ -363,9 +358,6 @@ pub(crate) struct ModsState {
     pub(crate) build: Option<build_run::Run>,
     /// Build was pressed and the build has not started yet (it asks for permission first).
     pub(crate) build_wanted: bool,
-    /// Whether Installed drew its Build button in the frame being drawn (the page is drawn
-    /// before the status strip).
-    pub(crate) build_button_drawn: bool,
     /// Whether a mod page's Details (who made it, how it is checked) is open.
     facts_open: bool,
     /// Discover or Installed, as the player last chose on Mods and on Packs this session.
@@ -424,7 +416,6 @@ impl Default for ModsState {
             unfit_details: false,
             build: None,
             build_wanted: false,
-            build_button_drawn: false,
             facts_open: false,
             last_mods: None,
             last_packs: None,
@@ -616,8 +607,16 @@ impl Launcher {
     /// title, version and picture.
     pub(crate) fn mods_lines(&mut self) -> Vec<(String, String, String, Option<String>)> {
         self.mods_refresh();
-        let rows = self.rows();
-        native_status::enabled(&self.mods_home())
+        self.build_lines(native_status::enabled(&self.mods_home()), true)
+    }
+
+    pub(crate) fn build_lines(
+        &self,
+        inputs: Vec<native_status::Mod>,
+        selected: bool,
+    ) -> Vec<(String, String, String, Option<String>)> {
+        let rows = if selected { self.rows() } else { Vec::new() };
+        inputs
             .into_iter()
             .map(|(id, version, _)| match rows.iter().find(|r| r.id == id) {
                 Some(row) => (id, row.title.clone(), version, row.icon.clone()),
@@ -969,36 +968,17 @@ impl Launcher {
         let Some(snap) = &self.ui.mods.snapshot else {
             return Vec::new();
         };
-        let unbuilt: HashSet<String> = if let Some(managed) = &snap.rows.managed {
-            managed.unbuilt.clone()
-        } else if !snap.rows.local.is_empty()
-            || snap
-                .rows
-                .entries
-                .iter()
-                .any(|e| native_status::is_native_file(&e.file))
-        {
-            self.native_mod_unbuilt("");
-            self.mods
-                .native_state
-                .borrow()
-                .as_ref()
-                .map(|(_, _, ids)| ids.iter().cloned().collect())
-                .unwrap_or_default()
-        } else {
-            HashSet::new()
-        };
         let index = sunrise::fetched_index();
         let game = snap.rows.managed.as_ref().map_or_else(
             || self.mods_game(),
-            |managed| sunrise_launcher::backend::game_version(managed.active.base()),
+            |managed| sunrise_launcher::backend::game_version(managed.base()),
         );
         let unfit_updates = snap
             .rows
             .managed
             .as_ref()
             .map_or_else(BTreeSet::new, |managed| {
-                sunrise::known_unfit_updates(managed.active.base())
+                sunrise::known_unfit_updates(managed.base())
             });
         let local_offers = if cfg!(debug_assertions) && sunrise::local() {
             sunrise::known_index()
@@ -1012,7 +992,7 @@ impl Launcher {
                 game: &game,
                 unfit_updates: &unfit_updates,
                 enabled: &snap.rows.enabled,
-                unbuilt: &unbuilt,
+                unbuilt: &snap.rows.unbuilt,
                 native_allowed: self.settings.native_mods_allowed_at.is_some(),
                 chosen: &snap.rows.chosen,
                 local: &snap.rows.local,

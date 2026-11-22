@@ -47,6 +47,7 @@ pub(crate) struct Facts {
     pub update: Option<String>,
     /// How many mods the game was made without.
     pub mods_off: usize,
+    pub pending_mods: bool,
 }
 
 /// Play itself: what it says, in the order the states win.
@@ -65,6 +66,7 @@ pub(crate) enum Main {
     SignIn,
     Install,
     Play,
+    BuildAndPlay,
 }
 
 /// The one action beside Play: one at most, and one name for each.
@@ -231,6 +233,8 @@ impl Facts {
             Main::SignIn
         } else if !self.installed {
             Main::Install
+        } else if self.pending_mods {
+            Main::BuildAndPlay
         } else {
             Main::Play
         };
@@ -331,6 +335,7 @@ impl Main {
             Main::SignIn => tr("Play").into(),
             Main::Install => tr("Install and play").into(),
             Main::Play => tr("Play").into(),
+            Main::BuildAndPlay => tr("Build mods and play").into(),
         }
     }
 
@@ -470,6 +475,7 @@ impl Launcher {
                 .game_update()
                 .map(|r| crate::sheets::build_name(&r.tag)),
             mods_off: launch.map_or(0, |summary| summary.mods_off),
+            pending_mods: launch.is_some_and(|summary| summary.pending_mods),
             ..self.launch_activity()
         }
     }

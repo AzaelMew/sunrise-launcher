@@ -289,6 +289,7 @@ struct Query {
 #[derive(Default)]
 pub(crate) struct LaunchSummary {
     pub(crate) mods_off: usize,
+    pub(crate) pending_mods: bool,
 }
 
 #[derive(Default)]
@@ -317,6 +318,10 @@ fn read_changed(query: &Query, known: &str) -> Option<(String, Snapshot)> {
         return None;
     }
     let items = read(&query.home);
+    let active = sunrise_launcher::managed_play::Active::read_pointer(&query.home)
+        .ok()
+        .flatten();
+    let pending_mods = !native_status::pending(&query.home, active.as_ref()).is_empty();
     let build = query
         .version
         .as_deref()
@@ -345,7 +350,10 @@ fn read_changed(query: &Query, known: &str) -> Option<(String, Snapshot)> {
         stamp,
         Snapshot {
             column: column(items),
-            launch: LaunchSummary { mods_off },
+            launch: LaunchSummary {
+                mods_off,
+                pending_mods,
+            },
         },
     ))
 }

@@ -12,6 +12,10 @@ use std::process::Command;
 pub enum Progress {
     Download(f32),
     Prepare,
+    NativeBuild {
+        base: String,
+        mods: Vec<crate::native_status::Mod>,
+    },
     Native(native_mods::Step),
     SignIn,
     Line(String),
@@ -75,7 +79,7 @@ impl Client<'_> {
         choose: impl FnOnce() -> Result<FirstBuild, String>,
         arguments: impl FnOnce(&mut Command) -> Result<(), String>,
         prepare_jars: impl FnOnce(&Command) -> Result<(), String>,
-        native_consent: NativeConsent<'_>,
+        (cancellation, native_consent): (&native_mods::Cancellation, NativeConsent<'_>),
         progress: impl Fn(Progress),
     ) -> Result<Started, StartError> {
         // A fresh default profile may not have a game directory yet. Do not recreate
@@ -93,7 +97,6 @@ impl Client<'_> {
         let mut profile =
             Profile::open_instance(&backend::game_home(), &backend::data_dir(), self.instance)?;
         let instance = profile.admitted_instance(self.instance);
-        let cancellation = native_mods::Cancellation::default();
         let check_build = |tag: &str, variant: Option<&BoundVariant>| {
             if self.accepted_account.is_none() && !developer_offline::enabled(tag) {
                 return Err(StartError::Account(NoOwner::default()));
@@ -105,7 +108,7 @@ impl Client<'_> {
             &mut profile,
             choose,
             check_build,
-            (&cancellation, native_consent),
+            (cancellation, native_consent),
             &progress,
             || {
                 use crate::browser::sunrise;
@@ -149,7 +152,7 @@ impl Client<'_> {
             arguments(&mut cmd)?;
             profile.spawn_checked_account(
                 &active,
-                &cancellation,
+                cancellation,
                 cmd,
                 (launch, self.piped, &|line| {
                     progress(Progress::HookLine(line))
@@ -197,7 +200,16 @@ impl Client<'_> {
     ) -> Result<(Active, Vec<String>), StartError> {
         let home = profile.home().to_owned();
         let mode = self.instance.native_profile;
-        let native = |step| progress(Progress::Native(step));
+        let started = std::cell::Cell::new(false);
+        let native = |base: &str, step| {
+            if !started.replace(true) {
+                progress(Progress::NativeBuild {
+                    base: base.into(),
+                    mods: crate::native_status::enabled(&home),
+                });
+            }
+            progress(Progress::Native(step));
+        };
         if let Some(old) = profile.active()? {
             check_build(old.base(), old.variant.as_deref())?;
             // Legacy writers still use the game lock, not profile admission. Keep
@@ -210,7 +222,7 @@ impl Client<'_> {
                 .refresh(
                     mode,
                     cancellation,
-                    native,
+                    |step| native(old.base(), step),
                     native_consent,
                     registry.as_deref(),
                 )
@@ -231,7 +243,12 @@ impl Client<'_> {
             first.verify_inputs()?;
             let notices = catalogue::inspect(&home, load_catalogue)?;
             let image = first
-                .exact_image(mode, cancellation, native, native_consent)
+                .exact_image(
+                    mode,
+                    cancellation,
+                    |step| native(first.base(), step),
+                    native_consent,
+                )
                 .map_err(StartError::Native)?;
             (image, notices)
         };

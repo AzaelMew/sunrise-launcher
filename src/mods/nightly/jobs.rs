@@ -201,7 +201,7 @@ impl Launcher {
     }
 
     pub(super) fn nightly_busy(&self) -> bool {
-        self.mods_locked_for(true).is_some()
+        self.mods_locked().is_some()
             || (!self.mutating()
                 && self
                     .ui
@@ -254,7 +254,7 @@ impl Launcher {
             .and_then(|inspection| inspection.data.checked_commit())
             .cloned()
         {
-            self.queue_source_build(SourcePicks::One(Box::new(pin)));
+            self.add_sources(SourcePicks::One(Box::new(pin)));
         }
     }
 

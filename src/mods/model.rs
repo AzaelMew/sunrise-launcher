@@ -693,7 +693,7 @@ pub(super) fn cells(
             ),
             (_, Some(Need::Build)) => say(
                 "clock",
-                tr("Needs a build").into(),
+                tr(super::ADDED_PENDING).into(),
                 Tone::Warning,
                 tr("Not built for this computer yet").into(),
             ),
@@ -1021,15 +1021,6 @@ impl Default for RowFilter {
             makes: BTreeSet::new(),
         }
     }
-}
-
-/// How many mods the one Build button builds, when the list shows it: it sits in the head of
-/// the NEEDS YOU group, so a search or filter that hides every row of that group hides it.
-/// `visible` are the rows shown ([`visible`]). Whoever draws a build's bar elsewhere asks
-/// this, so a build is never left without one.
-pub(super) fn build_in_head(rows: &[Row], visible: &[usize]) -> Option<usize> {
-    let waiting = rows.iter().filter(|r| r.need == Some(Need::Build)).count();
-    (waiting > 0 && visible.iter().any(|&i| rows[i].group() == Group::NeedsYou)).then_some(waiting)
 }
 
 /// Indexes into `rows` that pass the filter; the order of `rows` (grouped, by name) is kept.

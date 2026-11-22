@@ -90,14 +90,6 @@ impl Launcher {
                             .child(div().truncate().child(label))
                             .child(crate::widgets::progress_bar(fraction, &self.theme)),
                     )
-                    .children(self.active_source_build().map(|id| {
-                        button("source-build-show", tr("Show the build")).on_click(cx.listener(
-                            move |this, _, _, cx| {
-                                this.open_source_build(id);
-                                cx.notify();
-                            },
-                        ))
-                    }))
                     .children(stop),
             );
         }
@@ -120,22 +112,6 @@ impl Launcher {
                             .child(div().truncate().child(stage_label(step)))
                             .child(crate::widgets::progress_bar(fraction, &self.theme)),
                     ),
-                );
-            }
-        }
-        if self.registry_stage().is_none() && self.native_step.is_none() {
-            if let Some((id, said)) = self.recent_source_build() {
-                return Some(
-                    strip()
-                        .child(div().flex_1().min_w_0().truncate().child(said))
-                        .child(
-                            button("source-build-show-result", tr("Show the build")).on_click(
-                                cx.listener(move |this, _, _, cx| {
-                                    this.open_source_build(id);
-                                    cx.notify();
-                                }),
-                            ),
-                        ),
                 );
             }
         }
@@ -169,15 +145,7 @@ impl Launcher {
             StripAct::Act(_) => "alt-strip-fix",
             StripAct::Home => "alt-strip-home",
         };
-        // A build draws its own line: the stage it is at over the three stages' bar.
-        // Mods › Installed shows the bar in its Build button: the line is drawn without one,
-        // unless a search or filter hides that button.
-        let bar_here =
-            !(self.ui.page == crate::frame::Page::Installed && self.ui.mods.build_button_drawn);
-        let line = match self
-            .build_line(bar_here, cx)
-            .filter(|_| view.main == Main::Building)
-        {
+        let line = match self.build_line(cx).filter(|_| view.main == Main::Building) {
             Some(build) => build.into_any_element(),
             None => div().truncate().child(says).into_any_element(),
         };

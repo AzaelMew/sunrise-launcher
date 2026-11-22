@@ -12,6 +12,7 @@ use sunrise_launcher::backend::{self, Logged};
 use sunrise_launcher::i18n::tr;
 use sunrise_launcher::instances;
 use sunrise_launcher::jars::{self, Permission};
+use sunrise_launcher::native_mods;
 
 /// What an agent reads before its first call.
 const INSTRUCTIONS: &str = "Manage Sunrise, a Rust reimplementation of Minecraft Java Edition: install versions, prepare them from the player's own Minecraft, start the client or a dedicated server. Every tool is a sunrise-launcher CLI command of the same name (mods_search is sunrise-launcher mods search). Once play started the game, or the player turned on Agent Control in a game they started, the game_* tools play it: game_state, game_ui (every widget of the open screen), game_click, game_goto, game_screenshot...";
@@ -134,7 +135,7 @@ impl Session {
                             jars::prepare_for_command(cmd, jar_permission)
                                 .map_err(|e| e.to_string())
                         },
-                        None,
+                        (&native_mods::Cancellation::default(), None),
                         |event| {
                             if let managed_play::Progress::HookLine(line) = event {
                                 let mut tail = hook_tail.borrow_mut();

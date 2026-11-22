@@ -96,6 +96,7 @@ fn install_root(fixture: &Fixture, registry: &index::Index) {
         &["mods", "install", "root_mod", "--source", "sunrise"],
     );
     assert!(ok, "{text}");
+    fixture.commit_play();
 }
 
 fn live_state(fixture: &Fixture) -> [Vec<u8>; 4] {

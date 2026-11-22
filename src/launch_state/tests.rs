@@ -75,6 +75,22 @@ fn play_names_the_step_it_is_at_while_the_game_starts() {
 }
 
 #[test]
+fn pending_native_mods_change_the_idle_play_label_and_leave_the_gates_in_place() {
+    let mut facts = Facts {
+        pending_mods: true,
+        ..idle()
+    };
+    let ready = facts.view();
+    assert_eq!(ready.main.label(), "Build mods and play");
+    assert!(ready.enabled);
+    facts.building = true;
+    assert_eq!(facts.view().main, Main::Building);
+    facts.building = false;
+    facts.signed_in = false;
+    assert_eq!(facts.view().main, Main::SignIn);
+}
+
+#[test]
 fn signed_out_play_is_disabled_and_only_its_tooltip_says_why() {
     let out = Facts {
         signed_in: false,

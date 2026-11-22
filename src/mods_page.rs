@@ -33,11 +33,8 @@ pub(super) struct Mods {
     home: ModsHome,
     pub(crate) installs: install::Installs,
     pub(super) message: Option<Result<String, String>>,
-    /// The selected instance's native build state, the mods it would build again
-    /// (`native_status::unbuilt`), and the `native_status::fingerprint` they were read for: read
-    /// again only when that changes.
-    pub(super) native_state:
-        std::cell::RefCell<Option<(String, native_status::State, Vec<String>)>>,
+    /// The selected instance's native build state, cached by `native_status::fingerprint`.
+    pub(super) native_state: std::cell::RefCell<Option<(String, native_status::State)>>,
     /// The instance and the mods whose compile failed in the last stop: their chips say so until
     /// the next build attempt, whatever the player chose.
     pub(super) unbuilt: Option<(String, Vec<String>)>,

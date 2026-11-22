@@ -17,8 +17,32 @@ use sunrise_launcher::{
     profile_txn::Identity,
 };
 
-mod source_build;
-pub(crate) use source_build::{SourceBuild, SourcePicks};
+use sunrise_launcher::browser::sunrise::sources::{self, Source, SourceCommit};
+
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) enum SourcePicks {
+    One(Box<SourceCommit>),
+    Collection(Vec<Source>),
+}
+
+impl SourcePicks {
+    pub(crate) fn listings(&self) -> &[Source] {
+        match self {
+            Self::One(pin) => std::slice::from_ref(pin.source()),
+            Self::Collection(sources) => sources,
+        }
+    }
+
+    pub(super) fn resolve(
+        &self,
+    ) -> impl Iterator<Item = Result<SourceCommit, sources::Failure>> + '_ {
+        let (one, collection) = match self {
+            Self::One(pin) => (Some(Ok((**pin).clone())), &[][..]),
+            Self::Collection(sources) => (None, sources.as_slice()),
+        };
+        one.into_iter().chain(sources::resolve_each(collection))
+    }
+}
 
 #[derive(Default)]
 pub(crate) struct Installs {
@@ -28,8 +52,6 @@ pub(crate) struct Installs {
     pub(crate) world: Option<(WorldQuestion, Sender<bool>)>,
     source_question: Option<(SourceQuestion, Sender<Result<bool, String>>)>,
     source_outcomes: BTreeMap<(Identity, String), Result<(), SourceError>>,
-    source_builds: Vec<SourceBuild>,
-    shown_source_build: Option<usize>,
     outcomes: HashMap<(PathBuf, String), Outcome>,
     play: Option<(PathBuf, launcher_play::PlayIntent)>,
 }
@@ -43,7 +65,6 @@ struct Running {
     stage: InstallProgress,
     github: Option<Arc<GithubInput>>,
     source: Option<RunningSource>,
-    source_build: Option<usize>,
     mixed: bool,
 }
 
@@ -57,7 +78,7 @@ struct Request {
     github: Option<Arc<GithubInput>>,
     sources: Vec<PreparedSource>,
     mixed_registry: Vec<String>,
-    source_build: Option<(usize, SourcePicks)>,
+    picks: Option<SourcePicks>,
 }
 
 impl Request {
@@ -113,15 +134,6 @@ pub(crate) struct SourceTarget {
 }
 
 impl SourceTarget {
-    fn same_destination(&self, other: &Self) -> bool {
-        self.identity == other.identity
-            && self.profile.id == other.profile.id
-            && self.profile.home == other.profile.home
-            && self.profile.incarnation == other.profile.incarnation
-            && self.profile.native_profile == other.profile.native_profile
-            && self.base == other.base
-    }
-
     pub(crate) fn instance(&self) -> &instances::Instance {
         &self.profile
     }
@@ -150,6 +162,7 @@ struct RunningSource {
     visible: bool,
     names: Vec<String>,
     cancellation: Cancellation,
+    rejected: BTreeMap<String, SourceError>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -196,10 +209,7 @@ pub(crate) enum Decision {
 
 pub(crate) enum Worker {
     SourcePhase,
-    SourceStep(native_mods::Step),
-    SourceLog(Arc<str>),
     SourceRejected(String, SourceError),
-    SourceVersion(String, String),
     Mixed(Box<CombinedUpdate>),
     Progress(InstallProgress),
     Native(NativeQuestion, Sender<Result<bool, String>>),
@@ -282,6 +292,7 @@ impl Installs {
                 && q.view.kind == request.view.kind
                 && q.view.card == request.view.card
                 && q.view.ids == request.view.ids
+                && q.picks == request.picks
                 && match (&q.github, &request.github) {
                     (None, None) => true,
                     (Some(a), Some(b)) => Arc::ptr_eq(a, b),
@@ -409,36 +420,11 @@ impl Installs {
             Worker::Progress(step) => {
                 if let Some(run) = &mut self.running {
                     run.stage = step;
-                    if let Some(id) = run.source_build {
-                        self.source_builds[id].progress(step);
-                    }
                 }
             }
-            Worker::SourceStep(step) => {
-                if let Some(id) = self.running.as_ref().and_then(|run| run.source_build) {
-                    self.source_builds[id].step(&step);
-                }
-            }
-            Worker::SourceLog(log) => {
-                if let Some(id) = self.running.as_ref().and_then(|run| run.source_build) {
-                    self.source_builds[id].output = Some(log);
-                }
-            }
-            Worker::SourceRejected(mod_id, error) => {
-                if let Some(id) = self.running.as_ref().and_then(|run| run.source_build) {
-                    self.source_builds[id].reject(mod_id, error);
-                }
-            }
-            Worker::SourceVersion(mod_id, version) => {
-                if let Some(id) = self.running.as_ref().and_then(|run| run.source_build) {
-                    if let Some(line) = self.source_builds[id]
-                        .run
-                        .lines
-                        .iter_mut()
-                        .find(|line| line.id == mod_id)
-                    {
-                        line.version = version;
-                    }
+            Worker::SourceRejected(id, error) => {
+                if let Some(source) = self.running.as_mut().and_then(|run| run.source.as_mut()) {
+                    source.rejected.insert(id, error);
                 }
             }
             Worker::Decide(notice, reply) => {
@@ -468,7 +454,7 @@ impl Installs {
                     return false;
                 };
                 let ready = result.is_ok();
-                if run.source.is_some() {
+                if let Some(mut source) = run.source {
                     self.source_question.take();
                     let outcome = result.map(|_| ()).map_err(SourceError::from);
                     if let Err(error) = &outcome {
@@ -476,20 +462,15 @@ impl Installs {
                             eprintln!("Nightly source edit: {error}");
                         }
                     }
-                    let attempt = run.source_build.map(|id| {
-                        let build = &mut self.source_builds[id];
-                        build.finish(&outcome);
-                        build
-                    });
                     for id in &run.requests[0].ids {
                         let key = (run.identity, id.clone());
                         if matches!(outcome, Err(SourceError::Cancelled)) {
                             self.source_outcomes.remove(&key);
                         } else {
-                            let result = attempt.as_deref().map_or_else(
-                                || outcome.clone(),
-                                |build| build.outcome(id, &outcome),
-                            );
+                            let result = source
+                                .rejected
+                                .remove(id)
+                                .map_or_else(|| outcome.clone(), Err);
                             self.source_outcomes.insert(key, result);
                         }
                     }
@@ -601,6 +582,14 @@ impl Installs {
     }
 
     pub(super) fn take_play(&mut self) -> Option<(PathBuf, launcher_play::PlayIntent)> {
+        let (home, intent) = self.play.as_ref()?;
+        if self
+            .waiting
+            .iter()
+            .any(|request| request.profile.home == *home && request.profile.id == intent.instance)
+        {
+            return None;
+        }
         self.play.take()
     }
 }
@@ -666,7 +655,7 @@ impl Launcher {
             github: None,
             sources: inputs,
             mixed_registry: registry,
-            source_build: None,
+            picks: None,
         });
         self.start_registry_queue();
         Ok(())
@@ -899,27 +888,10 @@ impl Launcher {
     }
 
     pub(crate) fn github_target(&self) -> Result<GithubTarget, String> {
-        self.github_target_for(false)
-    }
-
-    fn source_build_target(&self) -> Result<SourceTarget, String> {
-        self.github_target_for(true)?.source()
-    }
-
-    pub(crate) fn source_build_base(&self, profile: &instances::Instance) -> Option<&str> {
-        let run = self.mods.installs.running.as_ref()?;
-        (run.source_build.is_some()
-            && run.profile.id == profile.id
-            && run.profile.home == profile.home)
-            .then_some(run.target.as_deref())
-            .flatten()
-    }
-
-    fn github_target_for(&self, queue_behind_native_build: bool) -> Result<GithubTarget, String> {
         if self.accounts.selected().is_none() && !sunrise_launcher::developer_offline::selected() {
             return Err(tr("Installs after you sign in").into());
         }
-        if let Some(why) = self.mods_locked_for(queue_behind_native_build) {
+        if let Some(why) = self.mods_locked() {
             return Err(why.into());
         }
         let profile = self
@@ -939,6 +911,54 @@ impl Launcher {
             target,
             release,
         })
+    }
+
+    pub(crate) fn add_sources(&mut self, picks: SourcePicks) {
+        let target = match self.source_target() {
+            Ok(target) => target,
+            Err(error) => {
+                self.open_notice(error, None);
+                return;
+            }
+        };
+        let ids: Vec<String> = picks
+            .listings()
+            .iter()
+            .map(|source| source.id().into())
+            .collect();
+        let Some(card) = ids.first().cloned() else {
+            return;
+        };
+        for id in &ids {
+            self.mods
+                .installs
+                .source_outcomes
+                .remove(&(target.identity, id.clone()));
+        }
+        self.mods.installs.submit(Request {
+            profile: target.profile,
+            identity: target.identity,
+            target: Some(target.base),
+            release: None,
+            displayed_names: BTreeMap::new(),
+            view: RequestView {
+                kind: Kind::Source,
+                card,
+                ids,
+            },
+            github: None,
+            sources: Vec::new(),
+            mixed_registry: Vec::new(),
+            picks: Some(picks),
+        });
+        self.start_registry_queue();
+    }
+
+    pub(crate) fn source_install_base(&self, profile: &instances::Instance) -> Option<&str> {
+        let run = self.mods.installs.running.as_ref()?;
+        (run.source.is_some() && run.profile.id == profile.id && run.profile.home == profile.home)
+            .then_some(run.target.as_deref())
+            .flatten()
     }
 
     pub(crate) fn queue_github(&mut self, input: Arc<GithubInput>) -> Result<(), String> {
@@ -982,7 +1002,7 @@ impl Launcher {
             github: Some(input),
             sources: Vec::new(),
             mixed_registry: Vec::new(),
-            source_build: None,
+            picks: None,
         });
         self.start_registry_queue();
         Ok(())
@@ -1028,7 +1048,7 @@ impl Launcher {
             github: None,
             sources: Vec::new(),
             mixed_registry: Vec::new(),
-            source_build: None,
+            picks: None,
         });
         self.start_registry_queue();
         Ok(())
@@ -1053,24 +1073,18 @@ impl Launcher {
         let ids = request.view.ids.clone();
         let cancellation = Cancellation::default();
         let mixed = kind == Kind::Mixed;
-        let source_build = request.source_build.as_ref().map(|(id, _)| *id);
         let listed = request
-            .source_build
+            .picks
             .as_ref()
-            .is_none_or(|(_, picks)| self.source_picks_listed(picks.listings()));
+            .is_none_or(|picks| self.source_picks_listed(picks.listings()));
         let source = matches!(kind, Kind::Source | Kind::Mixed).then(|| RunningSource {
             ids: ids.clone(),
             visible: !mixed,
-            names: if let Some(id) = source_build {
-                let build = &mut self.mods.installs.source_builds[id];
-                build.started = true;
-                build.run.step = tr("Checking the sources…").into();
-                build.stages.push(build.run.step.clone());
-                build
-                    .run
-                    .lines
+            names: if let Some(picks) = &request.picks {
+                picks
+                    .listings()
                     .iter()
-                    .map(|line| line.title.clone())
+                    .map(|source| source.name().into())
                     .collect()
             } else {
                 request
@@ -1080,6 +1094,7 @@ impl Launcher {
                     .collect()
             },
             cancellation: cancellation.clone(),
+            rejected: BTreeMap::new(),
         });
         let mut views = Vec::new();
         if mixed {
@@ -1099,7 +1114,6 @@ impl Launcher {
             mixed,
             stage: InstallProgress::Checking,
             source,
-            source_build,
             github: request.github.clone(),
         });
         let tx = self.mods.tx.clone();
@@ -1230,29 +1244,13 @@ impl Launcher {
                     }
                 }
                 Kind::Source => {
-                    let step = |step: &native_mods::Step| {
-                        let _ = post(Worker::SourceStep(step.clone()));
-                    };
-                    let log = |log: Arc<str>| {
-                        let _ = post(Worker::SourceLog(log));
-                    };
                     let hooks = SourceHooks {
                         install: hooks,
                         cancellation: &cancellation,
                         authorize: &authorize,
                         approve_worlds: &approve,
-                        step: if source_build.is_some() {
-                            Some(&step)
-                        } else {
-                            None
-                        },
-                        log: if source_build.is_some() {
-                            Some(&log)
-                        } else {
-                            None
-                        },
                     };
-                    let result = if let Some((_, picks)) = &request.source_build {
+                    let result = if let Some(picks) = &request.picks {
                         (|| {
                             if !listed {
                                 return Err(SourceError::Changed(
@@ -1290,14 +1288,7 @@ impl Launcher {
                             let mut packages = Vec::new();
                             for (pin, result) in pins.iter().zip(packed) {
                                 match result {
-                                    Ok(package) => {
-                                        let origin = package.origin();
-                                        let _ = post(Worker::SourceVersion(
-                                            origin.id.clone(),
-                                            origin.version.clone(),
-                                        ));
-                                        packages.push(package);
-                                    }
+                                    Ok(package) => packages.push(package),
                                     Err(error) => {
                                         let _ = post(Worker::SourceRejected(
                                             pin.source().id().into(),
@@ -1313,13 +1304,10 @@ impl Launcher {
                             if packages.is_empty() {
                                 return Err(rejected.unwrap_or(SourceError::Cancelled));
                             }
-                            let result = sunrise::apply_queued_sources(
+                            let result = sunrise::add_sources(
                                 &request.profile,
                                 request.identity,
-                                request
-                                    .target
-                                    .as_deref()
-                                    .expect("source build has a target"),
+                                request.target.as_deref().expect("source add has a target"),
                                 packages,
                                 hooks,
                             );
@@ -1479,7 +1467,7 @@ mod tests {
             github: None,
             sources: Vec::new(),
             mixed_registry: Vec::new(),
-            source_build: None,
+            picks: None,
             view: RequestView {
                 kind: Kind::Install,
                 card: id.into(),
@@ -1500,7 +1488,6 @@ mod tests {
                 stage: InstallProgress::Checking,
                 github: None,
                 source: None,
-                source_build: None,
                 mixed: false,
             }),
             ..Installs::default()
