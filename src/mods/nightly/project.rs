@@ -182,7 +182,7 @@ impl Launcher {
         // An Add or Update this mod was refused: said once by the modal when it happened, and
         // reopened from one line under the button.
         let refused_line = failed_job
-            .map(|error| (error, false))
+            .map(|error| (error, installed.is_some()))
             .or_else(|| installed.and(failure).map(|error| (error, true)))
             .and_then(|(error, update)| {
                 let refused = crate::mods::refused::Refused::one(
@@ -194,7 +194,7 @@ impl Launcher {
                 Some(self.refused_line("nightly-refused", refused, cx))
             });
         // Reading the source itself failed: what to do about it, in place.
-        let failure_panel = (!installed.is_some()).then_some(failure).flatten().and_then(|error| {
+        let failure_panel = failure.filter(|_| installed.is_none()).and_then(|error| {
             let words = source_error(error, Some(source))?;
             Some(div().flex().flex_col().items_start().gap(px(7.))
                 .child(note(words))

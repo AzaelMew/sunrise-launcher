@@ -823,11 +823,14 @@ impl Launcher {
                     })),
             );
         let installed_controls = installed_row.zip(cells.as_ref()).map(|(row, cells)| {
-            use sunrise_launcher::browser::sunrise::SourceError;
-            let problem = nightly::installed_source(row).and_then(|_| {
-                self.source_outcome(&row.id)
+            let refusal = nightly::installed_source(row).and_then(|origin| {
+                let problem = self
+                    .source_outcome(&row.id)
                     .and_then(|status| status.as_ref().err())
-                    .or_else(|| self.source_update_issue(&row.id))
+                    .or_else(|| self.source_update_issue(&row.id))?;
+                let repo = format!("{}/{}", origin.owner, origin.repo);
+                let refused = super::refused::Refused::one(&row.title, Some(repo), true, problem)?;
+                Some(self.refused_line("alt-project-source-refused", refused, cx))
             });
             let origin = row.local.as_ref().and_then(|local| local.github.as_ref());
             div()
@@ -840,17 +843,7 @@ impl Launcher {
                         .and_then(|origin| origin.tag.as_ref())
                         .map(|tag| note(trf("Release: {tag}", &[("tag", tag)]))),
                 )
-                .children(
-                    problem
-                        .and_then(|error| nightly::source_error(error, None))
-                        .map(note),
-                )
-                .children(problem.and_then(|error| match error {
-                    SourceError::Build { log: Some(log), .. } => {
-                        Some(self.nightly_log_button(&row.title, log.clone(), cx))
-                    }
-                    _ => None,
-                }))
+                .children(refusal)
                 .child(self.installed_project_controls(row, cells, busy, cx))
         });
         let source_button = match &p.source {
