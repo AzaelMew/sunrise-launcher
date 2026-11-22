@@ -81,6 +81,7 @@ pub(crate) struct SheetsState {
     way_out: Option<WayOut>,
     versions: versions::State,
     pub(super) switching: switching::State,
+    pub(super) profile_action: Option<crate::profile_delete::Action>,
 }
 
 /// A held update as the bottom bar and the Resolve sheet read it.
@@ -282,6 +283,7 @@ impl Launcher {
             || self.mods.installs.world.is_some()
             || self.owner_screen_open
             || self.instances.dialog.is_some()
+            || self.ui.sheets.profile_action.is_some()
             || (self.ui.page == crate::frame::Page::Hosting && self.servers.create.is_some())
     }
 
@@ -348,12 +350,16 @@ impl Launcher {
 
     /// Escape: true when a sheet was open and is closed now.
     pub(crate) fn sheet_escape(&mut self) -> bool {
-        let open = self.ui.sheets.registry.is_some()
+        let prompt_open = self.ui.sheets.registry.is_some()
             || self.pending_consent.is_some()
             || self.source_question().is_some()
             || self.mods.installs.question.is_some()
-            || self.mods.installs.world.is_some()
-            || self.ui.sheet.is_some();
+            || self.mods.installs.world.is_some();
+        if !prompt_open && self.ui.sheets.profile_action.is_some() {
+            self.close_profile_action();
+            return true;
+        }
+        let open = prompt_open || self.ui.sheet.is_some();
         if open {
             self.close_sheet();
         }
@@ -513,6 +519,9 @@ impl Launcher {
                         }))),
                 );
             return Some(frame("registry-world-impact", 690., body, cx));
+        }
+        if let Some(profile_action) = self.profile_action_sheet(cx) {
+            return Some(profile_action);
         }
         match self.ui.sheet {
             Some(Sheet::Build) => Some(self.build_sheet(cx)),

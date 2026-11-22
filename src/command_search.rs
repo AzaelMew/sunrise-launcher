@@ -150,6 +150,7 @@ pub(crate) fn destinations() -> Vec<Entry> {
         Entry::page(tr("Packs").to_string(), "package", Page::Packs),
         Entry::page(under("Servers", "Join"), "globe", Page::Join),
         Entry::page(under("Servers", "Host"), "server", Page::Hosting),
+        Entry::page(tr("Skins").to_string(), "shirt", Page::Skins),
         Entry::page(tr("Settings").to_string(), "sliders", Page::Settings),
     ];
     all.extend(Section::ALL.map(|section| Entry {
@@ -853,6 +854,7 @@ mod tests {
                 "Packs",
                 "Servers › Join",
                 "Servers › Host",
+                "Skins",
                 "Settings",
                 "Sunrise",
                 "Wildflower Valley",
@@ -985,17 +987,18 @@ mod tests {
     fn nothing_retired_is_listed() {
         let places: Vec<String> = destinations().into_iter().map(|e| e.label).collect();
         assert_eq!(
-            places[..6],
+            places[..7],
             [
                 "Home",
                 "Mods",
                 "Packs",
                 "Servers › Join",
                 "Servers › Host",
+                "Skins",
                 "Settings"
             ]
         );
-        assert_eq!(places.len(), 6 + Section::ALL.len() + SETTINGS_ROWS.len());
+        assert_eq!(places.len(), 7 + Section::ALL.len() + SETTINGS_ROWS.len());
         let entries = sample();
         for gone in [
             "java",
@@ -1041,7 +1044,7 @@ mod tests {
         );
         assert!(press(&mut search, "down") == Press::Stay);
         assert_eq!(on(&search), "Home");
-        for _ in 0..6 {
+        for _ in 0..7 {
             press(&mut search, "down");
         }
         assert_eq!(on(&search), "Sunrise", "from the pages into the profiles");

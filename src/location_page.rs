@@ -51,7 +51,7 @@ fn environment_blocked() -> bool {
 }
 
 impl Launcher {
-    fn location_busy(&self) -> bool {
+    pub(crate) fn location_busy(&self) -> bool {
         self.installing.is_some()
             || !self.removing.is_empty()
             || self.importing_build
@@ -71,13 +71,20 @@ impl Launcher {
             || self.github.busy()
             || self.instances.dialog.as_ref().is_some_and(|d| d.busy)
             || self.internet.location_busy()
+            || self.skins.writing()
     }
 
     fn location_blocked(&self) -> Option<String> {
         if environment_blocked() {
             Some(tr("Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.").into())
         } else if self.location_busy() {
-            Some(tr("Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.").into())
+            // A sentence of its own when a skin is being saved, so the other keeps its
+            // translations.
+            Some(if self.skins.writing() {
+                tr("Close the game and servers, and wait for downloads, builds, imports, sign-in and the skin being saved on the Skins tab to finish before moving data.").into()
+            } else {
+                tr("Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.").into()
+            })
         } else {
             None
         }
@@ -131,7 +138,12 @@ impl Launcher {
 
     /// Try the configured folder again. A success restarts the launcher, because paths already
     /// resolved to the fallback folders cannot be swapped under a running window.
-    fn retry_location(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn retry_location(&mut self, cx: &mut Context<Self>) {
+        if let Some(wait) = self.restart_blocked_by_skins() {
+            self.location_error = Some(wait);
+            cx.notify();
+            return;
+        }
         match sunrise_launcher::data_location::retry() {
             Ok(()) => {
                 self.location_error = Some(backend::restart());
@@ -143,7 +155,12 @@ impl Launcher {
 
     /// Keep the default folders: the pointer is kept beside the old one as `location.json.old`,
     /// and nothing in the moved folders is deleted.
-    fn use_default_location(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn use_default_location(&mut self, cx: &mut Context<Self>) {
+        if let Some(wait) = self.restart_blocked_by_skins() {
+            self.location_error = Some(wait);
+            cx.notify();
+            return;
+        }
         match sunrise_launcher::data_location::use_default_folder() {
             Ok(()) => {
                 self.location_error = Some(backend::restart());
@@ -151,6 +168,15 @@ impl Launcher {
             Err(error) => self.location_error = Some(open_error(&error)),
         }
         cx.notify();
+    }
+
+    /// Why the launcher mustn't restart now, if it mustn't: a Save or a saved skin being written
+    /// on the Skins tab, for any account, which a restart would cut off. The same check as a data
+    /// move's ([`Self::location_busy`]) and the launcher update's restart.
+    pub(crate) fn restart_blocked_by_skins(&self) -> Option<String> {
+        self.skins.writing().then(|| {
+            tr("Wait for the skin being saved on the Skins tab to finish, then try again.").into()
+        })
     }
 
     fn location_picker_error(&mut self, error: String) {

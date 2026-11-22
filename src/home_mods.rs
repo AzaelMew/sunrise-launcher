@@ -72,8 +72,11 @@ impl Kind {
 pub(crate) enum Picture {
     /// A registry mod's icon, by the mod's project there: asked for when its row is drawn.
     Project(String),
-    /// The local mod's own picture, read with it.
-    Image(Option<Arc<gpui::Image>>),
+    /// A local package's icon, with a verified source receipt when it was built from source.
+    Local {
+        package: Option<Arc<gpui::Image>>,
+        source: Option<Arc<sunrise_launcher::github_mods::Origin>>,
+    },
     /// Pack artwork is read and decoded only when its row is first built.
     Pack(Arc<PackPicture>),
 }
@@ -231,12 +234,17 @@ pub(crate) fn read(home: &Path) -> Vec<Item> {
             mod_version: Some(file.version),
             name: file.name,
             kind: Kind::Mod,
-            picture: Picture::Image(
-                file.icon
+            picture: Picture::Local {
+                package: file
+                    .icon
                     .ok()
                     .flatten()
                     .map(|icon| image(icon.bytes().to_vec())),
-            ),
+                source: file
+                    .origin
+                    .filter(|origin| origin.source.is_some())
+                    .map(Arc::new),
+            },
             open: Open::Installed(file.id.clone()),
             id: file.id,
         }
@@ -615,7 +623,26 @@ impl Launcher {
                                 PICTURE,
                             )
                         }
-                        Picture::Image(image) => tile(image.clone(), &item.id, &item.name, PICTURE),
+                        Picture::Local { package, source } => {
+                            let listing = if let Some(origin) = source {
+                                self.read_nightly_catalogue(false);
+                                self.source_listing(origin)
+                            } else {
+                                None
+                            };
+                            if let Some(source) = listing {
+                                self.source_tile(
+                                    source,
+                                    None,
+                                    self.nightly_catalogue_current(),
+                                    package.clone(),
+                                    PICTURE,
+                                    cx,
+                                )
+                            } else {
+                                tile(package.clone(), &item.id, &item.name, PICTURE)
+                            }
+                        }
                         Picture::Pack(art) => tile(art.show(cx), &item.id, &item.name, PICTURE),
                     };
                     let open = item.open.clone();
@@ -718,7 +745,10 @@ mod tests {
             id: name.to_lowercase(),
             name: name.into(),
             kind,
-            picture: Picture::Image(None),
+            picture: Picture::Local {
+                package: None,
+                source: None,
+            },
             open: Open::Installed(name.into()),
             on,
             mod_version: (kind == Kind::Mod).then(|| "1.0.0".into()),

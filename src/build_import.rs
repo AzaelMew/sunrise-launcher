@@ -20,7 +20,7 @@ use std::path::Path;
 
 const PREFIX: &str = "imported-";
 /// What an import was made from, in its folder.
-const RECORD: &str = "imported.json";
+pub const RECORD: &str = "imported.json";
 /// The most a program may take: a game build is ~100 MB.
 const MAX_PROGRAM: u64 = 1 << 30;
 
