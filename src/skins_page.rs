@@ -66,10 +66,14 @@ fn request_id() -> u64 {
     NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
-/// What decides whether the offline developer view is on, besides the environment: the
-/// profile and build chosen (`settings.json`, by its time and size) and the builds installed.
-/// The answer is kept while these stay the same, so drawing the page reads no profile files.
-type OfflineKey = (Option<(std::time::SystemTime, u64)>, Vec<String>);
+/// A file's time and size, if it is there.
+type Stamp = Option<(std::time::SystemTime, u64)>;
+
+/// What decides whether the offline developer view is on, besides the environment: the build
+/// the selected profile plays, that profile, the builds installed, and the played build's
+/// install and developer records (`.installed`, `developer.json`). The answer is kept while
+/// these stay the same, so drawing the page reads no profile files.
+type OfflineKey = (Option<String>, Option<String>, Vec<String>, [Stamp; 2]);
 
 /// Runs `work` on a thread of its own: false when no thread could be started (the caller says
 /// so), rather than a panic on the UI thread.
@@ -927,8 +931,8 @@ impl Launcher {
     /// Whether the page is in the offline developer view now: the mode in force, not the one
     /// the page was opened in, since another profile can be chosen while it is open. The
     /// environment is checked first, so a launcher not started for offline play reads no files
-    /// for it; in one that was, the answer is worked out again only when the profile or build
-    /// chosen, or the builds installed, change.
+    /// for it; in one that was, the answer is worked out again only when the build played, the
+    /// profile, the builds installed or the played build's records change ([`OfflineKey`]).
     fn skins_offline(&self) -> bool {
         #[cfg(test)]
         if let Some(offline) = self.skins.offline_for_test {
@@ -937,16 +941,26 @@ impl Launcher {
         if !sunrise_launcher::developer_offline::requested() {
             return false;
         }
-        let settings = std::fs::metadata(backend::data_dir().join("settings.json"))
-            .ok()
-            .and_then(|meta| Some((meta.modified().ok()?, meta.len())));
-        let key = (settings, self.installed.clone());
+        self.offline_cached(sunrise_launcher::developer_offline::selected)
+    }
+
+    /// The offline developer mode as `work_out` says, asked only when what it depends on
+    /// ([`OfflineKey`]) changed since it was last asked.
+    fn offline_cached(&self, work_out: impl FnOnce() -> bool) -> bool {
+        let played = self.selected().cloned();
+        let stamp = |name: &str| -> Stamp {
+            let meta = std::fs::metadata(backend::version_dir(played.as_ref()?).join(name)).ok()?;
+            Some((meta.modified().ok()?, meta.len()))
+        };
+        let records = [stamp(".installed"), stamp("developer.json")];
+        let profile = self.selected_instance().map(|i| i.id.clone());
+        let key = (played, profile, self.installed.clone(), records);
         if let Some((known, offline)) = &*self.skins.offline.borrow() {
             if *known == key {
                 return *offline;
             }
         }
-        let offline = sunrise_launcher::developer_offline::selected();
+        let offline = work_out();
         *self.skins.offline.borrow_mut() = Some((key, offline));
         offline
     }
@@ -1210,7 +1224,7 @@ impl Launcher {
                     Msg::SkinKept(uuid.clone(), address.clone(), kept, listing(&uuid, id))
                 },
                 || {
-                    let listed = listing(&uuid, id);
+                    let listed = (id, Err(stopped()));
                     Msg::SkinKept(uuid.clone(), address.clone(), Err(stopped()), listed)
                 },
             )
@@ -1563,7 +1577,7 @@ impl Launcher {
                     Msg::SkinsAdded(account.clone(), added, listing(&account, id))
                 },
                 || {
-                    let listed = listing(&account, id);
+                    let listed = (id, Err(stopped()));
                     Msg::SkinsAdded(account.clone(), vec![Err(stopped())], listed)
                 },
             )
@@ -1652,7 +1666,7 @@ impl Launcher {
                     )
                 },
                 || {
-                    let after = listing(&account, listed);
+                    let after = (listed, Err(stopped()));
                     Msg::SkinRemoved(account.clone(), skin.clone(), Err(stopped()), after)
                 },
             )
@@ -3306,6 +3320,35 @@ mod tests {
                 assert_eq!((l.location_busy(), l.launcher_update_wait()), before);
                 l.skins.disk_writes += 1;
                 assert!(l.location_busy(), "a saved skin being written");
+            },
+        );
+    }
+
+    #[test]
+    fn switching_the_profiles_build_while_skins_is_shown_works_the_offline_mode_out_again() {
+        in_a_scratch_launcher(
+            "skins_page::tests::switching_the_profiles_build_while_skins_is_shown_works_the_offline_mode_out_again",
+            |l| {
+                l.installed = vec!["developer-a".into(), "26.3-0.1.20261101".into()];
+                let pin = |l: &mut Launcher, tag: &str| {
+                    let id = l.selected_instance().unwrap().id.clone();
+                    let instance = l.instances.list.iter_mut().find(|i| i.id == id).unwrap();
+                    instance.version = Some(tag.into());
+                };
+                pin(l, "developer-a");
+                assert_eq!(l.selected().map(String::as_str), Some("developer-a"));
+                assert!(l.offline_cached(|| true), "worked out");
+                assert!(l.offline_cached(|| false), "kept while nothing changed");
+                // The profile now plays another build: the mode is worked out again.
+                pin(l, "26.3-0.1.20261101");
+                assert!(!l.offline_cached(|| false));
+                pin(l, "developer-a");
+                assert!(l.offline_cached(|| true));
+                // The played build's install record changes (reinstalled, removed).
+                let dir = backend::version_dir("developer-a");
+                std::fs::create_dir_all(&dir).unwrap();
+                std::fs::write(dir.join(".installed"), "").unwrap();
+                assert!(!l.offline_cached(|| false));
             },
         );
     }

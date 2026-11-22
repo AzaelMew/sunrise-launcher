@@ -26,13 +26,13 @@ pub(super) enum Page {
 
 impl Page {
     /// The pages `sunrise-launcher benchmark` switches through, as a player clicks them: the
-    /// header's tabs, then Settings.
-    pub(super) const BENCH: [Page; 6] = [
+    /// header's tabs, then Settings. Not Skins: opening it reads the account's profile (the
+    /// keychain, Microsoft, Mojang) and keeps the skin worn, and a benchmark touches no account.
+    pub(super) const BENCH: [Page; 5] = [
         Page::Home,
         Page::Discover,
         Page::Packs,
         Page::Join,
-        Page::Skins,
         Page::Settings,
     ];
 

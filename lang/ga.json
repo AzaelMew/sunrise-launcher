@@ -1521,7 +1521,6 @@
   "The launcher couldn't start looking up your profile. Try again.": "The launcher couldn't start looking up your profile. Try again.",
   "The skin you wear couldn't be kept among your saved skins just now. Open Skins again to retry.": "The skin you wear couldn't be kept among your saved skins just now. Open Skins again to retry.",
   "The launcher couldn't start saving. Nothing was sent: try again.": "The launcher couldn't start saving. Nothing was sent: try again.",
-  "A skin is still being saved on the Skins tab.": "A skin is still being saved on the Skins tab.",
   "It isn't a regular file.": "It isn't a regular file.",
   "The file is too big.": "The file is too big.",
   "The file isn't there.": "The file isn't there.",
@@ -1548,5 +1547,7 @@
   "The saved skins' list is damaged ({why}), so it was left as it is.": "The saved skins' list is damaged ({why}), so it was left as it is.",
   "This account has no valid profile id, so it can't keep saved skins.": "This account has no valid profile id, so it can't keep saved skins.",
   "This isn't a Minecraft skin: it must be a 64×64 or 64×32 PNG.": "This isn't a Minecraft skin: it must be a 64×64 or 64×32 PNG.",
-  "This skin's picture couldn't be loaded, so it can't be saved.": "This skin's picture couldn't be loaded, so it can't be saved."
+  "This skin's picture couldn't be loaded, so it can't be saved.": "This skin's picture couldn't be loaded, so it can't be saved.",
+  "Close the game and servers, and wait for downloads, builds, imports, sign-in and the skin being saved on the Skins tab to finish before moving data.": "Close the game and servers, and wait for downloads, builds, imports, sign-in and the skin being saved on the Skins tab to finish before moving data.",
+  "Could not reach the Minecraft services. Check your internet connection.": "Could not reach the Minecraft services. Check your internet connection."
 }

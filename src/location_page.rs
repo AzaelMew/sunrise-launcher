@@ -78,15 +78,12 @@ impl Launcher {
         if environment_blocked() {
             Some(tr("Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.").into())
         } else if self.location_busy() {
-            let wait = tr("Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.");
-            // Said apart, so the sentence above keeps its translations.
+            // A sentence of its own when a skin is being saved, so the other keeps its
+            // translations.
             Some(if self.skins.writing() {
-                format!(
-                    "{wait} {}",
-                    tr("A skin is still being saved on the Skins tab.")
-                )
+                tr("Close the game and servers, and wait for downloads, builds, imports, sign-in and the skin being saved on the Skins tab to finish before moving data.").into()
             } else {
-                wait.into()
+                tr("Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.").into()
             })
         } else {
             None
