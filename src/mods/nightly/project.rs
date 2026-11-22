@@ -136,7 +136,7 @@ impl Launcher {
                 .flex()
                 .flex_col()
                 .gap(px(8.))
-                .child(install_fact(Some(short_sha(&origin.commit))))
+                .child(install_fact(short_sha(&origin.commit)))
                 .children(update)
                 .child(self.remove_mod_button(&origin.id, busy, cx))
                 .children(

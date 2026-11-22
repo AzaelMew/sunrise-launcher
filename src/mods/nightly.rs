@@ -152,7 +152,7 @@ impl Launcher {
                         )),
                     ];
                     if let Some(rows) = installed {
-                        facts.push(collection_install_fact(collection, |id| {
+                        facts.extend(collection_install_fact(collection, |id| {
                             rows.github_origin(id).is_some()
                         }));
                     }
@@ -202,11 +202,9 @@ impl Launcher {
                             &[("collection", &catalogue.collections[i].name)],
                         )));
                     }
-                    if let Some(rows) = installed {
-                        facts.push(install_fact(
-                            rows.github_origin(source.id())
-                                .map(|origin| short_sha(&origin.commit)),
-                        ));
+                    if let Some(origin) = installed.and_then(|rows| rows.github_origin(source.id()))
+                    {
+                        facts.push(install_fact(short_sha(&origin.commit)));
                     }
                     let sources = catalogue.sources.clone();
                     browse_card(

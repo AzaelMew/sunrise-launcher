@@ -236,11 +236,11 @@ impl Launcher {
                 facts.push(muted(tr("Builds on this computer")));
             }
             if let Some(rows) = installed {
-                facts.push(match collection {
+                facts.extend(match collection {
                     Some(collection) => collection_install_fact(collection, |id| {
                         rows.registry_version(id).is_some()
                     }),
-                    None => install_fact(version),
+                    None => version.map(install_fact),
                 });
             }
             let open = id.clone();
@@ -455,35 +455,32 @@ impl InstalledRows {
     }
 }
 
-pub(super) fn install_fact(version: Option<&str>) -> Div {
-    version.map_or_else(
-        || muted(tr("Not installed")),
-        |version| {
-            status(
-                "tick-02",
-                trf("Installed · {version}", &[("version", version)]),
-                palette().success,
-            )
-        },
+pub(super) fn install_fact(version: &str) -> Div {
+    status(
+        "tick-02",
+        trf("Installed · {version}", &[("version", version)]),
+        palette().success,
     )
 }
 
 pub(super) fn collection_install_fact(
     collection: &sunrise_launcher_smod::index::Collection,
     installed: impl Fn(&str) -> bool,
-) -> Div {
+) -> Option<Div> {
     let count = collection
         .members
         .iter()
         .filter(|member| installed(&member.id))
         .count();
-    muted(trf(
-        "{installed} of {total} installed",
-        &[
-            ("installed", &count.to_string()),
-            ("total", &collection.members.len().to_string()),
-        ],
-    ))
+    (count > 0).then(|| {
+        muted(trf(
+            "{installed} of {total} installed",
+            &[
+                ("installed", &count.to_string()),
+                ("total", &collection.members.len().to_string()),
+            ],
+        ))
+    })
 }
 
 pub(super) fn discover_filters(filters: Div, order: Div) -> Div {
