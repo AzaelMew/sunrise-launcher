@@ -544,7 +544,7 @@ pub fn about(version: &str) -> Option<About> {
     checked_about(version).ok().flatten()
 }
 
-fn checked_about(version: &str) -> Result<Option<About>, String> {
+pub(crate) fn checked_about(version: &str) -> Result<Option<About>, String> {
     if !is_native(version) {
         return Ok(None);
     }
@@ -560,7 +560,7 @@ fn about_in(dir: &Path) -> Option<About> {
         serde_json::from_str(&fs::read_to_string(dir.join("native-mods.json")).ok()?).ok()?;
     let field = |name: &str| json[name].as_str().map(str::to_owned);
     Some(About {
-        base: field("base")?,
+        base: crate::browser::safe_name(json["base"].as_str()?)?.to_owned(),
         sunrise: field("sunrise").filter(|r| is_revision(r))?,
         target: match field("target").as_deref() {
             Some("server") => Target::Server,

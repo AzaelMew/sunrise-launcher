@@ -222,9 +222,14 @@ pub fn game_files(root: &Path, game_version: &str) -> PathBuf {
 
 /// Whether the servers' game files are there.
 pub fn game_files_ready() -> bool {
-    game_files(&runtime_root(), "26.3")
-        .join("sunrise-resources.json")
-        .is_file()
+    let root = runtime_root();
+    // The current release carries the lock it was built with, even after the
+    // launcher installation it came from has been removed.
+    backend::hosting_game_version(&root.join("current")).is_ok_and(|game_version| {
+        game_files(&root, &game_version)
+            .join("sunrise-resources.json")
+            .is_file()
+    })
 }
 
 /// Whether an installed version can host: it ships `sunrise-server` and is prepared.
@@ -232,49 +237,66 @@ pub fn can_host(tag: &str) -> Result<(), String> {
     host_resources(tag).map(|_| ())
 }
 
-fn host_resources(tag: &str) -> Result<(String, String), String> {
+struct HostResources {
+    owner: String,
+    base: PathBuf,
+    game_version: String,
+    folder: PathBuf,
+}
+
+fn host_resources(tag: &str) -> Result<HostResources, String> {
     if !backend::version_dir(tag).join(PROGRAM).is_file() {
         return Err(trf(
             "Sunrise {tag} has no server program. Install a newer game build first.",
             &[("tag", tag)],
         ));
     }
-    let owner = backend::installed_resources_owner(tag)?;
-    let game_version = backend::hosting_game_version(&owner)?;
-    if !backend::check_prepared(&owner) {
+    let (owner, base) = backend::installed_resources_root(tag)?;
+    let game_version = backend::hosting_game_version(&base)?;
+    let folder = backend::resources_for_game(&base, &game_version);
+    if !backend::prepared_at(&folder) {
         return Err(format!(
             "Sunrise {tag} isn't prepared yet: press Prepare on the Play page (it uses your own Minecraft {})",
             game_version
         ));
     }
-    Ok((owner, game_version))
+    Ok(HostResources {
+        owner,
+        base,
+        game_version,
+        folder,
+    })
 }
 
 /// Sets up the servers' programs from the installed version `tag` (if none are yet) and copies its
 /// prepared game files for them. Safe to run again: it only refreshes the game files.
 pub fn set_up(tag: &str) -> Result<(), String> {
-    let (owner, game_version) = host_resources(tag)?;
-    // The data generator's reports the game reads at run time, as Play checks them.
-    backend::need_base_prepared(&owner, None)?;
-    let resources = backend::resources_for_game(&backend::version_dir(&owner), &game_version);
+    let resources = host_resources(tag)?;
+    // Keep the base's prepared files stable while completing reports and copying them.
+    let _preparation = backend::prepare_lock_at(&resources.base, &resources.owner)?;
+    backend::complete_reports_at(
+        &backend::versions_dir(),
+        &resources.owner,
+        &resources.base,
+        &resources.folder,
+    );
     set_up_in(
         &runtime_root(),
         &backend::version_dir(tag),
         tag,
-        &game_version,
-        &resources,
+        &resources.game_version,
+        &resources.folder,
     )
 }
 
-/// [`set_up`] with its folders given (for tests).
-pub fn set_up_in(
+/// Copies a release with its already validated version and prepared resource folder.
+fn set_up_in(
     root: &Path,
     version: &Path,
     tag: &str,
     game_version: &str,
     resources: &Path,
 ) -> Result<(), String> {
-    crate::browser::safe_name(game_version).ok_or_else(backend::invalid_hosting_game_version)?;
     let releases = root.join("releases");
     fs::create_dir_all(&releases).map_err(|e| format!("{}: {e}", releases.display()))?;
     let release = releases.join(tag);

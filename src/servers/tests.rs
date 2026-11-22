@@ -120,17 +120,23 @@ fn native_server_setup_uses_base_resources_and_native_programs() {
     }
     fs::write(base_dir.join(PROGRAM), "base server").unwrap();
     fs::write(native_dir.join(PROGRAM), "native server").unwrap();
-    fs::write(
-        native_dir.join("native-mods.json"),
-        json!({"base": base, "sunrise": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "target": "client"}).to_string(),
-    )
-    .unwrap();
+    let record = native_dir.join("native-mods.json");
+    let write_record = |base: &str| {
+        fs::write(
+            &record,
+            json!({"base": base, "sunrise": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "target": "client"}).to_string(),
+        )
+        .unwrap();
+    };
+    write_record(base);
     let lock = base_dir.join("research-lock.json");
     fs::write(
         &lock,
         json!({"minecraft": {"version": "26.3-pre-1"}}).to_string(),
     )
     .unwrap();
+    // Native builds carry the base's lock into the runtime with their programs.
+    fs::copy(&lock, native_dir.join("research-lock.json")).unwrap();
     // Only the base has resources; the native build need not duplicate them.
     assert!(can_host(native).is_err());
     let resources = backend::resources(base);
@@ -140,6 +146,18 @@ fn native_server_setup_uses_base_resources_and_native_programs() {
     assert!(can_host(base).is_ok());
     assert!(can_host(native).is_ok());
     set_up(native).unwrap();
+    assert!(game_files_ready());
+    assert!(create_blocked(None).is_none());
+    let default = game_files(&runtime_root(), backend::PINNED_GAME);
+    fs::create_dir_all(&default).unwrap();
+    fs::write(default.join("sunrise-resources.json"), "{}").unwrap();
+    let current = game_files(&runtime_root(), "26.3-pre-1").join("sunrise-resources.json");
+    fs::remove_file(&current).unwrap();
+    assert!(
+        !game_files_ready(),
+        "another version's resources do not make the active release ready"
+    );
+    fs::write(&current, "{}").unwrap();
     assert_eq!(
         fs::read_to_string(program().unwrap()).unwrap(),
         "native server"
@@ -160,6 +178,33 @@ fn native_server_setup_uses_base_resources_and_native_programs() {
     assert!(!copied
         .with_file_name(format!(".{}.old", backend::game_version(base)))
         .exists());
+
+    // Reject malformed base tags and names that resolve outside the installs directory.
+    let outside = tempfile::tempdir().unwrap();
+    fs::write(outside.path().join(".installed"), "").unwrap();
+    for invalid in [
+        "../invalid-base",
+        outside.path().to_str().unwrap(),
+        r"..\invalid-base",
+    ] {
+        write_record(invalid);
+        assert!(can_host(native).unwrap_err().contains("native-mods.json"));
+        assert!(set_up(native).unwrap_err().contains("native-mods.json"));
+    }
+    let alias = backend::version_dir("base-symlink");
+    point(&alias, outside.path()).unwrap();
+    write_record("base-symlink");
+    assert!(can_host(native).unwrap_err().contains("reinstall"));
+    assert!(set_up(native).unwrap_err().contains("reinstall"));
+    write_record(base);
+    assert_eq!(
+        fs::read_to_string(program().unwrap()).unwrap(),
+        "native server"
+    );
+    assert_eq!(
+        fs::read_to_string(copied.join("nested/data")).unwrap(),
+        "updated resources"
+    );
 
     // A malformed game version stops setup before it modifies the runtime.
     let sibling = runtime_root().join("unrelated");
@@ -191,6 +236,8 @@ fn native_server_setup_uses_base_resources_and_native_programs() {
     fs::remove_dir_all(&base_dir).unwrap();
     assert!(can_host(native).unwrap_err().contains("reinstall"));
     assert!(set_up(native).unwrap_err().contains("reinstall"));
+    assert!(game_files_ready());
+    assert!(create_blocked(None).is_none());
 }
 
 #[cfg(unix)]
