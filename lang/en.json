@@ -55,5 +55,8 @@
   "You're offline. Connect to check the source.": "You're offline. Connect to check the source.",
   "{count} source projects": "{count} source projects",
   "{mod} build log": "{mod} build log",
-  "{track} @ {commit}": "{track} @ {commit}"
+  "{track} @ {commit}": "{track} @ {commit}",
+  "Sunrise mods": "Sunrise mods",
+  "Commit": "Commit",
+  "{author} · {source}": "{author} · {source}"
 }
