@@ -303,9 +303,9 @@ impl List {
 const WHEEL_STEP: f32 = 24.;
 
 /// A launcher window measuring itself: after its first frame it switches pages every
-/// [`crate::wake::TICK`] for a few seconds, opens the build picker and, once the release list
-/// has loaded and the picker has drawn its rows, scrolls the list for a few more; then it rests,
-/// writes what it measured for `benchmark` and quits.
+/// [`crate::wake::TICK`] for a few seconds, opens its [`List`] (the build picker, or Mods ›
+/// Installed) and, once that list has loaded and been drawn with its rows, scrolls it for a few
+/// more; then it rests, writes what it measured for `benchmark` and quits.
 ///
 /// Its samples are frame intervals while something was due on screen: during page switching,
 /// from each frame to the next, or from a switch to the first frame after it; while scrolling,
@@ -384,6 +384,8 @@ pub enum Target {
     Loading,
     /// Loaded, and the list has not one row.
     Empty,
+    /// Installed's read of the profile's mods failed: there is no list to scroll.
+    Failed,
     /// Loaded, but the window hasn't drawn the list with its loaded rows yet.
     LayingOut,
     /// Drawn with its loaded rows: its offset (GPUI's sign, negative below the top) and how far
@@ -400,6 +402,7 @@ enum Skip {
     Fits,
     ReleasesLate,
     NotLaidOut,
+    Failed,
     NeverMoved,
 }
 
@@ -409,6 +412,7 @@ impl Skip {
             Skip::NoProfile => "no profile is selected, so there is no list",
             Skip::Closed => "the list was closed before it could be scrolled",
             Skip::Empty => "the list had no rows",
+            Skip::Failed => "the list couldn't be read",
             Skip::Fits => "the list fits without scrolling",
             Skip::ReleasesLate => "the release list didn't load in time",
             Skip::NotLaidOut => "the list didn't draw its rows in time",
@@ -425,13 +429,13 @@ impl Bench {
 
     pub fn from_env() -> Option<Bench> {
         let out = std::env::var_os(BENCH_ENV)?;
-        Some(Bench::new(out.into()))
+        Some(Bench::new(out.into(), List::from_env()))
     }
 
-    fn new(out: PathBuf) -> Bench {
+    fn new(out: PathBuf, list: List) -> Bench {
         Bench {
             out,
-            list: List::from_env(),
+            list,
             began: None,
             page: 0,
             switched: None,
@@ -446,8 +450,8 @@ impl Bench {
     /// A benchmark whose page switching is over, writing its result to `out`: the next tick
     /// opens the build picker. For tests that drive a real launcher window.
     #[cfg(test)]
-    pub(crate) fn switched_for_test(out: PathBuf) -> Bench {
-        let mut bench = Bench::new(out);
+    pub(crate) fn switched_for_test(out: PathBuf, list: List) -> Bench {
+        let mut bench = Bench::new(out, list);
         bench.began = Some(Instant::now() - SWITCHING);
         bench
     }
@@ -520,10 +524,11 @@ impl Bench {
                 scroll.pending = None;
                 return None;
             }
-            Target::NoProfile | Target::Closed | Target::Empty => {
+            Target::NoProfile | Target::Closed | Target::Empty | Target::Failed => {
                 scroll.skip(match target {
                     Target::NoProfile => Skip::NoProfile,
                     Target::Closed => Skip::Closed,
+                    Target::Failed => Skip::Failed,
                     _ => Skip::Empty,
                 });
                 return None;
@@ -891,7 +896,7 @@ mod tests {
     #[test]
     fn page_switch_samples_keep_stalls_and_leave_out_idle_gaps() {
         let perf = drawn();
-        let mut bench = Bench::new(out("pages"));
+        let mut bench = Bench::new(out("pages"), List::Builds);
         // Before the script starts, a frame is no sample.
         bench.frame(Instant::now(), Some(ms(16)));
         assert!(matches!(bench.tick(&perf), Step::Go(1)));
@@ -907,7 +912,7 @@ mod tests {
     #[test]
     fn a_stall_across_two_switches_is_timed_from_the_first() {
         let perf = drawn();
-        let mut bench = Bench::new(out("two-switches"));
+        let mut bench = Bench::new(out("two-switches"), List::Builds);
         assert!(matches!(bench.tick(&perf), Step::Go(1)));
         let first = bench.switched.unwrap();
         // The next switch is due before the window has drawn the first.
@@ -925,7 +930,7 @@ mod tests {
     #[test]
     fn the_picker_waits_for_the_last_switch_to_be_drawn() {
         let perf = drawn();
-        let mut bench = Bench::new(out("boundary"));
+        let mut bench = Bench::new(out("boundary"), List::Builds);
         assert!(matches!(bench.tick(&perf), Step::Go(1)));
         let switched = bench.switched.unwrap();
         // Switching time is up before the window has drawn the last switch.
@@ -943,7 +948,7 @@ mod tests {
     #[test]
     fn scrolling_is_timed_from_the_frame_that_drew_the_loaded_rows() {
         let mut perf = drawn();
-        let mut bench = Bench::new(out("scroll"));
+        let mut bench = Bench::new(out("scroll"), List::Builds);
         to_scrolling(&mut bench, &perf);
         let now = Instant::now();
         // A cold start: the release list is still on its way, longer than the scroll phase.
@@ -996,7 +1001,7 @@ mod tests {
     #[test]
     fn a_wheel_step_in_flight_at_the_deadline_is_measured_once() {
         let perf = drawn();
-        let mut bench = Bench::new(out("last-wheel-step"));
+        let mut bench = Bench::new(out("last-wheel-step"), List::Builds);
         to_scrolling(&mut bench, &perf);
         let now = Instant::now();
         assert_eq!(bench.after_frame(now, laid(0., 100.)), Some(-24.));
@@ -1023,10 +1028,11 @@ mod tests {
             (Target::NoProfile, Skip::NoProfile),
             (Target::Closed, Skip::Closed),
             (Target::Empty, Skip::Empty),
+            (Target::Failed, Skip::Failed),
             (laid(0., 0.), Skip::Fits),
         ] {
             let perf = drawn();
-            let mut bench = Bench::new(out("still"));
+            let mut bench = Bench::new(out("still"), List::Builds);
             to_scrolling(&mut bench, &perf);
             let now = Instant::now();
             bench.frame(now, Some(ms(16)));
@@ -1048,7 +1054,7 @@ mod tests {
             (Target::LayingOut, Skip::NotLaidOut),
         ] {
             let perf = drawn();
-            let mut bench = Bench::new(out("late"));
+            let mut bench = Bench::new(out("late"), List::Builds);
             to_scrolling(&mut bench, &perf);
             assert_eq!(bench.after_frame(Instant::now(), waiting), None);
             bench.scroll.as_mut().unwrap().opened = Instant::now() - LIST_WAIT;

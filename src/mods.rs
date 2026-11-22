@@ -216,6 +216,46 @@ impl InstalledRows {
     }
 }
 
+/// What a frame of Installed drew: its rows read afresh, or something the benchmark mustn't time.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum InstalledDrawn {
+    /// A read is under way: nothing, or the rows of the read before it.
+    Reading,
+    /// The read failed: its error, over any rows from before it.
+    Failed,
+    /// Read, and the profile has no mods to list.
+    Empty,
+    /// Read, and its rows drawn.
+    Rows,
+}
+
+impl InstalledDrawn {
+    fn of(reading: bool, failed: bool, rows: usize) -> Self {
+        match (reading, failed, rows) {
+            (true, _, _) => Self::Reading,
+            (_, true, _) => Self::Failed,
+            (_, _, 0) => Self::Empty,
+            _ => Self::Rows,
+        }
+    }
+}
+
+/// The benchmark's view of Installed after a frame that drew it as `drawn`, with its list's
+/// offset and how far it scrolls (`laid`) when that frame drew the list. Only rows read afresh
+/// are timed; a read still under way is waited for.
+fn installed_target(
+    drawn: Option<InstalledDrawn>,
+    laid: Option<(f32, f32)>,
+) -> crate::perf::Target {
+    use crate::perf::Target;
+    match (drawn, laid) {
+        (Some(InstalledDrawn::Failed), _) => Target::Failed,
+        (Some(InstalledDrawn::Empty), _) => Target::Empty,
+        (Some(InstalledDrawn::Rows), Some((offset, max))) => Target::Laid { offset, max },
+        _ => Target::LayingOut,
+    }
+}
+
 struct Snapshot {
     key: String,
     home: PathBuf,
@@ -343,6 +383,8 @@ pub(crate) struct ModsState {
     /// The last clicked archive path, resolved in the current list for Shift-click.
     anchor: Option<String>,
     snapshot: Option<Snapshot>,
+    /// What the last frame of Installed drew, for the benchmark (`installed_bench_target`).
+    drawn: Option<InstalledDrawn>,
     open: Option<Open>,
     page_request: u64,
     nightly: nightly::State,
@@ -411,6 +453,7 @@ impl Default for ModsState {
             selection: BTreeSet::new(),
             anchor: None,
             snapshot: None,
+            drawn: None,
             open: None,
             page_request: 0,
             nightly: Default::default(),
@@ -676,6 +719,7 @@ impl Launcher {
 
     /// The play bar's quiet line about them: Mods › Installed, where each says why.
     pub(crate) fn show_installed_mods(&mut self) {
+        self.ui.mods.drawn = None;
         self.leave_section(false);
         self.mods_refresh();
         self.choose_view(Page::Installed);
@@ -690,18 +734,16 @@ impl Launcher {
         if self.ui.page != Page::Installed {
             return (Target::Closed, gpui::Bounds::default());
         }
-        let drawn = crate::frame::drawn_scroll("installed");
-        match drawn.filter(|_| self.ui.mods.snapshot.is_some()) {
-            // Still reading the profile's mods, or not drawn with them yet.
-            None => (Target::LayingOut, gpui::Bounds::default()),
-            Some(handle) => (
-                Target::Laid {
-                    offset: f32::from(handle.offset().y),
-                    max: f32::from(handle.max_offset().y),
-                },
-                handle.bounds(),
-            ),
-        }
+        // What the last frame drew, with the list's handle from that same frame.
+        let handle = crate::frame::drawn_scroll("installed");
+        let laid = handle.as_ref().map(|handle| {
+            (
+                f32::from(handle.offset().y),
+                f32::from(handle.max_offset().y),
+            )
+        });
+        let bounds = handle.map_or_else(gpui::Bounds::default, |handle| handle.bounds());
+        (installed_target(self.ui.mods.drawn, laid), bounds)
     }
 
     /// Mods › Discover itself, whatever Mods last showed.
@@ -1511,6 +1553,37 @@ mod enabled_tests {
 #[cfg(test)]
 mod installed_refresh_tests {
     use super::*;
+
+    #[test]
+    fn the_benchmark_times_installed_only_once_rows_read_afresh_are_drawn() {
+        use crate::perf::Target;
+        let laid = Some((-10., 400.));
+        // A refresh draws the last read's rows while it reads: they are waited past, not timed.
+        let retained = InstalledDrawn::of(true, false, 12);
+        assert_eq!(retained, InstalledDrawn::Reading);
+        assert_eq!(installed_target(Some(retained), laid), Target::LayingOut);
+        // Then the fresh rows: timed from the frame that drew them.
+        let fresh = InstalledDrawn::of(false, false, 14);
+        assert_eq!(fresh, InstalledDrawn::Rows);
+        assert_eq!(
+            installed_target(Some(fresh), laid),
+            Target::Laid {
+                offset: -10.,
+                max: 400.
+            }
+        );
+        assert_eq!(installed_target(Some(fresh), None), Target::LayingOut);
+        // An empty profile draws no list: it stops at once, saying so, not at the timeout.
+        let empty = InstalledDrawn::of(false, false, 0);
+        assert_eq!(empty, InstalledDrawn::Empty);
+        assert_eq!(installed_target(Some(empty), None), Target::Empty);
+        // A failed read over the rows from before it stops too, with its own reason.
+        let failed = InstalledDrawn::of(false, true, 12);
+        assert_eq!(failed, InstalledDrawn::Failed);
+        assert_eq!(installed_target(Some(failed), laid), Target::Failed);
+        // Not drawn yet.
+        assert_eq!(installed_target(None, laid), Target::LayingOut);
+    }
 
     #[test]
     fn busy_publication_keeps_the_settled_hold_and_disables_actions_until_refresh() {

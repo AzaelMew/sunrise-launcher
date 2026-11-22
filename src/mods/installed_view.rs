@@ -143,6 +143,12 @@ impl Launcher {
         let refresh_ready = refresh.is_none();
         page = page.children(refresh);
         let (rows, labels) = self.labeled_installed_rows();
+        let (reading, failed) = match InstalledRefresh::of(self.ui.mods.snapshot.as_ref()) {
+            InstalledRefresh::Ready => (false, false),
+            InstalledRefresh::Reading => (true, false),
+            InstalledRefresh::Failed(..) => (false, true),
+        };
+        self.ui.mods.drawn = Some(InstalledDrawn::of(reading, failed, rows.len()));
         if rows.is_empty() && !refresh_ready {
             return page.into_any_element();
         }
