@@ -26,7 +26,7 @@ fn registry_shape_supports_release_and_branch_in_the_same_repository() {
     b["track"] = json!({ "release": true });
     b["id"] = json!("camps");
     b["manifest"] = json!("sunrise-mod.toml");
-    let parsed = parse(&wire(vec![a, b])).unwrap();
+    let parsed = parse(&wire(vec![a, b])).unwrap().sources;
     assert_eq!(parsed[0].repo_id(), 123456789);
     assert_eq!(parsed[0].owner(), "Driftwood");
     assert_eq!(parsed[0].id(), "camps");
@@ -100,7 +100,7 @@ fn fields_added_to_the_feed_later_are_ignored() {
     let mut feed: Value = serde_json::from_slice(&wire(vec![source])).unwrap();
     feed["also_added_later"] = json!([1, 2]);
     let parsed = parse(&serde_json::to_vec(&feed).unwrap()).unwrap();
-    assert_eq!(parsed.len(), 1);
+    assert_eq!(parsed.sources.len(), 1);
     let mut missing = entry();
     missing.as_object_mut().unwrap().remove("repo_id");
     assert!(
@@ -186,4 +186,34 @@ fn discover_needs_only_the_source_catalogue() {
         requests,
         "Discover must not look up GitHub repositories/refs"
     );
+}
+
+#[test]
+fn a_collection_shows_only_when_the_list_has_every_member() {
+    let mut camps = entry();
+    camps["id"] = json!("camps");
+    camps["manifest"] = json!("mods/camps/sunrise-mod.toml");
+    let collection = |id: &str, members: &[&str], icon: &str| {
+        json!({
+            "id": id, "name": "Trail Tools", "summary": "Trails.", "owners": ["Driftwood"],
+            "icon": icon,
+            "members": members.iter().map(|m| json!({ "id": m })).collect::<Vec<_>>(),
+        })
+    };
+    let feed = json!({
+        "format": 1,
+        "sources": [entry(), camps],
+        "collections": [
+            collection("trail_tools", &["trail_atlas", "camps"], "icons/trail_tools.png"),
+            collection("partial", &["trail_atlas", "missing"], "icons/partial.png"),
+            collection("twice", &["camps", "camps"], "icons/twice.png"),
+            collection("elsewhere", &["camps"], "https://example.test/icon.png"),
+            collection("trail_tools", &["camps"], "icons/trail_tools.png"),
+        ],
+    });
+    let parsed = parse(&serde_json::to_vec(&feed).unwrap()).unwrap();
+    let ids: Vec<_> = parsed.collections.iter().map(|c| c.id.as_str()).collect();
+    assert_eq!(ids, ["trail_tools"]);
+    assert_eq!(parsed.collections[0].members.len(), 2);
+    assert!(parse(&wire(vec![entry()])).unwrap().collections.is_empty());
 }

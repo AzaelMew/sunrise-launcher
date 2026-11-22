@@ -505,6 +505,9 @@ impl Launcher {
             .get_or_insert_with(|| cx.focus_handle().tab_index(0).tab_stop(true))
             .clone();
         match self.ui.page {
+            Page::Project if self.ui.mods.nightly.collection.is_some() => {
+                self.source_collection(cx)
+            }
             Page::Project if self.ui.mods.nightly.open.is_some() => self.nightly_project(cx),
             Page::Project => {
                 let scope = self.mods_page_scope();
@@ -546,6 +549,7 @@ impl Launcher {
     /// Opens a mod's page, from Home or anywhere else. Its details are read in a worker.
     pub(crate) fn mods_show_project(&mut self, id: String) {
         self.ui.mods.nightly.open = None;
+        self.ui.mods.nightly.collection = None;
         let from = match self.ui.page {
             Page::Project => self
                 .ui
@@ -693,6 +697,7 @@ impl Launcher {
     fn choose_view(&mut self, page: Page) {
         let m = &mut self.ui.mods;
         m.nightly.open = None;
+        m.nightly.collection = None;
         match page {
             Page::Discover | Page::Installed => m.last_mods = Some(page),
             _ => m.last_packs = Some(page),

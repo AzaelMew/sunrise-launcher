@@ -39,6 +39,14 @@ fn icon_path(manifest: &str) -> Option<String> {
 }
 
 impl SourceIcon {
+    /// A file of the source list's own Pages site, such as a collection's icon.
+    pub fn pages(path: &str, allow_fetch: bool) -> Self {
+        Self {
+            location: Location::Pages(path.to_owned()),
+            allow_fetch,
+        }
+    }
+
     pub fn new(source: &Source, commit: Option<&SourceCommit>, allow_fetch: bool) -> Option<Self> {
         let source = commit.map_or(source, SourceCommit::source);
         let location = if let Some(icon) = source.icon() {

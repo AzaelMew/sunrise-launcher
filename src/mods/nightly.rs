@@ -5,6 +5,7 @@ use crate::frame::button;
 use std::time::{Duration, SystemTime};
 use sunrise_launcher::browser::sunrise::sources::{self, Catalogue, Source};
 
+mod collection;
 mod jobs;
 mod project;
 
@@ -22,6 +23,7 @@ pub(super) struct State {
     detail_request: u64,
     pub(super) limit: usize,
     pub(super) work: jobs::Work,
+    pub(super) collection: Option<collection::CollectionOpen>,
 }
 
 impl Launcher {
@@ -129,8 +131,22 @@ impl Launcher {
                 return page.into_any_element();
             }
         }
-        let shown = source_matches(&catalogue.sources, &self.ui.mods.filters.text);
-        let total = shown.len();
+        let filter = &self.ui.mods.filters.text;
+        // With no search, a collection's card stands in for its members; a search shows both.
+        let folded: HashSet<&str> = match filter.trim().is_empty() {
+            true => catalogue
+                .collections
+                .iter()
+                .flat_map(|c| c.members.iter().map(|m| m.id.as_str()))
+                .collect(),
+            false => HashSet::new(),
+        };
+        let collections = collection_matches(&catalogue.collections, filter);
+        let shown: Vec<_> = source_matches(&catalogue.sources, filter)
+            .into_iter()
+            .filter(|source| !folded.contains(source.id()))
+            .collect();
+        let total = collections.len() + shown.len();
         let allow_icon_fetch = catalogue.error.is_none();
         let limit = self.ui.mods.nightly.limit.max(PAGE_SIZE);
         let build = self.nightly_build_revision();
@@ -140,6 +156,48 @@ impl Launcher {
             .grid()
             .grid_cols(columns(self.content_width()))
             .gap(px(12.));
+        for (n, collection) in collections.iter().take(limit).enumerate() {
+            let icon = sources::SourceIcon::pages(&collection.icon, allow_icon_fetch);
+            let picture = work.icons.get(&icon).cloned().flatten();
+            let load = (!work.icons.contains_key(&icon))
+                .then(|| when_visible(cx, move |this| this.request_nightly_icon(icon)));
+            let facts = vec![
+                badge(tr("Collection")),
+                muted(trf(
+                    "{count} mods",
+                    &[("count", &collection.members.len().to_string())],
+                )),
+            ];
+            let open = (*collection).clone();
+            let choose = button(("nightly-collection-choose", n), tr("Choose mods")).on_click(
+                cx.listener(move |this, _, _, cx| {
+                    cx.stop_propagation();
+                    this.open_source_collection(&open);
+                    cx.notify();
+                }),
+            );
+            let open = (*collection).clone();
+            grid = grid.child(
+                browse_card(
+                    ("nightly-collection", n),
+                    picture,
+                    &collection.id,
+                    &collection.name,
+                    &collection.owners.join(", "),
+                    &collection.summary,
+                    facts,
+                    Some(choose.into_any_element()),
+                    None,
+                )
+                .relative()
+                .children(load)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.open_source_collection(&open);
+                    cx.notify();
+                })),
+            );
+        }
+        let limit = limit.saturating_sub(collections.len());
         for (n, source) in shown.into_iter().take(limit).enumerate() {
             let pin = work
                 .release_pins
@@ -168,6 +226,16 @@ impl Launcher {
                 facts.push(badge(tr("Made for this build")));
             }
             // Collection membership is another fact, not a separate card layout.
+            if let Some(collection) = catalogue
+                .collections
+                .iter()
+                .find(|c| c.members.iter().any(|m| m.id == source.id()))
+            {
+                facts.push(muted(trf(
+                    "Part of {collection}",
+                    &[("collection", &collection.name)],
+                )));
+            }
             let metadata_request = (matches!(source.tracker(), sources::Tracker::Branch(_))
                 && !work.metadata.contains_key(&key))
             .then_some(key);
@@ -300,6 +368,22 @@ fn made_for_build(profile: Option<&str>, pin: Option<&str>) -> bool {
     profile
         .zip(pin)
         .is_some_and(|(profile, pin)| pin.starts_with(profile))
+}
+
+fn collection_matches<'a>(
+    collections: &'a [sunrise_launcher_smod::index::Collection],
+    filter: &str,
+) -> Vec<&'a sunrise_launcher_smod::index::Collection> {
+    let words: Vec<_> = filter.split_whitespace().map(str::to_lowercase).collect();
+    let mut shown: Vec<_> = collections
+        .iter()
+        .filter(|c| {
+            let text = format!("{} {} {}", c.name, c.id, c.summary).to_lowercase();
+            words.iter().all(|word| text.contains(word))
+        })
+        .collect();
+    shown.sort_by_key(|c| c.name.to_lowercase());
+    shown
 }
 
 fn source_matches<'a>(sources: &'a [Source], filter: &str) -> Vec<&'a Source> {
