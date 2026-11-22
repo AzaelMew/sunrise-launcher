@@ -179,8 +179,12 @@ impl Launcher {
         let error = stop
             .map(|stop| stop.error.as_str())
             .filter(|s| !s.is_empty());
-        let error_open = run.details && error.is_some();
-        let log_height = if run.log_open || error_open { 165. } else { 0. };
+        let diagnostic = if run.log_open {
+            run.log.as_deref()
+        } else {
+            error.filter(|_| run.details)
+        };
+        let log_height = if diagnostic.is_some() { 165. } else { 0. };
         let list = card().overflow_hidden().child(
             div()
                 .id("build-lines")
@@ -257,21 +261,28 @@ impl Launcher {
                         .is_some_and(|instance| request.matches_profile(instance))
             })
         });
-        let copy_id: SharedString = "copy-build-error".into();
-        let copy = error.filter(|_| error_open && !run.log_open).map(|error| {
-            let error = error.to_owned();
+        let copy = diagnostic.map(|diagnostic| {
+            let diagnostic = diagnostic.to_owned();
+            let copy_id: SharedString = if run.log_open {
+                "copy-build-log"
+            } else {
+                "copy-build-error"
+            }
+            .into();
             button(
-                "copy-build-error",
-                tr(if crate::code_box::copied(&copy_id).is_some() {
-                    "Copied"
+                copy_id.clone(),
+                if crate::code_box::copied(&copy_id).is_some() {
+                    tr("Copied")
+                } else if run.log_open {
+                    tr("Copy")
                 } else {
-                    "Copy error"
-                }),
+                    tr("Copy error")
+                },
             )
             .on_click(move |_, window, cx| {
-                crate::widgets::copy_to_clipboard(
+                crate::widgets::copy_quietly(
                     cx,
-                    gpui::ClipboardItem::new_string(error.clone()),
+                    gpui::ClipboardItem::new_string(diagnostic.clone()),
                 );
                 crate::code_box::note_copy(copy_id.clone(), window, cx);
             })
@@ -347,10 +358,14 @@ impl Launcher {
             .child(head)
             .child(top)
             .child(list)
-            .children(error.filter(|_| error_open && !run.log_open).map(|error| {
+            .children(diagnostic.map(|text| {
                 card().min_w_0().overflow_hidden().child(
                     div()
-                        .id("build-error-pane")
+                        .id(if run.log_open {
+                            "build-log-pane"
+                        } else {
+                            "build-error-pane"
+                        })
                         .max_h(px(150.))
                         .min_w_0()
                         .overflow_y_scroll()
@@ -359,21 +374,14 @@ impl Launcher {
                         .font_family(crate::theme::MONO)
                         .text_size(px(tokens::SMALL))
                         .whitespace_normal()
-                        .child(crate::selectable::Selectable::styled(
-                            "build-error-text",
-                            gpui::StyledText::new(error.to_owned()),
-                        )),
+                        .child(
+                            crate::selectable::Selectable::styled(
+                                "build-diagnostic-text",
+                                gpui::StyledText::new(text.to_owned()),
+                            )
+                            .without_copy_preview(),
+                        ),
                 )
-            }))
-            .children(run.log.filter(|_| run.log_open).map(|log| {
-                div()
-                    .min_w_0()
-                    .overflow_hidden()
-                    .child(crate::code_box::code_box(
-                        "managed-build-log",
-                        vec![log.to_string().into()],
-                        Some(150.),
-                    ))
             }))
             .child(foot);
         Some(crate::sheets::frame("build-window", 600., body, cx))
