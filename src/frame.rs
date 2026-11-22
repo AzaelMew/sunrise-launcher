@@ -330,7 +330,7 @@ impl Launcher {
         if self.client.is_some() || self.launch_busy() {
             return;
         }
-        self.start_managed_client(instance, intent, Vec::new());
+        self.start_managed_client(instance, intent, None);
     }
 
     fn refuse_pack_play(&mut self, kind: instances::Kind) -> bool {

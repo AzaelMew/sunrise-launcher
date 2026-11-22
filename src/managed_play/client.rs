@@ -7,7 +7,13 @@ use crate::{
     developer_offline, instances, native_mods,
     process::child::Child,
 };
-use std::process::Command;
+use std::{
+    fs::File,
+    io::{self, Write as _},
+    path::Path,
+    process::Command,
+    sync::Arc,
+};
 
 pub enum Progress {
     Download(f32),
@@ -27,7 +33,7 @@ pub enum Progress {
 pub enum StartError {
     Journal(GameInstallProblem),
     Account(NoOwner),
-    Native(native_mods::Failed),
+    Native(native_mods::Failed, Option<Arc<FailedBuild>>),
     Hook(crate::launch::PreLaunchError),
     UnknownSpawn(String),
     Other(String),
@@ -47,7 +53,7 @@ impl From<StartError> for String {
                 Some(why) => why.to_owned(),
                 None => format!("{error} {}", crate::i18n::tr(backend::SIGN_IN_HINT)),
             },
-            StartError::Native(error) => error.into(),
+            StartError::Native(error, _) => error.into(),
             StartError::Hook(error) => error.to_string(),
             StartError::UnknownSpawn(error) | StartError::Other(error) => error,
         }
@@ -55,6 +61,31 @@ impl From<StartError> for String {
 }
 
 type NativeConsent<'a> = Option<&'a dyn Fn(&native_mods::Consent) -> bool>;
+
+/// The exact base of the Play attempt that reported a registry conflict.
+#[derive(Debug, PartialEq, Eq)]
+pub struct FailedBuild(Build);
+
+#[derive(Debug, PartialEq, Eq)]
+enum Build {
+    Active(Active),
+    First(FirstBuild),
+}
+
+#[derive(Clone)]
+pub struct ModRecovery {
+    pub build: Arc<FailedBuild>,
+    pub mods: Vec<(String, String)>,
+}
+
+fn native_failure(error: native_mods::Failed, build: impl FnOnce() -> Option<Build>) -> StartError {
+    let proof = if matches!(error, native_mods::Failed::RegistryConflict { .. }) {
+        build().map(|build| Arc::new(FailedBuild(build)))
+    } else {
+        None
+    };
+    StartError::Native(error, proof)
+}
 
 pub struct Client<'a> {
     pub instance: &'a instances::Instance,
@@ -83,14 +114,14 @@ impl Client<'_> {
         native: (&native_mods::Cancellation, NativeConsent<'_>),
         progress: impl Fn(Progress),
     ) -> Result<Started, StartError> {
-        self.start_with_mods_off(&[], choose, arguments, prepare_jars, native, progress)
+        self.start_with_recovery(None, choose, arguments, prepare_jars, native, progress)
     }
 
     /// The player accepted turning off these exact versions before resuming Play. Apply the
     /// change under admission for that same profile and before staging any build inputs.
-    pub fn start_with_mods_off(
+    pub fn start_with_recovery(
         self,
-        turn_off: &[(String, String)],
+        recovery: Option<ModRecovery>,
         choose: impl FnOnce() -> Result<FirstBuild, String>,
         arguments: impl FnOnce(&mut Command) -> Result<(), String>,
         prepare_jars: impl FnOnce(&Command) -> Result<(), String>,
@@ -112,27 +143,19 @@ impl Client<'_> {
         let mut profile =
             Profile::open_instance(&backend::game_home(), &backend::data_dir(), self.instance)?;
         let instance = profile.admitted_instance(self.instance);
-        if !turn_off.is_empty() {
+        let mut choose = Some(choose);
+        let selected = if let Some(recovery) = recovery {
             let _manifest = profile.lock_inputs()?;
             cancellation.check()?;
-            let enabled = crate::native_status::enabled(profile.home());
-            if !turn_off.iter().all(|(id, version)| {
-                enabled
-                    .iter()
-                    .any(|(on, installed, _)| on == id && installed == version)
-            }) {
-                return Err(
-                    crate::i18n::tr("The enabled mods changed. No mods were turned off.")
-                        .to_owned()
-                        .into(),
-                );
-            }
-            let ids = turn_off
-                .iter()
-                .map(|(id, _)| id.as_str())
-                .collect::<Vec<_>>();
-            crate::browser::mod_list::set_all_enabled(profile.home(), &ids, false)?;
-        }
+            let selected = recovery.verify(&profile, &mut choose)?;
+            turn_off_mods(profile.home(), &recovery.mods, |mut file, bytes| {
+                file.write_all(bytes)?;
+                file.sync_all()
+            })?;
+            selected
+        } else {
+            None
+        };
         let check_build = |tag: &str, variant: Option<&BoundVariant>| {
             if self.accepted_account.is_none() && !developer_offline::enabled(tag) {
                 return Err(StartError::Account(NoOwner::default()));
@@ -142,7 +165,7 @@ impl Client<'_> {
         };
         let (active, registry_notices) = self.ready(
             &mut profile,
-            choose,
+            || selected.map_or_else(|| choose.expect("a first Play needs a selection")(), Ok),
             check_build,
             (cancellation, native_consent),
             &progress,
@@ -264,7 +287,7 @@ impl Client<'_> {
                     registry.as_deref(),
                     Some(&log),
                 )
-                .map_err(StartError::Native)?
+                .map_err(|error| native_failure(error, || Some(Build::Active(old))))?
                 .ok_or_else(unsettled)?;
             return Ok((active, notices));
         }
@@ -290,7 +313,9 @@ impl Client<'_> {
                         native_consent,
                         Some(&log),
                     )
-                    .map_err(StartError::Native)?;
+                    .map_err(|error| {
+                        native_failure(error, || first.recovery_selection().ok().map(Build::First))
+                    })?;
                 (image, notices)
             };
             // Resource preparation takes a version lock. Don't take it under the game
@@ -302,6 +327,102 @@ impl Client<'_> {
         }
         ready
     }
+}
+
+impl ModRecovery {
+    fn verify(
+        &self,
+        profile: &Profile,
+        choose: &mut Option<impl FnOnce() -> Result<FirstBuild, String>>,
+    ) -> Result<Option<FirstBuild>, String> {
+        let changed = || {
+            crate::i18n::tr("The profile's game build changed. No mods were turned off.").to_owned()
+        };
+        match (&self.build.0, profile.active()?) {
+            (Build::Active(failed), Some(now))
+                if now.profile == failed.profile
+                    && now.generation() == failed.generation()
+                    && now.same_base(failed) =>
+            {
+                now.verify_artifacts().map_err(|_| changed())?;
+                Ok(None)
+            }
+            (Build::First(failed), None) if !profile.has_accepted_bootstrap()? => {
+                let now = choose.take().expect("a first Play needs a selection")()
+                    .map_err(|_| changed())?;
+                if *failed == now {
+                    Ok(Some(now))
+                } else {
+                    Err(changed())
+                }
+            }
+            _ => Err(changed()),
+        }
+    }
+}
+
+/// The caller holds profile admission and the game-manifest lock through publication.
+fn turn_off_mods(
+    home: &Path,
+    mods: &[(String, String)],
+    stage: impl FnOnce(&File, &[u8]) -> io::Result<()>,
+) -> Result<(), String> {
+    use sunrise_launcher_smod::mod_list::{ModList, FILE};
+    let path = home.join(FILE);
+    let original = super::optional_bytes(&path)?.unwrap_or_default();
+    let text = std::str::from_utf8(&original).map_err(|error| super::at(&path, error))?;
+    let enabled = ModList::parse(text).enabled;
+    let packages = super::scan_packages(home)?;
+    let turns_off = |id: &str| mods.iter().any(|(off, _)| off == id);
+    if mods.is_empty()
+        || !mods.iter().all(|(id, version)| {
+            enabled.contains(id)
+                && packages.iter().any(|pkg| {
+                    pkg.manifest.native.is_some()
+                        && pkg.manifest.id == *id
+                        && pkg.manifest.version == *version
+                })
+        })
+    {
+        return Err(crate::i18n::tr("The enabled mods changed. No mods were turned off.").into());
+    }
+    for pkg in &packages {
+        let manifest = &pkg.manifest;
+        if enabled.contains(&manifest.id) && !turns_off(&manifest.id) {
+            if let Some((required, _)) = manifest
+                .required_client_dependencies()
+                .find(|(id, _)| turns_off(id))
+            {
+                let dependency = packages
+                    .iter()
+                    .find(|pkg| pkg.manifest.id == *required)
+                    .expect("the exact mod to turn off was verified");
+                return Err(crate::i18n::trf(
+                    "{mod} needs {dependency}. No mods were turned off.",
+                    &[
+                        ("mod", &manifest.name),
+                        ("dependency", &dependency.manifest.name),
+                    ],
+                ));
+            }
+        }
+    }
+    // Keep the unrelated lines byte for byte, including key bindings and line endings.
+    let mut next = String::with_capacity(text.len());
+    for line in text.split_inclusive('\n') {
+        if !line
+            .split_once(':')
+            .is_some_and(|(key, _)| key.trim().strip_prefix("mod.").is_some_and(turns_off))
+        {
+            next.push_str(line);
+        }
+    }
+    let staged = tempfile::NamedTempFile::new_in(home).map_err(|error| super::at(&path, error))?;
+    stage(staged.as_file(), next.as_bytes()).map_err(|error| super::at(&path, error))?;
+    staged
+        .persist(&path)
+        .map_err(|error| super::at(&path, error))?;
+    Ok(())
 }
 
 #[cfg(test)]

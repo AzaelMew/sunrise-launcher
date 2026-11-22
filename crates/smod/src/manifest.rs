@@ -410,6 +410,14 @@ impl Internal {
 }
 
 impl Manifest {
+    /// Dependencies that must be present for a client installation.
+    pub fn required_client_dependencies(&self) -> impl Iterator<Item = (&String, &Dependency)> {
+        self.dependencies.iter().filter(|(_, need)| match need {
+            Dependency::Version(_) => true,
+            Dependency::Detailed(need) => !need.optional && need.side != Side::Server,
+        })
+    }
+
     pub fn parse(text: &str) -> Result<Self, String> {
         let m: Manifest = toml::from_str(text).map_err(|e| format!("{MANIFEST}: {e}"))?;
 

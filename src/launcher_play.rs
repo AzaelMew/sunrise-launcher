@@ -19,6 +19,16 @@ pub(crate) enum PlayDestination {
 }
 
 impl PlayDestination {
+    pub(crate) fn check_mod_recovery(&self) -> Result<(), &'static str> {
+        if matches!(self, Self::Quick("--world", _)) {
+            Err(tr(
+                "This world was not opened. Turning off mods could remove content from it.",
+            ))
+        } else {
+            Ok(())
+        }
+    }
+
     pub(super) fn apply(self, cmd: &mut std::process::Command) -> Result<(), String> {
         match self {
             Self::Home => (),
@@ -51,9 +61,12 @@ impl PlayIntent {
 }
 
 impl Launcher {
-    pub(crate) fn retry_managed_play(&mut self, turn_off: Vec<(String, String)>) {
+    pub(crate) fn retry_managed_play(
+        &mut self,
+        recovery: Option<sunrise_launcher::managed_play::ModRecovery>,
+    ) {
         if self.client.is_some()
-            || (self.launch_busy() && (!turn_off.is_empty() || !self.registry_accepts_play()))
+            || (self.launch_busy() && (recovery.is_some() || !self.registry_accepts_play()))
         {
             return;
         }
@@ -64,14 +77,20 @@ impl Launcher {
         if !request.matches_profile(current) {
             return;
         }
+        if recovery.is_some() {
+            if let Err(reason) = request.destination.check_mod_recovery() {
+                self.client_error = Some(reason.into());
+                return;
+            }
+        }
         let current = current.clone();
         self.close_sheet();
         self.client_error = None;
         self.prepare_error = None;
-        if turn_off.is_empty() {
-            self.resume_play(request);
+        if recovery.is_some() {
+            self.start_managed_client(current, request, recovery);
         } else {
-            self.start_managed_client(current, request, turn_off);
+            self.resume_play(request);
         }
     }
 }
@@ -269,7 +288,7 @@ impl Launcher {
         &mut self,
         instance: instances::Instance,
         intent: PlayIntent,
-        turn_off: Vec<(String, String)>,
+        recovery: Option<sunrise_launcher::managed_play::ModRecovery>,
     ) {
         use sunrise_launcher::managed_play::{Client, FirstBuild, Progress};
         let target = self.profile_target(&instance);
@@ -308,8 +327,8 @@ impl Launcher {
                 explicit_account: false,
                 piped: true,
             }
-            .start_with_mods_off(
-                &turn_off,
+            .start_with_recovery(
+                recovery,
                 || {
                     if let Some(tag) = target
                         .as_deref()
@@ -677,6 +696,20 @@ mod tests {
         fn refuse(&mut self, refusal: SignInRefusal) {
             self.refused.push(refusal);
         }
+    }
+
+    #[test]
+    fn a_world_tile_does_not_authorize_turning_mods_off_to_play() {
+        let world = PlayDestination::Quick("--world", "My world".into());
+        assert_eq!(
+            world.check_mod_recovery(),
+            Err("This world was not opened. Turning off mods could remove content from it.")
+        );
+        assert_eq!(PlayDestination::Home.check_mod_recovery(), Ok(()));
+        assert_eq!(
+            PlayDestination::Quick("--server", "example.invalid".into()).check_mod_recovery(),
+            Ok(())
+        );
     }
 
     #[test]

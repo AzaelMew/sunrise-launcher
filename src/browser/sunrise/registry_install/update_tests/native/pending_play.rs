@@ -79,13 +79,13 @@ fi
     };
     if stop {
         assert!(
-            matches!(error, StartError::Native(native_mods::Failed::Other(ref e))
+            matches!(error, StartError::Native(native_mods::Failed::Other(ref e), _)
             if e == native_mods::CANCELLED),
             "{error:?}"
         );
     } else {
         assert!(
-            matches!(error, StartError::Native(native_mods::Failed::Mods { ref left, compiling: true, .. })
+            matches!(error, StartError::Native(native_mods::Failed::Mods { ref left, compiling: true, .. }, _)
             if left.len() == 1 && left[0].id == BROKEN),
             "{error:?}"
         );

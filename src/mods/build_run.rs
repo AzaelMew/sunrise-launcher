@@ -96,6 +96,8 @@ pub(crate) struct Run {
     pub log_open: bool,
     /// Play started it; keep that identity until its worker reports the result.
     pub for_play: bool,
+    /// The admitted game build; a registry conflict alone cannot authorize an edit.
+    pub failed_build: Option<std::sync::Arc<sunrise_launcher::managed_play::FailedBuild>>,
     pub stop_requested: bool,
     /// When it ended with its window closed: the strip says how it went for [`SAID_FOR`].
     pub said_at: Option<Instant>,
@@ -139,6 +141,7 @@ impl Run {
             log: None,
             log_open: false,
             for_play,
+            failed_build: None,
             stop_requested: false,
             said_at: None,
         }
@@ -225,7 +228,6 @@ impl Run {
         let mut action = None;
         let summary = match failure {
             Failed::RegistryConflict { conflicts, .. } => {
-                let mut names = Vec::new();
                 let mut mods = Vec::new();
                 for line in &mut self.lines {
                     let reasons = conflicts
@@ -257,25 +259,25 @@ impl Run {
                         .collect::<Vec<_>>();
                     if !reasons.is_empty() {
                         line.state = State::Failed(reasons.join("\n"));
-                        names.push(line.title.as_str());
                         mods.push((line.id.clone(), line.version.clone()));
                     }
                 }
                 // Don't offer to continue if any of the reported mods isn't in this run's rows.
                 if self.for_play
+                    && !mods.is_empty()
                     && conflicts
                         .iter()
                         .all(|c| mods.iter().any(|(id, _)| *id == c.mod_id))
                 {
-                    let label = match names.as_slice() {
-                        [] => None,
-                        [name] => Some(trf("Turn off {mod} and play", &[("mod", name)])),
-                        many => Some(trf(
-                            "Turn off {count} mods",
-                            &[("count", &many.len().to_string())],
-                        )),
+                    let label = if mods.len() == 1 {
+                        tr("Turn off this mod and play").to_owned()
+                    } else {
+                        trf(
+                            "Turn off {count} mods and play",
+                            &[("count", &mods.len().to_string())],
+                        )
                     };
-                    action = label.map(|label| Recovery::TurnOff { label, mods });
+                    action = Some(Recovery::TurnOff { label, mods });
                 }
                 tr("These mods need dependencies that this game build can't use.").into()
             }
@@ -580,7 +582,7 @@ mod tests {
         assert_eq!(
             stop.action,
             Some(Recovery::TurnOff {
-                label: "Turn off ZOOM and play".into(),
+                label: "Turn off this mod and play".into(),
                 mods: vec![("zoom".into(), "1.0.0".into())],
             })
         );
@@ -595,7 +597,7 @@ mod tests {
         assert_eq!(run.counts().failed, 2);
         assert!(
             matches!(&run.end, Some(End::Stopped(stop)) if stop.action == Some(Recovery::TurnOff {
-                label: "Turn off 2 mods".into(),
+                label: "Turn off 2 mods and play".into(),
                 mods: vec![("minimap".into(), "1.0.0".into()), ("zoom".into(), "1.0.0".into())],
             }))
         );

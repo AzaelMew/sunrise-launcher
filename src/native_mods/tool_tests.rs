@@ -132,8 +132,44 @@ fn a_tool_run_reports_its_mods_asks_consent_and_ends_built_or_blamed() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Crates with no build script and no proc macro run nothing while building, so the player is
-/// not asked about them and the tool is told yes (#104).
+/// Captured from the published Dev SDK 7cfdf81463eb with an API-only `camera_blur`
+/// package pinned to log 0.4.35. Only the absolute scratch path was replaced.
+#[cfg(unix)]
+#[test]
+fn published_sdk_reply_names_the_archive_id_not_the_cargo_package() {
+    use super::super::{registry_failure, ConflictRequirement, Failed, RegistryConflict};
+    let dir = tempfile::tempdir().unwrap();
+    let reply =
+        include_str!("../../tests/fixtures/native-registry-sdk-7cfdf81463eb.jsonl").trim_end();
+    let reported = run(
+        fake(dir.path(), &[reply, "EXIT1"]),
+        "{}",
+        None,
+        &|_, _, _| (),
+        &Cancellation::default(),
+        None,
+        None,
+    )
+    .unwrap_err();
+    assert!(reported.blame.is_none());
+    let raw = reported.error.clone();
+    let Failed::RegistryConflict { conflicts, error } =
+        registry_failure::classify(reported.error, ["camera_blur", "loose_mod"].into_iter())
+    else {
+        panic!("expected an attributed SDK resolver conflict")
+    };
+    assert_eq!(error, raw);
+    assert_eq!(
+        conflicts,
+        [RegistryConflict {
+            mod_id: "camera_blur".into(),
+            package: "log".into(),
+            requirement: ConflictRequirement::Version("=0.4.35".into()),
+            game: "0.4.34".into(),
+        }]
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn resolver_failure_uses_cargos_requiring_chains_not_the_mods_lock_versions() {
@@ -154,13 +190,13 @@ fn resolver_failure_uses_cargos_requiring_chains_not_the_mods_lock_versions() {
     assert!(reported.blame.is_none());
     assert_eq!(reported.error, details);
     // A path printed by the SDK must name a mod that was actually staged.
-    let foreign = "mod-not-staged";
+    let foreign = "mod_not_staged";
     reported
         .error
-        .push_str(&details.replace("mod-motion-blur", foreign));
+        .push_str(&details.replace("mod_motion_blur", foreign));
     let Failed::RegistryConflict { conflicts, error } = registry_failure::classify(
         reported.error,
-        ["mod-motion-blur", "mod-lights", "loose_mod"].into_iter(),
+        ["mod_motion_blur", "mod_lights", "loose_mod"].into_iter(),
     ) else {
         panic!("expected attributed conflicts")
     };
@@ -169,13 +205,13 @@ fn resolver_failure_uses_cargos_requiring_chains_not_the_mods_lock_versions() {
         conflicts,
         [
             RegistryConflict {
-                mod_id: "mod-motion-blur".into(),
+                mod_id: "mod_motion_blur".into(),
                 package: "syn".into(),
                 requirement: ConflictRequirement::Version("=3.0.10".into()),
                 game: "3.0.6".into(),
             },
             RegistryConflict {
-                mod_id: "mod-lights".into(),
+                mod_id: "mod_lights".into(),
                 package: "log".into(),
                 requirement: ConflictRequirement::Version("=0.4.35".into()),
                 game: "0.4.34".into(),
@@ -187,12 +223,12 @@ fn resolver_failure_uses_cargos_requiring_chains_not_the_mods_lock_versions() {
 #[test]
 fn feature_conflicts_use_the_requiring_mod_even_when_its_version_requirement_fits() {
     use super::super::{registry_failure, ConflictRequirement, Failed};
-    let error = r#"Mods in Cargo's dependency report: mod-motion-blur.
+    let error = r#"Mods in Cargo's dependency report: mod_motion_blur.
 
 syn: the game locks 3.0.6, but resolution without the game's constraint selected 3.0.10.
 
 error: failed to select a version for `syn`.
-    ... required by package `mod_16 v0.1.1 (C:\temp\build\native-api\mod-motion-blur)`
+    ... required by package `mod_16 v0.1.1 (C:\temp\build\native-api\mod_motion_blur)`
 versions that meet the requirements `^3` are: 3.0.10, 3.0.6
 
 package `mod_16` depends on `syn` with feature `extra` but `syn` does not have that feature.
@@ -203,12 +239,12 @@ all possible versions conflict with previously selected packages
     ... which satisfies dependency `syn = "^3"` of package `mod_17 v0.1.1 (C:\temp\build\native-api\unrelated)`
 "#;
     let Failed::RegistryConflict { conflicts, .. } =
-        registry_failure::classify(error.into(), ["mod-motion-blur", "unrelated"].into_iter())
+        registry_failure::classify(error.into(), ["mod_motion_blur", "unrelated"].into_iter())
     else {
         panic!("expected one feature conflict")
     };
     assert_eq!(conflicts.len(), 1);
-    assert_eq!(conflicts[0].mod_id, "mod-motion-blur");
+    assert_eq!(conflicts[0].mod_id, "mod_motion_blur");
     assert_eq!(
         conflicts[0].requirement,
         ConflictRequirement::Feature("extra".into())
@@ -225,7 +261,7 @@ fn original_lock_comparison_and_network_failure_keep_distinct_actions() {
         ("error: failed to get successful HTTP response from `https://example.invalid`, got 404", false),
         ("error: failed to get successful HTTP response from `https://example.invalid`, got 503", true),
     ] {
-        assert!(matches!(registry_failure::classify(error.into(), ["mod-motion-blur"].into_iter()),
+        assert!(matches!(registry_failure::classify(error.into(), ["mod_motion_blur"].into_iter()),
             Failed::Tool { retryable, error: original } if retryable == expected && original == error));
     }
 }

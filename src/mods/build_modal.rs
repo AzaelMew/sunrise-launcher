@@ -253,14 +253,30 @@ impl Launcher {
                 }
             }))
         });
-        let recovery = stop.and_then(|stop| stop.action.clone()).filter(|_| {
-            self.play_retry.as_ref().is_some_and(|request| {
-                request.instance == run.instance
-                    && self
-                        .selected_instance()
-                        .is_some_and(|instance| request.matches_profile(instance))
-            })
+        let request = self.play_retry.as_ref().filter(|request| {
+            request.instance == run.instance
+                && self
+                    .selected_instance()
+                    .is_some_and(|instance| request.matches_profile(instance))
         });
+        let (recovery, refusal) = match (stop.and_then(|stop| stop.action.clone()), request) {
+            (Some(Recovery::Retry), Some(_)) => (Some((tr("Try again").to_owned(), None)), None),
+            (Some(Recovery::TurnOff { label, mods }), Some(request)) => {
+                match request.destination.check_mod_recovery() {
+                    Err(reason) => (None, Some(reason)),
+                    Ok(()) => (
+                        run.failed_build.clone().map(|build| {
+                            (
+                                label,
+                                Some(sunrise_launcher::managed_play::ModRecovery { build, mods }),
+                            )
+                        }),
+                        None,
+                    ),
+                }
+            }
+            _ => (None, None),
+        };
         let copy = diagnostic.map(|diagnostic| {
             let diagnostic = diagnostic.to_owned();
             let copy_id: SharedString = if run.log_open {
@@ -316,14 +332,10 @@ impl Launcher {
                 .flex_wrap()
                 .justify_end()
                 .gap(px(10.))
-                .children(recovery.map(|recovery| {
-                    let (label, mods) = match recovery {
-                        Recovery::Retry => (tr("Try again").to_owned(), Vec::new()),
-                        Recovery::TurnOff { label, mods } => (label, mods),
-                    };
+                .children(recovery.map(|(label, recovery)| {
                     button("play-build-retry", label).on_click(cx.listener(
                         move |this, _, _, cx| {
-                            this.retry_managed_play(mods.clone());
+                            this.retry_managed_play(recovery.clone());
                             cx.notify();
                         },
                     ))
@@ -357,6 +369,7 @@ impl Launcher {
             .flex_col()
             .child(head)
             .child(top)
+            .children(refusal.map(muted))
             .child(list)
             .children(diagnostic.map(|text| {
                 card().min_w_0().overflow_hidden().child(
@@ -466,7 +479,9 @@ impl Launcher {
                                     .child(
                                         div()
                                             .min_w_0()
-                                            .truncate()
+                                            .when(!matches!(line.state, State::Failed(_)), |d| {
+                                                d.truncate()
+                                            })
                                             .font_weight(FontWeight::SEMIBOLD)
                                             .when(waiting, |d| d.text_color(c(palette().muted)))
                                             .child(line.title.clone()),
