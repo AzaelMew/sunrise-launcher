@@ -42,7 +42,21 @@ pub(in crate::mods) fn libraries(index: &Index) -> HashSet<String> {
         .collect()
 }
 
-/// The collections' own cards for Discover: their members' downloads and newest day added up,
+/// A collection's downloads: its own count once the registry publishes one, else its members'
+/// downloads added up. The sum counts a player once per mod, so it runs high, but an index
+/// without the count would otherwise show every collection at 0 and sort it last. The sum stops at
+/// `u64::MAX`: published counts are any `u64`, and a plain sum panics in debug and wraps in release.
+pub(in crate::mods) fn downloads(collection: &Collection, index: &Index) -> u64 {
+    collection.downloads.unwrap_or_else(|| {
+        collection
+            .members
+            .iter()
+            .filter_map(|m| index.project(&m.id))
+            .fold(0, |sum, p| sum.saturating_add(p.downloads))
+    })
+}
+
+/// The collections' own cards for Discover: their downloads (`downloads`) and newest day,
 /// fitting when any member fits the build.
 pub(in crate::mods) fn cards(index: &Index, mods: &[Card]) -> Vec<Card> {
     index
@@ -66,7 +80,7 @@ pub(in crate::mods) fn cards(index: &Index, mods: &[Card]) -> Vec<Card> {
                 name: c.name.clone(),
                 authors: c.owners.join(", "),
                 summary: c.summary.clone(),
-                downloads: members.iter().map(|m| m.downloads).sum(),
+                downloads: downloads(c, index),
                 make: if members.iter().any(|m| m.make == Make::Native) {
                     Make::Native
                 } else {

@@ -42,6 +42,7 @@ mod pack_discover;
 mod pack_project;
 mod packs;
 mod project;
+pub(crate) mod refused;
 mod search;
 mod ui;
 pub(crate) use data_packs::names;
@@ -368,6 +369,8 @@ pub(crate) struct ModsState {
     revealed: Rc<std::cell::Cell<bool>>,
     /// A gallery picture enlarged over the window.
     viewer: Option<viewer::Viewer>,
+    /// What the refused-Add modal shows (`refused`).
+    refused: Option<refused::Refused>,
 }
 
 impl ModsState {
@@ -422,6 +425,7 @@ impl Default for ModsState {
             reveal: None,
             revealed: Default::default(),
             viewer: None,
+            refused: None,
         }
     }
 }

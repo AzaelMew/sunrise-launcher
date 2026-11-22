@@ -20,6 +20,11 @@ pub enum Route {
     Invalid {
         reason: String,
     },
+    /// Made for another build, and its package carries no list of what it uses, so it can't be
+    /// shown to fit this one: only its author can change that. Why, in the checker's words.
+    Unproven {
+        line: String,
+    },
     /// Not checked: the build's SDK isn't available (offline, or Sunrise isn't installed); why, as the player reads it.
     Unchecked {
         reason: String,

@@ -906,7 +906,10 @@ fn discover_folds_members_into_the_collection_and_hides_libraries_until_searched
     );
     let farm = all.iter().find(|c| c.id == "farm").unwrap();
     assert_eq!(farm.members, Some(3));
-    assert_eq!(farm.downloads, 30, "its mods' downloads added up");
+    assert_eq!(
+        farm.downloads, 30,
+        "no count of its own published: its mods' downloads added up, never 0"
+    );
     assert!(all.iter().find(|c| c.id == "lib").unwrap().library);
     assert!(!all.iter().find(|c| c.id == "jei").unwrap().library);
     // A search finds a member and a library like any other mod.
@@ -916,6 +919,39 @@ fn discover_folds_members_into_the_collection_and_hides_libraries_until_searched
     assert_eq!(names(&f), ["lib"]);
     f.text = "farm".into();
     assert_eq!(names(&f), ["farm"]);
+}
+
+#[test]
+fn a_collection_shows_its_own_downloads_once_the_registry_counts_them() {
+    let mut idx = zoo();
+    idx.collections[0].downloads = Some(5);
+    let all = cards(&idx, GAME);
+    let farm = all.iter().find(|c| c.id == "farm").unwrap();
+    assert_eq!(
+        farm.downloads, 5,
+        "the collection's own count, not its members' sum"
+    );
+    assert_eq!(collection::downloads(&idx.collections[0], &idx), 5);
+    // A published 0 is a real count, unlike a missing one.
+    idx.collections[0].downloads = Some(0);
+    assert_eq!(collection::downloads(&idx.collections[0], &idx), 0);
+}
+
+#[test]
+fn a_members_sum_that_passes_u64_max_stops_there() {
+    let mut idx = zoo();
+    assert_eq!(idx.collections[0].downloads, None);
+    for id in ["cow", "pig"] {
+        idx.projects
+            .iter_mut()
+            .find(|p| p.id == id)
+            .unwrap()
+            .downloads = u64::MAX;
+    }
+    assert_eq!(collection::downloads(&idx.collections[0], &idx), u64::MAX);
+    let all = cards(&idx, GAME);
+    let farm = all.iter().find(|c| c.id == "farm").unwrap();
+    assert_eq!(farm.downloads, u64::MAX, "neither a panic nor a wrap");
 }
 
 #[test]
