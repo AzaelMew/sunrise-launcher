@@ -15,6 +15,42 @@ pub(super) fn remove_names(rows: &[Row], labels: &[Option<String>]) -> BTreeMap<
         .collect()
 }
 
+impl ModsState {
+    fn installed_filters(&mut self, rows: &[Row]) -> model::FilterCounts {
+        let before = self.row_filter.clone();
+        let counts = model::counted_filters(rows, &mut self.row_filter);
+        if rows.is_empty() || self.row_filter != before {
+            self.selection.clear();
+            self.anchor = None;
+        }
+        counts
+    }
+
+    fn select_installed_row(&mut self, file: &str, shown: &[(String, String)], shift: bool) {
+        let Some(pos) = shown.iter().position(|(path, _)| path == file) else {
+            return;
+        };
+        let anchor = self
+            .anchor
+            .as_ref()
+            .filter(|_| shift)
+            .and_then(|anchor| shown.iter().position(|(path, _)| path == anchor));
+        if let Some(anchor) = anchor {
+            self.selection.extend(
+                shown[anchor.min(pos)..=anchor.max(pos)]
+                    .iter()
+                    .map(|(_, id)| id.clone()),
+            );
+        } else {
+            let id = &shown[pos].1;
+            if !self.selection.remove(id) {
+                self.selection.insert(id.clone());
+            }
+        }
+        self.anchor = Some(file.to_owned());
+    }
+}
+
 impl Launcher {
     pub(super) fn archive_display(&self, row: &Row) -> Option<&ArchiveDisplay> {
         self.ui
@@ -107,10 +143,11 @@ impl Launcher {
         let refresh_ready = refresh.is_none();
         page = page.children(refresh);
         let (rows, labels) = self.labeled_installed_rows();
+        if rows.is_empty() && !refresh_ready {
+            return page.into_any_element();
+        }
+        let model::FilterCounts { shows, kinds } = self.ui.mods.installed_filters(&rows);
         if rows.is_empty() {
-            if !refresh_ready {
-                return page.into_any_element();
-            }
             return page
                 .child(
                     card()
@@ -134,22 +171,18 @@ impl Launcher {
                 .into_any_element();
         }
 
-        let before = self.ui.mods.row_filter.clone();
-        let model::FilterCounts { shows, kinds } =
-            model::counted_filters(&rows, &mut self.ui.mods.row_filter);
-        let filter = self.ui.mods.row_filter.clone();
-        if filter != before {
-            self.ui.mods.selection.clear();
-            self.ui.mods.anchor = None;
-        }
-        let visible = model::visible(&rows, &filter);
-        let shown_ids: Rc<Vec<String>> = Rc::new(
+        let visible = model::visible(&rows, &self.ui.mods.row_filter);
+        let shown: Rc<Vec<_>> = Rc::new(
             visible
                 .iter()
-                .filter(|&&i| rows[i].selectable_archive())
-                .map(|&i| rows[i].id.clone())
+                .filter_map(|&i| {
+                    let row = &rows[i];
+                    let file = row.archive_file().filter(|_| row.selectable_archive())?;
+                    Some((file.to_owned(), row.id.clone()))
+                })
                 .collect(),
         );
+        let filter = self.ui.mods.row_filter.clone();
         let selected: Vec<&Row> = rows
             .iter()
             .filter(|r| r.selectable_archive() && self.ui.mods.selection.contains(&r.id))
@@ -160,7 +193,7 @@ impl Launcher {
             trf("{label} · {n}", &[("label", label), ("n", &n.to_string())])
         };
         let mut chips = div().flex().flex_wrap().items_center().gap(px(8.));
-        let shown = shows
+        let show_options = shows
             .into_iter()
             .map(|(which, n)| {
                 let label = match which {
@@ -177,7 +210,7 @@ impl Launcher {
                 (counted(label, n).into(), filter.show == which, pick)
             })
             .collect();
-        chips = chips.child(choices("alt-show", shown, cx).gap(px(8.)));
+        chips = chips.child(choices("alt-show", show_options, cx).gap(px(8.)));
         if !kinds.is_empty() {
             chips = chips.child(div().flex_none().w(px(1.)).h(px(20.)).bg(c(palette().line)));
         }
@@ -206,11 +239,11 @@ impl Launcher {
         page = page.child(chips);
 
         // ---- toolbar: select-all and the bulk actions, naming their scope
-        let selected_here = shown_ids
+        let selected_here = shown
             .iter()
-            .filter(|id| self.ui.mods.selection.contains(*id))
+            .filter(|(_, id)| self.ui.mods.selection.contains(id))
             .count();
-        let all_on = selected_here > 0 && selected_here == shown_ids.len();
+        let all_on = selected_here > 0 && selected_here == shown.len();
         let n_sel = selected.len();
         let registry_selected = selected.iter().filter(|row| row.local.is_none()).count();
         let busy = !refresh_ready || self.mods_busy();
@@ -244,7 +277,7 @@ impl Launcher {
             }
         };
         let toolbar = {
-            let ids = shown_ids.clone();
+            let all_shown = shown.clone();
             let select_all = checkbox("alt-select-all", all_on)
                 .when(selected_here > 0 && !all_on, |d| {
                     d.bg(c(palette().text))
@@ -253,9 +286,11 @@ impl Launcher {
                 })
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     let m = &mut this.ui.mods;
-                    match ids.iter().all(|id| m.selection.contains(id)) {
+                    match all_shown.iter().all(|(_, id)| m.selection.contains(id)) {
                         true => m.selection.clear(),
-                        false => m.selection.extend(ids.iter().cloned()),
+                        false => m
+                            .selection
+                            .extend(all_shown.iter().map(|(_, id)| id.clone())),
                     }
                     m.anchor = None;
                     cx.notify();
@@ -359,7 +394,7 @@ impl Launcher {
                             "{count} selected of {shown} shown",
                             &[
                                 ("count", &n_sel.to_string()),
-                                ("shown", &shown_ids.len().to_string()),
+                                ("shown", &shown.len().to_string()),
                             ],
                         )),
                     ))
@@ -409,7 +444,6 @@ impl Launcher {
                 .map(|notice| note(notice.to_owned()).p(px(10.))),
         );
         let mut n = 0;
-        let mut position = 0;
         for (collection, group) in model::installed_groups(&rows, &visible) {
             if let Some(title) = collection {
                 let head = div()
@@ -435,12 +469,7 @@ impl Launcher {
             }
             for &i in group {
                 let r = rows[i].clone();
-                let pos = position;
-                if r.selectable_archive() {
-                    position += 1;
-                }
-                list =
-                    list.child(self.row(n, pos, r, labels[i].clone(), shown_ids.clone(), busy, cx));
+                list = list.child(self.row(n, r, labels[i].clone(), shown.clone(), busy, cx));
                 n += 1;
             }
         }
@@ -544,14 +573,12 @@ impl Launcher {
         (rows, labels)
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn row(
         &mut self,
         n: usize,
-        pos: usize,
         r: Row,
         label: Option<String>,
-        ids: Rc<Vec<String>>,
+        shown: Rc<Vec<(String, String)>>,
         busy: bool,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
@@ -578,24 +605,15 @@ impl Launcher {
         let error = self.ui.mods.errors.get(&r.id).cloned();
 
         let check = {
-            let id = r.id.clone();
+            let file = r.archive_file().map(str::to_owned);
             checkbox(("alt-row-check", n), selected).on_click(cx.listener(
                 move |this, ev: &ClickEvent, _, cx| {
                     cx.stop_propagation();
-                    let m = &mut this.ui.mods;
-                    match (ev.modifiers().shift, m.anchor) {
-                        (true, Some(a)) => {
-                            let (lo, hi) = (a.min(pos), a.max(pos));
-                            m.selection
-                                .extend(ids[lo..=hi.min(ids.len() - 1)].iter().cloned());
-                        }
-                        _ => {
-                            if !m.selection.remove(&id) {
-                                m.selection.insert(id.clone());
-                            }
-                        }
+                    if let Some(file) = &file {
+                        this.ui
+                            .mods
+                            .select_installed_row(file, &shown, ev.modifiers().shift);
                     }
-                    m.anchor = Some(pos);
                     cx.notify();
                 },
             ))
@@ -1086,5 +1104,72 @@ impl Launcher {
             Ok(_) => self.reload_instances(),
             Err(e) => self.ui.mods.notice = Some(Err(e)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shift_click_resolves_its_archive_after_a_catalogue_reply_regroups_the_list() {
+        let mut mods = ModsState::default();
+        let local = ["ant", "bird", "cat", "dog"].map(|id| model::Local {
+            id: id.into(),
+            file: format!("sunrise-native-mods/{id}.smod"),
+            name: id.into(),
+            version: "1.0.0".into(),
+            github: None,
+            native: true,
+            unreadable: false,
+        });
+        let mut rows = model::rows(
+            &[],
+            &model::World {
+                index: None,
+                game: "26.3",
+                unfit_updates: &BTreeSet::new(),
+                enabled: &HashSet::new(),
+                unbuilt: &HashSet::new(),
+                native_allowed: true,
+                chosen: &BTreeMap::new(),
+                local: &local,
+            },
+        );
+        let shown = |rows: &[Row]| -> Vec<_> {
+            rows.iter()
+                .map(|row| (row.archive_file().unwrap().to_owned(), row.id.clone()))
+                .collect()
+        };
+        let before = shown(&rows);
+        mods.select_installed_row(&local[2].file, &before, false);
+        // The catalogue lists Cat in a collection after the first click.
+        rows[2].collection = Some(model::CollectionGroup {
+            id: "pets".into(),
+            name: "Pets".into(),
+        });
+        model::group_installed(&mut rows);
+        let after = shown(&rows);
+        assert_eq!(after[0].0, local[2].file);
+        mods.select_installed_row(&local[0].file, &after, true);
+        assert_eq!(mods.selection, ["ant".to_owned(), "cat".to_owned()].into());
+        // If the anchor no longer exists, treat a Shift-click like a normal click.
+        let remaining = shown(&rows[2..]);
+        mods.select_installed_row(&remaining[1].0, &remaining, true);
+        assert!(!mods.selection.contains("bird"));
+        assert!(mods.selection.contains("dog"));
+    }
+
+    #[test]
+    fn confirmed_empty_installed_resets_filters_selection_and_anchor() {
+        let mut mods = ModsState::default();
+        mods.row_filter.show = model::Show::On;
+        mods.row_filter.makes.insert(model::Make::Content);
+        mods.selection.insert("fern".into());
+        mods.anchor = Some("sunrise-mods/fern.smod".into());
+        let counts = mods.installed_filters(&[]);
+        assert!(counts.shows.is_empty() && counts.kinds.is_empty());
+        assert_eq!(mods.row_filter, model::RowFilter::default());
+        assert!(mods.selection.is_empty() && mods.anchor.is_none());
     }
 }

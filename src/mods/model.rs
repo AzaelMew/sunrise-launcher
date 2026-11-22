@@ -952,7 +952,11 @@ pub(super) fn rows(entries: &[Entry], w: &World) -> Vec<Row> {
             id: l.id.clone(),
             title: l.name.clone(),
             authors: String::new(),
-            make: l.native.then_some(Make::Native),
+            make: match (l.native, l.unreadable) {
+                (true, _) => Some(Make::Native),
+                (false, false) => Some(Make::Content),
+                (false, true) => None,
+            },
             version: l.version.clone(),
             on,
             need,

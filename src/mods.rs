@@ -340,8 +340,8 @@ pub(crate) struct ModsState {
     /// The worlds' data packs and the world picker (`data_packs`).
     data: data_packs::DataState,
     selection: BTreeSet<String>,
-    /// The row last clicked, for Shift-click ranges (an index into the visible rows).
-    anchor: Option<usize>,
+    /// The last clicked archive path, resolved in the current list for Shift-click.
+    anchor: Option<String>,
     snapshot: Option<Snapshot>,
     open: Option<Open>,
     page_request: u64,

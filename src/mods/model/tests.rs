@@ -672,7 +672,16 @@ fn native_files_the_browser_didnt_install_are_listed_and_never_planned() {
     // permission nor a build.
     let content = r.iter().find(|r| r.id == "by_hand").expect("listed");
     assert_eq!((content.title.as_str(), content.on), ("By Hand", true));
-    assert_eq!((content.make, &content.need), (None, &None));
+    assert_eq!((content.make, &content.need), (Some(Make::Content), &None));
+    let mut filter = RowFilter {
+        makes: BTreeSet::from([Make::Content]),
+        ..RowFilter::default()
+    };
+    let counts = counted_filters(&r, &mut filter);
+    let contents = visible(&r, &filter);
+    assert!(contents.iter().any(|&i| r[i].id == "by_hand"));
+    assert!(contents.iter().all(|&i| r[i].make == Some(Make::Content)));
+    assert!(counts.kinds.contains(&(Make::Content, contents.len())));
     assert!(content.local.is_some() && content.entry.is_none());
     assert!(!bulk_updatable(mine));
     let shown = visible(&r, &RowFilter::default());
