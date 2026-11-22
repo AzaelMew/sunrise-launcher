@@ -676,7 +676,7 @@ fn pinned_source_preflight_refusal_cancel_and_failed_update_keep_the_profile() {
         ),
         |fixture| {
             use crate::browser::sunrise::sources::{self, Source, Tracker};
-            use crate::github_mods::{self, SourceTrack};
+            use crate::github_mods::{self, AddedFrom, SourceTrack};
             use crate::native_mods::Cancellation;
             configure_tool(&fixture);
             let home = fixture.home();
@@ -754,23 +754,37 @@ fn pinned_source_preflight_refusal_cancel_and_failed_update_keep_the_profile() {
             )
             .unwrap();
             let cancellation = Cancellation::default();
-            let add_candidate = || {
-                prepare_source(
+            let collection = AddedFrom::Collection {
+                id: "lighting".into(),
+                name: "Lighting".into(),
+            };
+            let add_candidate = |added_from| {
+                let pin = sources::resolve(&listing, true).unwrap();
+                let packed = pack_sources(&[pin], added_from, &cancellation)
+                    .pop()
+                    .unwrap()?;
+                prepare_pasted_sources(
                     &fixture.instance,
                     identity,
                     BUILD,
-                    SourceRequest::Add(sources::resolve(&listing, true).unwrap()),
+                    vec![packed],
                     &cancellation,
                 )
+                .map(|mut prepared| prepared.pop().unwrap())
             };
             put("0.8.0", 'b', SOURCE, "");
-            assert!(matches!(add_candidate(), Err(SourceError::DoesNotFit(_))));
+            assert!(matches!(
+                add_candidate(collection.clone()),
+                Err(SourceError::DoesNotFit(_))
+            ));
             put("0.9.0", 'a', SOURCE, "[dependencies]\nfixture_lib='^1'\n");
             assert!(
-                matches!(add_candidate(), Err(SourceError::Dependency { required: Some(id), .. }) if id == "fixture_lib")
+                matches!(add_candidate(collection.clone()), Err(SourceError::Dependency { required: Some(id), .. }) if id == "fixture_lib")
             );
             let old = put("1.0.0", 'a', SOURCE, "");
-            let ready = add_candidate().unwrap();
+            let solo = add_candidate(AddedFrom::Discover).unwrap();
+            assert_eq!(solo.origin().added_from, Some(AddedFrom::Discover));
+            let ready = add_candidate(collection.clone()).unwrap();
             assert!(!home.join(ARCHIVE).exists());
             assert!(!home.join(crate::profile_txn::POINTER).exists());
             assert!(!fixture.root.join("compiled").exists());
@@ -828,6 +842,33 @@ fn pinned_source_preflight_refusal_cancel_and_failed_update_keep_the_profile() {
             .unwrap();
             let recorded = github_mods::origin(home, ID).unwrap();
             assert_eq!(recorded, *ready.origin());
+            assert_eq!(recorded.added_from, Some(collection));
+            // A second queued add of the same bytes from Discover keeps the collection receipt.
+            let pin = sources::resolve(&listing, true).unwrap();
+            let duplicate = pack_sources(&[pin], AddedFrom::Discover, &cancellation)
+                .pop()
+                .unwrap()
+                .unwrap();
+            add_sources(
+                &fixture.instance,
+                identity,
+                BUILD,
+                vec![duplicate],
+                SourceHooks {
+                    install: InstallHooks {
+                        progress: &|_| panic!("nothing to install"),
+                        native: &|_| panic!("nothing to install"),
+                        registry_crates: None,
+                        continue_after_failure: &|_| false,
+                        resolve: None,
+                    },
+                    cancellation: &cancellation,
+                    authorize: &|_| panic!("nothing to install"),
+                    approve_worlds: &no_world_question,
+                },
+            )
+            .unwrap();
+            assert_eq!(github_mods::origin(home, ID).unwrap(), recorded);
             assert!(
                 matches!(recorded.source.as_ref().map(|r| &r.track), Some(SourceTrack::Branch(branch)) if branch == "main")
             );
@@ -898,6 +939,7 @@ fn pinned_source_preflight_refusal_cancel_and_failed_update_keep_the_profile() {
             );
             let updated = update_candidate().unwrap();
             assert_eq!(updated.origin().commit, next);
+            assert_eq!(updated.origin().added_from, recorded.added_from);
             build(&updated, &cancellation, &|_| Ok(true), &|_| true).unwrap();
             assert!(mod_list::is_enabled(home, ID));
             assert_eq!(

@@ -183,6 +183,7 @@ fn pack_snapshot(
         commit: pin.sha().to_owned(),
         asset: None,
         sha256: package.sha256.clone(),
+        added_from: None,
         source: Some(SourceOrigin {
             repo_id: source.repo_id(),
             manifest: source.manifest().into(),
@@ -245,6 +246,7 @@ pub(crate) fn pack_pasted(
             commit: found.commit.clone(),
             asset: None,
             sha256: package.sha256.clone(),
+            added_from: Some(AddedFrom::Github),
             source: Some(SourceOrigin {
                 repo_id: meta.repo_id,
                 manifest,

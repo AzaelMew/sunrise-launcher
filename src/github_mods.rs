@@ -387,6 +387,17 @@ pub struct Origin {
     pub sha256: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<SourceOrigin>,
+    /// The install action, not whether the repository appears in today's catalogue.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub added_from: Option<AddedFrom>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AddedFrom {
+    Github,
+    Discover,
+    Collection { id: String, name: String },
 }
 
 impl Origin {
@@ -474,6 +485,7 @@ impl Packed {
             asset: asset.map(|a| a.name.clone()),
             sha256: self.sha256.clone(),
             source: None,
+            added_from: Some(AddedFrom::Github),
         }
     }
 

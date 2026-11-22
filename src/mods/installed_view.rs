@@ -498,7 +498,7 @@ impl Launcher {
                 }
                 row.collection = registry_collections
                     .get(entry.project.as_str())
-                    .map(|name| (*name).to_owned());
+                    .map(|collection| (*collection).into());
             }
             if let Some(archive) = self.archive_display(row) {
                 row.title.clone_from(&archive.name);
@@ -510,7 +510,7 @@ impl Launcher {
                 let update = self.source_update_version(origin).map(str::to_owned);
                 if let Some(source) = self.source_listing(origin) {
                     row.authors = source.owner().to_owned();
-                    row.collection = self.source_collection_name(source).map(str::to_owned);
+                    row.collection = self.source_collection_for(source).map(Into::into);
                     row.source_listing = Some(source.clone());
                 }
                 row.update = update;

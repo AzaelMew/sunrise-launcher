@@ -385,7 +385,10 @@ impl Launcher {
         source_matches_origin(source, origin).then_some(source)
     }
 
-    pub(super) fn source_collection_name(&self, source: &Source) -> Option<&str> {
+    pub(super) fn source_collection_for(
+        &self,
+        source: &Source,
+    ) -> Option<&sunrise_launcher_smod::index::Collection> {
         self.ui
             .mods
             .nightly
@@ -399,7 +402,6 @@ impl Launcher {
                     .iter()
                     .any(|member| member.id == source.id())
             })
-            .map(|collection| collection.name.as_str())
     }
 
     fn source_artwork(
@@ -628,6 +630,7 @@ mod tests {
             sha256: "0".repeat(64),
             tag: None,
             asset: None,
+            added_from: None,
             source: Some(sunrise_launcher::github_mods::SourceOrigin {
                 repo_id: 42,
                 manifest: "sunrise-mod.toml".into(),

@@ -151,7 +151,7 @@ pub(super) fn cards(index: &Index, game: &str) -> Vec<Card> {
                         .installable(p, game)
                         .is_some_and(|v| v.native_binaries.is_empty()),
                 members: None,
-                part_of: part_of.get(p.id.as_str()).map(|name| (*name).to_owned()),
+                part_of: part_of.get(p.id.as_str()).map(|c| c.name.clone()),
                 library: libraries.contains(&p.id),
             })
         })
@@ -455,6 +455,21 @@ pub(super) enum Need {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub(super) struct CollectionGroup {
+    pub(super) id: String,
+    pub(super) name: String,
+}
+
+impl From<&index::Collection> for CollectionGroup {
+    fn from(collection: &index::Collection) -> Self {
+        Self {
+            id: collection.id.clone(),
+            name: collection.name.clone(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub(super) struct Row {
     pub(super) id: String,
     pub(super) title: String,
@@ -475,7 +490,7 @@ pub(super) struct Row {
     pub(super) local: Option<Local>,
     pub(super) icon: Option<String>,
     pub(super) source_listing: Option<sunrise_launcher::browser::sunrise::sources::Source>,
-    pub(super) collection: Option<String>,
+    pub(super) collection: Option<CollectionGroup>,
     pub(super) entry: Option<Entry>,
     /// It can't run on the game this setup plays: the build left it out.
     pub(super) unfit: Option<Unfit>,
@@ -763,16 +778,20 @@ impl Row {
     }
 
     pub(super) fn source_label(&self) -> &str {
-        if let Some(collection) = &self.collection {
-            return collection;
-        }
-        match &self.local {
-            None => tr("Sunrise mods"),
-            Some(local) => match &local.github {
-                Some(origin) if origin.source.is_some() => tr("Sunrise mods"),
-                Some(_) => tr("From GitHub"),
-                None => tr("Local file"),
-            },
+        use sunrise_launcher::github_mods::AddedFrom;
+        let Some(local) = &self.local else {
+            return tr("Sunrise mods");
+        };
+        let Some(origin) = &local.github else {
+            return tr("Local file");
+        };
+        match &origin.added_from {
+            Some(AddedFrom::Collection { name, .. }) => name,
+            Some(AddedFrom::Discover) => tr("Sunrise mods"),
+            Some(AddedFrom::Github) => tr("From GitHub"),
+            // Only the paste flow installed GitHub packages without a source tracker.
+            None if origin.source.is_none() => tr("From GitHub"),
+            None => tr("Source"),
         }
     }
 
@@ -1043,8 +1062,11 @@ impl Default for RowFilter {
 /// Installed uses collection order first, keeping the status and name order within each group.
 pub(super) fn group_installed(rows: &mut [Row]) {
     sort(rows);
-    rows.sort_by(|a, b| {
-        (a.collection.is_none(), &a.collection).cmp(&(b.collection.is_none(), &b.collection))
+    rows.sort_by(|a, b| match (&a.collection, &b.collection) {
+        (Some(a), Some(b)) => a.id.cmp(&b.id),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => std::cmp::Ordering::Equal,
     });
 }
 
@@ -1052,9 +1074,10 @@ pub(super) fn installed_groups<'a>(
     rows: &'a [Row],
     visible: &'a [usize],
 ) -> impl Iterator<Item = (Option<&'a str>, &'a [usize])> {
+    let collection = |i: usize| rows[i].collection.as_ref();
     visible
-        .chunk_by(|a, b| rows[*a].collection == rows[*b].collection)
-        .map(|group| (rows[group[0]].collection.as_deref(), group))
+        .chunk_by(move |a, b| collection(*a).map(|c| &c.id) == collection(*b).map(|c| &c.id))
+        .map(move |group| (collection(group[0]).map(|c| c.name.as_str()), group))
 }
 
 pub(super) struct FilterCounts {

@@ -85,7 +85,7 @@ fn entry(id: &str, version: &str, native: bool, sha: &str) -> Entry {
 
 #[test]
 fn installed_source_label_distinguishes_catalogue_receipts_and_direct_github() {
-    use sunrise_launcher::github_mods::{Origin, SourceOrigin, SourceTrack};
+    use sunrise_launcher::github_mods::{AddedFrom, Origin, SourceOrigin, SourceTrack};
     let idx = index(vec![], vec![]);
     let none = HashSet::new();
     let github = Origin {
@@ -98,6 +98,7 @@ fn installed_source_label_distinguishes_catalogue_receipts_and_direct_github() {
         tag: None,
         asset: None,
         source: None,
+        added_from: None,
     };
     let locals = [Local {
         id: github.id.clone(),
@@ -117,16 +118,38 @@ fn installed_source_label_distinguishes_catalogue_receipts_and_direct_github() {
     )
     .remove(0);
     assert_eq!(row.source_label(), tr("From GitHub"));
-    row.local.as_mut().unwrap().github.as_mut().unwrap().source = Some(SourceOrigin {
+    row.collection = Some(CollectionGroup {
+        id: "collection-a".into(),
+        name: "Collection A".into(),
+    });
+    let origin = row.local.as_mut().unwrap().github.as_mut().unwrap();
+    origin.source = Some(SourceOrigin {
         repo_id: 42,
         manifest: "sunrise-mod.toml".into(),
         track: SourceTrack::Branch("main".into()),
         published_at: None,
     });
-    assert_eq!(row.source_label(), tr("Sunrise mods"));
-    row.collection = Some("Collection A".into());
-    assert_eq!(row.source_label(), "Collection A");
-    row.collection = None;
+    assert_eq!(row.source_label(), tr("Source"));
+    for (added_from, expected) in [
+        (AddedFrom::Github, tr("From GitHub")),
+        (AddedFrom::Discover, tr("Sunrise mods")),
+        (
+            AddedFrom::Collection {
+                id: "collection-b".into(),
+                name: "Collection B".into(),
+            },
+            "Collection B",
+        ),
+    ] {
+        row.local
+            .as_mut()
+            .unwrap()
+            .github
+            .as_mut()
+            .unwrap()
+            .added_from = Some(added_from);
+        assert_eq!(row.source_label(), expected);
+    }
     row.local.as_mut().unwrap().github = None;
     assert_eq!(row.source_label(), tr("Local file"));
     let registry = rows(
@@ -144,24 +167,36 @@ fn installed_sections_keep_collection_members_together_and_leave_loose_rows_unti
         entry("ant", "1.0.0", true, A),
         entry("bird", "1.0.0", true, A),
         entry("cat", "1.0.0", true, A),
+        entry("dog", "1.0.0", true, A),
     ];
     let mut rows = rows(&entries, &world(&idx, &none, &none, true));
-    rows[0].collection = Some("Wildlife".into());
-    rows[2].collection = Some("Wildlife".into());
+    let collection = |id: &str| {
+        Some(CollectionGroup {
+            id: id.into(),
+            name: "Wildlife".into(),
+        })
+    };
+    rows[0].collection = collection("park");
+    rows[2].collection = collection("park");
+    rows[3].collection = collection("zoo");
     rows[2].need = Some(Need::Build);
     group_installed(&mut rows);
     let visible = visible(&rows, &RowFilter::default());
     assert_eq!(
         installed_groups(&rows, &visible).collect::<Vec<_>>(),
-        [(Some("Wildlife"), &[0, 1][..]), (None, &[2][..])]
+        [
+            (Some("Wildlife"), &[0, 1][..]),
+            (Some("Wildlife"), &[2][..]),
+            (None, &[3][..])
+        ]
     );
     assert_eq!(
         rows.iter().map(|row| row.id.as_str()).collect::<Vec<_>>(),
-        ["cat", "ant", "bird"]
+        ["cat", "ant", "dog", "bird"]
     );
     assert_eq!(
-        installed_groups(&rows, &[2]).collect::<Vec<_>>(),
-        [(None, &[2][..])]
+        installed_groups(&rows, &[3]).collect::<Vec<_>>(),
+        [(None, &[3][..])]
     );
 }
 
@@ -797,6 +832,7 @@ fn every_row_fills_the_same_columns_whatever_it_has_to_say() {
             commit: "a".repeat(40),
             asset: Some("lib.smod".into()),
             source: None,
+            added_from: None,
             sha256: "b".repeat(64),
         }),
         native: true,

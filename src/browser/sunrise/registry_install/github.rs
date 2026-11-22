@@ -624,6 +624,7 @@ mod tests {
             commit,
             asset: Some("zoom-1.2.0.smod".into()),
             source: None,
+            added_from: None,
             sha256: "0".repeat(64),
         };
         let write_origin = |origin: &github_mods::Origin| {
