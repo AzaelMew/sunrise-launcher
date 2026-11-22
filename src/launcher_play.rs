@@ -502,32 +502,32 @@ impl Launcher {
 
     /// Signs an account in again on the sign-in screen, where its code is shown (#110).
     pub(crate) fn re_sign_in(&mut self, uuid: &str) {
-        let known = |id: &str| self.accounts.find(id).is_some();
-        match sign_in_start(self.account_locked(), Some(uuid), known) {
-            SignInStart::Refused => self.say_account_locked(),
-            SignInStart::Again(uuid) => self.sign_in_again(&uuid),
-            // Signed out since the click: there is nothing to renew.
-            SignInStart::New => {}
-        }
+        self.sign_in_from_action(SignInClick::Renew(uuid));
     }
 
-    /// The sign-in screen's own button: after a failed Sign in again it retries that same
-    /// account, so a different Microsoft account is still refused and who plays stays as it was;
-    /// otherwise it signs any account in.
+    /// Retry the original account when the current screen has a target.
     pub(crate) fn retry_sign_in(&mut self) {
-        let target = self.sign_in_target.as_ref().map(|a| a.uuid.clone());
-        let known = |id: &str| self.accounts.find(id).is_some();
-        match sign_in_start(self.account_locked(), target.as_deref(), known) {
-            SignInStart::Refused => self.say_account_locked(),
-            SignInStart::Again(uuid) => self.sign_in_again(&uuid),
-            SignInStart::New => self.begin_sign_in(None),
-        }
+        let target = self
+            .sign_in_target
+            .as_ref()
+            .map(|account| account.uuid.clone());
+        self.sign_in_from_action(SignInClick::Retry(target.as_deref()));
     }
 
-    fn sign_in_again(&mut self, uuid: &str) {
-        if let Some(account) = self.accounts.find(uuid).cloned() {
-            self.begin_sign_in(Some(account));
+    fn sign_in_from_action(&mut self, click: SignInClick<'_>) {
+        let start = click.target(self.account_locked(), |uuid| {
+            self.accounts.find(uuid).cloned()
+        });
+        if let Err(refusal) = dispatch_sign_in(start, |account| {
+            self.begin_sign_in(account);
             self.owner_screen_open = true;
+        }) {
+            match refusal {
+                SignInRefusal::Busy => self.say_account_locked(),
+                SignInRefusal::AccountRemoved => crate::glass_toast::say(tr(
+                    "This account was signed out. Add it again to sign in.",
+                )),
+            }
         }
     }
 
@@ -576,32 +576,41 @@ impl Launcher {
     }
 }
 
-/// What a sign-in click starts (#110).
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) enum SignInStart {
-    /// The game is starting and who plays is settled: nothing starts and nothing opens.
-    Refused,
-    /// That account again: the sign-in refuses any other Microsoft account and leaves who plays
-    /// as it was (`account::accept_sign_in`).
-    Again(String),
-    /// A sign-in for any account, which then becomes the one that plays.
-    New,
+enum SignInRefusal {
+    Busy,
+    AccountRemoved,
 }
 
-/// `wanted` is the account a click is for: Sign in again's, or the one a failed attempt on the
-/// sign-in screen was for. `known` says whether it is still signed in here.
-pub(crate) fn sign_in_start(
-    locked: bool,
-    wanted: Option<&str>,
-    known: impl Fn(&str) -> bool,
-) -> SignInStart {
-    if locked {
-        return SignInStart::Refused;
+enum SignInClick<'a> {
+    Renew(&'a str),
+    Retry(Option<&'a str>),
+}
+
+impl SignInClick<'_> {
+    fn target(
+        self,
+        locked: bool,
+        find: impl FnOnce(&str) -> Option<account::Account>,
+    ) -> Result<Option<account::Account>, SignInRefusal> {
+        if locked {
+            return Err(SignInRefusal::Busy);
+        }
+        match self {
+            Self::Renew(uuid) | Self::Retry(Some(uuid)) => {
+                find(uuid).map(Some).ok_or(SignInRefusal::AccountRemoved)
+            }
+            Self::Retry(None) => Ok(None),
+        }
     }
-    match wanted {
-        Some(uuid) if known(uuid) => SignInStart::Again(uuid.to_owned()),
-        _ => SignInStart::New,
-    }
+}
+
+/// Dispatches the worker and screen-open action together.
+fn dispatch_sign_in(
+    target: Result<Option<account::Account>, SignInRefusal>,
+    start: impl FnOnce(Option<account::Account>),
+) -> Result<(), SignInRefusal> {
+    target.map(start)
 }
 
 #[cfg(test)]
@@ -609,26 +618,49 @@ mod tests {
     use super::*;
 
     #[test]
-    fn sign_in_again_and_its_retry_stay_on_the_account_and_wait_for_the_game_to_start() {
-        let known = |id: &str| id == "a1";
-        // Sign in again on an account here: the screen opens on a sign-in for that account.
+    fn renewing_and_retrying_start_only_the_requested_account() {
+        let account = account::Account {
+            uuid: "a1".into(),
+            name: "Original account".into(),
+            skin: None,
+            cape: None,
+        };
+        let find = |uuid: &str| (uuid == account.uuid).then(|| account.clone());
+        let mut attempt = None;
+        dispatch_sign_in(SignInClick::Renew("a1").target(false, find), |target| {
+            attempt = target.map(|account| account.uuid);
+        })
+        .unwrap();
+        assert_eq!(attempt.as_deref(), Some("a1"));
+
+        let retry = attempt.as_deref();
+        let mut retried = None;
+        dispatch_sign_in(SignInClick::Retry(retry).target(false, find), |target| {
+            retried = target.map(|account| account.uuid);
+        })
+        .unwrap();
+        assert_eq!(retried, attempt);
+
+        let must_not_start = |_| panic!("No worker or sign-in screen should start");
         assert_eq!(
-            sign_in_start(false, Some("a1"), known),
-            SignInStart::Again("a1".into())
+            dispatch_sign_in(
+                SignInClick::Retry(retry).target(false, |_| None),
+                must_not_start
+            ),
+            Err(SignInRefusal::AccountRemoved)
         );
-        // The sign-in screen's button after that attempt failed (for example Microsoft answered
-        // with another account): still that account, never an open sign-in that could save and
-        // select the other one.
         assert_eq!(
-            sign_in_start(false, Some("a1"), known),
-            SignInStart::Again("a1".into())
+            dispatch_sign_in(SignInClick::Renew("a1").target(true, find), must_not_start),
+            Err(SignInRefusal::Busy)
         );
-        // While the game is starting nothing starts, retry or not, and the screen stays shut.
-        assert_eq!(sign_in_start(true, Some("a1"), known), SignInStart::Refused);
-        assert_eq!(sign_in_start(true, None, known), SignInStart::Refused);
-        // No account to renew (Add account, or one signed out meanwhile): any account.
-        assert_eq!(sign_in_start(false, None, known), SignInStart::New);
-        assert_eq!(sign_in_start(false, Some("gone"), known), SignInStart::New);
+        assert_eq!(
+            dispatch_sign_in(SignInClick::Retry(retry).target(true, find), must_not_start),
+            Err(SignInRefusal::Busy)
+        );
+        dispatch_sign_in(SignInClick::Retry(None).target(false, find), |target| {
+            assert!(target.is_none());
+        })
+        .unwrap();
     }
 
     #[test]

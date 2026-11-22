@@ -20,8 +20,9 @@ impl Launcher {
     /// The screen's own sign-in button. After a failed Sign in again it retries that same
     /// account, so a different Microsoft account is still refused and who plays stays as it was.
     fn sign_in_from_screen(&mut self) {
-        self.owner_screen_open = true;
-        if !self.sign_in_under_way() {
+        if self.sign_in_under_way() {
+            self.owner_screen_open = true;
+        } else {
             self.retry_sign_in();
         }
     }

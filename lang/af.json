@@ -1459,5 +1459,6 @@
   "Sign in with Microsoft": "Meld aan met Microsoft",
   "Sunrise mods": "Sunrise mods",
   "Commit": "Commit",
-  "{author} · {source}": "{author} · {source}"
+  "{author} · {source}": "{author} · {source}",
+  "This account was signed out. Add it again to sign in.": "This account was signed out. Add it again to sign in."
 }
