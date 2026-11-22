@@ -235,8 +235,10 @@ impl Launcher {
             && details
                 .and_then(|details| details.error.as_ref())
                 .is_none_or(|error| *error == sources::Failure::NoManifest);
-        let badge = made_for_build(
+        let badge = project_made_for_build(
             self.nightly_build_revision().as_deref(),
+            commit.map(|pin| pin.sha()),
+            installed.map(|origin| origin.commit.as_str()),
             details.and_then(|detail| detail.build_pin.as_deref()),
         )
         .then(|| div().flex().child(badge(tr("Made for this build"))));
@@ -510,6 +512,16 @@ impl Launcher {
     }
 }
 
+fn project_made_for_build(
+    profile: Option<&str>,
+    inspected: Option<&str>,
+    installed: Option<&str>,
+    pin: Option<&str>,
+) -> bool {
+    inspected.is_some_and(|inspected| installed.is_none_or(|installed| installed == inspected))
+        && made_for_build(profile, pin)
+}
+
 fn source_grant(origin: &sunrise_launcher::github_mods::Origin) -> Option<backend::SourceModGrant> {
     Some(backend::SourceModGrant {
         repo_id: origin.source.as_ref()?.repo_id,
@@ -584,6 +596,24 @@ pub(in crate::mods) fn source_error(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn build_badge_describes_the_installed_commit_not_a_newer_inspection() {
+        let build = "1".repeat(40);
+        let old = "2".repeat(40);
+        let newest = "3".repeat(40);
+        let stamp =
+            |shown| project_made_for_build(Some(&build), Some(&newest), shown, Some(&build));
+        assert!(stamp(None));
+        assert!(stamp(Some(&newest)));
+        assert!(!stamp(Some(&old)));
+        assert!(!project_made_for_build(
+            Some(&build),
+            None,
+            Some(&old),
+            Some(&build)
+        ));
+    }
 
     #[test]
     fn source_status_keeps_local_paths_out_of_regular_copy() {
