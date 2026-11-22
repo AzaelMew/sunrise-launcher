@@ -137,6 +137,19 @@ pub(crate) struct SourceTarget {
     base: String,
 }
 
+#[cfg(test)]
+impl SourceTarget {
+    /// The profile in `home` (an existing folder) on build `base`.
+    pub(crate) fn fixture(home: &Path, base: &str) -> Self {
+        let request = tests::request(home, "fixture", base);
+        Self {
+            profile: request.profile,
+            identity: request.identity,
+            base: base.into(),
+        }
+    }
+}
+
 impl SourceTarget {
     pub(crate) fn instance(&self) -> &instances::Instance {
         &self.profile
@@ -1621,7 +1634,7 @@ fn failure_line(error: &InstallError) -> &'static str {
 mod tests {
     use super::*;
 
-    fn request(home: &Path, id: &str, target: &str) -> Request {
+    pub(super) fn request(home: &Path, id: &str, target: &str) -> Request {
         let slug = home.file_name().unwrap().to_str().unwrap();
         Request {
             identity: Identity::of(home).unwrap(),

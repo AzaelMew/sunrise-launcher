@@ -30,6 +30,9 @@ pub(in crate::mods) struct Inspection {
 
 pub(in crate::mods) struct CheckedUpdates {
     scope: OpenScope,
+    /// The installed mods' fingerprint the check ran against (`native_status::fingerprint`):
+    /// a finding holds only while the mods are as they were.
+    inputs: String,
     only: Option<String>,
     target: Option<SourceTarget>,
     candidates: BTreeMap<String, (Origin, PreparedSource)>,
@@ -109,7 +112,7 @@ impl Launcher {
             }
             Event::Updates(checked) => {
                 state.work.checking = false;
-                state.work.updates = Some(*checked);
+                state.work.updates = Some(merge_checked(state.work.updates.take(), *checked));
             }
         }
         if add {
@@ -323,18 +326,22 @@ impl Launcher {
         let Some(rows) = self.discover_installed() else {
             return;
         };
+        let Some(inputs) = self.ui.mods.snapshot.as_ref().map(|s| s.key.clone()) else {
+            return;
+        };
         let origins = tracked_origins(&rows.local, only);
         if origins.is_empty() {
             return;
         }
         let only = only.map(|origin| origin.id.clone());
+        // The last findings stay until this check answers (`merge_checked`).
         self.ui.mods.nightly.work.checking = true;
-        self.ui.mods.nightly.work.updates = None;
         let refresh_catalogue = !self.nightly_catalogue_current();
         let tx = self.ui.mods.tx.clone();
         std::thread::spawn(move || {
             let mut checked = CheckedUpdates {
                 scope,
+                inputs,
                 only,
                 target: None,
                 candidates: BTreeMap::new(),
@@ -428,14 +435,26 @@ impl Launcher {
     }
 
     pub(in crate::mods) fn source_update_notice(&self, only: Option<&str>) -> Option<&str> {
+        // A check under way says so itself; the last one's outcome would contradict it.
+        if self.ui.mods.nightly.work.checking {
+            return None;
+        }
         let checked = self.source_updates_here()?;
         (checked.only.as_deref() == only)
             .then_some(checked.notice.as_deref())
             .flatten()
     }
 
+    /// The last findings, while the installed mods are still the ones they were proved against.
     fn source_updates_here(&self) -> Option<&CheckedUpdates> {
-        self.ui.mods.nightly.work.updates.as_ref()
+        let now = &self.ui.mods.snapshot.as_ref()?.key;
+        self.ui
+            .mods
+            .nightly
+            .work
+            .updates
+            .as_ref()
+            .filter(|checked| checked.inputs == *now)
     }
 
     pub(in crate::mods) fn submit_source_update(&mut self, id: &str) {
@@ -503,7 +522,10 @@ impl Launcher {
             .work
             .updates
             .as_mut()
-            .filter(|updates| updates.scope == scope)?;
+            .filter(|updates| updates.scope == scope)
+            .filter(|updates| {
+                self.ui.mods.snapshot.as_ref().map(|s| &s.key) == Some(&updates.inputs)
+            })?;
         let target = checked.target.clone()?;
         let wanted: Vec<_> = installed
             .filter(|origin| id.is_none_or(|id| id == origin.id))
@@ -522,6 +544,40 @@ impl Launcher {
             .collect();
         (!inputs.is_empty()).then_some((target, inputs))
     }
+}
+
+/// What a check found, laid over the last one. Only findings proved against the same profile,
+/// build and installed mods carry over. A profile-wide check replaces them; one project's check
+/// replaces only that project's offer or issue. A check that couldn't run (offline) keeps them
+/// and only says so.
+fn merge_checked(previous: Option<CheckedUpdates>, checked: CheckedUpdates) -> CheckedUpdates {
+    let same_target = |earlier: &Option<SourceTarget>| match (earlier, &checked.target) {
+        (Some(earlier), Some(now)) => {
+            earlier.identity() == now.identity() && earlier.base() == now.base()
+        }
+        (_, None) => true,
+        (None, Some(_)) => false,
+    };
+    let Some(mut merged) = previous.filter(|earlier| {
+        earlier.scope == checked.scope
+            && earlier.inputs == checked.inputs
+            && same_target(&earlier.target)
+    }) else {
+        return checked;
+    };
+    if checked.target.is_some() {
+        let Some(id) = checked.only.clone() else {
+            return checked;
+        };
+        merged.candidates.remove(&id);
+        merged.issues.remove(&id);
+        merged.target = checked.target;
+        merged.candidates.extend(checked.candidates);
+        merged.issues.extend(checked.issues);
+    }
+    merged.only = checked.only;
+    merged.notice = checked.notice;
+    merged
 }
 
 fn tracked_origins(local: &[model::Local], only: Option<&Origin>) -> Vec<Origin> {
@@ -561,6 +617,52 @@ fn source_for_update(predecessor: &Origin) -> Result<Option<Source>, sources::Fa
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_check_keeps_only_findings_proved_against_the_same_mods() {
+        let home = tempfile::tempdir().unwrap();
+        let scope = || OpenScope {
+            profile: Some("p".into()),
+            home: PathBuf::from("home"),
+            target: None,
+            game: "nightly".into(),
+        };
+        let issue = |why: &str| SourceError::Unproved(why.into());
+        let checked = |only: Option<&str>, inputs: &str, online: bool, issues: &[(&str, &str)]| {
+            CheckedUpdates {
+                scope: scope(),
+                inputs: inputs.into(),
+                only: only.map(str::to_owned),
+                target: online.then(|| SourceTarget::fixture(home.path(), "nightly-1")),
+                candidates: BTreeMap::new(),
+                issues: issues
+                    .iter()
+                    .map(|(id, why)| ((*id).to_owned(), issue(why)))
+                    .collect(),
+                notice: None,
+            }
+        };
+        let all = || checked(None, "mods-1", true, &[("a", "old a"), ("b", "b")]);
+
+        // One project's check on the same mods replaces only that project's finding.
+        let merged = merge_checked(Some(all()), checked(Some("a"), "mods-1", true, &[]));
+        assert_eq!(merged.issues.get("b"), Some(&issue("b")));
+        assert_eq!(merged.issues.get("a"), None);
+
+        // After a mod changed, nothing proved before carries over.
+        let merged = merge_checked(Some(all()), checked(Some("a"), "mods-2", true, &[]));
+        assert!(merged.issues.is_empty());
+
+        // Offline, nothing was checked: every earlier finding stays, for either kind of check.
+        for only in [None, Some("a")] {
+            let merged = merge_checked(Some(all()), checked(only, "mods-1", false, &[]));
+            assert_eq!(merged.issues.len(), 2);
+        }
+
+        // A profile-wide check that ran replaces everything.
+        let merged = merge_checked(Some(all()), checked(None, "mods-1", true, &[]));
+        assert!(merged.issues.is_empty());
+    }
 
     #[test]
     fn project_check_uses_only_its_exact_current_receipt() {
