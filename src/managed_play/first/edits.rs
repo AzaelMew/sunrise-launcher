@@ -136,7 +136,6 @@ impl Profile {
         if choice.base != tag || choice.image != tag {
             return Err(tr("Choose a game build, not a compiled mod image.").into());
         }
-        backend::need_prepared(tag)?;
         let bound = Bound {
             base: choice.base,
             image: choice.image,
@@ -405,14 +404,11 @@ impl Edit<'_> {
                 target.bound.verify_image()?;
                 let variant = target.variant().map(Box::new);
                 let generation = match &old {
-                    Some(previous) => {
-                        previous.verify_artifacts()?;
-                        Generation::Switch {
-                            previous,
-                            resources,
-                            variant,
-                        }
-                    }
+                    Some(previous) => Generation::Switch {
+                        previous,
+                        resources,
+                        variant,
+                    },
                     None => Generation::First {
                         profile: target.bound.profile,
                         resources,

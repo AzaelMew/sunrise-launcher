@@ -62,6 +62,7 @@ fn remember_unfit(base: &str, release: &index::Version) {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum InstallProgress {
+    PreparingBuild,
     Checking,
     Downloading(f32),
     Preparing,

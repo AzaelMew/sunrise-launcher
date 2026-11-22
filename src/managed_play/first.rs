@@ -587,9 +587,9 @@ impl FirstAttempt<'_> {
             return Ok(());
         }
         let preparation = backend::prepare_lock(base)?;
-        backend::reuse_prepared_for_play(base);
+        backend::reuse_prepared(&backend::versions_dir(), base);
         if backend::check_prepared(base) {
-            return Ok(());
+            return Resources::prepare(base, &preparation, Some(self.handoff())).map(drop);
         }
         let minecraft = backend::Settings::load()
             .minecraft_dir
@@ -613,8 +613,7 @@ impl FirstAttempt<'_> {
         log: &dyn Fn(String),
     ) -> Result<(), String> {
         crate::preparer::run_staged(command, preparation.handoff(Some(self.handoff())), log)?;
-        backend::forget_prepared();
-        backend::need_prepared_locked(self.base(), preparation)
+        Resources::prepare(self.base(), preparation, Some(self.handoff())).map(drop)
     }
 
     pub fn exact_image(

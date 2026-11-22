@@ -2,7 +2,7 @@
 //! updates. The GUI, the CLI and the MCP server all go through this module. Functions here
 //! block; the GUI runs them on threads and reads their messages.
 use crate::process::child::Child;
-use crate::{account, mojang, sources};
+use crate::{account, managed_play::Resources, mojang, sources};
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
@@ -1888,8 +1888,8 @@ pub(crate) fn copy_dir_except(from: &Path, to: &Path, skip: Option<&Path>) -> st
 /// After an install: when `tag` is not prepared but another installed version made the same
 /// resources, copies them (not hard links: preparing again rewrites files in place, which would
 /// change both). The player then needs neither their Minecraft folder nor a new preparation to
-/// play a release that only changed Sunrise. Returns the version they came from.
-fn reuse_prepared(versions: &Path, tag: &str) -> Option<String> {
+/// play a release that only changed Sunrise. The caller holds the target's preparation lock.
+pub(crate) fn reuse_prepared(versions: &Path, tag: &str) -> Option<String> {
     let target = versions.join(tag);
     let to = resources_at(&target);
     if to.join(RESOURCES_MANIFEST).exists() {
@@ -1923,6 +1923,7 @@ fn reuse_prepared(versions: &Path, tag: &str) -> Option<String> {
             if to.join(RESOURCES_MANIFEST).exists() {
                 return Ok(false); // Prepared meanwhile, by another copy or the player.
             }
+            Resources::invalidate(&target)?;
             let _ = fs::remove_dir_all(&to);
             fs::rename(&partial, &to).map(|_| true)
         });
@@ -1936,15 +1937,6 @@ fn reuse_prepared(versions: &Path, tag: &str) -> Option<String> {
     None
 }
 
-/// A first Play already owns the preparation lock. Reuse compatible resources but leave
-/// preparer children to the staged path; they must retain its profile admission.
-pub(crate) fn reuse_prepared_for_play(tag: &str) {
-    let versions = versions_dir();
-    reuse_prepared(&versions, tag);
-    complete_reports(&versions, tag);
-    forget_prepared();
-}
-
 /// What an install does once its folder is in place (an imported build's too, `build_import`):
 /// another installed version's resources if it has none, whatever its resources lack, then its
 /// data file.
@@ -1956,14 +1948,11 @@ pub(crate) fn reuse_prepared_for(tag: &str) {
     };
     let versions = versions_dir();
     reuse_prepared(&versions, tag);
-    complete_assets_in(
-        &versions,
-        tag,
-        minecraft_folders,
-        &|line| eprintln!("{line}"),
-        Some(&preparation.handoff(None)),
-    );
-    forget_prepared();
+    if check_prepared(tag) {
+        if let Err(error) = finish_preparation(tag, &preparation) {
+            eprintln!("{tag}: {error}");
+        }
+    }
     drop(preparation);
     let (root, resources) = (version_dir(tag), resources(tag));
     let spawned = std::thread::Builder::new()
@@ -2014,13 +2003,13 @@ pub fn reuse_prepared_everywhere() -> Vec<(String, String)> {
         };
         let handoff = preparation.handoff(None);
         refill_own_store(&tag, &handoff);
-        complete_assets_in(
-            &versions,
-            &tag,
-            minecraft_folders,
-            &|line| eprintln!("{line}"),
-            Some(&handoff),
-        );
+        if reused.iter().any(|(prepared, _)| prepared == &tag) {
+            if let Err(error) = finish_preparation(&tag, &preparation) {
+                eprintln!("{tag}: {error}");
+            }
+        } else {
+            complete_assets_staged(&tag, &handoff);
+        }
     }
     reused
 }
@@ -2094,7 +2083,9 @@ fn complete_reports(versions: &Path, tag: &str) -> bool {
         static COPIES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let n = COPIES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let partial = to.join(format!(".{name}.partial-{}-{n}", std::process::id()));
-        let copied = fs::copy(&from, &partial).and_then(|_| fs::rename(&partial, to.join(name)));
+        let copied = fs::copy(&from, &partial)
+            .and_then(|_| Resources::invalidate(&target))
+            .and_then(|_| fs::rename(&partial, to.join(name)));
         if copied.is_err() {
             let _ = fs::remove_file(&partial);
             complete = false;
@@ -2210,6 +2201,11 @@ fn complete_assets_in(
     match crate::preparer::add_extras(&binary, &root, &resources, &kinds, &folders(), log, handoff)
     {
         Ok(Some(added)) => {
+            if !added.added.is_empty() {
+                if let Err(error) = Resources::invalidate(&root) {
+                    log(format!("{tag}: {error}"));
+                }
+            }
             for (kind, error) in added.failed {
                 let what = lacking
                     .iter()
@@ -2664,6 +2660,14 @@ pub(crate) fn preparer_staged(
     }
     cmd.arg("--minecraft-dir").arg(&minecraft);
     Ok((cmd, minecraft))
+}
+
+/// Complete resources and publish their managed-Play snapshot while Prepare still holds its lock.
+pub fn finish_preparation(
+    tag: &str,
+    preparation: &crate::preparer::Preparation,
+) -> Result<(), String> {
+    Resources::prepare(&resources_owner(tag), preparation, None).map(drop)
 }
 
 /// Makes sure `jar` holds the server jar `manifest` names: one already cached whose sha1 is not
@@ -3213,36 +3217,25 @@ pub fn server_dir(requested: Option<PathBuf>) -> PathBuf {
 
 /// Whether `tag` is prepared, with the run-time reports it needs completed when another copy has them.
 pub fn need_prepared(tag: &str) -> Result<(), String> {
-    need_prepared_inner(tag, None)
+    let base = resources_owner(tag);
+    if base != tag && !version_dir(&base).join(COMPLETE).is_file() {
+        return Err(crate::i18n::trf(
+            "This native build needs its base version {base}; reinstall it.",
+            &[("base", &base)],
+        ));
+    }
+    need_base_prepared(&base, None)
 }
 
-pub(crate) fn need_prepared_locked(
-    tag: &str,
-    preparation: &crate::preparer::Preparation,
-) -> Result<(), String> {
-    need_prepared_inner(tag, Some(preparation))
-}
-
-fn need_prepared_inner(
+pub(crate) fn need_base_prepared(
     tag: &str,
     preparation: Option<&crate::preparer::Preparation>,
 ) -> Result<(), String> {
-    let about = crate::native_mods::about(tag);
-    if let Some(about) = &about {
-        if !version_dir(&about.base).join(COMPLETE).is_file() {
-            return Err(crate::i18n::trf(
-                "This native build needs its base version {base}; reinstall it.",
-                &[("base", &about.base)],
-            ));
-        }
-    }
-    let tag = about.as_ref().map_or(tag, |about| about.base.as_str());
     if check_prepared(tag) {
-        let _owned = if preparation.is_none() {
-            Some(prepare_lock(tag)?)
-        } else {
-            None
-        };
+        let _owned = preparation
+            .is_none()
+            .then(|| prepare_lock(tag))
+            .transpose()?;
         complete_reports(&versions_dir(), tag);
         Ok(())
     } else {
@@ -4361,10 +4354,10 @@ pub fn spawn_holding(
     job: Job,
     cmd: Command,
     tx: Sender<Msg>,
-    hold: Option<crate::preparer::Preparation>,
+    prepare: Option<(String, crate::preparer::Preparation)>,
 ) -> Result<Running, String> {
     let (cmd, runtime) = prepare_command(cmd)?;
-    spawn_prepared(job, cmd, runtime, tx, hold)
+    spawn_prepared(job, cmd, runtime, tx, prepare)
 }
 
 fn spawn_prepared(
@@ -4372,14 +4365,14 @@ fn spawn_prepared(
     mut cmd: Command,
     runtime: RuntimeGuard,
     tx: Sender<Msg>,
-    hold: Option<crate::preparer::Preparation>,
+    prepare: Option<(String, crate::preparer::Preparation)>,
 ) -> Result<Running, String> {
-    if let Some(preparation) = &hold {
+    if let Some((_, preparation)) = &prepare {
         let child = preparation
             .handoff(None)
             .spawn(cmd, true)
             .map_err(|e| e.to_string())?;
-        return Ok(monitor(job, child, tx, runtime, hold));
+        return Ok(monitor(job, child, tx, runtime, prepare));
     }
     #[cfg(unix)]
     {
@@ -4391,7 +4384,7 @@ fn spawn_prepared(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let child = play_log::spawn(&mut cmd)?.into();
-    Ok(monitor(job, child, tx, runtime, hold))
+    Ok(monitor(job, child, tx, runtime, None))
 }
 
 /// Use the same streams, process monitor and crash reporting for an admitted game's child.
@@ -4404,7 +4397,7 @@ fn monitor(
     mut child: Child,
     tx: Sender<Msg>,
     runtime: RuntimeGuard,
-    hold: Option<crate::preparer::Preparation>,
+    prepare: Option<(String, crate::preparer::Preparation)>,
 ) -> Running {
     let pid = child.id();
     let group = matches!(job, Job::Prepare);
@@ -4465,21 +4458,18 @@ fn monitor(
                 return;
             }
         }
-        let result = match status {
-            Ok(s) => {
-                runtime.game_exited();
-                if s.success() {
-                    Ok(())
-                } else {
-                    Err(format!("Exited with {s}"))
-                }
-            }
-            Err(e) => Err(e.to_string()),
-        };
         if group {
             crate::process::owned::CHILDREN.release(pid);
         }
-        drop(hold);
+        let result = status.map_err(|e| e.to_string()).and_then(|s| {
+            let result = match prepare {
+                Some((tag, preparation)) if s.success() => finish_preparation(&tag, &preparation),
+                _ if s.success() => Ok(()),
+                _ => Err(format!("Exited with {s}")),
+            };
+            runtime.game_exited();
+            result
+        });
         let _ = tx.send(Msg::Exit(job, result));
     });
     Running { child, stdin }

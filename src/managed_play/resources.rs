@@ -12,10 +12,11 @@ use std::{
 
 const ROOT: &str = "launcher-prepared";
 const EVIDENCE: &str = "data-file.json";
+const CURRENT: &str = "current.json";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct Resources {
+pub(crate) struct Resources {
     primary: [u8; 32],
     accelerator: Option<[u8; 32]>,
 }
@@ -25,9 +26,26 @@ impl Resources {
         base: &str,
         stage: &crate::profile_txn::Staging<'_>,
     ) -> Result<Self, String> {
+        let root = backend::version_dir(base);
         let preparation = backend::prepare_lock(base)?;
-        backend::need_prepared_locked(base, &preparation)?;
-        let handoff = preparation.handoff(Some(stage.handoff()));
+        match Self::current(&root)? {
+            Some(resources) => Ok(resources),
+            None => Self::prepare(base, &preparation, Some(stage.handoff())),
+        }
+    }
+
+    fn current(root: &Path) -> Result<Option<Self>, String> {
+        Ok(optional_bytes(&receipt(root)?)?.and_then(|bytes| serde_json::from_slice(&bytes).ok()))
+    }
+
+    /// Finish the shared preparation under its existing lock, before a profile needs it.
+    pub(crate) fn prepare(
+        base: &str,
+        preparation: &preparer::Preparation,
+        profile: Option<crate::process::leases::ProfileHandoff<'_>>,
+    ) -> Result<Self, String> {
+        backend::need_base_prepared(base, Some(preparation))?;
+        let handoff = preparation.handoff(profile);
         backend::complete_assets_staged(base, &handoff);
         let root = backend::version_dir(base);
         Self::seal(&root, &backend::resources(base), |resources| {
@@ -43,6 +61,13 @@ impl Resources {
                 }
             }
         })
+    }
+
+    pub(crate) fn invalidate(root: &Path) -> io::Result<()> {
+        match fs::remove_file(receipt(root).map_err(io::Error::other)?) {
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+            result => result,
+        }
     }
 
     pub(super) fn path(&self, base: &str) -> PathBuf {
@@ -85,72 +110,43 @@ impl Resources {
         source: &Path,
         accelerator: impl FnOnce(&Path) -> Option<[u8; 32]>,
     ) -> Result<Self, String> {
-        require_dir(root)?;
-        require_dir(&root.join(".local"))?;
-        if !source.starts_with(root) || !backend::prepared_at(source) {
-            return Err(setup_error(source));
-        }
         for ancestor in source.ancestors().take_while(|path| *path != root) {
             require_dir(ancestor)?;
         }
+        require_dir(root)?;
         let Some(primary) = artifact::tree(source, true)? else {
             return Err(setup_error(source));
         };
         let parent = parent(root);
-        match fs::create_dir(&parent) {
-            Ok(()) => {}
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
-            Err(error) => return Err(at(&parent, error)),
-        }
+        fs::create_dir_all(&parent).map_err(|e| at(&parent, e))?;
         require_dir(&parent)?;
         let snapshot = parent.join(key(primary));
-        let resources = snapshot.join("resources");
         let evidence = snapshot.join(EVIDENCE);
-        match fs::symlink_metadata(&snapshot) {
-            Ok(_) => {
-                require_dir(&snapshot)?;
-                if artifact::tree(&resources, true)? != Some(primary) {
-                    return Err(setup_error(&resources));
-                }
-                let accelerator = optional_bytes(&evidence)?
-                    .map(|bytes| serde_json::from_slice(&bytes).map_err(|e| e.to_string()))
-                    .transpose()?;
-                return Ok(Self {
-                    primary,
-                    accelerator,
-                });
+        let accelerator = if snapshot.exists() {
+            require_dir(&snapshot)?;
+            optional_bytes(&evidence)?.and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        } else {
+            // A move from .local flushes both directories, including the new store's entry.
+            let stage = tempfile::Builder::new()
+                .prefix(".prepared-")
+                .tempdir_in(root.join(".local"))
+                .map_err(|error| at(root, error))?;
+            let candidate = stage.path().join("resources");
+            copy_tree(source, &candidate, true, 0)?;
+            durable::flush_tree(&candidate).map_err(|e| at(&candidate, e))?;
+            durable::move_new_directory(stage.path(), &snapshot).map_err(|e| at(&snapshot, e))?;
+            let digest = accelerator(&snapshot.join("resources"));
+            if let Some(digest) = digest {
+                write_receipt(&evidence, &digest)?;
             }
-            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(at(&snapshot, error)),
-        }
-        let stage = tempfile::Builder::new()
-            .prefix(".prepared-")
-            .tempdir_in(&parent)
-            .map_err(|error| at(&parent, error))?;
-        let candidate = stage.path().join("resources");
-        copy_tree(source, &candidate, true, 0)?;
-        if artifact::tree(&candidate, true)? != Some(primary)
-            || artifact::tree(source, true)? != Some(primary)
-        {
-            return Err(setup_error(source));
-        }
-        durable::flush_tree(stage.path()).map_err(|e| at(stage.path(), e))?;
-        durable::move_new_directory(stage.path(), &snapshot).map_err(|e| at(&snapshot, e))?;
-        let accelerator = match accelerator(&resources) {
-            Some(digest) => {
-                let bytes = serde_json::to_vec(&digest).map_err(|error| error.to_string())?;
-                durable::replace(&snapshot, &evidence, &bytes).map_err(|e| at(&evidence, e))?;
-                Some(digest)
-            }
-            None => None,
+            digest
         };
-        if artifact::tree(&resources, true)? != Some(primary) {
-            return Err(setup_error(&resources));
-        }
-        Ok(Self {
+        let prepared = Self {
             primary,
             accelerator,
-        })
+        };
+        write_receipt(&parent.join(CURRENT), &prepared)?;
+        Ok(prepared)
     }
 }
 
@@ -165,6 +161,26 @@ pub(super) fn generated_cache(name: &OsStr) -> bool {
 
 fn parent(root: &Path) -> PathBuf {
     root.join(".local").join(ROOT)
+}
+fn receipt(root: &Path) -> Result<PathBuf, String> {
+    let parent = parent(root);
+    if parent.exists() {
+        for dir in [root, &root.join(".local"), &parent] {
+            require_dir(dir)?;
+        }
+    }
+    Ok(parent.join(CURRENT))
+}
+// These receipts only cache selection or accelerator evidence. A crash can lose them; the
+// primary tree is already durable and a profile's independent digest is checked at cutoff.
+fn write_receipt(path: &Path, value: &impl Serialize) -> Result<(), String> {
+    let mut staged = tempfile::NamedTempFile::new_in(path.parent().expect("snapshot directory"))
+        .map_err(|e| at(path, e))?;
+    serde_json::to_writer(&mut staged, value).map_err(|e| e.to_string())?;
+    staged
+        .persist(path)
+        .map(|_| ())
+        .map_err(|e| at(path, e.error))
 }
 fn key(digest: [u8; 32]) -> String {
     format!("{:x}", sha2::digest::Output::<Sha256>::from(digest))
@@ -241,18 +257,19 @@ mod tests {
             prepared
         );
         fs::write(source.join("blocks.json"), "{\"new\": true}").unwrap();
+        assert_eq!(Resources::current(root).unwrap().as_ref(), Some(&prepared));
+        fs::write(receipt(root).unwrap(), b"partial").unwrap();
+        assert_eq!(Resources::current(root).unwrap(), None);
+        Resources::invalidate(root).unwrap();
+        assert_eq!(Resources::current(root).unwrap(), None);
         let changed = Resources::seal(root, &source, |_| None).unwrap();
         assert_ne!(prepared.primary, changed.primary);
+        assert_eq!(Resources::current(root).unwrap(), Some(changed));
         fs::write(snapshot.join(preparer::DATA_FILE), b"different cache").unwrap();
         fs::write(snapshot.join("sunrise-data.bin.123.tmp"), b"pending cache").unwrap();
-        assert_eq!(
-            artifact::tree(&snapshot, true).unwrap(),
-            Some(prepared.primary)
-        );
+        let primary = || artifact::tree(&snapshot, true).unwrap();
+        assert_eq!(primary(), Some(prepared.primary));
         fs::write(snapshot.join("blocks.json"), b"different primary bytes").unwrap();
-        assert_ne!(
-            artifact::tree(&snapshot, true).unwrap(),
-            Some(prepared.primary)
-        );
+        assert_ne!(primary(), Some(prepared.primary));
     }
 }
