@@ -79,6 +79,14 @@ fn find_source<'a>(catalogue: &'a Catalogue, id: &str) -> Option<&'a Source> {
     Some(&catalogue.sources[i])
 }
 
+fn listing_for_origin<'a>(
+    catalogue: &'a Catalogue,
+    origin: &sunrise_launcher::github_mods::Origin,
+) -> Option<&'a Source> {
+    let source = find_source(catalogue, &origin.id)?;
+    source_matches_origin(source, origin).then_some(source)
+}
+
 fn source_matches_origin(source: &Source, origin: &sunrise_launcher::github_mods::Origin) -> bool {
     source.id() == origin.id
         && origin.owner.eq_ignore_ascii_case(source.owner())
@@ -128,7 +136,7 @@ impl Launcher {
             )
     }
 
-    pub(super) fn read_nightly_catalogue(&mut self, force: bool) {
+    pub(crate) fn read_nightly_catalogue(&mut self, force: bool) {
         let n = &mut self.ui.mods.nightly;
         if n.reading
             || (!force
@@ -393,13 +401,11 @@ impl Launcher {
             .source_project(id, file, self.ui.mods.nightly.catalogue.as_ref())
     }
 
-    pub(super) fn source_listing(
+    pub(crate) fn source_listing(
         &self,
         origin: &sunrise_launcher::github_mods::Origin,
     ) -> Option<&Source> {
-        let catalogue = self.ui.mods.nightly.catalogue.as_ref()?;
-        let source = find_source(catalogue, &origin.id)?;
-        source_matches_origin(source, origin).then_some(source)
+        listing_for_origin(self.ui.mods.nightly.catalogue.as_ref()?, origin)
     }
 
     pub(super) fn source_collection_for(
@@ -439,7 +445,7 @@ impl Launcher {
         (picture, icon.filter(|_| loaded.is_none()))
     }
 
-    pub(super) fn source_tile(
+    pub(crate) fn source_tile(
         &self,
         source: &Source,
         commit: Option<&sources::SourceCommit>,
@@ -665,6 +671,67 @@ mod tests {
             unreadable: false,
         };
         (source, local)
+    }
+
+    #[test]
+    fn a_home_row_without_a_package_icon_uses_its_source_list_icon() {
+        use crate::home_mods::Picture;
+        use sunrise_launcher_smod::{index, manifest::Package};
+
+        let home = tempfile::tempdir().unwrap();
+        let (_, local) = receipt_fixture();
+        let archive = Package::write_files(
+            &format!(
+                "id='lantern'\nname='Lantern'\nversion='1.0.0'\napi='{}'\n[native]\ngame='26.3'\nsunrise='{}'\n",
+                sunrise_launcher_smod::manifest::API,
+                "1".repeat(40),
+            ),
+            &[
+                ("Cargo.toml", b"[package]\nname='lantern'\nversion='1.0.0'\n"),
+                ("src/lib.rs", b"pub fn hooks() {}\n"),
+            ],
+        )
+        .unwrap();
+        let path = home.path().join(local.file);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, &archive).unwrap();
+        let mut origin = local.github.unwrap();
+        origin.sha256 = index::sha256(&archive);
+        std::fs::write(
+            path.with_extension("origin.json"),
+            serde_json::to_vec(&origin).unwrap(),
+        )
+        .unwrap();
+        let source = serde_json::from_value(serde_json::json!({
+            "id": "lantern", "name": "Lantern", "summary": "Lights the way.",
+            "repo": "Fixture/Lantern", "repo_id": 42, "manifest": "sunrise-mod.toml",
+            "track": {"branch": "main"}, "icon": "icons/lantern.png"
+        }))
+        .unwrap();
+        let catalogue = Catalogue {
+            sources: vec![source].into(),
+            collections: Vec::new().into(),
+            saved_at: None,
+            checked_at: SystemTime::UNIX_EPOCH,
+            error: None,
+        };
+
+        let rows = crate::home_mods::read(home.path());
+        let [row] = rows.as_slice() else {
+            panic!("expected one mod on Home");
+        };
+        let Picture::Local {
+            package: None,
+            source: Some(origin),
+        } = &row.picture
+        else {
+            panic!("Home should retain the source receipt even without an embedded icon");
+        };
+        let listing = listing_for_origin(&catalogue, origin).unwrap();
+        assert_eq!(
+            sources::SourceIcon::new(listing, None, true),
+            Some(sources::SourceIcon::pages("icons/lantern.png", true)),
+        );
     }
 
     #[test]
