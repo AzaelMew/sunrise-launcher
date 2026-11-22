@@ -1318,23 +1318,24 @@ pub fn poll_hosting(
     previous: Option<&Status>,
     since: u64,
 ) -> (Status, Option<(u64, Vec<String>)>) {
-    let Some(api) = Api::open(dir) else {
+    // A live supervisor holds its lock: with the lock free, nobody is running the server,
+    // whatever endpoint a supervisor that died left behind in `.sunrise/api.json`.
+    let unanswered = || {
         let lock_free = match fs::File::open(dir.join(".sunrise/lock")) {
             Ok(lock) => lock.try_lock_shared().is_ok(),
             Err(error) => error.kind() == std::io::ErrorKind::NotFound,
         };
-        let stopped = lock_free && matches!(dir.join(".sunrise/api.json").try_exists(), Ok(false));
-        return (
-            if stopped {
-                Status::stopped()
-            } else {
-                Status::unknown()
-            },
-            None,
-        );
+        if lock_free {
+            Status::stopped()
+        } else {
+            Status::unknown()
+        }
     };
-    let Some(mut status) = api.status() else {
-        return (Status::unknown(), None);
+    let Some((api, mut status)) = Api::open(dir).and_then(|api| {
+        let status = api.status()?;
+        Some((api, status))
+    }) else {
+        return (unanswered(), None);
     };
     let mut logs = api.logs(since);
     if status.phase != "running" || status.processes.is_none() {

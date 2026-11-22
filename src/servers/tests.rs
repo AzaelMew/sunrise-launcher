@@ -374,6 +374,22 @@ fn hosting_uses_the_engine_startup_and_a_failed_poll_is_unknown() {
     lock.try_lock().unwrap();
     assert_eq!(poll_hosting(dir.path(), None, 0).0.phase, "unknown");
     drop(lock);
+    // A supervisor that died leaves its endpoint behind; with its lock free the server is
+    // stopped, so Start stays available.
+    let dead = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = dead.local_addr().unwrap();
+    drop(dead);
+    fs::write(
+        lock_dir.join("api.json"),
+        format!(r#"{{"address": "{address}", "token": "stale"}}"#),
+    )
+    .unwrap();
+    assert_eq!(poll_hosting(dir.path(), None, 0).0.phase, "stopped");
+    let lock = fs::File::open(lock_dir.join("lock")).unwrap();
+    lock.try_lock().unwrap();
+    assert_eq!(poll_hosting(dir.path(), None, 0).0.phase, "unknown");
+    drop(lock);
+    fs::remove_file(lock_dir.join("api.json")).unwrap();
 
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     fs::write(
@@ -418,6 +434,9 @@ fn hosting_uses_the_engine_startup_and_a_failed_poll_is_unknown() {
             write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
         }
     });
+    // A live supervisor holds its lock, so a failed poll of it is unknown, not stopped.
+    let lock = fs::File::open(lock_dir.join("lock")).unwrap();
+    lock.try_lock().unwrap();
     let (first, _) = poll_hosting(dir.path(), None, 0);
     assert_eq!(first.listener, Some("127.0.0.1:25566".parse().unwrap()));
     let (second, _) = poll_hosting(dir.path(), Some(&first), 3);
