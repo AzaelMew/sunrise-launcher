@@ -85,16 +85,14 @@ pub(super) fn run(instance: &instances::Instance, tag: &str, as_json: bool) -> R
                         writeln!(out, "{}", question.omission_summary())?;
                     }
                     for line in question
-                        .worlds
-                        .lines()
-                        .into_iter()
-                        .chain(question.hold_lines())
+                        .hold_lines()
                         .chain(question.removed.iter().map(|(name, reason)| {
                             trf(
                                 "{mod} was taken down: {reason}",
                                 &[("mod", name), ("reason", reason)],
                             )
                         }))
+                        .chain(question.world_lines())
                     {
                         writeln!(out, "{}", line.replace(char::is_control, " "))?;
                     }

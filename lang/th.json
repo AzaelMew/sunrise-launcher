@@ -1640,5 +1640,13 @@
   "[y] Switch and turn them off, [r] Switch and remove them, [N] Cancel": "[y] Switch and turn them off, [r] Switch and remove them, [N] Cancel",
   "{mod} was removed: {reason}": "{mod} was removed: {reason}",
   "{mod} was removed.": "{mod} was removed.",
-  "There are too many possible mod combinations to check. Remove mods you no longer need from this profile, then try switching again. Nothing was switched.": "There are too many possible mod combinations to check. Remove mods you no longer need from this profile, then try switching again. Nothing was switched."
+  "There are too many possible mod combinations to check. Remove mods you no longer need from this profile, then try switching again. Nothing was switched.": "There are too many possible mod combinations to check. Remove mods you no longer need from this profile, then try switching again. Nothing was switched.",
+  "last played on a newer game": "last played on a newer game",
+  "last game build is unknown": "last game build is unknown",
+  "content from the mods above may be lost": "content from the mods above may be lost",
+  "content from the mods above and {mods} may be lost": "content from the mods above and {mods} may be lost",
+  "content from these mods may be lost: {mods}": "content from these mods may be lost: {mods}",
+  "{world}: {age}; {mods}.": "{world}: {age}; {mods}.",
+  "{world}: {age}.": "{world}: {age}.",
+  "{world}: {mods}.": "{world}: {mods}."
 }
