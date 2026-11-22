@@ -1,5 +1,18 @@
 //! The backend's messages, drained as they arrive (`Launcher::drain`, `wake.rs`).
 use super::*;
+use sunrise_launcher::managed_play::StartError;
+
+/// A canceled Play is not a build failure. Otherwise keep the window open for the native
+/// build diagnostic (or consent prompt) instead of restarting as soon as Play stops.
+fn settle_managed_play_error(error: &StartError, cancel_restart: impl FnOnce()) -> bool {
+    let cancelled = matches!(error,
+        StartError::Native(native_mods::Failed::Other(detail)) | StartError::Other(detail)
+            if detail == native_mods::CANCELLED);
+    if !cancelled && matches!(error, StartError::Native(_)) {
+        cancel_restart();
+    }
+    cancelled
+}
 
 impl Launcher {
     pub(super) fn refresh_installed(&mut self) {
@@ -136,13 +149,12 @@ impl Launcher {
                     }
                 }
                 Msg::ManagedClient { instance, result } => {
-                    use sunrise_launcher::managed_play::StartError;
                     self.native_cancellation = None;
                     self.native_step = None;
                     self.native_progress = None;
-                    let cancelled = matches!(result.as_ref(),
-                        Err(StartError::Native(native_mods::Failed::Other(detail)) | StartError::Other(detail))
-                            if detail == native_mods::CANCELLED);
+                    let cancelled = result.as_ref().as_ref().is_err_and(|error| {
+                        settle_managed_play_error(error, || self.cancel_launcher_restart())
+                    });
                     let mut captured_build_error = false;
                     if let (Some(run), Err(error)) = (&mut self.ui.mods.build, result.as_ref()) {
                         if run.for_play && run.running() {
@@ -710,6 +722,28 @@ impl Launcher {
         self.restart_launcher_if_ready(cx);
         if changed {
             cx.notify();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_managed_play_build_failure_disarms_the_update_but_a_cancellation_does_not() {
+        let error = StartError::Native(native_mods::Failed::Other("compiler failed".into()));
+        let mut restart_armed = true;
+        assert!(!settle_managed_play_error(&error, || restart_armed = false));
+        assert!(!restart_armed);
+
+        for error in [
+            StartError::Native(native_mods::Failed::Other(native_mods::CANCELLED.into())),
+            StartError::Other(native_mods::CANCELLED.into()),
+        ] {
+            assert!(settle_managed_play_error(&error, || panic!(
+                "Play was canceled"
+            )));
         }
     }
 }

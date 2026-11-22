@@ -122,7 +122,10 @@ pub(super) enum Event {
         backups: Vec<Backup>,
         service: bool,
     },
-    Applied(Result<Applied, Problem>),
+    Applied {
+        dir: PathBuf,
+        result: Result<Applied, Problem>,
+    },
     Pvp(Option<bool>),
     UpdateCheck(Result<Value, Problem>),
     Failed(String),
@@ -146,9 +149,55 @@ pub(super) struct Create {
     friends: Vec<String>,
 }
 
-/// What the sidebar shows of the Servers page: its list once the page has read it, and whether
-/// a server answers.
+struct SettingsBatch {
+    dir: PathBuf,
+    changes: Vec<(String, String)>,
+}
+
 impl Servers {
+    /// Runs `job` on a thread with the page busy; its lines and result arrive as events.
+    fn start_job(
+        &mut self,
+        label: impl Into<String>,
+        job: impl FnOnce(&dyn Fn(String)) -> Result<String, Problem> + Send + 'static,
+    ) {
+        if self.busy.is_some() {
+            return;
+        }
+        self.busy = Some(label.into());
+        self.job_log.clear();
+        self.problem = None;
+        self.note = None;
+        let tx = self.tx.clone();
+        std::thread::spawn(move || {
+            let lines = tx.clone();
+            let log = move |l: String| {
+                let _ = lines.send(Event::Line(l));
+            };
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job(&log)))
+                .unwrap_or_else(|panic| {
+                    let error = (panic.downcast_ref::<&str>().map(|s| s.to_string()))
+                        .or_else(|| panic.downcast_ref::<String>().cloned())
+                        .unwrap_or_default();
+                    Err(Problem::plain(trf(
+                        "Could not run {program}: {error}",
+                        &[("program", "sunrise-server"), ("error", &error)],
+                    )))
+                });
+            let _ = tx.send(Event::Done(result));
+        });
+    }
+
+    fn finish_job(&mut self, result: Result<String, Problem>) {
+        self.busy = None;
+        self.polled = None;
+        match result {
+            Ok(note) if !note.is_empty() => self.note = Some(note),
+            Ok(_) => {}
+            Err(problem) => self.problem = Some(problem),
+        }
+    }
+
     /// Work still owned by this launcher, not the lifetime of a dedicated server.
     pub(super) fn writing(&self) -> bool {
         self.busy.is_some() || self.creating || self.applying || !self.queued.is_empty()
@@ -211,7 +260,7 @@ pub(super) struct Servers {
     creating: bool,
     config: Option<Value>,
     /// Settings waiting for `config set`, and whether one runs.
-    queued: Vec<(String, String)>,
+    queued: VecDeque<SettingsBatch>,
     applying: bool,
     /// Settings saved while the server ran that wait for its next start.
     restart_needed: BTreeSet<String>,
@@ -262,7 +311,7 @@ impl Servers {
             create: None,
             creating: false,
             config: None,
-            queued: Vec::new(),
+            queued: VecDeque::new(),
             applying: false,
             restart_needed: BTreeSet::new(),
             backups: Vec::new(),
@@ -331,7 +380,12 @@ impl Servers {
     /// A setting as shown: what was just asked for, else what server.toml holds.
     fn shown(&self, section: &str, key: &str) -> String {
         let full = format!("{section}.{key}");
-        if let Some((_, v)) = self.queued.iter().rev().find(|(k, _)| *k == full) {
+        if let Some((_, v)) = self
+            .queued
+            .iter()
+            .find(|batch| self.open.as_ref() == Some(&batch.dir))
+            .and_then(|batch| batch.changes.iter().find(|(k, _)| *k == full))
+        {
             return v.clone();
         }
         match self.setting(section, key) {
@@ -339,6 +393,66 @@ impl Servers {
             None => String::new(),
             Some(v) => v.to_string(),
         }
+    }
+
+    fn queue_setting(&mut self, dir: PathBuf, key: &str, value: String) {
+        if let Some(batch) = self.queued.iter_mut().find(|batch| batch.dir == dir) {
+            batch.changes.retain(|(queued, _)| queued != key);
+            batch.changes.push((key.to_owned(), value));
+        } else {
+            self.queued.push_back(SettingsBatch {
+                dir,
+                changes: vec![(key.to_owned(), value)],
+            });
+        }
+    }
+
+    /// Starts the oldest batch, even if its server is no longer open on the page.
+    fn next_settings_batch(&mut self) -> Option<SettingsBatch> {
+        if self.applying {
+            return None;
+        }
+        let batch = self.queued.pop_front()?;
+        self.applying = true;
+        // Shown as asked until the file is read back, but only on this server.
+        if let Some(config) = self
+            .config
+            .as_mut()
+            .filter(|_| self.open.as_ref() == Some(&batch.dir))
+        {
+            for (key, value) in &batch.changes {
+                if let Some((section, field)) = key.split_once('.') {
+                    let new = match &config[section][field] {
+                        Value::Bool(_) => Value::Bool(value == "true"),
+                        Value::Number(_) => value.parse::<i64>().map_or(Value::Null, Value::from),
+                        _ => Value::String(value.clone()),
+                    };
+                    config[section][field] = new;
+                }
+            }
+        }
+        Some(batch)
+    }
+
+    /// Whether the displayed settings need re-reading now that this write has finished.
+    fn finish_settings(&mut self, dir: &Path, result: Result<Applied, Problem>) -> bool {
+        self.applying = false;
+        let visible = self.open.as_deref() == Some(dir);
+        match result {
+            Ok(applied) if visible && applied.running => {
+                self.restart_needed.extend(applied.restart)
+            }
+            Ok(_) => {}
+            // A suggested action for another server must never run against the open server.
+            Err(problem) => {
+                self.problem = Some(if visible {
+                    problem
+                } else {
+                    Problem::plain(problem.message)
+                })
+            }
+        }
+        visible && !self.queued.iter().any(|batch| batch.dir == dir)
     }
 }
 
@@ -369,46 +483,13 @@ fn own_name(accounts: &Accounts) -> Option<String> {
 impl Launcher {
     // ----- Background work ------------------------------------------------------------------
 
-    /// Runs `job` on a thread with the page busy; its lines and result arrive as events.
-    fn server_job(
-        &mut self,
-        label: impl Into<String>,
-        job: impl FnOnce(&dyn Fn(String)) -> Result<String, Problem> + Send + 'static,
-    ) {
-        if self.servers.busy.is_some() {
-            return;
-        }
-        self.servers.busy = Some(label.into());
-        self.servers.job_log.clear();
-        self.servers.problem = None;
-        self.servers.note = None;
-        let tx = self.servers.tx.clone();
-        std::thread::spawn(move || {
-            let lines = tx.clone();
-            let log = move |l: String| {
-                let _ = lines.send(Event::Line(l));
-            };
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job(&log)))
-                .unwrap_or_else(|panic| {
-                    let error = (panic.downcast_ref::<&str>().map(|s| s.to_string()))
-                        .or_else(|| panic.downcast_ref::<String>().cloned())
-                        .unwrap_or_default();
-                    Err(Problem::plain(trf(
-                        "Could not run {program}: {error}",
-                        &[("program", "sunrise-server"), ("error", &error)],
-                    )))
-                });
-            let _ = tx.send(Event::Done(result));
-        });
-    }
-
     /// `sunrise-server <args>` on the open server, as a job.
     fn server_command(&mut self, label: &str, args: Vec<String>) {
         let Some(dir) = self.servers.open.clone() else {
             return;
         };
         let tx = self.tx.clone();
-        self.server_job(label.to_string(), move |log| {
+        self.servers.start_job(label.to_string(), move |log| {
             let args: Vec<&str> = args.iter().map(String::as_str).collect();
             let result = match args.first().copied() {
                 Some("start" | "restart") => {
@@ -589,13 +670,7 @@ impl Launcher {
                 true
             }
             Event::Done(result) => {
-                s.busy = None;
-                s.polled = None;
-                match result {
-                    Ok(note) if !note.is_empty() => s.note = Some(note),
-                    Ok(_) => {}
-                    Err(p) => s.problem = Some(p),
-                }
+                s.finish_job(result);
                 self.load_details();
                 true
             }
@@ -651,17 +726,11 @@ impl Launcher {
                 }
                 true
             }
-            Event::Applied(result) => {
-                s.applying = false;
-                match result {
-                    Ok(applied) if applied.running => s.restart_needed.extend(applied.restart),
-                    Ok(_) => {}
-                    Err(p) => s.problem = Some(p),
-                }
-                if s.queued.is_empty() {
+            Event::Applied { dir, result } => {
+                let refresh = s.finish_settings(&dir, result);
+                self.apply_settings();
+                if refresh {
                     self.load_details();
-                } else {
-                    self.apply_settings();
                 }
                 true
             }
@@ -710,41 +779,26 @@ impl Launcher {
 
     /// Queues a setting for `sunrise-server config set`; they go one batch at a time.
     fn set_setting(&mut self, key: &str, value: String) {
-        self.servers.queued.retain(|(k, _)| k != key);
-        self.servers.queued.push((key.to_string(), value));
-        self.servers.note = None;
-        if !self.servers.applying {
-            self.apply_settings();
-        }
-    }
-
-    fn apply_settings(&mut self) {
         let Some(dir) = self.servers.open.clone() else {
             return;
         };
-        let batch = std::mem::take(&mut self.servers.queued);
-        if batch.is_empty() {
+        self.servers.queue_setting(dir, key, value);
+        self.servers.note = None;
+        self.apply_settings();
+    }
+
+    fn apply_settings(&mut self) {
+        let Some(SettingsBatch { dir, changes }) = self.servers.next_settings_batch() else {
             return;
-        }
-        self.servers.applying = true;
-        // Shown as asked until the file is read back.
-        if let Some(config) = &mut self.servers.config {
-            for (key, value) in &batch {
-                if let Some((section, field)) = key.split_once('.') {
-                    let new = match &config[section][field] {
-                        Value::Bool(_) => Value::Bool(value == "true"),
-                        Value::Number(_) => value.parse::<i64>().map_or(Value::Null, Value::from),
-                        _ => Value::String(value.clone()),
-                    };
-                    config[section][field] = new;
-                }
-            }
-        }
+        };
         let tx = self.servers.tx.clone();
         std::thread::spawn(move || {
-            let pairs: Vec<(&str, String)> =
-                batch.iter().map(|(k, v)| (k.as_str(), v.clone())).collect();
-            let _ = tx.send(Event::Applied(servers::set_config(&dir, &pairs)));
+            let pairs: Vec<_> = changes
+                .iter()
+                .map(|(key, value)| (key.as_str(), value.clone()))
+                .collect();
+            let result = servers::set_config(&dir, &pairs);
+            let _ = tx.send(Event::Applied { dir, result });
         });
     }
 
@@ -773,7 +827,7 @@ impl Launcher {
         STARTED_HERE.lock().unwrap().push(dir.clone());
         self.servers.restart_needed.clear();
         let tx = self.tx.clone();
-        self.server_job("Starting", move |log| {
+        self.servers.start_job("Starting", move |log| {
             if let Some(api) = servers::Api::open(&dir) {
                 if let Ok(status) = api.call("GET", "/api/v1/status", None) {
                     if status["phase"] == "stopped"
@@ -792,7 +846,7 @@ impl Launcher {
         let Some(dir) = self.servers.open.clone() else {
             return;
         };
-        self.server_job("Stopping", move |log| {
+        self.servers.start_job("Stopping", move |log| {
             // The running server's API first; when it can't be reached or refuses, the CLI,
             // whose error is the job's.
             let via_api = servers::Api::open(&dir)
@@ -809,7 +863,7 @@ impl Launcher {
             return;
         };
         let tx = self.tx.clone();
-        self.server_job("Restarting", move |log| {
+        self.servers.start_job("Restarting", move |log| {
             // The running server's API first; when it can't be reached or refuses, the CLI,
             // whose error is the job's.
             let via_api = servers::Api::open(&dir)
@@ -833,12 +887,13 @@ impl Launcher {
             }
             Fix::Prepare => match self.selected().cloned() {
                 Some(tag) if backend::is_prepared(&tag) => {
-                    self.server_job("Copying the game files", move |log| {
-                        log(format!("Copying the game files prepared for Sunrise {tag}"));
-                        servers::set_up(&tag)
-                            .map(|_| "The game files are ready. Press Start again.".to_string())
-                            .map_err(Problem::plain)
-                    });
+                    self.servers
+                        .start_job("Copying the game files", move |log| {
+                            log(format!("Copying the game files prepared for Sunrise {tag}"));
+                            servers::set_up(&tag)
+                                .map(|_| "The game files are ready. Press Start again.".to_string())
+                                .map_err(Problem::plain)
+                        });
                 }
                 _ => {
                     self.servers.create = None;
@@ -1348,6 +1403,89 @@ mod tests {
         servers.applying = true;
         assert!(servers.writing());
         servers.applying = false;
+        assert!(!servers.writing());
+    }
+
+    #[test]
+    fn an_update_waits_for_a_hosting_restore_until_the_worker_reports_completion() {
+        use crate::launcher_update::Wait;
+        let mut servers = Servers::new();
+        servers.statuses.insert(
+            PathBuf::from("server"),
+            Status {
+                phase: "running".into(),
+                ..Status::default()
+            },
+        );
+        let (finish, wait_for_finish) = std::sync::mpsc::channel();
+        servers.start_job("Restore a backup", move |_| {
+            wait_for_finish.recv().unwrap();
+            Ok(String::new())
+        });
+        let ready = SelfUpdate::Ready(Release {
+            tag: "v1.3.0".into(),
+            name: String::new(),
+            body: String::new(),
+            date: String::new(),
+            time: String::new(),
+            asset: None,
+            prerelease: false,
+            nightly: None,
+        });
+        let restart = |hosting: &Servers| {
+            ready
+                .ready_to_restart(true, true, || {
+                    Wait::for_activity(false, false, hosting, false)
+                })
+                .is_some()
+        };
+        assert!(!restart(&servers));
+        finish.send(()).unwrap();
+        let Event::Done(result) = servers.rx.recv_timeout(Duration::from_secs(10)).unwrap() else {
+            panic!("expected the Hosting worker's completion event");
+        };
+        result.as_ref().unwrap();
+        servers.finish_job(result);
+        assert!(restart(&servers), "a running server must not block restart");
+    }
+
+    #[test]
+    fn queued_settings_drain_to_their_own_servers_without_an_open_page() {
+        let (one, two) = (PathBuf::from("one"), PathBuf::from("two"));
+        let mut servers = Servers::new();
+        servers.open = Some(one.clone());
+        servers.queue_setting(one.clone(), "server.motd", "saving".into());
+        let first = servers.next_settings_batch().unwrap();
+        assert_eq!(first.dir, one);
+        servers.queue_setting(one.clone(), "server.motd", "old edit".into());
+        servers.queue_setting(one.clone(), "server.motd", "latest edit".into());
+        servers.open = Some(two.clone());
+        assert_eq!(servers.shown("server", "motd"), "");
+        servers.queue_setting(two.clone(), "server.motd", "other server".into());
+        assert_eq!(servers.shown("server", "motd"), "other server");
+        servers.open = None;
+        assert!(servers.next_settings_batch().is_none());
+        let done = || {
+            Ok(Applied {
+                applied: vec![],
+                restart: vec!["server.motd".into()],
+                running: true,
+            })
+        };
+        assert!(!servers.finish_settings(&first.dir, done()));
+        assert!(servers.writing());
+        for (dir, motd) in [(one, "latest edit"), (two, "other server")] {
+            let batch = servers.next_settings_batch().unwrap();
+            assert_eq!(batch.dir, dir);
+            assert_eq!(
+                batch.changes,
+                [(String::from("server.motd"), String::from(motd))]
+            );
+            assert!(servers.writing());
+            assert!(!servers.finish_settings(&batch.dir, done()));
+        }
+        assert!(servers.restart_needed.is_empty());
+        assert!(servers.next_settings_batch().is_none());
         assert!(!servers.writing());
     }
 

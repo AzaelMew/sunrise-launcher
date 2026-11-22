@@ -1363,7 +1363,7 @@ impl Launcher {
                     this.servers.confirm_restore = None;
                     if let Some(dir) = this.servers.open.clone() {
                         let (name, restored) = (name.clone(), restored.clone());
-                        this.server_job("Restoring", move |log| {
+                        this.servers.start_job("Restoring", move |log| {
                             servers::run_streamed(&dir, &["restore", &name, "--yes"], log)
                                 .map(|_| restored)
                         });
@@ -1451,9 +1451,10 @@ impl Launcher {
                             "Updated to Sunrise {tag}. The world was backed up first (Backups).",
                             &[("tag", &tag)],
                         );
-                        this.server_job(trf("Updating to {tag}", &[("tag", &tag)]), move |log| {
-                            servers::run_streamed(&dir, &["update"], log).map(|_| done)
-                        });
+                        this.servers
+                            .start_job(trf("Updating to {tag}", &[("tag", &tag)]), move |log| {
+                                servers::run_streamed(&dir, &["update"], log).map(|_| done)
+                            });
                     }
                 },
             )),

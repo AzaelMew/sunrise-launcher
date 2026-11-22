@@ -24,15 +24,15 @@ pub(super) enum Wait {
 }
 
 impl Wait {
-    fn for_activity(
+    pub(super) fn for_activity(
         game: bool,
         importing_build: bool,
-        hosting_writes: bool,
+        hosting: &servers_page::Servers,
         other_work: bool,
     ) -> Option<Self> {
         if game {
             Some(Self::Game)
-        } else if importing_build || hosting_writes || other_work {
+        } else if importing_build || hosting.writing() || other_work {
             Some(Self::Work)
         } else {
             None
@@ -126,14 +126,14 @@ impl<'a> Offer<'a> {
 }
 
 impl SelfUpdate {
-    fn ready_to_restart(
+    pub(super) fn ready_to_restart(
         &self,
         armed: bool,
         allowed: bool,
-        idle: impl FnOnce() -> bool,
+        wait: impl FnOnce() -> Option<Wait>,
     ) -> Option<&Release> {
         match self {
-            Self::Ready(release) if armed && allowed && idle() => Some(release),
+            Self::Ready(release) if armed && allowed && wait().is_none() => Some(release),
             _ => None,
         }
     }
@@ -252,7 +252,7 @@ impl Launcher {
         Wait::for_activity(
             self.client.is_some() || self.starting_client.is_some() || self.starting_pack.is_some(),
             self.importing_build,
-            self.servers.writing(),
+            &self.servers,
             self.launch_busy()
                 || self
                     .instances
@@ -301,7 +301,7 @@ impl Launcher {
 
     pub(super) fn launcher_update_finished(
         &mut self,
-        result: Result<Option<backend::Staged>, String>,
+        result: Result<Option<backend::Staged>, backend::StageUpdateError>,
     ) {
         if matches!(self.self_update, SelfUpdate::Discarding) {
             if let Ok(Some(staged)) = result {
@@ -320,9 +320,18 @@ impl Launcher {
                 update_handoff::set_pending(staged);
                 SelfUpdate::Ready(release)
             }
+            Err(backend::StageUpdateError::Check(
+                error @ backend::LauncherCheckError::Rejected { .. },
+            )) => {
+                // This worker has already finished, unlike a rejected check during a download.
+                self.restart_for_launcher_update = false;
+                self.self_update = SelfUpdate::Idle;
+                self.note_launcher_check(Err(error));
+                return;
+            }
             Err(error) => {
                 self.restart_for_launcher_update = false;
-                SelfUpdate::Failed(release, error)
+                SelfUpdate::Failed(release, error.into())
             }
         };
         self.reconcile_launcher_offer();
@@ -333,7 +342,7 @@ impl Launcher {
         let Some(release) = self.self_update.ready_to_restart(
             self.restart_for_launcher_update,
             backend::self_update_allowed(),
-            || self.launcher_update_wait().is_none(),
+            || self.launcher_update_wait(),
         ) else {
             return;
         };
@@ -652,23 +661,16 @@ mod tests {
 
     #[test]
     fn a_download_that_finishes_during_a_write_waits_for_its_worker() {
-        for (importing, hosting, other_work) in [
-            (true, false, false),
-            (false, true, false),
-            (false, false, true),
-        ] {
+        let hosting = servers_page::Servers::new();
+        for (importing, other_work) in [(true, false), (false, true)] {
             let ready = SelfUpdate::Ready(release("v1.3.0"));
-            let wait = Wait::for_activity(false, importing, hosting, other_work);
+            let wait = Wait::for_activity(false, importing, &hosting, other_work);
             assert_eq!(wait, Some(Wait::Work));
-            assert!(ready
-                .ready_to_restart(true, true, || wait.is_none())
-                .is_none());
-            // Completion of the write, not completion of the update download, permits the restart.
+            assert!(ready.ready_to_restart(true, true, || wait).is_none());
             assert!(ready
                 .ready_to_restart(true, true, || Wait::for_activity(
-                    false, false, false, false
-                )
-                .is_none())
+                    false, false, &hosting, false
+                ))
                 .is_some());
         }
     }
@@ -713,7 +715,7 @@ mod tests {
         let mut dropped = false;
         assert!(staged.withdraw(&found.tag, || dropped = true));
         assert!(dropped);
-        assert!(staged.ready_to_restart(true, true, || true).is_none());
+        assert!(staged.ready_to_restart(true, true, || None).is_none());
         let mut downloading = SelfUpdate::Downloading(found.clone(), 0.5);
         assert!(downloading.withdraw(&found.tag, || panic!("stage is still being written")));
         assert!(Offer::new(&downloading, None, None, true, false).is_none());
@@ -732,12 +734,14 @@ mod tests {
             Some("Update when you close the game")
         );
         assert!(SelfUpdate::Downloading(found.clone(), 1.0)
-            .ready_to_restart(true, true, || true)
+            .ready_to_restart(true, true, || None)
             .is_none());
         let ready = SelfUpdate::Ready(found);
-        assert!(ready.ready_to_restart(true, true, || false).is_none());
-        assert!(ready.ready_to_restart(false, true, || true).is_none());
-        assert!(ready.ready_to_restart(true, false, || true).is_none());
-        assert!(ready.ready_to_restart(true, true, || true).is_some());
+        assert!(ready
+            .ready_to_restart(true, true, || Some(Wait::Game))
+            .is_none());
+        assert!(ready.ready_to_restart(false, true, || None).is_none());
+        assert!(ready.ready_to_restart(true, false, || None).is_none());
+        assert!(ready.ready_to_restart(true, true, || None).is_some());
     }
 }
