@@ -427,6 +427,8 @@ pub(crate) struct ModsState {
     anchor: Option<String>,
     snapshot: Option<Snapshot>,
     home_mod_labels: Option<HomeModLabels>,
+    /// The mods folder's fingerprint, kept between frames (`native_status::Fingerprints`).
+    fingerprints: native_status::Fingerprints,
     /// What the last frame of Installed drew, for the benchmark (`installed_bench_target`).
     drawn: Option<InstalledDrawn>,
     open: Option<Open>,
@@ -500,6 +502,7 @@ impl Default for ModsState {
             anchor: None,
             snapshot: None,
             home_mod_labels: None,
+            fingerprints: Default::default(),
             drawn: None,
             open: None,
             page_request: 0,
@@ -1086,7 +1089,12 @@ impl Launcher {
         let home = self.mods_home();
         self.mods
             .follow_home(self.selected_instance().map(|i| i.home.clone()));
-        let key = native_status::fingerprint(&home, None);
+        // Asked on every frame of the Mods pages: read again only when something moved.
+        let key = self
+            .ui
+            .mods
+            .fingerprints
+            .read(&home, None, std::time::Instant::now());
         let moved = self
             .ui
             .mods

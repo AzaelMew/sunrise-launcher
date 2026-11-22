@@ -530,8 +530,9 @@ fn parse_built(about: &serde_json::Value) -> Vec<Mod> {
         .collect()
 }
 
-/// What [`state`] depends on, cheap to read on every frame: the folder, the version, the on/off
-/// list and each `.smod`'s size and time. The Mods page reads the mods again when it changes.
+/// What [`state`] depends on: the folder, the version, the on/off list and each `.smod`'s size
+/// and time. The Mods page reads the mods again when it changes. It reads every mod's file, so a
+/// page asking on every frame keeps it with [`Fingerprints`].
 pub fn fingerprint(home: &Path, version: Option<&str>) -> String {
     let mut out = format!("{}\n{version:?}\n", home.display());
     // The on/off list (`browser::mod_list::is_enabled`).
@@ -550,6 +551,73 @@ pub fn fingerprint(home: &Path, version: Option<&str>) -> String {
         let meta = fs::symlink_metadata(&path).ok();
         let time = meta.as_ref().and_then(|m| m.modified().ok());
         out += &format!("\n{} {:?} {time:?}", path.display(), meta.map(|m| m.len()));
+    }
+    out
+}
+
+/// How long [`Fingerprints`] trusts a glance before reading every mod again.
+pub const FULL_EVERY: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// [`fingerprint`] for a page that asks on every frame. A pack of a few hundred mods made the
+/// full read cost about 7 ms a frame (a `stat` of each archive and its origin, and a line for
+/// each), so it is kept, and read again only when a glance says something moved: the two mod
+/// folders, whose time changes when a mod is added, removed or renamed into place, and the lists
+/// beside them. A mod rewritten where it lies changes neither, so the full read is also redone
+/// every [`FULL_EVERY`].
+#[derive(Default)]
+pub struct Fingerprints {
+    kept: Option<Kept>,
+}
+
+struct Kept {
+    home: std::path::PathBuf,
+    version: Option<String>,
+    glance: String,
+    full: String,
+    at: std::time::Instant,
+}
+
+impl Fingerprints {
+    /// [`fingerprint`]`(home, version)`, as of `now`.
+    pub fn read(&mut self, home: &Path, version: Option<&str>, now: std::time::Instant) -> String {
+        let glance = glance(home);
+        if let Some(kept) = &self.kept {
+            if kept.home == home
+                && kept.version.as_deref() == version
+                && kept.glance == glance
+                && now.saturating_duration_since(kept.at) < FULL_EVERY
+            {
+                return kept.full.clone();
+            }
+        }
+        let full = fingerprint(home, version);
+        self.kept = Some(Kept {
+            home: home.to_owned(),
+            version: version.map(str::to_owned),
+            glance,
+            full: full.clone(),
+            at: now,
+        });
+        full
+    }
+}
+
+/// The few things whose time and size change whenever the mods do, but for a mod rewritten in
+/// place ([`Fingerprints`]).
+fn glance(home: &Path) -> String {
+    let mut out = String::new();
+    for path in [
+        home.join(native_mods::INSTALLED),
+        home.join(sunrise_launcher_smod::mod_list::DIR),
+        home.join(mod_list::MODS_LIST),
+        home.join("mod-browser.json"),
+        home.join("mod-browser/active-build.json"),
+        home.join(sunrise_launcher_smod::index::browser_state::PENDING),
+        home.join(crate::profile_txn::POINTER),
+    ] {
+        let meta = fs::symlink_metadata(&path).ok();
+        let time = meta.as_ref().and_then(|m| m.modified().ok());
+        out += &format!("{:?} {time:?}\n", meta.map(|m| m.len()));
     }
     out
 }
@@ -684,6 +752,53 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn a_kept_fingerprint_sees_mods_added_and_lists_changed_at_once_and_rewrites_in_time() {
+        let home = tempfile::tempdir().unwrap();
+        let home = home.path();
+        let mods = home.join(sunrise_launcher_smod::mod_list::DIR);
+        fs::create_dir_all(&mods).unwrap();
+        fs::write(mods.join("a.smod"), b"one").unwrap();
+        fs::write(home.join("mod-browser.json"), b"{}").unwrap();
+        let mut kept = Fingerprints::default();
+        let t0 = std::time::Instant::now();
+        let first = kept.read(home, None, t0);
+        assert_eq!(first, fingerprint(home, None));
+        assert_eq!(kept.read(home, None, t0), first, "nothing moved: kept");
+
+        // A mod added (or removed, or renamed into place) moves its folder's time: read again.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        fs::write(mods.join("b.smod"), b"two").unwrap();
+        let added = kept.read(home, None, t0);
+        assert_ne!(added, first);
+        assert_eq!(added, fingerprint(home, None));
+
+        // The browser's list rewritten, as an install or update does: read again.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        fs::write(home.join("mod-browser.json"), b"{\"entries\":[]}").unwrap();
+        let listed = kept.read(home, None, t0);
+        assert_ne!(listed, added);
+
+        // A mod rewritten where it lies moves neither: kept until the full read is due.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        fs::write(mods.join("a.smod"), b"one, longer").unwrap();
+        assert_eq!(kept.read(home, None, t0), listed);
+        let later = t0 + FULL_EVERY;
+        assert_eq!(kept.read(home, None, later), fingerprint(home, None));
+        assert_ne!(kept.read(home, None, later), listed);
+
+        // Another folder or version is never answered from the kept one.
+        let other = tempfile::tempdir().unwrap();
+        assert_eq!(
+            kept.read(other.path(), None, later),
+            fingerprint(other.path(), None)
+        );
+        assert_eq!(
+            kept.read(home, Some("26.3"), later),
+            fingerprint(home, Some("26.3"))
+        );
+    }
 
     fn m(id: &str, version: &str) -> Mod {
         (id.into(), version.into(), None)
