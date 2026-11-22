@@ -153,6 +153,13 @@ fn classify_bundles(
                     fit::Verdict::Fits { .. } => Route::Fits {
                         line: fit::line(&id, &verdict, &shown),
                     },
+                    // A list in a newer schema is the game's to read: updating the game helps.
+                    fit::Verdict::NoList {
+                        why: Some(fit::NoListReason::NewerSchema),
+                        ..
+                    } => Route::Unchecked {
+                        reason: fit::line(&id, &verdict, &shown),
+                    },
                     fit::Verdict::NoList { .. } => Route::Unproven {
                         line: fit::line(&id, &verdict, &shown),
                     },

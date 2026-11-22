@@ -365,7 +365,7 @@ impl Installs {
     pub(super) fn refused(
         &self,
         event: &Worker,
-    ) -> Option<(PathBuf, crate::mods::refused::Refused)> {
+    ) -> Option<(instances::Instance, crate::mods::refused::Refused)> {
         use crate::mods::refused::{Refusal, Refused, RefusedMod};
         let run = self.running.as_ref()?;
         let source = run.source.as_ref().filter(|_| run.github.is_none())?;
@@ -391,7 +391,33 @@ impl Installs {
                 })
             })
             .collect();
+        if matches!(batch, Some(SourceError::Cancelled)) {
+            return None;
+        }
         let mut names: Vec<String> = mods.iter().map(|m| m.name.clone()).collect();
+        // The rest failed too, for its own reason: said once, after the members refused alone.
+        if let Some(error) = batch
+            .as_ref()
+            .filter(|error| !mods.is_empty() && !source.rejected.values().any(|e| e == *error))
+        {
+            let rest: Vec<&(String, String, String)> = source
+                .members
+                .iter()
+                .filter(|(id, _, _)| !source.rejected.contains_key(id))
+                .collect();
+            let (name, repo) = match rest.as_slice() {
+                [(_, name, repo)] => (name.clone(), Some(repo.clone())),
+                _ => (tr("The other mods").to_owned(), None),
+            };
+            if let Some(refusal) = Refusal::of(&name, error) {
+                mods.push(RefusedMod {
+                    name,
+                    repo,
+                    refusal,
+                });
+                names = source.names.clone();
+            }
+        }
         if mods.is_empty() {
             let error = batch?;
             let (name, repo) = match source.members.as_slice() {
@@ -406,7 +432,7 @@ impl Installs {
             names = source.names.clone();
         }
         Some((
-            run.profile.home.clone(),
+            run.profile.clone(),
             Refused {
                 update: source.update,
                 names,
@@ -1711,6 +1737,18 @@ mod tests {
         assert!(installs
             .refused(&Worker::Progress(InstallProgress::Checking))
             .is_none());
+
+        // The rest then failing for its own reason is said once more, after the member.
+        let failed = Worker::Done(Err(InstallError::Source(SourceError::DoesNotFit(
+            "jade pins build ed3ac19".into(),
+        ))));
+        let (_, modal) = installs.refused(&failed).unwrap();
+        let said: Vec<_> = modal.mods.iter().map(|m| m.name.as_str()).collect();
+        assert_eq!(said, ["Minimap", "Jade"]);
+        assert!(modal.mods[1].refusal.said.starts_with("Jade isn't ready"));
+        // Stopping it opens nothing, whatever a member said before.
+        let stopped = Worker::Done(Err(InstallError::Source(SourceError::Cancelled)));
+        assert_eq!(installs.refused(&stopped), None);
     }
 
     #[test]

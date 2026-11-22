@@ -94,15 +94,15 @@ impl Launcher {
         let busy = self.nightly_busy();
         let build = if busy || current.is_some() {
             dim(build)
+        } else if !offline && listed && failed_job.is_some() {
+            let source = source.clone();
+            build.on_click(cx.listener(move |this, _, _, cx| {
+                this.reread_and_add(source.clone());
+                cx.notify();
+            }))
         } else if can_build {
             build.on_click(cx.listener(|this, _, _, cx| {
                 this.build_nightly();
-                cx.notify();
-            }))
-        } else if !offline && failed_job.is_some() {
-            let source = source.clone();
-            build.on_click(cx.listener(move |this, _, _, cx| {
-                this.inspect_nightly(source.clone(), true);
                 cx.notify();
             }))
         } else {
