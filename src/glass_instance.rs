@@ -373,7 +373,7 @@ mod tests {
         let first = nightly(old, "2035-08-09T12:30:10Z");
         let second = nightly(newer, "2035-08-09T12:30:45Z");
         sunrise_launcher::nightly::note_published(&[first]);
-        sunrise_launcher::nightly::note_published(&[second.clone()]);
+        sunrise_launcher::nightly::note_published(std::slice::from_ref(&second));
         assert_eq!(
             home_update(&profile, &[second], |_| Ok(Some(active(old, old))))
                 .map(|release| release.tag.as_str()),
