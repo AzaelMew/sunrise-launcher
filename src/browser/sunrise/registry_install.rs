@@ -32,7 +32,7 @@ mod switch;
 pub use conflicts::ResolveQuestion;
 use source::MixedSources;
 pub use source::{
-    apply_sources, prepare_pasted_sources, prepare_source, read_pasted_sources,
+    apply_sources, pack_source, prepare_pasted_sources, prepare_source, read_pasted_sources,
     update_registry_and_sources, CombinedUpdate, PastedSource, PreparedSource, SourceError,
     SourceHooks, SourceRequest,
 };

@@ -1,9 +1,9 @@
 //! A source collection's page: its mods to pick from, one Build. Each picked mod builds from its
 //! own repository through the same source flow as a single mod, with one consent for all of them.
 use super::*;
-use crate::mods_page::install::SourceTarget;
+use crate::mods_page::install::{stage_label, SourceTarget};
 use std::collections::BTreeSet;
-use sunrise_launcher::browser::sunrise::{PreparedSource, SourceError, SourceRequest};
+use sunrise_launcher::browser::sunrise::{PreparedSource, SourceError};
 use sunrise_launcher::native_mods::Cancellation;
 use sunrise_launcher_smod::index::Collection;
 
@@ -11,12 +11,14 @@ use sunrise_launcher_smod::index::Collection;
 pub(in crate::mods) struct CollectionOpen {
     id: String,
     ticked: BTreeSet<String>,
-    preparing: bool,
+    /// The listings a Build click is checking; its result applies only while they still match.
+    pending: Option<Vec<Source>>,
 }
 
 /// What preparing a collection's picks produced: the builds to queue, and why any pick can't.
 pub(in crate::mods) struct PreparedCollection {
     id: String,
+    picks: Vec<Source>,
     target: Option<SourceTarget>,
     prepared: Vec<PreparedSource>,
     failed: Vec<(String, String)>,
@@ -36,7 +38,7 @@ impl Launcher {
                 .filter(|member| member.default)
                 .map(|member| member.id.clone())
                 .collect(),
-            preparing: false,
+            pending: None,
         });
     }
 
@@ -65,21 +67,17 @@ impl Launcher {
         let (Some(open), Some(catalogue)) = (state.collection.as_mut(), &state.catalogue) else {
             return;
         };
-        let picks: Vec<Source> = catalogue
-            .sources
-            .iter()
-            .filter(|source| open.ticked.contains(source.id()) && !built.contains(source.id()))
-            .cloned()
-            .collect();
-        if picks.is_empty() || open.preparing {
+        let picks = collection_picks(catalogue, &open.id, &open.ticked, &built);
+        if picks.is_empty() || open.pending.is_some() {
             return;
         }
-        open.preparing = true;
+        open.pending = Some(picks.clone());
         let id = open.id.clone();
         let tx = self.ui.mods.tx.clone();
         std::thread::spawn(move || {
             let mut done = PreparedCollection {
                 id,
+                picks: picks.clone(),
                 target: None,
                 prepared: Vec::new(),
                 failed: Vec::new(),
@@ -87,27 +85,28 @@ impl Launcher {
             match target {
                 Ok(target) => {
                     let cancellation = Cancellation::default();
+                    let mut packed = Vec::new();
                     for (source, pin) in picks.iter().zip(sources::resolve_batch(&picks)) {
-                        let prepared = pin.map_err(SourceError::Github).and_then(|pin| {
-                            sunrise::prepare_source(
-                                target.instance(),
-                                target.identity(),
-                                target.base(),
-                                SourceRequest::Add(pin),
-                                &cancellation,
-                            )
-                        });
-                        match prepared {
-                            Ok(prepared) => done.prepared.push(prepared),
-                            Err(error) => {
-                                eprintln!(
-                                    "Nightly collection preflight ({}): {error}",
-                                    source.id()
-                                );
-                                let why = source_error(&error, Some(source))
-                                    .unwrap_or_else(|| error.to_string());
-                                done.failed.push((source.name().to_owned(), why));
-                            }
+                        match pin
+                            .map_err(SourceError::Github)
+                            .and_then(|pin| sunrise::pack_source(&pin, &cancellation))
+                        {
+                            Ok(package) => packed.push(package),
+                            Err(error) => done.failed.push(failure(&error, Some(source))),
+                        }
+                    }
+                    // One check over every pick, so a ticked library supplies its ticked
+                    // dependents, as a pasted repository's packages are checked together.
+                    if !packed.is_empty() {
+                        match sunrise::prepare_pasted_sources(
+                            target.instance(),
+                            target.identity(),
+                            target.base(),
+                            packed,
+                            &cancellation,
+                        ) {
+                            Ok(prepared) => done.prepared = prepared,
+                            Err(error) => done.failed.push(failure(&error, None)),
                         }
                     }
                     done.target = Some(target);
@@ -121,17 +120,29 @@ impl Launcher {
     }
 
     pub(super) fn collection_prepared(&mut self, done: PreparedCollection) {
-        let Some(open) = self
-            .ui
-            .mods
-            .nightly
+        let state = &mut self.ui.mods.nightly;
+        let Some(open) = state
             .collection
             .as_mut()
-            .filter(|open| open.id == done.id)
+            .filter(|open| open.id == done.id && open.pending.as_ref() == Some(&done.picks))
         else {
             return;
         };
-        open.preparing = false;
+        open.pending = None;
+        // Queue only what the current list still offers for this collection, as a single
+        // source's Build does.
+        let built = BTreeSet::new();
+        let ticked = done.picks.iter().map(|s| s.id().to_owned()).collect();
+        let listed = state.catalogue.as_ref().is_some_and(|catalogue| {
+            collection_picks(catalogue, &done.id, &ticked, &built) == done.picks
+        });
+        if !listed || !self.nightly_catalogue_current() {
+            self.ui.mods.notice = Some(Err(tr(
+                "This source listing changed. Open it again from Discover.",
+            )
+            .into()));
+            return;
+        }
         let failed = done
             .failed
             .iter()
@@ -155,6 +166,8 @@ impl Launcher {
     }
 
     pub(in crate::mods) fn source_collection(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let activity: Option<(Vec<String>, sunrise::InstallProgress)> =
+            self.source_activity().map(|a| (a.ids.to_vec(), a.progress));
         let built = self.built_sources();
         let can_start = self.nightly_catalogue_current() && !self.nightly_busy();
         let state = &self.ui.mods.nightly;
@@ -196,7 +209,7 @@ impl Launcher {
                 collection,
                 members,
                 open.ticked.clone(),
-                open.preparing,
+                open.pending.is_some(),
                 catalogue.error.is_none(),
             ))
         });
@@ -304,7 +317,37 @@ impl Launcher {
                     this.inspect_nightly(open.clone(), false);
                     cx.notify();
                 }));
-            let right = installed.then(|| status("check", tr("Installed"), palette().success));
+            // The installer's own result for this mod, as its page shows it.
+            let running = activity
+                .as_ref()
+                .filter(|(ids, _)| ids.iter().any(|id| id == source.id()));
+            let failed = self
+                .source_outcome(source.id())
+                .and_then(|outcome| outcome.as_ref().err())
+                .filter(|_| !installed && running.is_none());
+            let right = if installed {
+                Some(status("check", tr("Installed"), palette().success))
+            } else if let Some((_, progress)) = running {
+                Some(status("hammer", stage_label(*progress), palette().muted))
+            } else {
+                failed.map(|_| status("information-circle", tr("Build failed"), palette().warning))
+            };
+            let why = failed.map(|error| {
+                let log = match error {
+                    SourceError::Build { log: Some(log), .. } => Some(log.clone()),
+                    _ => None,
+                };
+                div()
+                    .flex()
+                    .flex_col()
+                    .items_start()
+                    .gap(px(6.))
+                    .pt(px(4.))
+                    .child(note(
+                        source_error(error, Some(source)).unwrap_or_else(|| error.to_string()),
+                    ))
+                    .children(log.map(|log| self.nightly_log_button(source.name(), log, cx)))
+            });
             let tick = checkbox(("nightly-collection-box", i), on).tab_stop(false);
             let member = source.id().to_owned();
             rows = rows.child(
@@ -337,7 +380,8 @@ impl Launcher {
                                     .text_size(px(tokens::SMALL))
                                     .text_color(c(palette().muted))
                                     .child(source.summary().to_owned()),
-                            ),
+                            )
+                            .children(why),
                     )
                     .children(right)
                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -451,4 +495,33 @@ impl Launcher {
         )
         .into_any_element()
     }
+}
+
+/// The ticked listings of the current list's collection `id`, in its order, leaving out mods
+/// already built and anything no longer a member.
+fn collection_picks(
+    catalogue: &sources::Catalogue,
+    id: &str,
+    ticked: &BTreeSet<String>,
+    built: &BTreeSet<String>,
+) -> Vec<Source> {
+    catalogue
+        .collections
+        .iter()
+        .find(|collection| collection.id == id)
+        .into_iter()
+        .flat_map(|collection| &collection.members)
+        .filter(|member| ticked.contains(&member.id) && !built.contains(&member.id))
+        .filter_map(|member| catalogue.sources.iter().find(|s| s.id() == member.id))
+        .cloned()
+        .collect()
+}
+
+fn failure(error: &SourceError, source: Option<&Source>) -> (String, String) {
+    eprintln!("Nightly collection preflight: {error}");
+    let why = source_error(error, source).unwrap_or_else(|| error.to_string());
+    (
+        source.map_or_else(String::new, |s| s.name().to_owned()),
+        why,
+    )
 }

@@ -165,6 +165,16 @@ pub fn prepare_source(
     }
 }
 
+/// One pinned listing's exact bytes, to check with others through [`prepare_pasted_sources`].
+pub fn pack_source(
+    pin: &SourceCommit,
+    cancellation: &native_mods::Cancellation,
+) -> Result<PastedSource, SourceError> {
+    github_mods::pack_pin(pin, cancellation)
+        .map(|(package, origin)| PastedSource { package, origin })
+        .map_err(SourceError::Github)
+}
+
 /// Uncompiled, exact bytes from a single pasted GitHub snapshot. Being listed is not a fit proof.
 #[derive(Clone)]
 pub struct PastedSource {
