@@ -190,9 +190,11 @@ impl Launcher {
                         Some(div().text_size(px(tokens::LABEL)).line_clamp(4).child(said.clone()))
                     }
                     Some(End::Cancelled) => Some(
-                        div()
-                            .text_size(px(tokens::LABEL))
-                            .child(tr("The game does not start. Build again when you are ready.")),
+                        div().text_size(px(tokens::LABEL)).child(if source.is_some() {
+                            tr("This build did not change your installed mods.")
+                        } else {
+                            tr("The game does not start. Build again when you are ready.")
+                        }),
                     ),
                     Some(End::Done) if source.is_none() && counts.needs_update + counts.failed > 0 => Some(
                         div()
@@ -218,10 +220,11 @@ impl Launcher {
         );
 
         // ---- the foot: stop it, or put it aside
-        let has_details =
-            run.lines.iter().any(
-                |l| matches!(&l.state, State::NeedsUpdate { details, .. } if !details.is_empty()),
-            ) || counts.failed > 0;
+        let source_id = source.as_ref().map(|(id, _)| *id);
+        let has_details = run
+            .lines
+            .iter()
+            .any(|l| matches!(&l.state, State::NeedsUpdate { details, .. } if !details.is_empty()));
         let details = (!running && has_details).then(|| {
             div()
                 .id("build-details")
@@ -242,8 +245,10 @@ impl Launcher {
                     c(palette().muted),
                 ))
                 .child(tr("Details"))
-                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                    if let Some(run) = &mut this.ui.mods.build {
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    if let Some(id) = source_id {
+                        this.toggle_source_build_details(id);
+                    } else if let Some(run) = &mut this.ui.mods.build {
                         run.details = !run.details;
                     }
                     cx.notify();
@@ -259,7 +264,6 @@ impl Launcher {
                 },
             ))
         });
-        let source_id = source.as_ref().map(|(id, _)| *id);
         let retry = source_id.filter(|_| !running && (stopped || counts.failed > 0));
         let cancel = source.as_ref().is_none_or(|(_, build)| {
             build.stage != sunrise::InstallProgress::Publishing

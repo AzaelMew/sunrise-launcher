@@ -256,7 +256,7 @@ impl Launcher {
             .open
             .as_ref()
             .filter(|open| open.scope == scope)
-            .and_then(|open| open.inspection.as_ref()?.data.commit.as_ref())
+            .and_then(|open| open.inspection.as_ref()?.data.checked_commit())
             .filter(|pin| !self.nightly_installed(pin))
             .cloned()
         else {

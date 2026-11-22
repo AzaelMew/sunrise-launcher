@@ -121,6 +121,7 @@ fn exercise(test: &str, case: Case) {
                 authorize: &|_| Ok(true),
                 approve_worlds: &no_world_question,
                 step: None,
+                log: None,
             },
         )
         .unwrap();

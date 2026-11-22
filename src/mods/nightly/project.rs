@@ -91,7 +91,8 @@ impl Launcher {
             .catalogue
             .as_ref()
             .is_some_and(|list| list.sources.contains(source));
-        let can_build = !offline && listed && commit.is_some();
+        let can_build =
+            !offline && listed && details.and_then(sources::Details::checked_commit).is_some();
         let busy = self.nightly_busy();
         let build = if let Some(id) = job.filter(|id| self.source_builds()[*id].run.running()) {
             build.on_click(cx.listener(move |this, _, _, cx| {

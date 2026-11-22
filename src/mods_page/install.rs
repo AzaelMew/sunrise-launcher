@@ -196,7 +196,8 @@ pub(crate) enum Decision {
 
 pub(crate) enum Worker {
     SourcePhase,
-    SourceStep(native_mods::Step, Option<Arc<str>>),
+    SourceStep(native_mods::Step),
+    SourceLog(Arc<str>),
     SourceRejected(String, SourceError),
     SourceVersion(String, String),
     Mixed(Box<CombinedUpdate>),
@@ -413,18 +414,19 @@ impl Installs {
                     }
                 }
             }
-            Worker::SourceStep(step, output) => {
+            Worker::SourceStep(step) => {
                 if let Some(id) = self.running.as_ref().and_then(|run| run.source_build) {
-                    self.source_builds[id].step(&step, output);
+                    self.source_builds[id].step(&step);
+                }
+            }
+            Worker::SourceLog(log) => {
+                if let Some(id) = self.running.as_ref().and_then(|run| run.source_build) {
+                    self.source_builds[id].output = Some(log);
                 }
             }
             Worker::SourceRejected(mod_id, error) => {
-                if let Some(run) = &self.running {
-                    if let Some(id) = run.source_build {
-                        self.source_builds[id].fail_line(&mod_id, &error);
-                        self.source_outcomes
-                            .insert((run.identity, mod_id), Err(error));
-                    }
+                if let Some(id) = self.running.as_ref().and_then(|run| run.source_build) {
+                    self.source_builds[id].reject(mod_id, error);
                 }
             }
             Worker::SourceVersion(mod_id, version) => {
@@ -474,18 +476,17 @@ impl Installs {
                             eprintln!("Nightly source edit: {error}");
                         }
                     }
-                    if let Some(id) = run.source_build {
-                        self.source_builds[id].finish(&outcome);
-                    }
+                    let attempt = run.source_build.map(|id| {
+                        let build = &mut self.source_builds[id];
+                        build.finish(&outcome);
+                        build
+                    });
                     for id in &run.requests[0].ids {
-                        if run.source_build.is_some() {
-                            self.source_outcomes
-                                .entry((run.identity, id.clone()))
-                                .or_insert_with(|| outcome.clone());
-                        } else {
-                            self.source_outcomes
-                                .insert((run.identity, id.clone()), outcome.clone());
-                        }
+                        let result = attempt
+                            .as_deref()
+                            .map_or_else(|| outcome.clone(), |build| build.outcome(id, &outcome));
+                        self.source_outcomes
+                            .insert((run.identity, id.clone()), result);
                     }
                 } else {
                     for request in run.requests {
@@ -1224,13 +1225,11 @@ impl Launcher {
                     }
                 }
                 Kind::Source => {
-                    let step = |step: &native_mods::Step, output| {
-                        if !matches!(
-                            step,
-                            native_mods::Step::Tools { .. } | native_mods::Step::Rust(_)
-                        ) {
-                            let _ = post(Worker::SourceStep(step.clone(), output));
-                        }
+                    let step = |step: &native_mods::Step| {
+                        let _ = post(Worker::SourceStep(step.clone()));
+                    };
+                    let log = |log: Arc<str>| {
+                        let _ = post(Worker::SourceLog(log));
                     };
                     let hooks = SourceHooks {
                         install: hooks,
@@ -1239,6 +1238,11 @@ impl Launcher {
                         approve_worlds: &approve,
                         step: if source_build.is_some() {
                             Some(&step)
+                        } else {
+                            None
+                        },
+                        log: if source_build.is_some() {
+                            Some(&log)
                         } else {
                             None
                         },
@@ -1253,9 +1257,16 @@ impl Launcher {
                             }
                             let mut rejected = None;
                             let mut pins = Vec::new();
-                            for (listing, resolved) in picks.listings().iter().zip(picks.resolve())
-                            {
-                                match resolved {
+                            let mut resolved = picks.resolve();
+                            for listing in picks.listings() {
+                                if cancellation.is_stopped() {
+                                    return Err(SourceError::Cancelled);
+                                }
+                                let pin = resolved.next().expect("one resolution per listing");
+                                if cancellation.is_stopped() {
+                                    return Err(SourceError::Cancelled);
+                                }
+                                match pin {
                                     Ok(pin) => pins.push(pin),
                                     Err(error) => {
                                         let error = SourceError::Github(error);
@@ -1267,10 +1278,12 @@ impl Launcher {
                                     }
                                 }
                             }
+                            let packed = sunrise::pack_sources(&pins, &cancellation);
+                            if cancellation.is_stopped() {
+                                return Err(SourceError::Cancelled);
+                            }
                             let mut packages = Vec::new();
-                            for (pin, result) in
-                                pins.iter().zip(sunrise::pack_sources(&pins, &cancellation))
-                            {
+                            for (pin, result) in pins.iter().zip(packed) {
                                 match result {
                                     Ok(package) => {
                                         let origin = package.origin();
@@ -1295,7 +1308,7 @@ impl Launcher {
                             if packages.is_empty() {
                                 return Err(rejected.unwrap_or(SourceError::Cancelled));
                             }
-                            sunrise::apply_queued_sources(
+                            let result = sunrise::apply_queued_sources(
                                 &request.profile,
                                 request.identity,
                                 request
@@ -1304,7 +1317,12 @@ impl Launcher {
                                     .expect("source build has a target"),
                                 packages,
                                 hooks,
-                            )
+                            );
+                            if cancellation.is_stopped() {
+                                Err(SourceError::Cancelled)
+                            } else {
+                                result
+                            }
                         })()
                     } else {
                         sunrise::apply_sources(

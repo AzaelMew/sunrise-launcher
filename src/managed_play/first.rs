@@ -434,6 +434,7 @@ impl Profile {
             cancellation,
             progress,
             consent,
+            None,
         )?;
         let _manifest = game_lock(&home)?;
         crate::browser::installed::recover_game_install(&home).map_err(String::from)?;
@@ -632,6 +633,7 @@ impl FirstAttempt<'_> {
             cancellation,
             progress,
             consent,
+            None,
         )
     }
 
@@ -723,6 +725,7 @@ pub(super) fn image_for_stage(
     cancellation: &native_mods::Cancellation,
     progress: impl Fn(native_mods::Step),
     consent: Option<&dyn Fn(&native_mods::Consent) -> bool>,
+    log: Option<&dyn Fn(std::sync::Arc<str>)>,
 ) -> Result<String, native_mods::Failed> {
     if super::verify_included(base, preferred, home).is_ok() {
         if native_mods::is_native(preferred) {
@@ -733,7 +736,16 @@ pub(super) fn image_for_stage(
     if crate::native_status::enabled(home).is_empty() {
         return Ok(base.to_owned());
     }
-    native_mods::build_exact_client(base, home, mode, stage, cancellation, progress, consent)
+    native_mods::build_exact_client(
+        base,
+        home,
+        mode,
+        stage,
+        cancellation,
+        progress,
+        consent,
+        log,
+    )
 }
 
 pub(super) fn game_lock(home: &Path) -> Result<HomeLockGuard, String> {

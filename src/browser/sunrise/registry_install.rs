@@ -881,6 +881,7 @@ fn prove_edit(
         cancellation,
         |step| build_progress(step, hooks.progress),
         hooks.registry_crates,
+        None,
     )
 }
 

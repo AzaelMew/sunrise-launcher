@@ -113,6 +113,7 @@ pub(in crate::browser::sunrise::registry_install) fn update_registry_and_sources
                 cancellation,
                 authorize: authorize_source,
                 step: None,
+                log: None,
                 approve_worlds: &|impact| {
                     if let Some(checked) = &reviewed {
                         let same = impact.matches_world_review(checked);

@@ -640,6 +640,7 @@ fn home_read_recovers_the_first_switch_receipt_after_a_killed_commit() {
                 &cancellation,
                 |_| {},
                 None,
+                None,
             )
             .unwrap();
         let updated = edit

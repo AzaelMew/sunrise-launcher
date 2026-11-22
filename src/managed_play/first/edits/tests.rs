@@ -93,6 +93,7 @@ fn world_locks_span_live_publication_and_undo() {
                 &cancellation,
                 |_| {},
                 None,
+                None,
             )
             .unwrap();
         let mut before_first_rename = false;

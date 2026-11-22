@@ -782,6 +782,7 @@ fn pinned_source_preflight_refusal_cancel_and_failed_update_keep_the_profile() {
                         authorize,
                         approve_worlds,
                         step: None,
+                        log: None,
                     },
                 )
             };

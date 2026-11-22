@@ -290,6 +290,9 @@ pub fn apply_queued_sources(
         None,
         hooks.cancellation,
     )?;
+    if prepared.is_empty() {
+        return hooks.cancellation.check().map_err(SourceError::from);
+    }
     apply_sources(
         instance,
         identity,
@@ -333,6 +336,11 @@ fn bind_packages(
         let before = managed_play::inputs(&instance.home, None)?;
         let selected = packages
             .into_iter()
+            // An earlier request only satisfies a queued pick after publishing these exact bytes.
+            // A checked preview/update has predecessor rules of its own and never skips here.
+            .filter(|(pasted, _)| {
+                copy_to.is_some() || !source_is_published(instance, active.as_ref(), &pasted.origin)
+            })
             .map(|(pasted, predecessor)| PreparedSource {
                 identity,
                 base: base.into(),
@@ -364,14 +372,26 @@ fn bind_packages(
     }
 }
 
-pub(super) type SourceStep<'a> = dyn Fn(&native_mods::Step, Option<Arc<str>>) + 'a;
+fn source_is_published(
+    instance: &Instance,
+    active: Option<&managed_play::Active>,
+    origin: &Origin,
+) -> bool {
+    let home = &instance.home;
+    github_mods::origin(home, &origin.id).as_ref() == Some(origin)
+        && active.is_some_and(|active| {
+            active.holds().all(|held| held.id() != origin.id) && active.matches_inputs(home)
+        })
+        && github::installed_origin(home, &origin.id, |installed| installed == origin).is_ok()
+}
 
 pub struct SourceHooks<'a> {
     pub install: InstallHooks<'a>,
     pub cancellation: &'a native_mods::Cancellation,
     pub authorize: &'a dyn Fn(&[PreparedSource]) -> Result<bool, String>,
     pub approve_worlds: &'a dyn Fn(&ChangeImpact) -> bool,
-    pub step: Option<&'a SourceStep<'a>>,
+    pub step: Option<&'a dyn Fn(&native_mods::Step)>,
+    pub log: Option<&'a dyn Fn(Arc<str>)>,
 }
 
 pub fn apply_sources(
@@ -423,6 +443,7 @@ pub fn apply_sources(
             cancellation,
             authorize: &|| (hooks.authorize)(prepared),
             step: hooks.step,
+            log: hooks.log,
         }),
     )
     .map_err(SourceError::from);

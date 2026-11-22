@@ -124,6 +124,17 @@ pub struct Details {
     pub error: Option<Failure>,
 }
 
+impl Details {
+    /// Only a successful current ref and manifest check can supply a build request.
+    pub fn checked_commit(&self) -> Option<&SourceCommit> {
+        if self.error.is_none() && self.build_pin.is_some() {
+            self.commit.as_ref()
+        } else {
+            None
+        }
+    }
+}
+
 #[derive(Clone)]
 struct Lookup {
     when: Instant,
@@ -850,12 +861,19 @@ pub fn resolve(source: &Source, refresh: bool) -> Result<SourceCommit, Failure> 
 
 /// One explicit check across many installed mods; repository/ref lookups deduplicate within it.
 pub fn resolve_batch(sources: &[Source]) -> Vec<Result<SourceCommit, Failure>> {
+    resolve_each(sources).collect()
+}
+
+/// Check a collection lazily, sharing one ref check per repository/tracker. The caller can
+/// stop before the next lookup without throwing away the results already checked.
+pub fn resolve_each(
+    sources: &[Source],
+) -> impl Iterator<Item = Result<SourceCommit, Failure>> + '_ {
     let github = Github::current();
     let requested = Some(Instant::now());
     sources
         .iter()
-        .map(|source| resolve_checked(&github, source, requested))
-        .collect()
+        .map(move |source| resolve_checked(&github, source, requested))
 }
 
 fn resolve_checked(
@@ -864,9 +882,11 @@ fn resolve_checked(
     requested: Option<Instant>,
 ) -> Result<SourceCommit, Failure> {
     let details = inspect(github, source, requested, false);
-    details
-        .error
-        .map_or_else(|| details.commit.ok_or(Failure::RefUnavailable), Err)
+    if let Some(pin) = details.checked_commit() {
+        Ok(pin.clone())
+    } else {
+        Err(details.error.unwrap_or(Failure::RefUnavailable))
+    }
 }
 
 #[cfg(test)]

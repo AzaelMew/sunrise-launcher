@@ -1,6 +1,6 @@
 //! Presentation for a Nightly source request on the shared installer queue.
 use super::*;
-use crate::mods::build_run::{Run, State};
+use crate::mods::build_run::{End, Run, State};
 use sunrise_launcher::browser::sunrise::sources::{self, Source, SourceCommit};
 use sunrise_launcher::native_mods::Step;
 
@@ -18,11 +18,14 @@ impl SourcePicks {
         }
     }
 
-    pub(super) fn resolve(&self) -> Vec<Result<SourceCommit, sources::Failure>> {
-        match self {
-            Self::One(pin) => vec![Ok((**pin).clone())],
-            Self::Collection(sources) => sources::resolve_batch(sources),
-        }
+    pub(super) fn resolve(
+        &self,
+    ) -> impl Iterator<Item = Result<SourceCommit, sources::Failure>> + '_ {
+        let (one, collection) = match self {
+            Self::One(pin) => (Some(Ok((**pin).clone())), &[][..]),
+            Self::Collection(sources) => (None, sources.as_slice()),
+        };
+        one.into_iter().chain(sources::resolve_each(collection))
     }
 }
 
@@ -36,6 +39,7 @@ pub(crate) struct SourceBuild {
     pub(crate) show_log: bool,
     target: SourceTarget,
     picks: SourcePicks,
+    rejected: BTreeMap<String, SourceError>,
 }
 
 impl SourceBuild {
@@ -53,7 +57,7 @@ impl SourceBuild {
         self.stage = stage;
     }
 
-    pub(super) fn step(&mut self, step: &Step, output: Option<Arc<str>>) {
+    pub(super) fn step(&mut self, step: &Step) {
         self.run.step(step);
         match step {
             Step::Mod { .. } => self.stages.push(self.run.step.clone()),
@@ -67,25 +71,44 @@ impl SourceBuild {
             }
             _ => (),
         }
-        if output.is_some() {
-            self.output = output;
-        }
     }
 
-    pub(super) fn fail_line(&mut self, id: &str, error: &SourceError) {
-        if let Some(line) = self.run.lines.iter_mut().find(|line| line.id == id) {
-            line.state = State::Failed(error.to_string());
+    pub(super) fn reject(&mut self, id: String, error: SourceError) {
+        self.rejected.insert(id, error);
+    }
+
+    pub(super) fn outcome(
+        &self,
+        id: &str,
+        result: &Result<(), SourceError>,
+    ) -> Result<(), SourceError> {
+        if !matches!(result, Err(SourceError::Cancelled)) {
+            if let Some(error) = self.rejected.get(id) {
+                return Err(error.clone());
+            }
         }
+        result.clone()
+    }
+
+    fn failed(&self) -> bool {
+        matches!(self.run.end, Some(End::Stopped(_))) || self.run.counts().failed > 0
     }
 
     pub(super) fn finish(&mut self, result: &Result<(), SourceError>) {
+        if !matches!(result, Err(SourceError::Cancelled)) {
+            for line in &mut self.run.lines {
+                if let Some(error) = self.rejected.get(&line.id) {
+                    line.state = State::Failed(error.to_string());
+                }
+            }
+        }
         match result {
             Ok(()) => self.run.done(),
             Err(SourceError::Cancelled) => self.run.cancelled(),
             Err(error) => {
                 let failed = match error {
                     SourceError::Build { failed, log, .. } => {
-                        if log.is_some() {
+                        if self.output.is_none() {
                             self.output = log.clone();
                         }
                         failed.as_slice()
@@ -100,10 +123,7 @@ impl SourceBuild {
                 }
             }
         }
-        self.show_log |= result
-            .as_ref()
-            .is_err_and(|error| !matches!(error, SourceError::Cancelled))
-            || self.run.counts().failed > 0;
+        self.show_log |= self.failed();
         self.run.said_at = Some(Instant::now());
     }
 }
@@ -116,101 +136,10 @@ impl Launcher {
         }
     }
 
-    fn submit_source_build(&mut self, target: SourceTarget, mut picks: SourcePicks) {
-        let installs = &mut self.mods.installs;
-        // Coalesce the same already-requested listing on the same profile/build. A collection
-        // still queues any other picks together, not one request per row.
-        let matching = |build: &SourceBuild, listing: &Source| {
-            build.run.running()
-                && build.target.same_destination(&target)
-                && build.picks.listings().contains(listing)
-        };
-        let existing = installs.source_builds.iter().position(|build| {
-            if let (SourcePicks::One(wanted), SourcePicks::One(current)) = (&picks, &build.picks) {
-                if wanted.sha() != current.sha() {
-                    return false;
-                }
-            }
-            picks
-                .listings()
-                .iter()
-                .any(|listing| matching(build, listing))
-        });
-        if let SourcePicks::Collection(listings) = &mut picks {
-            listings.retain(|listing| {
-                !installs
-                    .source_builds
-                    .iter()
-                    .any(|build| matching(build, listing))
-            });
-        }
-        if picks.listings().is_empty()
-            || (matches!(picks, SourcePicks::One(_)) && existing.is_some())
-        {
-            if let Some(id) = existing {
-                self.open_source_build(id);
-            }
+    fn submit_source_build(&mut self, target: SourceTarget, picks: SourcePicks) {
+        let Some(id) = self.mods.installs.enqueue_source_build(target, picks) else {
             return;
-        }
-        if !installs
-            .source_builds
-            .iter()
-            .any(|build| build.run.running())
-        {
-            installs.source_builds.clear();
-        }
-        let id = installs.source_builds.len();
-        let mut run = Run::start(
-            target.profile.id.clone(),
-            target.profile.name.clone(),
-            crate::sheets::build_name(&target.base),
-            picks
-                .listings()
-                .iter()
-                .map(|source| {
-                    (
-                        source.id().into(),
-                        source.name().into(),
-                        String::new(),
-                        None,
-                    )
-                })
-                .collect(),
-            false,
-        );
-        run.step = tr("Queued").into();
-        let ids: Vec<String> = run.lines.iter().map(|line| line.id.clone()).collect();
-        for mod_id in &ids {
-            installs
-                .source_outcomes
-                .remove(&(target.identity, mod_id.clone()));
-        }
-        installs.source_builds.push(SourceBuild {
-            run,
-            started: false,
-            stage: InstallProgress::Checking,
-            stages: Vec::new(),
-            output: None,
-            show_log: false,
-            target: target.clone(),
-            picks: picks.clone(),
-        });
-        installs.waiting.push_back(Request {
-            profile: target.profile,
-            identity: target.identity,
-            target: Some(target.base),
-            release: None,
-            displayed_names: BTreeMap::new(),
-            view: RequestView {
-                kind: Kind::Source,
-                card: ids[0].clone(),
-                ids,
-            },
-            github: None,
-            sources: Vec::new(),
-            mixed_registry: Vec::new(),
-            source_build: Some((id, picks)),
-        });
+        };
         self.start_registry_queue();
         // Show the active batch and the newly queued rows in the same window.
         let shown = self
@@ -255,14 +184,26 @@ impl Launcher {
     }
 
     pub(crate) fn recent_source_build(&self) -> Option<(usize, String)> {
-        let (id, build) = self
-            .source_builds()
+        let now = Instant::now();
+        self.source_builds()
             .iter()
             .enumerate()
-            .rev()
             .filter(|(_, build)| !build.run.running())
-            .max_by_key(|(_, build)| build.run.said_at)?;
-        build.run.said(Instant::now()).map(|said| (id, said))
+            .filter_map(|(id, build)| {
+                let said = if build.failed() {
+                    build.run.headline()
+                } else {
+                    build.run.said(now)?
+                };
+                Some((build.run.said_at, id, said))
+            })
+            .max_by_key(|(at, _, _)| *at)
+            .map(|(_, id, said)| (id, said))
+    }
+
+    pub(crate) fn toggle_source_build_details(&mut self, id: usize) {
+        let run = &mut self.mods.installs.source_builds[id].run;
+        run.details = !run.details;
     }
 
     pub(crate) fn toggle_source_build_log(&mut self, id: usize) {
@@ -313,6 +254,89 @@ impl Launcher {
     }
 }
 
+impl Installs {
+    fn enqueue_source_build(&mut self, target: SourceTarget, picks: SourcePicks) -> Option<usize> {
+        if picks.listings().is_empty() {
+            return None;
+        }
+        // An exact duplicate single request can reopen that job. A collection always keeps its
+        // full selection: an earlier job may fail, even if it picked one of the same mods.
+        if let SourcePicks::One(wanted) = &picks {
+            if let Some(id) = self.source_builds.iter().position(|build| {
+                build.run.running()
+                    && build.target.same_destination(&target)
+                    && matches!(&build.picks, SourcePicks::One(current) if current == wanted)
+            }) {
+                return Some(id);
+            }
+        }
+        if !self.source_builds.iter().any(|build| build.run.running()) {
+            self.source_builds.retain(|build| {
+                build.failed()
+                    && !(build.target.same_destination(&target)
+                        && build
+                            .picks
+                            .listings()
+                            .iter()
+                            .all(|listing| picks.listings().contains(listing)))
+            });
+        }
+        let id = self.source_builds.len();
+        let mut run = Run::start(
+            target.profile.id.clone(),
+            target.profile.name.clone(),
+            crate::sheets::build_name(&target.base),
+            picks
+                .listings()
+                .iter()
+                .map(|source| {
+                    (
+                        source.id().into(),
+                        source.name().into(),
+                        String::new(),
+                        None,
+                    )
+                })
+                .collect(),
+            false,
+        );
+        run.step = tr("Queued").into();
+        let ids: Vec<String> = run.lines.iter().map(|line| line.id.clone()).collect();
+        for mod_id in &ids {
+            self.source_outcomes
+                .remove(&(target.identity, mod_id.clone()));
+        }
+        self.source_builds.push(SourceBuild {
+            run,
+            started: false,
+            stage: InstallProgress::Checking,
+            stages: Vec::new(),
+            output: None,
+            show_log: false,
+            target: target.clone(),
+            picks: picks.clone(),
+            rejected: BTreeMap::new(),
+        });
+        self.waiting.push_back(Request {
+            profile: target.profile,
+            identity: target.identity,
+            target: Some(target.base),
+            release: None,
+            displayed_names: BTreeMap::new(),
+            view: RequestView {
+                kind: Kind::Source,
+                card: ids[0].clone(),
+                ids,
+            },
+            github: None,
+            sources: Vec::new(),
+            mixed_registry: Vec::new(),
+            source_build: Some((id, picks)),
+        });
+        Some(id)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -356,6 +380,7 @@ mod tests {
                 show_log: false,
                 target,
                 picks: SourcePicks::Collection(picks.to_vec()),
+                rejected: BTreeMap::new(),
             },
         )
     }
@@ -363,26 +388,20 @@ mod tests {
     #[test]
     fn the_compiler_stage_names_the_current_row_and_failure_keeps_its_log() {
         let (_root, mut build) = job();
-        build.step(
-            &Step::Mod {
-                id: "butterflies".into(),
-                done: 1,
-                total: 2,
-            },
-            None,
-        );
+        build.step(&Step::Mod {
+            id: "butterflies".into(),
+            done: 1,
+            total: 2,
+        });
         build.progress(InstallProgress::Building(Some(0.)));
         assert_eq!(build.run.lines[0].state, State::Building);
         assert_eq!(build.run.lines[1].state, State::Waiting);
         assert!(build.run.step.contains("butterflies"));
-        build.step(
-            &Step::Mod {
-                id: "fireflies".into(),
-                done: 2,
-                total: 2,
-            },
-            None,
-        );
+        build.step(&Step::Mod {
+            id: "fireflies".into(),
+            done: 2,
+            total: 2,
+        });
         let log: Arc<str> = Arc::from("error: rejected compiler input");
         build.finish(&Err(SourceError::Build {
             detail: "compiler refused".into(),
@@ -405,14 +424,103 @@ mod tests {
     #[test]
     fn a_rejected_package_does_not_become_built_when_the_other_pick_publishes() {
         let (_root, mut build) = job();
-        build.fail_line(
-            "butterflies",
-            &SourceError::Github(sources::Failure::NoManifest),
+        build.reject(
+            "butterflies".into(),
+            SourceError::Github(sources::Failure::NoManifest),
         );
         build.finish(&Ok(()));
         assert!(matches!(build.run.lines[0].state, State::Failed(_)));
         assert_eq!(build.run.lines[1].state, State::Built);
         assert!(build.show_log);
+    }
+
+    #[test]
+    fn a_failed_single_pick_does_not_remove_it_from_the_following_joint_build() {
+        let (_root, build) = job();
+        let [butterflies, creature] = [
+            build.picks.listings()[0].clone(),
+            Source::for_origin(
+                "creature",
+                "Example/creatures",
+                1,
+                "library/sunrise-mod.toml",
+                sources::Tracker::Branch("main".into()),
+            )
+            .unwrap(),
+        ];
+        let mut installs = Installs::default();
+        let first = installs
+            .enqueue_source_build(
+                build.target.clone(),
+                SourcePicks::Collection(vec![butterflies.clone()]),
+            )
+            .unwrap();
+        let joint = installs
+            .enqueue_source_build(
+                build.target,
+                SourcePicks::Collection(vec![butterflies, creature]),
+            )
+            .unwrap();
+        let start = |installs: &mut Installs, id, expected: &[&str]| {
+            let request = installs.waiting.pop_front().unwrap();
+            assert_eq!(request.view.ids, expected);
+            let (job, picks) = request.source_build.unwrap();
+            assert_eq!(job, id);
+            assert_eq!(
+                picks.listings().iter().map(Source::id).collect::<Vec<_>>(),
+                expected
+            );
+            installs.running = Some(Running {
+                profile: request.profile,
+                identity: request.identity,
+                target: request.target,
+                batch: Arc::new(Mutex::new(None)),
+                requests: vec![request.view],
+                stage: InstallProgress::Checking,
+                github: None,
+                source: Some(RunningSource {
+                    ids: expected.iter().map(|id| (*id).into()).collect(),
+                    visible: true,
+                    names: Vec::new(),
+                    cancellation: Cancellation::default(),
+                }),
+                source_build: Some(id),
+                mixed: false,
+            });
+            (request.identity, "butterflies".to_owned())
+        };
+        let key = start(&mut installs, first, &["butterflies"]);
+        installs.handle(Worker::Done(Err(InstallError::Source(
+            SourceError::Dependency {
+                required: Some("creature".into()),
+                detail: "Butterflies needs creature".into(),
+            },
+        ))));
+        assert!(matches!(
+            installs.source_outcomes[&key],
+            Err(SourceError::Dependency { .. })
+        ));
+        start(&mut installs, joint, &["butterflies", "creature"]);
+        installs.handle(Worker::Done(Ok(InstalledBatch::default())));
+        assert_eq!(installs.source_outcomes[&key], Ok(()));
+        assert_eq!(installs.source_builds[joint].run.counts().built, 2);
+    }
+
+    #[test]
+    fn cancellation_does_not_publish_partial_preflight_rejections() {
+        let (_root, mut build) = job();
+        build.reject(
+            "butterflies".into(),
+            SourceError::Github(sources::Failure::NoManifest),
+        );
+        let result = Err(SourceError::Cancelled);
+        build.finish(&result);
+        assert_eq!(build.run.end, Some(End::Cancelled));
+        assert_eq!(build.run.counts().failed, 0);
+        assert_eq!(
+            build.outcome("butterflies", &result),
+            Err(SourceError::Cancelled)
+        );
     }
 
     #[test]

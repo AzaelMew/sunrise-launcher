@@ -98,7 +98,8 @@ pub(super) struct SourceBatch<'a> {
     pub(super) active: Option<&'a managed_play::Active>,
     pub(super) cancellation: &'a native_mods::Cancellation,
     pub(super) authorize: &'a dyn Fn() -> Result<bool, String>,
-    pub(super) step: Option<&'a source::SourceStep<'a>>,
+    pub(super) step: Option<&'a dyn Fn(&native_mods::Step)>,
+    pub(super) log: Option<&'a dyn Fn(Arc<str>)>,
 }
 
 pub(super) fn edit_github(
@@ -250,26 +251,19 @@ pub(super) fn edit_github(
             progress: &progress,
             ..hooks
         };
-        let proof = if let Some(observe) = source.and_then(|source| source.step) {
-            edit.prove(
-                home,
-                instance.native_profile,
-                cancellation,
-                |step| {
-                    // Install is emitted with the native cache lease held, after the fenced
-                    // compiler has exited and its output has been imported.
-                    let log = match step {
-                        native_mods::Step::Install => native_mods::log_snapshot(),
-                        _ => None,
-                    };
-                    observe(&step, log);
-                    build_progress(step, proof_hooks.progress);
-                },
-                proof_hooks.registry_crates,
-            )
-        } else {
-            prove_edit(&edit, home, instance, cancellation, &proof_hooks)
-        };
+        let proof = edit.prove(
+            home,
+            instance.native_profile,
+            cancellation,
+            |step| {
+                if let Some(observe) = source.and_then(|source| source.step) {
+                    observe(&step);
+                }
+                build_progress(step, proof_hooks.progress);
+            },
+            proof_hooks.registry_crates,
+            source.and_then(|source| source.log),
+        );
         proof.map_err(|e| match &e {
             native_mods::Failed::Mods { left, .. }
                 if left.iter().any(|item| {
@@ -528,7 +522,7 @@ fn check_fresh(home: &Path, id: &str) -> Result<(), InstallError> {
     Ok(())
 }
 
-fn installed_origin(
+pub(super) fn installed_origin(
     home: &Path,
     id: &str,
     matches: impl FnOnce(&github_mods::Origin) -> bool,
