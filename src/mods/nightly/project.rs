@@ -71,6 +71,8 @@ impl Launcher {
                 cx.notify();
             }))
         };
+        // A build the mod does not fit: Add stays off until it is checked again.
+        let refused = matches!(failed_job, Some(SourceError::DoesNotFit(_)));
         let build_label = if let Some(activity) = current.as_ref() {
             if activity.progress == sunrise::InstallProgress::Publishing {
                 tr("Finishing…").into()
@@ -79,6 +81,8 @@ impl Launcher {
             }
         } else if matches!(failed_job, Some(SourceError::Tools(_))) {
             tr("Retry download").into()
+        } else if refused {
+            tr("Can't add to this build").into()
         } else {
             tr("Add from source…").into()
         };
@@ -92,7 +96,7 @@ impl Launcher {
         let can_build =
             !offline && listed && details.and_then(sources::Details::checked_commit).is_some();
         let busy = self.nightly_busy();
-        let build = if busy || current.is_some() {
+        let build = if busy || current.is_some() || refused {
             dim(build)
         } else if can_build {
             build.on_click(cx.listener(|this, _, _, cx| {
@@ -171,8 +175,36 @@ impl Launcher {
                 _ => None,
             };
             let words = source_error(error, Some(source))?;
+            // The whole reason, in the checker's words, with what the author can do.
+            let detail = match error {
+                SourceError::Unproved(detail)
+                | SourceError::DoesNotFit(detail)
+                | SourceError::Dependency { detail, .. } => Some(detail.clone()),
+                _ => None,
+            };
+            let check_again = matches!(error, SourceError::Unproved(_) | SourceError::DoesNotFit(_)).then(|| {
+                let source = source.clone();
+                button("nightly-check-again", tr("Check again")).on_click(cx.listener(
+                    move |this, _, _, cx| {
+                        this.forget_source_outcome(source.id());
+                        this.inspect_nightly(source.clone(), true);
+                        cx.notify();
+                    },
+                ))
+            });
             Some(div().flex().flex_col().items_start().gap(px(7.))
-                .child(note(words))
+                .p(px(10.))
+                .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
+                .border_1()
+                .border_color(c(palette().warning))
+                .child(div().font_weight(FontWeight::SEMIBOLD).child(words))
+                .children(detail.map(|detail| {
+                    div()
+                        .text_size(px(tokens::SMALL))
+                        .text_color(c(palette().muted))
+                        .child(crate::selectable::selectable(detail))
+                }))
+                .children(check_again)
                 .children(dependency.map(|source| button("nightly-find-dependency", tr("Find dependency"))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.inspect_nightly(source.clone(), false);
@@ -574,7 +606,7 @@ pub(in crate::mods) fn source_error(
         SourceError::Dependency { required: None, .. } => {
             tr("Can't install these mods together").into()
         }
-        SourceError::Unproved(_) => tr("Fit could not be verified").into(),
+        SourceError::Unproved(_) => tr("Couldn't add this mod").into(),
         SourceError::Changed(_) => {
             tr("The profile or game build changed. Check the source again; nothing was changed.")
                 .into()

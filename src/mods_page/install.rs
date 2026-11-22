@@ -366,6 +366,23 @@ impl Installs {
                 )
             });
         }
+        // A refused source Add is also said where the Mods page shows its notices, not only on
+        // the mod's own page: a player may have clicked from a collection or moved on.
+        if let (Some(source), Worker::Done(Err(error))) = (&run.source, event) {
+            if matches!(
+                error,
+                InstallError::Cancelled | InstallError::Source(SourceError::Cancelled)
+            ) {
+                return None;
+            }
+            return Some(trf(
+                "Couldn't add {mods}. {why}",
+                &[
+                    ("mods", &crate::mods::names(&source.names)),
+                    ("why", &error.to_string()),
+                ],
+            ));
+        }
         if matches!(
             run.requests[0].kind,
             Kind::Install | Kind::Github | Kind::Source | Kind::Mixed
@@ -721,6 +738,20 @@ impl Launcher {
             .installs
             .source_outcomes
             .get(&(Identity::of(home).ok()?, id.to_owned()))
+    }
+
+    /// Forget a source's last refusal, so checking it again starts from a clean page.
+    pub(crate) fn forget_source_outcome(&mut self, id: &str) {
+        let Some(identity) = self
+            .selected_instance()
+            .and_then(|instance| Identity::of(&instance.home).ok())
+        else {
+            return;
+        };
+        self.mods
+            .installs
+            .source_outcomes
+            .remove(&(identity, id.to_owned()));
     }
 
     pub(crate) fn source_question(&self) -> Option<&SourceQuestion> {

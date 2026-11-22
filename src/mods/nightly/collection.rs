@@ -238,6 +238,16 @@ impl Launcher {
                     .child(note(
                         source_error(error, Some(source)).unwrap_or_else(|| error.to_string()),
                     ))
+                    // The checker's whole reason, with what the author can do.
+                    .children(
+                        matches!(
+                            error,
+                            SourceError::Unproved(_)
+                                | SourceError::DoesNotFit(_)
+                                | SourceError::Dependency { .. }
+                        )
+                        .then(|| muted(error.to_string()).text_size(px(tokens::SMALL))),
+                    )
                     .children(log.map(|log| self.nightly_log_button(source.name(), log, cx)))
             });
             let tick = checkbox(("nightly-collection-box", i), on).tab_stop(false);
