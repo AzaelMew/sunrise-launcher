@@ -18,6 +18,10 @@ pub struct Collection {
     /// The registry's published HTTPS icon address.
     pub icon: String,
     pub members: Vec<Member>,
+    /// The collection's own downloads, once the registry's publish job counts them. `None` until
+    /// then (every index published so far), so a reader can tell "not counted" from 0.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub downloads: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

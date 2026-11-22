@@ -661,6 +661,7 @@ mod tests {
                     id: "zebra".into(),
                     default: true,
                 }],
+                downloads: None,
             }]
             .into(),
             saved_at: None,
