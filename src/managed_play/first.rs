@@ -1,6 +1,6 @@
 //! First Play freezes the candidate and its proof before downloading or preparing anything.
 use super::{
-    at, inputs, scan_packages, unsettled, Active, Artifact, Generation, HeldReason,
+    at, inputs, scan_packages, unsettled, Active, Artifact, Generation, HeldReason, NativeWork,
     ReferencePublication, Resources,
 };
 use crate::{
@@ -392,13 +392,11 @@ impl Profile {
 
     /// Bring an already committed profile forward on the same base. The game may have
     /// changed packages and the enable list; failed fits never change the launcher pointer.
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn refresh(
         &mut self,
         mode: native_mods::Profile,
-        cancellation: &native_mods::Cancellation,
+        (cancellation, consent): NativeWork<'_>,
         progress: impl Fn(native_mods::Step),
-        consent: Option<&dyn Fn(&native_mods::Consent) -> bool>,
         registry: Option<&sunrise_launcher_smod::index::Index>,
         log: Option<&dyn Fn(std::sync::Arc<str>)>,
         replacement: Option<Resources>,

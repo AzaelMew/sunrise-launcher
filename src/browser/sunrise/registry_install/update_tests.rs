@@ -218,9 +218,8 @@ impl Fixture {
         if profile
             .refresh(
                 self.instance.native_profile,
-                &cancel,
+                (&cancel, None),
                 |_| {},
-                None,
                 None,
                 None,
                 None,

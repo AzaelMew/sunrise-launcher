@@ -201,9 +201,8 @@ fn game_replacements_repair_only_owned_row_fields_and_advance_the_same_base() {
         let local = profile
             .refresh(
                 native_mods::Profile::Optimized,
-                &cancellation,
+                (&cancellation, None),
                 |_| {},
-                None,
                 None,
                 None,
                 None,
@@ -227,9 +226,8 @@ fn game_replacements_repair_only_owned_row_fields_and_advance_the_same_base() {
         let current = profile
             .refresh(
                 native_mods::Profile::Optimized,
-                &cancellation,
+                (&cancellation, None),
                 |_| {},
-                None,
                 Some(&registry),
                 None,
                 None,
@@ -263,9 +261,8 @@ fn game_replacements_repair_only_owned_row_fields_and_advance_the_same_base() {
     assert!(profile
         .refresh(
             native_mods::Profile::Optimized,
-            &cancellation,
+            (&cancellation, None),
             |_| {},
-            None,
             None,
             None,
             None,

@@ -101,9 +101,67 @@ const CHECKOUT_RESOURCES: &str = ".local/sunrise-client";
 /// started game can both copy.
 static PARTIAL: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
+fn plain_directory_exists(path: &Path) -> std::io::Result<bool> {
+    use std::io::ErrorKind;
+    match fs::symlink_metadata(path) {
+        Ok(meta) if meta.is_dir() && !crate::native_cache::linked(&meta) => Ok(true),
+        Ok(_) => Err(ErrorKind::InvalidData.into()),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
+/// The old directory stays recoverable until the new directory is visible at its final path.
+fn publish_prepared(staged: &Path, to: &Path, previous: &Path) -> std::io::Result<()> {
+    use crate::profile_txn::durable::move_new_directory;
+    let saved = plain_directory_exists(to)?;
+    let publish = (|| {
+        if saved {
+            move_new_directory(to, previous)?;
+        }
+        move_new_directory(staged, to)
+    })();
+    if let Err(error) = publish {
+        // The rename helper can fail syncing the parent after either move has happened.
+        // Restore only if the destination really is missing; otherwise keep the backup.
+        let restore = (|| {
+            if saved && !plain_directory_exists(to)? && plain_directory_exists(previous)? {
+                move_new_directory(previous, to)?;
+            }
+            Ok::<(), std::io::Error>(())
+        })();
+        return match restore {
+            Ok(()) => Err(error),
+            Err(restore) => Err(std::io::Error::other(format!("{error}; {restore}"))),
+        };
+    }
+    if saved {
+        fs::remove_dir_all(previous)?;
+    }
+    Ok(())
+}
+
 /// Copy current checkout resources into a missing or stale full folder. A copy, not a link:
 /// preparing again must not change the checkout. Never replace a server-only preparation.
 fn copy_prepared(root: &Path, from: &Path, to: &Path) -> std::io::Result<bool> {
+    use crate::profile_txn::durable;
+    let version = to.file_name().unwrap_or_default().to_string_lossy();
+    let previous = to.with_file_name(format!(".{version}.checkout-previous"));
+    // The preparation lock excludes both Play's preparation and another developer import.
+    // Finish or undo the previous namespace change before deciding if this copy is needed.
+    if plain_directory_exists(&previous)? {
+        if !plain_directory_exists(to)? {
+            durable::move_new_directory(&previous, to)?;
+        } else if backend::check_play_resources(root, to).is_ok() {
+            fs::remove_dir_all(&previous)?;
+        } else {
+            // A new tree appeared after the interruption; neither tree can be discarded.
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                previous.display().to_string(),
+            ));
+        }
+    }
     let replaceable = || match backend::check_play_resources(root, to) {
         Err(backend::Unprepared::Incomplete) => Ok(true),
         Ok(()) | Err(backend::Unprepared::ServerOnly) => Ok(false),
@@ -114,7 +172,6 @@ fn copy_prepared(root: &Path, from: &Path, to: &Path) -> std::io::Result<bool> {
     }
     // Without the data file: it names its own root, so a copy of it could not be read.
     let data_file = from.join(crate::preparer::DATA_FILE);
-    let version = to.file_name().unwrap_or_default().to_string_lossy();
     let partial = to.with_file_name(format!(
         ".{version}.partial-{}-{}",
         std::process::id(),
@@ -122,12 +179,12 @@ fn copy_prepared(root: &Path, from: &Path, to: &Path) -> std::io::Result<bool> {
     ));
     let _ = fs::remove_dir_all(&partial);
     let copied = backend::copy_dir_except(from, &partial, Some(&data_file)).and_then(|()| {
+        durable::flush_tree(&partial)?;
         if !replaceable()? {
             return Ok(false); // Prepared meanwhile, by Play or another command.
         }
         crate::managed_play::Resources::invalidate(root)?;
-        let _ = fs::remove_dir_all(to);
-        fs::rename(&partial, to).map(|()| true)
+        publish_prepared(&partial, to, &previous).map(|()| true)
     });
     let _ = fs::remove_dir_all(&partial);
     copied
@@ -496,6 +553,36 @@ mod tests {
         fs::write(to.join(stamp), r#"{"output_version":1}"#).unwrap();
         assert!(!copy_prepared(&root, &from, &to).unwrap());
         assert_eq!(fs::read_to_string(manifest).unwrap(), server);
+    }
+
+    #[test]
+    fn failed_developer_publication_restores_the_old_resources() {
+        let folder = tempfile::tempdir().unwrap();
+        let root = folder.path();
+        let to = root.join(".local/sunrise-client/26.3");
+        let previous = to.with_file_name(".26.3.checkout-previous");
+        prepared_folder(&to, "old prepared tables");
+
+        // The staged directory disappeared before publication. The old tree was already
+        // renamed aside when the second rename failed, and must be restored as a whole.
+        let staged = to.with_file_name(".missing-staged-copy");
+        let error = publish_prepared(&staged, &to, &previous).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
+        assert_eq!(
+            fs::read_to_string(to.join("registries.json")).unwrap(),
+            "old prepared tables"
+        );
+        assert!(!previous.exists());
+
+        // A stopped launcher at the same cut leaves the old tree under its recovery name.
+        // Re-import restores it before inspecting even an absent checkout.
+        crate::profile_txn::durable::move_new_directory(&to, &previous).unwrap();
+        assert!(!copy_prepared(root, &staged, &to).unwrap());
+        assert_eq!(
+            fs::read_to_string(to.join("registries.json")).unwrap(),
+            "old prepared tables"
+        );
+        assert!(!previous.exists());
     }
 
     #[test]

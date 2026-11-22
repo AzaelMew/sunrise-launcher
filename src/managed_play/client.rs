@@ -1,5 +1,5 @@
 //! Ordinary client Play keeps one admission on its worker through the actual spawn.
-use super::{catalogue, first::game_lock, unsettled, Active, FirstBuild, Profile};
+use super::{catalogue, first::game_lock, unsettled, Active, FirstBuild, NativeWork, Profile};
 use crate::{
     account::{self, Accounts, NoOwner},
     backend::{self, installation::BoundVariant, RuntimeGuard},
@@ -60,8 +60,6 @@ impl From<StartError> for String {
     }
 }
 
-type NativeConsent<'a> = Option<&'a dyn Fn(&native_mods::Consent) -> bool>;
-
 /// The exact base of the Play attempt that reported a registry conflict.
 #[derive(Debug, PartialEq, Eq)]
 pub struct FailedBuild(Build);
@@ -111,7 +109,7 @@ impl Client<'_> {
         choose: impl FnOnce() -> Result<FirstBuild, String>,
         arguments: impl FnOnce(&mut Command) -> Result<(), String>,
         prepare_jars: impl FnOnce(&Command) -> Result<(), String>,
-        native: (&native_mods::Cancellation, NativeConsent<'_>),
+        native: NativeWork<'_>,
         progress: impl Fn(Progress),
     ) -> Result<Started, StartError> {
         self.start_with_recovery(None, choose, arguments, prepare_jars, native, progress)
@@ -125,7 +123,7 @@ impl Client<'_> {
         choose: impl FnOnce() -> Result<FirstBuild, String>,
         arguments: impl FnOnce(&mut Command) -> Result<(), String>,
         prepare_jars: impl FnOnce(&Command) -> Result<(), String>,
-        (cancellation, native_consent): (&native_mods::Cancellation, NativeConsent<'_>),
+        (cancellation, native_consent): NativeWork<'_>,
         progress: impl Fn(Progress),
     ) -> Result<Started, StartError> {
         // A fresh default profile may not have a game directory yet. Do not recreate
@@ -253,7 +251,7 @@ impl Client<'_> {
         profile: &mut Profile,
         choose: impl FnOnce() -> Result<FirstBuild, String>,
         check_build: impl FnOnce(&str, Option<&BoundVariant>) -> Result<(), StartError>,
-        (cancellation, native_consent): (&native_mods::Cancellation, NativeConsent<'_>),
+        (cancellation, native_consent): NativeWork<'_>,
         progress: impl Fn(Progress),
         load_catalogue: impl FnOnce() -> Option<std::sync::Arc<sunrise_launcher_smod::index::Index>>,
     ) -> Result<(Active, Vec<String>), StartError> {
@@ -297,9 +295,8 @@ impl Client<'_> {
             let active = profile
                 .refresh(
                     mode,
-                    cancellation,
+                    (cancellation, native_consent),
                     |step| native(old.base(), step),
-                    native_consent,
                     registry.as_deref(),
                     Some(&log),
                     replacement,
