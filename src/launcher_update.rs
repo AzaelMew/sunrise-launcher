@@ -284,9 +284,15 @@ impl Launcher {
                 &[("percent", &format!("{:.0}", progress * 100.))],
             ),
             (None, _, Status::Ready) => tr("Update queued").into(),
-            _ => available,
+            _ => trf("{version} available", &[("version", offer.version)]),
         };
-        let tip = action.clone().unwrap_or_else(|| label.clone());
+        let tip = action.clone().unwrap_or_else(|| {
+            if matches!(offer.status, Status::Disabled | Status::Stuck(_)) {
+                tr("What's new").into()
+            } else {
+                label.clone()
+            }
+        });
         let main = button("launcher-update", "")
             .max_w(px(172.))
             .overflow_hidden()

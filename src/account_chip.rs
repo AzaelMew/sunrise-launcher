@@ -121,6 +121,7 @@ impl Launcher {
         if self.accounts.accounts.is_empty() {
             let p = palette();
             let label = tr("Sign in with Microsoft");
+            let icon_only = compact && self.settings.sidebar_expanded && self.window_width < 900.;
             return crate::frame::input(false)
                 .id("account-sign-in")
                 .min_w_0()
@@ -136,11 +137,16 @@ impl Launcher {
                 .reach_edge()
                 .tooltip(crate::glass_ui::tip(label))
                 .child(crate::microsoft::logo(18.))
-                .child(div().min_w_0().truncate().child(if compact {
-                    tr("Sign in")
-                } else {
-                    label
-                }))
+                .when(icon_only, |chip| {
+                    chip.w(px(tokens::FIELD)).px_0().justify_center()
+                })
+                .when(!icon_only, |chip| {
+                    chip.child(div().min_w_0().truncate().child(if compact {
+                        tr("Sign in")
+                    } else {
+                        label
+                    }))
+                })
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.account_action(Action::Add);
                     cx.notify();

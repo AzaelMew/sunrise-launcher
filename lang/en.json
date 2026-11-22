@@ -76,5 +76,6 @@
   "Cancel restart": "Cancel restart",
   "Later": "Later",
   "{version} available · {status}": "{version} available · {status}",
-  "Sign in": "Sign in"
+  "Sign in": "Sign in",
+  "{version} available": "{version} available"
 }
