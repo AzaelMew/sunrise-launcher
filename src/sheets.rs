@@ -1558,22 +1558,35 @@ impl Launcher {
                     .border_1()
                     .border_color(rgb(palette().line)),
             );
+        // Only the choices scroll when the window is short: the heading, the Extras note and an
+        // error stay in view (#184).
+        let choices = div()
+            .id("alt-build-choices")
+            .flex()
+            .flex_col()
+            .gap(px(10.))
+            .min_h_0()
+            .overflow_y_scroll()
+            .track_scroll(&crate::frame::scrolls("build-list"))
+            .children(status.map(muted))
+            .child(list);
         let body = div()
             .flex()
             .flex_col()
             .gap(px(10.))
             .child(
                 div()
+                    .flex_none()
                     .text_size(px(tokens::CAPTION))
                     .text_color(rgb(palette().muted))
                     .child(tr("GAME BUILD")),
             )
-            .children(status.map(muted))
-            .child(list)
-            .child(div().h(px(1.)).bg(rgb(palette().line)))
-            .child(extras)
+            .child(choices)
+            .child(div().flex_none().h(px(1.)).bg(rgb(palette().line)))
+            .child(extras.flex_none())
             .children(self.ui.sheets.error.clone().map(|e| {
                 div()
+                    .flex_none()
                     .text_color(rgb(palette().danger))
                     .text_size(px(tokens::SMALL))
                     .child(e)
@@ -1603,10 +1616,9 @@ impl Launcher {
             .child(
                 body.id("alt-build-body")
                     .absolute()
-                    // Never taller than the room under the picker: a long list scrolls.
+                    // Never taller than the room under the picker: the choices scroll.
                     .max_h(px((self.window_height - top - 12.).max(120.)))
-                    .overflow_y_scroll()
-                    .track_scroll(&crate::frame::scrolls("build-list"))
+                    .overflow_hidden()
                     // Inside the window, however narrow it is.
                     .left(px(left.min(self.window_width - width - 12.).max(12.)))
                     .top(px(top))
