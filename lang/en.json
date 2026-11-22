@@ -84,22 +84,5 @@
   "Finishing the previous download…": "Finishing the previous download…",
   "The launcher update could not be verified.": "The launcher update could not be verified.",
   "Close": "Close",
-  "This account was signed out. Add it again to sign in.": "This account was signed out. Add it again to sign in.",
-  "Address to share": "Address to share",
-  "Local network": "Local network",
-  "Internet": "Internet",
-  "Last detected public address": "Last detected public address",
-  "Address on this network": "Address on this network",
-  "Public IP not detected": "Public IP not detected",
-  "Finding public IP…": "Finding public IP…",
-  "Public IP unavailable": "Public IP unavailable",
-  "Server port unavailable": "Server port unavailable",
-  "Last detected public IP: {ip}.": "Last detected public IP: {ip}.",
-  "Detecting your public IPv4 sends a direct request to ipify outside the launcher proxy. ipify sees this connection's IP address. The request does not check whether your server is reachable.": "Detecting your public IPv4 sends a direct request to ipify outside the launcher proxy. ipify sees this connection's IP address. The request does not check whether your server is reachable.",
-  "Refresh public IP": "Refresh public IP",
-  "Detect public IP": "Detect public IP",
-  "Could not find your public IP. Check your internet connection and try again.": "Could not find your public IP. Check your internet connection and try again.",
-  "Forward TCP port {port} on your router to this computer and allow it through your firewall. If your provider uses CGNAT, you need a public IP or a tunnel.": "Forward TCP port {port} on your router to this computer and allow it through your firewall. If your provider uses CGNAT, you need a public IP or a tunnel.",
-  "No local network address was found. localhost works only on this computer.": "No local network address was found. localhost works only on this computer.",
-  "The server is running on port {running}. Restart to use saved port {saved}.": "The server is running on port {running}. Restart to use saved port {saved}."
+  "This account was signed out. Add it again to sign in.": "This account was signed out. Add it again to sign in."
 }

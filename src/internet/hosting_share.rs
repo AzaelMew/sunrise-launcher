@@ -72,7 +72,11 @@ impl Launcher {
             .text_color(rgb(palette().text))
     }
 
-    pub(crate) fn hosting_share(&mut self, port: u16, cx: &mut Context<Self>) -> Div {
+    pub(crate) fn hosting_share(
+        &mut self,
+        listener: Option<std::net::SocketAddr>,
+        cx: &mut Context<Self>,
+    ) -> Div {
         let mut panel = div()
             .flex()
             .flex_col()
@@ -157,40 +161,56 @@ impl Launcher {
             Some(State::Running(_)) => {}
         }
         let node = self.internet.node().cloned().unwrap_or_default();
-        let address = node.address(port);
-        let ip = node.ipv4().unwrap_or_default().to_string();
-        let typed = tr("Friends type it in Multiplayer, Add Server, once this computer is shared with them and Tailscale runs on theirs.");
-        panel = panel
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(12.))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .font_family(theme::MONO)
-                            .text_size(px(18.))
-                            // A long name breaks after a dot, never inside a word: a zero-width
-                            // space after each dot is a place it may wrap. Copy takes the plain one.
-                            .child(address.replace('.', ".\u{200B}")),
-                    )
-                    .child(self.share_copy("share-copy", address, cx)),
-            )
-            .child(hint(if node.magic_dns && !ip.is_empty() {
-                let ip_port = if port == 25565 {
-                    ip.clone()
-                } else {
-                    format!("{ip}:{port}")
-                };
-                trf(
-                    "Or {address}. {typed}",
-                    &[("address", &ip_port), ("typed", typed)],
+        let ip = node
+            .ipv4()
+            .and_then(|ip| ip.parse::<std::net::IpAddr>().ok());
+        let port = listener
+            .filter(|address| {
+                address.is_ipv4()
+                    && !address.ip().is_loopback()
+                    && ip.is_some_and(|ip| address.ip().is_unspecified() || address.ip() == ip)
+            })
+            .map(|address| address.port());
+        let ip = ip.map(|ip| ip.to_string()).unwrap_or_default();
+        if let Some(port) = port {
+            let address = node.address(port);
+            let typed = tr("Friends type it in Multiplayer, Add Server, once this computer is shared with them and Tailscale runs on theirs.");
+            panel = panel
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(12.))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .font_family(theme::MONO)
+                                .text_size(px(18.))
+                                // A long name breaks after a dot, never inside a word: a zero-width
+                                // space after each dot is a place it may wrap. Copy takes the plain one.
+                                .child(address.replace('.', ".\u{200B}")),
+                        )
+                        .child(self.share_copy("share-copy", address, cx)),
                 )
-            } else {
-                typed.to_string()
-            }))
+                .child(hint(if node.magic_dns && !ip.is_empty() {
+                    let ip_port = if port == 25565 {
+                        ip.clone()
+                    } else {
+                        format!("{ip}:{port}")
+                    };
+                    trf(
+                        "Or {address}. {typed}",
+                        &[("address", &ip_port), ("typed", typed)],
+                    )
+                } else {
+                    typed.to_string()
+                }));
+        } else {
+            self.internet.confirm_limit = false;
+            panel = panel.child(hint(tr("No game address is available through Tailscale.")));
+        }
+        panel = panel
             .child(div().h(px(1.)).bg(rgb(palette().divider)))
             .child(
                 div()
@@ -212,7 +232,7 @@ impl Launcher {
         }
     }
 
-    fn share_invite(&mut self, ip: &str, port: u16, cx: &mut Context<Self>) -> Div {
+    fn share_invite(&mut self, ip: &str, port: Option<u16>, cx: &mut Context<Self>) -> Div {
         let mut d = div().flex().flex_col().gap(px(10.));
         if self.internet.token().is_none() {
             d = d.child(hint(tr(
@@ -369,11 +389,14 @@ impl Launcher {
 
         // What shared friends reach.
         let reach = match &self.internet.policy {
-            Some(Ok((policy, etag))) => Some((
-                tailscale::reach(policy, ip, port),
-                policy.clone(),
-                etag.clone(),
-            )),
+            Some(Ok((policy, etag))) => port.map(|port| {
+                (
+                    tailscale::reach(policy, ip, port),
+                    policy.clone(),
+                    etag.clone(),
+                    port,
+                )
+            }),
             Some(Err(e)) => {
                 d = d.child(hint(trf(
                     "Couldn't read your access controls: {error}",
@@ -383,7 +406,7 @@ impl Launcher {
             }
             None => None,
         };
-        if let Some((reach, policy, etag)) = reach {
+        if let Some((reach, policy, etag, port)) = reach {
             let at = format!("{ip}:{port}");
             let safety = match reach {
                 Reach::Everything if self.internet.confirm_limit => {

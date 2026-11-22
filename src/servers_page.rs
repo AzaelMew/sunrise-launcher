@@ -136,7 +136,7 @@ pub(super) enum Event {
     Failed(String),
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PublicLookup {
     Idle,
     Loading(u64),
@@ -313,6 +313,7 @@ pub(super) struct Servers {
     last_public_address: Option<std::net::Ipv4Addr>,
     public_lookup: PublicLookup,
     public_lookup_request: u64,
+    public_lookup_in_flight: Option<u64>,
     faces: HashMap<String, Option<Vec<[u8; 4]>>>,
     tx: Sender<Event>,
     rx: Receiver<Event>,
@@ -364,6 +365,7 @@ impl Servers {
             last_public_address: None,
             public_lookup: PublicLookup::Idle,
             public_lookup_request: 0,
+            public_lookup_in_flight: None,
             faces: HashMap::new(),
             tx,
             rx,
@@ -402,43 +404,83 @@ impl Servers {
         self.open
             .as_ref()
             .and_then(|d| self.statuses.get(d).cloned())
-            .unwrap_or_else(Status::stopped)
+            .unwrap_or_else(Status::unknown)
     }
 
     /// A setting from server.toml (as `config --json` gave it).
     fn setting(&self, section: &str, key: &str) -> Option<&Value> {
         self.config
             .as_ref()
-            .map(|c| &c[section][key])
+            .and_then(|c| c.get(section)?.get(key))
             .filter(|v| !v.is_null())
     }
 
-    fn address_ports(&self, status: &Status) -> (Option<u16>, Option<u16>) {
+    fn share_address(&self, status: &Status) -> (Option<std::net::SocketAddr>, Option<u16>) {
         let saved = self
             .setting("server", "port")
             .and_then(Value::as_u64)
             .and_then(|port| u16::try_from(port).ok())
             .filter(|port| *port != 0);
-        let has_status = self
-            .open
-            .as_ref()
-            .is_some_and(|dir| self.statuses.contains_key(dir));
         let saving_port = self
             .applying
             .iter()
             .chain(&self.queued)
             .any(|batch| self.open.as_ref() == Some(&batch.dir) && batch.changes_port());
-        let port = match (saved, has_status, status.phase.as_str()) {
-            (Some(port), true, "stopped") if !saving_port => Some(port),
-            (Some(_), true, "running") => status.running_port,
+        let address = match status.phase.as_str() {
+            "running" => status.listener,
+            "stopped" if !saving_port => saved.and_then(|port| {
+                let bind = match self.setting("server", "bind") {
+                    None => "",
+                    Some(value) => value.as_str()?,
+                };
+                let ip: std::net::IpAddr = if bind.is_empty() {
+                    std::net::Ipv4Addr::UNSPECIFIED.into()
+                } else {
+                    bind.parse().ok()?
+                };
+                Some(std::net::SocketAddr::new(ip.to_canonical(), port))
+            }),
             _ => None,
         };
-        (port, saved)
+        (address, saved)
     }
 
-    fn reset_public_lookup(&mut self) {
+    pub(super) fn reset_public_lookup(&mut self) {
         self.public_lookup = PublicLookup::Idle;
         self.copied = None;
+    }
+
+    fn begin_public_lookup(&mut self) -> Option<u64> {
+        if !self.internet_address || self.public_lookup_in_flight.is_some() {
+            return None;
+        }
+        self.public_lookup_request += 1;
+        let request = self.public_lookup_request;
+        self.public_lookup_in_flight = Some(request);
+        self.public_lookup = PublicLookup::Loading(request);
+        self.copied = None;
+        Some(request)
+    }
+
+    fn finish_public_lookup(
+        &mut self,
+        request: u64,
+        result: Result<std::net::Ipv4Addr, String>,
+    ) -> bool {
+        if self.public_lookup_in_flight != Some(request) {
+            return false;
+        }
+        self.public_lookup_in_flight = None;
+        if self.public_lookup == PublicLookup::Loading(request) {
+            self.public_lookup = match result {
+                Ok(ip) => {
+                    self.last_public_address = Some(ip);
+                    PublicLookup::Detected
+                }
+                Err(_) => PublicLookup::Failed,
+            };
+        }
+        true
     }
 
     /// A setting as shown: what was just asked for, else what server.toml holds.
@@ -607,6 +649,7 @@ impl Launcher {
             return;
         }
         let s = &mut self.servers;
+        s.statuses.remove(&dir);
         s.open = Some(dir);
         s.internet_address = false;
         s.reset_public_lookup();
@@ -664,13 +707,9 @@ impl Launcher {
                 } else {
                     0
                 };
+                let previous = self.servers.statuses.get(&dir).cloned();
                 std::thread::spawn(move || {
-                    let api = servers::Api::open(&dir);
-                    let status = api
-                        .as_ref()
-                        .and_then(|a| a.status())
-                        .unwrap_or_else(Status::stopped);
-                    let logs = api.and_then(|a| a.logs(since));
+                    let (status, logs) = servers::poll_hosting(&dir, previous.as_ref(), since);
                     let _ = tx.send(Event::Polled {
                         dir,
                         status: Box::new(status),
@@ -698,19 +737,7 @@ impl Launcher {
     fn servers_event(&mut self, event: Event) -> bool {
         let s = &mut self.servers;
         match event {
-            Event::PublicAddress { request, result } => {
-                if s.public_lookup != PublicLookup::Loading(request) {
-                    return false;
-                }
-                s.public_lookup = match result {
-                    Ok(ip) => {
-                        s.last_public_address = Some(ip);
-                        PublicLookup::Detected
-                    }
-                    Err(_) => PublicLookup::Failed,
-                };
-                true
-            }
+            Event::PublicAddress { request, result } => s.finish_public_lookup(request, result),
             Event::Polled { dir, status, logs } => {
                 s.polling = false;
                 let mut changed = false;
@@ -742,7 +769,9 @@ impl Launcher {
                 s.polling = false;
                 let mut changed = false;
                 for (dir, status) in all {
-                    changed |= s.note_status(dir, status);
+                    if s.open.as_ref() != Some(&dir) {
+                        changed |= s.note_status(dir, status);
+                    }
                 }
                 changed
             }
@@ -804,6 +833,7 @@ impl Launcher {
                 if !s.list.iter().any(|entry| entry.dir == dir) {
                     s.settings_outcomes.remove(&dir);
                     s.open = None;
+                    s.reset_public_lookup();
                     self.side_servers = s.list.clone();
                 }
                 match result {
@@ -818,8 +848,10 @@ impl Launcher {
                     && s.applying.as_ref().is_some_and(SettingsBatch::changes_port)
                 {
                     s.details_request += 1;
-                    if let Some(server) =
-                        s.config.as_mut().and_then(|c| c["server"].as_object_mut())
+                    if let Some(server) = s
+                        .config
+                        .as_mut()
+                        .and_then(|c| c.get_mut("server")?.as_object_mut())
                     {
                         server.remove("port");
                     }
@@ -851,15 +883,16 @@ impl Launcher {
     }
 
     fn find_server_public_address(&mut self) {
-        let s = &mut self.servers;
-        if !s.internet_address || matches!(s.public_lookup, PublicLookup::Loading(_)) {
+        if self.ui.page != crate::frame::Page::Hosting
+            || self.servers.open.is_none()
+            || self.servers.tab != Tab::Overview
+        {
             return;
         }
-        s.public_lookup_request += 1;
-        let request = s.public_lookup_request;
-        s.public_lookup = PublicLookup::Loading(request);
-        s.copied = None;
-        let tx = s.tx.clone();
+        let Some(request) = self.servers.begin_public_lookup() else {
+            return;
+        };
+        let tx = self.servers.tx.clone();
         std::thread::spawn(move || {
             let result = servers::network::public_ipv4();
             let _ = tx.send(Event::PublicAddress { request, result });
@@ -1479,6 +1512,7 @@ fn phase_label(status: &Status) -> String {
         "starting" => tr("Starting").into(),
         "restarting" => tr("Restarting").into(),
         "stopping" => tr("Stopping").into(),
+        "unknown" => tr("Server status unavailable").into(),
         _ => tr("Stopped").into(),
     }
 }
@@ -1501,43 +1535,76 @@ mod tests {
     use super::*;
 
     #[test]
-    fn sharing_waits_for_the_selected_server_and_uses_its_engine_port() {
+    fn sharing_uses_the_live_bind_without_saved_settings_and_clears_an_unknown_status() {
         let mut servers = Servers::new();
-        let first = PathBuf::from("first");
-        let second = PathBuf::from("second");
-        servers.open = Some(first.clone());
+        let dir = PathBuf::from("server");
+        servers.open = Some(dir.clone());
         servers.config = Some(serde_json::json!({"server": {"port": 25567}}));
-        let running = Status {
-            phase: "running".into(),
-            running_port: Some(25566),
-            ..Status::default()
-        };
+        let old = "127.0.0.1:25566".parse().unwrap();
         assert_eq!(
-            servers.address_ports(&servers.status()),
+            servers.share_address(&servers.status()),
             (None, Some(25567))
         );
-        servers.note_status(first, running);
-        assert_eq!(
-            servers.address_ports(&servers.status()),
-            (Some(25566), Some(25567))
+        servers.note_status(
+            dir.clone(),
+            Status {
+                phase: "running".into(),
+                listener: Some(old),
+                ..Status::default()
+            },
         );
-
-        servers.open = Some(second.clone());
+        assert_eq!(
+            servers.share_address(&servers.status()),
+            (Some(old), Some(25567))
+        );
         servers.config = None;
-        servers.note_status(second.clone(), Status::stopped());
-        assert_eq!(servers.address_ports(&servers.status()), (None, None));
-        servers.config = Some(serde_json::json!({"server": {"port": 65536}}));
-        assert_eq!(servers.address_ports(&servers.status()), (None, None));
-        servers.config = Some(serde_json::json!({"server": {"port": 25568}}));
+        assert_eq!(servers.share_address(&servers.status()), (Some(old), None));
+        servers.config = Some(serde_json::json!({"server": {"port": 25567}}));
+        servers.note_status(dir.clone(), Status::unknown());
         assert_eq!(
-            servers.address_ports(&servers.status()),
-            (Some(25568), Some(25568))
+            servers.share_address(&servers.status()),
+            (None, Some(25567))
         );
-        servers.queue_setting(second, "server.port", "25569".into());
+        let restarted = "0.0.0.0:25567".parse().unwrap();
+        servers.note_status(
+            dir.clone(),
+            Status {
+                phase: "running".into(),
+                listener: Some(restarted),
+                ..Status::default()
+            },
+        );
         assert_eq!(
-            servers.address_ports(&servers.status()),
-            (None, Some(25568))
+            servers.share_address(&servers.status()),
+            (Some(restarted), Some(25567))
         );
+        servers.note_status(dir.clone(), Status::stopped());
+        assert_eq!(
+            servers.share_address(&servers.status()),
+            (Some(restarted), Some(25567))
+        );
+        servers.queue_setting(dir, "server.port", "25568".into());
+        assert_eq!(
+            servers.share_address(&servers.status()),
+            (None, Some(25567))
+        );
+    }
+
+    #[test]
+    fn a_dismissed_lookup_remains_in_flight_and_cannot_enable_copy() {
+        let mut servers = Servers::new();
+        servers.internet_address = true;
+        let first = servers.begin_public_lookup().unwrap();
+        servers.reset_public_lookup();
+        assert!(servers.begin_public_lookup().is_none());
+        let ip = "192.0.2.42".parse().unwrap();
+        assert!(servers.finish_public_lookup(first, Ok(ip)));
+        assert_eq!(servers.public_lookup, PublicLookup::Idle);
+        assert!(servers.last_public_address.is_none());
+        let second = servers.begin_public_lookup().unwrap();
+        assert!(servers.finish_public_lookup(second, Ok(ip)));
+        assert_eq!(servers.public_lookup, PublicLookup::Detected);
+        assert_eq!(servers.last_public_address, Some(ip));
     }
 
     #[test]

@@ -216,6 +216,70 @@ fn lists_and_status_read_as_vanilla_and_the_supervisor_write_them() {
     assert!(!Status::stopped().running());
 }
 
+#[test]
+fn hosting_uses_the_engine_startup_and_a_failed_poll_is_unknown() {
+    let dir = tempfile::tempdir().unwrap();
+    assert_eq!(poll_hosting(dir.path(), None, 0).0.phase, "stopped");
+    let lock_dir = dir.path().join(".sunrise");
+    fs::create_dir(&lock_dir).unwrap();
+    let lock = fs::File::create_new(lock_dir.join("lock")).unwrap();
+    lock.try_lock().unwrap();
+    assert_eq!(poll_hosting(dir.path(), None, 0).0.phase, "unknown");
+    drop(lock);
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    fs::write(
+        lock_dir.join("api.json"),
+        json!({"address": listener.local_addr().unwrap().to_string(), "token":"test"}).to_string(),
+    )
+    .unwrap();
+    // The file can already contain the next launch's port; it isn't evidence of what is open.
+    fs::write(dir.path().join("server.properties"), "server-port=25567").unwrap();
+    let status =
+        |pid| json!({"phase":"running","pid":123,"engine_pid":pid,"engine_uptime_seconds":4});
+    let log = |host| {
+        json!({"next":3,"lines":[
+            "[10:00:00] [Supervisor/INFO]: Starting game with the game files in resources",
+            format!("[10:00:01] [Server thread/INFO]: Starting Minecraft server on {host}"),
+            "[10:00:02] [Server thread/INFO]: Done (2s)!"
+        ]})
+    };
+    let server = std::thread::spawn(move || {
+        for (request, value) in [
+            ("/api/v1/status", status(10)),
+            ("/api/v1/logs?since=0", log("127.0.0.1:25566")),
+            ("/api/v1/status", status(10)),
+            ("/api/v1/status", status(20)),
+            ("/api/v1/logs?since=3", json!({"next":3,"lines":[]})),
+            ("/api/v1/logs?since=0", log("*:25567")),
+            ("/api/v1/status", status(20)),
+            ("/api/v1/status", json!({"error":"not available"})),
+        ] {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(&mut stream);
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            assert!(line.starts_with(&format!("GET {request} ")), "{line}");
+            loop {
+                line.clear();
+                if reader.read_line(&mut line).unwrap() == 0 || line == "\r\n" {
+                    break;
+                }
+            }
+            let body = value.to_string();
+            write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+        }
+    });
+    let (first, _) = poll_hosting(dir.path(), None, 0);
+    assert_eq!(first.listener, Some("127.0.0.1:25566".parse().unwrap()));
+    let (second, _) = poll_hosting(dir.path(), Some(&first), 3);
+    assert_eq!(second.listener, Some("0.0.0.0:25567".parse().unwrap()));
+    let (unknown, _) = poll_hosting(dir.path(), Some(&second), 3);
+    assert_eq!(unknown.phase, "unknown");
+    assert!(unknown.listener.is_none());
+    server.join().unwrap();
+}
+
 /// The control API: the token goes with every call, and errors come back as the server words them.
 #[test]
 fn the_api_sends_the_token() {

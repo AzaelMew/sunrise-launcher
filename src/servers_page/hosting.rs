@@ -223,7 +223,9 @@ impl Launcher {
         let body = match open {
             Some(dir) => self.host_server(&dir, cx),
             None => {
-                self.servers.open = None;
+                if self.servers.open.take().is_some() {
+                    self.servers.reset_public_lookup();
+                }
                 self.host_list(cx)
             }
         };
@@ -281,7 +283,7 @@ impl Launcher {
             Fix::Prepare if !self.selected().is_some_and(|tag| backend::is_prepared(tag)) => {
                 self.servers.problem = None;
                 self.servers.create = None;
-                self.ui.page = crate::frame::Page::Home;
+                self.navigate(crate::frame::Page::Home);
                 self.play_game(crate::launcher_play::PlayDestination::Home);
             }
             fix => self.fix(fix, cx),
@@ -487,6 +489,7 @@ impl Launcher {
                         .child(tr("All servers"))
                         .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                             this.servers.open = None;
+                            this.servers.reset_public_lookup();
                             this.servers.polled = None;
                             this.servers.problem = None;
                             this.servers.note = None;
@@ -553,6 +556,9 @@ impl Launcher {
             .into_iter()
             .map(|(tab, name)| {
                 let pick: Choose = Rc::new(move |this, _| {
+                    if this.servers.tab == Tab::Overview && tab != Tab::Overview {
+                        this.servers.reset_public_lookup();
+                    }
                     this.servers.tab = tab;
                     this.servers.confirm_restore = None;
                 });
@@ -574,8 +580,8 @@ impl Launcher {
     // ----- Overview -------------------------------------------------------------------------
 
     fn host_overview(&mut self, status: &Status, cx: &mut Context<Self>) -> Div {
-        let (port, saved) = self.servers.address_ports(status);
-        let here = self.host_address_card(port, saved, status, cx);
+        let (listener, saved) = self.servers.share_address(status);
+        let here = self.host_address_card(listener, saved, status, cx);
         let on = status.running();
         let dash = || "–".to_string();
         let stat = |value: String, name: &str| {
@@ -658,7 +664,7 @@ impl Launcher {
             );
         }
         right = right.child(self.host_console(on, cx));
-        let sharing = port.map(|port| self.hosting_share(port, cx));
+        let sharing = self.hosting_share(listener, cx);
         div()
             .flex()
             .items_start()
@@ -671,14 +677,14 @@ impl Launcher {
                     .flex_col()
                     .gap(px(14.))
                     .child(here)
-                    .children(sharing),
+                    .child(sharing),
             )
             .child(right)
     }
 
     fn host_address_card(
         &mut self,
-        port: Option<u16>,
+        listener: Option<std::net::SocketAddr>,
         saved: Option<u16>,
         status: &Status,
         cx: &mut Context<Self>,
@@ -687,18 +693,32 @@ impl Launcher {
         let internet = s.internet_address;
         let lookup = s.public_lookup;
         let last = s.last_public_address;
-        let lan = (!internet).then(servers::lan_address).flatten();
-        let address = port.and_then(|port| {
-            if internet {
-                last.filter(|_| lookup == PublicLookup::Detected)
-                    .map(|ip| servers::network::address(ip.into(), port))
-            } else {
-                Some(lan.map_or_else(
-                    || format!("localhost:{port}"),
-                    |ip| servers::network::address(ip, port),
-                ))
-            }
-        });
+        let port = listener.map(|address| address.port());
+        let local_only = listener.is_some_and(|address| address.ip().is_loopback());
+        let public_port = listener
+            .filter(|address| address.is_ipv4() && !address.ip().is_loopback())
+            .map(|address| address.port());
+        let lan = listener
+            .filter(|_| !internet && !local_only)
+            .and_then(|address| {
+                if address.ip().is_unspecified() {
+                    servers::lan_address().filter(|ip| ip.is_ipv4() == address.is_ipv4())
+                } else {
+                    Some(address.ip())
+                }
+            });
+        let address = if internet {
+            last.filter(|_| lookup == PublicLookup::Detected)
+                .zip(public_port)
+                .map(|(ip, port)| servers::network::address(ip.into(), port))
+        } else {
+            listener.filter(|_| !local_only).map(|listener| {
+                lan.map_or_else(
+                    || format!("localhost:{}", listener.port()),
+                    |ip| servers::network::address(ip, listener.port()),
+                )
+            })
+        };
 
         let modes = chip_group(
             "host-address-network",
@@ -718,6 +738,10 @@ impl Launcher {
             .is_some_and(|at| at.elapsed() < Duration::from_secs(2));
         let shown = address.clone().unwrap_or_else(|| {
             tr(match (internet, lookup) {
+                _ if local_only => "Local connections only",
+                (true, _) if listener.is_some() && public_port.is_none() => {
+                    "Public IPv4 unavailable for this listener"
+                }
                 (true, PublicLookup::Idle) => "Public IP not detected",
                 (true, PublicLookup::Loading(_)) => "Finding public IP…",
                 (true, PublicLookup::Failed) => "Public IP unavailable",
@@ -765,8 +789,15 @@ impl Launcher {
                     )),
             );
 
-        if internet {
-            if let Some(ip) = last.filter(|_| lookup != PublicLookup::Detected || port.is_none()) {
+        if local_only {
+            panel = panel.child(hint(tr("This server listens only on this computer.")));
+        } else if internet && (listener.is_none() || public_port.is_some()) {
+            if listener.is_none() {
+                panel = panel.child(hint(tr("Server port unavailable")));
+            }
+            if let Some(ip) =
+                last.filter(|_| lookup != PublicLookup::Detected || public_port.is_none())
+            {
                 panel = panel.child(hint(trf(
                     "Last detected public IP: {ip}.",
                     &[("ip", &ip.to_string())],
@@ -783,7 +814,7 @@ impl Launcher {
                     } else {
                         "Detect public IP"
                     }),
-                    !matches!(lookup, PublicLookup::Loading(_)),
+                    s.public_lookup_in_flight.is_none(),
                     cx,
                     |this, _| this.find_server_public_address(),
                 ));
@@ -792,23 +823,23 @@ impl Launcher {
                     "Could not find your public IP. Check your internet connection and try again.",
                 )));
             }
-            if let Some(port) = port {
+            if let Some(port) = public_port {
                 panel = panel.child(hint(trf(
                     "Forward TCP port {port} on your router to this computer and allow it through your firewall. If your provider uses CGNAT, you need a public IP or a tunnel.",
                     &[("port", &port.to_string())],
                 )));
             }
-        } else if lan.is_some() {
+        } else if !internet && lan.is_some() {
             panel = panel.child(hint(tr(
                 "Friends on the same Wi-Fi: Multiplayer, Add Server, then paste this address.",
             )));
-        } else {
+        } else if !internet && listener.is_some() {
             panel = panel.child(hint(tr(
                 "No local network address was found. localhost works only on this computer.",
             )));
         }
 
-        if let Some(port) = port.filter(|_| !internet) {
+        if let Some(port) = public_port.filter(|_| !internet && lan.is_some()) {
             panel = panel.child(hint(trf(
                 "Friends elsewhere can't reach it as it is: use Tailscale below, or forward TCP port {port} on your router to this computer.",
                 &[("port", &port.to_string())],

@@ -13,16 +13,37 @@ pub fn address(ip: IpAddr, port: u16) -> String {
     }
 }
 
-/// Reads the generated properties the current engine started with.
-pub(super) fn properties_port(properties: &str) -> Option<u16> {
-    properties
-        .lines()
-        .rev()
-        .find_map(|line| {
-            let (key, value) = line.split_once('=')?;
-            (key.trim() == "server-port").then(|| value.trim().parse::<u16>().ok())
-        })?
-        .filter(|port| *port != 0)
+/// Reads the listener reported by the most recent completed engine startup.
+pub(super) fn listener_from_startup(lines: &[String]) -> Option<std::net::SocketAddr> {
+    let start = lines.iter().rposition(|line| {
+        line.split_once("] [Supervisor/INFO]: ")
+            .is_some_and(|(_, msg)| {
+                msg.starts_with("Starting ") && msg.contains(" with the game files in ")
+            })
+    })?;
+    let startup = &lines[start + 1..];
+    let done = startup.iter().position(|line| startup_done(line))?;
+    let announcement = startup[..done].iter().find_map(|line| {
+        line.split_once("] [Server thread/INFO]: ")?
+            .1
+            .strip_prefix("Starting Minecraft server on ")
+    })?;
+    let (host, port) = announcement.rsplit_once(':')?;
+    let port: u16 = port.parse().ok()?;
+    let ip: IpAddr = match host {
+        "*" => Ipv4Addr::UNSPECIFIED.into(),
+        host => host
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .parse()
+            .ok()?,
+    };
+    (port != 0).then(|| std::net::SocketAddr::new(ip.to_canonical(), port))
+}
+
+pub(super) fn startup_done(line: &str) -> bool {
+    line.split_once("] [Server thread/INFO]: ")
+        .is_some_and(|(_, message)| message.starts_with("Done ("))
 }
 
 /// Called only when the owner presses the detection button. ipify sees the
@@ -101,14 +122,41 @@ mod tests {
     }
 
     #[test]
-    fn properties_use_the_engine_port_and_reject_missing_or_invalid_values() {
+    fn only_a_finished_current_engine_start_supplies_an_address() {
+        let started =
+            "[10:00:00] [Supervisor/INFO]: Starting engine with the game files in resources";
+        let done = "[10:00:02] [Server thread/INFO]: Done (2s)!";
+        let old_address = "[10:00:01] [Server thread/INFO]: Starting Minecraft server on *:25565";
+        let new_address = "[10:00:01] [Server thread/INFO]: Starting Minecraft server on ::1:25567";
+        let read = |lines: &[&str]| {
+            listener_from_startup(
+                &lines
+                    .iter()
+                    .map(|line| line.to_string())
+                    .collect::<Vec<_>>(),
+            )
+        };
         assert_eq!(
-            properties_port("# comment\r\nserver-port=25566\r\n"),
-            Some(25566)
+            read(&[started, old_address, done]),
+            Some("0.0.0.0:25565".parse().unwrap())
         );
-        assert_eq!(properties_port("query.port=25565"), None);
-        assert_eq!(properties_port("server-port=65536"), None);
-        assert_eq!(properties_port("server-port=0"), None);
+        assert_eq!(
+            read(&[started, old_address, done, started, new_address, done]),
+            Some("[::1]:25567".parse().unwrap())
+        );
+        assert_eq!(
+            read(&[started, old_address, done, started, new_address]),
+            None
+        );
+        assert_eq!(read(&[new_address, done]), None);
+        assert_eq!(
+            read(&[
+                started,
+                "[10:00:01] [Server thread/INFO]: Starting Minecraft server on *:0",
+                done
+            ]),
+            None
+        );
     }
 
     #[test]

@@ -1499,5 +1499,10 @@
   "Could not find your public IP. Check your internet connection and try again.": "Не удалось определить внешний IP. Проверьте подключение к интернету и повторите попытку.",
   "Forward TCP port {port} on your router to this computer and allow it through your firewall. If your provider uses CGNAT, you need a public IP or a tunnel.": "Пробросьте TCP-порт {port} на роутере на этот компьютер и разрешите его в брандмауэре. Если провайдер использует CGNAT, нужен публичный IP или туннель.",
   "No local network address was found. localhost works only on this computer.": "Адрес локальной сети не найден. localhost работает только на этом компьютере.",
-  "The server is running on port {running}. Restart to use saved port {saved}.": "Сервер работает на порту {running}. Чтобы применить сохранённый порт {saved}, перезапустите сервер."
+  "The server is running on port {running}. Restart to use saved port {saved}.": "Сервер работает на порту {running}. Чтобы применить сохранённый порт {saved}, перезапустите сервер.",
+  "Server status unavailable": "Состояние сервера недоступно",
+  "Local connections only": "Только локальные подключения",
+  "This server listens only on this computer.": "Сервер принимает подключения только с этого компьютера.",
+  "Public IPv4 unavailable for this listener": "Подключение по внешнему IPv4 недоступно",
+  "No game address is available through Tailscale.": "Адрес игрового сервера в Tailscale недоступен."
 }
