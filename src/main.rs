@@ -323,7 +323,7 @@ struct Launcher {
     auth_progress: HashMap<String, account::session::Phase>,
     profile_heads: profile_heads::Heads,
     /// The Skins tab (`skins_page`).
-    skins: skins_page::Skins,
+    skins: skins_page::SkinsPages,
     /// The account chip's menu (`account_chip`).
     account_menu: account_chip::Menu,
     /// The launcher's search (`command_search`).

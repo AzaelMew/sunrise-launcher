@@ -1,7 +1,7 @@
 //! The account's skin: a PNG and its arm model sent to the Minecraft services
 //! (`POST /minecraft/profile/skins`, a multipart form with `variant` and `file`), which every
 //! client and server then shows, as the official launcher does.
-use super::capes::{self, Profile};
+use super::capes::{self, Written};
 use super::{bearer, request_to, Endpoints, Value};
 
 /// The most a skin may weigh here: real ones are a few kilobytes.
@@ -21,8 +21,9 @@ pub(crate) fn form(boundary: &str, png: &[u8], slim: bool) -> Vec<u8> {
     body
 }
 
-/// Wears the skin `png` with slim or classic arms; the profile as it is after it.
-pub fn upload(ep: &Endpoints, token: &str, png: &[u8], slim: bool) -> Result<Profile, String> {
+/// Wears the skin `png` with slim or classic arms: what the change left, or why the services
+/// refused it.
+pub fn upload(ep: &Endpoints, token: &str, png: &[u8], slim: bool) -> Result<Written, String> {
     if png.len() > MAX_SKIN || crate::player_model::skin(png).is_none() {
         return Err("This isn't a Minecraft skin: it must be a 64×64 or 64×32 PNG.".into());
     }
@@ -51,7 +52,7 @@ pub fn upload(ep: &Endpoints, token: &str, png: &[u8], slim: bool) -> Result<Pro
     let profile: Value =
         serde_json::from_str(&response.into_string().unwrap_or_default()).unwrap_or(Value::Null);
     match status {
-        200 | 204 => capes::after_change(ep, token, &profile),
+        200 | 204 => Ok(capes::after_change(ep, token, &profile)),
         401 => Err(super::SIGN_IN_AGAIN.into()),
         400 => Err("Mojang refused this skin. It must be a 64×64 or 64×32 PNG.".into()),
         429 => Err("Too many skin changes in a short time. Wait a minute, then try again.".into()),

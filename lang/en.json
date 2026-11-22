@@ -67,7 +67,6 @@
   "Offline developer session: skins and capes can't be changed here.": "Offline developer session: skins and capes can't be changed here.",
   "Only a PNG file can be added as a skin.": "Only a PNG file can be added as a skin.",
   "Player model": "Player model",
-  "Saved, but the skin worn before couldn't be kept: {why}": "Saved, but the skin worn before couldn't be kept: {why}",
   "Saved. Everyone sees your new look.": "Saved. Everyone sees your new look.",
   "Sign in with the Microsoft account that owns Minecraft: Java Edition to choose its skin and cape.": "Sign in with the Microsoft account that owns Minecraft: Java Edition to choose its skin and cape.",
   "Skin": "Skin",
@@ -82,5 +81,10 @@
   "Wide": "Wide",
   "Your cape was changed, but the skin wasn't: {why}": "Your cape was changed, but the skin wasn't: {why}",
   "Your skin": "Your skin",
-  "Your skin was saved, but the cape wasn't changed: {why}": "Your skin was saved, but the cape wasn't changed: {why}"
+  "Your skin was saved, but the cape wasn't changed: {why}": "Your skin was saved, but the cape wasn't changed: {why}",
+  "The skin you wear now couldn't be kept, so it wasn't replaced: {why}": "The skin you wear now couldn't be kept, so it wasn't replaced: {why}",
+  "Saved, but the saved skin's arms couldn't be kept: {why}": "Saved, but the saved skin's arms couldn't be kept: {why}",
+  "Saved, but the launcher couldn't note it down: {why}": "Saved, but the launcher couldn't note it down: {why}",
+  "Saved. The Minecraft services took it, but your profile couldn't be read back yet: {why}": "Saved. The Minecraft services took it, but your profile couldn't be read back yet: {why}",
+  "The Minecraft services answered with another account's profile.": "The Minecraft services answered with another account's profile."
 }

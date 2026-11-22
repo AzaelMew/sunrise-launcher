@@ -9,18 +9,23 @@
 //! What the account wears comes from one reading of its profile, made each time the page opens,
 //! so a change made in another launcher shows here.
 //!
+//! Each account has its own page ([`SkinsPages`]): switching to another account and back finds
+//! the first one as it was left, a Save still under way included, so an account never has two
+//! Saves at once, and a Save that ends while another account is shown is reconciled with its
+//! own account's page. Choices made while a Save runs are kept as they are, and compared with
+//! what the account wears only once the Save has said what that is.
+//!
 //! Every request runs on a worker and comes back as a message (`Msg::SkinsProfile`, `Picture`,
 //! `LookSaved`, `SkinsAdded`) carrying the account it was for and its own number, unique for
 //! the whole run: an answer for another account, or one a later request replaced, changes
-//! nothing on the page. A Save that ends after the page moved to another account is still
-//! recorded for the account it was made for.
+//! nothing on the page. The Save itself is [`account::look::save`].
 //!
 //! In an offline developer session the page only shows the player: no profile requests, no
-//! edits.
+//! edits, and an answer to a request made before changes nothing.
 use super::*;
 use crate::frame::Reach as _;
 use crate::paint::palette;
-use backend::LookOutcome;
+use account::look::{self, Change, Kept};
 use gpui::{img, rgb, ExternalPaths, MouseButton, MouseDownEvent, MouseMoveEvent, RenderImage};
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -119,6 +124,7 @@ pub(crate) struct Submitted {
     pub cape: Option<CapePick>,
 }
 
+/// One account's page.
 pub(crate) struct Skins {
     /// The account shown.
     uuid: Option<String>,
@@ -126,6 +132,9 @@ pub(crate) struct Skins {
     read_only: bool,
     /// What the account wears, from its profile: none while the first reading is under way.
     profile: Option<Result<Profile, String>>,
+    /// Changes the services accepted that no profile has shown yet: the account is taken to
+    /// wear them over `profile` until the next reading says what it wears.
+    unconfirmed: Edit,
     /// The reading whose answer counts.
     reading: Option<u64>,
     /// The Save under way.
@@ -161,6 +170,7 @@ impl Default for Skins {
             uuid: None,
             read_only: false,
             profile: None,
+            unconfirmed: Edit::default(),
             reading: None,
             saving: None,
             edit: Edit::default(),
@@ -180,6 +190,65 @@ impl Default for Skins {
     }
 }
 
+/// Every account's page: the one shown, and those of the accounts shown before, kept as they
+/// were left (a Save under way, edits, what the profile said). The shown page is reached
+/// through `Deref`.
+#[derive(Default)]
+pub(crate) struct SkinsPages {
+    current: Skins,
+    parked: HashMap<String, Skins>,
+}
+
+impl std::ops::Deref for SkinsPages {
+    type Target = Skins;
+    fn deref(&self) -> &Skins {
+        &self.current
+    }
+}
+
+impl std::ops::DerefMut for SkinsPages {
+    fn deref_mut(&mut self) -> &mut Skins {
+        &mut self.current
+    }
+}
+
+impl SkinsPages {
+    /// Shows the page of account `uuid`: the one it had, else a new one. Pages of accounts no
+    /// longer `signed_in` are forgotten, unless a Save of theirs is still under way.
+    fn show(&mut self, uuid: &str, signed_in: impl Fn(&str) -> bool) {
+        if self.current.uuid.as_deref() != Some(uuid) {
+            let page = self
+                .parked
+                .remove(uuid)
+                .unwrap_or_else(|| Skins::new_for(uuid));
+            let before = std::mem::replace(&mut self.current, page);
+            if let Some(was) = before.uuid.clone() {
+                self.parked.insert(was, before);
+            }
+        }
+        self.parked
+            .retain(|uuid, page| page.saving.is_some() || signed_in(uuid));
+    }
+
+    /// The page of account `uuid`, shown or not.
+    fn page_mut(&mut self, uuid: &str) -> Option<&mut Skins> {
+        if self.current.uuid.as_deref() == Some(uuid) {
+            Some(&mut self.current)
+        } else {
+            self.parked.get_mut(uuid)
+        }
+    }
+
+    /// A picture arrived: every page that asked for it gets it.
+    fn picture(&mut self, url: &str, png: Option<Vec<u8>>) {
+        for page in std::iter::once(&mut self.current).chain(self.parked.values_mut()) {
+            if page.pictures.contains_key(url) {
+                page.picture(url.to_owned(), png.clone());
+            }
+        }
+    }
+}
+
 impl Skins {
     fn new_for(uuid: &str) -> Skins {
         Skins {
@@ -188,8 +257,18 @@ impl Skins {
         }
     }
 
+    /// Enters or leaves the offline developer view. Entering it drops the reading under way,
+    /// so its answer starts nothing.
+    fn set_read_only(&mut self, read_only: bool) {
+        self.read_only = read_only;
+        if read_only {
+            self.reading = None;
+        }
+    }
+
     /// What the account wears. `recorded` is the skin accounts.json has for it, used until the
     /// profile has been read; `default_slim` the arms of its default skin, when it wears none.
+    /// Changes accepted but not yet shown by a profile count as worn.
     fn worn(&self, recorded: Option<&(String, String)>, default_slim: bool) -> Worn {
         let (skin, cape) = match &self.profile {
             Some(Ok(profile)) => (
@@ -209,7 +288,11 @@ impl Skins {
             (Some((url, _)), Some((kept, id))) if url == kept => SkinPick::Saved(id.clone()),
             _ => SkinPick::Worn,
         };
-        Worn { skin, slim, cape }
+        Worn {
+            skin: self.unconfirmed.skin.clone().unwrap_or(skin),
+            slim: self.unconfirmed.slim.unwrap_or(slim),
+            cape: self.unconfirmed.cape.clone().or(cape),
+        }
     }
 
     /// The look the preview shows: each edit over what is worn.
@@ -222,8 +305,12 @@ impl Skins {
     }
 
     /// Forgets the edits that ask for what is worn already. A cape edit stays while the worn
-    /// cape is unknown: it is an explicit choice.
+    /// cape is unknown: it is an explicit choice. While a Save runs nothing is forgotten: what
+    /// is worn is about to change, and a choice that matches it now may not match it after.
     fn settle(&mut self, worn: &Worn) {
+        if self.saving.is_some() {
+            return;
+        }
         if self.edit.skin.as_ref() == Some(&worn.skin) {
             self.edit.skin = None;
         }
@@ -235,22 +322,27 @@ impl Skins {
         }
     }
 
-    /// A reading for `uuid` asked for.
+    /// A reading asked for.
     fn read_asked(&mut self) -> u64 {
         let id = request_id();
         self.reading = Some(id);
         id
     }
 
-    /// A reading answered: kept when it is for the account shown and the last one asked, and no
-    /// Save is under way (its answer is newer than any reading made before it ends).
+    /// A reading answered: kept when it is for the account shown and the last one asked, the
+    /// page isn't read-only, and no Save is under way (its answer is newer than any reading
+    /// made before it ends).
     fn read_answered(&mut self, uuid: &str, id: u64, result: Result<Profile, String>) -> bool {
-        if self.uuid.as_deref() != Some(uuid) || self.reading != Some(id) {
+        if self.read_only || self.uuid.as_deref() != Some(uuid) || self.reading != Some(id) {
             return false;
         }
         self.reading = None;
         if self.saving.is_some() {
             return false;
+        }
+        if result.is_ok() {
+            // The reading says what is worn: accepted changes are in it, or didn't take.
+            self.unconfirmed = Edit::default();
         }
         // A reading that failed after one that worked keeps what was known.
         if result.is_ok() || !matches!(self.profile, Some(Ok(_))) {
@@ -259,9 +351,19 @@ impl Skins {
         true
     }
 
+    /// Asks for a picture from Mojang's texture server: true when it is to be fetched (not
+    /// asked before, and the page isn't read-only).
+    fn ask_picture(&mut self, url: &str) -> bool {
+        if self.read_only || self.pictures.contains_key(url) {
+            return false;
+        }
+        self.pictures.insert(url.to_owned(), Picture::Pending);
+        true
+    }
+
     /// A Save of the edits asked for.
     fn submit(&mut self) -> Option<Submitted> {
-        if self.edit.is_empty() || self.saving.is_some() {
+        if self.read_only || self.edit.is_empty() || self.saving.is_some() {
             return None;
         }
         let submitted = Submitted {
@@ -275,52 +377,49 @@ impl Skins {
         Some(submitted)
     }
 
-    /// A Save answered: each change that went through is what is worn now, and its edit is
-    /// done unless the player has changed it again meanwhile; what failed stays to do. None when
-    /// the answer isn't this page's Save (another account's, or an old one).
-    fn save_answered(&mut self, id: u64, outcome: &LookOutcome) -> Option<Result<String, String>> {
-        let submitted = self.saving.take_if(|s| s.id == id)?;
+    /// The Save `id` answered, if it is this page's. Each change the services accepted is done:
+    /// its edit is forgotten unless the player changed it again meanwhile, and it isn't sent
+    /// again. What a profile showed is what is worn; what was accepted but not shown is taken
+    /// as worn until the next reading. What failed stays to do. The caller then settles the
+    /// edits against what is worn now.
+    fn save_answered(&mut self, id: u64, outcome: &look::Outcome) -> bool {
+        let Some(submitted) = self.saving.take_if(|s| s.id == id) else {
+            return false;
+        };
         // A reading asked before this Save ended may say what was worn before it.
         self.reading = None;
-        let latest = [&outcome.cape, &outcome.skin]
-            .into_iter()
-            .find_map(|r| r.as_ref().and_then(|r| r.as_ref().ok()));
-        if let Some(profile) = latest {
+        if let Some(profile) = &outcome.profile {
             self.profile = Some(Ok(profile.clone()));
+            self.unconfirmed = Edit::default();
         }
-        if matches!(outcome.skin, Some(Ok(_))) {
+        let accepted = |change: &Option<Change>| change.as_ref().is_some_and(Change::accepted);
+        if matches!(outcome.skin, Some(Change::Unconfirmed(_))) {
+            self.unconfirmed.skin = submitted.skin.clone();
+            self.unconfirmed.slim = submitted.slim;
+        }
+        if matches!(outcome.cape, Some(Change::Unconfirmed(_))) {
+            self.unconfirmed.cape = submitted.cape.clone();
+        }
+        if accepted(&outcome.skin) {
             if self.edit.skin == submitted.skin {
                 self.edit.skin = None;
             }
             if self.edit.slim == submitted.slim {
                 self.edit.slim = None;
             }
+            // "The skin worn", chosen while the Save replaced it, is the one it replaced.
+            if self.edit.skin == Some(SkinPick::Worn) {
+                self.edit.skin = match &outcome.kept {
+                    Kept::Kept(saved) => Some(SkinPick::Saved(saved.id.clone())),
+                    _ => None,
+                };
+            }
         }
-        if matches!(outcome.cape, Some(Ok(_))) && self.edit.cape == submitted.cape {
+        if accepted(&outcome.cape) && self.edit.cape == submitted.cape {
             self.edit.cape = None;
         }
-        let said = match (&outcome.skin, &outcome.cape) {
-            (Some(Err(skin)), Some(Ok(_))) => Err(trf(
-                "Your cape was changed, but the skin wasn't: {why}",
-                &[("why", skin)],
-            )
-            .to_string()),
-            (Some(Ok(_)), Some(Err(cape))) => Err(trf(
-                "Your skin was saved, but the cape wasn't changed: {why}",
-                &[("why", cape)],
-            )
-            .to_string()),
-            (Some(Err(why)), _) | (_, Some(Err(why))) => Err(why.clone()),
-            _ => Ok(tr("Saved. Everyone sees your new look.").to_string()),
-        };
-        Some(match (&said, &outcome.kept) {
-            (Ok(_), Some(why)) => Err(trf(
-                "Saved, but the skin worn before couldn't be kept: {why}",
-                &[("why", why)],
-            )
-            .to_string()),
-            _ => said,
-        })
+        self.said = Some(said(outcome));
+        true
     }
 
     /// The pictures not yet asked for.
@@ -388,6 +487,70 @@ impl Skins {
     }
 }
 
+/// What a Save says it did: each change on its own when one went through and another didn't.
+fn said(outcome: &look::Outcome) -> Result<String, String> {
+    let failed = |change: &Option<Change>| match change {
+        Some(Change::Failed(why)) => Some(why.clone()),
+        _ => None,
+    };
+    let skin = failed(&outcome.skin).map(|why| match &outcome.kept {
+        Kept::Failed(_) => trf(
+            "The skin you wear now couldn't be kept, so it wasn't replaced: {why}",
+            &[("why", &why)],
+        )
+        .to_string(),
+        _ => why,
+    });
+    let cape = failed(&outcome.cape);
+    let sent = |change: &Option<Change>| change.is_some();
+    match (skin, cape) {
+        (Some(skin), None) if sent(&outcome.cape) => {
+            return Err(trf(
+                "Your cape was changed, but the skin wasn't: {why}",
+                &[("why", &skin)],
+            )
+            .to_string())
+        }
+        (None, Some(cape)) if sent(&outcome.skin) => {
+            return Err(trf(
+                "Your skin was saved, but the cape wasn't changed: {why}",
+                &[("why", &cape)],
+            )
+            .to_string())
+        }
+        (Some(why), _) | (_, Some(why)) => return Err(why),
+        (None, None) => {}
+    }
+    if let Some(why) = &outcome.arms {
+        return Err(trf(
+            "Saved, but the saved skin's arms couldn't be kept: {why}",
+            &[("why", why)],
+        )
+        .to_string());
+    }
+    if let Some(why) = &outcome.recorded {
+        return Err(trf(
+            "Saved, but the launcher couldn't note it down: {why}",
+            &[("why", why)],
+        )
+        .to_string());
+    }
+    let unconfirmed = [&outcome.skin, &outcome.cape]
+        .into_iter()
+        .find_map(|change| match change {
+            Some(Change::Unconfirmed(why)) => Some(why),
+            _ => None,
+        });
+    Ok(match unconfirmed {
+        Some(why) => trf(
+            "Saved. The Minecraft services took it, but your profile couldn't be read back yet: {why}",
+            &[("why", why)],
+        )
+        .to_string(),
+        None => tr("Saved. Everyone sees your new look.").to_string(),
+    })
+}
+
 /// A default skin's file in the prepared game files.
 fn default_skin_path(resources: &Path, name: &str, slim: bool) -> PathBuf {
     resources
@@ -450,10 +613,12 @@ impl Launcher {
         let Some(account) = self.look_account() else {
             return;
         };
-        if self.skins.uuid.as_deref() != Some(&account.uuid) {
-            self.skins = skins_page::Skins::new_for(&account.uuid);
-        }
-        self.skins.read_only = sunrise_launcher::developer_offline::selected();
+        let accounts = &self.accounts.accounts;
+        self.skins.show(&account.uuid, |uuid| {
+            accounts.iter().any(|a| a.uuid == uuid)
+        });
+        self.skins
+            .set_read_only(sunrise_launcher::developer_offline::selected());
         if self.skins.read_only {
             return;
         }
@@ -468,8 +633,13 @@ impl Launcher {
     }
 
     fn profile_read(&mut self, account: &account::Account) {
+        if self.skins.read_only || self.skins.uuid.as_deref() != Some(&account.uuid) {
+            return;
+        }
         let id = self.skins.read_asked();
         let (account, tx) = (account.clone(), self.tx.clone());
+        let other =
+            tr("The Minecraft services answered with another account's profile.").to_string();
         std::thread::spawn(move || {
             let ep = account::Endpoints::live();
             let result = account::token_for(
@@ -478,17 +648,22 @@ impl Launcher {
                 account::store(),
                 &account,
             )
-            .and_then(|token| capes::read(&ep, &token));
+            .and_then(|token| capes::read(&ep, &token))
+            .and_then(|profile| {
+                profile
+                    .is_for(&account.uuid)
+                    .then_some(profile)
+                    .ok_or(other)
+            });
             let _ = tx.send(Msg::SkinsProfile(account.uuid, id, result));
         });
     }
 
     /// Fetches a picture from Mojang's texture server once.
     fn picture_ask(&mut self, url: String) {
-        if self.skins.pictures.contains_key(&url) {
+        if !self.skins.ask_picture(&url) {
             return;
         }
-        self.skins.pictures.insert(url.clone(), Picture::Pending);
         let tx = self.tx.clone();
         std::thread::spawn(move || {
             let png = capes::picture(&url);
@@ -505,6 +680,9 @@ impl Launcher {
     }
 
     fn after_profile(&mut self) {
+        if self.skins.read_only {
+            return;
+        }
         if let Some(Ok(profile)) = &self.skins.profile {
             let urls: Vec<String> = profile
                 .skin
@@ -521,12 +699,25 @@ impl Launcher {
         self.settle_edits();
     }
 
-    fn worn_look(&self, account: &account::Account) -> Worn {
+    /// What account `uuid`'s look is worked out from besides its page: the skin accounts.json
+    /// has for it, and the arms of its default skin.
+    fn worn_inputs(&self, uuid: &str) -> (Option<(String, String)>, bool) {
+        let recorded = self
+            .accounts
+            .accounts
+            .iter()
+            .find(|a| a.uuid == uuid)
+            .and_then(|a| a.skin.clone());
         let default_slim = self.skin_resources().is_some_and(|resources| {
-            sunrise_launcher::heads::default_skin_file(&resources, &account.uuid)
+            sunrise_launcher::heads::default_skin_file(&resources, uuid)
                 .is_some_and(|(_, slim)| slim)
         });
-        self.skins.worn(account.skin.as_ref(), default_slim)
+        (recorded, default_slim)
+    }
+
+    fn worn_look(&self, account: &account::Account) -> Worn {
+        let (recorded, default_slim) = self.worn_inputs(&account.uuid);
+        self.skins.worn(recorded.as_ref(), default_slim)
     }
 
     fn settle_edits(&mut self) {
@@ -538,7 +729,7 @@ impl Launcher {
 
     /// A picture from the texture server arrived (`Msg::Picture`).
     pub(crate) fn skins_picture(&mut self, url: String, png: Option<Vec<u8>>) {
-        self.skins.picture(url, png);
+        self.skins.picture(&url, png);
         self.remember_worn();
     }
 
@@ -552,6 +743,9 @@ impl Launcher {
 
     /// Keeps the skin worn now among the saved skins (once: the same skin is saved once).
     fn remember_worn(&mut self) {
+        if self.skins.read_only {
+            return;
+        }
         let (Some(uuid), Some((url, model))) = (self.skins.uuid.clone(), self.worn_skin()) else {
             return;
         };
@@ -667,8 +861,8 @@ impl Launcher {
         Some((url.clone(), texture))
     }
 
-    /// Sends the edits to the Minecraft services: the skin when it (or its arms) changed, then
-    /// the cape when it did; nothing that wasn't edited.
+    /// Sends the edits to the Minecraft services ([`look::save`]): the skin when it (or its
+    /// arms) changed, then the cape when it did; nothing that wasn't edited.
     fn look_save(&mut self) {
         let Some(account) = self.look_account() else {
             return;
@@ -680,13 +874,14 @@ impl Launcher {
         let (skin, slim, _) = self.skins.chosen(&worn);
         let sent = if self.skins.edit.touches_skin() {
             match self.skin_png(&account, &skin, slim).1 {
-                Png::Ready(png) => {
-                    let saved_id = match &skin {
+                Png::Ready(png) => Some(look::SkinSent {
+                    png: png.as_ref().clone(),
+                    slim,
+                    saved: match &skin {
                         SkinPick::Saved(id) => Some(id.clone()),
                         _ => None,
-                    };
-                    Some((png.as_ref().clone(), slim, saved_id))
-                }
+                    },
+                }),
                 Png::Pending | Png::Missing => {
                     self.skins.said = Some(Err(tr("This skin's picture isn't here yet.").into()));
                     return;
@@ -695,40 +890,29 @@ impl Launcher {
         } else {
             None
         };
-        // The skin worn now is kept before it is replaced, even if its picture hasn't
-        // arrived yet: the worker fetches it first.
-        let previous = sent
-            .as_ref()
-            .and_then(|_| self.worn_skin())
-            .filter(|(url, _)| {
-                !self
-                    .skins
-                    .worn_saved
-                    .as_ref()
-                    .is_some_and(|(kept, _)| kept == url)
-            })
-            .map(|(url, model)| {
-                let png = match self.skins.pictures.get(&url) {
-                    Some(Picture::Ready(png)) => Some(png.clone()),
-                    _ => None,
-                };
-                (url, model == "slim", png)
-            });
         let Some(submitted) = self.skins.submit() else {
             return;
         };
-        let cape = submitted.cape.clone().map(|cape| match cape {
-            CapePick::Minecraft(id) => Some(id),
-            CapePick::None => None,
-        });
+        let request = look::Request {
+            uuid: account.uuid.clone(),
+            skin: sent,
+            cape: submitted.cape.clone().map(|cape| match cape {
+                CapePick::Minecraft(id) => Some(id),
+                CapePick::None => None,
+            }),
+        };
+        // Pictures already here aren't fetched again to keep the skin replaced.
+        let known: HashMap<String, Vec<u8>> = self
+            .skins
+            .pictures
+            .iter()
+            .filter_map(|(url, picture)| match picture {
+                Picture::Ready(png) => Some((url.clone(), png.clone())),
+                _ => None,
+            })
+            .collect();
         let (id, tx) = (submitted.id, self.tx.clone());
         std::thread::spawn(move || {
-            let kept = previous.and_then(|(url, slim, png)| {
-                let png = png.or_else(|| capes::picture(&url))?;
-                skin_library::folder(&account.uuid)
-                    .and_then(|dir| skin_library::add(&dir, &png, "", Some(slim)))
-                    .err()
-            });
             let ep = account::Endpoints::live();
             let token = account::token_for(
                 &ep,
@@ -736,82 +920,58 @@ impl Launcher {
                 account::store(),
                 &account,
             );
-            let skin = sent.as_ref().map(|(png, slim, _)| {
-                token
-                    .clone()
-                    .and_then(|token| account::skins::upload(&ep, &token, png, *slim))
-            });
-            let cape = cape.map(|id| {
-                token
-                    .clone()
-                    .and_then(|token| capes::wear(&ep, &token, id.as_deref()))
-            });
-            let outcome = LookOutcome {
-                sent,
-                skin,
-                cape,
-                kept,
-            };
+            let fetch = |url: &str| known.get(url).cloned().or_else(|| capes::picture(url));
+            let record = |skin, cape| account::Accounts::save_look(&account.uuid, skin, cape);
+            let outcome = look::save(
+                &request,
+                &look::Tools {
+                    ep: &ep,
+                    token,
+                    library: skin_library::folder(&account.uuid),
+                    fetch: &fetch,
+                    record: &record,
+                },
+            );
             let _ = tx.send(Msg::LookSaved(account.uuid, id, Box::new(outcome)));
         });
     }
 
-    /// A Save ended. What went through is recorded for the account it was made for, whichever
-    /// account the page shows now; the page itself changes only for its own Save.
-    pub(crate) fn look_saved(&mut self, uuid: String, id: u64, outcome: LookOutcome) {
-        let skin_done = outcome
-            .skin
-            .as_ref()
-            .and_then(|r| r.as_ref().ok())
-            .map(|p| p.skin.clone());
-        let cape_done = outcome
-            .cape
-            .as_ref()
-            .and_then(|r| r.as_ref().ok())
-            .map(|p| p.worn_cape().map(|c| c.url.clone()));
-        let mut problems = Vec::new();
-        if skin_done.is_some() || cape_done.is_some() {
-            if let Some(a) = self.accounts.accounts.iter_mut().find(|a| a.uuid == uuid) {
-                if let Some(skin) = &skin_done {
-                    a.skin = skin.clone();
+    /// A Save ended (`Msg::LookSaved`). It is reconciled with its own account's page, shown or
+    /// not, and what it did is in that account's record (written by the Save itself, before it
+    /// ended, so an account's records are written in the order of its Saves).
+    pub(crate) fn look_saved(&mut self, uuid: String, id: u64, outcome: look::Outcome) {
+        if let Some(profile) = &outcome.profile {
+            let skin = (outcome.skin == Some(Change::Done)).then(|| profile.skin.clone());
+            let cape = (outcome.cape == Some(Change::Done))
+                .then(|| profile.worn_cape().map(|c| c.url.clone()));
+            if skin.is_some() || cape.is_some() {
+                if let Some(a) = self.accounts.accounts.iter_mut().find(|a| a.uuid == uuid) {
+                    if let Some(skin) = skin {
+                        a.skin = skin;
+                    }
+                    if let Some(cape) = cape {
+                        a.cape = cape;
+                    }
                 }
-                if let Some(cape) = &cape_done {
-                    a.cape = cape.clone();
-                }
-            }
-            let (uuid, skin, cape) = (uuid.clone(), skin_done.clone(), cape_done.clone());
-            std::thread::spawn(move || {
-                if let Err(e) = account::Accounts::save_look(&uuid, skin, cape) {
-                    eprintln!("Sunrise: the new skin and cape couldn't be recorded: {e}");
-                }
-            });
-            self.load_profile_heads();
-        }
-        // The arms chosen for a saved skin are its own once that skin is worn with them.
-        if let (Some(_), Some((_, slim, Some(saved)))) = (&skin_done, &outcome.sent) {
-            if let Err(why) = skin_library::folder(&uuid)
-                .and_then(|dir| skin_library::set_slim(&dir, saved, *slim))
-            {
-                problems.push(why);
+                self.load_profile_heads();
             }
         }
-        if self.skins.uuid.as_deref() != Some(&uuid) {
-            return;
-        }
-        // The skin just sent is the picture at its new URL: the one sent, not what is chosen now.
-        if let (Some(Some((url, _))), Some((png, _, _))) = (&skin_done, &outcome.sent) {
-            self.skins.picture(url.clone(), Some(png.clone()));
-        }
-        let Some(said) = self.skins.save_answered(id, &outcome) else {
+        let (recorded, default_slim) = self.worn_inputs(&uuid);
+        let Some(page) = self.skins.page_mut(&uuid) else {
             return;
         };
+        if !page.save_answered(id, &outcome) {
+            return;
+        }
+        let worn = page.worn(recorded.as_ref(), default_slim);
+        page.settle(&worn);
+        if self.skins.uuid.as_deref() != Some(&uuid) {
+            // Shown again later, the page reads the profile and the saved skins anew.
+            return;
+        }
         let listed = skin_library::folder(&uuid).and_then(|dir| skin_library::list(&dir));
         self.skins.set_saved(listed);
-        self.skins.said = Some(match (said, problems.pop()) {
-            (Ok(_), Some(why)) => Err(why),
-            (said, _) => said,
-        });
-        if !matches!(self.skins.profile, Some(Ok(_))) {
+        if !matches!(self.skins.profile, Some(Ok(_))) || !self.skins.unconfirmed.is_empty() {
             if let Some(account) = self.look_account() {
                 self.profile_read(&account);
             }
@@ -1564,6 +1724,7 @@ mod tests {
     use sunrise_launcher::account::capes::Cape;
 
     const SKIN: &str = "http://textures.minecraft.net/texture/worn";
+    const ALEX: &str = "http://textures.minecraft.net/texture/alex";
 
     fn cape(id: &str, active: bool) -> Cape {
         Cape {
@@ -1576,6 +1737,7 @@ mod tests {
 
     fn profile(skin: &str, slim: bool, worn_cape: Option<&str>) -> Profile {
         Profile {
+            id: "069a79f444e94726a5befca90e38aaf5".into(),
             skin: Some((skin.into(), if slim { "slim" } else { "classic" }.into())),
             capes: ["c1", "c2"]
                 .into_iter()
@@ -1588,23 +1750,43 @@ mod tests {
         skins.worn(None, false)
     }
 
-    /// Picks `skin` on the page the way a tile does.
-    fn pick(skins: &mut Skins, skin: SkinPick) {
-        skins.edit.skin = Some(skin);
+    /// Chooses on the page the way a tile does: the edit, then forgetting what is worn already.
+    fn choose(skins: &mut Skins, change: impl FnOnce(&mut Edit)) {
+        change(&mut skins.edit);
         let worn = worn(skins);
         skins.settle(&worn);
     }
 
+    fn pick(skins: &mut Skins, skin: SkinPick) {
+        choose(skins, |edit| edit.skin = Some(skin));
+    }
+
+    /// A Save answered and settled, as `Launcher::look_saved` does it.
+    fn answer(skins: &mut Skins, id: u64, outcome: &look::Outcome) -> bool {
+        let answered = skins.save_answered(id, outcome);
+        let worn = worn(skins);
+        skins.settle(&worn);
+        answered
+    }
+
     fn outcome(
-        skin: Option<Result<Profile, String>>,
-        cape: Option<Result<Profile, String>>,
-    ) -> LookOutcome {
-        LookOutcome {
-            sent: None,
+        skin: Option<Change>,
+        cape: Option<Change>,
+        profile: Option<Profile>,
+    ) -> look::Outcome {
+        look::Outcome {
+            kept: Kept::Nothing,
             skin,
             cape,
-            kept: None,
+            profile,
+            arms: None,
+            recorded: None,
         }
+    }
+
+    fn read(skins: &mut Skins, profile: Profile) {
+        let id = skins.read_asked();
+        assert!(skins.read_answered("a", id, Ok(profile)));
     }
 
     #[test]
@@ -1613,7 +1795,6 @@ mod tests {
         let id = skins.read_asked();
         pick(&mut skins, SkinPick::Default("alex"));
         assert_eq!(worn(&skins).cape, None, "the worn cape isn't known yet");
-        // The profile arrives after the pick: the account wears c2.
         assert!(skins.read_answered("a", id, Ok(profile(SKIN, false, Some("c2")))));
         let submitted = skins.submit().unwrap();
         assert_eq!(submitted.skin, Some(SkinPick::Default("alex")));
@@ -1623,20 +1804,18 @@ mod tests {
     #[test]
     fn a_save_that_ends_before_the_reading_keeps_its_answer() {
         let mut skins = Skins::new_for("a");
-        let read = skins.read_asked();
+        let reading = skins.read_asked();
         pick(&mut skins, SkinPick::Default("alex"));
         let submitted = skins.submit().unwrap();
-        let after = profile(
-            "http://textures.minecraft.net/texture/alex",
-            false,
-            Some("c2"),
-        );
-        assert!(skins
-            .save_answered(submitted.id, &outcome(Some(Ok(after.clone())), None))
-            .unwrap()
-            .is_ok());
+        let after = profile(ALEX, false, Some("c2"));
+        assert!(answer(
+            &mut skins,
+            submitted.id,
+            &outcome(Some(Change::Done), None, Some(after.clone()))
+        ));
+        assert!(skins.said.as_ref().unwrap().is_ok());
         // The reading asked before the Save says what was worn before it: it changes nothing.
-        assert!(!skins.read_answered("a", read, Ok(profile(SKIN, false, None))));
+        assert!(!skins.read_answered("a", reading, Ok(profile(SKIN, false, None))));
         assert_eq!(skins.profile, Some(Ok(after)));
         assert!(skins.edit.is_empty());
     }
@@ -1644,25 +1823,24 @@ mod tests {
     #[test]
     fn a_reading_answered_during_a_save_leaves_it_alone() {
         let mut skins = Skins::new_for("a");
-        let read = skins.read_asked();
+        let reading = skins.read_asked();
         skins.edit.cape = Some(CapePick::Minecraft("c1".into()));
         let submitted = skins.submit().unwrap();
-        assert!(!skins.read_answered("a", read, Ok(profile(SKIN, false, Some("c2")))));
+        assert!(!skins.read_answered("a", reading, Ok(profile(SKIN, false, Some("c2")))));
         assert_eq!(skins.saving.as_ref().map(|s| s.id), Some(submitted.id));
         let after = profile(SKIN, false, Some("c1"));
-        assert!(skins
-            .save_answered(submitted.id, &outcome(None, Some(Ok(after.clone()))))
-            .unwrap()
-            .is_ok());
+        assert!(answer(
+            &mut skins,
+            submitted.id,
+            &outcome(None, Some(Change::Done), Some(after.clone()))
+        ));
         assert_eq!(skins.profile, Some(Ok(after)));
     }
 
     #[test]
     fn an_explicit_no_cape_is_sent_and_an_unknown_one_is_not_taken_for_it() {
         let mut skins = Skins::new_for("a");
-        skins.edit.cape = Some(CapePick::None);
-        let worn = worn(&skins);
-        skins.settle(&worn);
+        choose(&mut skins, |edit| edit.cape = Some(CapePick::None));
         assert_eq!(skins.edit.cape, Some(CapePick::None), "kept while unknown");
         assert_eq!(skins.submit().unwrap().cape, Some(CapePick::None));
     }
@@ -1670,26 +1848,24 @@ mod tests {
     #[test]
     fn a_partial_save_leaves_only_the_failed_change_to_do() {
         let mut skins = Skins::new_for("a");
-        let read = skins.read_asked();
-        assert!(skins.read_answered("a", read, Ok(profile(SKIN, false, Some("c2")))));
+        read(&mut skins, profile(SKIN, false, Some("c2")));
         pick(&mut skins, SkinPick::Default("alex"));
-        skins.edit.cape = Some(CapePick::Minecraft("c1".into()));
+        choose(&mut skins, |edit| {
+            edit.cape = Some(CapePick::Minecraft("c1".into()))
+        });
         let submitted = skins.submit().unwrap();
-        let after = profile(
-            "http://textures.minecraft.net/texture/alex",
-            false,
-            Some("c2"),
+        let after = profile(ALEX, false, Some("c2"));
+        answer(
+            &mut skins,
+            submitted.id,
+            &outcome(
+                Some(Change::Done),
+                Some(Change::Failed("Too many cape changes.".into())),
+                Some(after.clone()),
+            ),
         );
-        let said = skins
-            .save_answered(
-                submitted.id,
-                &outcome(
-                    Some(Ok(after.clone())),
-                    Some(Err("Too many cape changes.".into())),
-                ),
-            )
-            .unwrap();
-        assert!(said.unwrap_err().contains("Too many cape changes."));
+        let said = skins.said.clone().unwrap().unwrap_err();
+        assert!(said.contains("Too many cape changes."), "{said}");
         assert_eq!(
             skins.profile,
             Some(Ok(after)),
@@ -1697,7 +1873,6 @@ mod tests {
         );
         assert_eq!(skins.edit.skin, None, "the skin is done: no second upload");
         assert_eq!(skins.edit.cape, Some(CapePick::Minecraft("c1".into())));
-        // The next Save sends only the cape.
         let again = skins.submit().unwrap();
         assert_eq!((again.skin, again.slim), (None, None));
         assert_eq!(again.cape, Some(CapePick::Minecraft("c1".into())));
@@ -1708,15 +1883,39 @@ mod tests {
         let mut skins = Skins::new_for("a");
         pick(&mut skins, SkinPick::Default("alex"));
         let submitted = skins.submit().unwrap();
-        let said = skins
-            .save_answered(
-                submitted.id,
-                &outcome(Some(Err("Sign in again.".into())), None),
-            )
-            .unwrap();
-        assert_eq!(said, Err("Sign in again.".into()));
+        answer(
+            &mut skins,
+            submitted.id,
+            &outcome(Some(Change::Failed("Sign in again.".into())), None, None),
+        );
+        assert_eq!(skins.said, Some(Err("Sign in again.".into())));
         assert_eq!(skins.edit.skin, Some(SkinPick::Default("alex")));
         assert!(skins.saving.is_none(), "Save can be tried again");
+    }
+
+    #[test]
+    fn a_skin_not_replaced_because_its_predecessor_couldnt_be_kept_says_so() {
+        let mut skins = Skins::new_for("a");
+        read(&mut skins, profile(SKIN, false, None));
+        pick(&mut skins, SkinPick::Default("alex"));
+        let submitted = skins.submit().unwrap();
+        let mut failed = outcome(
+            Some(Change::Failed("no picture".into())),
+            None,
+            Some(profile(SKIN, false, None)),
+        );
+        failed.kept = Kept::Failed("no picture".into());
+        answer(&mut skins, submitted.id, &failed);
+        let said = skins.said.clone().unwrap().unwrap_err();
+        assert!(
+            said.contains("couldn't be kept") && said.contains("no picture"),
+            "{said}"
+        );
+        assert_eq!(
+            skins.edit.skin,
+            Some(SkinPick::Default("alex")),
+            "still to do"
+        );
     }
 
     #[test]
@@ -1725,36 +1924,230 @@ mod tests {
         pick(&mut skins, SkinPick::Default("alex"));
         let submitted = skins.submit().unwrap();
         pick(&mut skins, SkinPick::Default("steve"));
-        let after = profile("http://textures.minecraft.net/texture/alex", false, None);
-        skins.save_answered(submitted.id, &outcome(Some(Ok(after)), None));
+        answer(
+            &mut skins,
+            submitted.id,
+            &outcome(Some(Change::Done), None, Some(profile(ALEX, false, None))),
+        );
         assert_eq!(skins.edit.skin, Some(SkinPick::Default("steve")));
     }
 
     #[test]
-    fn answers_from_before_an_account_switch_change_nothing() {
-        // A → B → A: each visit asks anew, under numbers never given before.
-        let mut first = Skins::new_for("a");
-        let old_read = first.read_asked();
-        pick(&mut first, SkinPick::Default("alex"));
-        let old_save = first.submit().unwrap();
-        let mut back = Skins::new_for("a");
-        let read = back.read_asked();
+    fn the_worn_cape_clicked_while_another_saves_is_kept() {
+        // c1 is worn; c2 is being saved; the player clicks c1 again.
+        let mut skins = Skins::new_for("a");
+        read(&mut skins, profile(SKIN, false, Some("c1")));
+        choose(&mut skins, |edit| {
+            edit.cape = Some(CapePick::Minecraft("c2".into()))
+        });
+        let submitted = skins.submit().unwrap();
+        choose(&mut skins, |edit| {
+            edit.cape = Some(CapePick::Minecraft("c1".into()))
+        });
+        assert_eq!(
+            skins.edit.cape,
+            Some(CapePick::Minecraft("c1".into())),
+            "not dropped as a no-op against the profile from before the Save"
+        );
+        let (_, _, shown) = skins.chosen(&worn(&skins));
+        assert_eq!(
+            shown,
+            Some(CapePick::Minecraft("c1".into())),
+            "the preview shows it"
+        );
+        // c2 went on: c1 is still to do, and the next Save sends it.
+        answer(
+            &mut skins,
+            submitted.id,
+            &outcome(
+                None,
+                Some(Change::Done),
+                Some(profile(SKIN, false, Some("c2"))),
+            ),
+        );
+        assert_eq!(skins.edit.cape, Some(CapePick::Minecraft("c1".into())));
+        assert_eq!(
+            skins.submit().unwrap().cape,
+            Some(CapePick::Minecraft("c1".into()))
+        );
+
+        // The same click when c2 was refused: c1 is what is worn, so nothing is left to do.
+        let mut skins = Skins::new_for("a");
+        read(&mut skins, profile(SKIN, false, Some("c1")));
+        choose(&mut skins, |edit| {
+            edit.cape = Some(CapePick::Minecraft("c2".into()))
+        });
+        let submitted = skins.submit().unwrap();
+        choose(&mut skins, |edit| {
+            edit.cape = Some(CapePick::Minecraft("c1".into()))
+        });
+        answer(
+            &mut skins,
+            submitted.id,
+            &outcome(
+                None,
+                Some(Change::Failed("busy".into())),
+                Some(profile(SKIN, false, Some("c1"))),
+            ),
+        );
+        assert!(skins.edit.is_empty());
+    }
+
+    #[test]
+    fn the_worn_skin_chosen_during_a_save_is_the_one_it_replaced() {
+        let mut skins = Skins::new_for("a");
+        read(&mut skins, profile(SKIN, false, None));
+        pick(&mut skins, SkinPick::Default("alex"));
+        let submitted = skins.submit().unwrap();
+        pick(&mut skins, SkinPick::Worn);
+        let mut done = outcome(Some(Change::Done), None, Some(profile(ALEX, false, None)));
+        let kept = Saved {
+            id: "0123456789abcdef".into(),
+            name: String::new(),
+            slim: false,
+        };
+        done.kept = Kept::Kept(kept.clone());
+        answer(&mut skins, submitted.id, &done);
+        assert_eq!(
+            skins.edit.skin,
+            Some(SkinPick::Saved(kept.id)),
+            "not \"the skin worn\", which is now the new one"
+        );
+    }
+
+    #[test]
+    fn a_save_during_a_switch_away_and_back_stays_with_its_account() {
+        let mut pages = SkinsPages::default();
+        let signed_in = |_: &str| true;
+        pages.show("a", signed_in);
+        let old_read = pages.read_asked();
+        pick(&mut pages, SkinPick::Default("alex"));
+        let save = pages.submit().unwrap();
+        // A → B → A while the Save runs.
+        pages.show("b", signed_in);
+        assert_eq!(pages.uuid.as_deref(), Some("b"));
+        assert!(pages.saving.is_none(), "B has a page of its own");
+        pages.show("a", signed_in);
+        assert_eq!(
+            pages.saving.as_ref().map(|s| s.id),
+            Some(save.id),
+            "A's Save is still under way"
+        );
+        assert_eq!(pages.edit.skin, Some(SkinPick::Default("alex")));
+        assert!(
+            pages.submit().is_none(),
+            "no second write while the first runs"
+        );
+        // A reading from before the switch is still no answer to a newer one.
+        let read = pages.read_asked();
         assert_ne!(read, old_read);
-        assert!(!back.read_answered("a", old_read, Ok(profile(SKIN, false, None))));
-        assert!(!back.read_answered("b", read, Ok(profile(SKIN, false, None))));
-        assert!(back
-            .save_answered(
-                old_save.id,
-                &outcome(Some(Ok(profile(SKIN, true, None))), None)
-            )
-            .is_none());
-        assert!(back.read_answered("a", read, Ok(profile(SKIN, false, Some("c1")))));
+        assert!(!pages.read_answered("a", old_read, Ok(profile(SKIN, false, None))));
+        assert!(!pages.read_answered("b", read, Ok(profile(SKIN, false, None))));
+        // The Save ends while B is shown: A's page is reconciled, B's left alone.
+        pages.show("b", signed_in);
+        let after = profile(ALEX, false, Some("c1"));
+        let done = outcome(Some(Change::Done), None, Some(after.clone()));
+        assert!(!pages.save_answered(save.id, &done), "not B's Save");
+        assert!(answer(pages.page_mut("a").unwrap(), save.id, &done));
+        assert!(
+            pages.profile.is_none(),
+            "B's page knows nothing of A's profile"
+        );
+        pages.show("a", signed_in);
+        assert_eq!(pages.profile, Some(Ok(after)));
+        assert!(pages.saving.is_none());
+        assert!(pages.edit.is_empty(), "done, not sent again");
+        assert!(pages.said.as_ref().unwrap().is_ok());
+    }
+
+    #[test]
+    fn a_page_is_forgotten_with_its_account_but_not_during_a_save() {
+        let mut pages = SkinsPages::default();
+        pages.show("a", |_| true);
+        pick(&mut pages, SkinPick::Default("alex"));
+        pages.submit().unwrap();
+        pages.show("b", |_| true);
+        pages.show("c", |uuid| uuid != "a");
+        assert!(
+            pages.page_mut("a").is_some(),
+            "its Save still to be answered"
+        );
+        pages.page_mut("a").unwrap().saving = None;
+        pages.show("b", |uuid| uuid != "a");
+        assert!(pages.page_mut("a").is_none());
+        assert!(pages.page_mut("c").is_some());
+    }
+
+    #[test]
+    fn a_picture_reaches_the_page_that_asked_for_it_while_another_is_shown() {
+        let mut pages = SkinsPages::default();
+        pages.show("a", |_| true);
+        assert!(pages.ask_picture(SKIN));
+        pages.show("b", |_| true);
+        pages.picture(SKIN, Some(vec![1, 2, 3]));
+        assert!(!pages.pictures.contains_key(SKIN), "B didn't ask for it");
+        pages.show("a", |_| true);
+        assert_eq!(
+            pages.pictures.get(SKIN),
+            Some(&Picture::Ready(vec![1, 2, 3]))
+        );
+    }
+
+    #[test]
+    fn an_accepted_but_unconfirmed_save_is_not_sent_again() {
+        // The upload got a 204 and the reading after it failed.
+        let mut skins = Skins::new_for("a");
+        read(&mut skins, profile(SKIN, false, Some("c1")));
+        pick(&mut skins, SkinPick::Default("alex"));
+        choose(&mut skins, |edit| edit.cape = Some(CapePick::None));
+        let submitted = skins.submit().unwrap();
+        answer(
+            &mut skins,
+            submitted.id,
+            &outcome(
+                Some(Change::Unconfirmed("busy".into())),
+                Some(Change::Unconfirmed("busy".into())),
+                Some(profile(SKIN, false, Some("c1"))),
+            ),
+        );
+        assert!(skins.said.as_ref().unwrap().is_ok(), "not a failure");
+        assert!(skins.edit.is_empty(), "out of the resend path");
+        assert!(skins.submit().is_none(), "Save has nothing to send");
+        // Until a reading says otherwise, the account is taken to wear what was accepted.
+        let shown = worn(&skins);
+        assert_eq!(shown.skin, SkinPick::Default("alex"));
+        assert_eq!(shown.cape, Some(CapePick::None));
+        // Clicking what was worn before is a change again, and is sent.
+        choose(&mut skins, |edit| {
+            edit.cape = Some(CapePick::Minecraft("c1".into()))
+        });
+        assert_eq!(skins.edit.cape, Some(CapePick::Minecraft("c1".into())));
+        skins.edit = Edit::default();
+        // The next reading is the truth.
+        read(&mut skins, profile(ALEX, false, None));
+        assert!(skins.unconfirmed.is_empty());
+        assert_eq!(worn(&skins).skin, SkinPick::Worn);
+    }
+
+    #[test]
+    fn offline_mode_ignores_a_reading_asked_online() {
+        // Same account: the page was opened online, then again in an offline developer session.
+        let mut skins = Skins::new_for("a");
+        let reading = skins.read_asked();
+        skins.set_read_only(true);
+        assert_eq!(skins.reading, None, "the reading under way is dropped");
+        assert!(!skins.read_answered("a", reading, Ok(profile(SKIN, false, Some("c1")))));
+        assert_eq!(skins.profile, None);
+        assert!(!skins.ask_picture(SKIN), "no texture requests offline");
+        pick(&mut skins, SkinPick::Default("alex"));
+        assert!(skins.submit().is_none(), "no edits are sent");
+        skins.set_read_only(false);
+        assert!(skins.ask_picture(SKIN));
     }
 
     #[test]
     fn the_worn_look_comes_from_one_reading_of_the_profile() {
         let mut skins = Skins::new_for("a");
-        // Before the reading: what accounts.json recorded, the cape unknown.
         let recorded = (SKIN.to_owned(), "slim".to_owned());
         assert_eq!(
             skins.worn(Some(&recorded), false),
@@ -1764,21 +2157,17 @@ mod tests {
                 cape: None
             }
         );
-        // Changed in another launcher: the reading wins, skin and cape alike.
-        let read = skins.read_asked();
-        skins.read_answered(
-            "a",
-            read,
-            Ok(profile(
+        read(
+            &mut skins,
+            profile(
                 "http://textures.minecraft.net/texture/new",
                 false,
                 Some("c1"),
-            )),
+            ),
         );
         let worn = skins.worn(Some(&recorded), false);
         assert!(!worn.slim);
         assert_eq!(worn.cape, Some(CapePick::Minecraft("c1".into())));
-        // A reading that fails later keeps what the last one said.
         let again = skins.read_asked();
         skins.read_answered("a", again, Err("offline".into()));
         assert!(matches!(skins.profile, Some(Ok(_))));
@@ -1787,12 +2176,10 @@ mod tests {
     #[test]
     fn the_worn_skins_tile_uses_the_profiles_arms() {
         let mut skins = Skins::new_for("a");
-        let read = skins.read_asked();
-        skins.read_answered("a", read, Ok(profile(SKIN, true, None)));
+        read(&mut skins, profile(SKIN, true, None));
         skins.worn_saved = Some((SKIN.into(), "0123456789abcdef".into()));
         let worn = worn(&skins);
         assert_eq!(worn.skin, SkinPick::Saved("0123456789abcdef".into()));
-        // Clicking it with the profile's arms is no edit at all.
         skins.edit.skin = Some(worn.skin.clone());
         skins.edit.slim = Some(worn.slim);
         skins.settle(&worn);

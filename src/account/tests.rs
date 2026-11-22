@@ -25,6 +25,15 @@ struct Mock {
     /// What a skin upload is answered with instead of the profile: a status and an empty body
     /// (an acknowledgement with nothing usable in it).
     skin_answer_empty: Option<u16>,
+    /// The same for a cape change.
+    cape_answer_empty: Option<u16>,
+    /// A skin upload is acknowledged but changes nothing (the profile keeps the skin before).
+    upload_ignored: bool,
+    /// What the next profile readings answer, in turn, before they answer with the profile: 0
+    /// the profile, 200 a body with a malformed `capes` field, any other status an error page.
+    profile_answers: std::collections::VecDeque<u16>,
+    /// The worn skin's picture; unset: `texture/abc`. Each upload gets a new one.
+    skin_url: Option<String>,
     /// Every skin upload, as the services would parse it: its content type's boundary and its
     /// form parts, by name.
     uploads: Vec<Upload>,
@@ -111,7 +120,8 @@ fn mock_profile(mock: &Mock) -> Value {
     };
     json!({
         "id": UUID, "name": "Notch",
-        "skins": [{"id": "s1", "state": "ACTIVE", "url": "http://textures.minecraft.net/texture/abc",
+        "skins": [{"id": "s1", "state": "ACTIVE",
+                   "url": mock.skin_url.as_deref().unwrap_or("http://textures.minecraft.net/texture/abc"),
                    "variant": if mock.slim || mock.worn.is_none() { "SLIM" } else { "CLASSIC" }}],
         "capes": [cape("c1", "Migrator"), cape("c2", "Vanilla")],
     })
@@ -220,14 +230,21 @@ fn route(mock: &mut Mock, method: &str, path: &str, auth: &str, body: &str) -> (
             404,
             json!({"path": "/minecraft/profile", "errorType": "NOT_FOUND", "error": "NOT_FOUND"}),
         ),
-        ("GET", "/mc/minecraft/profile") => reply(200, mock_profile(mock)),
+        ("GET", "/mc/minecraft/profile") => match mock.profile_answers.pop_front() {
+            Some(200) => reply(200, json!({"id": UUID, "skins": [], "capes": "none"})),
+            Some(0) | None => reply(200, mock_profile(mock)),
+            Some(status) => reply(status, json!({"error": "TEMPORARILY_UNAVAILABLE"})),
+        },
         ("PUT", "/mc/minecraft/profile/capes/active") => {
             assert_eq!(auth, "Bearer mc-token");
             let v: Value = serde_json::from_str(body).unwrap();
             match v["capeId"].as_str() {
                 Some(id @ ("c1" | "c2")) => {
                     mock.worn = Some(Some(id.into()));
-                    reply(200, mock_profile(mock))
+                    match mock.cape_answer_empty {
+                        Some(status) => (status, String::new()),
+                        None => reply(200, mock_profile(mock)),
+                    }
                 }
                 _ => reply(400, json!({"errorType": "BAD_REQUEST"})),
             }
@@ -235,15 +252,25 @@ fn route(mock: &mut Mock, method: &str, path: &str, auth: &str, body: &str) -> (
         ("DELETE", "/mc/minecraft/profile/capes/active") => {
             assert_eq!(auth, "Bearer mc-token");
             mock.worn = Some(None);
-            reply(200, mock_profile(mock))
+            match mock.cape_answer_empty {
+                Some(status) => (status, String::new()),
+                None => reply(200, mock_profile(mock)),
+            }
         }
         ("POST", "/mc/minecraft/profile/skins") => {
             assert_eq!(auth, "Bearer mc-token");
             let upload = mock.uploads.last().expect("the upload's form");
-            mock.slim = upload.variant == "slim";
+            let slim = upload.variant == "slim";
             let skin = image::load_from_memory_with_format(&upload.file, image::ImageFormat::Png);
             if !upload.closed || !matches!(skin, Ok(ref s) if s.width() == 64) {
                 return reply(400, json!({"errorType": "BAD_REQUEST"}));
+            }
+            if !mock.upload_ignored {
+                mock.slim = slim;
+                mock.skin_url = Some(format!(
+                    "http://textures.minecraft.net/texture/up{}",
+                    mock.uploads.len()
+                ));
             }
             match mock.skin_answer_empty {
                 Some(status) => (status, String::new()),
@@ -2654,12 +2681,16 @@ fn the_owned_capes_are_listed_and_one_or_none_is_worn() {
         )),
         "the skin from the same reading"
     );
-    let worn = capes::wear(&ep, "mc-token", Some("c1")).unwrap();
+    let profile = |w: Result<capes::Written, String>| match w.unwrap() {
+        capes::Written::Profile(p) => p,
+        other => panic!("not confirmed: {other:?}"),
+    };
+    let worn = profile(capes::wear(&ep, "mc-token", Some("c1")));
     assert_eq!(
         names(&worn.capes),
         [("Migrator".into(), true), ("Vanilla".into(), false)]
     );
-    let none = capes::wear(&ep, "mc-token", None).unwrap();
+    let none = profile(capes::wear(&ep, "mc-token", None));
     assert!(none.capes.iter().all(|c| !c.active));
     assert_eq!(
         capes::wear(&ep, "mc-token", Some("not-owned")),
@@ -2681,17 +2712,30 @@ fn a_cape_change_with_no_network_says_so() {
 }
 
 #[test]
-fn only_textures_minecraft_net_capes_are_kept() {
-    let profile = json!({"capes": [
-        {"id": "a", "state": "ACTIVE", "url": "http://textures.minecraft.net/texture/abc123", "alias": "A"},
-        {"id": "b", "state": "INACTIVE", "url": "http://example.com/texture/abc123", "alias": "B"},
-        {"id": "c", "state": "INACTIVE", "url": "http://textures.minecraft.net/texture/../x", "alias": "C"},
-        {"state": "INACTIVE", "url": "http://textures.minecraft.net/texture/def", "alias": "No id"},
-    ]});
-    let kept = capes::owned(&profile);
-    assert_eq!(kept.len(), 1);
-    assert_eq!(kept[0].id, "a");
-    assert!(capes::owned(&json!({})).is_empty());
+fn a_profile_with_a_cape_pictured_elsewhere_is_unreadable() {
+    let cape =
+        |id: &str, url: &str| json!({"id": id, "state": "INACTIVE", "url": url, "alias": id});
+    let profile = |capes: Value| json!({"id": UUID, "skins": [], "capes": capes});
+    let kept = capes::Profile::of(&profile(json!([cape(
+        "a",
+        "http://textures.minecraft.net/texture/abc123"
+    )])))
+    .unwrap();
+    assert_eq!(kept.capes[0].id, "a");
+    // Not a shorter list of capes: a profile the launcher can't take as what the account owns.
+    for elsewhere in [
+        "http://example.com/texture/abc123",
+        "http://textures.minecraft.net/texture/../x",
+    ] {
+        assert_eq!(
+            capes::Profile::of(&profile(json!([
+                cape("a", "http://textures.minecraft.net/texture/abc123"),
+                cape("b", elsewhere)
+            ]))),
+            None,
+            "{elsewhere}"
+        );
+    }
 }
 
 #[test]
@@ -2736,11 +2780,15 @@ fn a_skin_is_sent_as_a_well_formed_form_with_its_arm_model() {
     let (m, ep) = mock(|m| m.worn = Some(Some("c2".into())));
     for slim in [true, false] {
         let skin = png(64, 64);
-        let worn = skins::upload(&ep, "mc-token", &skin, slim).unwrap();
+        let capes::Written::Profile(worn) = skins::upload(&ep, "mc-token", &skin, slim).unwrap()
+        else {
+            panic!("the services sent the profile back");
+        };
+        let n = m.lock().unwrap().uploads.len();
         assert_eq!(
             worn.skin,
             Some((
-                "http://textures.minecraft.net/texture/abc".into(),
+                format!("http://textures.minecraft.net/texture/up{n}"),
                 if slim { "slim" } else { "classic" }.into()
             ))
         );
@@ -2778,6 +2826,9 @@ fn an_acknowledgement_without_a_profile_is_read_back() {
     for status in [200, 204] {
         let (m, ep) = mock(|m| m.skin_answer_empty = Some(status));
         let worn = skins::upload(&ep, "mc-token", &png(64, 64), true).unwrap();
+        let capes::Written::Profile(worn) = worn else {
+            panic!("read back: {worn:?}");
+        };
         assert_eq!(
             worn.skin.map(|(_, model)| model).as_deref(),
             Some("slim"),
@@ -2789,6 +2840,26 @@ fn an_acknowledgement_without_a_profile_is_read_back() {
             (method.as_str(), path.as_str()),
             ("GET", "/mc/minecraft/profile")
         );
+    }
+}
+
+#[test]
+fn an_accepted_change_whose_read_back_fails_is_unconfirmed_not_refused() {
+    // 204, then the reading fails: an error page, or a body whose `capes` field is malformed.
+    for reading in [503, 200] {
+        let (_m, ep) = mock(|m| {
+            m.skin_answer_empty = Some(204);
+            m.cape_answer_empty = Some(204);
+            m.profile_answers = [reading, reading].into();
+        });
+        assert!(matches!(
+            skins::upload(&ep, "mc-token", &png(64, 64), false),
+            Ok(capes::Written::Unconfirmed(_))
+        ));
+        assert!(matches!(
+            capes::wear(&ep, "mc-token", Some("c1")),
+            Ok(capes::Written::Unconfirmed(_))
+        ));
     }
 }
 
@@ -2832,4 +2903,263 @@ fn a_look_is_recorded_on_its_own_account_and_nothing_else() {
         after.accounts[1].name, "jeb",
         "the other account as it is now"
     );
+}
+
+/// A Save's tools against the mock: `pictures` are what Mojang's texture server has.
+#[derive(Default)]
+#[allow(clippy::type_complexity)]
+struct LookBench {
+    library: Option<tempfile::TempDir>,
+    pictures: HashMap<String, Vec<u8>>,
+    fetched: std::cell::RefCell<Vec<String>>,
+    records: std::cell::RefCell<Vec<(Option<Option<(String, String)>>, Option<Option<String>>)>>,
+}
+
+impl LookBench {
+    fn new() -> LookBench {
+        LookBench {
+            library: Some(tempfile::tempdir().unwrap()),
+            ..Default::default()
+        }
+    }
+
+    fn dir(&self) -> &Path {
+        self.library.as_ref().unwrap().path()
+    }
+
+    fn save(&self, ep: &Endpoints, request: &look::Request) -> look::Outcome {
+        let fetch = |url: &str| {
+            self.fetched.borrow_mut().push(url.to_owned());
+            self.pictures.get(url).cloned()
+        };
+        let record = |skin, cape| {
+            self.records.borrow_mut().push((skin, cape));
+            Ok(())
+        };
+        look::save(
+            request,
+            &look::Tools {
+                ep,
+                token: Ok("mc-token".into()),
+                library: Ok(self.dir().to_owned()),
+                fetch: &fetch,
+                record: &record,
+            },
+        )
+    }
+}
+
+/// A 64 by 64 skin, one texel of it `n`.
+fn skin_png(n: u8) -> Vec<u8> {
+    let image = image::RgbaImage::from_fn(64, 64, |x, y| {
+        image::Rgba(if (x, y) == (0, 0) {
+            [n, 1, 1, 255]
+        } else {
+            [x as u8, y as u8, 7, 255]
+        })
+    });
+    let mut out = std::io::Cursor::new(Vec::new());
+    image.write_to(&mut out, image::ImageFormat::Png).unwrap();
+    out.into_inner()
+}
+
+fn skin_request(png: Vec<u8>, slim: bool, cape: Option<Option<&str>>) -> look::Request {
+    look::Request {
+        uuid: UUID.into(),
+        skin: Some(look::SkinSent {
+            png,
+            slim,
+            saved: None,
+        }),
+        cape: cape.map(|c| c.map(str::to_owned)),
+    }
+}
+
+const ABC: &str = "http://textures.minecraft.net/texture/abc";
+
+fn methods(m: &Arc<Mutex<Mock>>) -> Vec<String> {
+    m.lock()
+        .unwrap()
+        .log
+        .iter()
+        .map(|(method, _, _)| method.clone())
+        .collect()
+}
+
+#[test]
+fn a_save_keeps_the_skin_the_profile_wears_now_not_an_older_one() {
+    // accounts.json (and the page, its reading not back yet) still say `abc`; the account
+    // wears `now`, changed in another launcher.
+    let now = "http://textures.minecraft.net/texture/now";
+    let (m, ep) = mock(|m| {
+        m.worn = Some(Some("c2".into()));
+        m.skin_url = Some(now.into());
+    });
+    let mut bench = LookBench::new();
+    bench.pictures.insert(ABC.into(), skin_png(9));
+    bench.pictures.insert(now.into(), skin_png(1));
+    let out = bench.save(&ep, &skin_request(skin_png(2), true, None));
+    assert_eq!(
+        *bench.fetched.borrow(),
+        [now],
+        "the picture of the skin worn now"
+    );
+    let look::Kept::Kept(kept) = &out.kept else {
+        panic!("kept: {:?}", out.kept);
+    };
+    assert!(!kept.slim, "with the arms it was worn with");
+    assert_eq!(
+        crate::skin_library::png(bench.dir(), &kept.id),
+        Some(skin_png(1))
+    );
+    assert_eq!(out.skin, Some(look::Change::Done));
+    assert_eq!(out.cape, None);
+    let up = "http://textures.minecraft.net/texture/up1".to_owned();
+    assert_eq!(
+        out.profile.as_ref().and_then(|p| p.skin.clone()),
+        Some((up.clone(), "slim".into()))
+    );
+    assert_eq!(
+        *bench.records.borrow(),
+        [(Some(Some((up, "slim".into()))), None)],
+        "only the skin recorded: the cape wasn't changed"
+    );
+    assert_eq!(methods(&m), ["GET", "POST"], "read, then replaced");
+}
+
+#[test]
+fn a_skin_whose_predecessor_cant_be_kept_is_not_sent() {
+    let (m, ep) = mock(|m| m.worn = Some(Some("c2".into())));
+    // The texture server has no picture for `abc`: a failed download, not "nothing to keep".
+    let bench = LookBench::new();
+    let out = bench.save(&ep, &skin_request(skin_png(2), false, Some(Some("c1"))));
+    assert!(matches!(out.kept, look::Kept::Failed(_)), "{:?}", out.kept);
+    assert!(matches!(out.skin, Some(look::Change::Failed(_))));
+    assert!(!methods(&m).contains(&"POST".to_owned()));
+    // The cape is its own change: it still goes through, and only it is recorded.
+    assert_eq!(out.cape, Some(look::Change::Done));
+    assert_eq!(
+        *bench.records.borrow(),
+        [(
+            None,
+            Some(Some("http://textures.minecraft.net/texture/c1".into()))
+        )]
+    );
+    // A profile that can't be read before the upload stops it the same way.
+    let (m, ep) = mock(|m| m.profile_answers = [503].into());
+    let out = LookBench::new().save(&ep, &skin_request(skin_png(2), false, None));
+    assert!(matches!(out.kept, look::Kept::Failed(_)));
+    assert!(matches!(out.skin, Some(look::Change::Failed(_))));
+    assert_eq!(methods(&m), ["GET"]);
+}
+
+#[test]
+fn an_upload_accepted_but_not_read_back_is_unconfirmed_and_not_recorded() {
+    // 204 to the upload, then the reading after it fails: an error page, or malformed capes.
+    for reading in [503, 200] {
+        let (m, ep) = mock(|m| {
+            m.worn = Some(Some("c2".into()));
+            m.skin_answer_empty = Some(204);
+            m.profile_answers = [0, reading].into();
+        });
+        let mut bench = LookBench::new();
+        bench.pictures.insert(ABC.into(), skin_png(1));
+        let out = bench.save(&ep, &skin_request(skin_png(2), false, None));
+        assert!(
+            matches!(out.skin, Some(look::Change::Unconfirmed(_))),
+            "accepted, not refused: {:?}",
+            out.skin
+        );
+        assert!(out.skin.as_ref().unwrap().accepted());
+        assert_eq!(
+            out.profile.as_ref().and_then(|p| p.skin.clone()),
+            Some((ABC.into(), "classic".into())),
+            "the latest profile known is the one before, not one claiming the upload"
+        );
+        assert!(bench.records.borrow().is_empty(), "no URL to record");
+        assert_eq!(methods(&m), ["GET", "POST", "GET"]);
+    }
+}
+
+#[test]
+fn a_cape_profile_after_an_unconfirmed_skin_settles_it() {
+    let (_m, ep) = mock(|m| {
+        m.worn = Some(Some("c2".into()));
+        m.skin_answer_empty = Some(204);
+        m.profile_answers = [0, 503].into();
+    });
+    let mut bench = LookBench::new();
+    bench.pictures.insert(ABC.into(), skin_png(1));
+    let out = bench.save(&ep, &skin_request(skin_png(2), true, Some(None)));
+    assert_eq!(
+        out.skin,
+        Some(look::Change::Done),
+        "the cape's profile shows it"
+    );
+    assert_eq!(out.cape, Some(look::Change::Done));
+    assert_eq!(
+        *bench.records.borrow(),
+        [(
+            Some(Some((
+                "http://textures.minecraft.net/texture/up1".into(),
+                "slim".into()
+            ))),
+            Some(None)
+        )]
+    );
+}
+
+#[test]
+fn an_upload_the_profile_doesnt_show_is_a_failure_to_try_again() {
+    let (_m, ep) = mock(|m| {
+        m.worn = Some(Some("c2".into()));
+        m.upload_ignored = true;
+    });
+    let mut bench = LookBench::new();
+    bench.pictures.insert(ABC.into(), skin_png(1));
+    let out = bench.save(&ep, &skin_request(skin_png(2), false, None));
+    assert!(matches!(out.skin, Some(look::Change::Failed(_))));
+    assert!(bench.records.borrow().is_empty());
+    // The same skin again with other arms keeps its URL: shown, not a failure.
+    let (_m, ep) = mock(|m| m.worn = Some(Some("c2".into())));
+    let mut bench = LookBench::new();
+    bench.pictures.insert(ABC.into(), skin_png(1));
+    _m.lock().unwrap().upload_ignored = false;
+    let out = bench.save(&ep, &skin_request(skin_png(1), true, None));
+    assert_eq!(out.skin, Some(look::Change::Done));
+}
+
+#[test]
+fn a_saved_skin_takes_the_arms_it_was_worn_with() {
+    let (_m, ep) = mock(|m| m.worn = Some(Some("c2".into())));
+    let mut bench = LookBench::new();
+    bench.pictures.insert(ABC.into(), skin_png(1));
+    let saved = crate::skin_library::add(bench.dir(), &skin_png(3), "Knight", Some(false)).unwrap();
+    let mut request = skin_request(skin_png(3), true, None);
+    request.skin.as_mut().unwrap().saved = Some(saved.id.clone());
+    let out = bench.save(&ep, &request);
+    assert_eq!((out.skin, out.arms), (Some(look::Change::Done), None));
+    let listed = crate::skin_library::list(bench.dir()).unwrap();
+    assert!(listed.iter().find(|s| s.id == saved.id).unwrap().slim);
+}
+
+#[test]
+fn a_profile_for_another_account_is_not_taken_for_this_ones() {
+    let (m, ep) = mock(|m| m.worn = Some(Some("c2".into())));
+    let bench = LookBench::new();
+    let mut request = skin_request(skin_png(2), false, Some(Some("c1")));
+    request.uuid = "b09600dff4354d4fb56776eec1e55083".into();
+    let out = bench.save(&ep, &request);
+    assert!(
+        matches!(out.skin, Some(look::Change::Failed(_))),
+        "not sent blind"
+    );
+    assert!(
+        matches!(out.cape, Some(look::Change::Unconfirmed(_))),
+        "accepted, but its profile is another account's: {:?}",
+        out.cape
+    );
+    assert_eq!(out.profile, None);
+    assert!(bench.records.borrow().is_empty());
+    assert_eq!(methods(&m), ["GET", "PUT"]);
 }

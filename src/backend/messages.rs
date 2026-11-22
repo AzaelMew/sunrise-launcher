@@ -1,18 +1,5 @@
 use super::*;
 
-/// How a Save on the Skins tab went, each change on its own: a skin can be worn while the cape
-/// change after it is refused, and the page then knows which one is still to do.
-pub struct LookOutcome {
-    /// The skin sent: its picture, its arms, and the saved skin it was, if it was one.
-    pub sent: Option<(Vec<u8>, bool, Option<String>)>,
-    /// The skin change: the profile after it, or why not. None when the skin wasn't changed.
-    pub skin: Option<Result<crate::account::capes::Profile, String>>,
-    /// The cape change after it, the same way.
-    pub cape: Option<Result<crate::account::capes::Profile, String>>,
-    /// Keeping the skin worn before among the saved skins failed: why.
-    pub kept: Option<String>,
-}
-
 pub enum Msg {
     Playing(Option<u64>),
     Storage(Result<Box<crate::storage::Report>, String>),
@@ -53,7 +40,7 @@ pub enum Msg {
     /// had).
     Picture(String, Option<Vec<u8>>),
     /// A Save on the Skins tab for account `.0`, numbered `.1`, ended.
-    LookSaved(String, u64, Box<LookOutcome>),
+    LookSaved(String, u64, Box<crate::account::look::Outcome>),
     /// Skin files added to account `.0`'s saved skins: each one, or why not.
     SkinsAdded(String, Vec<Result<crate::skin_library::Saved, String>>),
     /// The owner gate's answer for the game about to start: the selected account's session

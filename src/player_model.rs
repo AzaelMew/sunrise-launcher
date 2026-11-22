@@ -292,6 +292,38 @@ mod tests {
     }
 
     #[test]
+    fn a_real_picture_one_texel_over_a_limit_is_refused_by_it() {
+        let clear = |_, _| [0; 4];
+        // Whole, decodable PNGs a few kilobytes big once decoded, far below the allocation
+        // limit: only the width and height check can turn them down.
+        for (w, h, max_w, max_h) in [
+            (65, 64, 64, 64),
+            (64, 65, 64, 64),
+            (2049, 1, 2048, 1024),
+            (1, 1025, 2048, 1024),
+        ] {
+            let over = png(w, h, clear);
+            assert!(
+                decode(&over, w, h).is_some(),
+                "{w}x{h} decodes within its own size"
+            );
+            assert!(
+                decode(&over, max_w, max_h).is_none(),
+                "{w}x{h} over the limit"
+            );
+        }
+        // At the limits, they pass.
+        assert!(decode(&png(64, 64, clear), 64, 64).is_some());
+        assert!(decode(&png(2048, 1, clear), 2048, 1024).is_some());
+        assert!(decode(&png(1, 1024, clear), 2048, 1024).is_some());
+        // The skin and cape readers use those limits.
+        assert!(skin(&png(65, 64, clear)).is_none());
+        assert!(skin(&png(64, 65, clear)).is_none());
+        assert!(cape(&png(2049, 32, clear)).is_none());
+        assert!(cape(&png(64, 1025, clear)).is_none());
+    }
+
+    #[test]
     fn a_modern_skins_base_is_opaque_and_its_overlay_kept() {
         // Clear everywhere: the base layer comes out opaque, the outer layer stays clear.
         let clear = skin(&png(64, 64, |_, _| [5, 6, 7, 0])).unwrap();

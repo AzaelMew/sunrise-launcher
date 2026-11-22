@@ -14,6 +14,7 @@
 //! (release builds take it from the repository variable), which the same variable at run time
 //! overrides. Without one, sign-in says it is not configured.
 pub mod capes;
+pub mod look;
 pub mod session;
 pub mod skins;
 

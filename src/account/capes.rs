@@ -29,60 +29,89 @@ pub struct Cape {
 /// the capes always agree.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Profile {
+    /// The profile's id (32 hex digits): the account it describes.
+    pub id: String,
     /// The skin worn: its URL and model ("classic" or "slim"); none for a default skin.
     pub skin: Option<(String, String)>,
     pub capes: Vec<Cape>,
 }
 
 impl Profile {
-    /// A profile from the services' answer. None for anything that isn't one (an empty body,
-    /// an error page): that says nothing about what the account wears, not "no skin, no capes".
+    /// A profile from the services' answer, every field it is used for checked. None for
+    /// anything that isn't wholly one: an empty body, an error page, a `skins` or `capes` field
+    /// that isn't a list, an entry without an id or a known state, a picture elsewhere than
+    /// Mojang's texture server, an unknown arm model, or more than one skin or cape worn. Such
+    /// an answer says nothing about what the account wears (not "no skin, no capes"), so it
+    /// never becomes what the page compares edits with.
     pub fn of(v: &Value) -> Option<Profile> {
-        str_field(v, "id")?;
-        v.get("skins")?.as_array()?;
-        Some(Profile {
-            skin: worn_skin(v),
-            capes: owned(v),
-        })
+        let id = str_field(v, "id")?;
+        if id.len() != 32 || !id.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return None;
+        }
+        let mut skin = None;
+        for entry in v.get("skins")?.as_array()? {
+            if !active(entry)? {
+                continue;
+            }
+            let url = str_field(entry, "url").filter(|u| is_texture(u))?;
+            let model = match entry.get("variant").and_then(Value::as_str) {
+                Some(m) if m.eq_ignore_ascii_case("classic") => "classic",
+                Some(m) if m.eq_ignore_ascii_case("slim") => "slim",
+                _ => return None,
+            };
+            if skin.replace((url, model.to_owned())).is_some() {
+                return None;
+            }
+        }
+        let capes = v
+            .get("capes")?
+            .as_array()?
+            .iter()
+            .map(|c| {
+                Some(Cape {
+                    id: str_field(c, "id").filter(|id| !id.is_empty())?,
+                    alias: match c.get("alias") {
+                        None => String::new(),
+                        Some(alias) => alias.as_str()?.to_owned(),
+                    },
+                    url: str_field(c, "url").filter(|u| is_texture(u))?,
+                    active: active(c)?,
+                })
+            })
+            .collect::<Option<Vec<_>>>()?;
+        if capes.iter().filter(|c| c.active).count() > 1 {
+            return None;
+        }
+        Some(Profile { id, skin, capes })
     }
 
-    /// The URL of the cape worn, if one is.
+    /// The profile is the account `uuid`'s (dashes and case aside).
+    pub fn is_for(&self, uuid: &str) -> bool {
+        self.id.eq_ignore_ascii_case(&uuid.replace('-', ""))
+    }
+
+    /// The cape worn, if one is.
     pub fn worn_cape(&self) -> Option<&Cape> {
         self.capes.iter().find(|c| c.active)
     }
 }
 
-/// The capes a profile lists, in its order.
-pub fn owned(profile: &Value) -> Vec<Cape> {
-    profile
-        .get("capes")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|c| {
-            Some(Cape {
-                id: str_field(c, "id")?,
-                alias: str_field(c, "alias").unwrap_or_default(),
-                url: str_field(c, "url").filter(|u| is_texture(u))?,
-                active: c.get("state").and_then(Value::as_str) == Some("ACTIVE"),
-            })
-        })
-        .collect()
+/// An entry's state: worn (`ACTIVE`) or not (`INACTIVE`); none for anything else.
+fn active(entry: &Value) -> Option<bool> {
+    match entry.get("state")?.as_str()? {
+        "ACTIVE" => Some(true),
+        "INACTIVE" => Some(false),
+        _ => None,
+    }
 }
 
-/// The skin a profile wears: its URL and model.
-fn worn_skin(profile: &Value) -> Option<(String, String)> {
-    let skin = profile
-        .get("skins")?
-        .as_array()?
-        .iter()
-        .find(|s| s.get("state").and_then(Value::as_str) == Some("ACTIVE"))?;
-    Some((
-        str_field(skin, "url").filter(|u| is_texture(u))?,
-        str_field(skin, "variant")
-            .unwrap_or_else(|| "CLASSIC".into())
-            .to_lowercase(),
-    ))
+/// What a change the services accepted is known to have left: the profile they sent back or
+/// that was read back after it; or only that it was accepted, when no profile could be had
+/// after it (and why not). An accepted change is not sent again, nor taken as confirmed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Written {
+    Profile(Profile),
+    Unconfirmed(String),
 }
 
 /// A picture on Mojang's texture server. Profiles list them as plain `http://` addresses; they
@@ -128,17 +157,21 @@ fn unreadable() -> &'static str {
     "The Minecraft services sent an answer the launcher can't read. Try again later."
 }
 
-/// The profile after a change the services accepted: the one they sent back, else read again,
-/// since an acknowledgement without a usable profile confirms nothing about what is worn.
-pub(super) fn after_change(ep: &Endpoints, token: &str, v: &Value) -> Result<Profile, String> {
+/// What a change the services accepted left: the profile they sent back, else read again,
+/// since an acknowledgement without a usable profile confirms nothing about what is worn. A
+/// read-back that fails leaves the change accepted but unconfirmed, never refused.
+pub(super) fn after_change(ep: &Endpoints, token: &str, v: &Value) -> Written {
     match Profile::of(v) {
-        Some(profile) => Ok(profile),
-        None => read(ep, token),
+        Some(profile) => Written::Profile(profile),
+        None => match read(ep, token) {
+            Ok(profile) => Written::Profile(profile),
+            Err(why) => Written::Unconfirmed(why),
+        },
     }
 }
 
-/// Wears the cape `id`, or none; the profile as it is after it.
-pub fn wear(ep: &Endpoints, token: &str, id: Option<&str>) -> Result<Profile, String> {
+/// Wears the cape `id`, or none: what the change left, or why the services refused it.
+pub fn wear(ep: &Endpoints, token: &str, id: Option<&str>) -> Result<Written, String> {
     let url = format!("{}/minecraft/profile/capes/active", ep.minecraft);
     let (status, v) = match id {
         Some(id) => send(
@@ -153,7 +186,7 @@ pub fn wear(ep: &Endpoints, token: &str, id: Option<&str>) -> Result<Profile, St
         )?,
     };
     match status {
-        200 | 204 => after_change(ep, token, &v),
+        200 | 204 => Ok(after_change(ep, token, &v)),
         401 => Err(super::SIGN_IN_AGAIN.into()),
         400 | 404 => Err("This account doesn't own that cape.".into()),
         429 => Err("Too many cape changes in a short time. Wait a minute, then try again.".into()),
@@ -193,6 +226,8 @@ fn read_picture(reader: impl Read) -> Option<Vec<u8>> {
 mod tests {
     use super::*;
 
+    const ID: &str = "069a79f444e94726a5befca90e38aaf5";
+
     #[test]
     fn textures_are_fetched_over_https_only_from_mojang() {
         assert_eq!(
@@ -215,8 +250,98 @@ mod tests {
         assert_eq!(Profile::of(&Value::Null), None);
         assert_eq!(Profile::of(&json!({})), None);
         assert_eq!(Profile::of(&json!({"capes": []})), None, "no id, no skins");
-        let profile = Profile::of(&json!({"id": "x", "skins": []})).unwrap();
+        assert_eq!(
+            Profile::of(&json!({"id": ID, "skins": []})),
+            None,
+            "no capes field is not an empty list of them"
+        );
+        let profile = Profile::of(&json!({"id": ID, "skins": [], "capes": []})).unwrap();
         assert_eq!(profile.skin, None);
         assert!(profile.capes.is_empty());
+        assert!(profile.is_for("069a79f4-44e9-4726-a5be-fca90e38aaf5"));
+        assert!(!profile.is_for("b09600dff4354d4fb56776eec1e55083"));
+    }
+
+    #[test]
+    fn a_profile_with_a_malformed_field_is_no_profile() {
+        let skin = json!({"id": "s", "state": "ACTIVE", "variant": "SLIM",
+                          "url": "http://textures.minecraft.net/texture/abc"});
+        let cape = json!({"id": "c1", "state": "ACTIVE", "alias": "Migrator",
+                          "url": "http://textures.minecraft.net/texture/c1"});
+        let good = json!({"id": ID, "skins": [skin], "capes": [cape]});
+        let read = Profile::of(&good).unwrap();
+        assert_eq!(
+            read.skin,
+            Some((
+                "http://textures.minecraft.net/texture/abc".into(),
+                "slim".into()
+            ))
+        );
+        assert_eq!(read.worn_cape().map(|c| c.id.as_str()), Some("c1"));
+        let with = |pointer: &str, value: Value| {
+            let mut v = good.clone();
+            *v.pointer_mut(pointer).unwrap() = value;
+            v
+        };
+        for (why, broken) in [
+            ("capes not a list", with("/capes", json!({"c1": true}))),
+            ("capes null", with("/capes", Value::Null)),
+            ("skins not a list", with("/skins", json!("abc"))),
+            ("an id that isn't one", with("/id", json!("Notch"))),
+            ("a cape that isn't an object", with("/capes/0", json!("c1"))),
+            ("a cape without an id", with("/capes/0/id", Value::Null)),
+            (
+                "a cape without a state",
+                with("/capes/0/state", Value::Null),
+            ),
+            (
+                "a cape in an unknown state",
+                with("/capes/0/state", json!("WORN")),
+            ),
+            (
+                "a cape pictured elsewhere",
+                with("/capes/0/url", json!("http://example.com/texture/c1")),
+            ),
+            (
+                "a cape alias that isn't text",
+                with("/capes/0/alias", json!(7)),
+            ),
+            (
+                "a skin in an unknown state",
+                with("/skins/0/state", json!(1)),
+            ),
+            (
+                "a skin with no arm model",
+                with("/skins/0/variant", Value::Null),
+            ),
+            (
+                "an unknown arm model",
+                with("/skins/0/variant", json!("WIDE")),
+            ),
+            (
+                "a skin pictured elsewhere",
+                with("/skins/0/url", json!("http://example.com/texture/abc")),
+            ),
+            (
+                "two capes worn",
+                with(
+                    "/capes",
+                    json!([good["capes"][0], {"id": "c2", "state": "ACTIVE",
+                    "url": "http://textures.minecraft.net/texture/c2"}]),
+                ),
+            ),
+            (
+                "two skins worn",
+                with("/skins", json!([good["skins"][0], good["skins"][0]])),
+            ),
+        ] {
+            assert_eq!(Profile::of(&broken), None, "{why}");
+        }
+        // An inactive skin needs no picture: only the worn one is ever shown.
+        let old = with(
+            "/skins",
+            json!([good["skins"][0], {"id": "old", "state": "INACTIVE"}]),
+        );
+        assert_eq!(Profile::of(&old).unwrap().skin, read.skin);
     }
 }

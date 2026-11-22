@@ -1,8 +1,43 @@
 //! Saved skins: the skins an account wore or its player added on the Skins tab, kept in the
 //! launcher's data folder, each account's apart (`saved-skins/<uuid>/`: each skin's PNG under its
-//! id, and `index.json` with their names and arm models) so they can be worn again with one click. They leave the computer only when worn,
-//! and then only to the Minecraft services.
+//! id, and `index.json` with their names and arm models) so they can be worn again with one
+//! click. They leave the computer only when worn, and then only to the Minecraft services.
+//!
+//! Every change to an index (adding a skin, its arm model, removing one) reads it, changes it
+//! and writes it back under one lock ([`changing`]), so two changes at once in this launcher
+//! (two imports, an import beside a Save keeping the skin it replaces) can't each write over
+//! what the other added.
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, MutexGuard};
+
+/// Held for the whole of a change to any account's index: changes are rare and quick, so one
+/// lock for every account costs nothing.
+fn changing() -> MutexGuard<'static, ()> {
+    static CHANGES: Mutex<()> = Mutex::new(());
+    CHANGES
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// A temporary file beside `path`, named for this process and this write alone.
+fn temporary(path: &Path) -> PathBuf {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let n = NEXT.fetch_add(1, Ordering::Relaxed);
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    path.with_file_name(format!("{name}.{}.{n}.tmp", std::process::id()))
+}
+
+/// Writes `bytes` to `path` whole or not at all.
+fn write_whole(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    let tmp = temporary(path);
+    std::fs::write(&tmp, bytes)
+        .and_then(|()| std::fs::rename(&tmp, path))
+        .map_err(|e| {
+            let _ = std::fs::remove_file(&tmp);
+            e.to_string()
+        })
+}
 
 /// One saved skin.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -62,16 +97,11 @@ fn valid_id(id: &str) -> bool {
     id.len() == 16 && id.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
+/// Writes the index; only ever called under [`changing`].
 fn save(dir: &Path, list: &[Saved]) -> Result<(), String> {
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let text = serde_json::to_string_pretty(list).map_err(|e| e.to_string())?;
-    let tmp = dir.join(format!("index.json.{}.tmp", std::process::id()));
-    std::fs::write(&tmp, text + "\n")
-        .and_then(|()| std::fs::rename(&tmp, dir.join("index.json")))
-        .map_err(|e| {
-            let _ = std::fs::remove_file(&tmp);
-            e.to_string()
-        })
+    write_whole(&dir.join("index.json"), (text + "\n").as_bytes())
 }
 
 /// Saves the skin `png` as `name`, its arms as the picture suggests
@@ -84,12 +114,13 @@ pub fn add(dir: &Path, png: &[u8], name: &str, slim: Option<bool>) -> Result<Sav
     let skin = crate::player_model::raw_skin(png)
         .ok_or("This isn't a Minecraft skin: it must be a 64×64 or 64×32 PNG.")?;
     let id = id_of(&skin);
+    let _changing = changing();
     let mut all = list(dir)?;
     if let Some(known) = all.iter().find(|s| s.id == id) {
         return Ok(known.clone());
     }
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    std::fs::write(png_path(dir, &id), png).map_err(|e| e.to_string())?;
+    write_whole(&png_path(dir, &id), png)?;
     let name: String = name.trim().chars().take(40).collect();
     let saved = Saved {
         id,
@@ -127,6 +158,7 @@ pub fn find(dir: &Path, png: &[u8]) -> Option<Saved> {
 
 /// Gives the saved skin `id` slim or classic arms.
 pub fn set_slim(dir: &Path, id: &str, slim: bool) -> Result<(), String> {
+    let _changing = changing();
     let mut all = list(dir)?;
     match all.iter_mut().find(|s| s.id == id) {
         Some(s) if s.slim != slim => s.slim = slim,
@@ -137,6 +169,7 @@ pub fn set_slim(dir: &Path, id: &str, slim: bool) -> Result<(), String> {
 
 /// Forgets the saved skin `id` and deletes its picture.
 pub fn remove(dir: &Path, id: &str) -> Result<(), String> {
+    let _changing = changing();
     let mut all = list(dir)?;
     all.retain(|s| s.id != id);
     save(dir, &all)?;
@@ -245,6 +278,54 @@ mod tests {
             "069a79f444e94726a5befca90e38aaf",
         ] {
             assert!(folder_in(data.path(), bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn changes_made_at_once_all_survive() {
+        // Skins told apart by one texel each, added and given arms by threads let go together.
+        let skin = |n: u8| {
+            let image = image::RgbaImage::from_fn(64, 64, |x, y| {
+                image::Rgba(if (x, y) == (0, 0) {
+                    [n, 0, 0, 255]
+                } else {
+                    [1, 2, 3, 255]
+                })
+            });
+            let mut out = std::io::Cursor::new(Vec::new());
+            image.write_to(&mut out, image::ImageFormat::Png).unwrap();
+            out.into_inner()
+        };
+        for _ in 0..5 {
+            let dir = tempfile::tempdir().unwrap();
+            let first = add(dir.path(), &skin(200), "First", Some(false)).unwrap();
+            let start = std::sync::Arc::new(std::sync::Barrier::new(17));
+            let threads: Vec<_> = (0..17u8)
+                .map(|n| {
+                    let (dir, start, png) = (dir.path().to_owned(), start.clone(), skin(n));
+                    let first = first.id.clone();
+                    std::thread::spawn(move || {
+                        start.wait();
+                        if n == 16 {
+                            set_slim(&dir, &first, true)
+                        } else {
+                            add(&dir, &png, &format!("Skin {n}"), None).map(|_| ())
+                        }
+                    })
+                })
+                .collect();
+            for t in threads {
+                t.join().unwrap().unwrap();
+            }
+            let all = list(dir.path()).unwrap();
+            assert_eq!(all.len(), 17, "every skin added is listed: {all:?}");
+            assert!(all[0].slim, "the arm change survived the adds");
+            let leftovers: Vec<_> = std::fs::read_dir(dir.path())
+                .unwrap()
+                .filter_map(|e| e.ok())
+                .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
+                .collect();
+            assert!(leftovers.is_empty(), "no temporary file left behind");
         }
     }
 
