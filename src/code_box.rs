@@ -152,11 +152,7 @@ pub(crate) fn tick(id: &SharedString, n: usize, size: f32, color: Hsla) -> gpui:
 
 /// Records a copy from `id`'s button, so [`copied`] shows it, and redraws once it has shown.
 pub(crate) fn note_copy(id: SharedString, window: &mut Window, cx: &mut gpui::App) {
-    let n = COPIED.with_borrow_mut(|m| {
-        let e = m.entry(id.clone()).or_insert((Instant::now(), 0));
-        *e = (Instant::now(), e.1 + 1);
-        e.1
-    });
+    let n = remember_copy(&id);
     // The view isn't known outside a draw, so redraw the window.
     window.refresh();
     // Back to the copy glyph once the tick has shown, unless another copy came since.
@@ -169,4 +165,13 @@ pub(crate) fn note_copy(id: SharedString, window: &mut Window, cx: &mut gpui::Ap
             }
         })
         .detach();
+}
+
+/// Counts a copy from `id`'s button and returns its number, for [`copied`].
+pub(crate) fn remember_copy(id: &SharedString) -> usize {
+    COPIED.with_borrow_mut(|m| {
+        let e = m.entry(id.clone()).or_insert((Instant::now(), 0));
+        *e = (Instant::now(), e.1 + 1);
+        e.1
+    })
 }

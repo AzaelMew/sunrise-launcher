@@ -152,7 +152,7 @@ impl Launcher {
                                         .child(user_code.to_string()),
                                 ),
                         )
-                        .child(copy_button("owner-copy", tr("Copy code"), copy)),
+                        .child(copy_button("owner-copy", tr("Copy code"), copy, user_code)),
                 )
                 .children((!microsoft::has_private_window()).then(|| {
                     said(
@@ -178,7 +178,7 @@ impl Launcher {
                                 .on_click(move |_, _, cx| microsoft::open_private(&private_uri, cx))
                                 .into_any_element()
                         } else {
-                            copy_button("owner-copy-link", tr("Copy link"), link_uri)
+                            copy_button("owner-copy-link", tr("Copy link"), link_uri, user_code)
                         })
                         .child(
                             button("owner-other", tr("Use a different Microsoft account"))
@@ -503,40 +503,60 @@ impl Launcher {
     }
 }
 
+/// Which copy `copy_button` remembers: this button for this sign-in attempt (`attempt` is the
+/// attempt's code), so a new attempt's button starts at its label even while the last one's
+/// "Copied" would still show.
+fn copy_key(id: &str, attempt: &str) -> SharedString {
+    SharedString::from(format!("{id}:{attempt}"))
+}
+
 /// A copy button that shows the copy on itself (#168), not in a toast: its label turns to
 /// "Copied" on an accent tint with a tick that pops in, then goes back.
-fn copy_button(id: &'static str, label: &str, text: String) -> AnyElement {
-    let key = SharedString::from(id);
+///
+/// The button stays the same element in every state, so a player who copies with Enter keeps
+/// focus on it and Tab goes on to the next action: only its label and the children inside it
+/// change, and the tint is a child that animates, not a wrapper around the button.
+fn copy_button(id: &'static str, label: &str, text: String, attempt: &str) -> AnyElement {
+    let key = copy_key(id, attempt);
     let accent: gpui::Hsla = rgb(palette().accent).into();
     let shown = crate::code_box::copied(&key);
+    let base = button(
+        id,
+        shown.map_or_else(|| label.to_string(), |_| tr("Copied").into()),
+    )
+    .relative()
+    .gap(px(6.));
     let base = match shown {
-        Some(n) => button(id, tr("Copied"))
-            .gap(px(6.))
+        Some(n) => base
             .border_color(accent.opacity(0.5))
+            // Its own hover: the accent edge stays, and the tint below stays over the fill.
+            .hover(move |s| s.border_color(accent.opacity(0.75)))
             .child(crate::code_box::tick(
                 &key,
                 n,
                 16.,
                 rgb(palette().text).into(),
-            )),
-        None => button(id, label.to_string()),
+            ))
+            .child(
+                // The tint comes up with the tick, over any hover fill.
+                div()
+                    .absolute()
+                    .inset_0()
+                    .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
+                    .with_animation(
+                        ElementId::named_usize(SharedString::from(format!("{key}-tint")), n),
+                        crate::code_box::played(std::time::Duration::from_millis(200)),
+                        move |d, t| d.bg(accent.opacity(0.16 * t)),
+                    ),
+            ),
+        None => base,
     };
     let clicked = key.clone();
-    let base = base.on_click(move |_, window, cx| {
+    base.on_click(move |_, window, cx| {
         crate::widgets::copy_quietly(cx, gpui::ClipboardItem::new_string(text.clone()));
         crate::code_box::note_copy(clicked.clone(), window, cx);
-    });
-    match shown {
-        // The tint comes up with the tick.
-        Some(n) => base
-            .with_animation(
-                ElementId::named_usize(SharedString::from(format!("{id}-tint")), n),
-                crate::code_box::played(std::time::Duration::from_millis(200)),
-                move |b, t| b.bg(accent.opacity(0.16 * t)),
-            )
-            .into_any_element(),
-        None => base.into_any_element(),
-    }
+    })
+    .into_any_element()
 }
 
 /// What the sheet shows of the sign-in.
@@ -560,6 +580,22 @@ fn short_link(uri: &str) -> &str {
 
 #[cfg(test)]
 mod tests {
+    use super::copy_key;
+
+    #[test]
+    fn a_copy_shows_on_its_own_sign_in_attempt_only() {
+        let first = copy_key("owner-copy", "ABCD1234");
+        let next = copy_key("owner-copy", "EFGH5678");
+        let link = copy_key("owner-copy-link", "ABCD1234");
+        assert_eq!(crate::code_box::copied(&first), None);
+        let n = crate::code_box::remember_copy(&first);
+        assert_eq!(crate::code_box::copied(&first), Some(n));
+        // Cancelling and asking for a new code: that attempt's button starts at Copy code,
+        // and the link's button on the same attempt was never copied.
+        assert_eq!(crate::code_box::copied(&next), None);
+        assert_eq!(crate::code_box::copied(&link), None);
+    }
+
     #[test]
     fn links_are_shown_as_typed() {
         assert_eq!(
