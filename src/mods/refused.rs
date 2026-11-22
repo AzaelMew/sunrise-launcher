@@ -173,6 +173,8 @@ impl Launcher {
             .text_color(c(palette().warning))
             .child(label)
             .on_click(cx.listener(move |this, _, _, cx| {
+                // A collection row under it toggles its tick on a click.
+                cx.stop_propagation();
                 this.open_refused(refused.clone());
                 cx.notify();
             }))

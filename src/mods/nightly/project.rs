@@ -163,7 +163,7 @@ impl Launcher {
         // An Add or Update this mod was refused: said once by the modal when it happened, and
         // reopened from one line under the button.
         let refused_line = failed_job
-            .map(|error| (error, false))
+            .map(|error| (error, installed.is_some()))
             .or_else(|| installed.and(failure).map(|error| (error, true)))
             .and_then(|(error, update)| {
                 let refused = crate::mods::refused::Refused::one(

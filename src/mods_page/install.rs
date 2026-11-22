@@ -567,9 +567,12 @@ impl Installs {
                         }
                     }
                     let several = run.requests[0].ids.len() > 1;
+                    let stopped = matches!(outcome, Err(SourceError::Cancelled));
                     for id in &run.requests[0].ids {
                         let key = (run.identity, id.clone());
                         let result = match source.rejected.remove(id) {
+                            // Stopped: nothing it said before is pinned on the page.
+                            Some(_) if stopped => Err(SourceError::Cancelled),
                             Some(error) => Err(error),
                             // Several that failed as a whole: said once, by the modal.
                             None if several && outcome.is_err() => {

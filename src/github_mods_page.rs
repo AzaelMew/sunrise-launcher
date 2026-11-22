@@ -376,12 +376,9 @@ impl Launcher {
                     if let Some(failure) = failure {
                         self.github.pending_failure = Some(failure);
                     }
-                    let message = if detail.is_empty() {
-                        line
-                    } else {
-                        format!("{line}\n{detail}")
-                    };
-                    self.mods.message = Some(Err(message));
+                    // The notice says what it means; the checker's words stay with the form,
+                    // behind Show details, when the player opens it again.
+                    self.mods.message = Some(Err(line));
                 }
             }
         }
