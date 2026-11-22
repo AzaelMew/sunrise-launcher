@@ -4,7 +4,8 @@ use super::ui::*;
 use super::*;
 use crate::frame::button;
 use std::time::{Duration, SystemTime};
-use sunrise_launcher::browser::sunrise::sources::{self, Catalogue, Source};
+pub(super) use sunrise_launcher::browser::sunrise::sources::Source;
+use sunrise_launcher::browser::sunrise::sources::{self, Catalogue};
 
 mod collection;
 mod jobs;
@@ -19,7 +20,10 @@ const SOURCE_ID_CONFLICT: &str = "Another installed mod uses this ID.";
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SourcePresence<'a> {
     Missing,
-    Installed(&'a sunrise_launcher::github_mods::Origin),
+    Installed {
+        origin: &'a sunrise_launcher::github_mods::Origin,
+        file: &'a str,
+    },
     Conflict,
 }
 
@@ -43,16 +47,23 @@ impl InstalledRows {
         let Some(origin) = &row.github else {
             return SourcePresence::Conflict;
         };
-        if origin.owner.eq_ignore_ascii_case(source.owner())
-            && origin.source.as_ref().is_some_and(|receipt| {
-                receipt.repo_id == source.repo_id() && receipt.manifest == source.manifest()
-            })
-        {
-            SourcePresence::Installed(origin)
+        if source_matches_origin(source, origin) {
+            SourcePresence::Installed {
+                origin,
+                file: &row.file,
+            }
         } else {
             SourcePresence::Conflict
         }
     }
+}
+
+fn source_matches_origin(source: &Source, origin: &sunrise_launcher::github_mods::Origin) -> bool {
+    source.id() == origin.id
+        && origin.owner.eq_ignore_ascii_case(source.owner())
+        && origin.source.as_ref().is_some_and(|receipt| {
+            receipt.repo_id == source.repo_id() && receipt.manifest == source.manifest()
+        })
 }
 
 #[derive(Default)]
@@ -201,7 +212,7 @@ impl Launcher {
                                     .is_ok_and(|i| {
                                         matches!(
                                             rows.source_presence(&catalogue.sources[i]),
-                                            SourcePresence::Installed(_)
+                                            SourcePresence::Installed { .. }
                                         )
                                     })
                             },
@@ -229,14 +240,8 @@ impl Launcher {
                 }
                 Listing::Source { index: i, part_of } => {
                     let source = &catalogue.sources[i];
-                    let pin = work
-                        .release_pins
-                        .get(source.id())
-                        .filter(|pin| pin.source() == source);
-                    let icon = sources::SourceIcon::new(source, pin, allow_fetch);
-                    let loaded = icon.as_ref().and_then(|icon| work.icons.get(icon));
-                    let load = icon
-                        .filter(|_| loaded.is_none())
+                    let (picture, load) = self.source_artwork(source, None, allow_fetch);
+                    let load = load
                         .map(|icon| when_visible(cx, move |this| this.request_nightly_icon(icon)));
                     let mut facts = vec![tag(model::Make::Native.label())];
                     // A card never makes a GitHub request just for a badge. Only a recently
@@ -254,24 +259,28 @@ impl Launcher {
                             &[("collection", &catalogue.collections[i].name)],
                         )));
                     }
-                    if let Some(rows) = installed {
-                        match rows.source_presence(source) {
-                            SourcePresence::Installed(origin) => facts.push(install_fact(
+                    let package = installed.and_then(|rows| match rows.source_presence(source) {
+                        SourcePresence::Installed { origin, file } => {
+                            facts.push(install_fact(
                                 short_sha(&origin.commit),
                                 rows.unbuilt.contains(source.id()),
-                            )),
-                            SourcePresence::Conflict => facts.push(status(
+                            ));
+                            rows.archives.get(file)?.icon.clone()
+                        }
+                        SourcePresence::Conflict => {
+                            facts.push(status(
                                 "information-circle",
                                 tr(SOURCE_ID_CONFLICT),
                                 palette().warning,
-                            )),
-                            SourcePresence::Missing => {}
+                            ));
+                            None
                         }
-                    }
+                        SourcePresence::Missing => None,
+                    });
                     let sources = catalogue.sources.clone();
                     browse_card(
                         ("nightly-card", i),
-                        loaded.cloned().flatten(),
+                        mod_artwork(picture, package),
                         source.id(),
                         source.name(),
                         source.owner(),
@@ -358,24 +367,75 @@ impl Launcher {
         crate::frame::scrolls("nightly-discover").set_offset(gpui::point(px(0.), px(0.)));
     }
 
-    fn nightly_icon_tile(
+    pub(super) fn source_catalogue_pending(&self) -> bool {
+        let state = &self.ui.mods.nightly;
+        state.catalogue.is_none() && state.reading
+    }
+
+    pub(super) fn source_listing(
+        &self,
+        origin: &sunrise_launcher::github_mods::Origin,
+    ) -> Option<&Source> {
+        let catalogue = self.ui.mods.nightly.catalogue.as_ref()?;
+        let i = catalogue
+            .sources
+            .binary_search_by(|source| source.id().cmp(&origin.id))
+            .ok()?;
+        let source = &catalogue.sources[i];
+        source_matches_origin(source, origin).then_some(source)
+    }
+
+    pub(super) fn source_collection_name(&self, source: &Source) -> Option<&str> {
+        self.ui
+            .mods
+            .nightly
+            .catalogue
+            .as_ref()?
+            .collections
+            .iter()
+            .find(|collection| {
+                collection
+                    .members
+                    .iter()
+                    .any(|member| member.id == source.id())
+            })
+            .map(|collection| collection.name.as_str())
+    }
+
+    fn source_artwork(
         &self,
         source: &Source,
         commit: Option<&sources::SourceCommit>,
         allow_fetch: bool,
+    ) -> (Option<PathBuf>, Option<sources::SourceIcon>) {
+        let work = &self.ui.mods.nightly.work;
+        let commit = commit.or_else(|| {
+            work.release_pins
+                .get(source.id())
+                .filter(|pin| pin.source() == source)
+        });
+        let icon = sources::SourceIcon::new(source, commit, allow_fetch);
+        let loaded = icon.as_ref().and_then(|icon| work.icons.get(icon));
+        let picture = loaded.cloned().flatten();
+        (picture, icon.filter(|_| loaded.is_none()))
+    }
+
+    pub(super) fn source_tile(
+        &self,
+        source: &Source,
+        commit: Option<&sources::SourceCommit>,
+        allow_fetch: bool,
+        package: Option<std::sync::Arc<gpui::Image>>,
         side: f32,
         cx: &Context<Self>,
     ) -> Div {
-        let icon = sources::SourceIcon::new(source, commit, allow_fetch);
-        let icons = &self.ui.mods.nightly.work.icons;
-        let loaded = icon.as_ref().and_then(|icon| icons.get(icon));
-        let tile = tile(loaded.cloned().flatten(), source.id(), source.name(), side);
-        let Some(icon) = icon.filter(|_| loaded.is_none()) else {
-            return tile;
-        };
-        tile.relative().child(when_visible(cx, move |this| {
-            this.request_nightly_icon(icon)
-        }))
+        let (listed, load) = self.source_artwork(source, commit, allow_fetch);
+        let picture = mod_artwork(listed, package);
+        tile(picture, source.id(), source.name(), side)
+            .relative()
+            .children(
+                load.map(|icon| when_visible(cx, move |this| this.request_nightly_icon(icon))),
+            )
     }
 
     fn nightly_build_revision(&self) -> Option<String> {
@@ -599,7 +659,10 @@ mod tests {
         assert_eq!(origin.commit, "1".repeat(40));
         assert_eq!(
             rows.source_presence(&listing),
-            SourcePresence::Installed(origin)
+            SourcePresence::Installed {
+                origin,
+                file: &rows.local[0].file
+            }
         );
     }
 

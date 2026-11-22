@@ -83,6 +83,108 @@ fn entry(id: &str, version: &str, native: bool, sha: &str) -> Entry {
     .unwrap()
 }
 
+#[test]
+fn installed_source_label_distinguishes_catalogue_receipts_and_direct_github() {
+    use sunrise_launcher::github_mods::{Origin, SourceOrigin, SourceTrack};
+    let idx = index(vec![], vec![]);
+    let none = HashSet::new();
+    let github = Origin {
+        id: "lantern".into(),
+        version: "1.0.0".into(),
+        owner: "Workshop".into(),
+        repo: "Lantern".into(),
+        commit: "1".repeat(40),
+        sha256: A.into(),
+        tag: None,
+        asset: None,
+        source: None,
+    };
+    let locals = [Local {
+        id: github.id.clone(),
+        file: "sunrise-native-mods/lantern.smod".into(),
+        name: "Lantern".into(),
+        version: github.version.clone(),
+        github: Some(github),
+        native: true,
+        unreadable: false,
+    }];
+    let mut row = rows(
+        &[],
+        &World {
+            local: &locals,
+            ..world(&idx, &none, &none, true)
+        },
+    )
+    .remove(0);
+    assert_eq!(row.source_label(), tr("From GitHub"));
+    row.local.as_mut().unwrap().github.as_mut().unwrap().source = Some(SourceOrigin {
+        repo_id: 42,
+        manifest: "sunrise-mod.toml".into(),
+        track: SourceTrack::Branch("main".into()),
+        published_at: None,
+    });
+    assert_eq!(row.source_label(), tr("Sunrise mods"));
+    row.collection = Some("Collection A".into());
+    assert_eq!(row.source_label(), "Collection A");
+    row.collection = None;
+    row.local.as_mut().unwrap().github = None;
+    assert_eq!(row.source_label(), tr("Local file"));
+    let registry = rows(
+        &[entry("registry", "1.0.0", true, A)],
+        &world(&idx, &none, &none, true),
+    );
+    assert_eq!(registry[0].source_label(), tr("Sunrise mods"));
+}
+
+#[test]
+fn installed_sections_keep_collection_members_together_and_leave_loose_rows_untitled() {
+    let idx = index(vec![], vec![]);
+    let none = HashSet::new();
+    let entries = [
+        entry("ant", "1.0.0", true, A),
+        entry("bird", "1.0.0", true, A),
+        entry("cat", "1.0.0", true, A),
+    ];
+    let mut rows = rows(&entries, &world(&idx, &none, &none, true));
+    rows[0].collection = Some("Wildlife".into());
+    rows[2].collection = Some("Wildlife".into());
+    rows[2].need = Some(Need::Build);
+    group_installed(&mut rows);
+    let visible = visible(&rows, &RowFilter::default());
+    assert_eq!(
+        installed_groups(&rows, &visible).collect::<Vec<_>>(),
+        [(Some("Wildlife"), &[0, 1][..]), (None, &[2][..])]
+    );
+    assert_eq!(
+        rows.iter().map(|row| row.id.as_str()).collect::<Vec<_>>(),
+        ["cat", "ant", "bird"]
+    );
+    assert_eq!(
+        installed_groups(&rows, &[2]).collect::<Vec<_>>(),
+        [(None, &[2][..])]
+    );
+}
+
+#[test]
+fn installed_filters_hide_zero_counts_and_drop_a_hidden_selection() {
+    let idx = index(vec![], vec![]);
+    let on = HashSet::from(["lantern".into()]);
+    let rows = rows(
+        &[entry("lantern", "1.0.0", true, A)],
+        &world(&idx, &on, &HashSet::new(), true),
+    );
+    let mut filter = RowFilter {
+        show: Show::Off,
+        makes: BTreeSet::from([Make::Content]),
+        ..RowFilter::default()
+    };
+    let counts = counted_filters(&rows, &mut filter);
+    assert_eq!(counts.shows, [(Show::All, 1), (Show::On, 1)]);
+    assert_eq!(counts.kinds, [(Make::Native, 1)]);
+    assert_eq!(filter, RowFilter::default());
+    assert_eq!(visible(&rows, &filter), [0]);
+}
+
 const A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
@@ -786,9 +888,9 @@ fn every_row_fills_the_same_columns_whatever_it_has_to_say() {
             _ => assert!(!cells.unavailable),
         }
     }
-    // A row with nothing pressing says where it is from, quietly; its cells are still there.
+    // The source is in the byline; it doesn't take up the status column.
     let fine = cells(row("fine"), None, None, true);
-    assert_eq!(fine.status.as_ref().unwrap().tone, Tone::Muted);
+    assert!(fine.status.is_none());
     assert_eq!(fine.action, None);
     assert!(fine.switch, "local files can be switched on and off");
     // A registry row with nothing to say: empty status and action cells, a live switch.

@@ -1,6 +1,5 @@
-//! Mods › Installed (mocks 05, 05b): what needs the player first, then updates, then the rest;
-//! one switch per row; bulk actions that name their count and scope.
-use super::model::{self, Group, Make, Row, Show};
+//! Mods › Installed: collection sections, one switch per row, and scoped bulk actions.
+use super::model::{self, Row, Show};
 use super::ui::*;
 use super::*;
 use crate::paint::palette;
@@ -17,6 +16,15 @@ pub(super) fn remove_names(rows: &[Row], labels: &[Option<String>]) -> BTreeMap<
 }
 
 impl Launcher {
+    pub(super) fn archive_display(&self, row: &Row) -> Option<&ArchiveDisplay> {
+        self.ui
+            .mods
+            .snapshot
+            .as_ref()?
+            .archives
+            .get(row.archive_file()?)
+    }
+
     pub(super) fn installed(
         &mut self,
         window: &mut Window,
@@ -126,7 +134,14 @@ impl Launcher {
                 .into_any_element();
         }
 
+        let before = self.ui.mods.row_filter.clone();
+        let model::FilterCounts { shows, kinds } =
+            model::counted_filters(&rows, &mut self.ui.mods.row_filter);
         let filter = self.ui.mods.row_filter.clone();
+        if filter != before {
+            self.ui.mods.selection.clear();
+            self.ui.mods.anchor = None;
+        }
         let visible = model::visible(&rows, &filter);
         let shown_ids: Rc<Vec<String>> = Rc::new(
             visible
@@ -141,31 +156,33 @@ impl Launcher {
             .collect();
 
         // ---- what to show: the same row of chips Discover filters with
-        let count = |f: &dyn Fn(&Row) -> bool| rows.iter().filter(|r| f(r)).count();
         let counted = |label: &str, n: usize| {
             trf("{label} · {n}", &[("label", label), ("n", &n.to_string())])
         };
         let mut chips = div().flex().flex_wrap().items_center().gap(px(8.));
-        let shown = [
-            (tr("All"), rows.len(), Show::All),
-            (tr("Turned on"), count(&|r| r.on), Show::On),
-            (tr("Turned off"), count(&|r| !r.on), Show::Off),
-        ]
-        .into_iter()
-        .map(|(label, n, which)| {
-            let pick: Choose = Rc::new(move |this, _| {
-                let m = &mut this.ui.mods;
-                m.row_filter.show = which;
-                m.selection.clear();
-                m.anchor = None;
-            });
-            (counted(label, n).into(), filter.show == which, pick)
-        })
-        .collect();
+        let shown = shows
+            .into_iter()
+            .map(|(which, n)| {
+                let label = match which {
+                    Show::All => tr("All"),
+                    Show::On => tr("Turned on"),
+                    Show::Off => tr("Turned off"),
+                };
+                let pick: Choose = Rc::new(move |this, _| {
+                    let m = &mut this.ui.mods;
+                    m.row_filter.show = which;
+                    m.selection.clear();
+                    m.anchor = None;
+                });
+                (counted(label, n).into(), filter.show == which, pick)
+            })
+            .collect();
         chips = chips.child(choices("alt-show", shown, cx).gap(px(8.)));
-        chips = chips.child(div().flex_none().w(px(1.)).h(px(20.)).bg(c(palette().line)));
-        for (i, make) in [Make::Native, Make::Content].into_iter().enumerate() {
-            let n = count(&|r| r.make == Some(make));
+        if !kinds.is_empty() {
+            chips = chips.child(div().flex_none().w(px(1.)).h(px(20.)).bg(c(palette().line)));
+        }
+        for (make, n) in kinds {
+            let i = make as usize;
             chips = chips.child(
                 // Two switches, not one choice: each is its own Tab stop.
                 chip(
@@ -387,24 +404,14 @@ impl Launcher {
             bar
         };
 
-        // ---- rows, in three groups
         let mut list = div().flex().flex_col().children(
             self.source_update_notice()
                 .map(|notice| note(notice.to_owned()).p(px(10.))),
         );
-        let mut last: Option<Group> = None;
+        let mut n = 0;
         let mut position = 0;
-        let group_counts = |g: Group| visible.iter().filter(|&&i| rows[i].group() == g).count();
-        for (n, &i) in visible.iter().enumerate() {
-            let r = rows[i].clone();
-            let g = r.group();
-            if last != Some(g) {
-                last = Some(g);
-                let (title, count) = match g {
-                    Group::NeedsYou => (tr("NEEDS YOU"), group_counts(g)),
-                    Group::Updates => (tr("UPDATES"), group_counts(g)),
-                    Group::Rest => (tr("EVERYTHING ELSE"), group_counts(g)),
-                };
+        for (collection, group) in model::installed_groups(&rows, &visible) {
+            if let Some(title) = collection {
                 let head = div()
                     .flex()
                     .items_center()
@@ -418,16 +425,24 @@ impl Launcher {
                             .text_color(c(palette().muted))
                             .child(crate::selectable::selectable(trf(
                                 "{title} · {count}",
-                                &[("title", title), ("count", &count.to_string())],
+                                &[("title", title), ("count", &group.len().to_string())],
                             ))),
                     );
                 list = list.child(head);
+            } else if n != 0 {
+                // A gap ends the previous collection without giving loose mods a heading.
+                list = list.child(div().h(px(12.)).bg(c(palette().background)));
             }
-            let pos = position;
-            if r.selectable_archive() {
-                position += 1;
+            for &i in group {
+                let r = rows[i].clone();
+                let pos = position;
+                if r.selectable_archive() {
+                    position += 1;
+                }
+                list =
+                    list.child(self.row(n, pos, r, labels[i].clone(), shown_ids.clone(), busy, cx));
+                n += 1;
             }
-            list = list.child(self.row(n, pos, r, labels[i].clone(), shown_ids.clone(), busy, cx));
         }
         if visible.is_empty() && refresh_ready {
             list = list.child(
@@ -463,33 +478,53 @@ impl Launcher {
 
     pub(super) fn labeled_installed_rows(&self) -> (Vec<Row>, Vec<Option<String>>) {
         let mut rows = self.rows();
+        // The same catalogue Discover displays, including a saved copy. This is display-only;
+        // `rows` uses a fetched index for registry status and update offers.
+        let registry = sunrise::known_index();
+        let registry_collections = registry
+            .as_deref()
+            .map(model::collection::part_of)
+            .unwrap_or_default();
         // Use the exact installed package's display name here, as in the Remove review.
         // Compute collisions before filtering so a row keeps its label when peers are hidden.
-        let archive_names = self.ui.mods.snapshot.as_ref().map(|s| &s.archive_names);
-        let archive_name = |r: &Row| {
-            archive_names
-                .filter(|_| r.selectable_archive())
-                .and_then(|names| names.get(&r.id))
-        };
-        let mut renamed = false;
         for row in &mut rows {
-            if let Some(version) =
-                nightly::installed_source(row).and_then(|origin| self.source_update_version(origin))
-            {
-                row.update = Some(version.to_owned());
-                renamed = true; // The new offer may move the row to the Updates group.
+            if let Some(entry) = &row.entry {
+                if let Some(project) = registry
+                    .as_ref()
+                    .and_then(|index| index.project(&entry.project))
+                {
+                    row.icon.clone_from(&project.icon);
+                    row.authors = project.authors.join(", ");
+                }
+                row.collection = registry_collections
+                    .get(entry.project.as_str())
+                    .map(|name| (*name).to_owned());
             }
-            if let Some(archive) = archive_name(row).filter(|archive| row.title != archive.name) {
+            if let Some(archive) = self.archive_display(row) {
                 row.title.clone_from(&archive.name);
-                renamed = true;
+                if row.authors.is_empty() {
+                    row.authors = archive.authors.join(", ");
+                }
+            }
+            if let Some(origin) = nightly::installed_source(row) {
+                let update = self.source_update_version(origin).map(str::to_owned);
+                if let Some(source) = self.source_listing(origin) {
+                    row.authors = source.owner().to_owned();
+                    row.collection = self.source_collection_name(source).map(str::to_owned);
+                    row.source_listing = Some(source.clone());
+                }
+                row.update = update;
+            }
+            if let Some(origin) = row.local.as_ref().and_then(|local| local.github.as_ref()) {
+                if row.authors.is_empty() {
+                    row.authors.clone_from(&origin.owner);
+                }
             }
         }
-        if renamed {
-            model::sort(&mut rows);
-        }
+        model::group_installed(&mut rows);
         use installed::{ModLabel, ModLabelSource};
         let labels = installed::colliding_mod_labels(rows.iter().map(|row| {
-            let (authors, version) = archive_name(row).map_or_else(
+            let (authors, version) = self.archive_display(row).map_or_else(
                 || (std::slice::from_ref(&row.authors), row.version.as_str()),
                 |archive| (archive.authors.as_slice(), archive.version.as_str()),
             );
@@ -521,10 +556,25 @@ impl Launcher {
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let selected = self.ui.mods.selection.contains(&r.id);
-        let picture = r
-            .icon
-            .clone()
-            .and_then(|u| self.mods_image(&u, images::ROW));
+        let package = self
+            .archive_display(&r)
+            .and_then(|archive| archive.icon.clone());
+        let artwork = if let Some(source) = &r.source_listing {
+            self.source_tile(
+                source,
+                None,
+                self.nightly_catalogue_current(),
+                package,
+                32.,
+                cx,
+            )
+        } else {
+            let listed = r
+                .icon
+                .as_ref()
+                .and_then(|url| self.mods_image(url, images::ROW));
+            tile(mod_artwork(listed, package), &r.id, &r.title, 32.)
+        };
         let error = self.ui.mods.errors.get(&r.id).cloned();
 
         let check = {
@@ -675,53 +725,33 @@ impl Launcher {
                     .on_click(|_, _, cx| cx.stop_propagation())
             }
         };
-        let title = {
-            let plain_name = label.is_none();
-            div()
-                .min_w_0()
-                .flex()
-                .items_baseline()
-                .gap(px(8.))
-                .child(
-                    div()
-                        .min_w_0()
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .truncate()
-                        .child(label.unwrap_or_else(|| r.title.clone())),
-                )
-                .children(plain_name.then(|| {
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .text_size(px(tokens::SMALL))
-                        .text_color(c(palette().muted))
-                        .truncate()
-                        .child(r.authors.clone())
-                }))
+        let source = r.source_label();
+        let byline = if label.is_some() || r.authors.is_empty() {
+            source.to_owned()
+        } else {
+            trf(
+                "{author} · {source}",
+                &[("author", &r.authors), ("source", source)],
+            )
         };
         let title = div()
             .flex()
             .flex_col()
             .min_w_0()
-            .child(title)
-            .children(
-                r.local
-                    .as_ref()
-                    .and_then(|local| local.github.as_ref())
-                    .map(|origin| {
-                        let label = if origin.source.is_some() {
-                            nightly::source_provenance(origin)
-                        } else {
-                            trf("GitHub: {source}", &[("source", &origin.label())])
-                        };
-                        div()
-                            .id(("installed-origin", n))
-                            .text_size(px(tokens::SMALL))
-                            .text_color(c(palette().muted))
-                            .truncate()
-                            .tooltip(crate::glass_ui::tip(label.clone()))
-                            .child(label)
-                    }),
+            .child(
+                div()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .truncate()
+                    .child(label.unwrap_or_else(|| r.title.clone())),
+            )
+            .child(
+                div()
+                    .id(("installed-origin", n))
+                    .text_size(px(tokens::SMALL))
+                    .text_color(c(palette().muted))
+                    .truncate()
+                    .tooltip(crate::glass_ui::tip(byline.clone()))
+                    .child(byline),
             )
             .children(
                 nightly::installed_source(&r)
@@ -806,7 +836,7 @@ impl Launcher {
             } else {
                 div().flex_none().w(px(18.))
             })
-            .child(tile(picture, &r.id, &r.title, 32.));
+            .child(artwork);
         let row = if wide {
             row.child(title.flex_1().min_w(px(140.)))
                 .child(kind(column::KIND))
@@ -868,7 +898,7 @@ impl Launcher {
     /// Where a row's switch would be, for a mod the game was made without: "Not on Nov 17" and
     /// a "?" that says why in one sentence, the changed items for its author, and the way on.
     pub(super) fn unfit(
-        &mut self,
+        &self,
         n: usize,
         r: &Row,
         unfit: model::Unfit,

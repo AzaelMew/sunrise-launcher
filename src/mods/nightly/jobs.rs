@@ -16,6 +16,7 @@ pub(in crate::mods) enum Event {
 
 pub(in crate::mods) struct Open {
     pub(super) source: Source,
+    pub(super) from: Page,
     pub(super) scope: OpenScope,
     pub(super) request: u64,
     pub(super) inspection: Option<Inspection>,
@@ -116,9 +117,9 @@ impl Launcher {
         let scope = self.mods_page_scope();
         let state = &mut self.ui.mods.nightly;
         if state.open.as_ref().is_some_and(|open| open.scope != scope) {
-            state.open = None;
+            let from = state.open.take().map_or(Page::Discover, |open| open.from);
             if self.ui.page == Page::Project {
-                self.ui.page = Page::Discover;
+                self.ui.page = from;
             }
         }
         if state
@@ -132,15 +133,36 @@ impl Launcher {
     }
 
     pub(in crate::mods) fn inspect_nightly(&mut self, source: Source, refresh: bool) {
+        let from = self
+            .ui
+            .mods
+            .nightly
+            .open
+            .as_ref()
+            .filter(|_| self.ui.page == Page::Project)
+            .map_or(Page::Discover, |open| open.from);
+        self.inspect_nightly_from(source, refresh, from);
+    }
+
+    pub(in crate::mods) fn inspect_nightly_from(
+        &mut self,
+        source: Source,
+        refresh: bool,
+        from: Page,
+    ) {
         let scope = self.mods_page_scope();
         self.ui.page = Page::Project;
         self.ui.mods.open = None;
         let state = &mut self.ui.mods.nightly;
+        if state.open.as_ref().is_none_or(|open| open.source != source) {
+            crate::frame::scrolls("project").set_offset(gpui::point(px(0.), px(0.)));
+        }
         state.detail_request += 1;
         let request = state.detail_request;
         state.collection = None;
         state.open = Some(Open {
             source: source.clone(),
+            from,
             scope,
             request,
             inspection: None,
@@ -258,7 +280,7 @@ impl Launcher {
         }
     }
 
-    pub(super) fn nightly_catalogue_current(&self) -> bool {
+    pub(in crate::mods) fn nightly_catalogue_current(&self) -> bool {
         self.ui.mods.nightly.catalogue.as_ref().is_some_and(|list| {
             list.saved_at.is_some()
                 && list.error.is_none()

@@ -255,7 +255,7 @@ impl Launcher {
                         true => dim(tick),
                         false => tick,
                     })
-                    .child(self.nightly_icon_tile(source, None, allow_fetch, 36., cx))
+                    .child(self.source_tile(source, None, allow_fetch, None, 36., cx))
                     .child(
                         div()
                             .flex_1()
