@@ -63,6 +63,9 @@ pub(super) struct State {
     pub after_sign_in: Option<crate::launcher_play::PlayIntent>,
     /// The sidebar's last open or close, while it may still be easing there.
     pub rail: Option<crate::motion::Fade>,
+    /// How open the sidebar is in the frame being drawn, or was in the last one: sampled once
+    /// as each frame begins, so the rail, the top bar and the page lay out for the same width.
+    pub rail_drawn: Option<f32>,
 }
 
 /// The keyboard's ring, in `color`, around a filled control that has no edge of its own to turn
@@ -560,6 +563,7 @@ impl Launcher {
         // window has drawn. Nothing on screen is read here: a benchmark reads where the build
         // list was left, and moves it, between frames (`bench_wheel`).
         let now = std::time::Instant::now();
+        self.ui.rail_drawn = Some(self.rail_open_at(now));
         let gap = self.perf.frame(now);
         if let Some(bench) = &mut self.bench {
             bench.frame(now, gap);

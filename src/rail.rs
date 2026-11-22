@@ -37,6 +37,17 @@ fn icon_slot(icon: impl IntoElement) -> Div {
         .child(icon)
 }
 
+/// Whether the selected profile's actions button shows beside its name, `open` of the way:
+/// once it fades in, when it is already clear of the mark.
+fn side_actions_shown(open: f32) -> bool {
+    label_opacity(open) > 0.
+}
+
+/// The room under the mark the closed actions button took (28 px), `open` of the way.
+fn actions_room(open: f32) -> f32 {
+    28. * (1. - open).clamp(0., 1.)
+}
+
 fn profile_lock_reason(
     work: &crate::launch_state::Facts,
     located: bool,
@@ -77,16 +88,25 @@ impl Launcher {
         self.window_width - (rail_width(self.rail_open()) - CLOSED)
     }
 
-    /// How open the sidebar is drawn now: 0 closed, 1 open, between while it eases.
+    /// How open the sidebar is drawn: 0 closed, 1 open, between while it eases. The frame's
+    /// one sample (`frame::State::rail_drawn`): a part built later in the same frame never sees
+    /// a width the rail wasn't drawn at.
     pub(crate) fn rail_open(&self) -> f32 {
+        self.ui
+            .rail_drawn
+            .unwrap_or_else(|| self.rail_open_at(std::time::Instant::now()))
+    }
+
+    /// How open the sidebar is at `now`.
+    pub(crate) fn rail_open_at(&self, now: std::time::Instant) -> f32 {
         let at_rest = if self.settings.sidebar_expanded {
             1.
         } else {
             0.
         };
-        self.ui.rail.map_or(at_rest, |fade| {
-            fade.value(std::time::Instant::now()).clamp(0., 1.)
-        })
+        self.ui
+            .rail
+            .map_or(at_rest, |fade| fade.value(now).clamp(0., 1.))
     }
 
     fn profile_lock(&self) -> Option<&'static str> {
@@ -312,7 +332,11 @@ impl Launcher {
                     }),
                 )
             });
-            let actions = more.then(|| {
+            // Opening, the button leaves the row for its place beside the name, which it reaches
+            // only once there is room: until it shows, it sits over the mark, so it isn't built
+            // at all, or a press on the mark could open the profile's menu.
+            let side = labelled && side_actions_shown(open);
+            let actions = (more && (!labelled || side)).then(|| {
                 let top = Rc::new(Cell::new(0.));
                 let read_top = top.clone();
                 let i = i.clone();
@@ -360,7 +384,12 @@ impl Launcher {
                     .child(profile.when(lock.is_none(), |d| {
                         d.on_click(cx.listener(move |this, _, _, cx| this.switch_profile(&i, cx)))
                     }))
-                    .children(actions),
+                    .children(actions)
+                    // The room the closed button took under the mark eases away with the
+                    // width, so the profiles below don't jump as it leaves the row.
+                    .when(more && labelled, |d| {
+                        d.child(div().flex_none().h(px(actions_room(open))))
+                    }),
             );
         }
         let mut rail = div()
@@ -432,6 +461,31 @@ impl Launcher {
 mod tests {
     use super::*;
     use crate::launch_state::Facts;
+
+    #[test]
+    fn the_actions_button_takes_input_only_where_it_shows_clear_of_the_mark() {
+        for step in 0..=1000 {
+            let open = step as f32 / 1000.;
+            // Inside the rail's padding (5) and border (1): the button sits 5 px from the
+            // right and is 28 wide; the mark sits in its column after the row's border.
+            let button_left = rail_width(open) - 2. * 5. - 2. - 5. - 28.;
+            // The mark is centred in its column, which doesn't move as the sidebar opens.
+            let mark_right = 1. + (CLOSED_ROW - 28.) / 2. + 28.;
+            if open > 0. && side_actions_shown(open) {
+                assert!(
+                    button_left >= mark_right,
+                    "at {open} the button ({button_left}) is over the mark ({mark_right})"
+                );
+            }
+        }
+        // Closed, the button is in the row under the mark; the room it took eases away.
+        assert_eq!(actions_room(0.), 28.);
+        assert_eq!(actions_room(1.), 0.);
+        assert!(
+            (actions_room(0.001) - 28.).abs() < 0.1,
+            "no jump as opening begins"
+        );
+    }
 
     #[test]
     fn icons_keep_the_closed_rows_column_and_labels_wait_for_room() {
