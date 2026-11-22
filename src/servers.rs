@@ -459,12 +459,13 @@ fn publish_host_runtime(dir: &Path, resources: Option<&Path>) -> Result<(), Stri
                 Err(_) if status(dir).running() => return Ok(()),
                 Err(problem) => return Err(problem.message),
             };
-            let Some((_, path)) = probed else {
+            let Some(probed) = probed else {
                 // Before engine-command the CLI forwarded these verbs directly. There is
                 // no authoritative resource path to publish for those supervisors.
                 return Ok(());
             };
-            reported = path;
+            (_, reported) =
+                prepare_host_resources(dir, probed).map_err(|problem| problem.message)?;
             &reported
         }
     };
@@ -518,11 +519,12 @@ pub fn run_managed(
     line: &dyn Fn(String),
     permission: crate::jars::Permission<'_>,
 ) -> Result<(), Problem> {
-    let (mut engine, resources) = engine_command(dir)?.ok_or_else(|| {
+    let probed = engine_command(dir)?.ok_or_else(|| {
         Problem::plain(tr(
             "This server's Sunrise build is too old to start from the launcher: update the server to a newer build.",
         ))
     })?;
+    let (mut engine, resources) = prepare_host_resources(dir, probed)?;
     crate::jars::prepare_launch(&mut engine, &crate::launch::Launch::default(), permission)
         .map_err(|error| Problem::plain(error.to_string()))?;
     let supervisor = supervisor_command(dir, args, Some(&resources)).map_err(Problem::plain)?;
@@ -532,14 +534,39 @@ pub fn run_managed(
 /// The `format` of `sunrise-server engine-command --json` this launcher reads (sunrise-org/sunrise's docs/api/engine-command.md).
 const ENGINE_COMMAND_FORMAT: u64 = 1;
 
+#[derive(Debug)]
+struct EngineResources {
+    path: PathBuf,
+    pending: bool,
+}
+
 /// The engine and resources the supervisor would use, or `None` for a pre-protocol supervisor.
-fn engine_command(dir: &Path) -> Result<Option<(Command, PathBuf)>, Problem> {
+fn engine_command(dir: &Path) -> Result<Option<(Command, EngineResources)>, Problem> {
     let output = command(dir, &["engine-command", "--json"])
         .map_err(Problem::plain)?
         .stdin(Stdio::null())
         .output()
         .map_err(|e| unrun(&e))?;
     engine_from_reply(&output.stdout)
+}
+
+fn prepare_host_resources(
+    dir: &Path,
+    (engine, resources): (Command, EngineResources),
+) -> Result<(Command, PathBuf), Problem> {
+    if !resources.pending {
+        return Ok((engine, resources.path));
+    }
+    // For a pending managed install, init repairs its resources without changing server.toml
+    // or recording a new EULA agreement (sunrise-org/sunrise#4620).
+    run(dir, &["init", "--yes"])?;
+    match engine_command(dir)? {
+        Some((engine, resources)) if !resources.pending => Ok((engine, resources.path)),
+        _ => Err(Problem {
+            message: tr("The server's game files are still not prepared.").into(),
+            fix: Some(Fix::Prepare),
+        }),
+    }
 }
 
 /// Why `sunrise-server` couldn't be run, in the launcher's language.
@@ -551,7 +578,7 @@ fn unrun(error: &std::io::Error) -> Problem {
 }
 
 /// [`engine_command`]'s reply as a command, or the problem it names: missing game files are [`Fix::Prepare`].
-fn engine_from_reply(stdout: &[u8]) -> Result<Option<(Command, PathBuf)>, Problem> {
+fn engine_from_reply(stdout: &[u8]) -> Result<Option<(Command, EngineResources)>, Problem> {
     // A build from before `engine-command` answers with its usage, never with a JSON object, whatever its exit code.
     let Some(reply) = serde_json::from_slice::<serde_json::Value>(stdout)
         .ok()
@@ -591,7 +618,13 @@ fn engine_from_reply(stdout: &[u8]) -> Result<Option<(Command, PathBuf)>, Proble
             None => engine.env_remove(key),
         };
     }
-    Ok(Some((engine, PathBuf::from(text("resources")?))))
+    let resources = EngineResources {
+        path: PathBuf::from(text("resources")?),
+        pending: Option::<bool>::deserialize(&reply["resources_pending"])
+            .map_err(|_| unreadable())?
+            .unwrap_or_default(),
+    };
+    Ok(Some((engine, resources)))
 }
 
 fn stream(dir: &Path, mut command: Command, line: &dyn Fn(String)) -> Result<(), Problem> {
