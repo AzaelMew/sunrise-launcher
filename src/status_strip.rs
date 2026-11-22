@@ -90,6 +90,14 @@ impl Launcher {
                             .child(div().truncate().child(label))
                             .child(crate::widgets::progress_bar(fraction, &self.theme)),
                     )
+                    .children(self.active_source_build().map(|id| {
+                        button("source-build-show", tr("Show the build")).on_click(cx.listener(
+                            move |this, _, _, cx| {
+                                this.open_source_build(id);
+                                cx.notify();
+                            },
+                        ))
+                    }))
                     .children(stop),
             );
         }
@@ -112,6 +120,22 @@ impl Launcher {
                             .child(div().truncate().child(stage_label(step)))
                             .child(crate::widgets::progress_bar(fraction, &self.theme)),
                     ),
+                );
+            }
+        }
+        if self.registry_stage().is_none() && self.native_step.is_none() {
+            if let Some((id, said)) = self.recent_source_build() {
+                return Some(
+                    strip()
+                        .child(div().flex_1().min_w_0().truncate().child(said))
+                        .child(
+                            button("source-build-show-result", tr("Show the build")).on_click(
+                                cx.listener(move |this, _, _, cx| {
+                                    this.open_source_build(id);
+                                    cx.notify();
+                                }),
+                            ),
+                        ),
                 );
             }
         }

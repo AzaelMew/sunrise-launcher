@@ -255,6 +255,7 @@ impl Edit<'_> {
         cancellation: &native_mods::Cancellation,
         progress: impl Fn(native_mods::Step),
         consent: Option<&dyn Fn(&native_mods::Consent) -> bool>,
+        log: Option<&dyn Fn(std::sync::Arc<str>)>,
     ) -> Result<CandidateImage, native_mods::Failed> {
         let before = inputs(candidate, None)?;
         let preferred = match &self.basis {
@@ -271,6 +272,7 @@ impl Edit<'_> {
             cancellation,
             progress,
             consent,
+            log,
         )?;
         if inputs(candidate, None)? != before {
             return Err(unsettled().into());

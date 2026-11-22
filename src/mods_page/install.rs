@@ -17,6 +17,9 @@ use sunrise_launcher::{
     profile_txn::Identity,
 };
 
+mod source_build;
+pub(crate) use source_build::{SourceBuild, SourcePicks};
+
 #[derive(Default)]
 pub(crate) struct Installs {
     running: Option<Running>,
@@ -25,6 +28,8 @@ pub(crate) struct Installs {
     pub(crate) world: Option<(WorldQuestion, Sender<bool>)>,
     source_question: Option<(SourceQuestion, Sender<Result<bool, String>>)>,
     source_outcomes: BTreeMap<(Identity, String), Result<(), SourceError>>,
+    source_builds: Vec<SourceBuild>,
+    shown_source_build: Option<usize>,
     outcomes: HashMap<(PathBuf, String), Outcome>,
     play: Option<(PathBuf, launcher_play::PlayIntent)>,
 }
@@ -38,6 +43,7 @@ struct Running {
     stage: InstallProgress,
     github: Option<Arc<GithubInput>>,
     source: Option<RunningSource>,
+    source_build: Option<usize>,
     mixed: bool,
 }
 
@@ -51,6 +57,7 @@ struct Request {
     github: Option<Arc<GithubInput>>,
     sources: Vec<PreparedSource>,
     mixed_registry: Vec<String>,
+    source_build: Option<(usize, SourcePicks)>,
 }
 
 impl Request {
@@ -106,6 +113,15 @@ pub(crate) struct SourceTarget {
 }
 
 impl SourceTarget {
+    fn same_destination(&self, other: &Self) -> bool {
+        self.identity == other.identity
+            && self.profile.id == other.profile.id
+            && self.profile.home == other.profile.home
+            && self.profile.incarnation == other.profile.incarnation
+            && self.profile.native_profile == other.profile.native_profile
+            && self.base == other.base
+    }
+
     pub(crate) fn instance(&self) -> &instances::Instance {
         &self.profile
     }
@@ -180,6 +196,10 @@ pub(crate) enum Decision {
 
 pub(crate) enum Worker {
     SourcePhase,
+    SourceStep(native_mods::Step),
+    SourceLog(Arc<str>),
+    SourceRejected(String, SourceError),
+    SourceVersion(String, String),
     Mixed(Box<CombinedUpdate>),
     Progress(InstallProgress),
     Native(NativeQuestion, Sender<Result<bool, String>>),
@@ -389,6 +409,36 @@ impl Installs {
             Worker::Progress(step) => {
                 if let Some(run) = &mut self.running {
                     run.stage = step;
+                    if let Some(id) = run.source_build {
+                        self.source_builds[id].progress(step);
+                    }
+                }
+            }
+            Worker::SourceStep(step) => {
+                if let Some(id) = self.running.as_ref().and_then(|run| run.source_build) {
+                    self.source_builds[id].step(&step);
+                }
+            }
+            Worker::SourceLog(log) => {
+                if let Some(id) = self.running.as_ref().and_then(|run| run.source_build) {
+                    self.source_builds[id].output = Some(log);
+                }
+            }
+            Worker::SourceRejected(mod_id, error) => {
+                if let Some(id) = self.running.as_ref().and_then(|run| run.source_build) {
+                    self.source_builds[id].reject(mod_id, error);
+                }
+            }
+            Worker::SourceVersion(mod_id, version) => {
+                if let Some(id) = self.running.as_ref().and_then(|run| run.source_build) {
+                    if let Some(line) = self.source_builds[id]
+                        .run
+                        .lines
+                        .iter_mut()
+                        .find(|line| line.id == mod_id)
+                    {
+                        line.version = version;
+                    }
                 }
             }
             Worker::Decide(notice, reply) => {
@@ -426,9 +476,22 @@ impl Installs {
                             eprintln!("Nightly source edit: {error}");
                         }
                     }
+                    let attempt = run.source_build.map(|id| {
+                        let build = &mut self.source_builds[id];
+                        build.finish(&outcome);
+                        build
+                    });
                     for id in &run.requests[0].ids {
-                        self.source_outcomes
-                            .insert((run.identity, id.clone()), outcome.clone());
+                        let key = (run.identity, id.clone());
+                        if matches!(outcome, Err(SourceError::Cancelled)) {
+                            self.source_outcomes.remove(&key);
+                        } else {
+                            let result = attempt.as_deref().map_or_else(
+                                || outcome.clone(),
+                                |build| build.outcome(id, &outcome),
+                            );
+                            self.source_outcomes.insert(key, result);
+                        }
                     }
                 } else {
                     for request in run.requests {
@@ -603,6 +666,7 @@ impl Launcher {
             github: None,
             sources: inputs,
             mixed_registry: registry,
+            source_build: None,
         });
         self.start_registry_queue();
         Ok(())
@@ -835,10 +899,27 @@ impl Launcher {
     }
 
     pub(crate) fn github_target(&self) -> Result<GithubTarget, String> {
+        self.github_target_for(false)
+    }
+
+    fn source_build_target(&self) -> Result<SourceTarget, String> {
+        self.github_target_for(true)?.source()
+    }
+
+    pub(crate) fn source_build_base(&self, profile: &instances::Instance) -> Option<&str> {
+        let run = self.mods.installs.running.as_ref()?;
+        (run.source_build.is_some()
+            && run.profile.id == profile.id
+            && run.profile.home == profile.home)
+            .then_some(run.target.as_deref())
+            .flatten()
+    }
+
+    fn github_target_for(&self, queue_behind_native_build: bool) -> Result<GithubTarget, String> {
         if self.accounts.selected().is_none() && !sunrise_launcher::developer_offline::selected() {
             return Err(tr("Installs after you sign in").into());
         }
-        if let Some(why) = self.mods_locked() {
+        if let Some(why) = self.mods_locked_for(queue_behind_native_build) {
             return Err(why.into());
         }
         let profile = self
@@ -901,6 +982,7 @@ impl Launcher {
             github: Some(input),
             sources: Vec::new(),
             mixed_registry: Vec::new(),
+            source_build: None,
         });
         self.start_registry_queue();
         Ok(())
@@ -946,6 +1028,7 @@ impl Launcher {
             github: None,
             sources: Vec::new(),
             mixed_registry: Vec::new(),
+            source_build: None,
         });
         self.start_registry_queue();
         Ok(())
@@ -970,14 +1053,32 @@ impl Launcher {
         let ids = request.view.ids.clone();
         let cancellation = Cancellation::default();
         let mixed = kind == Kind::Mixed;
+        let source_build = request.source_build.as_ref().map(|(id, _)| *id);
+        let listed = request
+            .source_build
+            .as_ref()
+            .is_none_or(|(_, picks)| self.source_picks_listed(picks.listings()));
         let source = matches!(kind, Kind::Source | Kind::Mixed).then(|| RunningSource {
             ids: ids.clone(),
             visible: !mixed,
-            names: request
-                .source_inputs()
-                .iter()
-                .map(|source| source.name().into())
-                .collect(),
+            names: if let Some(id) = source_build {
+                let build = &mut self.mods.installs.source_builds[id];
+                build.started = true;
+                build.run.step = tr("Checking the sources…").into();
+                build.stages.push(build.run.step.clone());
+                build
+                    .run
+                    .lines
+                    .iter()
+                    .map(|line| line.title.clone())
+                    .collect()
+            } else {
+                request
+                    .source_inputs()
+                    .iter()
+                    .map(|source| source.name().into())
+                    .collect()
+            },
             cancellation: cancellation.clone(),
         });
         let mut views = Vec::new();
@@ -998,12 +1099,13 @@ impl Launcher {
             mixed,
             stage: InstallProgress::Checking,
             source,
+            source_build,
             github: request.github.clone(),
         });
         let tx = self.mods.tx.clone();
         let launcher = self.tx.clone();
         std::thread::spawn(move || {
-            let post = |event| tx.send(Event::Registry(event));
+            let post = |event| tx.send(Event::Registry(event)).is_ok();
             let choose = || {
                 if let Some(tag) = request
                     .target
@@ -1022,9 +1124,7 @@ impl Launcher {
                 post(Worker::Decide(
                     Decision::Resolve(Arc::new(question.clone())),
                     reply,
-                ))
-                .is_ok()
-                    && answer.recv().unwrap_or(false)
+                )) && answer.recv().unwrap_or(false)
             };
             let hooks = InstallHooks {
                 progress: &|step| {
@@ -1032,7 +1132,7 @@ impl Launcher {
                 },
                 native: &|question| {
                     let (reply, answer) = std::sync::mpsc::channel();
-                    if post(Worker::Native(question.clone(), reply)).is_err() {
+                    if !post(Worker::Native(question.clone(), reply)) {
                         return Ok(false);
                     }
                     answer.recv().unwrap_or(Ok(false))
@@ -1046,7 +1146,7 @@ impl Launcher {
                 }),
                 continue_after_failure: &|notice| {
                     let (reply, answer) = std::sync::mpsc::channel();
-                    post(Worker::Decide(Decision::Build(notice.clone()), reply)).is_ok()
+                    post(Worker::Decide(Decision::Build(notice.clone()), reply))
                         && answer.recv().unwrap_or(false)
                 },
                 resolve: (kind == Kind::Install)
@@ -1070,7 +1170,7 @@ impl Launcher {
                     );
                     question.cancel_default |= next.cancel_default;
                 }
-                post(Worker::World(question, reply)).is_ok() && answer.recv().unwrap_or(false)
+                post(Worker::World(question, reply)) && answer.recv().unwrap_or(false)
             };
             let approve = |impact: &ChangeImpact| review(impact, None);
             let authorize = |prepared: &[PreparedSource]| {
@@ -1082,7 +1182,7 @@ impl Launcher {
                         .collect(),
                 };
                 let (reply, answer) = std::sync::mpsc::channel();
-                if post(Worker::Source(question, reply)).is_err() {
+                if !post(Worker::Source(question, reply)) {
                     return Ok(false);
                 }
                 answer.recv().unwrap_or(Ok(false))
@@ -1129,20 +1229,119 @@ impl Launcher {
                         }
                     }
                 }
-                Kind::Source => sunrise::apply_sources(
-                    &request.profile,
-                    request.identity,
-                    request.source_inputs(),
-                    choose,
-                    SourceHooks {
+                Kind::Source => {
+                    let step = |step: &native_mods::Step| {
+                        let _ = post(Worker::SourceStep(step.clone()));
+                    };
+                    let log = |log: Arc<str>| {
+                        let _ = post(Worker::SourceLog(log));
+                    };
+                    let hooks = SourceHooks {
                         install: hooks,
                         cancellation: &cancellation,
                         authorize: &authorize,
                         approve_worlds: &approve,
-                    },
-                )
-                .map(|()| InstalledBatch::default())
-                .map_err(InstallError::Source),
+                        step: if source_build.is_some() {
+                            Some(&step)
+                        } else {
+                            None
+                        },
+                        log: if source_build.is_some() {
+                            Some(&log)
+                        } else {
+                            None
+                        },
+                    };
+                    let result = if let Some((_, picks)) = &request.source_build {
+                        (|| {
+                            if !listed {
+                                return Err(SourceError::Changed(
+                                    tr("This source listing changed. Open it again from Discover.")
+                                        .into(),
+                                ));
+                            }
+                            let mut rejected = None;
+                            let mut pins = Vec::new();
+                            let mut resolved = picks.resolve();
+                            for listing in picks.listings() {
+                                if cancellation.is_stopped() {
+                                    return Err(SourceError::Cancelled);
+                                }
+                                let pin = resolved.next().expect("one resolution per listing");
+                                if cancellation.is_stopped() {
+                                    return Err(SourceError::Cancelled);
+                                }
+                                match pin {
+                                    Ok(pin) => pins.push(pin),
+                                    Err(error) => {
+                                        let error = SourceError::Github(error);
+                                        let _ = post(Worker::SourceRejected(
+                                            listing.id().into(),
+                                            error.clone(),
+                                        ));
+                                        rejected = Some(error);
+                                    }
+                                }
+                            }
+                            let packed = sunrise::pack_sources(&pins, &cancellation);
+                            if cancellation.is_stopped() {
+                                return Err(SourceError::Cancelled);
+                            }
+                            let mut packages = Vec::new();
+                            for (pin, result) in pins.iter().zip(packed) {
+                                match result {
+                                    Ok(package) => {
+                                        let origin = package.origin();
+                                        let _ = post(Worker::SourceVersion(
+                                            origin.id.clone(),
+                                            origin.version.clone(),
+                                        ));
+                                        packages.push(package);
+                                    }
+                                    Err(error) => {
+                                        let _ = post(Worker::SourceRejected(
+                                            pin.source().id().into(),
+                                            error.clone(),
+                                        ));
+                                        rejected = Some(error);
+                                    }
+                                }
+                            }
+                            if cancellation.is_stopped() {
+                                return Err(SourceError::Cancelled);
+                            }
+                            if packages.is_empty() {
+                                return Err(rejected.unwrap_or(SourceError::Cancelled));
+                            }
+                            let result = sunrise::apply_queued_sources(
+                                &request.profile,
+                                request.identity,
+                                request
+                                    .target
+                                    .as_deref()
+                                    .expect("source build has a target"),
+                                packages,
+                                hooks,
+                            );
+                            if cancellation.is_stopped() {
+                                Err(SourceError::Cancelled)
+                            } else {
+                                result
+                            }
+                        })()
+                    } else {
+                        sunrise::apply_sources(
+                            &request.profile,
+                            request.identity,
+                            request.source_inputs(),
+                            choose,
+                            hooks,
+                        )
+                    };
+                    result
+                        .map(|()| InstalledBatch::default())
+                        .map_err(InstallError::Source)
+                }
                 Kind::Mixed => {
                     let done = sunrise::update_registry_and_sources(
                         &request.profile,
@@ -1280,6 +1479,7 @@ mod tests {
             github: None,
             sources: Vec::new(),
             mixed_registry: Vec::new(),
+            source_build: None,
             view: RequestView {
                 kind: Kind::Install,
                 card: id.into(),
@@ -1300,6 +1500,7 @@ mod tests {
                 stage: InstallProgress::Checking,
                 github: None,
                 source: None,
+                source_build: None,
                 mixed: false,
             }),
             ..Installs::default()

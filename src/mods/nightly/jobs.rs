@@ -1,6 +1,6 @@
 //! Read-only inspection and explicit update offers. Only the shared installer can publish.
 use super::*;
-use crate::mods_page::install::SourceTarget;
+use crate::mods_page::install::{SourcePicks, SourceTarget};
 use std::collections::BTreeMap;
 use sunrise_launcher::browser::sunrise::{PreparedSource, SourceError, SourceRequest};
 use sunrise_launcher::github_mods::{Origin, SourceTrack};
@@ -12,7 +12,6 @@ pub(in crate::mods) enum Event {
     Image(sources::ReadmeImage, Option<PathBuf>),
     Icon(sources::SourceIcon, Option<PathBuf>),
     Updates(Box<CheckedUpdates>),
-    Collection(Box<super::collection::PreparedCollection>),
 }
 
 pub(in crate::mods) struct Open {
@@ -24,8 +23,6 @@ pub(in crate::mods) struct Open {
 
 pub(in crate::mods) struct Inspection {
     pub(super) data: sources::Details,
-    /// Only a confirmed vacant mod ID can start an Add preflight.
-    pub(super) candidate: Option<Result<(SourceTarget, PreparedSource), SourceError>>,
 }
 
 pub(in crate::mods) struct CheckedUpdates {
@@ -108,7 +105,6 @@ impl Launcher {
                 state.work.checking = false;
                 state.work.updates = Some(*checked);
             }
-            Event::Collection(done) => self.collection_prepared(*done),
         }
     }
 
@@ -137,10 +133,6 @@ impl Launcher {
 
     pub(in crate::mods) fn inspect_nightly(&mut self, source: Source, refresh: bool) {
         let scope = self.mods_page_scope();
-        let add = self
-            .discover_installed()
-            .is_some_and(|rows| rows.source_presence(&source) == SourcePresence::Missing);
-        let target = add.then(|| self.source_target());
         self.ui.page = Page::Project;
         self.ui.mods.open = None;
         let state = &mut self.ui.mods.nightly;
@@ -159,30 +151,9 @@ impl Launcher {
         let tx = self.ui.mods.tx.clone();
         std::thread::spawn(move || {
             let data = sources::details(&source, refresh);
-            let candidate = target.map(|target| {
-                if let Some(error) = &data.error {
-                    return Err(SourceError::Github(error.clone()));
-                }
-                let pin = data
-                    .commit
-                    .clone()
-                    .ok_or(SourceError::Github(sources::Failure::NoManifest))?;
-                let target = target.map_err(SourceError::Unproved)?;
-                let candidate = sunrise::prepare_source(
-                    target.instance(),
-                    target.identity(),
-                    target.base(),
-                    SourceRequest::Add(pin),
-                    &Cancellation::default(),
-                )?;
-                Ok((target, candidate))
-            });
-            if let Some(Err(error)) = &candidate {
-                eprintln!("Nightly source preflight ({}): {error}", source.id());
-            }
             let _ = tx.send(super::super::Event::Nightly(Event::Detail(
                 request,
-                Box::new(Inspection { data, candidate }),
+                Box::new(Inspection { data }),
             )));
         });
     }
@@ -230,64 +201,60 @@ impl Launcher {
     }
 
     pub(super) fn nightly_busy(&self) -> bool {
-        self.mutating()
-            || self.mods_locked().is_some()
-            || self
-                .ui
-                .mods
-                .snapshot
-                .as_ref()
-                .is_none_or(|snap| !snap.ready())
+        self.mods_locked_for(true).is_some()
+            || (!self.mutating()
+                && self
+                    .ui
+                    .mods
+                    .snapshot
+                    .as_ref()
+                    .is_none_or(|snap| !snap.ready()))
+    }
+
+    pub(crate) fn source_picks_listed(&self, picks: &[Source]) -> bool {
+        self.ui
+            .mods
+            .nightly
+            .catalogue
+            .as_ref()
+            .is_some_and(|list| picks.iter().all(|source| list.sources.contains(source)))
     }
 
     pub(super) fn build_nightly(&mut self) {
-        if !self.nightly_catalogue_current() || !self.guard() || self.nightly_busy() {
+        if !self.nightly_catalogue_current() || self.nightly_busy() {
             return;
         }
         let scope = self.mods_page_scope();
-        let Some(rows) = self.discover_installed() else {
-            return;
-        };
-        if self
+        let Some(open) = self
             .ui
             .mods
             .nightly
             .open
             .as_ref()
-            .is_none_or(|open| rows.source_presence(&open.source) != SourcePresence::Missing)
+            .filter(|open| open.scope == scope)
+        else {
+            return;
+        };
+        if !self
+            .discover_installed()
+            .is_some_and(|rows| rows.source_presence(&open.source) == SourcePresence::Missing)
         {
             return;
         }
-        let state = &mut self.ui.mods.nightly;
-        let Some(open) = state.open.as_mut().filter(|open| open.scope == scope) else {
-            return;
-        };
-        if !state
-            .catalogue
-            .as_ref()
-            .is_some_and(|list| list.sources.contains(&open.source))
-        {
+        if !self.source_picks_listed(std::slice::from_ref(&open.source)) {
             self.ui.mods.notice = Some(Err(tr(
                 "This source listing changed. Open it again from Discover.",
             )
             .into()));
             return;
         }
-        let Some(candidate) = open
+        if let Some(pin) = open
             .inspection
-            .as_mut()
-            .and_then(|inspection| inspection.candidate.as_mut())
-        else {
-            return;
-        };
-        if candidate.is_err() {
-            return;
-        }
-        let candidate = std::mem::replace(candidate, Err(SourceError::Cancelled));
-        if let Ok((target, candidate)) = candidate {
-            if let Err(error) = self.queue_sources(target, vec![candidate]) {
-                self.ui.mods.notice = Some(Err(error));
-            }
+            .as_ref()
+            .and_then(|inspection| inspection.data.checked_commit())
+            .cloned()
+        {
+            self.queue_source_build(SourcePicks::One(Box::new(pin)));
         }
     }
 

@@ -108,10 +108,43 @@ pub(crate) fn pack_pin(
         .repo()
         .split_once('/')
         .expect("validated source repository");
-    let (scratch, top) = archive_at(owner, repo, pin.sha(), cancellation)?;
+    let snapshot = archive_at(owner, repo, pin.sha(), cancellation)?;
+    pack_snapshot(pin, &snapshot, cancellation)
+}
+
+/// A collection may list several folders in the same exact repository snapshot. Download and
+/// unpack it once, but still prove each declared manifest and package on its own.
+pub(crate) fn pack_pins(
+    pins: &[SourceCommit],
+    cancellation: &Cancellation,
+) -> Vec<Result<(Packed, Origin), Failure>> {
+    let mut snapshots = std::collections::HashMap::new();
+    pins.iter()
+        .map(|pin| {
+            let source = pin.source();
+            let (owner, repo) = source.repo().split_once('/').expect("validated repository");
+            let snapshot = snapshots
+                .entry((source.repo_id(), source.repo(), pin.sha()))
+                .or_insert_with(|| archive_at(owner, repo, pin.sha(), cancellation));
+            pack_snapshot(
+                pin,
+                snapshot.as_ref().map_err(|error| error.clone())?,
+                cancellation,
+            )
+        })
+        .collect()
+}
+
+fn pack_snapshot(
+    pin: &SourceCommit,
+    (scratch, top): &(std::sync::Arc<tempfile::TempDir>, PathBuf),
+    cancellation: &Cancellation,
+) -> Result<(Packed, Origin), Failure> {
+    let source = pin.source();
+    let (owner, repo) = source.repo().split_once('/').expect("validated repository");
     let checked = Failure::Other;
     cancellation.check().map_err(checked)?;
-    let mut manifest = top;
+    let mut manifest = top.clone();
     for component in source.manifest().split('/') {
         // Match the declared spelling even on a case-insensitive filesystem.
         manifest = fs::read_dir(&manifest)
@@ -140,7 +173,7 @@ pub(crate) fn pack_pin(
         return Err(checked(tr("The GitHub mod download is too large.").into()));
     }
     let mut package = super::checked(&bytes, scratch.path(), None).map_err(checked)?;
-    package._scratch = Some(scratch);
+    package._scratch = Some(scratch.clone());
     let origin = Origin {
         id: package.id.clone(),
         version: package.version.clone(),

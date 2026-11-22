@@ -2053,6 +2053,7 @@ pub fn build(
 
 /// Compile the admitted profile's whole enabled set without changing its pointer or files.
 /// The exact build is only a cache candidate until the profile journal publishes it.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn build_exact_client(
     base: &str,
     home: &Path,
@@ -2061,6 +2062,7 @@ pub(crate) fn build_exact_client(
     cancellation: &Cancellation,
     progress: impl Fn(Step),
     registry_consent: Option<&dyn Fn(&Consent) -> bool>,
+    log: Option<&dyn Fn(std::sync::Arc<str>)>,
 ) -> Result<String, Failed> {
     cancellation.admit_native_work()?;
     if let Some(error) = backend::native_mod_architecture_error() {
@@ -2101,7 +2103,14 @@ pub(crate) fn build_exact_client(
             cancellation.check()?;
             Ok(built.version)
         },
-        |_| {},
+        |_| {
+            // The terminal attempt line and imported compiler output belong to this lease.
+            if let Some(log) = log {
+                if let Some(output) = build_log::snapshot() {
+                    log(output);
+                }
+            }
+        },
     )
 }
 

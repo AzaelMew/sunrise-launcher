@@ -75,6 +75,7 @@ pub enum SourceError {
     Build {
         detail: String,
         log: Option<Arc<str>>,
+        failed: Vec<String>,
     },
 }
 
@@ -166,13 +167,18 @@ pub fn prepare_source(
 }
 
 /// One pinned listing's exact bytes, to check with others through [`prepare_pasted_sources`].
-pub fn pack_source(
-    pin: &SourceCommit,
+pub fn pack_sources(
+    pins: &[SourceCommit],
     cancellation: &native_mods::Cancellation,
-) -> Result<PastedSource, SourceError> {
-    github_mods::pack_pin(pin, cancellation)
-        .map(|(package, origin)| PastedSource { package, origin })
-        .map_err(SourceError::Github)
+) -> Vec<Result<PastedSource, SourceError>> {
+    github_mods::pack_pins(pins, cancellation)
+        .into_iter()
+        .map(|result| {
+            result
+                .map(|(package, origin)| PastedSource { package, origin })
+                .map_err(SourceError::Github)
+        })
+        .collect()
 }
 
 /// Uncompiled, exact bytes from a single pasted GitHub snapshot. Being listed is not a fit proof.
@@ -245,6 +251,65 @@ fn prepare_packages(
     packages: Vec<(PastedSource, Option<Origin>)>,
     cancellation: &native_mods::Cancellation,
 ) -> Result<Vec<PreparedSource>, SourceError> {
+    let stage = tempfile::tempdir().map_err(|e| e.to_string())?;
+    let (result, origins) = bind_packages(
+        instance,
+        identity,
+        base,
+        packages,
+        Some(stage.path()),
+        cancellation,
+    )?;
+    let entries = result.iter().map(PreparedSource::entry).collect::<Vec<_>>();
+    let trial = github::stage_entries(
+        stage.path(),
+        &entries,
+        &origins,
+        result[0].active.as_ref(),
+        base,
+    )?;
+    check_source_set(stage.path(), &trial.off, base, cancellation)?;
+    Ok(result)
+}
+
+/// The queued selection enters the install transaction directly. Fit is checked once against
+/// that transaction's exact staged set, before consent or compilation. Read-only previews
+/// still use `prepare_packages` so their answers come from an isolated copy.
+pub fn apply_queued_sources(
+    instance: &Instance,
+    identity: Identity,
+    base: &str,
+    selected: Vec<PastedSource>,
+    hooks: SourceHooks<'_>,
+) -> Result<(), SourceError> {
+    let (prepared, _) = bind_packages(
+        instance,
+        identity,
+        base,
+        selected.into_iter().map(|entry| (entry, None)).collect(),
+        None,
+        hooks.cancellation,
+    )?;
+    if prepared.is_empty() {
+        return hooks.cancellation.check().map_err(SourceError::from);
+    }
+    apply_sources(
+        instance,
+        identity,
+        &prepared,
+        || FirstBuild::installed(base),
+        hooks,
+    )
+}
+
+fn bind_packages(
+    instance: &Instance,
+    identity: Identity,
+    base: &str,
+    packages: Vec<(PastedSource, Option<Origin>)>,
+    copy_to: Option<&Path>,
+    cancellation: &native_mods::Cancellation,
+) -> Result<(Vec<PreparedSource>, BTreeMap<String, Origin>), SourceError> {
     if packages.is_empty() {
         return Err(SourceError::Cancelled);
     }
@@ -258,8 +323,7 @@ fn prepare_packages(
     if checked_base.base_tag() != base {
         return Err(changed_source_target());
     }
-    let stage = tempfile::tempdir().map_err(|e| e.to_string())?;
-    let (result, origins) = {
+    {
         let _lock = crate::browser::lock_home(&instance.home).map_err(|e| e.to_string())?;
         let active = managed_play::display_active(&instance.home)?;
         if Identity::of(&instance.home)? != identity
@@ -272,6 +336,11 @@ fn prepare_packages(
         let before = managed_play::inputs(&instance.home, None)?;
         let selected = packages
             .into_iter()
+            // An earlier request only satisfies a queued pick after publishing these exact bytes.
+            // A checked preview/update has predecessor rules of its own and never skips here.
+            .filter(|(pasted, _)| {
+                copy_to.is_some() || !source_is_published(instance, active.as_ref(), &pasted.origin)
+            })
             .map(|(pasted, predecessor)| PreparedSource {
                 identity,
                 base: base.into(),
@@ -283,29 +352,37 @@ fn prepare_packages(
                 predecessor,
             })
             .collect::<Vec<_>>();
-        let entries = selected
-            .iter()
-            .map(PreparedSource::entry)
-            .collect::<Vec<_>>();
-        let origins = github::predecessors(&instance.home, &entries)?;
-        managed_play::copy_install_inputs(&instance.home, stage.path())?;
-        if managed_play::inputs(stage.path(), None)? != before
-            || managed_play::inputs(&instance.home, None)? != before
-        {
-            return Err(changed_source_target());
-        }
-        (selected, origins)
-    };
-    let entries = result.iter().map(PreparedSource::entry).collect::<Vec<_>>();
-    let trial = github::stage_entries(
-        stage.path(),
-        &entries,
-        &origins,
-        result[0].active.as_ref(),
-        base,
-    )?;
-    check_source_set(stage.path(), &trial.off, base, cancellation)?;
-    Ok(result)
+        let origins = if let Some(stage) = copy_to {
+            let entries = selected
+                .iter()
+                .map(PreparedSource::entry)
+                .collect::<Vec<_>>();
+            let origins = github::predecessors(&instance.home, &entries)?;
+            managed_play::copy_install_inputs(&instance.home, stage)?;
+            if managed_play::inputs(stage, None)? != before
+                || managed_play::inputs(&instance.home, None)? != before
+            {
+                return Err(changed_source_target());
+            }
+            origins
+        } else {
+            BTreeMap::new()
+        };
+        Ok((selected, origins))
+    }
+}
+
+fn source_is_published(
+    instance: &Instance,
+    active: Option<&managed_play::Active>,
+    origin: &Origin,
+) -> bool {
+    let home = &instance.home;
+    github_mods::origin(home, &origin.id).as_ref() == Some(origin)
+        && active.is_some_and(|active| {
+            active.holds().all(|held| held.id() != origin.id) && active.matches_inputs(home)
+        })
+        && github::installed_origin(home, &origin.id, |installed| installed == origin).is_ok()
 }
 
 pub struct SourceHooks<'a> {
@@ -313,6 +390,8 @@ pub struct SourceHooks<'a> {
     pub cancellation: &'a native_mods::Cancellation,
     pub authorize: &'a dyn Fn(&[PreparedSource]) -> Result<bool, String>,
     pub approve_worlds: &'a dyn Fn(&ChangeImpact) -> bool,
+    pub step: Option<&'a dyn Fn(&native_mods::Step)>,
+    pub log: Option<&'a dyn Fn(Arc<str>)>,
 }
 
 pub fn apply_sources(
@@ -363,6 +442,8 @@ pub fn apply_sources(
             active: first.active.as_ref(),
             cancellation,
             authorize: &|| (hooks.authorize)(prepared),
+            step: hooks.step,
+            log: hooks.log,
         }),
     )
     .map_err(SourceError::from);

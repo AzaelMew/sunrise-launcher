@@ -13,8 +13,20 @@ use sunrise_launcher::browser::sunrise;
 impl Launcher {
     /// The build window, while one is open.
     pub(crate) fn build_modal(&mut self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
-        let run = self.ui.mods.build.clone()?;
+        let source = if self.ui.sheet == Some(crate::sheets::Sheet::SourceBuild) {
+            Some(
+                self.source_build_view()
+                    .map(|(id, build)| (id, build.clone()))?,
+            )
+        } else {
+            None
+        };
+        let run = match &source {
+            Some((_, build)) => build.run.clone(),
+            None => self.ui.mods.build.clone()?,
+        };
         let running = run.running();
+        let queued = running && source.as_ref().is_some_and(|(_, build)| !build.started);
         let counts = run.counts();
 
         // ---- the head: what this is, for whom, and the way to put it aside
@@ -49,7 +61,11 @@ impl Launcher {
                     .flex()
                     .flex_col()
                     .gap(px(4.))
-                    .child(crate::sheets::title(run.headline()))
+                    .child(crate::sheets::title(if queued {
+                        tr("Build queued").into()
+                    } else {
+                        run.headline()
+                    }))
                     .child(muted(trf(
                         "{profile} · Sunrise {build}",
                         &[("profile", &run.profile), ("build", &run.on)],
@@ -58,8 +74,21 @@ impl Launcher {
             .child(close);
 
         // ---- how far the whole build is, or how it went
-        let top = if running {
-            let percent = (run.fraction() * 100.).round() as u32;
+        let top = if queued {
+            muted(tr("This build starts when the current work finishes."))
+        } else if running {
+            let fraction = match &source {
+                Some((_, build))
+                    if !matches!(
+                        build.stage,
+                        sunrise::InstallProgress::Building(_)
+                            | sunrise::InstallProgress::Publishing
+                    ) =>
+                {
+                    crate::mods_page::install::stage_fraction(build.stage)
+                }
+                _ => Some(run.fraction()),
+            };
             div()
                 .flex()
                 .flex_col()
@@ -71,14 +100,15 @@ impl Launcher {
                         .gap(px(12.))
                         .text_size(px(tokens::LABEL))
                         .child(div().flex_1().min_w_0().truncate().child(run.step.clone()))
-                        .child(
+                        .children(fraction.map(|fraction| {
+                            let percent = (fraction * 100.).round() as u32;
                             div()
                                 .flex_none()
                                 .text_color(c(palette().muted))
-                                .child(format!("{percent}%")),
-                        ),
+                                .child(format!("{percent}%"))
+                        })),
                 )
-                .child(
+                .children(fraction.map(|fraction| {
                     div()
                         .h(px(6.))
                         .rounded(px(3.))
@@ -89,9 +119,9 @@ impl Launcher {
                                 .h(px(6.))
                                 .rounded(px(3.))
                                 .bg(c(palette().accent))
-                                .w(relative(run.fraction().clamp(0.02, 1.))),
-                        ),
-                )
+                                .w(relative(fraction.clamp(0.02, 1.))),
+                        )
+                }))
                 .children(
                     run.for_play
                         .then(|| muted(tr("The game starts by itself when this is done."))),
@@ -137,7 +167,7 @@ impl Launcher {
                             "tick-02",
                             palette().success,
                         ))
-                        .child(tally(
+                        .children((source.is_none() || counts.needs_update != 0).then(|| tally(
                             counts.needs_update,
                             match counts.needs_update {
                                 1 => tr("1 needs an update").into(),
@@ -145,7 +175,7 @@ impl Launcher {
                             },
                             "information-circle",
                             palette().warning,
-                        ))
+                        )))
                         .child(tally(
                             counts.failed,
                             trf("{count} failed", &[("count", &count(counts.failed))]),
@@ -160,11 +190,13 @@ impl Launcher {
                         Some(div().text_size(px(tokens::LABEL)).line_clamp(4).child(said.clone()))
                     }
                     Some(End::Cancelled) => Some(
-                        div()
-                            .text_size(px(tokens::LABEL))
-                            .child(tr("The game does not start. Build again when you are ready.")),
+                        div().text_size(px(tokens::LABEL)).child(if source.is_some() {
+                            tr("This build did not change your installed mods.")
+                        } else {
+                            tr("The game does not start. Build again when you are ready.")
+                        }),
                     ),
-                    Some(End::Done) if counts.needs_update + counts.failed > 0 => Some(
+                    Some(End::Done) if source.is_none() && counts.needs_update + counts.failed > 0 => Some(
                         div()
                             .text_size(px(tokens::LABEL))
                             .child(tr("You can play now. The rest stay installed and come back once they are updated.")),
@@ -176,7 +208,7 @@ impl Launcher {
         // ---- one line per mod
         let mut list = div().flex().flex_col();
         for (n, line) in run.lines.iter().enumerate() {
-            list = list.child(self.build_line_of(n, line, run.details));
+            list = list.child(self.build_line_of(n, line, run.details, !running, queued));
         }
         let list = card().overflow_hidden().child(
             div()
@@ -188,10 +220,11 @@ impl Launcher {
         );
 
         // ---- the foot: stop it, or put it aside
-        let has_details =
-            run.lines.iter().any(
-                |l| matches!(&l.state, State::NeedsUpdate { details, .. } if !details.is_empty()),
-            ) || counts.failed > 0;
+        let source_id = source.as_ref().map(|(id, _)| *id);
+        let has_details = run
+            .lines
+            .iter()
+            .any(|l| matches!(&l.state, State::NeedsUpdate { details, .. } if !details.is_empty()));
         let details = (!running && has_details).then(|| {
             div()
                 .id("build-details")
@@ -212,8 +245,10 @@ impl Launcher {
                     c(palette().muted),
                 ))
                 .child(tr("Details"))
-                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                    if let Some(run) = &mut this.ui.mods.build {
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    if let Some(id) = source_id {
+                        this.toggle_source_build_details(id);
+                    } else if let Some(run) = &mut this.ui.mods.build {
                         run.details = !run.details;
                     }
                     cx.notify();
@@ -221,7 +256,7 @@ impl Launcher {
         });
         // A build that stopped always offers its log: one that names no mod has no Details.
         let stopped = matches!(run.end, Some(End::Stopped(_)));
-        let log = (!running && (run.details || stopped)).then(|| {
+        let log = (source.is_none() && !running && (run.details || stopped)).then(|| {
             button("build-log", tr("Open the build log")).on_click(cx.listener(
                 |this, _: &ClickEvent, _, cx| {
                     let _ = this;
@@ -229,19 +264,31 @@ impl Launcher {
                 },
             ))
         });
+        let retry = source_id.filter(|_| !running && (stopped || counts.failed > 0));
+        let cancel = source.as_ref().is_none_or(|(_, build)| {
+            build.stage != sunrise::InstallProgress::Publishing
+                && (queued
+                    || self
+                        .source_activity()
+                        .is_none_or(|activity| !activity.stopping))
+        });
         let foot = if running {
             div()
                 .flex()
                 .items_center()
                 .gap(px(10.))
-                .child(
+                .children(cancel.then(|| {
                     button("build-cancel", tr("Cancel build")).on_click(cx.listener(
-                        |this, _: &ClickEvent, _, cx| {
-                            this.stop_build();
+                        move |this, _: &ClickEvent, _, cx| {
+                            if let Some(id) = source_id {
+                                this.cancel_source_build(id);
+                            } else {
+                                this.stop_build();
+                            }
                             cx.notify();
                         },
-                    )),
-                )
+                    ))
+                }))
                 .child(div().flex_1())
                 .child(
                     primary("build-background", tr("Keep building in the background")).on_click(
@@ -259,6 +306,14 @@ impl Launcher {
                 .children(details)
                 .child(div().flex_1())
                 .children(log)
+                .children(retry.map(|id| {
+                    button("source-build-retry", tr("Try again")).on_click(cx.listener(
+                        move |this, _, _, cx| {
+                            this.retry_source_build(id);
+                            cx.notify();
+                        },
+                    ))
+                }))
                 .child(primary("build-done", tr("Done")).on_click(cx.listener(
                     |this, _: &ClickEvent, _, cx| {
                         this.close_sheet();
@@ -267,31 +322,109 @@ impl Launcher {
                 )))
         };
 
+        let content = if let Some((id, build)) = source {
+            let others = self
+                .source_builds()
+                .iter()
+                .enumerate()
+                .filter(|(other, _)| *other != id)
+                .map(|(other, job)| {
+                    let names = job
+                        .run
+                        .lines
+                        .iter()
+                        .map(|line| line.title.clone())
+                        .collect::<Vec<_>>();
+                    let state = if job.run.running() && !job.started {
+                        tr("Queued").into()
+                    } else {
+                        job.run.headline()
+                    };
+                    button(
+                        ("source-build-job", other),
+                        trf(
+                            "{mods} · {status}",
+                            &[("mods", &crate::mods::names(&names)), ("status", &state)],
+                        ),
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.open_source_build(other);
+                        cx.notify();
+                    }))
+                })
+                .collect::<Vec<_>>();
+            let log_button = button(
+                "source-build-log",
+                if build.show_log {
+                    tr("Hide build log")
+                } else {
+                    tr("Show build log")
+                },
+            )
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.toggle_source_build_log(id);
+                cx.notify();
+            }));
+            let log = build.show_log.then(|| {
+                let mut text = build.stages.join("\n");
+                if let Some(output) = build.output {
+                    text.push_str("\n\n");
+                    text.push_str(&output);
+                }
+                if let Some(End::Stopped(reason)) = &run.end {
+                    text.push_str("\n\n");
+                    text.push_str(reason);
+                }
+                card().p(px(12.)).child(crate::selectable::selectable(text))
+            });
+            div()
+                .id("source-build-content")
+                .max_h(px((self.window_height - 290.).max(120.)))
+                .overflow_y_scroll()
+                .track_scroll(&crate::frame::scrolls("source-build-content"))
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(8.))
+                        .child(list)
+                        .when(!others.is_empty(), |d| {
+                            d.child(muted(tr("Other build requests"))).children(others)
+                        })
+                        .child(log_button)
+                        .children(log),
+                )
+                .into_any_element()
+        } else {
+            list.into_any_element()
+        };
         let body = div()
             .flex()
             .flex_col()
             .child(head)
             .child(top)
-            .child(list)
+            .child(content)
             .child(foot);
         Some(crate::sheets::frame("build-window", 600., body, cx))
     }
 
     /// One mod's line: its picture, its name and version, and where it stands.
-    fn build_line_of(&mut self, n: usize, line: &Line, details: bool) -> Div {
+    fn build_line_of(
+        &mut self,
+        n: usize,
+        line: &Line,
+        details: bool,
+        ended: bool,
+        queued: bool,
+    ) -> Div {
         let picture = line
             .icon
             .clone()
             .and_then(|url| self.mods_image(&url, images::ROW));
         // A build that ended never reaches the mods still waiting: they weren't built.
-        let ended = self
-            .ui
-            .mods
-            .build
-            .as_ref()
-            .is_some_and(|run| run.end.is_some());
         let (icon, color, label): (&'static str, u32, String) = match &line.state {
             State::Waiting if ended => ("minus-sign", palette().muted, tr("Not built").into()),
+            State::Waiting if queued => ("clock", palette().muted, tr("Queued").into()),
             State::Waiting => ("clock", palette().muted, tr("Waiting").into()),
             State::Building => ("hammer", palette().accent_ink, tr("Building").into()),
             State::Built => ("tick-02", palette().success, tr("Built").into()),

@@ -98,6 +98,8 @@ pub(super) struct SourceBatch<'a> {
     pub(super) active: Option<&'a managed_play::Active>,
     pub(super) cancellation: &'a native_mods::Cancellation,
     pub(super) authorize: &'a dyn Fn() -> Result<bool, String>,
+    pub(super) step: Option<&'a dyn Fn(&native_mods::Step)>,
+    pub(super) log: Option<&'a dyn Fn(Arc<str>)>,
 }
 
 pub(super) fn edit_github(
@@ -249,7 +251,20 @@ pub(super) fn edit_github(
             progress: &progress,
             ..hooks
         };
-        prove_edit(&edit, home, instance, cancellation, &proof_hooks).map_err(|e| match &e {
+        let proof = edit.prove(
+            home,
+            instance.native_profile,
+            cancellation,
+            |step| {
+                if let Some(observe) = source.and_then(|source| source.step) {
+                    observe(&step);
+                }
+                build_progress(step, proof_hooks.progress);
+            },
+            proof_hooks.registry_crates,
+            source.and_then(|source| source.log),
+        );
+        proof.map_err(|e| match &e {
             native_mods::Failed::Mods { left, .. }
                 if left.iter().any(|item| {
                     matches!(item.why, native_mods::Why::Unfit(_))
@@ -264,10 +279,12 @@ pub(super) fn edit_github(
                 compiling: true,
                 error,
                 log,
+                left,
                 ..
             } if source.is_some() => InstallError::Source(SourceError::Build {
                 detail: error.clone(),
                 log: log.clone(),
+                failed: left.iter().map(|entry| entry.id.clone()).collect(),
             }),
             native_mods::Failed::Tools(_) if source.is_some() => {
                 InstallError::Source(SourceError::Tools(e.into()))
@@ -505,7 +522,7 @@ fn check_fresh(home: &Path, id: &str) -> Result<(), InstallError> {
     Ok(())
 }
 
-fn installed_origin(
+pub(super) fn installed_origin(
     home: &Path,
     id: &str,
     matches: impl FnOnce(&github_mods::Origin) -> bool,

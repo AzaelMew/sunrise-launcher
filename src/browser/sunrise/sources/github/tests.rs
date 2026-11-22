@@ -239,7 +239,13 @@ fn active_cooldown_preserves_cached_details_but_does_not_authorize_builds() {
     let s = Sandbox::new();
     s.readme("README.md", "# Trail Atlas");
     let source = Sandbox::source(42);
-    assert!(inspect(&s.github, &source, None, true).error.is_none());
+    assert_eq!(
+        inspect(&s.github, &source, None, true)
+            .checked_commit()
+            .unwrap()
+            .sha(),
+        SHA
+    );
     s.put(
         &format!("api/repos/{REPO}.status"),
         "429\nRetry-After: 500\n",
@@ -248,6 +254,7 @@ fn active_cooldown_preserves_cached_details_but_does_not_authorize_builds() {
     let start = test_requests();
     let details = inspect(&s.github, &source, None, true);
     assert_eq!(details.error, Some(limited.clone()));
+    assert!(details.checked_commit().is_none());
     assert_eq!(details.commit.unwrap().sha(), SHA);
     assert_eq!(details.readme.unwrap().markdown(), "# Trail Atlas");
     assert_eq!(

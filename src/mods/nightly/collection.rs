@@ -1,27 +1,15 @@
 //! A source collection's page: its mods to pick from, one Build. Each picked mod builds from its
 //! own repository through the same source flow as a single mod, with one consent for all of them.
 use super::*;
-use crate::mods_page::install::{stage_label, SourceTarget};
+use crate::mods_page::install::{stage_label, SourcePicks};
 use std::collections::BTreeSet;
-use sunrise_launcher::browser::sunrise::{PreparedSource, SourceError};
-use sunrise_launcher::native_mods::Cancellation;
+use sunrise_launcher::browser::sunrise::SourceError;
 use sunrise_launcher_smod::index::Collection;
 
 /// The open collection and the mods ticked on its page.
 pub(in crate::mods) struct CollectionOpen {
     id: String,
     ticked: BTreeSet<String>,
-    /// The listings a Build click is checking; its result applies only while they still match.
-    pending: Option<Vec<Source>>,
-}
-
-/// What preparing a collection's picks produced: the builds to queue, and why any pick can't.
-pub(in crate::mods) struct PreparedCollection {
-    id: String,
-    picks: Vec<Source>,
-    target: Option<SourceTarget>,
-    prepared: Vec<PreparedSource>,
-    failed: Vec<(String, String)>,
 }
 
 impl Launcher {
@@ -38,7 +26,6 @@ impl Launcher {
                 .filter(|member| member.default)
                 .map(|member| member.id.clone())
                 .collect(),
-            pending: None,
         });
     }
 
@@ -55,113 +42,19 @@ impl Launcher {
             .collect()
     }
 
-    /// Resolve and check each ticked mod that isn't built yet, then queue them as one batch: the
-    /// installer asks consent once, listing every repository.
+    /// The selected rows become one request, even if another build is running.
     fn build_source_collection(&mut self) {
-        if !self.nightly_catalogue_current() || !self.guard() {
+        if !self.nightly_catalogue_current() || self.nightly_busy() {
             return;
         }
         let built = self.built_sources();
-        let target = self.source_target();
-        let state = &mut self.ui.mods.nightly;
-        let (Some(open), Some(catalogue)) = (state.collection.as_mut(), &state.catalogue) else {
+        let state = &self.ui.mods.nightly;
+        let (Some(open), Some(catalogue)) = (&state.collection, &state.catalogue) else {
             return;
         };
         let picks = collection_picks(catalogue, &open.id, &open.ticked, &built);
-        if picks.is_empty() || open.pending.is_some() {
-            return;
-        }
-        open.pending = Some(picks.clone());
-        let id = open.id.clone();
-        let tx = self.ui.mods.tx.clone();
-        std::thread::spawn(move || {
-            let mut done = PreparedCollection {
-                id,
-                picks: picks.clone(),
-                target: None,
-                prepared: Vec::new(),
-                failed: Vec::new(),
-            };
-            match target {
-                Ok(target) => {
-                    let cancellation = Cancellation::default();
-                    let mut packed = Vec::new();
-                    for (source, pin) in picks.iter().zip(sources::resolve_batch(&picks)) {
-                        match pin
-                            .map_err(SourceError::Github)
-                            .and_then(|pin| sunrise::pack_source(&pin, &cancellation))
-                        {
-                            Ok(package) => packed.push(package),
-                            Err(error) => done.failed.push(failure(&error, Some(source))),
-                        }
-                    }
-                    // One check over every pick, so a ticked library supplies its ticked
-                    // dependents, as a pasted repository's packages are checked together.
-                    if !packed.is_empty() {
-                        match sunrise::prepare_pasted_sources(
-                            target.instance(),
-                            target.identity(),
-                            target.base(),
-                            packed,
-                            &cancellation,
-                        ) {
-                            Ok(prepared) => done.prepared = prepared,
-                            Err(error) => done.failed.push(failure(&error, None)),
-                        }
-                    }
-                    done.target = Some(target);
-                }
-                Err(error) => done.failed.push((String::new(), error)),
-            }
-            let _ = tx.send(super::super::Event::Nightly(Event::Collection(Box::new(
-                done,
-            ))));
-        });
-    }
-
-    pub(super) fn collection_prepared(&mut self, done: PreparedCollection) {
-        let state = &mut self.ui.mods.nightly;
-        let Some(open) = state
-            .collection
-            .as_mut()
-            .filter(|open| open.id == done.id && open.pending.as_ref() == Some(&done.picks))
-        else {
-            return;
-        };
-        open.pending = None;
-        // Queue only what the current list still offers for this collection, as a single
-        // source's Build does.
-        let built = BTreeSet::new();
-        let ticked = done.picks.iter().map(|s| s.id().to_owned()).collect();
-        let listed = state.catalogue.as_ref().is_some_and(|catalogue| {
-            collection_picks(catalogue, &done.id, &ticked, &built) == done.picks
-        });
-        if !listed || !self.nightly_catalogue_current() {
-            self.ui.mods.notice = Some(Err(tr(
-                "This source listing changed. Open it again from Discover.",
-            )
-            .into()));
-            return;
-        }
-        let failed = done
-            .failed
-            .iter()
-            .map(|(name, why)| match name.is_empty() {
-                true => why.clone(),
-                false => format!("{name}: {why}"),
-            })
-            .collect::<Vec<_>>();
-        if let Some(target) = done.target.filter(|_| !done.prepared.is_empty()) {
-            if let Err(error) = self.queue_sources(target, done.prepared) {
-                self.ui.mods.notice = Some(Err(error));
-                return;
-            }
-        }
-        if !failed.is_empty() {
-            self.ui.mods.notice = Some(Err(trf(
-                "These mods can't be built: {mods}",
-                &[("mods", &failed.join("; "))],
-            )));
+        if !picks.is_empty() {
+            self.queue_source_build(SourcePicks::Collection(picks));
         }
     }
 
@@ -209,11 +102,10 @@ impl Launcher {
                 collection,
                 members,
                 open.ticked.clone(),
-                open.pending.is_some(),
                 catalogue.error.is_none(),
             ))
         });
-        let Some((collection, members, ticked, preparing, allow_fetch)) = found else {
+        let Some((collection, members, ticked, allow_fetch)) = found else {
             return page
                 .child(back)
                 .child(muted(tr("This collection can't be shown.")))
@@ -399,15 +291,15 @@ impl Launcher {
         }
 
         // The side panel: the one Build, and what it does.
-        let label = match (preparing, picked) {
-            (true, _) => tr("Checking the sources…").to_string(),
-            (false, 0) if pickable.is_empty() => tr("Installed").to_string(),
-            (false, n) => trf("Build {count} mods", &[("count", &n.to_string())]),
+        let label = if pickable.is_empty() {
+            tr("Installed").into()
+        } else {
+            trf("Build {count} mods", &[("count", &picked.to_string())])
         };
         let action = crate::frame::primary("nightly-collection-build", label)
             .w_full()
             .h(px(tokens::ACTION));
-        let action = if can_start && !preparing && picked > 0 {
+        let action = if can_start && picked > 0 {
             action.on_click(cx.listener(|this, _, _, cx| {
                 this.build_source_collection();
                 cx.notify();
@@ -515,13 +407,4 @@ fn collection_picks(
         .filter_map(|member| catalogue.sources.iter().find(|s| s.id() == member.id))
         .cloned()
         .collect()
-}
-
-fn failure(error: &SourceError, source: Option<&Source>) -> (String, String) {
-    eprintln!("Nightly collection preflight: {error}");
-    let why = source_error(error, source).unwrap_or_else(|| error.to_string());
-    (
-        source.map_or_else(String::new, |s| s.name().to_owned()),
-        why,
-    )
 }

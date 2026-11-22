@@ -71,7 +71,9 @@ impl Launcher {
         if instance.kind != instances::Kind::Pack {
             match sunrise_launcher::managed_play::display_active(&instance.home) {
                 Ok(Some(active)) => return Some(active.base().to_owned()),
-                Err(_) => return None, // A claimed or unsettled profile must not display a false pin.
+                // Our source transaction may hold this profile's admission. Keep its captured
+                // base visible for the next request, rather than treating the profile as uninstalled.
+                Err(_) => return self.source_build_base(instance).map(str::to_owned),
                 Ok(None) => (),
             }
         }

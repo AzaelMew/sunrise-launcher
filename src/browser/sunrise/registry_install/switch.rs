@@ -155,6 +155,7 @@ pub fn switch_build(
                     super::build_progress(step, hooks.progress);
                 },
                 hooks.registry_crates,
+                None,
             )
         };
         let Some(proof) = exact_image(
