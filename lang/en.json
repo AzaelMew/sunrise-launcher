@@ -149,8 +149,8 @@
   "This skin's picture couldn't be loaded, so it can't be saved.": "This skin's picture couldn't be loaded, so it can't be saved.",
   "Close the game and servers, and wait for downloads, builds, imports, sign-in and the skin being saved on the Skins tab to finish before moving data.": "Close the game and servers, and wait for downloads, builds, imports, sign-in and the skin being saved on the Skins tab to finish before moving data.",
   "Could not reach the Minecraft services. Check your internet connection.": "Could not reach the Minecraft services. Check your internet connection.",
-  "There are too many saved skins. Remove some, then add this one again.": "There are too many saved skins. Remove some, then add this one again.",
   "Wait for the skin being saved on the Skins tab to finish, then try again.": "Wait for the skin being saved on the Skins tab to finish, then try again.",
   "Your new skin isn't confirmed yet, so it won't be sent again: {why}": "Your new skin isn't confirmed yet, so it won't be sent again: {why}",
-  "Your cape change isn't confirmed yet, so it won't be sent again: {why}": "Your cape change isn't confirmed yet, so it won't be sent again: {why}"
+  "Your cape change isn't confirmed yet, so it won't be sent again: {why}": "Your cape change isn't confirmed yet, so it won't be sent again: {why}",
+  "There are too many saved skins. Remove some, then try again.": "There are too many saved skins. Remove some, then try again."
 }

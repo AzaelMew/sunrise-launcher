@@ -187,26 +187,21 @@ fn valid_id(id: &str) -> bool {
     id.len() == 16 && id.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
-/// The index `list` as written: refused when it would weigh more than [`MAX_INDEX`] and more
-/// than the index in `dir` does now. A change that would make it too big is refused before
-/// anything is written, so the saved skins stay as they were and can still be listed; one that
-/// doesn't make it bigger (a removal, other arms) still goes through on an index already over
-/// it, so an older, bigger one can be made smaller.
-fn index_bytes(dir: &Path, list: &[Saved]) -> Result<Vec<u8>, String> {
+/// The index `list` as written. With a new entry (`adds`) it is refused when it would weigh
+/// more than [`MAX_INDEX`], before anything is written, so the saved skins stay as they were
+/// and can still be listed. A change that adds no entry (a removal, other arms) always goes
+/// through, so an index already over it can still be changed and made smaller.
+fn index_bytes(list: &[Saved], adds: bool) -> Result<Vec<u8>, String> {
     let text = serde_json::to_string_pretty(list).map_err(|e| e.to_string())? + "\n";
-    let now = std::fs::metadata(dir.join("index.json")).map_or(0, |m| m.len());
-    let len = text.len() as u64;
-    if len > MAX_INDEX && len > now {
-        return Err(
-            tr("There are too many saved skins. Remove some, then add this one again.").into(),
-        );
+    if adds && text.len() as u64 > MAX_INDEX {
+        return Err(tr("There are too many saved skins. Remove some, then try again.").into());
     }
     Ok(text.into_bytes())
 }
 
-/// Writes the index; only ever called under [`changing`].
+/// Writes the index, with no new entry in it; only ever called under [`changing`].
 fn save(dir: &Path, list: &[Saved]) -> Result<(), String> {
-    let bytes = index_bytes(dir, list)?;
+    let bytes = index_bytes(list, false)?;
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     write_whole(&dir.join("index.json"), &bytes)
 }
@@ -250,7 +245,7 @@ fn add_with(dir: &Path, png: &[u8], name: &str, arms: Arms) -> Result<Saved, Str
     let _changing = changing();
     let mut all = list_all(dir)?;
     // What the index becomes, worked out (and refused when too big) before anything is written.
-    let (saved, changed) = match all.iter_mut().find(|s| s.id == id) {
+    let (saved, changed, adds) = match all.iter_mut().find(|s| s.id == id) {
         Some(known) => {
             let changed = match arms {
                 Arms::Worn(slim) if slim != known.slim => {
@@ -259,7 +254,7 @@ fn add_with(dir: &Path, png: &[u8], name: &str, arms: Arms) -> Result<Saved, Str
                 }
                 _ => false,
             };
-            (known.clone(), changed)
+            (known.clone(), changed, false)
         }
         None => {
             let saved = Saved {
@@ -271,10 +266,10 @@ fn add_with(dir: &Path, png: &[u8], name: &str, arms: Arms) -> Result<Saved, Str
                 },
             };
             all.push(saved.clone());
-            (saved, true)
+            (saved, true, true)
         }
     };
-    let index = changed.then(|| index_bytes(dir, &all)).transpose()?;
+    let index = changed.then(|| index_bytes(&all, adds)).transpose()?;
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let path = png_path(dir, &id);
     let there = read_skin_file(&path).ok().and_then(|p| id_of_png(&p));
@@ -662,6 +657,14 @@ mod tests {
             list_all(dir.path()).unwrap().len(),
             20_000,
             "smaller by one"
+        );
+        // Other arms add no entry: they go through, though "false" is longer than "true".
+        set_slim(dir.path(), &first.id, true).unwrap();
+        set_slim(dir.path(), &first.id, false).unwrap();
+        let worn = add(dir.path(), &picture(64, 64, false), "", Some(true)).unwrap();
+        assert!(
+            worn.slim,
+            "the arms it is worn with, on an index over the cap"
         );
         remove(dir.path(), &first.id).unwrap();
         assert!(list(dir.path()).unwrap().is_empty());

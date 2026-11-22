@@ -85,7 +85,9 @@ impl Launcher {
                 Msg::LookSaved(uuid, id, outcome) => self.look_saved(uuid, id, *outcome),
                 Msg::SkinsAdded(uuid, added, listing) => self.skins_added(uuid, added, listing),
                 Msg::SkinsListed(uuid, listing) => self.skins_listed(uuid, listing),
-                Msg::LookRecorded(uuid, recorded) => self.look_recorded(uuid, recorded),
+                Msg::LookRecorded(uuid, record, recorded) => {
+                    self.look_recorded(uuid, record, recorded)
+                }
                 Msg::SkinRemoved(uuid, id, removed, listing) => {
                     self.skin_removed(uuid, id, removed, listing)
                 }

@@ -51,7 +51,7 @@ pub enum Msg {
     SkinsListed(String, crate::skin_library::Listing),
     /// What a later profile confirmed of account `.0`'s last Save, recorded in accounts.json, or
     /// why not.
-    LookRecorded(String, Result<(), String>),
+    LookRecorded(String, crate::account::look::Record, Result<(), String>),
     /// The saved skin `.1` of account `.0` removed, or why not, and the list after.
     SkinRemoved(
         String,

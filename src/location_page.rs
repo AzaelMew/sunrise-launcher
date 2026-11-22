@@ -138,7 +138,7 @@ impl Launcher {
 
     /// Try the configured folder again. A success restarts the launcher, because paths already
     /// resolved to the fallback folders cannot be swapped under a running window.
-    fn retry_location(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn retry_location(&mut self, cx: &mut Context<Self>) {
         if let Some(wait) = self.restart_blocked_by_skins() {
             self.location_error = Some(wait);
             cx.notify();
@@ -155,7 +155,7 @@ impl Launcher {
 
     /// Keep the default folders: the pointer is kept beside the old one as `location.json.old`,
     /// and nothing in the moved folders is deleted.
-    fn use_default_location(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn use_default_location(&mut self, cx: &mut Context<Self>) {
         if let Some(wait) = self.restart_blocked_by_skins() {
             self.location_error = Some(wait);
             cx.notify();
