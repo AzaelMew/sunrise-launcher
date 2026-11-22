@@ -18,6 +18,7 @@
 //!   changed: an account's Saves never overlap, so its records are written in order.
 use super::capes::{self, Profile, Written};
 use super::{skins, Endpoints};
+use crate::i18n::tr;
 use crate::skin_library::{self, Saved};
 use std::path::PathBuf;
 
@@ -124,15 +125,25 @@ pub struct Tools<'a> {
     pub record: &'a dyn Fn(&Record) -> Result<(), String>,
 }
 
-const OTHER_ACCOUNT: &str = "The Minecraft services answered with another account's profile.";
-const CHANGED_ELSEWHERE: &str =
-    "It was changed somewhere else since this page read it. The page now shows the skin you wear: check it, then Save again.";
-const SKIN_NOT_SHOWN: &str =
-    "The Minecraft services took the skin, but your profile doesn't show it yet.";
-const SKIN_NOT_CHECKED: &str =
-    "The Minecraft services took the skin, but its picture couldn't be fetched back to check it.";
-const CAPE_NOT_SHOWN: &str =
-    "The Minecraft services took the cape change, but your profile doesn't show it yet.";
+fn other_account() -> String {
+    tr("The Minecraft services answered with another account's profile.").into()
+}
+
+fn changed_elsewhere() -> String {
+    tr("It was changed somewhere else since this page read it. The page now shows the skin you wear: check it, then Save again.").into()
+}
+
+fn skin_not_shown() -> String {
+    tr("The Minecraft services took the skin, but your profile doesn't show it yet.").into()
+}
+
+fn skin_not_checked() -> String {
+    tr("The Minecraft services took the skin, but its picture couldn't be fetched back to check it.").into()
+}
+
+fn cape_not_shown() -> String {
+    tr("The Minecraft services took the cape change, but your profile doesn't show it yet.").into()
+}
 
 /// Does what `request` asks.
 pub fn save(request: &Request, tools: &Tools) -> Outcome {
@@ -149,7 +160,7 @@ pub fn save(request: &Request, tools: &Tools) -> Outcome {
         let before = capes::read(tools.ep, &token).and_then(|p| {
             p.is_for(&request.uuid)
                 .then_some(p)
-                .ok_or_else(|| OTHER_ACCOUNT.to_owned())
+                .ok_or_else(other_account)
         })?;
         Ok((token, before))
     });
@@ -165,7 +176,7 @@ pub fn save(request: &Request, tools: &Tools) -> Outcome {
     // The profile a write left, if it is this account's.
     let own = |written: Written| match written {
         Written::Profile(p) if p.is_for(&request.uuid) => Ok(p),
-        Written::Profile(_) => Err(OTHER_ACCOUNT.to_owned()),
+        Written::Profile(_) => Err(other_account()),
         Written::Unconfirmed(why) => Err(why),
     };
     // The picture uploaded and its arms, once the services took it: what a later profile is
@@ -222,7 +233,7 @@ pub fn save(request: &Request, tools: &Tools) -> Outcome {
                     let change = if after.worn_cape().map(|c| &c.id) == cape.as_ref() {
                         Change::Done
                     } else {
-                        Change::Unconfirmed(CAPE_NOT_SHOWN.into())
+                        Change::Unconfirmed(cape_not_shown())
                     };
                     out.profile = Some(after);
                     change
@@ -259,14 +270,14 @@ fn upload_skin(
             _ => false,
         };
         if !same {
-            return Err(CHANGED_ELSEWHERE.into());
+            return Err(changed_elsewhere());
         }
     }
     let current = match &before.skin {
         None => None,
         Some((url, model)) => {
             let Some(png) = (tools.fetch)(url) else {
-                let why = "Its picture couldn't be downloaded from Mojang.".to_owned();
+                let why = tr("Its picture couldn't be downloaded from Mojang.").to_owned();
                 *kept = Kept::Failed(why.clone());
                 return Err(why);
             };
@@ -293,7 +304,7 @@ fn upload_skin(
         Picture::New { png, .. } => png.clone(),
         Picture::Worn(WornPicture::Default(png)) => png.clone(),
         // Checked above: the account wears a skin from the texture server, just kept.
-        Picture::Worn(WornPicture::Texture(_)) => current.ok_or(CHANGED_ELSEWHERE)?,
+        Picture::Worn(WornPicture::Texture(_)) => current.ok_or_else(changed_elsewhere)?,
     })
 }
 
@@ -302,19 +313,19 @@ fn upload_skin(
 /// texture server sends another PNG of it, so the skins are compared, not the files).
 fn skin_shown(after: &Profile, png: &[u8], slim: bool, tools: &Tools) -> Change {
     let Some((url, model)) = &after.skin else {
-        return Change::Unconfirmed(SKIN_NOT_SHOWN.into());
+        return Change::Unconfirmed(skin_not_shown());
     };
     if (model == "slim") != slim {
-        return Change::Unconfirmed(SKIN_NOT_SHOWN.into());
+        return Change::Unconfirmed(skin_not_shown());
     }
     let Some(served) = (tools.fetch)(url) else {
-        return Change::Unconfirmed(SKIN_NOT_CHECKED.into());
+        return Change::Unconfirmed(skin_not_checked());
     };
     match (
         skin_library::id_of_png(&served),
         skin_library::id_of_png(png),
     ) {
         (Some(served), Some(sent)) if served == sent => Change::Done,
-        _ => Change::Unconfirmed(SKIN_NOT_SHOWN.into()),
+        _ => Change::Unconfirmed(skin_not_shown()),
     }
 }

@@ -2948,14 +2948,14 @@ impl LookBench {
                     .strip_prefix("http://textures.minecraft.net/texture/up")?
                     .parse()
                     .ok()?;
-                Some(
-                    m.lock()
-                        .unwrap()
-                        .uploads
-                        .get(n.checked_sub(1)?)?
-                        .file
-                        .clone(),
-                )
+                let sent = m
+                    .lock()
+                    .unwrap()
+                    .uploads
+                    .get(n.checked_sub(1)?)?
+                    .file
+                    .clone();
+                Some(served_copy(&sent))
             })
         };
         let record = |record: &look::Record| {
@@ -2973,6 +2973,30 @@ impl LookBench {
             },
         )
     }
+}
+
+/// The texture server's copy of a skin uploaded: the same texels in another PNG, as Mojang
+/// re-encodes what it is sent (another compression and filter, and nothing kept under the
+/// texels left clear).
+fn served_copy(sent: &[u8]) -> Vec<u8> {
+    use image::ImageEncoder as _;
+    let mut image = image::load_from_memory_with_format(sent, image::ImageFormat::Png)
+        .unwrap()
+        .to_rgba8();
+    for texel in image.pixels_mut() {
+        if texel.0[3] == 0 {
+            texel.0 = [0; 4];
+        }
+    }
+    let mut out = Vec::new();
+    image::codecs::png::PngEncoder::new_with_quality(
+        &mut out,
+        image::codecs::png::CompressionType::Best,
+        image::codecs::png::FilterType::Paeth,
+    )
+    .write_image(&image, 64, image.height(), image::ExtendedColorType::Rgba8)
+    .unwrap();
+    out
 }
 
 /// A 64 by 64 skin, one texel of it `n`.
@@ -3212,6 +3236,28 @@ fn an_accepted_change_the_profile_doesnt_show_is_unconfirmed_not_to_send_again()
     bench.pictures.insert(ABC.into(), skin_png(1));
     bench.pictures.insert(UP1.into(), skin_png(1));
     let out = bench.save(&m, &ep, &skin_request(skin_png(1), true, None));
+    assert_eq!(out.skin, Some(look::Change::Done));
+}
+
+#[test]
+fn a_skin_the_texture_server_re_encodes_is_still_the_one_sent() {
+    // A clear hat with colour under it: the server's copy has other bytes and none of that
+    // colour, but it is the same skin.
+    let image = image::RgbaImage::from_fn(64, 64, |x, y| {
+        image::Rgba(if (40..48).contains(&x) && y < 8 {
+            [200, 100, 50, 0]
+        } else {
+            [x as u8, y as u8, 9, 255]
+        })
+    });
+    let mut sent = std::io::Cursor::new(Vec::new());
+    image.write_to(&mut sent, image::ImageFormat::Png).unwrap();
+    let sent = sent.into_inner();
+    assert_ne!(served_copy(&sent), sent, "other bytes");
+    let (m, ep) = mock(|m| m.worn = Some(Some("c2".into())));
+    let mut bench = LookBench::new();
+    bench.pictures.insert(ABC.into(), skin_png(1));
+    let out = bench.save(&m, &ep, &skin_request(sent, false, None));
     assert_eq!(out.skin, Some(look::Change::Done));
 }
 

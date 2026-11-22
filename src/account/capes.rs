@@ -5,6 +5,7 @@
 //! account wears one (`PUT /minecraft/profile/capes/active` with its id) or none (`DELETE` on the
 //! same path), and every client and server shows that one, since it travels in the signed profile.
 use super::{bearer, json, request_to, send, str_field, Body, Endpoints, Value};
+use crate::i18n::{tr, trf};
 use std::io::Read;
 use std::time::Duration;
 
@@ -130,7 +131,17 @@ fn texture_id(url: &str) -> Option<&str> {
 
 /// The HTTPS address of a texture: the one a picture is fetched from.
 pub fn https(url: &str) -> Option<String> {
-    Some(format!("https://{TEXTURES}{}", texture_id(url)?))
+    let id = texture_id(url)?;
+    // Development builds only: `SUNRISE_MINECRAFT_TEXTURES_ENDPOINT` (an address ending in `/`)
+    // serves the pictures from a local mock, as `SUNRISE_MINECRAFT_SERVICES_ENDPOINT` does the
+    // profile, to see and screenshot the Skins tab.
+    if let Some(base) = std::env::var("SUNRISE_MINECRAFT_TEXTURES_ENDPOINT")
+        .ok()
+        .filter(|_| cfg!(debug_assertions))
+    {
+        return Some(format!("{base}{id}"));
+    }
+    Some(format!("https://{TEXTURES}{id}"))
 }
 
 /// What the account with `token` wears now.
@@ -145,16 +156,17 @@ pub fn read(ep: &Endpoints, token: &str) -> Result<Profile, String> {
     )?;
     match status {
         200 => Profile::of(&v).ok_or_else(|| unreadable().into()),
-        401 => Err(super::SIGN_IN_AGAIN.into()),
-        429 => Err("The Minecraft services are busy. Wait a minute, then try again.".into()),
-        _ => Err(format!(
-            "The Minecraft services couldn't say what this account wears (error {status}). Try again later."
+        401 => Err(tr(super::SIGN_IN_AGAIN).into()),
+        429 => Err(tr("The Minecraft services are busy. Wait a minute, then try again.").into()),
+        _ => Err(trf(
+            "The Minecraft services couldn't say what this account wears (error {status}). Try again later.",
+            &[("status", &status.to_string())],
         )),
     }
 }
 
 fn unreadable() -> &'static str {
-    "The Minecraft services sent an answer the launcher can't read. Try again later."
+    tr("The Minecraft services sent an answer the launcher can't read. Try again later.")
 }
 
 /// What a change the services accepted left: the profile they sent back, else read again,
@@ -187,11 +199,14 @@ pub fn wear(ep: &Endpoints, token: &str, id: Option<&str>) -> Result<Written, St
     };
     match status {
         200 | 204 => Ok(after_change(ep, token, &v)),
-        401 => Err(super::SIGN_IN_AGAIN.into()),
-        400 | 404 => Err("This account doesn't own that cape.".into()),
-        429 => Err("Too many cape changes in a short time. Wait a minute, then try again.".into()),
-        _ => Err(format!(
-            "The Minecraft services couldn't change the cape (error {status}). Try again later."
+        401 => Err(tr(super::SIGN_IN_AGAIN).into()),
+        400 | 404 => Err(tr("This account doesn't own that cape.").into()),
+        429 => {
+            Err(tr("Too many cape changes in a short time. Wait a minute, then try again.").into())
+        }
+        _ => Err(trf(
+            "The Minecraft services couldn't change the cape (error {status}). Try again later.",
+            &[("status", &status.to_string())],
         )),
     }
 }

@@ -7,6 +7,7 @@
 //! and writes it back under one lock ([`changing`]), so two changes at once in this launcher
 //! (two imports, an import beside a Save keeping the skin it replaces) can't each write over
 //! what the other added.
+use crate::i18n::{tr, trf};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard};
@@ -61,7 +62,7 @@ fn folder_in(data: &Path, uuid: &str) -> Result<PathBuf, String> {
     if uuid.len() == 32 && uuid.bytes().all(|b| b.is_ascii_hexdigit()) {
         Ok(data.join("saved-skins").join(uuid))
     } else {
-        Err("This account has no valid profile id, so it can't keep saved skins.".into())
+        Err(tr("This account has no valid profile id, so it can't keep saved skins.").into())
     }
 }
 
@@ -75,16 +76,33 @@ pub fn list(dir: &Path) -> Result<Vec<Saved>, String> {
         .collect())
 }
 
+/// A listing of an account's saved skins ([`list`]) and the number of the request it answers,
+/// so the page takes in only the latest.
+pub type Listing = (u64, Result<Vec<Saved>, String>);
+
+/// The most an index may weigh: a thousand saved skins take about a tenth of it.
+const MAX_INDEX: u64 = 1 << 20;
+
 /// Every entry of the index in `dir`, those whose picture is gone included: what a change
-/// writes back, so it leaves the entries it doesn't touch as they were.
+/// writes back, so it leaves the entries it doesn't touch as they were. The index is read as
+/// [`read_bounded`] reads a file: a regular file of at most [`MAX_INDEX`] bytes.
 fn list_all(dir: &Path) -> Result<Vec<Saved>, String> {
-    let text = match std::fs::read_to_string(dir.join("index.json")) {
-        Ok(text) => text,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(e) => return Err(format!("The saved skins couldn't be read: {e}")),
+    let bytes = match read_bounded(&dir.join("index.json"), MAX_INDEX) {
+        Ok(bytes) => bytes,
+        Err(Unread::Missing) => return Ok(Vec::new()),
+        Err(why) => {
+            return Err(trf(
+                "The saved skins couldn't be read: {why}",
+                &[("why", &why.to_string())],
+            ))
+        }
     };
-    serde_json::from_str(&text)
-        .map_err(|e| format!("The saved skins' list is damaged ({e}), so it was left as it is."))
+    serde_json::from_slice(&bytes).map_err(|e| {
+        trf(
+            "The saved skins' list is damaged ({why}), so it was left as it is.",
+            &[("why", &e.to_string())],
+        )
+    })
 }
 
 /// A saved skin's picture.
@@ -94,12 +112,31 @@ pub fn png(dir: &Path, id: &str) -> Option<Vec<u8>> {
         .flatten()
 }
 
-/// The file at `path`, if it is a regular file no bigger than a skin
-/// ([`crate::account::skins::MAX_SKIN`]): nothing larger is read into memory, whatever its length
-/// claims, and a pipe put in its place is never waited on.
-pub fn read_skin_file(path: &Path) -> Result<Vec<u8>, String> {
+/// Why [`read_bounded`] read nothing.
+#[derive(Debug)]
+enum Unread {
+    Missing,
+    NotRegular,
+    TooBig,
+    Io(String),
+}
+
+impl std::fmt::Display for Unread {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Unread::Missing => f.write_str(tr("The file isn't there.")),
+            Unread::NotRegular => f.write_str(tr("It isn't a regular file.")),
+            Unread::TooBig => f.write_str(tr("The file is too big.")),
+            Unread::Io(why) => f.write_str(why),
+        }
+    }
+}
+
+/// The file at `path`, if it is a regular file of at most `max` bytes: nothing larger is read
+/// into memory, whatever its length claims, and a pipe put in its place is never waited on
+/// (it is opened without blocking, and the open file is checked before anything is read).
+fn read_bounded(path: &Path, max: u64) -> Result<Vec<u8>, Unread> {
     use std::io::Read as _;
-    let max = crate::account::skins::MAX_SKIN as u64;
     let mut open = std::fs::OpenOptions::new();
     open.read(true);
     #[cfg(unix)]
@@ -107,21 +144,35 @@ pub fn read_skin_file(path: &Path) -> Result<Vec<u8>, String> {
         use std::os::unix::fs::OpenOptionsExt as _;
         open.custom_flags(libc::O_NONBLOCK);
     }
-    let file = open.open(path).map_err(|e| e.to_string())?;
-    let meta = file.metadata().map_err(|e| e.to_string())?;
+    let file = open.open(path).map_err(|e| match e.kind() {
+        std::io::ErrorKind::NotFound => Unread::Missing,
+        _ => Unread::Io(e.to_string()),
+    })?;
+    let meta = file.metadata().map_err(|e| Unread::Io(e.to_string()))?;
     if !meta.is_file() {
-        return Err(crate::i18n::tr("Only a PNG file can be added as a skin.").to_string());
+        return Err(Unread::NotRegular);
+    }
+    if meta.len() > max {
+        return Err(Unread::TooBig);
     }
     let mut bytes = Vec::new();
-    if meta.len() <= max {
-        file.take(max + 1)
-            .read_to_end(&mut bytes)
-            .map_err(|e| e.to_string())?;
-    }
-    if meta.len() > max || bytes.len() as u64 > max {
-        return Err(crate::i18n::tr("This picture is too big for a skin.").to_string());
+    file.take(max + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| Unread::Io(e.to_string()))?;
+    if bytes.len() as u64 > max {
+        return Err(Unread::TooBig);
     }
     Ok(bytes)
+}
+
+/// The file at `path`, if it is a regular file no bigger than a skin
+/// ([`crate::account::skins::MAX_SKIN`]), read as [`read_bounded`] reads one.
+pub fn read_skin_file(path: &Path) -> Result<Vec<u8>, String> {
+    read_bounded(path, crate::account::skins::MAX_SKIN as u64).map_err(|why| match why {
+        Unread::NotRegular => tr("Only a PNG file can be added as a skin.").to_string(),
+        Unread::TooBig => tr("This picture is too big for a skin.").to_string(),
+        other => other.to_string(),
+    })
 }
 
 fn png_path(dir: &Path, id: &str) -> PathBuf {
@@ -146,10 +197,11 @@ fn save(dir: &Path, list: &[Saved]) -> Result<(), String> {
 /// again.
 pub fn add(dir: &Path, png: &[u8], name: &str, slim: Option<bool>) -> Result<Saved, String> {
     if png.len() > crate::account::skins::MAX_SKIN {
-        return Err("This picture is too big for a skin.".into());
+        return Err(tr("This picture is too big for a skin.").into());
     }
-    let id =
-        id_of_png(png).ok_or("This isn't a Minecraft skin: it must be a 64×64 or 64×32 PNG.")?;
+    let id = id_of_png(png).ok_or(tr(
+        "This isn't a Minecraft skin: it must be a 64×64 or 64×32 PNG.",
+    ))?;
     let _changing = changing();
     let mut all = list_all(dir)?;
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;

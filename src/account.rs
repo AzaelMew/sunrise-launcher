@@ -70,11 +70,17 @@ impl Endpoints {
             .ok()
             .filter(|_| cfg!(debug_assertions))
             .unwrap_or_else(|| "https://login.microsoftonline.com/consumers/oauth2/v2.0".into());
+        // The same for the Minecraft services (the profile, its skin and capes), to see and
+        // screenshot the Skins tab against a local mock.
+        let minecraft = std::env::var("SUNRISE_MINECRAFT_SERVICES_ENDPOINT")
+            .ok()
+            .filter(|_| cfg!(debug_assertions))
+            .unwrap_or_else(|| "https://api.minecraftservices.com".into());
         Self {
             microsoft,
             xbox_user: "https://user.auth.xboxlive.com/user/authenticate".into(),
             xsts: "https://xsts.auth.xboxlive.com/xsts/authorize".into(),
-            minecraft: "https://api.minecraftservices.com".into(),
+            minecraft,
         }
     }
 }

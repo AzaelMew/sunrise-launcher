@@ -3,6 +3,7 @@
 //! client and server then shows, as the official launcher does.
 use super::capes::{self, Written};
 use super::{bearer, request_to, Endpoints, Value};
+use crate::i18n::{tr, trf};
 
 /// The most a skin may weigh here: real ones are a few kilobytes.
 pub const MAX_SKIN: usize = 256 * 1024;
@@ -25,7 +26,7 @@ pub(crate) fn form(boundary: &str, png: &[u8], slim: bool) -> Vec<u8> {
 /// refused it.
 pub fn upload(ep: &Endpoints, token: &str, png: &[u8], slim: bool) -> Result<Written, String> {
     if png.len() > MAX_SKIN || crate::player_model::skin(png).is_none() {
-        return Err("This isn't a Minecraft skin: it must be a 64×64 or 64×32 PNG.".into());
+        return Err(tr("This isn't a Minecraft skin: it must be a 64×64 or 64×32 PNG.").into());
     }
     let mut boundary = [0u8; 12];
     getrandom::fill(&mut boundary).map_err(|e| e.to_string())?;
@@ -43,9 +44,10 @@ pub fn upload(ep: &Endpoints, token: &str, png: &[u8], slim: bool) -> Result<Wri
         Ok(r) => r,
         Err(ureq::Error::Status(_, r)) => r,
         Err(ureq::Error::Transport(_)) => {
-            return Err(
-                "Could not reach the Minecraft services. Check your internet connection.".into(),
+            return Err(tr(
+                "Could not reach the Minecraft services. Check your internet connection.",
             )
+            .into())
         }
     };
     let status = response.status();
@@ -53,11 +55,14 @@ pub fn upload(ep: &Endpoints, token: &str, png: &[u8], slim: bool) -> Result<Wri
         serde_json::from_str(&response.into_string().unwrap_or_default()).unwrap_or(Value::Null);
     match status {
         200 | 204 => Ok(capes::after_change(ep, token, &profile)),
-        401 => Err(super::SIGN_IN_AGAIN.into()),
-        400 => Err("Mojang refused this skin. It must be a 64×64 or 64×32 PNG.".into()),
-        429 => Err("Too many skin changes in a short time. Wait a minute, then try again.".into()),
-        _ => Err(format!(
-            "The Minecraft services couldn't change the skin (error {status}). Try again later."
+        401 => Err(tr(super::SIGN_IN_AGAIN).into()),
+        400 => Err(tr("Mojang refused this skin. It must be a 64×64 or 64×32 PNG.").into()),
+        429 => {
+            Err(tr("Too many skin changes in a short time. Wait a minute, then try again.").into())
+        }
+        _ => Err(trf(
+            "The Minecraft services couldn't change the skin (error {status}). Try again later.",
+            &[("status", &status.to_string())],
         )),
     }
 }

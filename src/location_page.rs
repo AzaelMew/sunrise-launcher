@@ -51,7 +51,7 @@ fn environment_blocked() -> bool {
 }
 
 impl Launcher {
-    fn location_busy(&self) -> bool {
+    pub(crate) fn location_busy(&self) -> bool {
         self.installing.is_some()
             || !self.removing.is_empty()
             || self.importing_build
@@ -78,7 +78,16 @@ impl Launcher {
         if environment_blocked() {
             Some(tr("Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.").into())
         } else if self.location_busy() {
-            Some(tr("Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.").into())
+            let wait = tr("Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.");
+            // Said apart, so the sentence above keeps its translations.
+            Some(if self.skins.writing() {
+                format!(
+                    "{wait} {}",
+                    tr("A skin is still being saved on the Skins tab.")
+                )
+            } else {
+                wait.into()
+            })
         } else {
             None
         }

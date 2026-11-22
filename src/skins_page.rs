@@ -66,13 +66,10 @@ fn request_id() -> u64 {
     NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
-/// Whether the page is in the offline developer view now: asked again each time, since another
-/// profile can be chosen while the page is open. The environment is checked first, so a
-/// launcher that wasn't started for offline play reads no files for it.
-fn offline_now() -> bool {
-    sunrise_launcher::developer_offline::requested()
-        && sunrise_launcher::developer_offline::selected()
-}
+/// What decides whether the offline developer view is on, besides the environment: the
+/// profile and build chosen (`settings.json`, by its time and size) and the builds installed.
+/// The answer is kept while these stay the same, so drawing the page reads no profile files.
+type OfflineKey = (Option<(std::time::SystemTime, u64)>, Vec<String>);
 
 /// Runs `work` on a thread of its own: false when no thread could be started (the caller says
 /// so), rather than a panic on the UI thread.
@@ -81,6 +78,20 @@ fn spawn(name: &str, work: impl FnOnce() + Send + 'static) -> bool {
         .name(name.into())
         .spawn(work)
         .is_ok()
+}
+
+/// Sends what `work` makes, or what `fallback` makes when `work` panics: every job and thread of
+/// the page answers, so nothing it counts or waits on (a write under way, a reading, a picture
+/// asked for) is left waiting for an answer that never comes.
+fn answer(tx: &Sender<Msg>, work: impl FnOnce() -> Msg, fallback: impl FnOnce() -> Msg) {
+    let msg =
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(work)).unwrap_or_else(|_| fallback());
+    let _ = tx.send(msg);
+}
+
+/// What a job that stopped unexpectedly says.
+fn stopped() -> String {
+    tr("The launcher stopped this unexpectedly. Try again.").to_string()
 }
 
 type Job = Box<dyn FnOnce() + Send>;
@@ -240,8 +251,13 @@ pub(crate) struct Skins {
     /// Pictures from Mojang's texture server by URL.
     pictures: HashMap<String, Picture>,
     saved: Vec<Saved>,
-    /// Why the saved skins couldn't be read, or the skin worn kept among them, if they couldn't.
+    /// Why the saved skins couldn't be listed, if they couldn't.
     library_error: Option<String>,
+    /// Why the skin worn couldn't be kept among them, if it couldn't: until one is kept.
+    keep_error: Option<String>,
+    /// The number of the latest listing of the saved skins taken in: an older one changes
+    /// nothing.
+    listed: u64,
     /// The saved skin that keeps each skin worn, by its URL: every skin worn is kept, so one
     /// replaced by a Save stays in the list to wear again.
     kept: HashMap<String, String>,
@@ -280,6 +296,8 @@ impl Default for Skins {
             pictures: HashMap::new(),
             saved: Vec::new(),
             library_error: None,
+            keep_error: None,
+            listed: 0,
             kept: HashMap::new(),
             keeping: HashSet::new(),
             said: Vec::new(),
@@ -305,16 +323,34 @@ pub(crate) struct SkinsPages {
     parked: HashMap<String, Skins>,
     /// Pictures fetched from Mojang's texture server.
     net: Queue,
-    /// Skin files read, added and kept.
-    disk: Queue,
-    /// Skins being added or kept on disk now: a data move waits for them.
+    /// Skin files read for the pictures drawn.
+    reads: Queue,
+    /// The saved skins' index listed and changed (skins added, kept, removed): apart from the
+    /// reads, so a page of pictures never crowds out a change.
+    writes: Queue,
+    /// Saved skins being added, kept or removed now: a data move waits for them.
     disk_writes: usize,
     /// Whether the page was last opened in the offline developer view: drawn in the other
     /// mode, it is opened anew.
     opened_offline: Option<bool>,
     /// A Save that ended in the offline view changed a profile head not fetched since.
     heads_stale: bool,
+    /// Whether the offline developer view is on, and what that was worked out from.
+    offline: RefCell<Option<(OfflineKey, bool)>>,
+    /// The prepared game files the default skins come from and the default skins they have,
+    /// for the profile build and the builds installed they were looked for with.
+    resources: RefCell<Option<ResourcesFound>>,
+    /// The offline developer view, as a test sets it.
+    #[cfg(test)]
+    offline_for_test: Option<bool>,
 }
+
+/// [`SkinsPages::resources`]: the build played, the builds installed, and what they have.
+type ResourcesFound = (
+    Option<String>,
+    Vec<String>,
+    Option<(PathBuf, Vec<&'static str>)>,
+);
 
 impl std::ops::Deref for SkinsPages {
     type Target = Skins;
@@ -672,7 +708,13 @@ impl Skins {
         texture
     }
 
-    fn set_saved(&mut self, listed: Result<Vec<Saved>, String>) {
+    /// A listing of the saved skins arrived (numbered `id`): taken in unless a newer one was.
+    /// It says only whether the list could be read; why the skin worn couldn't be kept stays.
+    fn listing(&mut self, (id, listed): skin_library::Listing) {
+        if id <= self.listed {
+            return;
+        }
+        self.listed = id;
         match listed {
             Ok(saved) => {
                 self.saved = saved;
@@ -816,17 +858,97 @@ fn add_files(uuid: &str, paths: &[PathBuf]) -> Vec<Result<Saved, String>> {
         .collect()
 }
 
+/// What a Save that stopped unexpectedly reports: each change it was asked for may have gone
+/// through already, so none is taken as refused (sent again) or done; the profile is read again.
+fn stopped_outcome((skin, cape): (bool, bool)) -> look::Outcome {
+    let change = |asked: bool| asked.then(|| Change::Unconfirmed(stopped()));
+    look::Outcome {
+        kept: Kept::Nothing,
+        skin: change(skin),
+        cape: change(cape),
+        profile: None,
+        arms: None,
+        recorded: None,
+    }
+}
+
+/// The file of the default skin the game gives `uuid`, with slim or classic arms: the same
+/// skin's picture for the arms asked, since each default skin comes in both.
+fn account_default_path(resources: &Path, uuid: &str, slim: bool) -> Option<PathBuf> {
+    let (path, _) = sunrise_launcher::heads::default_skin_file(resources, uuid)?;
+    let name = path.file_stem()?.to_str()?;
+    Some(default_skin_path(resources, name, slim))
+}
+
+/// Lists `uuid`'s saved skins, numbered `id`: what a job on the writes queue sends once it is
+/// done, so the page shows the list as that job left it.
+fn listing(uuid: &str, id: u64) -> skin_library::Listing {
+    (
+        id,
+        skin_library::folder(uuid).and_then(|dir| skin_library::list(&dir)),
+    )
+}
+
 impl Launcher {
-    /// The prepared game files the default skins are read from: the version the selected profile
-    /// plays when it has them, else the first installed version that does. None when no game
-    /// is prepared: nothing is looked for relative to the working folder.
-    fn skin_resources(&self) -> Option<PathBuf> {
+    /// The prepared game files the default skins are read from, and the default skins they
+    /// have: the version the selected profile plays when it has them, else the first installed
+    /// version that does. None when no game is prepared: nothing is looked for relative to the
+    /// working folder. Looked for once for the build played and the builds installed, not at
+    /// every drawing.
+    fn skin_resources_found(&self) -> Option<(PathBuf, Vec<&'static str>)> {
+        let selected = self.selected().cloned();
+        if let Some((played, installed, found)) = &*self.skins.resources.borrow() {
+            if *played == selected && *installed == self.installed {
+                return found.clone();
+            }
+        }
         let has = |resources: &Path| default_skin_path(resources, "steve", false).is_file();
-        self.selected()
-            .into_iter()
+        let found = selected
+            .iter()
             .chain(self.installed.iter())
             .map(|tag| backend::resources(tag))
             .find(|resources| has(resources))
+            .map(|resources| {
+                let defaults = DEFAULT_SKINS
+                    .into_iter()
+                    .filter(|name| default_skin_path(&resources, name, false).is_file())
+                    .collect();
+                (resources, defaults)
+            });
+        *self.skins.resources.borrow_mut() =
+            Some((selected, self.installed.clone(), found.clone()));
+        found
+    }
+
+    fn skin_resources(&self) -> Option<PathBuf> {
+        self.skin_resources_found().map(|(resources, _)| resources)
+    }
+
+    /// Whether the page is in the offline developer view now: the mode in force, not the one
+    /// the page was opened in, since another profile can be chosen while it is open. The
+    /// environment is checked first, so a launcher not started for offline play reads no files
+    /// for it; in one that was, the answer is worked out again only when the profile or build
+    /// chosen, or the builds installed, change.
+    fn skins_offline(&self) -> bool {
+        #[cfg(test)]
+        if let Some(offline) = self.skins.offline_for_test {
+            return offline;
+        }
+        if !sunrise_launcher::developer_offline::requested() {
+            return false;
+        }
+        let settings = std::fs::metadata(backend::data_dir().join("settings.json"))
+            .ok()
+            .and_then(|meta| Some((meta.modified().ok()?, meta.len())));
+        let key = (settings, self.installed.clone());
+        if let Some((known, offline)) = &*self.skins.offline.borrow() {
+            if *known == key {
+                return *offline;
+            }
+        }
+        let offline = sunrise_launcher::developer_offline::selected();
+        *self.skins.offline.borrow_mut() = Some((key, offline));
+        offline
     }
 
     /// The account whose look the page shows: the one that plays (the selected one, else the
@@ -840,8 +962,12 @@ impl Launcher {
 
     /// The page opened, another account plays, or the offline developer mode changed: what
     /// the account wears is read again, and what couldn't be had before is asked for again.
+    /// The files the last import couldn't add stay listed until the next import.
     pub(crate) fn skins_open(&mut self) {
-        let offline = offline_now();
+        // Looked for again: a game may have been prepared since.
+        *self.skins.resources.get_mut() = None;
+        *self.skins.offline.get_mut() = None;
+        let offline = self.skins_offline();
         self.skins.opened_offline = Some(offline);
         let Some(account) = self.look_account() else {
             return;
@@ -850,7 +976,6 @@ impl Launcher {
         self.skins.show(&account.uuid, |uuid| {
             accounts.iter().any(|a| a.uuid == uuid)
         });
-        self.skins.added.clear();
         self.skins
             .files
             .get_mut()
@@ -863,8 +988,7 @@ impl Launcher {
         if std::mem::take(&mut self.skins.heads_stale) {
             self.load_profile_heads();
         }
-        let listed = skin_library::folder(&account.uuid).and_then(|dir| skin_library::list(&dir));
-        self.skins.set_saved(listed);
+        self.skins_list(&account.uuid);
         if self.skins.saving.is_none() {
             self.profile_read(&account);
         }
@@ -873,11 +997,41 @@ impl Launcher {
         }
     }
 
+    /// Lists `uuid`'s saved skins on the writes queue, after the changes queued before it.
+    fn skins_list(&mut self, uuid: &str) {
+        let (tx, account, id) = (self.tx.clone(), uuid.to_owned(), request_id());
+        let job = Box::new(move || {
+            answer(
+                &tx,
+                || Msg::SkinsListed(account.clone(), listing(&account, id)),
+                || Msg::SkinsListed(account.clone(), (id, Err(stopped()))),
+            )
+        });
+        if self.skins.writes.push("skins-index", job).is_err() {
+            if let Some(page) = self.skins.page_mut(uuid) {
+                page.listing((
+                    id,
+                    Err(tr(
+                        "The launcher is busy with your saved skins. Open Skins again in a moment.",
+                    )
+                    .to_string()),
+                ));
+            }
+        }
+    }
+
+    /// The saved skins were listed (`Msg::SkinsListed`).
+    pub(crate) fn skins_listed(&mut self, uuid: String, listed: skin_library::Listing) {
+        if let Some(page) = self.skins.page_mut(&uuid) {
+            page.listing(listed);
+        }
+    }
+
     /// Reads what the shown page's account wears, on a thread of its own: one reading at a
     /// time for a page, so asking again while one is under way (Try again, the page opened
     /// again) waits for that one's answer instead of starting another.
     fn profile_read(&mut self, account: &account::Account) {
-        if offline_now()
+        if self.skins_offline()
             || self.skins.uuid.as_deref() != Some(&account.uuid)
             || self.skins.reading.is_some()
         {
@@ -888,21 +1042,28 @@ impl Launcher {
         let other =
             tr("The Minecraft services answered with another account's profile.").to_string();
         let started = spawn("skins-profile", move || {
-            let ep = account::Endpoints::live();
-            let result = account::token_for(
-                &ep,
-                account::client_id().as_deref(),
-                account::store(),
-                &account,
+            let uuid = account.uuid.clone();
+            answer(
+                &tx,
+                || {
+                    let ep = account::Endpoints::live();
+                    let result = account::token_for(
+                        &ep,
+                        account::client_id().as_deref(),
+                        account::store(),
+                        &account,
+                    )
+                    .and_then(|token| capes::read(&ep, &token))
+                    .and_then(|profile| {
+                        profile
+                            .is_for(&account.uuid)
+                            .then_some(profile)
+                            .ok_or(other)
+                    });
+                    Msg::SkinsProfile(account.uuid.clone(), id, result)
+                },
+                || Msg::SkinsProfile(uuid, id, Err(stopped())),
             )
-            .and_then(|token| capes::read(&ep, &token))
-            .and_then(|profile| {
-                profile
-                    .is_for(&account.uuid)
-                    .then_some(profile)
-                    .ok_or(other)
-            });
-            let _ = tx.send(Msg::SkinsProfile(account.uuid, id, result));
         });
         if !started {
             self.skins.reading = None;
@@ -918,13 +1079,17 @@ impl Launcher {
     /// Fetches a picture from Mojang's texture server, on the texture queue; one it won't take
     /// counts as one that couldn't be had (asked for again at the next reading).
     fn picture_ask(&mut self, url: String) {
-        if !self.skins.ask_picture(&url, offline_now()) {
+        let offline = self.skins_offline();
+        if !self.skins.ask_picture(&url, offline) {
             return;
         }
         let (tx, address) = (self.tx.clone(), url.clone());
         let job = Box::new(move || {
-            let png = capes::picture(&address);
-            let _ = tx.send(Msg::Picture(address, png));
+            answer(
+                &tx,
+                || Msg::Picture(address.clone(), capes::picture(&address)),
+                || Msg::Picture(address.clone(), None),
+            )
         });
         if self.skins.net.push("skins-textures", job).is_err() {
             self.skins_picture(url, None);
@@ -933,14 +1098,15 @@ impl Launcher {
 
     /// A reading answered (`Msg::SkinsProfile`): the pictures it names are asked for.
     pub(crate) fn skins_profile(&mut self, uuid: String, id: u64, result: Result<Profile, String>) {
-        if !self.skins.read_answered(&uuid, id, result, offline_now()) {
+        let offline = self.skins_offline();
+        if !self.skins.read_answered(&uuid, id, result, offline) {
             return;
         }
         self.after_profile();
     }
 
     fn after_profile(&mut self) {
-        if offline_now() {
+        if self.skins_offline() {
             return;
         }
         if let Some(Ok(profile)) = &self.skins.profile {
@@ -1019,9 +1185,9 @@ impl Launcher {
     }
 
     /// Keeps the skin worn now among the saved skins, with the arms it is worn with, on the
-    /// disk queue (once: the same skin is saved once).
+    /// writes queue (once: the same skin is saved once).
     fn remember_worn(&mut self) {
-        if offline_now() {
+        if self.skins_offline() {
             return;
         }
         let (Some(uuid), Some((url, model))) = (self.skins.uuid.clone(), self.worn_skin()) else {
@@ -1033,20 +1199,29 @@ impl Launcher {
         let Some(Picture::Ready(png)) = self.skins.pictures.get(&url) else {
             return;
         };
-        let (png, tx, address) = (png.clone(), self.tx.clone(), url.clone());
+        let (png, tx, address, id) = (png.clone(), self.tx.clone(), url.clone(), request_id());
         let job = Box::new(move || {
-            // Kept without a name: its tile shows the skin alone.
-            let kept = skin_library::folder(&uuid)
-                .and_then(|dir| skin_library::add(&dir, &png, "", Some(model == "slim")));
-            let _ = tx.send(Msg::SkinKept(uuid, address, kept));
+            answer(
+                &tx,
+                || {
+                    // Kept without a name: its tile shows the skin alone.
+                    let kept = skin_library::folder(&uuid)
+                        .and_then(|dir| skin_library::add(&dir, &png, "", Some(model == "slim")));
+                    Msg::SkinKept(uuid.clone(), address.clone(), kept, listing(&uuid, id))
+                },
+                || {
+                    let listed = listing(&uuid, id);
+                    Msg::SkinKept(uuid.clone(), address.clone(), Err(stopped()), listed)
+                },
+            )
         });
-        match self.skins.disk.push("skins-files", job) {
+        match self.skins.writes.push("skins-index", job) {
             Ok(()) => {
                 self.skins.keeping.insert(url);
                 self.skins.disk_writes += 1;
             }
             Err(_) => {
-                self.skins.library_error = Some(
+                self.skins.keep_error = Some(
                     tr("The skin you wear couldn't be kept among your saved skins just now. Open Skins again to retry.")
                         .to_string(),
                 );
@@ -1055,27 +1230,29 @@ impl Launcher {
     }
 
     /// The skin worn was kept, or couldn't be (`Msg::SkinKept`).
-    pub(crate) fn skins_kept(&mut self, uuid: String, url: String, kept: Result<Saved, String>) {
+    pub(crate) fn skins_kept(
+        &mut self,
+        uuid: String,
+        url: String,
+        kept: Result<Saved, String>,
+        listed: skin_library::Listing,
+    ) {
         self.skins.disk_writes = self.skins.disk_writes.saturating_sub(1);
         let (recorded, default_slim) = self.worn_inputs(&uuid);
-        let shown = self.skins.uuid.as_deref() == Some(&uuid);
         let Some(page) = self.skins.page_mut(&uuid) else {
             return;
         };
         page.keeping.remove(&url);
+        page.listing(listed);
         match kept {
             Ok(saved) => {
+                page.keep_error = None;
                 page.forget_file(&saved_key(Some(&uuid), &saved.id));
                 page.kept.insert(url, saved.id);
                 let worn = page.worn(recorded.as_ref(), default_slim);
                 page.settle(&worn);
-                if shown {
-                    let listed =
-                        skin_library::folder(&uuid).and_then(|dir| skin_library::list(&dir));
-                    self.skins.set_saved(listed);
-                }
             }
-            Err(why) => page.library_error = Some(why),
+            Err(why) => page.keep_error = Some(why),
         }
     }
 
@@ -1084,7 +1261,7 @@ impl Launcher {
         let Some(uuid) = self.skins.uuid.clone() else {
             return;
         };
-        if offline_now() {
+        if self.skins_offline() {
             return;
         }
         let (recorded, default_slim) = self.worn_inputs(&uuid);
@@ -1100,11 +1277,11 @@ impl Launcher {
                 let Some(resources) = self.skin_resources() else {
                     return (String::new(), Png::Missing);
                 };
-                let key = format!("uuid-default:{}:{uuid}", resources.display());
-                let png = self.skins.file(&key, || {
-                    sunrise_launcher::heads::default_skin_file(&resources, uuid)
-                        .map(|(path, _)| path)
-                });
+                // The account's default skin with the arms shown: each comes in both.
+                let key = format!("uuid-default:{}:{uuid}:{slim}", resources.display());
+                let png = self
+                    .skins
+                    .file(&key, || account_default_path(&resources, uuid, slim));
                 (key, png)
             }
             SkinPick::Saved(id) => {
@@ -1128,17 +1305,20 @@ impl Launcher {
         }
     }
 
-    /// Reads the files asked for while the page was drawn, on the disk queue. One it won't take
-    /// now is asked for again when the page is next drawn (a file read ending redraws it).
+    /// Reads the files asked for while the page was drawn, on the reads queue. One it won't
+    /// take now is asked for again when the page is next drawn (a file read ending redraws it).
     fn skins_read_files(&mut self) {
         let wanted = std::mem::take(self.skins.wanted.get_mut());
         for (key, path, id) in wanted {
             let (tx, name) = (self.tx.clone(), key.clone());
             let job = Box::new(move || {
-                let png = skin_library::read_skin_file(&path).ok();
-                let _ = tx.send(Msg::SkinFile(name, id, png));
+                answer(
+                    &tx,
+                    || Msg::SkinFile(name.clone(), id, skin_library::read_skin_file(&path).ok()),
+                    || Msg::SkinFile(name.clone(), id, None),
+                )
             });
-            match self.skins.disk.push("skins-files", job) {
+            match self.skins.reads.push("skins-files", job) {
                 Ok(()) => {}
                 Err(Refused::Full) => {
                     self.skins.files.get_mut().remove(&key);
@@ -1189,7 +1369,7 @@ impl Launcher {
     /// arms) changed, then the cape when it did; nothing that wasn't edited. New arms alone are
     /// sent as such, so the Save keeps the picture the account wears when it starts.
     fn look_save(&mut self) {
-        let offline = offline_now();
+        let offline = self.skins_offline();
         let Some(account) = self.look_account() else {
             return;
         };
@@ -1203,13 +1383,16 @@ impl Launcher {
         let worn = self.worn_look(&account);
         let (_, slim, _) = self.skins.chosen(&worn);
         let png = |skin: &SkinPick| match self.skin_png(&account.uuid, skin, slim).1 {
-            Png::Ready(png) => Some(png.as_ref().clone()),
-            Png::Pending | Png::Missing => None,
+            Png::Ready(png) => Ok(png.as_ref().clone()),
+            Png::Pending => Err(tr("This skin's picture isn't here yet.").to_string()),
+            Png::Missing => {
+                Err(tr("This skin's picture couldn't be loaded, so it can't be saved.").to_string())
+            }
         };
         let picture = match self.skins.skin_sent(&worn) {
             None => None,
             Some(SkinSent::Arms(Some(url))) => {
-                Some(Some(look::Picture::Worn(look::WornPicture::Texture(url))))
+                Some(Ok(look::Picture::Worn(look::WornPicture::Texture(url))))
             }
             Some(SkinSent::Arms(None)) => Some(
                 png(&SkinPick::AccountDefault)
@@ -1225,9 +1408,9 @@ impl Launcher {
         };
         let sent = match picture {
             None => None,
-            Some(Some(picture)) => Some(look::SkinSent { picture, slim }),
-            Some(None) => {
-                self.skins.said = vec![Err(tr("This skin's picture isn't here yet.").to_string())];
+            Some(Ok(picture)) => Some(look::SkinSent { picture, slim }),
+            Some(Err(why)) => {
+                self.skins.said = vec![Err(why)];
                 return;
             }
         };
@@ -1254,40 +1437,50 @@ impl Launcher {
             .collect();
         let (id, tx) = (submitted.id, self.tx.clone());
         let started = spawn("skins-save", move || {
-            let ep = account::Endpoints::live();
-            let token = account::token_for(
-                &ep,
-                account::client_id().as_deref(),
-                account::store(),
-                &account,
-            );
-            let known = RefCell::new(known);
-            let fetch = |url: &str| {
-                if let Some(png) = known.borrow().get(url) {
-                    return Some(png.clone());
-                }
-                let png = capes::picture(url)?;
-                known.borrow_mut().insert(url.to_owned(), png.clone());
-                Some(png)
-            };
-            let record = |record: &look::Record| {
-                account::Accounts::save_look(
-                    &account.uuid,
-                    record.skin.clone(),
-                    record.cape.clone(),
-                )
-            };
-            let outcome = look::save(
-                &request,
-                &look::Tools {
-                    ep: &ep,
-                    token,
-                    library: skin_library::folder(&account.uuid),
-                    fetch: &fetch,
-                    record: &record,
+            let uuid = account.uuid.clone();
+            // Stopped unexpectedly, the Save may have changed something already: nothing it
+            // asked for is sent again, and the profile is read again (`stopped_outcome`).
+            let asked = (request.skin.is_some(), request.cape.is_some());
+            answer(
+                &tx,
+                || {
+                    let ep = account::Endpoints::live();
+                    let token = account::token_for(
+                        &ep,
+                        account::client_id().as_deref(),
+                        account::store(),
+                        &account,
+                    );
+                    let known = RefCell::new(known);
+                    let fetch = |url: &str| {
+                        if let Some(png) = known.borrow().get(url) {
+                            return Some(png.clone());
+                        }
+                        let png = capes::picture(url)?;
+                        known.borrow_mut().insert(url.to_owned(), png.clone());
+                        Some(png)
+                    };
+                    let record = |record: &look::Record| {
+                        account::Accounts::save_look(
+                            &account.uuid,
+                            record.skin.clone(),
+                            record.cape.clone(),
+                        )
+                    };
+                    let outcome = look::save(
+                        &request,
+                        &look::Tools {
+                            ep: &ep,
+                            token,
+                            library: skin_library::folder(&account.uuid),
+                            fetch: &fetch,
+                            record: &record,
+                        },
+                    );
+                    Msg::LookSaved(account.uuid.clone(), id, Box::new(outcome))
                 },
-            );
-            let _ = tx.send(Msg::LookSaved(account.uuid, id, Box::new(outcome)));
+                || Msg::LookSaved(uuid, id, Box::new(stopped_outcome(asked))),
+            )
         });
         if !started {
             self.skins.saving = None;
@@ -1303,7 +1496,7 @@ impl Launcher {
     /// ended, so an account's records are written in the order of its Saves). In the offline
     /// view it starts nothing more.
     pub(crate) fn look_saved(&mut self, uuid: String, id: u64, outcome: look::Outcome) {
-        let offline = offline_now();
+        let offline = self.skins_offline();
         if let Some(profile) = &outcome.profile {
             let skin = (outcome.skin == Some(Change::Done)).then(|| profile.skin.clone());
             let cape = (outcome.cape == Some(Change::Done))
@@ -1337,8 +1530,7 @@ impl Launcher {
             // Shown again later, online, the page reads the profile and the saved skins anew.
             return;
         }
-        let listed = skin_library::folder(&uuid).and_then(|dir| skin_library::list(&dir));
-        self.skins.set_saved(listed);
+        self.skins_list(&uuid);
         if !matches!(self.skins.profile, Some(Ok(_))) || !self.skins.unconfirmed.is_empty() {
             if let Some(account) = self.look_account() {
                 self.profile_read(&account);
@@ -1356,27 +1548,34 @@ impl Launcher {
     }
 
     fn skins_add_for(&mut self, uuid: String, paths: Vec<PathBuf>) {
-        if offline_now() || paths.is_empty() {
+        if self.skins_offline() || paths.is_empty() {
             return;
         }
         if let Some(page) = self.skins.page_mut(&uuid) {
             page.added.clear();
         }
-        let tx = self.tx.clone();
-        let account = uuid.clone();
+        let (tx, account, id) = (self.tx.clone(), uuid.clone(), request_id());
         let job = Box::new(move || {
-            let added = add_files(&account, &paths);
-            let _ = tx.send(Msg::SkinsAdded(account, added));
+            answer(
+                &tx,
+                || {
+                    let added = add_files(&account, &paths);
+                    Msg::SkinsAdded(account.clone(), added, listing(&account, id))
+                },
+                || {
+                    let listed = listing(&account, id);
+                    Msg::SkinsAdded(account.clone(), vec![Err(stopped())], listed)
+                },
+            )
         });
-        match self.skins.disk.push("skins-files", job) {
+        match self.skins.writes.push("skins-index", job) {
             Ok(()) => self.skins.disk_writes += 1,
             Err(_) => {
                 if let Some(page) = self.skins.page_mut(&uuid) {
-                    page.added =
-                        vec![
-                            tr("The launcher is busy reading skins. Add them again in a moment.")
-                                .to_string(),
-                        ];
+                    page.added = vec![tr(
+                        "The launcher is busy with your saved skins. Add them again in a moment.",
+                    )
+                    .to_string()];
                 }
             }
         }
@@ -1385,18 +1584,22 @@ impl Launcher {
     /// Skin files were added (`Msg::SkinsAdded`): those that couldn't be say so beside the
     /// skins, and the last one added is chosen, if the page still shows the account they were
     /// added for.
-    pub(crate) fn skins_added(&mut self, uuid: String, added: Vec<Result<Saved, String>>) {
+    pub(crate) fn skins_added(
+        &mut self,
+        uuid: String,
+        added: Vec<Result<Saved, String>>,
+        listed: skin_library::Listing,
+    ) {
         self.skins.disk_writes = self.skins.disk_writes.saturating_sub(1);
         let shown = self.skins.uuid.as_deref() == Some(&uuid);
         let Some(page) = self.skins.page_mut(&uuid) else {
             return;
         };
+        page.listing(listed);
         let last = page.files_added(added);
         if !shown {
             return;
         }
-        let listed = skin_library::folder(&uuid).and_then(|dir| skin_library::list(&dir));
-        self.skins.set_saved(listed);
         if let Some(saved) = last {
             self.choose(|edit| {
                 edit.skin = Some(SkinPick::Saved(saved.id.clone()));
@@ -1428,27 +1631,71 @@ impl Launcher {
         .detach();
     }
 
+    /// Removes the saved skin `id` of the account shown, on the writes queue.
     fn skin_forget(&mut self, id: &str) {
         let Some(uuid) = self.skins.uuid.clone() else {
             return;
         };
-        let removed = skin_library::folder(&uuid).and_then(|dir| {
-            skin_library::remove(&dir, id)?;
-            skin_library::list(&dir)
+        let (tx, account, skin, listed) =
+            (self.tx.clone(), uuid.clone(), id.to_owned(), request_id());
+        let job = Box::new(move || {
+            answer(
+                &tx,
+                || {
+                    let removed = skin_library::folder(&account)
+                        .and_then(|dir| skin_library::remove(&dir, &skin));
+                    Msg::SkinRemoved(
+                        account.clone(),
+                        skin.clone(),
+                        removed,
+                        listing(&account, listed),
+                    )
+                },
+                || {
+                    let after = listing(&account, listed);
+                    Msg::SkinRemoved(account.clone(), skin.clone(), Err(stopped()), after)
+                },
+            )
         });
-        match removed {
-            Ok(listed) => self.skins.set_saved(Ok(listed)),
-            Err(why) => {
-                self.skins.said = vec![Err(why)];
-                return;
+        match self.skins.writes.push("skins-index", job) {
+            Ok(()) => self.skins.disk_writes += 1,
+            Err(_) => {
+                self.skins.said = vec![Err(tr(
+                    "The launcher is busy with your saved skins. Try again in a moment.",
+                )
+                .to_string())]
             }
         }
-        self.skins.removed(id);
-        if self.skins.edit.skin == Some(SkinPick::Saved(id.to_owned())) {
+    }
+
+    /// A saved skin was removed, or couldn't be (`Msg::SkinRemoved`).
+    pub(crate) fn skin_removed(
+        &mut self,
+        uuid: String,
+        id: String,
+        removed: Result<(), String>,
+        listed: skin_library::Listing,
+    ) {
+        self.skins.disk_writes = self.skins.disk_writes.saturating_sub(1);
+        let shown = self.skins.uuid.as_deref() == Some(&uuid);
+        let Some(page) = self.skins.page_mut(&uuid) else {
+            return;
+        };
+        page.listing(listed);
+        if let Err(why) = removed {
+            page.said = vec![Err(why)];
+            return;
+        }
+        page.removed(&id);
+        let chosen = page.edit.skin == Some(SkinPick::Saved(id.clone()));
+        if chosen && shown {
             self.choose(|edit| {
                 edit.skin = None;
                 edit.slim = None;
             });
+        } else if chosen {
+            page.edit.skin = None;
+            page.edit.slim = None;
         }
     }
 
@@ -1480,7 +1727,7 @@ impl Launcher {
                     .font_weight(FontWeight::BOLD)
                     .child(tr("Skins")),
             );
-        let offline = offline_now();
+        let offline = self.skins_offline();
         let account = self.look_account();
         // Another account plays now (switched in the account menu while the page is open), or
         // another profile turned the offline developer view on or off.
@@ -1490,36 +1737,33 @@ impl Launcher {
         if self.skins.opened_offline != Some(offline) || other_account {
             self.skins_open();
         }
-        if offline {
-            // The game's offline look: the account's default skin, or Steve's with no account.
-            // Nothing the page knows from online (a profile, edits) is shown.
-            let (uuid, skin, slim) = match &account {
-                Some(a) => (
-                    a.uuid.clone(),
-                    SkinPick::AccountDefault,
-                    self.default_slim(&a.uuid),
-                ),
-                None => (String::new(), SkinPick::Default("steve"), false),
-            };
-            let preview = self.look_preview(&uuid, (&skin, slim, None), true, window, cx);
-            return self.turned_by_dragging(
-                page.child(
-                    div()
-                        .flex()
-                        .flex_wrap()
-                        .items_start()
-                        .gap(px(24.))
-                        .child(preview)
-                        .child(crate::settings::hint(tr(
-                            "Offline developer session: skins and capes can't be changed here.",
-                        ))),
-                ),
-                cx,
-            );
-        }
-        let Some(account) = account else {
-            return page.child(
-                crate::home::card()
+        let account = match account {
+            Some(account) if !offline => account,
+            account => {
+                // A player of the page's own, from the game files alone: in the offline developer
+                // view the game's offline look (the account's default skin, Steve's with no
+                // account), and Steve signed out. Nothing the page knows from online (a profile,
+                // edits) is shown. With no game prepared there is no picture to show.
+                let (uuid, skin, slim) = match account.as_ref().filter(|_| offline) {
+                    Some(a) => (
+                        a.uuid.clone(),
+                        SkinPick::AccountDefault,
+                        self.default_slim(&a.uuid),
+                    ),
+                    None => (String::new(), SkinPick::Default("steve"), false),
+                };
+                let preview = self
+                    .skin_resources()
+                    .is_some()
+                    .then(|| self.look_preview(&uuid, (&skin, slim, None), true, window, cx));
+                let beside = if offline {
+                    crate::settings::hint(tr(
+                        "Offline developer session: skins and capes can't be changed here.",
+                    ))
+                } else {
+                    crate::home::card()
+                    .flex_1()
+                    .min_w(px(280.))
                     .p(px(20.))
                     .flex()
                     .flex_col()
@@ -1533,8 +1777,21 @@ impl Launcher {
                             this.sign_in_to_play();
                             cx.notify();
                         }),
-                    )),
-            );
+                    ))
+                };
+                return self.turned_by_dragging(
+                    page.child(
+                        div()
+                            .flex()
+                            .flex_wrap()
+                            .items_start()
+                            .gap(px(24.))
+                            .children(preview)
+                            .child(beside),
+                    ),
+                    cx,
+                );
+            }
         };
         let worn = self.worn_look(&account);
         let (skin, slim, cape) = self.skins.chosen(&worn);
@@ -1733,13 +1990,16 @@ impl Launcher {
             .flex()
             .gap(px(8.))
             .child(
-                crate::frame::primary("skins-save", tr(if saving { "Saving…" } else { "Save" }))
-                    .flex_1()
-                    .when(!changed || saving, |d| d.opacity(0.5).cursor_default())
-                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                        this.look_save();
-                        cx.notify();
-                    })),
+                crate::frame::primary(
+                    "skins-save",
+                    if saving { tr("Saving…") } else { tr("Save") },
+                )
+                .flex_1()
+                .when(!changed || saving, |d| d.opacity(0.5).cursor_default())
+                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                    this.look_save();
+                    cx.notify();
+                })),
             )
             .when(changed && !saving, |d| {
                 d.child(
@@ -2000,13 +2260,10 @@ impl Launcher {
                     this.skins_pick_file(cx);
                 })),
         );
-        let defaults: Vec<&'static str> = match self.skin_resources() {
-            Some(resources) => DEFAULT_SKINS
-                .into_iter()
-                .filter(|name| default_skin_path(&resources, name, false).is_file())
-                .collect(),
-            None => Vec::new(),
-        };
+        let defaults = self
+            .skin_resources_found()
+            .map(|(_, defaults)| defaults)
+            .unwrap_or_default();
         let mut section = div()
             .flex()
             .flex_col()
@@ -2024,6 +2281,9 @@ impl Launcher {
                     .map(|why| crate::settings::warning(why.clone())),
             )
             .when_some(self.skins.library_error.clone(), |d, why| {
+                d.child(crate::settings::warning(why))
+            })
+            .when_some(self.skins.keep_error.clone(), |d, why| {
                 d.child(crate::settings::warning(why))
             });
         if !defaults.is_empty() {
@@ -2194,7 +2454,7 @@ mod tests {
     }
 
     /// A Save answered and settled, as `Launcher::look_saved` does it.
-    fn answer(skins: &mut Skins, id: u64, outcome: &look::Outcome) -> bool {
+    fn answer_save(skins: &mut Skins, id: u64, outcome: &look::Outcome) -> bool {
         let answered = skins.save_answered(id, outcome);
         let worn = worn(skins);
         skins.settle(&worn);
@@ -2251,7 +2511,7 @@ mod tests {
         pick(&mut skins, SkinPick::Default("alex"));
         let submitted = skins.submit(false).unwrap();
         let after = profile(ALEX, false, Some("c2"));
-        assert!(answer(
+        assert!(answer_save(
             &mut skins,
             submitted.id,
             &outcome(Some(Change::Done), None, Some(after.clone()))
@@ -2272,7 +2532,7 @@ mod tests {
         assert!(!skins.read_answered("a", reading, Ok(profile(SKIN, false, Some("c2"))), false));
         assert_eq!(skins.saving.as_ref().map(|s| s.id), Some(submitted.id));
         let after = profile(SKIN, false, Some("c1"));
-        assert!(answer(
+        assert!(answer_save(
             &mut skins,
             submitted.id,
             &outcome(None, Some(Change::Done), Some(after.clone()))
@@ -2298,7 +2558,7 @@ mod tests {
         });
         let submitted = skins.submit(false).unwrap();
         let after = profile(ALEX, false, Some("c2"));
-        answer(
+        answer_save(
             &mut skins,
             submitted.id,
             &outcome(
@@ -2350,7 +2610,7 @@ mod tests {
         let mut skins = Skins::new_for("a");
         pick(&mut skins, SkinPick::Default("alex"));
         let submitted = skins.submit(false).unwrap();
-        answer(
+        answer_save(
             &mut skins,
             submitted.id,
             &outcome(Some(Change::Failed("Sign in again.".into())), None, None),
@@ -2373,7 +2633,7 @@ mod tests {
             Some(profile(SKIN, false, None)),
         );
         failed.kept = Kept::Failed("no picture".into());
-        answer(&mut skins, submitted.id, &failed);
+        answer_save(&mut skins, submitted.id, &failed);
         let said = skins.said[0].clone().unwrap_err();
         assert!(
             said.contains("couldn't be kept") && said.contains("no picture"),
@@ -2392,7 +2652,7 @@ mod tests {
         pick(&mut skins, SkinPick::Default("alex"));
         let submitted = skins.submit(false).unwrap();
         pick(&mut skins, SkinPick::Default("steve"));
-        answer(
+        answer_save(
             &mut skins,
             submitted.id,
             &outcome(Some(Change::Done), None, Some(profile(ALEX, false, None))),
@@ -2424,7 +2684,7 @@ mod tests {
             "the preview shows it"
         );
         // c2 went on: c1 is still to do, and the next Save sends it.
-        answer(
+        answer_save(
             &mut skins,
             submitted.id,
             &outcome(
@@ -2449,7 +2709,7 @@ mod tests {
         choose(&mut skins, |edit| {
             edit.cape = Some(CapePick::Minecraft("c1".into()))
         });
-        answer(
+        answer_save(
             &mut skins,
             submitted.id,
             &outcome(
@@ -2475,7 +2735,7 @@ mod tests {
         pick(&mut skins, SkinPick::Default("alex"));
         let submitted = skins.submit(false).unwrap();
         pick(&mut skins, SkinPick::AccountDefault);
-        answer(
+        answer_save(
             &mut skins,
             submitted.id,
             &outcome(Some(Change::Done), None, Some(profile(ALEX, false, None))),
@@ -2495,7 +2755,7 @@ mod tests {
         pick(&mut skins, SkinPick::Texture(SKIN.into()));
         let mut done = outcome(Some(Change::Done), None, Some(profile(ALEX, false, None)));
         done.kept = kept(SKIN);
-        answer(&mut skins, submitted.id, &done);
+        answer_save(&mut skins, submitted.id, &done);
         assert_eq!(skins.edit.skin, Some(SkinPick::Saved(KEPT.into())));
 
         // A stale "Your skin" (the page showed `worn`, the Save found and kept another): the
@@ -2507,7 +2767,7 @@ mod tests {
         pick(&mut skins, SkinPick::Texture(SKIN.into()));
         let mut done = outcome(Some(Change::Done), None, Some(profile(ALEX, false, None)));
         done.kept = kept("http://textures.minecraft.net/texture/other");
-        answer(&mut skins, submitted.id, &done);
+        answer_save(&mut skins, submitted.id, &done);
         assert_eq!(skins.edit.skin, Some(SkinPick::Texture(SKIN.into())));
     }
 
@@ -2592,7 +2852,7 @@ mod tests {
         let after = profile(ALEX, false, Some("c1"));
         let done = outcome(Some(Change::Done), None, Some(after.clone()));
         assert!(!pages.save_answered(save.id, &done), "not B's Save");
-        assert!(answer(pages.page_mut("a").unwrap(), save.id, &done));
+        assert!(answer_save(pages.page_mut("a").unwrap(), save.id, &done));
         assert!(!pages.writing());
         assert!(
             pages.profile.is_none(),
@@ -2782,7 +3042,7 @@ mod tests {
         pick(&mut skins, SkinPick::Default("alex"));
         choose(&mut skins, |edit| edit.cape = Some(CapePick::None));
         let submitted = skins.submit(false).unwrap();
-        answer(
+        answer_save(
             &mut skins,
             submitted.id,
             &outcome(
@@ -2892,5 +3152,208 @@ mod tests {
         let name = dir.path().file_name().unwrap().to_string_lossy();
         assert!(why.contains(name.as_ref()), "named: {why}");
         assert!(add_files("not-a-uuid", &[dir.path().join("x.png")])[0].is_err());
+    }
+
+    #[test]
+    fn a_job_that_panics_still_answers() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        answer(
+            &tx,
+            || panic!("a bad job"),
+            || Msg::SkinFile("k".into(), 7, None),
+        );
+        assert!(matches!(rx.recv().unwrap(), Msg::SkinFile(key, 7, None) if key == "k"));
+        answer(
+            &tx,
+            || Msg::SkinFile("k".into(), 8, Some(vec![1])),
+            || panic!("not the fallback"),
+        );
+        assert!(matches!(rx.recv().unwrap(), Msg::SkinFile(_, 8, Some(_))));
+    }
+
+    #[test]
+    fn a_save_that_stopped_unexpectedly_is_neither_sent_again_nor_taken_as_done() {
+        let mut skins = Skins::new_for("a");
+        read(&mut skins, profile(SKIN, false, Some("c1")));
+        pick(&mut skins, SkinPick::Default("alex"));
+        choose(&mut skins, |edit| edit.cape = Some(CapePick::None));
+        let submitted = skins.submit(false).unwrap();
+        answer_save(&mut skins, submitted.id, &stopped_outcome((true, true)));
+        assert!(skins.saving.is_none());
+        assert!(skins.edit.is_empty(), "not sent again");
+        assert_eq!(skins.unconfirmed.skin, Some(SkinPick::Default("alex")));
+        assert_eq!(skins.said.len(), 2);
+        assert!(skins.said.iter().all(Result::is_err));
+        assert_eq!(stopped_outcome((false, true)).skin, None);
+    }
+
+    #[test]
+    fn the_account_default_skin_comes_with_the_arms_shown() {
+        let resources = tempfile::tempdir().unwrap();
+        // An id the game gives a slim default skin, then the same skin with wide arms.
+        let uuid = (0..64u32)
+            .map(|n| format!("{n:032x}"))
+            .find(|uuid| {
+                sunrise_launcher::heads::default_skin_file(resources.path(), uuid)
+                    .is_some_and(|(_, slim)| slim)
+            })
+            .unwrap();
+        let (slim_file, _) =
+            sunrise_launcher::heads::default_skin_file(resources.path(), &uuid).unwrap();
+        let name = slim_file.file_stem().unwrap().to_str().unwrap().to_owned();
+        assert_eq!(
+            account_default_path(resources.path(), &uuid, true),
+            Some(slim_file)
+        );
+        assert_eq!(
+            account_default_path(resources.path(), &uuid, false),
+            Some(default_skin_path(resources.path(), &name, false)),
+            "the wide picture of the same skin"
+        );
+    }
+
+    #[test]
+    fn only_the_latest_listing_counts_and_a_failed_keep_stays_shown() {
+        let mut skins = Skins::new_for("a");
+        let one = Saved {
+            id: KEPT.into(),
+            name: String::new(),
+            slim: false,
+        };
+        skins.listing((5, Ok(vec![one.clone()])));
+        skins.listing((3, Ok(Vec::new())));
+        assert_eq!(
+            skins.saved,
+            std::slice::from_ref(&one),
+            "an older listing changes nothing"
+        );
+        skins.keep_error = Some("disk full".into());
+        skins.listing((6, Err("unreadable".into())));
+        assert_eq!(skins.library_error.as_deref(), Some("unreadable"));
+        skins.listing((7, Ok(vec![one])));
+        assert_eq!(skins.library_error, None);
+        assert_eq!(
+            skins.keep_error.as_deref(),
+            Some("disk full"),
+            "a listing that works doesn't hide a keep that didn't"
+        );
+    }
+
+    /// The launcher itself, in a child of the test binary with scratch homes, no keychain and an
+    /// unreachable proxy, so it reads and writes no player's data and fetches nothing.
+    fn in_a_scratch_launcher(name: &str, test: impl FnOnce(&mut Launcher)) {
+        const CHILD: &str = "SUNRISE_SKINS_LAUNCHER_TEST";
+        if std::env::var_os(CHILD).is_none() {
+            let scratch = tempfile::tempdir().unwrap();
+            let root = scratch.path();
+            let nowhere = "http://127.0.0.1:9";
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", name, "--nocapture"])
+                .env(CHILD, root)
+                .env("SUNRISE_LAUNCHER_HOME", root.join("launcher"))
+                .env("SUNRISE_HOME", root.join("game"))
+                .env("SUNRISE_LAUNCHER_LOCATION_FILE", root.join("location.json"))
+                .env("SUNRISE_NO_KEYCHAIN", "1")
+                .env("SUNRISE_TELEMETRY_URL", "off")
+                .env("SUNRISE_LAUNCHER_NO_SELF_UPDATE", "1")
+                .env("XDG_DATA_HOME", root.join("data"))
+                .env("XDG_CONFIG_HOME", root.join("config"))
+                .env("HTTPS_PROXY", nowhere)
+                .env("HTTP_PROXY", nowhere)
+                .env("ALL_PROXY", nowhere)
+                .env_remove("NO_PROXY")
+                .env_remove("SUNRISE_GITHUB_MIRROR")
+                .env_remove("SUNRISE_LAUNCHER_BENCH")
+                .env_remove("SUNRISE_LAUNCHER_DEVELOPER_OFFLINE")
+                .status()
+                .unwrap();
+            assert!(status.success());
+            return;
+        }
+        let mut app = gpui::TestAppContext::single();
+        let (shell, cx) = app.add_window_view(crate::window_root::Shell::new);
+        let launcher = shell.read_with(cx, |shell, _| shell.launcher());
+        launcher.update(cx, |l, _| {
+            l.accounts.accounts.push(account::Account {
+                uuid: UUID.into(),
+                name: "Player".into(),
+                skin: None,
+                cape: None,
+            });
+            test(l)
+        });
+    }
+
+    const UUID: &str = "069a79f444e94726a5befca90e38aaf5";
+
+    #[test]
+    fn a_save_on_any_page_holds_off_a_data_move_and_a_launcher_restart() {
+        in_a_scratch_launcher(
+            "skins_page::tests::a_save_on_any_page_holds_off_a_data_move_and_a_launcher_restart",
+            |l| {
+                let before = (l.location_busy(), l.launcher_update_wait());
+                l.skins.show(UUID, |_| true);
+                l.skins.edit.cape = Some(CapePick::None);
+                l.skins.submit(false).unwrap();
+                // Another account's page shown: the Save is still under way.
+                l.skins.show("b09600dff4354d4fb56776eec1e55083", |_| true);
+                assert!(l.location_busy());
+                assert_eq!(
+                    l.launcher_update_wait(),
+                    Some(crate::launcher_update::Wait::Work)
+                );
+                l.skins.page_mut(UUID).unwrap().saving = None;
+                assert_eq!((l.location_busy(), l.launcher_update_wait()), before);
+                l.skins.disk_writes += 1;
+                assert!(l.location_busy(), "a saved skin being written");
+            },
+        );
+    }
+
+    #[test]
+    fn offline_now_a_save_that_ends_starts_nothing_and_choices_are_ignored() {
+        in_a_scratch_launcher(
+            "skins_page::tests::offline_now_a_save_that_ends_starts_nothing_and_choices_are_ignored",
+            |l| {
+                l.skins.offline_for_test = Some(false);
+                l.skins.show(UUID, |_| true);
+                l.skins.edit.skin = Some(SkinPick::Default("alex"));
+                let save = l.skins.submit(false).unwrap();
+                // The offline developer view comes on while the Save runs.
+                l.skins.offline_for_test = Some(true);
+                let mut done = outcome(
+                    Some(Change::Done),
+                    None,
+                    Some(Profile {
+                        id: UUID.into(),
+                        ..profile(ALEX, false, Some("c1"))
+                    }),
+                );
+                done.kept = kept(SKIN);
+                l.look_saved(UUID.into(), save.id, done);
+                assert!(l.skins.saving.is_none(), "reconciled");
+                assert_eq!(
+                    l.accounts.accounts[0].skin.as_ref().map(|(u, _)| u.as_str()),
+                    Some(ALEX),
+                    "recorded"
+                );
+                assert!(l.skins.heads_stale, "no profile head fetched offline");
+                assert!(l.skins.reading.is_none(), "no profile read");
+                assert!(l.skins.pictures.is_empty(), "no picture asked for");
+                assert!(l.skins.keeping.is_empty(), "no skin kept");
+                assert!(l.skins.writes.jobs.is_none(), "no saved skins listed");
+                // A reading answered, a choice and a Save: none of them do anything offline.
+                let reading = l.skins.read_asked();
+                l.skins_profile(UUID.into(), reading, Ok(profile(SKIN, false, None)));
+                assert!(l.skins.pictures.is_empty());
+                l.choose(|edit| edit.cape = Some(CapePick::None));
+                assert!(l.skins.edit.is_empty());
+                l.skins.edit.cape = Some(CapePick::None);
+                l.look_save();
+                assert!(l.skins.saving.is_none(), "nothing sent");
+                l.skins_add_for(UUID.into(), vec![PathBuf::from("x.png")]);
+                assert_eq!(l.skins.disk_writes, 0, "nothing added");
+            },
+        );
     }
 }
