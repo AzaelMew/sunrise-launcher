@@ -1,8 +1,9 @@
 <!--
 Fill in what applies and delete the rest, including these comments.
 
-Opened by an AI agent? Keep the first line, naming the person and the tool:
-> 🤖 Opened by <name>'s AI agent (<tool, model>), not by <name> personally.
+Opened by an AI agent? Copy this line out of the comment to the very first line of the PR body
+before you delete the comment, so it shows on GitHub. Say who opened the PR and on whose behalf:
+> 🤖 Opened by <name>'s AI agent, not by <name> personally.
 -->
 
 ## What changed
@@ -18,13 +19,14 @@ Opened by an AI agent? Keep the first line, naming the person and the tool:
 ## Self-check
 
 - Head: `<full commit SHA>`
-- Local: <!-- what you ran and on which OS, e.g. `cargo fmt --all --check`, `cargo clippy --all-targets --locked -- -D warnings`, `cargo test --locked --workspace` -->
+- Local: <!-- what you ran and on which OS, e.g. `cargo fmt --all --check`, `cargo clippy --all-targets --locked -- -D warnings`, `cargo test --locked --workspace --lib --bins` (CI picks the integration tests per platform) -->
 - Manual: <!-- what you tried in the running launcher -->
 - Not checked: <!-- what you couldn't or didn't test (other platforms, a live server, a signed game), or "nothing" -->
 
-<!-- UI or design changes: a before and an after of each screen it changes, at 1280×800 and
-800×600, dark and light where they differ. Take the before on `main`, at the same window size and
-in the same state as the after.
+<!-- UI or design changes: a before and an after of each state it changes (not just each screen),
+at 1280×800 and 800×600, dark and light where they differ. Take the before on `main`, at the same
+window size and in the same state as the after. For stacked work, take the before on the head of the
+PR it builds on, so it shows only what this PR changes. A state that's new has no before: say so.
 
 ### Captures
 
@@ -32,11 +34,14 @@ in the same state as the after.
 |---|---|---|
 | … at 1280×800 | … | … |
 | … at 800×600 | … | … |
+| new state | none (new) | … |
 -->
 
 <!--
 Before you open it:
-- Every commit is signed off (`git commit -s`; `git rebase --signoff origin/main` fixes a branch). The DCO check fails without it.
+- Every commit is signed off by its author (`git commit -s`). For your own commits,
+  `git rebase --signoff origin/main` adds a missing sign-off; it can't sign off for someone
+  else's commit, so ask that author instead. The DCO check fails without it.
 - Copies of game files changed? Update `tools/ci/sunrise-commit` in the same PR (CONTRIBUTING.md).
 - Not ready for review yet? Open it as a draft.
 -->
