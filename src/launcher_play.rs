@@ -527,6 +527,7 @@ impl Launcher {
         }
         self.sign_in_state = None;
         self.sign_in_target = None;
+        self.sign_in_copies.clear();
     }
 
     pub(crate) fn choose_folder(&mut self, cx: &mut Context<Self>) {

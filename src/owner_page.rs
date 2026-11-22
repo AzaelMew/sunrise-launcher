@@ -3,7 +3,7 @@
 //! without one (those who played offline before the gate), and again whenever Play is refused.
 //! The sign-in runs on it, code and all.
 use super::*;
-use crate::frame::{button, primary, Reach as _};
+use crate::frame::{button, button_base, primary, Reach as _};
 use crate::paint::palette;
 use gpui::rgb;
 
@@ -152,7 +152,7 @@ impl Launcher {
                                         .child(user_code.to_string()),
                                 ),
                         )
-                        .child(copy_button("owner-copy", tr("Copy code"), copy, user_code)),
+                        .child(self.copy_button(CopyButton::Code, tr("Copy code"), copy, cx)),
                 )
                 .children((!microsoft::has_private_window()).then(|| {
                     said(
@@ -178,7 +178,7 @@ impl Launcher {
                                 .on_click(move |_, _, cx| microsoft::open_private(&private_uri, cx))
                                 .into_any_element()
                         } else {
-                            copy_button("owner-copy-link", tr("Copy link"), link_uri, user_code)
+                            self.copy_button(CopyButton::Link, tr("Copy link"), link_uri, cx)
                         })
                         .child(
                             button("owner-other", tr("Use a different Microsoft account"))
@@ -503,60 +503,112 @@ impl Launcher {
     }
 }
 
-/// Which copy `copy_button` remembers: this button for this sign-in attempt (`attempt` is the
-/// attempt's code), so a new attempt's button starts at its label even while the last one's
-/// "Copied" would still show.
-fn copy_key(id: &str, attempt: &str) -> SharedString {
-    SharedString::from(format!("{id}:{attempt}"))
+const COPY_SHOWN: Duration = Duration::from_millis(1400);
+
+#[derive(Clone, Copy)]
+enum CopyButton {
+    Code,
+    Link,
 }
 
-/// A copy button that shows the copy on itself (#168), not in a toast: its label turns to
-/// "Copied" on an accent tint with a tick that pops in, then goes back.
-///
-/// The button stays the same element in every state, so a player who copies with Enter keeps
-/// focus on it and Tab goes on to the next action: only its label and the children inside it
-/// change, and the tint is a child that animates, not a wrapper around the button.
-fn copy_button(id: &'static str, label: &str, text: String, attempt: &str) -> AnyElement {
-    let key = copy_key(id, attempt);
+impl CopyButton {
+    fn id(self) -> &'static str {
+        match self {
+            Self::Code => "owner-copy",
+            Self::Link => "owner-copy-link",
+        }
+    }
+}
+
+/// The two copy indicators for the current sign-in attempt.
+#[derive(Default)]
+pub(super) struct SignInCopies {
+    code: Option<(Instant, usize)>,
+    link: Option<(Instant, usize)>,
+    serial: usize,
+}
+
+impl SignInCopies {
+    pub(super) fn clear(&mut self) {
+        self.code = None;
+        self.link = None;
+    }
+
+    fn shown(&self, kind: CopyButton) -> Option<usize> {
+        match kind {
+            CopyButton::Code => self.code,
+            CopyButton::Link => self.link,
+        }
+        .filter(|(at, _)| at.elapsed() < COPY_SHOWN)
+        .map(|(_, serial)| serial)
+    }
+
+    fn copy(&mut self, kind: CopyButton) {
+        self.serial += 1;
+        let mark = Some((Instant::now(), self.serial));
+        match kind {
+            CopyButton::Code => self.code = mark,
+            CopyButton::Link => self.link = mark,
+        }
+    }
+}
+
+impl Launcher {
+    fn copy_button(
+        &self,
+        kind: CopyButton,
+        label: &str,
+        text: String,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        copy_button_face(kind, label, self.sign_in_copies.shown(kind))
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                crate::widgets::copy_quietly(cx, gpui::ClipboardItem::new_string(text.clone()));
+                this.sign_in_copies.copy(kind);
+                cx.notify();
+                cx.spawn(async move |this, cx| {
+                    cx.background_executor().timer(COPY_SHOWN).await;
+                    let _ = this.update(cx, |_, cx| cx.notify());
+                })
+                .detach();
+            }))
+            .into_any_element()
+    }
+}
+
+/// Keep the focusable element in place while the label and decorative children change.
+fn copy_button_face(kind: CopyButton, label: &str, shown: Option<usize>) -> Stateful<Div> {
+    let id = kind.id();
     let accent: gpui::Hsla = rgb(palette().accent).into();
-    let shown = crate::code_box::copied(&key);
-    let base = button(
+    let base = button_base(
         id,
         shown.map_or_else(|| label.to_string(), |_| tr("Copied").into()),
     )
     .relative()
     .gap(px(6.));
-    let base = match shown {
+    match shown {
         Some(n) => base
             .border_color(accent.opacity(0.5))
-            // Its own hover: the accent edge stays, and the tint below stays over the fill.
             .hover(move |s| s.border_color(accent.opacity(0.75)))
             .child(crate::code_box::tick(
-                &key,
+                &SharedString::from(id),
                 n,
                 16.,
                 rgb(palette().text).into(),
             ))
             .child(
-                // The tint comes up with the tick, over any hover fill.
                 div()
                     .absolute()
                     .inset_0()
                     .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
                     .with_animation(
-                        ElementId::named_usize(SharedString::from(format!("{key}-tint")), n),
-                        crate::code_box::played(std::time::Duration::from_millis(200)),
+                        ElementId::named_usize(SharedString::from(format!("{id}-tint")), n),
+                        crate::code_box::played(Duration::from_millis(200)),
                         move |d, t| d.bg(accent.opacity(0.16 * t)),
                     ),
             ),
-        None => base,
-    };
-    let clicked = key.clone();
-    base.on_click(move |_, window, cx| {
-        crate::widgets::copy_quietly(cx, gpui::ClipboardItem::new_string(text.clone()));
-        crate::code_box::note_copy(clicked.clone(), window, cx);
-    })
-    .into_any_element()
+        None => base.hover(|s| s.bg(rgb(palette().hover))),
+    }
 }
 
 /// What the sheet shows of the sign-in.
@@ -580,20 +632,29 @@ fn short_link(uri: &str) -> &str {
 
 #[cfg(test)]
 mod tests {
-    use super::copy_key;
+    use super::*;
 
     #[test]
-    fn a_copy_shows_on_its_own_sign_in_attempt_only() {
-        let first = copy_key("owner-copy", "ABCD1234");
-        let next = copy_key("owner-copy", "EFGH5678");
-        let link = copy_key("owner-copy-link", "ABCD1234");
-        assert_eq!(crate::code_box::copied(&first), None);
-        let n = crate::code_box::remember_copy(&first);
-        assert_eq!(crate::code_box::copied(&first), Some(n));
-        // Cancelling and asking for a new code: that attempt's button starts at Copy code,
-        // and the link's button on the same attempt was never copied.
-        assert_eq!(crate::code_box::copied(&next), None);
-        assert_eq!(crate::code_box::copied(&link), None);
+    fn copy_buttons_keep_their_identity_when_feedback_appears_and_resets() {
+        let mut copies = SignInCopies::default();
+        for kind in [CopyButton::Code, CopyButton::Link] {
+            let expected = Some(ElementId::from(kind.id()));
+            let mut initial = copy_button_face(kind, "Copy", copies.shown(kind));
+            assert_eq!(initial.interactivity().element_id, expected);
+
+            copies.copy(kind);
+            assert!(copies.shown(kind).is_some());
+            let mut copied = copy_button_face(kind, "Copy", copies.shown(kind));
+            assert_eq!(copied.interactivity().element_id, expected);
+
+            copies.clear();
+            assert!(copies.shown(kind).is_none());
+            let mut reset = copy_button_face(kind, "Copy", copies.shown(kind));
+            assert_eq!(reset.interactivity().element_id, expected);
+        }
+
+        copies.copy(CopyButton::Code);
+        assert!(copies.shown(CopyButton::Link).is_none());
     }
 
     #[test]
