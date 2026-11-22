@@ -4060,15 +4060,41 @@ pub fn self_update(release: &Release, progress: impl Fn(f32)) -> Result<(), Stri
     Ok(())
 }
 
+/// A manifest check has different consequences from an error writing or downloading the stage.
+#[derive(Debug)]
+pub enum StageUpdateError {
+    Check(LauncherCheckError),
+    Download(String),
+}
+
+impl From<StageUpdateError> for String {
+    fn from(error: StageUpdateError) -> Self {
+        match error {
+            StageUpdateError::Check(error) => error.to_string(),
+            StageUpdateError::Download(error) => error,
+        }
+    }
+}
+
 /// Downloads and unpacks a launcher release next to this one without putting it in place yet
 /// ([`place_checked`] does, in this process or in the installer `update_handoff` starts), in a new
 /// stage folder that no other launcher writes to. None when the file there already is that release
 /// or a newer one.
-pub fn stage_update(release: &Release, progress: impl Fn(f32)) -> Result<Option<Staged>, String> {
-    let (url, size) = release
-        .asset
-        .clone()
-        .ok_or("This launcher release has no build for this platform.")?;
+pub fn stage_update(
+    release: &Release,
+    progress: impl Fn(f32),
+) -> Result<Option<Staged>, StageUpdateError> {
+    stage_update_with(release, progress, fetch_small)
+}
+
+fn stage_update_with(
+    release: &Release,
+    progress: impl Fn(f32),
+    fetch_manifest: impl Fn(&str) -> Result<Option<Vec<u8>>, String>,
+) -> Result<Option<Staged>, StageUpdateError> {
+    let (url, size) = release.asset.as_ref().ok_or_else(|| {
+        StageUpdateError::Download("This launcher release has no build for this platform.".into())
+    })?;
     let target = launcher_version(&release.tag).unwrap_or("0");
     if installed_launcher_version(&update_target())
         .is_some_and(|v| v != VERSION && compare_versions(&v, target).is_ge())
@@ -4079,17 +4105,17 @@ pub fn stage_update(release: &Release, progress: impl Fn(f32)) -> Result<Option<
         &release.tag,
         launcher_asset().unwrap_or_default(),
         &sunrise_launcher_release_verify::trusted_launcher_keys(),
-        fetch_small,
+        fetch_manifest,
     )
-    .map_err(|error| error.to_string())?;
+    .map_err(StageUpdateError::Check)?;
     let work = update_work_dir();
     remove_abandoned_stages(&work, std::time::SystemTime::now(), process_alive);
-    let stage = new_stage_folder(&work)?;
-    let staged = fill_stage(&stage, &release.tag, &url, size, &sha256, &progress);
+    let stage = new_stage_folder(&work).map_err(StageUpdateError::Download)?;
+    let staged = fill_stage(&stage, &release.tag, url, *size, &sha256, &progress);
     if staged.is_err() {
         let _ = fs::remove_dir_all(&stage);
     }
-    staged.map(Some)
+    staged.map(Some).map_err(StageUpdateError::Download)
 }
 
 fn fill_stage(

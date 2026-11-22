@@ -21,7 +21,7 @@ pub enum Msg {
     Updates(Box<Updates>),
     LauncherChecked(Box<Result<Option<Release>, LauncherCheckError>>),
     LauncherProgress(f32),
-    LauncherUpdated(Result<Option<Staged>, String>),
+    LauncherUpdated(Result<Option<Staged>, StageUpdateError>),
     /// `reuse_prepared_everywhere` prepared these versions.
     Reused(Vec<(String, String)>),
     /// None when secrets are kept in the OS keychain, else what to say: they last only until

@@ -19,12 +19,23 @@ pub(super) enum Page {
     Project,
     Join,
     Hosting,
-    /// The Skins tab (`skins_page`): for now, the account's capes.
+    /// The Skins tab (`skins_page`): the look of the account that plays.
     Skins,
     Settings,
 }
 
 impl Page {
+    /// The pages `sunrise-launcher benchmark` switches through, as a player clicks them: the
+    /// header's tabs, then Settings.
+    pub(super) const BENCH: [Page; 6] = [
+        Page::Home,
+        Page::Discover,
+        Page::Packs,
+        Page::Join,
+        Page::Skins,
+        Page::Settings,
+    ];
+
     /// The tab that stays selected on a subpage.
     fn active_tab(self) -> Self {
         match self {
@@ -538,6 +549,14 @@ impl Launcher {
             self.panel_opacity_preview(),
         );
         scrolls_begin();
+        // Records start-up and UI frame times, and lets a benchmark window begin once the
+        // window has drawn. Nothing on screen is read here: a benchmark reads where the build
+        // list was left, and moves it, between frames (`bench_wheel`).
+        let now = std::time::Instant::now();
+        let gap = self.perf.frame(now);
+        if let Some(bench) = &mut self.bench {
+            bench.frame(now, gap);
+        }
         crate::selectable::begin();
         crate::tokens::set_roundness(self.corner_roundness());
         self.modal_before(window, cx);
