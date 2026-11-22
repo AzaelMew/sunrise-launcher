@@ -70,6 +70,13 @@ impl Launcher {
         self.save_settings();
     }
 
+    /// The window's width less what the sidebar takes beyond its closed width, as it is drawn
+    /// now: what the top bar's narrow layouts go by, so they change when the room does, part
+    /// way through an ease, not on the press that starts it.
+    pub(crate) fn bar_width(&self) -> f32 {
+        self.window_width - (rail_width(self.rail_open()) - CLOSED)
+    }
+
     /// How open the sidebar is drawn now: 0 closed, 1 open, between while it eases.
     pub(crate) fn rail_open(&self) -> f32 {
         let at_rest = if self.settings.sidebar_expanded {

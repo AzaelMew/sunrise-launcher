@@ -439,7 +439,8 @@ impl Launcher {
     fn header(&mut self, cx: &mut Context<Self>) -> Div {
         let p = palette();
         let active = self.ui.page.active_tab();
-        let compact = self.window_width < 900. && self.settings.sidebar_expanded;
+        // Below 900 px with the sidebar open; never with it closed (the window is 800 px at least).
+        let compact = self.bar_width() < 750.;
         // Keep every destination readable; the account chip can shorten its label.
         let mut tabs = div()
             .flex()
