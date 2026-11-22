@@ -221,23 +221,26 @@ fn strip_html(markdown: String) -> String {
     // The parser hands over block HTML a line at a time, and inline HTML a tag at a time: read
     // each HTML block, and each paragraph's inline HTML, as one fragment.
     let (mut block, mut inline) = (String::new(), String::new());
+    // A comment or text-only element left open in one fragment hides what follows it until it
+    // closes, across Markdown boundaries.
+    let mut open = None;
     let mut in_block = false;
     for (event, span) in parser(&markdown).into_offset_iter() {
         let html = match &event {
             Event::Start(Tag::HtmlBlock) => {
-                push_images(&mut clean, &mut inline, false);
+                push_images(&mut clean, &mut inline, false, &mut open);
                 in_block = true;
                 continue;
             }
             Event::End(TagEnd::HtmlBlock) => {
                 in_block = false;
-                push_images(&mut clean, &mut block, true);
+                push_images(&mut clean, &mut block, true, &mut open);
                 continue;
             }
             Event::End(
                 TagEnd::Paragraph | TagEnd::Heading(_) | TagEnd::TableCell | TagEnd::Item,
             ) => {
-                push_images(&mut clean, &mut inline, false);
+                push_images(&mut clean, &mut inline, false, &mut open);
                 continue;
             }
             Event::Html(html) | Event::InlineHtml(html) => html,
@@ -252,15 +255,15 @@ fn strip_html(markdown: String) -> String {
             _ => block.push_str(html),
         }
     }
-    push_images(&mut clean, &mut inline, false);
-    push_images(&mut clean, &mut block, true);
+    push_images(&mut clean, &mut inline, false, &mut open);
+    push_images(&mut clean, &mut block, true, &mut open);
     clean.push_str(&markdown[next..]);
     clean
 }
 
 /// Write the images of an HTML fragment as Markdown images, and empty the fragment.
-fn push_images(clean: &mut String, fragment: &mut String, block: bool) {
-    for (alt, src) in html_images(fragment) {
+fn push_images(clean: &mut String, fragment: &mut String, block: bool, open: &mut Option<String>) {
+    for (alt, src) in html_images(fragment, open) {
         clean.push_str("![");
         for c in alt.chars().filter(|c| !c.is_control()) {
             if c.is_ascii_punctuation() {
@@ -281,13 +284,24 @@ fn push_images(clean: &mut String, fragment: &mut String, block: bool) {
 /// The `alt` and `src` of each `img` element in an HTML fragment. Comments, `script` and `style`
 /// text, and the attributes of other elements are skipped whole. A `src` that could break out of
 /// a Markdown destination is dropped.
-fn html_images(html: &str) -> Vec<(String, String)> {
+fn html_images(html: &str, open: &mut Option<String>) -> Vec<(String, String)> {
     let mut found = Vec::new();
     let mut rest = html;
-    while let Some(open) = rest.find('<') {
-        rest = &rest[open + 1..];
+    loop {
+        if let Some(close) = open.as_deref() {
+            let Some(at) = closing(rest, close) else {
+                return found;
+            };
+            rest = &rest[at..];
+            *open = None;
+        }
+        let Some(lt) = rest.find('<') else {
+            break;
+        };
+        rest = &rest[lt + 1..];
         if let Some(comment) = rest.strip_prefix("!--") {
-            rest = comment.find("-->").map_or("", |end| &comment[end + 3..]);
+            rest = comment;
+            *open = Some("-->".into());
             continue;
         }
         // The whole tag name: `img-preview` is not `img`.
@@ -314,21 +328,24 @@ fn html_images(html: &str) -> Vec<(String, String)> {
                     found.push((value("alt").unwrap_or_default(), src));
                 }
             }
-            "script" | "style" | "textarea" | "title" => {
-                // Raw text through the matching end tag, `</script` followed by the name's end.
-                // ASCII lowercasing keeps every byte offset.
-                let close = format!("</{name}");
-                let lower = rest.to_ascii_lowercase();
-                let end = lower.match_indices(&close).map(|(at, _)| at).find(|&at| {
-                    lower[at + close.len()..]
-                        .starts_with(|c: char| c.is_ascii_whitespace() || c == '/' || c == '>')
-                });
-                rest = end.map_or("", |end| &rest[end..]);
-            }
+            "script" | "style" | "textarea" | "title" => *open = Some(format!("</{name}")),
             _ => (),
         }
     }
     found
+}
+
+/// Where text hidden by an open comment or text-only element ends: after `-->`, or at the
+/// matching end tag (`</script` followed by the name's end). ASCII lowercasing keeps offsets.
+fn closing(rest: &str, close: &str) -> Option<usize> {
+    if close == "-->" {
+        return rest.find(close).map(|at| at + close.len());
+    }
+    let lower = rest.to_ascii_lowercase();
+    lower.match_indices(close).map(|(at, _)| at).find(|&at| {
+        lower[at + close.len()..]
+            .starts_with(|c: char| c.is_ascii_whitespace() || c == '/' || c == '>')
+    })
 }
 
 /// A tag's attributes, names lowercased and values decoded, and the text after its closing `>`.
