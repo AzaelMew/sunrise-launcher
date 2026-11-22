@@ -2406,6 +2406,7 @@ fn carried_over(name: &std::ffi::OsStr, target: Target) -> bool {
         "native-mods.json",
         "native-data",
         crate::managed_play::Artifact::ARCHIVE_RECEIPT,
+        crate::managed_play::Artifact::SDK_RECEIPT,
         sunrise_launcher_smod::mod_list::NATIVE_DIR,
     ]
     .iter()
