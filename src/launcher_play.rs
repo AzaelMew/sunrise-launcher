@@ -502,33 +502,13 @@ impl Launcher {
 
     /// Signs an account in again on the sign-in screen, where its code is shown (#110).
     pub(crate) fn re_sign_in(&mut self, uuid: &str) {
-        self.sign_in_from_action(SignInClick::Renew(uuid));
+        sign_in_click(self, Some(uuid.to_owned()));
     }
 
     /// Retry the original account when the current screen has a target.
     pub(crate) fn retry_sign_in(&mut self) {
-        let target = self
-            .sign_in_target
-            .as_ref()
-            .map(|account| account.uuid.clone());
-        self.sign_in_from_action(SignInClick::Retry(target.as_deref()));
-    }
-
-    fn sign_in_from_action(&mut self, click: SignInClick<'_>) {
-        let start = click.target(self.account_locked(), |uuid| {
-            self.accounts.find(uuid).cloned()
-        });
-        if let Err(refusal) = dispatch_sign_in(start, |account| {
-            self.begin_sign_in(account);
-            self.owner_screen_open = true;
-        }) {
-            match refusal {
-                SignInRefusal::Busy => self.say_account_locked(),
-                SignInRefusal::AccountRemoved => crate::glass_toast::say(tr(
-                    "This account was signed out. Add it again to sign in.",
-                )),
-            }
-        }
+        let target = SignInHost::retry_target(self);
+        sign_in_click(self, target);
     }
 
     pub(crate) fn begin_sign_in(&mut self, target: Option<account::Account>) {
@@ -583,85 +563,142 @@ enum SignInRefusal {
     AccountRemoved,
 }
 
-enum SignInClick<'a> {
-    Renew(&'a str),
-    Retry(Option<&'a str>),
+/// What the sign-in buttons need from the launcher, so their real handler runs in tests too.
+trait SignInHost {
+    /// A game is starting or the account can't change now.
+    fn locked(&self) -> bool;
+    fn account(&self, uuid: &str) -> Option<account::Account>;
+    /// The account the sign-in screen on show was for, if any.
+    fn retry_target(&self) -> Option<String>;
+    /// Starts the sign-in worker for `target` and shows its screen.
+    fn start(&mut self, target: Option<account::Account>);
+    fn refuse(&mut self, refusal: SignInRefusal);
 }
 
-impl SignInClick<'_> {
-    fn target(
-        self,
-        locked: bool,
-        find: impl FnOnce(&str) -> Option<account::Account>,
-    ) -> Result<Option<account::Account>, SignInRefusal> {
-        if locked {
-            return Err(SignInRefusal::Busy);
-        }
-        match self {
-            Self::Renew(uuid) | Self::Retry(Some(uuid)) => {
-                find(uuid).map(Some).ok_or(SignInRefusal::AccountRemoved)
+impl SignInHost for Launcher {
+    fn locked(&self) -> bool {
+        self.account_locked()
+    }
+
+    fn account(&self, uuid: &str) -> Option<account::Account> {
+        self.accounts.find(uuid).cloned()
+    }
+
+    fn retry_target(&self) -> Option<String> {
+        self.sign_in_target
+            .as_ref()
+            .map(|account| account.uuid.clone())
+    }
+
+    fn start(&mut self, target: Option<account::Account>) {
+        self.begin_sign_in(target);
+        self.owner_screen_open = true;
+    }
+
+    fn refuse(&mut self, refusal: SignInRefusal) {
+        match refusal {
+            SignInRefusal::Busy => self.say_account_locked(),
+            SignInRefusal::AccountRemoved => {
+                crate::glass_toast::say(tr("This account was signed out. Add it again to sign in."))
             }
-            Self::Retry(None) => Ok(None),
         }
     }
 }
 
-/// Dispatches the worker and screen-open action together.
-fn dispatch_sign_in(
-    target: Result<Option<account::Account>, SignInRefusal>,
-    start: impl FnOnce(Option<account::Account>),
-) -> Result<(), SignInRefusal> {
-    target.map(start)
+/// Sign `uuid` in again, or a new account when there is none: refused while the account is
+/// locked, and when that account was removed meanwhile.
+fn sign_in_click(host: &mut impl SignInHost, uuid: Option<String>) {
+    if host.locked() {
+        return host.refuse(SignInRefusal::Busy);
+    }
+    let target = match uuid {
+        None => None,
+        Some(uuid) => match host.account(&uuid) {
+            Some(account) => Some(account),
+            None => return host.refuse(SignInRefusal::AccountRemoved),
+        },
+    };
+    host.start(target);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    #[derive(Default)]
+    struct FakeSignIn {
+        locked: bool,
+        accounts: Vec<account::Account>,
+        target: Option<String>,
+        started: Vec<Option<String>>,
+        screen_open: bool,
+        refused: Vec<SignInRefusal>,
+    }
+
+    impl SignInHost for FakeSignIn {
+        fn locked(&self) -> bool {
+            self.locked
+        }
+        fn account(&self, uuid: &str) -> Option<account::Account> {
+            self.accounts.iter().find(|a| a.uuid == uuid).cloned()
+        }
+        fn retry_target(&self) -> Option<String> {
+            self.target.clone()
+        }
+        fn start(&mut self, target: Option<account::Account>) {
+            self.target = target.as_ref().map(|account| account.uuid.clone());
+            self.started.push(self.target.clone());
+            self.screen_open = true;
+        }
+        fn refuse(&mut self, refusal: SignInRefusal) {
+            self.refused.push(refusal);
+        }
+    }
+
     #[test]
     fn renewing_and_retrying_start_only_the_requested_account() {
-        let account = account::Account {
+        let original = account::Account {
             uuid: "a1".into(),
             name: "Original account".into(),
             skin: None,
             cape: None,
         };
-        let find = |uuid: &str| (uuid == account.uuid).then(|| account.clone());
-        let mut attempt = None;
-        dispatch_sign_in(SignInClick::Renew("a1").target(false, find), |target| {
-            attempt = target.map(|account| account.uuid);
-        })
-        .unwrap();
-        assert_eq!(attempt.as_deref(), Some("a1"));
+        let mut host = FakeSignIn {
+            accounts: vec![original],
+            ..FakeSignIn::default()
+        };
+        // Sign in again opens the screen for that account; a retry after an error reuses it.
+        sign_in_click(&mut host, Some("a1".into()));
+        assert!(host.screen_open);
+        let retry = host.retry_target();
+        sign_in_click(&mut host, retry);
+        assert_eq!(host.started, [Some("a1".into()), Some("a1".into())]);
 
-        let retry = attempt.as_deref();
-        let mut retried = None;
-        dispatch_sign_in(SignInClick::Retry(retry).target(false, find), |target| {
-            retried = target.map(|account| account.uuid);
-        })
-        .unwrap();
-        assert_eq!(retried, attempt);
+        // The account was removed meanwhile: retry starts nothing.
+        host.accounts.clear();
+        host.screen_open = false;
+        let retry = host.retry_target();
+        sign_in_click(&mut host, retry);
+        assert_eq!(host.started.len(), 2);
+        assert!(!host.screen_open);
+        assert_eq!(host.refused, [SignInRefusal::AccountRemoved]);
 
-        let must_not_start = |_| panic!("No worker or sign-in screen should start");
-        assert_eq!(
-            dispatch_sign_in(
-                SignInClick::Retry(retry).target(false, |_| None),
-                must_not_start
-            ),
-            Err(SignInRefusal::AccountRemoved)
-        );
-        assert_eq!(
-            dispatch_sign_in(SignInClick::Renew("a1").target(true, find), must_not_start),
-            Err(SignInRefusal::Busy)
-        );
-        assert_eq!(
-            dispatch_sign_in(SignInClick::Retry(retry).target(true, find), must_not_start),
-            Err(SignInRefusal::Busy)
-        );
-        dispatch_sign_in(SignInClick::Retry(None).target(false, find), |target| {
-            assert!(target.is_none());
-        })
-        .unwrap();
+        // While a game starts, neither button opens the screen or starts a worker.
+        let mut starting = FakeSignIn {
+            locked: true,
+            target: Some("a1".into()),
+            ..FakeSignIn::default()
+        };
+        sign_in_click(&mut starting, Some("a1".into()));
+        let retry = starting.retry_target();
+        sign_in_click(&mut starting, retry);
+        assert!(starting.started.is_empty() && !starting.screen_open);
+        assert_eq!(starting.refused, [SignInRefusal::Busy, SignInRefusal::Busy]);
+
+        // A screen with no account behind it signs a new account in.
+        let mut fresh = FakeSignIn::default();
+        sign_in_click(&mut fresh, None);
+        assert_eq!(fresh.started, [None]);
     }
 
     #[test]
