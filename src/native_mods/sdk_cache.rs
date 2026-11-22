@@ -28,6 +28,9 @@ use std::path::{Path, PathBuf};
 use sunrise_launcher_release_verify::{PublicKey, SIGNATURE, SIGNATURE_V2, SUMS};
 use sunrise_launcher_sdk::{self as sdk, Asset, Index, Kind, Side, INDEX};
 
+mod game;
+pub(crate) use game::{offers_game, stage_game, GameSlices};
+
 /// The SDK's three compiled slices of one build, each in its own folder (`runtime`, `api`, `engine`).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Package {
@@ -240,7 +243,7 @@ pub fn known_name(commit: &str) -> String {
 
 /// Where SDK releases are read from.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) enum Base {
+pub(crate) enum Base {
     /// `<url>/<tag>/<file>`.
     Url(String),
     /// `<folder>/<tag>/<file>`.
@@ -260,7 +263,7 @@ enum Unread {
 
 impl Base {
     /// [`BASE_VAR`]'s base, else this repository's releases.
-    pub(super) fn from_env() -> Self {
+    pub(crate) fn from_env() -> Self {
         Self::parse(std::env::var_os(BASE_VAR))
     }
 
@@ -324,6 +327,25 @@ impl Base {
             )));
         }
         Ok(Some(bytes))
+    }
+
+    pub(crate) fn release_file(
+        &self,
+        tag: &str,
+        version: &str,
+        name: &str,
+    ) -> Result<Option<Vec<u8>>, Refusal> {
+        self.small(tag, name).map_err(|unread| match unread {
+            Unread::Offline => Refusal::Offline {
+                build: version.to_owned(),
+                bytes: None,
+            },
+            Unread::Local(why) => Refusal::Cache(why),
+            Unread::Failed(why) => Refusal::Refused {
+                build: version.to_owned(),
+                why,
+            },
+        })
     }
 
     /// Where the base keeps the release `tag`'s file `name` on this computer, when it does.
@@ -412,20 +434,16 @@ fn index_in(root: &Path, base: &Base, commit: &str, keys: &[PublicKey]) -> Resul
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => return Err(Refusal::Cache(format!("{}: {error}", kept.display()))),
     }
+    let bytes = signed_sdk_index(base, commit, keys)?;
+    let sdk = checked(&bytes, commit, dir)?;
+    write_whole(&kept, &bytes)?;
+    Ok(sdk)
+}
+
+fn signed_sdk_index(base: &Base, commit: &str, keys: &[PublicKey]) -> Result<Vec<u8>, Refusal> {
+    let build = shown(commit, None);
     let tag = tag(commit);
-    let read = |name: &str| {
-        base.small(&tag, name).map_err(|unread| match unread {
-            Unread::Offline => Refusal::Offline {
-                build: build.clone(),
-                bytes: None,
-            },
-            Unread::Local(why) => Refusal::Cache(why),
-            Unread::Failed(why) => Refusal::Refused {
-                build: build.clone(),
-                why,
-            },
-        })
-    };
+    let read = |name: &str| base.release_file(&tag, &build, name);
     // The index first: a build without one has no SDK, whatever else its release holds.
     let bytes = read(INDEX)?.ok_or_else(|| Refusal::NoSdk {
         build: build.clone(),
@@ -447,9 +465,7 @@ fn index_in(root: &Path, base: &Base, commit: &str, keys: &[PublicKey]) -> Resul
     )
     .map_err(unsigned)?;
     sunrise_launcher_release_verify::check(INDEX, &signed, &sha256(&bytes)).map_err(unsigned)?;
-    let sdk = checked(&bytes, commit, dir)?;
-    write_whole(&kept, &bytes)?;
-    Ok(sdk)
+    Ok(bytes)
 }
 
 /// `bytes` read as build `commit`'s index, its toolchain this launcher's.
@@ -1016,7 +1032,21 @@ fn build_of_in(
     let Some(bytes) = bytes else {
         return Err(last);
     };
-    let build = Index::build_of(&bytes).map_err(|refusal| match refusal {
+    let commit = game_commit(version, channel, &bytes)?;
+    write_whole(&file, commit.as_bytes())?;
+    Ok(commit)
+}
+
+fn game_commit(
+    version: &str,
+    channel: Option<sunrise_launcher_release_verify::Channel>,
+    bytes: &[u8],
+) -> Result<String, Refusal> {
+    let refused = |why| Refusal::Refused {
+        build: version.to_owned(),
+        why,
+    };
+    let build = Index::build_of(bytes).map_err(|refusal| match refusal {
         sdk::Refusal::Schema(schema) => Refusal::UpdateLauncher {
             build: version.to_owned(),
             what: trf("SDK schema {schema}", &[("schema", &schema.to_string())]),
@@ -1031,7 +1061,6 @@ fn build_of_in(
             &[("commit", &commit), ("version", version)],
         )));
     }
-    write_whole(&file, commit.as_bytes())?;
     Ok(commit)
 }
 
@@ -1045,19 +1074,7 @@ fn signed_game_index(
     channel: Option<sunrise_launcher_release_verify::Channel>,
     keys: &[PublicKey],
 ) -> Result<Vec<u8>, Refusal> {
-    let read = |name: &str| {
-        base.small(tag, name).map_err(|unread| match unread {
-            Unread::Offline => Refusal::Offline {
-                build: version.to_owned(),
-                bytes: None,
-            },
-            Unread::Local(why) => Refusal::Cache(why),
-            Unread::Failed(why) => Refusal::Refused {
-                build: version.to_owned(),
-                why,
-            },
-        })
-    };
+    let read = |name: &str| base.release_file(tag, version, name);
     let bytes = read(INDEX)?.ok_or_else(|| Refusal::NoSdk {
         build: version.to_owned(),
     })?;
@@ -1122,4 +1139,4 @@ fn signed_game_index(
 
 #[cfg(test)]
 #[path = "sdk_cache_tests.rs"]
-mod tests;
+pub(crate) mod tests;

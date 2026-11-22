@@ -1567,5 +1567,22 @@
   "The profile was kept in {folder}": "The profile was kept in {folder}",
   "The profile changed and could not be restored: {error}.": "The profile changed and could not be restored: {error}.",
   "If you restore it from the Trash, move the restored folder back to {folder} in your game folder.": "If you restore it from the Trash, move the restored folder back to {folder} in your game folder.",
-  "Profile deletion was interrupted": "Profile deletion was interrupted"
+  "Profile deletion was interrupted": "Profile deletion was interrupted",
+  "Show details": "Show details",
+  "Hide details": "Hide details",
+  "Copy error": "Copy error",
+  "{mod} needs {crate} {requirement}; this game build has {version}.": "{mod} needs {crate} {requirement}; this game build has {version}.",
+  "{mod} needs {crate} with {feature}; this game build has {version} without it.": "{mod} needs {crate} with {feature}; this game build has {version} without it.",
+  "These mods need dependencies that this game build can't use.": "These mods need dependencies that this game build can't use.",
+  "The build could not download what it needs. Check your connection and try again.": "The build could not download what it needs. Check your connection and try again.",
+  "The build couldn't use every enabled mod.": "The build couldn't use every enabled mod.",
+  "The build could not finish. No game was started.": "The build could not finish. No game was started.",
+  "The enabled mods changed. No mods were turned off.": "The enabled mods changed. No mods were turned off.",
+  "This world was not opened. Turning off mods could remove content from it.": "This world was not opened. Turning off mods could remove content from it.",
+  "The profile's game build changed. No mods were turned off.": "The profile's game build changed. No mods were turned off.",
+  "{mod} needs {dependency}. No mods were turned off.": "{mod} needs {dependency}. No mods were turned off.",
+  "Turn off this mod and play": "Turn off this mod and play",
+  "Turn off {count} mods and play": "Turn off {count} mods and play",
+  "Sunrise couldn't check the saved worlds. No mods were turned off.": "Sunrise couldn't check the saved worlds. No mods were turned off.",
+  "Turning off these mods could remove content from: {worlds}. No mods were turned off.": "Turning off these mods could remove content from: {worlds}. No mods were turned off."
 }

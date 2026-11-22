@@ -10,9 +10,9 @@ fn settle_managed_play_error(
     cancel_restart: impl FnOnce(),
 ) -> bool {
     let cancelled = matches!(error,
-        StartError::Native(native_mods::Failed::Other(detail)) | StartError::Other(detail)
+        StartError::Native(native_mods::Failed::Other(detail), _) | StartError::Other(detail)
             if detail == native_mods::CANCELLED);
-    if !cancelled && (active_play_build || matches!(error, StartError::Native(_))) {
+    if !cancelled && (active_play_build || matches!(error, StartError::Native(..))) {
         cancel_restart();
     }
     cancelled
@@ -194,34 +194,25 @@ impl Launcher {
                         if active_play_build {
                             match error {
                                 _ if cancelled => run.cancelled(),
-                                StartError::Native(native_mods::Failed::Mods {
-                                    left,
-                                    error,
-                                    compiling,
-                                    ..
-                                }) => {
-                                    let summary = if *compiling && !left.is_empty() {
-                                        tr("A mod couldn't be built. See the build log for details.")
-                                            .to_owned()
-                                    } else {
-                                        error.clone()
-                                    };
-                                    run.stopped(summary, &[]);
-                                    for mod_error in left {
-                                        run.mark_left_out(mod_error);
-                                    }
+                                StartError::Native(error, build) => {
+                                    run.failed_build = build.clone();
+                                    run.native_failed(error, &[]);
                                 }
-                                StartError::Native(error) => run.stopped(error.to_string(), &[]),
                                 StartError::Other(error) => {
-                                    run.stopped(error.clone(), &[]);
+                                    run.stopped(
+                                        tr("The build could not finish. No game was started.")
+                                            .into(),
+                                        error.clone(),
+                                    );
                                     captured_build_error = true;
                                 }
                                 StartError::Journal(error) => {
-                                    run.stopped(error.summary().into(), &[])
+                                    run.stopped(error.summary().into(), error.details())
                                 }
-                                _ => {
-                                    run.stopped(tr("The build could not be published.").into(), &[])
-                                }
+                                _ => run.stopped(
+                                    tr("The build could not be published.").into(),
+                                    String::new(),
+                                ),
                             }
                         }
                     }
@@ -272,12 +263,14 @@ impl Launcher {
                             self.client_error = Some(refused.in_window());
                         }
                         Err(_) if cancelled => (),
-                        Err(StartError::Native(native_mods::Failed::NoConsent)) => {
+                        Err(StartError::Native(native_mods::Failed::NoConsent, _)) => {
                             self.request_native_build_consent();
                         }
-                        Err(StartError::Native(error)) => {
+                        Err(StartError::Native(error, _)) => {
                             self.native_for = Some(instance.id);
-                            self.native_failed(error.to_string(), &[]);
+                            if !active_play_build {
+                                self.native_failed(error.to_string(), &[]);
+                            }
                         }
                         Err(StartError::Hook(error)) => self.client_error = Some(error.to_string()),
                         Err(StartError::Other(_)) if captured_build_error => (),
@@ -511,18 +504,10 @@ impl Launcher {
                     if no_consent {
                         self.ui.mods.build = None;
                     } else if let Some(run) = &mut self.ui.mods.build {
-                        match (result.is_ok(), cancelled, &self.native_error) {
-                            (true, ..) => run.done(),
-                            (false, true, _) => run.cancelled(),
-                            (false, false, error) => run.stopped(
-                                error.clone().unwrap_or_default(),
-                                &self.native_failed_mods,
-                            ),
-                        }
-                        if let Err(native_mods::Failed::Mods { left, .. }) = &result {
-                            for reason in left {
-                                run.mark_left_out(reason);
-                            }
+                        match &result {
+                            Ok(_) => run.done(),
+                            Err(_) if cancelled => run.cancelled(),
+                            Err(error) => run.native_failed(error, &self.native_failed_mods),
                         }
                         if !shown {
                             run.said_at = Some(Instant::now());
@@ -766,7 +751,7 @@ mod tests {
 
     #[test]
     fn a_managed_play_build_failure_disarms_the_update_but_a_cancellation_does_not() {
-        let native = StartError::Native(native_mods::Failed::Other("compiler failed".into()));
+        let native = StartError::Native(native_mods::Failed::Other("compiler failed".into()), None);
         let publication = StartError::Other("could not write the profile pointer".into());
         for (error, build_running) in [(&native, false), (&publication, true)] {
             let mut restart_armed = true;
@@ -780,7 +765,10 @@ mod tests {
         )));
 
         for error in [
-            StartError::Native(native_mods::Failed::Other(native_mods::CANCELLED.into())),
+            StartError::Native(
+                native_mods::Failed::Other(native_mods::CANCELLED.into()),
+                None,
+            ),
             StartError::Other(native_mods::CANCELLED.into()),
         ] {
             assert!(settle_managed_play_error(&error, true, || panic!(

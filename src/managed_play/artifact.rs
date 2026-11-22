@@ -1,6 +1,6 @@
 //! Exact identity of an installed executable and the files it reads beside itself.
 use super::{digest_file, plain_file, require_dir, validate_tag};
-use crate::backend;
+use crate::{backend, native_mods::sdk_cache::GameSlices};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{fs, io, path::Path};
@@ -24,10 +24,11 @@ impl Artifact {
     }
 
     pub(crate) const ARCHIVE_RECEIPT: &str = ".sunrise-archive.json";
+    pub(crate) const SDK_RECEIPT: &str = ".sunrise-sdk.json";
 
     /// Record the extracted image before its cache name and completion marker are published.
     pub(crate) fn record_archive(dir: &Path, tag: &str, archive: &str) -> Result<(), String> {
-        let image = Self::image(dir, tag, Some(archive))?;
+        let image = Self::image(dir, tag, Some(archive), None)?;
         let path = dir.join(Self::ARCHIVE_RECEIPT);
         let file = fs::File::create_new(&path).map_err(|error| at(&path, error))?;
         serde_json::to_writer(
@@ -40,6 +41,14 @@ impl Artifact {
         .map_err(|error| at(&path, error.into()))
     }
 
+    pub(crate) fn record_sdk(dir: &Path, tag: &str, sdk: GameSlices) -> Result<(), String> {
+        let image = Self::image(dir, tag, None, Some(&sdk))?;
+        let path = dir.join(Self::SDK_RECEIPT);
+        let file = fs::File::create_new(&path).map_err(|error| at(&path, error))?;
+        serde_json::to_writer(file, &SdkReceipt { sdk, image })
+            .map_err(|error| at(&path, error.into()))
+    }
+
     /// Accept a deferred archive only when its digest and the current executable/runtime
     /// match the image recorded after verifying and extracting that archive.
     pub(crate) fn matches_archive(dir: &Path, tag: &str, archive: &str) -> bool {
@@ -47,36 +56,57 @@ impl Artifact {
     }
 
     pub(crate) fn from_archive(dir: &Path, tag: &str, archive: &str) -> Result<Self, String> {
-        Self::installed(dir, tag, Some(archive))
+        Self::installed(dir, tag, Some(Source::Archive(archive)))
     }
 
-    fn installed(dir: &Path, tag: &str, expected: Option<&str>) -> Result<Self, String> {
+    pub(crate) fn from_sdk(dir: &Path, tag: &str, index: &str) -> Result<Self, String> {
+        Self::installed(dir, tag, Some(Source::Sdk(index)))
+    }
+
+    fn installed(dir: &Path, tag: &str, expected: Option<Source<'_>>) -> Result<Self, String> {
         require_dir(dir)?;
         let complete = dir.join(".installed");
         if super::open_if_file(&complete)?.is_none() {
             return Err(at(&complete, io::ErrorKind::NotFound.into()));
         }
         let path = dir.join(Self::ARCHIVE_RECEIPT);
-        let receipt = super::optional_bytes(&path)?
-            .map(|bytes| {
-                serde_json::from_slice::<ArchiveReceipt>(&bytes)
-                    .map_err(|error| at(&path, error.into()))
+        let archive: Option<ArchiveReceipt> = receipt(&path)?;
+        let sdk: Option<SdkReceipt> = receipt(&dir.join(Self::SDK_RECEIPT))?;
+        let (source, saved) = match (&archive, &sdk) {
+            (Some(_), Some(_)) => return Err(super::unsettled()),
+            (Some(receipt), None) => (
+                Some(Source::Archive(&receipt.archive)),
+                Some(&receipt.image),
+            ),
+            (None, Some(receipt)) => (Some(Source::Sdk(&receipt.sdk.index)), Some(&receipt.image)),
+            (None, None) => (None, None),
+        };
+        if expected.is_some_and(|expected| source != Some(expected))
+            || source.is_some_and(|source| {
+                let (Source::Archive(digest) | Source::Sdk(digest)) = source;
+                !backend::installation::valid_archive_digest(digest)
             })
-            .transpose()?;
-        let archive = receipt.as_ref().map(|receipt| receipt.archive.as_str());
-        if expected.is_some_and(|expected| archive != Some(expected))
-            || archive.is_some_and(|archive| !backend::installation::valid_archive_digest(archive))
         {
             return Err(super::unsettled());
         }
-        let image = Self::image(dir, tag, archive)?;
-        if receipt.is_some_and(|receipt| receipt.image != image) {
+        let image = Self::image(
+            dir,
+            tag,
+            archive.as_ref().map(|receipt| receipt.archive.as_str()),
+            sdk.as_ref().map(|receipt| &receipt.sdk),
+        )?;
+        if saved.is_some_and(|saved| *saved != image) {
             return Err(super::unsettled());
         }
         Ok(image)
     }
 
-    fn image(dir: &Path, tag: &str, archive: Option<&str>) -> Result<Self, String> {
+    fn image(
+        dir: &Path,
+        tag: &str,
+        archive: Option<&str>,
+        sdk: Option<&GameSlices>,
+    ) -> Result<Self, String> {
         let path = dir.join(backend::CLIENT);
         let Some(executable) = digest_file(&path)? else {
             return Err(at(&path, io::ErrorKind::NotFound.into()));
@@ -87,6 +117,18 @@ impl Artifact {
             Self::ARCHIVE_RECEIPT.as_bytes(),
             archive.map(|archive| Sha256::digest(archive).into()),
         );
+        if let Some(sdk) = sdk {
+            let bytes = serde_json::to_vec(sdk).map_err(|error| error.to_string())?;
+            item(
+                &mut hash,
+                Self::SDK_RECEIPT.as_bytes(),
+                Some(Sha256::digest(bytes).into()),
+            );
+        }
+        // Keep existing static receipts and Play journals valid when there is no deps/ tree.
+        if let Some(deps) = tree(&dir.join("deps"), false)? {
+            item(&mut hash, b"deps", Some(deps));
+        }
         for file in [
             backend::GAME_BUILD_ARCHITECTURE,
             "sunrise-release.json",
@@ -139,6 +181,25 @@ impl Artifact {
 struct ArchiveReceipt {
     archive: String,
     image: Artifact,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Source<'a> {
+    Archive(&'a str),
+    Sdk(&'a str),
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SdkReceipt {
+    sdk: GameSlices,
+    image: Artifact,
+}
+
+fn receipt<T: serde::de::DeserializeOwned>(path: &Path) -> Result<Option<T>, String> {
+    super::optional_bytes(path)?
+        .map(|bytes| serde_json::from_slice(&bytes).map_err(|error| at(path, error.into())))
+        .transpose()
 }
 
 pub(super) fn tree(path: &Path, resources: bool) -> Result<Option<[u8; 32]>, String> {
@@ -237,8 +298,10 @@ mod tests {
         fs::write(dir.join(backend::CLIENT), b"game").unwrap();
         fs::write(dir.join(".installed"), []).unwrap();
         fs::create_dir(dir.join("native-data")).unwrap();
+        fs::create_dir_all(dir.join("deps/nested")).unwrap();
         let paths = [
             "native.dll",
+            "deps/nested/libsdk.so",
             "native-data/data.json",
             backend::GAME_BUILD_ARCHITECTURE,
         ];

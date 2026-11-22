@@ -34,27 +34,30 @@ pub(super) fn dev(tag: &str) -> Result<Option<Release>, String> {
         .map_or((super::ASSET, super::GAME_FALLBACK), |(asset, fallback)| {
             (Some(asset), fallback)
         });
-    dev_in(&[release], tag, asset, fallback)
-        .map(Some)
-        .ok_or_else(missing)
+    let target = super::installation::sdk_target(super::selected_game_architecture(&settings));
+    let mut dev = dev_in(
+        &[release],
+        tag,
+        &[asset, fallback, target.map(|_| sunrise_launcher_sdk::INDEX)],
+    )
+    .ok_or_else(missing)?;
+    if let Some(target) = target {
+        super::check_sdk_offer(
+            &mut dev,
+            target,
+            &crate::native_mods::sdk_cache::Base::from_env(),
+            &sunrise_launcher_release_verify::trusted_keys_for(super::GAME_REPO),
+        );
+    }
+    Ok(Some(dev))
 }
 
-/// The Dev build tagged `tag` in `list` (GitHub's answer for it) with `asset`, else `fallback`.
-fn dev_in(
-    list: &[serde_json::Value],
-    tag: &str,
-    asset: Option<&str>,
-    fallback: Option<&str>,
-) -> Option<Release> {
+/// The Dev build tagged `tag` in `list` (GitHub's answer for it).
+fn dev_in(list: &[serde_json::Value], tag: &str, assets: &[Option<&str>]) -> Option<Release> {
     let keep = |tag: &str| Channel::of(tag) == Some(Channel::Dev);
-    let mut found = super::parse_releases(list, asset, keep)
+    let mut dev = super::parse_releases(list, assets, keep)
         .into_iter()
-        .chain(super::parse_releases(list, fallback, keep))
-        .filter(|r| r.tag == tag && r.prerelease);
-    let mut dev = found.next()?;
-    if dev.asset.is_none() {
-        dev.asset = found.find_map(|r| r.asset);
-    }
+        .find(|r| r.tag == tag && r.prerelease)?;
     // Its GitHub tag is its version: its files are there, and it installs and verifies as that.
     dev.nightly = Some(dev.tag.clone());
     Some(dev)
@@ -220,11 +223,11 @@ impl WorldBuildOrder {
 }
 
 fn world_order_releases(list: &[serde_json::Value]) -> Vec<Release> {
-    let mut releases = super::game_releases(list);
+    let mut releases = super::game_releases_with(list, &[]);
     // Use each Dev source once for provenance, independent of the picker and update filters.
     releases.retain(|r| Channel::of(&r.tag) != Some(Channel::Dev));
     releases.extend(
-        super::parse_releases(list, None, |tag| {
+        super::parse_releases(list, &[], |tag| {
             sunrise_launcher_release_verify::is_build(Channel::Dev, tag)
         })
         .into_iter()
@@ -325,8 +328,7 @@ mod tests {
                 "prerelease": true,
                 "assets": [{"name": "sunrise-linux-x86_64.tar.gz", "size": 123}]
             })],
-            Some("sunrise-linux-x86_64.tar.gz"),
-            None,
+            &[Some("sunrise-linux-x86_64.tar.gz")],
         )
     }
 
@@ -356,7 +358,7 @@ mod tests {
             "prerelease": true,
             "assets": [{"name": x64, "size": 1}]
         })];
-        let found = dev_in(&list, DEV, Some(arm), Some(x64)).unwrap();
+        let found = dev_in(&list, DEV, &[Some(arm), Some(x64)]).unwrap();
         assert_eq!(found.tag, DEV);
         assert_eq!(found.nightly.as_deref(), Some(DEV));
         assert!(found.prerelease);
@@ -366,15 +368,15 @@ mod tests {
             Some(DEV),
             "what install() checks before verifying"
         );
-        assert!(dev_in(&list, "dev-2026-11-12-aaaaaaa", Some(x64), None).is_none());
+        assert!(dev_in(&list, "dev-2026-11-12-aaaaaaa", &[Some(x64)]).is_none());
         let mut full_release = list;
         full_release[0]["prerelease"] = serde_json::Value::Bool(false);
-        assert!(dev_in(&full_release, DEV, Some(x64), None).is_none());
+        assert!(dev_in(&full_release, DEV, &[Some(x64)]).is_none());
         let nightly = [
             serde_json::json!({"tag_name": "nightly", "name": "Nightly 2026-11-13 · bbbbbbb",
                                            "assets": [{"name": x64, "size": 1}]}),
         ];
-        assert!(dev_in(&nightly, "nightly", Some(x64), None).is_none());
+        assert!(dev_in(&nightly, "nightly", &[Some(x64)]).is_none());
         // Other tags are not looked up here; only a full Dev tag may go to GitHub.
         for tag in ["nightly", "26.3-0.1.0", "preview-2026-11-13-bbbbbbb"] {
             assert!(dev(tag).unwrap().is_none(), "{tag}");

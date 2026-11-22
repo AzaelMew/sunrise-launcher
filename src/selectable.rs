@@ -118,15 +118,13 @@ fn selected_text() -> Option<String> {
 pub struct Selectable {
     id: ElementId,
     text: StyledText,
+    copy_preview: bool,
 }
 
 /// Plain selectable text.
 pub fn selectable(text: impl Into<SharedString>) -> Selectable {
     let text = text.into();
-    Selectable {
-        id: ElementId::Name(text.clone()),
-        text: StyledText::new(text),
-    }
+    Selectable::styled(ElementId::Name(text.clone()), StyledText::new(text))
 }
 
 impl Selectable {
@@ -135,7 +133,14 @@ impl Selectable {
         Self {
             id: id.into(),
             text,
+            copy_preview: true,
         }
+    }
+
+    /// Keep selected diagnostics out of the copy toast; they belong inside their pane.
+    pub(crate) fn without_copy_preview(mut self) -> Self {
+        self.copy_preview = false;
+        self
     }
 }
 
@@ -391,6 +396,7 @@ impl Element for Selectable {
         }
         if anchor_here {
             let whole = text.len();
+            let copy_preview = self.copy_preview;
             window.on_key_event(move |ev: &KeyDownEvent, phase, _, cx| {
                 if phase != DispatchPhase::Bubble || !ev.keystroke.modifiers.secondary(cx) {
                     return;
@@ -398,10 +404,13 @@ impl Element for Selectable {
                 match ev.keystroke.key.as_str() {
                     "c" => {
                         if let Some(text) = selected_text() {
-                            crate::widgets::copy_to_clipboard(
-                                cx,
-                                gpui::ClipboardItem::new_string(text),
-                            );
+                            let item = gpui::ClipboardItem::new_string(text);
+                            if copy_preview {
+                                crate::widgets::copy_to_clipboard(cx, item);
+                            } else {
+                                crate::widgets::copy_quietly(cx, item);
+                                crate::glass_toast::say(crate::i18n::tr("Copied"));
+                            }
                         }
                     }
                     "a" => {
