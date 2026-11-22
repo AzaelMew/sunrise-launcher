@@ -272,7 +272,12 @@ impl Launcher {
             );
 
         let shots = details
-            .map(|d| d.gallery.iter().map(|i| i.url.clone()).collect())
+            .map(|d| {
+                d.gallery
+                    .iter()
+                    .map(|i| super::viewer::Picture::Url(i.url.clone()))
+                    .collect()
+            })
             .unwrap_or_default();
         let about: AnyElement = match &loaded {
             None => muted(tr("Loading…")).into_any_element(),

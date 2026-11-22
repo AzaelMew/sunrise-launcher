@@ -410,9 +410,19 @@ impl Github {
             }
         };
         let first = get(&url)?;
-        let Some(location) = matches!(first.status(), 301 | 302 | 303 | 307 | 308)
-            .then(|| first.header("location"))
-            .flatten()
+        if !matches!(first.status(), 301 | 302 | 303 | 307 | 308) {
+            // A rate limit starts the same cooldown as any other GitHub request.
+            return self
+                .status(
+                    state,
+                    first.status(),
+                    |name| first.header(name),
+                    unexpected_status,
+                )
+                .map(|()| None);
+        }
+        let Some(location) = first
+            .header("location")
             .filter(|location| readme::asset_redirect(location))
         else {
             return Ok(None);

@@ -213,100 +213,175 @@ fn parser(markdown: &str) -> Parser<'_> {
     )
 }
 
-/// Remove all HTML. An `<img>` tag's `src` and `alt` stay, as a Markdown image, so it meets the
-/// same image rules as one written in Markdown.
+/// Remove all HTML. An `<img>` element's `src` and `alt` stay, as a Markdown image, so it meets
+/// the same image rules as one written in Markdown.
 fn strip_html(markdown: String) -> String {
     let mut clean = String::with_capacity(markdown.len());
     let mut next = 0;
+    // The parser hands over block HTML a line at a time: read each run of HTML as one fragment.
+    let mut fragment = String::new();
     for (event, span) in parser(&markdown).into_offset_iter() {
-        let (html, block) = match &event {
-            Event::Html(html) => (html, true),
-            Event::InlineHtml(html) => (html, false),
+        let html = match &event {
+            Event::Html(html) | Event::InlineHtml(html) => html,
             _ => continue,
         };
-        if next <= span.start {
+        if next < span.start {
+            push_images(&mut clean, &mut fragment);
             clean.push_str(&markdown[next..span.start]);
         }
         next = next.max(span.end);
-        for (alt, src) in html_images(html) {
-            clean.push_str("![");
-            for c in alt.chars().filter(|c| !c.is_control()) {
-                if c.is_ascii_punctuation() {
-                    clean.push('\\');
-                }
-                clean.push(c);
-            }
-            clean.push_str("](<");
-            clean.push_str(&src);
-            clean.push_str(">)");
-            if block {
-                clean.push_str("\n\n");
-            }
-        }
+        fragment.push_str(html);
     }
+    push_images(&mut clean, &mut fragment);
     clean.push_str(&markdown[next..]);
     clean
 }
 
-/// The `alt` and `src` of each `<img>` tag in one HTML fragment. A `src` that could break out of a
-/// Markdown destination is dropped.
+/// Write the images of an HTML fragment as Markdown images, and empty the fragment.
+fn push_images(clean: &mut String, fragment: &mut String) {
+    for (alt, src) in html_images(fragment) {
+        clean.push_str("![");
+        for c in alt.chars().filter(|c| !c.is_control()) {
+            if c.is_ascii_punctuation() {
+                clean.push('\\');
+            }
+            clean.push(c);
+        }
+        clean.push_str("](<");
+        clean.push_str(&src);
+        clean.push_str(">)\n\n");
+    }
+    fragment.clear();
+}
+
+/// The `alt` and `src` of each `img` element in an HTML fragment. Comments, `script` and `style`
+/// text, and the attributes of other elements are skipped whole. A `src` that could break out of
+/// a Markdown destination is dropped.
 fn html_images(html: &str) -> Vec<(String, String)> {
-    let lower = html.to_ascii_lowercase();
     let mut found = Vec::new();
-    let mut at = 0;
-    while let Some(start) = lower[at..].find("<img").map(|n| at + n + 4) {
-        at = start;
-        if !html[start..].starts_with(|c: char| c.is_ascii_whitespace() || c == '/') {
+    let mut rest = html;
+    while let Some(open) = rest.find('<') {
+        rest = &rest[open + 1..];
+        if let Some(comment) = rest.strip_prefix("!--") {
+            rest = comment.find("-->").map_or("", |end| &comment[end + 3..]);
             continue;
         }
-        let (mut alt, mut src) = (String::new(), None);
-        // Attributes up to the tag's first unquoted `>`.
-        let mut rest = &html[start..];
-        loop {
-            rest = rest.trim_start_matches(|c: char| c.is_ascii_whitespace() || c == '/');
-            let name_end = rest
-                .find(|c: char| c.is_ascii_whitespace() || matches!(c, '=' | '/' | '>'))
-                .unwrap_or(rest.len());
-            if name_end == 0 {
-                break;
-            }
-            let name = rest[..name_end].to_ascii_lowercase();
-            rest = rest[name_end..].trim_start();
-            let mut value = "";
-            if let Some(after) = rest.strip_prefix('=') {
-                let after = after.trim_start();
-                let (text, tail) = match after.chars().next() {
-                    Some(quote @ ('"' | '\'')) => {
-                        let body = &after[1..];
-                        let close = body.find(quote).unwrap_or(body.len());
-                        (&body[..close], body.get(close + 1..).unwrap_or(""))
-                    }
-                    _ => {
-                        let close = after
-                            .find(|c: char| c.is_ascii_whitespace() || c == '>')
-                            .unwrap_or(after.len());
-                        (&after[..close], &after[close..])
-                    }
+        let name_end = rest
+            .find(|c: char| !c.is_ascii_alphanumeric())
+            .unwrap_or(rest.len());
+        let name = rest[..name_end].to_ascii_lowercase();
+        let (attributes, after) = tag_attributes(&rest[name_end..]);
+        rest = after;
+        match name.as_str() {
+            "img" => {
+                let value = |key: &str| {
+                    attributes
+                        .iter()
+                        .find(|(name, _)| name == key)
+                        .map(|(_, value)| value.clone())
                 };
-                value = text;
-                rest = tail;
+                if let Some(src) = value("src").filter(|src| {
+                    !src.is_empty()
+                        && !src.contains(|c: char| {
+                            c.is_whitespace() || c.is_control() || c == '<' || c == '>'
+                        })
+                }) {
+                    found.push((value("alt").unwrap_or_default(), src));
+                }
             }
-            match name.as_str() {
-                "src" => src = Some(value.to_owned()),
-                "alt" => alt = value.to_owned(),
-                _ => (),
+            "script" | "style" => {
+                // ASCII lowercasing keeps every byte offset.
+                let close = format!("</{name}");
+                rest = rest
+                    .to_ascii_lowercase()
+                    .find(&close)
+                    .map_or("", |end| &rest[end..]);
             }
-        }
-        at = html.len() - rest.len();
-        if let Some(src) = src.filter(|src| {
-            !src.is_empty()
-                && !src
-                    .contains(|c: char| c.is_whitespace() || c.is_control() || c == '<' || c == '>')
-        }) {
-            found.push((alt, src));
+            _ => (),
         }
     }
     found
+}
+
+/// A tag's attributes, names lowercased and values decoded, and the text after its closing `>`.
+fn tag_attributes(mut rest: &str) -> (Vec<(String, String)>, &str) {
+    let mut attributes = Vec::new();
+    loop {
+        rest = rest.trim_start_matches(|c: char| c.is_ascii_whitespace() || c == '/');
+        if let Some(after) = rest.strip_prefix('>') {
+            return (attributes, after);
+        }
+        let name_end = rest
+            .find(|c: char| c.is_ascii_whitespace() || matches!(c, '=' | '/' | '>'))
+            .unwrap_or(rest.len());
+        if name_end == 0 {
+            return (attributes, "");
+        }
+        let name = rest[..name_end].to_ascii_lowercase();
+        rest = rest[name_end..].trim_start();
+        let mut value = "";
+        if let Some(after) = rest.strip_prefix('=') {
+            let after = after.trim_start();
+            let (text, tail) = match after.chars().next() {
+                Some(quote @ ('"' | '\'')) => {
+                    let body = &after[1..];
+                    let close = body.find(quote).unwrap_or(body.len());
+                    (&body[..close], body.get(close + 1..).unwrap_or(""))
+                }
+                _ => {
+                    let close = after
+                        .find(|c: char| c.is_ascii_whitespace() || c == '>')
+                        .unwrap_or(after.len());
+                    (&after[..close], &after[close..])
+                }
+            };
+            value = text;
+            rest = tail;
+        }
+        attributes.push((name, decode_entities(value)));
+    }
+}
+
+/// HTML's character references: the named ones an attribute needs, and numeric ones.
+fn decode_entities(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find('&') {
+        out.push_str(&rest[..at]);
+        rest = &rest[at..];
+        let decoded = rest.find(';').and_then(|end| {
+            let name = &rest[1..end];
+            let c = match name {
+                "amp" => '&',
+                "lt" => '<',
+                "gt" => '>',
+                "quot" => '"',
+                "apos" => '\'',
+                "nbsp" => '\u{a0}',
+                _ => {
+                    let number = name.strip_prefix('#')?;
+                    let code = match number.strip_prefix(['x', 'X']) {
+                        Some(hex) => u32::from_str_radix(hex, 16).ok()?,
+                        None => number.parse().ok()?,
+                    };
+                    char::from_u32(code)?
+                }
+            };
+            Some((c, end + 1))
+        });
+        match decoded {
+            Some((c, len)) => {
+                out.push(c);
+                rest = &rest[len..];
+            }
+            None => {
+                out.push('&');
+                rest = &rest[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 pub(super) fn load(

@@ -141,6 +141,21 @@ impl Launcher {
         });
     }
 
+    /// A README image's file once it has loaded, asking for it the first time.
+    pub(in crate::mods) fn readme_picture(
+        &mut self,
+        image: &sources::ReadmeImage,
+    ) -> Option<PathBuf> {
+        match self.ui.mods.nightly.work.images.get(image) {
+            Some(Some(path)) => path.clone(),
+            Some(None) => None,
+            None => {
+                self.request_nightly_image(image.clone());
+                None
+            }
+        }
+    }
+
     pub(super) fn request_nightly_image(&mut self, image: sources::ReadmeImage) {
         use std::collections::hash_map::Entry;
         let Entry::Vacant(entry) = self.ui.mods.nightly.work.images.entry(image.clone()) else {

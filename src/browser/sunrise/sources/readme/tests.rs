@@ -113,6 +113,26 @@ fn html_img_tags_become_images_under_the_same_rules_and_other_html_is_dropped() 
 }
 
 #[test]
+fn only_real_img_elements_count_and_a_block_tag_may_span_lines() {
+    let markdown = "<!-- <img src=\"media/commented.png\"> -->\n\n\
+         <script>let s = '<img src=\"media/script.png\">';</script>\n\n\
+         <a title='<img src=\"media/attribute.png\">' href=\"x\">link</a>\n\n\
+         <p align=\"center\">\n  <img\n    alt=\"A &amp; B &#x2014; &lt;C&gt;\"\n    src=\"media/split.png\"\n  />\n</p>\n"
+        .to_owned();
+    let readme = Saved {
+        path: "README.md".into(),
+        markdown,
+    }
+    .parse(REPO, SHA, true);
+    let found: Vec<_> = readme
+        .images()
+        .iter()
+        .map(|i| (i.alt(), &i.location))
+        .collect();
+    assert_eq!(found, [("A & B \u{2014} <C>", &repo("media/split.png"))]);
+}
+
+#[test]
 fn only_github_attachment_ids_are_attachments() {
     let at = |dest: &str| image_location(REPO, SHA, "README.md", dest);
     assert_eq!(

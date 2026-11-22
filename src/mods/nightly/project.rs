@@ -6,6 +6,24 @@ use sunrise_launcher::browser::sunrise::SourceError;
 impl Launcher {
     pub(in crate::mods) fn nightly_project(&mut self, cx: &mut Context<Self>) -> AnyElement {
         self.ui.mods.build_button_drawn = false;
+        // The README's pictures show in the same gallery and viewer as a registry mod's.
+        let pictures = self
+            .ui
+            .mods
+            .nightly
+            .open
+            .as_ref()
+            .and_then(|open| open.inspection.as_ref()?.data.readme.as_ref())
+            .map(|readme| {
+                readme
+                    .images()
+                    .iter()
+                    .cloned()
+                    .map(super::super::viewer::Picture::Readme)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let gallery = self.gallery(pictures, cx);
         let state = &self.ui.mods.nightly;
         let open = state.open.as_ref().expect("a Nightly detail is open");
         let source = &open.source;
@@ -210,7 +228,7 @@ impl Launcher {
                 ),
             )
         };
-        left = left.children(above);
+        left = left.children(above).children(gallery);
         let saved_readme = readme.is_some()
             && matches!(
                 details.and_then(|details| details.error.as_ref()),
@@ -222,48 +240,8 @@ impl Launcher {
             tr("README from the repository")
         }));
         let body = if let Some(readme) = readme {
-            let entity = cx.entity().downgrade();
-            let compact = self.content_width() < 860.;
-            crate::markdown::render_pinned(readme, &self.theme, |image| {
-                let placeholder = || note(image.alt().to_owned());
-                match state.work.images.get(image) {
-                    Some(Some(Some(path))) => gpui::img(path.clone())
-                        .max_w_full()
-                        .max_h(px(if compact { 180. } else { 240. }))
-                        .object_fit(gpui::ObjectFit::ScaleDown)
-                        .into_any_element(),
-                    Some(_) => placeholder().into_any_element(),
-                    None => {
-                        let image = image.clone();
-                        let entity = entity.clone();
-                        div()
-                            .relative()
-                            .min_h(px(24.))
-                            .child(placeholder())
-                            .child(
-                                gpui::canvas(
-                                    move |bounds, window, cx| {
-                                        if window.content_mask().bounds.intersects(&bounds) {
-                                            let image = image.clone();
-                                            let entity = entity.clone();
-                                            cx.defer(move |cx| {
-                                                entity
-                                                    .update(cx, |this, _| {
-                                                        this.request_nightly_image(image)
-                                                    })
-                                                    .ok();
-                                            });
-                                        }
-                                    },
-                                    |_, _, _, _| {},
-                                )
-                                .absolute()
-                                .inset_0(),
-                            )
-                            .into_any_element()
-                    }
-                }
-            })
+            // Its pictures are in the gallery above.
+            crate::markdown::render_pinned(readme, &self.theme, |_| div().into_any_element())
         } else if inspection.is_none() {
             note(tr("Checking the pinned source…")).into_any_element()
         } else {
