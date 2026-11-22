@@ -1643,5 +1643,17 @@
   "Public IPv4 unavailable for this listener": "Подключение по внешнему IPv4 недоступно",
   "No game address is available through Tailscale.": "Адрес игрового сервера в Tailscale недоступен.",
   "Friends you share this computer with can reach all of it, not only Minecraft.": "Друзья, которым вы предоставите доступ к этому компьютеру, смогут подключаться к любым его портам, включая порты других приложений.",
-  "The game port is unavailable, so Sunrise can't check access to that port.": "Игровой порт недоступен, поэтому Sunrise не может проверить доступ к нему."
+  "The game port is unavailable, so Sunrise can't check access to that port.": "Игровой порт недоступен, поэтому Sunrise не может проверить доступ к нему.",
+  "Switch to {build}?": "Switch to {build}?",
+  "1 mod can’t move to this build yet. You can keep it installed but turned off, or remove it.": "1 mod can’t move to this build yet. You can keep it installed but turned off, or remove it.",
+  "{count} mods can’t move to this build yet. You can keep them installed but turned off, or remove them.": "{count} mods can’t move to this build yet. You can keep them installed but turned off, or remove them.",
+  "{mod} — Not compatible with this build.": "{mod} — Not compatible with this build.",
+  "{mod} — Fit could not be verified.": "{mod} — Fit could not be verified.",
+  "Removed when switching builds": "Removed when switching builds",
+  "Switch and turn them off": "Switch and turn them off",
+  "Switch and remove them": "Switch and remove them",
+  "[y] Switch and turn them off, [r] Switch and remove them, [N] Cancel": "[y] Switch and turn them off, [r] Switch and remove them, [N] Cancel",
+  "{mod} was removed: {reason}": "{mod} was removed: {reason}",
+  "{mod} was removed.": "{mod} was removed.",
+  "There are too many possible mod combinations to check. Remove mods you no longer need from this profile, then try switching again. Nothing was switched.": "There are too many possible mod combinations to check. Remove mods you no longer need from this profile, then try switching again. Nothing was switched."
 }

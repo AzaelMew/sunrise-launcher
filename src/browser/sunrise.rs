@@ -1752,7 +1752,8 @@ pub use registry_install::{
     remove_mods, switch_build, update_github, update_registry, update_registry_and_sources,
     BuildNotice, ChangeImpact, CombinedUpdate, InstallError, InstallHooks, InstallProgress,
     InstalledBatch, NativeQuestion, PastedSource, PreparedSource, ResolveQuestion, SourceError,
-    SourceHooks, SourceRequest, SwitchHooks, SwitchQuestion, Switched, UpdateRequest,
+    SourceHooks, SourceRequest, SwitchDecision, SwitchHooks, SwitchQuestion, Switched,
+    UpdateRequest,
 };
 #[cfg(test)]
 mod tests;

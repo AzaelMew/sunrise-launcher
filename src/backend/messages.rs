@@ -103,7 +103,7 @@ pub enum Msg {
     SwitchProgress(crate::browser::sunrise::InstallProgress),
     SwitchQuestion(
         Box<crate::browser::sunrise::SwitchQuestion>,
-        std::sync::mpsc::Sender<bool>,
+        std::sync::mpsc::Sender<crate::browser::sunrise::SwitchDecision>,
     ),
     Switched(
         PathBuf,

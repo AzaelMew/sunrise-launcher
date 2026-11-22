@@ -36,7 +36,9 @@ pub use source::{
     read_pasted_sources, update_registry_and_sources, CombinedUpdate, PastedSource, PreparedSource,
     SourceError, SourceHooks, SourceRequest,
 };
-pub use switch::{checked_switch_fit, switch_build, SwitchHooks, SwitchQuestion, Switched};
+pub use switch::{
+    checked_switch_fit, switch_build, SwitchDecision, SwitchHooks, SwitchQuestion, Switched,
+};
 
 // Advisory only. Never use these in place of a fresh, admitted worker proof. Key by the
 // base build and verified archive hash, not the Minecraft version or catalogue version number.

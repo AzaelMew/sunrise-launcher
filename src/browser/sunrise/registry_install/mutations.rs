@@ -181,7 +181,7 @@ impl From<&crate::github_mods::Origin> for ReviewedRelease {
 
 #[derive(Debug)]
 pub(super) struct ReviewedArchive {
-    target: ReviewedMod,
+    pub(super) target: ReviewedMod,
     file: String,
     digest: String,
 }
@@ -358,6 +358,116 @@ pub(crate) fn check_activation(
     Ok(())
 }
 
+/// Exact archive leaves selected for removal in a private profile edit.
+pub(super) struct StagedRemoval {
+    pub(super) archives: Vec<ReviewedArchive>,
+    retired: BTreeSet<String>,
+    reviewed_leaves: Vec<(String, String)>,
+}
+
+impl StagedRemoval {
+    pub(super) fn revalidate(&self, live: &Path) -> Result<(), String> {
+        // A changed alias can transfer another row's claim without changing any archive bytes.
+        let rows = Document::read(live)?;
+        for (id, file) in &self.reviewed_leaves {
+            rows.rows
+                .check_other_claims(live, id, file)
+                .map_err(|error| error.render(trf))?;
+        }
+        Ok(())
+    }
+}
+
+pub(super) fn stage_removal<'a>(
+    live: &Path,
+    home: &Path,
+    active: Option<&managed_play::Active>,
+    ids: impl IntoIterator<Item = &'a str>,
+    present: &Inventory,
+) -> Result<StagedRemoval, InstallError> {
+    let mut rows = Document::read(home)?;
+    let mut changed_rows = false;
+    let mut retired = BTreeSet::new();
+    let mut archives = Vec::new();
+    let mut reviewed_leaves = Vec::new();
+    let live_rows = Document::read(live)?;
+    for id in ids {
+        let unverified = || {
+            trf(
+                "Couldn't verify the installed file for {mod}. Nothing was removed.",
+                &[("mod", id)],
+            )
+        };
+        let item = present.get(id).ok_or_else(unverified)?;
+        let digest = item.digest.as_ref().ok_or_else(unverified)?;
+        let relative = item
+            .package
+            .path
+            .strip_prefix(home)
+            .map_err(|_| unverified())?;
+        let file = relative
+            .to_str()
+            .ok_or_else(unverified)?
+            .replace(std::path::MAIN_SEPARATOR, "/");
+        // The live home retains filesystem aliases which a private copy can't reproduce.
+        live_rows
+            .rows
+            .check_other_claims(live, id, &file)
+            .map_err(|error| error.render(trf))?;
+        if let Some((active, hold)) = active.and_then(|active| {
+            active
+                .holds()
+                .find(|hold| hold.id() == id)
+                .map(|hold| (active, hold))
+        }) {
+            if !item.matches_hold(home, active.base(), hold) {
+                return Err(held_change_refusal(id));
+            }
+            retired.insert(id.to_owned());
+        }
+        if rows
+            .row(id)?
+            .is_some_and(|row| row["kind"] == "mod" && row["file"].as_str() == Some(file.as_str()))
+        {
+            rows.remove(id)?;
+            changed_rows = true;
+        }
+        if item.github_origin(home).is_some() {
+            let origin = item.package.path.with_extension("origin.json");
+            let origin_name = origin.strip_prefix(home).map_err(|_| unverified())?;
+            let origin_name = origin_name
+                .to_str()
+                .ok_or_else(unverified)?
+                .replace(std::path::MAIN_SEPARATOR, "/");
+            live_rows
+                .rows
+                .check_other_claims(live, id, &origin_name)
+                .map_err(|error| error.render(trf))?;
+            reviewed_leaves.push((id.to_owned(), origin_name));
+            fs::remove_file(&origin).map_err(|e| at(&origin, e))?;
+        }
+        reviewed_leaves.push((id.to_owned(), file.clone()));
+        fs::remove_file(&item.package.path).map_err(|e| at(&item.package.path, e))?;
+        archives.push(ReviewedArchive {
+            target: ReviewedMod {
+                name: item.package.manifest.name.clone(),
+                id: id.to_owned(),
+            },
+            file,
+            digest: digest.clone(),
+        });
+    }
+    if changed_rows {
+        rows.write(home)?;
+    }
+
+    Ok(StagedRemoval {
+        archives,
+        retired,
+        reviewed_leaves,
+    })
+}
+
 /// Explicit Remove approves the displayed path and digest, independent of archive origin.
 /// The required dependent closure is turned off, not deleted.
 pub fn remove_mods(
@@ -383,77 +493,14 @@ pub fn remove_mods(
     let home = next.path();
     let present = inventory(home, None)?;
     let ids = ids.iter().cloned().collect::<BTreeSet<_>>();
-    let mut rows = Document::read(home)?;
     let enabled = enabled(home)?;
-    let mut changed_rows = false;
-    let mut retired = BTreeSet::new();
-    let mut archives = Vec::new();
-    let mut reviewed_leaves = Vec::new();
-    let live_rows = Document::read(&instance.home)?;
-    for id in &ids {
-        let unverified = || {
-            trf(
-                "Couldn't verify the installed file for {mod}. Nothing was removed.",
-                &[("mod", id)],
-            )
-        };
-        let item = present.get(id).ok_or_else(unverified)?;
-        let digest = item.digest.as_ref().ok_or_else(unverified)?;
-        let relative = item
-            .package
-            .path
-            .strip_prefix(home)
-            .map_err(|_| unverified())?;
-        let file = relative
-            .to_str()
-            .ok_or_else(unverified)?
-            .replace(std::path::MAIN_SEPARATOR, "/");
-        // The live home retains filesystem aliases which a private copy can't reproduce.
-        live_rows
-            .rows
-            .check_other_claims(&instance.home, id, &file)
-            .map_err(|error| error.render(trf))?;
-        if let Some(hold) = edit.held(id) {
-            if !item.matches_hold(home, edit.base(), hold) {
-                return Err(held_change_refusal(id));
-            }
-            retired.insert(id.clone());
-        }
-        if rows
-            .row(id)?
-            .is_some_and(|row| row["kind"] == "mod" && row["file"].as_str() == Some(file.as_str()))
-        {
-            rows.remove(id)?;
-            changed_rows = true;
-        }
-        if item.github_origin(home).is_some() {
-            let origin = item.package.path.with_extension("origin.json");
-            let origin_name = origin.strip_prefix(home).map_err(|_| unverified())?;
-            let origin_name = origin_name
-                .to_str()
-                .ok_or_else(unverified)?
-                .replace(std::path::MAIN_SEPARATOR, "/");
-            live_rows
-                .rows
-                .check_other_claims(&instance.home, id, &origin_name)
-                .map_err(|error| error.render(trf))?;
-            reviewed_leaves.push((id.as_str(), origin_name));
-            fs::remove_file(&origin).map_err(|e| at(&origin, e))?;
-        }
-        reviewed_leaves.push((id.as_str(), file.clone()));
-        fs::remove_file(&item.package.path).map_err(|e| at(&item.package.path, e))?;
-        archives.push(ReviewedArchive {
-            target: ReviewedMod {
-                name: item.package.manifest.name.clone(),
-                id: id.clone(),
-            },
-            file,
-            digest: digest.clone(),
-        });
-    }
-    if changed_rows {
-        rows.write(home)?;
-    }
+    let mut staged = stage_removal(
+        &instance.home,
+        home,
+        edit.current(),
+        ids.iter().map(String::as_str),
+        &present,
+    )?;
 
     // Only propagate along actual, enabled, required edges. Keep every dependent path and
     // provenance byte; validate the effective enabled graph separately after changing its list.
@@ -484,7 +531,8 @@ pub fn remove_mods(
     if let Some(conflict) = manifest_conflict(home, None, None, |_| false)? {
         return Err(InstallError::Refused(conflict.reason));
     }
-    let removed = archives
+    let removed = staged
+        .archives
         .iter()
         .map(|archive| archive.target.label())
         .collect::<Vec<_>>();
@@ -498,7 +546,7 @@ pub fn remove_mods(
     let impact = ChangeImpact::read(
         &instance.home,
         Change::Remove {
-            removed: archives,
+            removed: std::mem::take(&mut staged.archives),
             disabled: disabled
                 .into_iter()
                 .map(|id| ReviewedMod {
@@ -519,20 +567,14 @@ pub fn remove_mods(
         .map_err(|e| InstallError::Unproved(e.into()))?;
     (hooks.progress)(InstallProgress::Publishing);
     let reviewed = impact.into_evidence();
-    edit.publish_install(proof, &cancellation, &retired, || {
+    edit.publish_install(proof, &cancellation, &staged.retired, || {
         if managed_play::inputs(home, None)? != reviewed_image {
             return Err(tr(
                 "The files prepared for removal changed. Nothing was removed; try again.",
             )
             .into());
         }
-        // A changed alias can transfer another row's claim without changing any archive bytes.
-        let rows = Document::read(&instance.home)?;
-        for (id, file) in &reviewed_leaves {
-            rows.rows
-                .check_other_claims(&instance.home, id, file)
-                .map_err(|error| error.render(trf))?;
-        }
+        staged.revalidate(&instance.home)?;
         bind_worlds(&instance.home, &suspect, &reviewed)
     })?;
     Ok(removed)

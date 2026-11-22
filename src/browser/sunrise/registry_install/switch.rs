@@ -11,7 +11,7 @@ pub struct SwitchHooks<'a> {
     pub cancellation: &'a native_mods::Cancellation,
     pub progress: &'a dyn Fn(InstallProgress),
     pub registry_crates: Option<&'a dyn Fn(&native_mods::Consent) -> bool>,
-    pub approve: &'a dyn Fn(&SwitchQuestion) -> Result<bool, String>,
+    pub approve: &'a dyn Fn(&SwitchQuestion) -> Result<SwitchDecision, String>,
     pub at_cutoff: &'a dyn Fn() -> Result<(), String>,
 }
 
@@ -25,22 +25,43 @@ pub struct SwitchQuestion {
     pub removed: Vec<(String, String)>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SwitchDecision {
+    Cancel,
+    TurnOff,
+    Remove,
+}
+
 impl SwitchQuestion {
+    pub fn needed(&self) -> bool {
+        self.worlds.needed() || self.has_omissions() || !self.removed.is_empty()
+    }
+
+    pub fn has_omissions(&self) -> bool {
+        !self.held.is_empty() || !self.unproved.is_empty()
+    }
+
+    pub fn omission_summary(&self) -> String {
+        let count = self.held.len() + self.unproved.len();
+        if count == 1 {
+            tr("1 mod can’t move to this build yet. You can keep it installed but turned off, or remove it.").into()
+        } else {
+            trf(
+                "{count} mods can’t move to this build yet. You can keep them installed but turned off, or remove them.",
+                &[("count", &count.to_string())],
+            )
+        }
+    }
+
     pub fn hold_lines(&self) -> impl Iterator<Item = String> + '_ {
         self.held
             .iter()
-            .map(|name| {
-                trf(
-                    "{mod} will be turned off. Needs an update from its author.",
-                    &[("mod", name)],
-                )
-            })
-            .chain(self.unproved.iter().map(|name| {
-                trf(
-                    "{mod} will be turned off. Fit could not be verified.",
-                    &[("mod", name)],
-                )
-            }))
+            .map(|name| trf("{mod} — Not compatible with this build.", &[("mod", name)]))
+            .chain(
+                self.unproved
+                    .iter()
+                    .map(|name| trf("{mod} — Fit could not be verified.", &[("mod", name)])),
+            )
     }
 }
 
@@ -128,7 +149,7 @@ pub fn switch_build(
         .prefix("switch-download-")
         .tempdir_in(old.path())
         .map_err(|e| at(old.path(), e))?;
-    let choices = choices(
+    let mut choices = choices(
         &original,
         &catalogue,
         local,
@@ -136,37 +157,40 @@ pub fn switch_build(
         download.path(),
         hooks.progress,
     )?;
+    let mut omissions = Omissions {
+        unproved: prune_missing_uses(&mut choices, &original, tag)?,
+        ..Omissions::default()
+    };
+    let prove = |home: &Path| {
+        edit.prove(
+            home,
+            instance.native_profile,
+            hooks.cancellation,
+            |step| super::build_progress(step, hooks.progress),
+            hooks.registry_crates,
+            None,
+        )
+    };
     let mut selected = None;
-    let mut omissions = Omissions::default();
-    best_survivor_set(&choices, &original.mods, |set| {
+    best_survivor_set(&mut choices, &original.mods, |set| {
+        let mut rejected = BTreeSet::new();
         (hooks.progress)(InstallProgress::Preparing);
         let Some(enabled) = enabled_set(&set, &original.mods) else {
-            return Ok(false);
+            return Ok(Trial::Conflict);
         };
         let next = edit.candidate()?;
         apply(next.path(), &original, &set, &enabled)?;
         validate_enabled(next.path(), &catalogue, official.as_ref()).map_err(|e| e.to_string())?;
-        let prove = |home: &Path| {
-            edit.prove(
-                home,
-                instance.native_profile,
-                hooks.cancellation,
-                |step| {
-                    super::build_progress(step, hooks.progress);
-                },
-                hooks.registry_crates,
-                None,
-            )
-        };
         let Some(proof) = exact_image(
             prove(next.path()),
             &set,
             &enabled,
             hooks.cancellation,
             &mut omissions,
+            &mut rejected,
         )?
         else {
-            return Ok(false);
+            return Ok(Trial::reject(rejected));
         };
         // An intentionally off native choice still needs proof for its legitimate activation.
         // It may activate its required off dependencies, but never evict another enabled mod.
@@ -176,7 +200,7 @@ pub fn switch_build(
             }
             let mut activated = enabled.clone();
             if !activate(id, &set, &mut activated) || !fits(&set, &activated) {
-                return Ok(false);
+                return Ok(Trial::Conflict);
             }
             let trial = edit.candidate()?;
             apply(trial.path(), &original, &set, &activated)?;
@@ -186,23 +210,29 @@ pub fn switch_build(
                 &activated,
                 hooks.cancellation,
                 &mut omissions,
+                &mut rejected,
             )?
             .is_none()
             {
-                return Ok(false);
+                return Ok(Trial::reject(rejected));
             }
         }
-        selected = Some((next, proof, set));
-        Ok(true)
+        let kept = set.keys().map(|&id| id.to_owned()).collect::<BTreeSet<_>>();
+        let replaced = set
+            .iter()
+            .filter(|(_, package)| package.replacement.is_some())
+            .map(|(&id, _)| id.to_owned())
+            .collect::<Vec<_>>();
+        selected = Some((next, proof, kept, replaced));
+        Ok(Trial::Fit)
     })?;
-    let (next, proof, set) = selected.ok_or_else(unproved_switch)?;
+    let (next, mut proof, kept, replaced) = selected.ok_or_else(unproved_switch)?;
     let mut holds = Vec::new();
     let mut held = Vec::new();
     let mut unknown = Vec::new();
     for (id, old) in &original.mods {
         let manifest = &old.seen.package.manifest;
-        let chosen = set.get(id.as_str());
-        if chosen.is_none() && !original.removed.contains_key(id) && !old.held {
+        if !kept.contains(id) && !original.removed.contains_key(id) && !old.held {
             let path = &old.seen.package.path;
             let directory = path
                 .parent()
@@ -259,11 +289,12 @@ pub fn switch_build(
         // The staged image proves compatibility with the target, not that the old
         // game and the new one interpret saved definitions in the same way.
         None,
-        original.removed.keys().map(String::as_str).chain(
-            set.iter()
-                .filter(|(_, package)| package.replacement.is_some())
-                .map(|(&id, _)| id),
-        ),
+        original
+            .removed
+            .keys()
+            .chain(&replaced)
+            .map(String::as_str)
+            .chain(holds.iter().map(Held::id)),
     )?;
     let resources = edit.switch_resources()?;
     let mut order = None;
@@ -288,13 +319,45 @@ pub fn switch_build(
         unproved: unknown,
         removed: original.removed.values().cloned().collect(),
     };
-    if question.worlds.needed() && !(hooks.approve)(&question)? {
-        return Ok(Switched::Stayed);
+    let mut removed = original.removed;
+    let mut removal = None;
+    if question.needed() {
+        match (hooks.approve)(&question)? {
+            SwitchDecision::Cancel => return Ok(Switched::Stayed),
+            SwitchDecision::TurnOff => (),
+            SwitchDecision::Remove if !holds.is_empty() => {
+                let present = inventory(next.path(), None)?;
+                let staged = mutations::stage_removal(
+                    &instance.home,
+                    next.path(),
+                    edit.current(),
+                    holds.iter().map(Held::id),
+                    &present,
+                )
+                .map_err(|error| error.to_string())?;
+                removed.extend(staged.archives.iter().map(|archive| {
+                    (
+                        archive.target.id.clone(),
+                        (
+                            archive.target.name.clone(),
+                            tr("Removed when switching builds").into(),
+                        ),
+                    )
+                }));
+                holds.clear();
+                proof = prove(next.path()).map_err(String::from)?;
+                removal = Some(staged);
+            }
+            SwitchDecision::Remove => (),
+        }
     }
-    let active = edit.publish_switch(proof, hooks.cancellation, holds, original.removed, || {
+    let active = edit.publish_switch(proof, hooks.cancellation, holds, removed, || {
         let (_, current, proof) = super::super::complete_index(&source, local)?;
         if current != evidence || proof.is_some() != official.is_some() {
             return Err(tr("The mod registry changed while the switch was being prepared. Nothing was switched.").into());
+        }
+        if let Some(removal) = removal {
+            removal.revalidate(&instance.home)?;
         }
         fence.revalidate(&instance.home)
     }, || {
@@ -655,49 +718,142 @@ pub(super) fn sha256_bytes(hex: &str) -> Result<[u8; 32], String> {
     Ok(bytes)
 }
 
-fn best_survivor_set<'a>(
-    slots: &'a Choices,
+// A bare native archive pinned to a different build has no cross-build proof to try.
+// Keep alternate versions eligible and leave any supplied uses list to the target SDK.
+fn prune_missing_uses(
+    slots: &mut Choices,
+    original: &Originals<'_>,
+    tag: &str,
+) -> Result<BTreeSet<String>, String> {
+    let mut revision = None;
+    let mut omitted = BTreeSet::new();
+    for (id, choices) in slots.iter_mut().filter(|(_, choices)| !choices.is_empty()) {
+        for choice in std::mem::take(choices) {
+            if let Some(native) = &choice.manifest.native {
+                // If the full revision isn't known, leave the verdict to the exact builder.
+                let target = revision.get_or_insert_with(|| native_mods::revision_of(tag).ok());
+                if target
+                    .as_ref()
+                    .is_some_and(|target| *target != native.sunrise)
+                {
+                    let path = match &choice.replacement {
+                        Some((file, _)) => file,
+                        None => &original.mods[id].seen.package.path,
+                    };
+                    let archive =
+                        zip::ZipArchive::new(fs::File::open(path).map_err(|e| at(path, e))?)
+                            .map_err(|e| at(path, e))?;
+                    if archive
+                        .index_for_name(sunrise_launcher_smod::manifest::USES_FILE)
+                        .is_none()
+                    {
+                        continue;
+                    }
+                }
+            }
+            choices.push(choice);
+        }
+        if choices.is_empty() {
+            omitted.insert(id.clone());
+        }
+    }
+    Ok(prune_dependents(slots, &omitted))
+}
+
+fn prune_dependents(slots: &mut Choices, unproved: &BTreeSet<String>) -> BTreeSet<String> {
+    let variants = || {
+        slots
+            .iter()
+            .filter(|(_, choices)| !choices.is_empty())
+            .map(|(id, choices)| (id.as_str(), choices.iter()))
+    };
+    let mut unknown: BTreeSet<_> = unproved.iter().map(String::as_str).collect();
+    spread_to_dependents(variants(), &mut unknown);
+    let unknown = unknown.into_iter().map(str::to_owned).collect();
+    let mut unavailable: BTreeSet<_> = slots
+        .iter()
+        .filter(|(_, choices)| choices.is_empty())
+        .map(|(id, _)| id.as_str())
+        .collect();
+    spread_to_dependents(variants(), &mut unavailable);
+    let unavailable: BTreeSet<_> = unavailable.into_iter().map(str::to_owned).collect();
+    slots.retain(|id, choices| {
+        if unavailable.contains(id) {
+            return false;
+        }
+        choices.retain(|choice| {
+            !choice
+                .manifest
+                .required_client_dependencies()
+                .any(|(dep, _)| unavailable.contains(dep))
+        });
+        true
+    });
+    unknown
+}
+
+type Rejected = BTreeSet<(String, String)>;
+
+enum Trial {
+    Fit,
+    Conflict,
+    Rejected(Rejected),
+}
+
+impl Trial {
+    fn reject(rejected: Rejected) -> Self {
+        if rejected.is_empty() {
+            Self::Conflict
+        } else {
+            Self::Rejected(rejected)
+        }
+    }
+}
+
+fn best_survivor_set(
+    slots: &mut Choices,
     original: &BTreeMap<String, Original>,
-    mut trial: impl FnMut(Set<'a>) -> Result<bool, String>,
+    mut trial: impl FnMut(Set<'_>) -> Result<Trial, String>,
 ) -> Result<(), String> {
-    struct Search<'a> {
+    struct Search<'a, 'budget> {
         slots: Vec<(&'a str, &'a [Package], bool)>,
         remaining: Vec<usize>,
-        checked: usize,
+        checked: &'budget mut usize,
     }
-    impl<'a> Search<'a> {
+    impl<'a> Search<'a, '_> {
         fn rank(
             &mut self,
             at: usize,
             retained: usize,
             chosen: &mut Set<'a>,
-            trial: &mut impl FnMut(Set<'a>) -> Result<bool, String>,
-        ) -> Result<bool, String> {
+            trial: &mut impl FnMut(Set<'a>) -> Result<Trial, String>,
+        ) -> Result<Trial, String> {
             if retained > self.remaining[at] {
-                return Ok(false);
+                return Ok(Trial::Conflict);
             }
-            self.checked += 1;
-            if self.checked > MAX_TRIALS * 128 {
+            *self.checked += 1;
+            if *self.checked > MAX_TRIALS * 128 {
                 return Err(too_many());
             }
             let Some(&(id, choices, original)) = self.slots.get(at) else {
                 let mut reachable = BTreeSet::new();
                 for &(id, _, was) in &self.slots {
                     if was && chosen.contains_key(id) && !activate(id, chosen, &mut reachable) {
-                        return Ok(false);
+                        return Ok(Trial::Conflict);
                     }
                 }
                 return if reachable.len() == chosen.len() {
                     trial(chosen.clone())
                 } else {
-                    Ok(false)
+                    Ok(Trial::Conflict)
                 };
             };
             if let Some(left) = retained.checked_sub(usize::from(original)) {
                 for choice in choices {
                     chosen.insert(id, choice);
-                    if self.rank(at + 1, left, chosen, trial)? {
-                        return Ok(true);
+                    match self.rank(at + 1, left, chosen, trial)? {
+                        Trial::Conflict => (),
+                        result => return Ok(result),
                     }
                 }
                 chosen.remove(id);
@@ -705,33 +861,49 @@ fn best_survivor_set<'a>(
             self.rank(at + 1, retained, chosen, trial)
         }
     }
-    let slots: Vec<_> = slots
-        .iter()
-        .map(|(id, choices)| (id.as_str(), choices.as_slice(), original.contains_key(id)))
-        .collect();
-    let mut remaining = vec![0; slots.len() + 1];
-    for (i, (_, choices, was)) in slots.iter().enumerate().rev() {
-        remaining[i] = remaining[i + 1] + usize::from(*was && !choices.is_empty());
-    }
-    let mut search = Search {
-        slots,
-        remaining,
-        checked: 0,
-    };
     let mut tried = 0;
-    let mut checked_trial = |chosen| {
-        tried += 1;
-        if tried > MAX_TRIALS {
-            return Err(too_many());
+    let mut checked = 0;
+    'rerank: loop {
+        let mut checked_trial = |chosen| {
+            tried += 1;
+            if tried > MAX_TRIALS {
+                return Err(too_many());
+            }
+            trial(chosen)
+        };
+        let variants = slots
+            .iter()
+            .map(|(id, choices)| (id.as_str(), choices.as_slice(), original.contains_key(id)))
+            .collect::<Vec<_>>();
+        let mut remaining = vec![0; variants.len() + 1];
+        for (i, (_, _, was)) in variants.iter().enumerate().rev() {
+            remaining[i] = remaining[i + 1] + usize::from(*was);
         }
-        trial(chosen)
-    };
-    for retained in (0..=search.remaining[0]).rev() {
-        if search.rank(0, retained, &mut BTreeMap::new(), &mut checked_trial)? {
-            return Ok(());
+        let mut search = Search {
+            slots: variants,
+            remaining,
+            checked: &mut checked,
+        };
+        for retained in (0..=search.remaining[0]).rev() {
+            match search.rank(0, retained, &mut BTreeMap::new(), &mut checked_trial)? {
+                Trial::Fit => return Ok(()),
+                Trial::Conflict => (),
+                Trial::Rejected(rejected) => {
+                    // The SDK verdict is about these exact bytes, not this combination.
+                    // Re-rank with the still-eligible versions, not subsets of failed ones.
+                    for (id, digest) in rejected {
+                        slots
+                            .get_mut(&id)
+                            .expect("trial choice")
+                            .retain(|choice| choice.digest.as_ref() != Some(&digest));
+                    }
+                    prune_dependents(slots, &BTreeSet::new());
+                    continue 'rerank;
+                }
+            }
         }
+        return Err(unproved_switch());
     }
-    Err(unproved_switch())
 }
 
 fn activate<'a>(id: &'a str, set: &Set<'a>, selected: &mut BTreeSet<&'a str>) -> bool {
@@ -855,8 +1027,10 @@ fn exact_image(
     enabled: &BTreeSet<&str>,
     cancellation: &native_mods::Cancellation,
     omissions: &mut Omissions,
+    rejected: &mut Rejected,
 ) -> Result<Option<CandidateImage>, String> {
     use native_mods::{Failed, Why};
+    let variants = || set.iter().map(|(&id, &pkg)| (id, std::iter::once(pkg)));
     match result {
         Ok(image) => Ok(Some(image)),
         Err(Failed::Mods {
@@ -872,6 +1046,11 @@ fn exact_image(
                         enabled.contains(*id) && p.manifest.version == omission.version
                     })
                     .ok_or_else(unproved_switch)?;
+                if !compiling && matches!(omission.why, Why::Unfit(_) | Why::Unproved(_)) {
+                    if let Some(digest) = &package.digest {
+                        rejected.insert((id.into(), digest.clone()));
+                    }
+                }
                 match omission.why {
                     Why::Unfit(detail) if !compiling => {
                         unfit.insert(id);
@@ -901,8 +1080,8 @@ fn exact_image(
             // The builder only sees native bundles and reports one cause per omitted
             // dependent. Use the entire trial's required client closure, including content
             // and all of its causes. A known incompatibility alone defeats that trial.
-            spread_to_dependents(set, &mut unfit);
-            spread_to_dependents(set, &mut unknown);
+            spread_to_dependents(variants(), &mut unfit);
+            spread_to_dependents(variants(), &mut unknown);
             omissions
                 .unproved
                 .extend(unknown.difference(&unfit).map(|&id| id.to_owned()));
@@ -922,7 +1101,7 @@ fn exact_image(
             // Only this source's original SDK is missing. Keep trying the remaining
             // packages against the target SDK, including listed native mods.
             let mut unknown = BTreeSet::from([id]);
-            spread_to_dependents(set, &mut unknown);
+            spread_to_dependents(variants(), &mut unknown);
             omissions
                 .unproved
                 .extend(unknown.into_iter().map(str::to_owned));
@@ -951,7 +1130,7 @@ fn exact_image(
             if unknown.is_empty() {
                 return Err(unproved_switch());
             }
-            spread_to_dependents(set, &mut unknown);
+            spread_to_dependents(variants(), &mut unknown);
             omissions
                 .unproved
                 .extend(unknown.into_iter().map(str::to_owned));
@@ -961,18 +1140,24 @@ fn exact_image(
     }
 }
 
-fn spread_to_dependents<'a>(set: &Set<'a>, omitted: &mut BTreeSet<&'a str>) {
-    let mut before = 0;
-    while before != omitted.len() {
-        before = omitted.len();
-        for (&id, package) in set {
-            if package
-                .manifest
-                .required_client_dependencies()
-                .any(|(dep, _)| omitted.contains(dep.as_str()))
-            {
+fn spread_to_dependents<'a>(
+    variants: impl Iterator<Item = (&'a str, impl Iterator<Item = &'a Package>)> + Clone,
+    omitted: &mut BTreeSet<&'a str>,
+) {
+    loop {
+        let before = omitted.len();
+        for (id, mut choices) in variants.clone() {
+            if choices.all(|package| {
+                package
+                    .manifest
+                    .required_client_dependencies()
+                    .any(|(dep, _)| omitted.contains(dep.as_str()))
+            }) {
                 omitted.insert(id);
             }
+        }
+        if before == omitted.len() {
+            return;
         }
     }
 }
@@ -982,7 +1167,7 @@ fn unproved_switch() -> String {
 }
 
 fn too_many() -> String {
-    tr("Not every compatible mod set could be checked. Nothing was switched.").into()
+    tr("There are too many possible mod combinations to check. Remove mods you no longer need from this profile, then try switching again. Nothing was switched.").into()
 }
 
 #[cfg(test)]
@@ -1033,7 +1218,7 @@ mod tests {
             let authority = official.then(|| OfficialRegistry::fixture(&catalogue));
             let originals =
                 Originals::read(before.path(), None, &catalogue, authority.as_ref()).unwrap();
-            let options = choices(
+            let mut options = choices(
                 &originals,
                 &catalogue,
                 true,
@@ -1042,14 +1227,15 @@ mod tests {
                 &|_| {},
             )
             .unwrap();
-            best_survivor_set(&options, &originals.mods, |set| {
+            prune_dependents(&mut options, &BTreeSet::new());
+            best_survivor_set(&mut options, &originals.mods, |set| {
                 apply(
                     candidate.path(),
                     &originals,
                     &set,
                     &enabled_set(&set, &originals.mods).unwrap(),
                 )?;
-                Ok(true)
+                Ok(Trial::Fit)
             })
             .unwrap();
             let changed = candidate.path().join(&row.file);
