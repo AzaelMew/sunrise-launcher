@@ -83,5 +83,6 @@
   "{version} available": "{version} available",
   "Finishing the previous download…": "Finishing the previous download…",
   "The launcher update could not be verified.": "The launcher update could not be verified.",
-  "Close": "Close"
+  "Close": "Close",
+  "This account was signed out. Add it again to sign in.": "This account was signed out. Add it again to sign in."
 }

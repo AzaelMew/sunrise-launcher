@@ -500,10 +500,14 @@ impl Launcher {
         self.begin_sign_in(None);
     }
 
+    /// Signs an account in again on the sign-in screen, where its code is shown (#110).
     pub(crate) fn re_sign_in(&mut self, uuid: &str) {
-        if let Some(account) = self.accounts.find(uuid).cloned() {
-            self.begin_sign_in(Some(account));
-        }
+        sign_in_click(self, Some(uuid.to_owned()));
+    }
+
+    /// Retry the original account when the current screen has a target.
+    pub(crate) fn retry_sign_in(&mut self) {
+        retry_click(self);
     }
 
     pub(crate) fn begin_sign_in(&mut self, target: Option<account::Account>) {
@@ -527,6 +531,7 @@ impl Launcher {
         }
         self.sign_in_state = None;
         self.sign_in_target = None;
+        self.sign_in_copies.clear();
     }
 
     pub(crate) fn choose_folder(&mut self, cx: &mut Context<Self>) {
@@ -551,9 +556,161 @@ impl Launcher {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum SignInRefusal {
+    Busy,
+    AccountRemoved,
+}
+
+/// What the sign-in buttons need from the launcher, so their real handler runs in tests too.
+trait SignInHost {
+    /// A game is starting or the account can't change now.
+    fn locked(&self) -> bool;
+    fn account(&self, uuid: &str) -> Option<account::Account>;
+    /// The account the sign-in screen on show was for, if any.
+    fn retry_target(&self) -> Option<String>;
+    /// Starts the sign-in worker for `target`.
+    fn start_worker(&mut self, target: Option<account::Account>);
+    /// Shows the sign-in screen, where the worker's code appears.
+    fn open_screen(&mut self);
+    fn refuse(&mut self, refusal: SignInRefusal);
+}
+
+impl SignInHost for Launcher {
+    fn locked(&self) -> bool {
+        self.account_locked()
+    }
+
+    fn account(&self, uuid: &str) -> Option<account::Account> {
+        self.accounts.find(uuid).cloned()
+    }
+
+    fn retry_target(&self) -> Option<String> {
+        self.sign_in_target
+            .as_ref()
+            .map(|account| account.uuid.clone())
+    }
+
+    fn start_worker(&mut self, target: Option<account::Account>) {
+        self.begin_sign_in(target);
+    }
+
+    fn open_screen(&mut self) {
+        self.owner_screen_open = true;
+    }
+
+    fn refuse(&mut self, refusal: SignInRefusal) {
+        match refusal {
+            SignInRefusal::Busy => self.say_account_locked(),
+            SignInRefusal::AccountRemoved => {
+                crate::glass_toast::say(tr("This account was signed out. Add it again to sign in."))
+            }
+        }
+    }
+}
+
+/// Sign `uuid` in again, or a new account when there is none: refused while the account is
+/// locked, and when that account was removed meanwhile.
+fn sign_in_click(host: &mut impl SignInHost, uuid: Option<String>) {
+    if host.locked() {
+        return host.refuse(SignInRefusal::Busy);
+    }
+    let target = match uuid {
+        None => None,
+        Some(uuid) => match host.account(&uuid) {
+            Some(account) => Some(account),
+            None => return host.refuse(SignInRefusal::AccountRemoved),
+        },
+    };
+    host.start_worker(target);
+    host.open_screen();
+}
+
+/// Retry on the sign-in screen: the account that screen was for, or a new one.
+fn retry_click(host: &mut impl SignInHost) {
+    let target = host.retry_target();
+    sign_in_click(host, target);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Default)]
+    struct FakeSignIn {
+        locked: bool,
+        accounts: Vec<account::Account>,
+        target: Option<String>,
+        started: Vec<Option<String>>,
+        screen_open: bool,
+        refused: Vec<SignInRefusal>,
+    }
+
+    impl SignInHost for FakeSignIn {
+        fn locked(&self) -> bool {
+            self.locked
+        }
+        fn account(&self, uuid: &str) -> Option<account::Account> {
+            self.accounts.iter().find(|a| a.uuid == uuid).cloned()
+        }
+        fn retry_target(&self) -> Option<String> {
+            self.target.clone()
+        }
+        fn start_worker(&mut self, target: Option<account::Account>) {
+            self.target = target.as_ref().map(|account| account.uuid.clone());
+            self.started.push(self.target.clone());
+        }
+        fn open_screen(&mut self) {
+            self.screen_open = true;
+        }
+        fn refuse(&mut self, refusal: SignInRefusal) {
+            self.refused.push(refusal);
+        }
+    }
+
+    #[test]
+    fn renewing_and_retrying_start_only_the_requested_account() {
+        let original = account::Account {
+            uuid: "a1".into(),
+            name: "Original account".into(),
+            skin: None,
+            cape: None,
+        };
+        let mut host = FakeSignIn {
+            accounts: vec![original],
+            ..FakeSignIn::default()
+        };
+        // Sign in again opens the screen for that account; a retry after an error reuses it.
+        sign_in_click(&mut host, Some("a1".into()));
+        assert!(host.screen_open);
+        retry_click(&mut host);
+        assert_eq!(host.started, [Some("a1".into()), Some("a1".into())]);
+
+        // The account was removed meanwhile: retry starts nothing.
+        host.accounts.clear();
+        host.screen_open = false;
+        retry_click(&mut host);
+        assert_eq!(host.started.len(), 2);
+        assert!(!host.screen_open);
+        assert_eq!(host.refused, [SignInRefusal::AccountRemoved]);
+
+        // While a game starts, neither button opens the screen or starts a worker.
+        let mut starting = FakeSignIn {
+            locked: true,
+            target: Some("a1".into()),
+            ..FakeSignIn::default()
+        };
+        sign_in_click(&mut starting, Some("a1".into()));
+        retry_click(&mut starting);
+        assert!(starting.started.is_empty() && !starting.screen_open);
+        assert_eq!(starting.refused, [SignInRefusal::Busy, SignInRefusal::Busy]);
+
+        // A screen with no account behind it signs a new account in.
+        let mut fresh = FakeSignIn::default();
+        retry_click(&mut fresh);
+        assert_eq!(fresh.started, [None]);
+        assert!(fresh.screen_open);
+    }
 
     #[test]
     fn a_retained_legacy_copy_does_not_stop_play_at_the_mod_check() {
