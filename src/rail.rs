@@ -37,10 +37,27 @@ fn icon_slot(icon: impl IntoElement) -> Div {
         .child(icon)
 }
 
-/// Whether the selected profile's actions button shows beside its name, `open` of the way:
-/// once it fades in, when it is already clear of the mark.
-fn side_actions_shown(open: f32) -> bool {
-    label_opacity(open) > 0.
+/// Where the selected profile's actions button is.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum ActionsAt {
+    /// In the row under the mark, the sidebar closed.
+    Under,
+    /// Beside the name, fading in with it.
+    Beside,
+}
+
+/// Where the actions button is built `open` of the way, if at all. Closed, it is under the mark.
+/// Opening, it leaves the row for its place beside the name, which it takes once it fades in,
+/// when it is already clear of the mark: until then it would sit, unseen, over the mark, where a
+/// press on the mark could open the profile's menu, so it isn't built.
+fn actions_at(open: f32) -> Option<ActionsAt> {
+    if open <= 0. {
+        Some(ActionsAt::Under)
+    } else if label_opacity(open) > 0. {
+        Some(ActionsAt::Beside)
+    } else {
+        None
+    }
 }
 
 /// The room under the mark the closed actions button took (28 px), `open` of the way.
@@ -319,7 +336,10 @@ impl Launcher {
                 i.name.clone(),
                 on,
             )
-            .child(icon_slot(self.profile_mark(&i, 28.)))
+            .child(
+                icon_slot(self.profile_mark(&i, 28.))
+                    .when(on, |d| d.debug_selector(|| "selected-profile-mark".into())),
+            )
             .when(labelled, |d| d.child(txt(i.name.clone())))
             .when(labelled && more, |d| d.pr(px(36.)))
             .when(deletable, |d| {
@@ -332,20 +352,15 @@ impl Launcher {
                     }),
                 )
             });
-            // Opening, the button leaves the row for its place beside the name, which it reaches
-            // only once there is room: until it shows, it sits over the mark, so it isn't built
-            // at all, or a press on the mark could open the profile's menu.
-            let side = labelled && side_actions_shown(open);
-            let actions = (more && (!labelled || side)).then(|| {
+            let actions = more.then(|| actions_at(open)).flatten().map(|at| {
                 let top = Rc::new(Cell::new(0.));
                 let read_top = top.clone();
                 let i = i.clone();
                 div()
                     .id(SharedString::from(format!("profile-actions-{}", i.id)))
+                    .debug_selector(|| "selected-profile-actions".into())
                     .reach()
-                    // Beside the name once the sidebar opens, fading in with it; under the
-                    // mark when closed.
-                    .when(labelled, |d| {
+                    .when(at == ActionsAt::Beside, |d| {
                         d.absolute()
                             .top(px(6.))
                             .right(px(5.))
@@ -463,21 +478,42 @@ mod tests {
     use crate::launch_state::Facts;
 
     #[test]
-    fn the_actions_button_takes_input_only_where_it_shows_clear_of_the_mark() {
-        for step in 0..=1000 {
+    fn the_actions_button_is_under_the_mark_closed_beside_the_name_open_and_absent_between() {
+        // Both settled layouts have it.
+        assert_eq!(actions_at(0.), Some(ActionsAt::Under));
+        assert_eq!(actions_at(1.), Some(ActionsAt::Beside));
+        let (mut hidden, mut beside) = (0, false);
+        for step in 1..=1000 {
             let open = step as f32 / 1000.;
             // Inside the rail's padding (5) and border (1): the button sits 5 px from the
-            // right and is 28 wide; the mark sits in its column after the row's border.
+            // right and is 28 wide. The mark is centred in its column after the row's border,
+            // and the column doesn't move as the sidebar opens.
             let button_left = rail_width(open) - 2. * 5. - 2. - 5. - 28.;
-            // The mark is centred in its column, which doesn't move as the sidebar opens.
             let mark_right = 1. + (CLOSED_ROW - 28.) / 2. + 28.;
-            if open > 0. && side_actions_shown(open) {
-                assert!(
-                    button_left >= mark_right,
-                    "at {open} the button ({button_left}) is over the mark ({mark_right})"
+            match actions_at(open) {
+                Some(ActionsAt::Under) => panic!("at {open} the button is back under the mark"),
+                Some(ActionsAt::Beside) => {
+                    beside = true;
+                    assert!(
+                        button_left >= mark_right,
+                        "at {open} the button ({button_left}) is over the mark ({mark_right})"
+                    );
+                    assert!(label_opacity(open) > 0., "at {open} it is built unseen");
+                }
+                None => {
+                    assert!(!beside, "at {open} it went away again after showing");
+                    hidden += 1;
+                }
+            }
+            if button_left < mark_right {
+                assert_eq!(
+                    actions_at(open),
+                    None,
+                    "at {open} it would be over the mark"
                 );
             }
         }
+        assert!(hidden > 0, "the start of opening leaves it out");
         // Closed, the button is in the row under the mark; the room it took eases away.
         assert_eq!(actions_room(0.), 28.);
         assert_eq!(actions_room(1.), 0.);
@@ -485,6 +521,97 @@ mod tests {
             (actions_room(0.001) - 28.).abs() < 0.1,
             "no jump as opening begins"
         );
+    }
+
+    /// Runs `test` again in a child process with scratch homes, as the other window tests do:
+    /// `None` here, the scratch root in the child.
+    fn scratch_child(test: &str) -> Option<std::path::PathBuf> {
+        const CHILD: &str = "SUNRISE_RAIL_TEST";
+        if let Some(root) = std::env::var_os(CHILD) {
+            return Some(root.into());
+        }
+        let scratch = tempfile::tempdir().unwrap();
+        let root = scratch.path();
+        let nowhere = "http://127.0.0.1:9";
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", &format!("rail::tests::{test}")])
+            .env(CHILD, root)
+            .env("SUNRISE_HOME", root.join("game"))
+            .env("SUNRISE_LAUNCHER_HOME", root.join("launcher"))
+            .env("SUNRISE_LAUNCHER_LOCATION_FILE", root.join("location.json"))
+            .env("SUNRISE_NO_KEYCHAIN", "1")
+            .env("SUNRISE_LAUNCHER_NO_SELF_UPDATE", "1")
+            .env("SUNRISE_TELEMETRY_URL", "off")
+            .env("XDG_DATA_HOME", root.join("data"))
+            .env("XDG_CONFIG_HOME", root.join("config"))
+            .env("HTTP_PROXY", nowhere)
+            .env("HTTPS_PROXY", nowhere)
+            .env("ALL_PROXY", nowhere)
+            .env_remove("NO_PROXY")
+            .env_remove("SUNRISE_GITHUB_MIRROR")
+            .env_remove("SUNRISE_LAUNCHER_BENCH")
+            .status()
+            .unwrap();
+        assert!(status.success(), "{test} failed in its child process");
+        None
+    }
+
+    #[test]
+    fn the_actions_button_takes_presses_settled_and_leaves_the_mark_alone_while_hidden() {
+        if scratch_child(
+            "the_actions_button_takes_presses_settled_and_leaves_the_mark_alone_while_hidden",
+        )
+        .is_none()
+        {
+            return;
+        }
+        let profile = instances::create("Cabin", None).unwrap();
+        let mut settings = Settings::load();
+        settings.instance = Some(profile.id.clone());
+        settings.sidebar_expanded = false;
+        settings.save().unwrap();
+        let mut app = gpui::TestAppContext::single();
+        let (shell, cx) = app.add_window_view(crate::window_root::Shell::new);
+        let launcher = shell.read_with(cx, |shell, _| shell.launcher());
+        // A frame with the sidebar `open` of the way, and no menu up.
+        let draw = |cx: &mut gpui::VisualTestContext, open: f32| {
+            launcher.update(cx, |l, cx| {
+                l.ui.rail_pin = Some(open);
+                l.ui.sheets.profile_action = None;
+                cx.notify();
+            });
+            cx.run_until_parked();
+        };
+        let menu = |cx: &mut gpui::VisualTestContext| {
+            launcher.read_with(cx, |l, _| {
+                matches!(
+                    l.ui.sheets.profile_action,
+                    Some(crate::profile_delete::Action::Menu { .. })
+                )
+            })
+        };
+        for open in [0., 1.] {
+            draw(cx, open);
+            let button = cx
+                .debug_bounds("selected-profile-actions")
+                .unwrap_or_else(|| panic!("at {open} the button is drawn"));
+            cx.simulate_click(button.center(), gpui::Modifiers::none());
+            assert!(menu(cx), "at {open} a press on the button opens the menu");
+        }
+        for open in [0.05, 0.15, 0.25] {
+            draw(cx, open);
+            // Not drawn, so nothing to hit and no Tab stop.
+            assert_eq!(
+                cx.debug_bounds("selected-profile-actions"),
+                None,
+                "at {open}"
+            );
+            let mark = cx
+                .debug_bounds("selected-profile-mark")
+                .unwrap_or_else(|| panic!("at {open} the mark is drawn"));
+            cx.simulate_click(mark.center(), gpui::Modifiers::none());
+            assert!(!menu(cx), "at {open} a press on the mark opened the menu");
+        }
     }
 
     #[test]
