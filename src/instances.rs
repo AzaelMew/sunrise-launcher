@@ -834,10 +834,10 @@ pub fn delete_with_selection(query: &str) -> Result<(Instance, Result<(), String
         &backend::data_dir(),
         query,
         &crate::desktop_seams::to_trash,
-    )?;
+    )
+    .map_err(|error| error.to_string())?;
     let mut settings = backend::Settings::load();
-    let saved = if settings.instance.as_ref() == Some(&gone.id) {
-        settings.instance = None;
+    let saved = if clear_deleted_selection(&mut settings, &gone.id) {
         settings.save()
     } else {
         Ok(())
@@ -846,22 +846,64 @@ pub fn delete_with_selection(query: &str) -> Result<(Instance, Result<(), String
     Ok((gone, saved))
 }
 
+/// Takes the same fallback as the command, without overwriting other live window settings.
+pub fn clear_deleted_selection(settings: &mut backend::Settings, id: &str) -> bool {
+    settings
+        .instance
+        .take_if(|selected| selected == id)
+        .is_some()
+}
+
+/// Move the exact folder shown in the window's confirmation, not a fresh lookup by slug.
+/// The caller saves its selection once the move settles.
+pub fn trash_confirmed(instance: Instance) -> Result<Instance, DeleteError> {
+    delete_selected(
+        &backend::game_home(),
+        &backend::data_dir(),
+        instance,
+        &crate::desktop_seams::to_trash,
+    )
+}
+
+#[derive(Debug)]
+pub struct DeleteError {
+    pub detail: String,
+    /// Set when the folder left its original path but could not reach the Trash.
+    pub retained: Option<PathBuf>,
+}
+
+impl From<String> for DeleteError {
+    fn from(detail: String) -> Self {
+        Self {
+            detail,
+            retained: None,
+        }
+    }
+}
+
+impl std::fmt::Display for DeleteError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(path) = &self.retained {
+            let folder = path.to_string_lossy();
+            write!(
+                f,
+                "{}: {}",
+                crate::i18n::trf("The profile was kept in {folder}", &[("folder", &folder)]),
+                self.detail
+            )
+        } else {
+            f.write_str(&self.detail)
+        }
+    }
+}
+
 fn delete_in(
     game_home: &Path,
     data: &Path,
     query: &str,
     trash: &dyn Fn(&Path) -> Result<(), String>,
-) -> Result<Instance, String> {
+) -> Result<Instance, DeleteError> {
     let instance = find_in(&list_with_snapshot(game_home, data, false, || {}), query)?;
-    if instance.kind == Kind::Pack {
-        return Err(registry_pack::remove_unavailable());
-    }
-    if instance.kind == Kind::Default {
-        return Err(crate::i18n::trf(
-            "{name} is the game's own folder: it can't be deleted.",
-            &[("name", &instance.name)],
-        ));
-    }
     delete_selected(game_home, data, instance, trash)
 }
 
@@ -870,7 +912,17 @@ fn delete_selected(
     data: &Path,
     instance: Instance,
     trash: &dyn Fn(&Path) -> Result<(), String>,
-) -> Result<Instance, String> {
+) -> Result<Instance, DeleteError> {
+    if instance.kind == Kind::Pack {
+        return Err(registry_pack::remove_unavailable().into());
+    }
+    if instance.kind == Kind::Default {
+        return Err(crate::i18n::trf(
+            "{name} is the game's own folder: it can't be deleted.",
+            &[("name", &instance.name)],
+        )
+        .into());
+    }
     delete_selected_at(
         game_home,
         data,
@@ -886,7 +938,7 @@ fn delete_selected_at(
     instance: Instance,
     detach: impl FnOnce(&Path, &Path) -> std::io::Result<()>,
     trash: &dyn Fn(&Path) -> Result<(), String>,
-) -> Result<Instance, String> {
+) -> Result<Instance, DeleteError> {
     let work = &instance.work;
     let expected = instance.incarnation.ok_or_else(lifecycle::changed)?;
     let profile =
@@ -914,8 +966,8 @@ fn delete_selected_at(
                 return match durable::move_new_directory(&gone, work) {
                     Ok(()) => Err(changed),
                     Err(error) => Err(crate::i18n::trf(
-                        "The profile changed and could not be restored: {error}. Check {folder} for the detached profile.",
-                        &[("error", &error.to_string()), ("folder", &gone.to_string_lossy())],
+                        "The profile changed and could not be restored: {error}.",
+                        &[("error", &error.to_string())],
                     )),
                 };
             }
@@ -923,22 +975,12 @@ fn delete_selected_at(
             Ok(())
         })
     })();
-    if let Err(error) = detached {
-        let _ = fs::remove_dir(&private); // Never recursive: rename may already have won.
-        return Err(error);
-    }
-    let trashed = trash(&gone).map_err(|error| {
-        crate::i18n::trf(
-            "{name} was moved to {folder}, but could not go to the Trash: {error}",
-            &[
-                ("name", &instance.name),
-                ("folder", &gone.to_string_lossy()),
-                ("error", &error),
-            ],
-        )
-    });
-    let _ = fs::remove_dir(&private);
-    trashed?;
+    let trashed = detached.and_then(|()| trash(&gone));
+    let _ = fs::remove_dir(&private); // Never recursive: rename may already have won.
+    trashed.map_err(|detail| DeleteError {
+        retained: gone.is_dir().then_some(gone),
+        detail,
+    })?;
     Ok(instance)
 }
 

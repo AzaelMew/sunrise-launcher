@@ -425,6 +425,7 @@ fn deleted_instances_go_to_the_trash_and_are_forgotten() {
     // The game's home stays.
     assert!(delete_in(&home, &data, DEFAULT, &to_trash)
         .unwrap_err()
+        .detail
         .contains("can't be deleted"));
     assert!(home.join("saves/World/level.dat").is_file());
     // A folder removed by hand: its choices are dropped, a new one of that name starts clean.
@@ -436,6 +437,36 @@ fn deleted_instances_go_to_the_trash_and_are_forgotten() {
     let again = create_in(&home, &data, "Skyblock", None).unwrap();
     assert_eq!(again.group, None);
     fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn a_failed_selection_save_does_not_undo_the_confirmed_delete() {
+    let root = tempfile::tempdir().unwrap();
+    let (game, data, trash) = (
+        root.path().join("game"),
+        root.path().join("data"),
+        root.path().join("trash"),
+    );
+    let profile = create_in(&game, &data, "Survival", None).unwrap();
+    backend::Settings {
+        instance: Some(profile.id.clone()),
+        ..Default::default()
+    }
+    .save_to(&data)
+    .unwrap();
+    // Leave the old selection readable but make the fenced write fail.
+    let gate = data.join(".settings.json.lock");
+    fs::remove_file(&gate).unwrap();
+    fs::create_dir(&gate).unwrap();
+    let gone = delete_selected(&game, &data, profile, &|path| {
+        crate::desktop_seams::to_folder(path, &trash)
+    })
+    .unwrap();
+    let mut live = backend::Settings::load_from(&data);
+    assert!(clear_deleted_selection(&mut live, &gone.id));
+    assert!(live.save_to(&data).is_err());
+    assert!(trash.join("survival").is_dir());
+    assert!(!gone.home.exists());
 }
 
 #[test]
@@ -473,7 +504,8 @@ fn a_profile_lookup_pairs_its_old_row_with_its_old_directory() {
         delete_selected(&game, &cache, selected, &|_| panic!(
             "replacement reached Trash"
         ))
-        .unwrap_err(),
+        .unwrap_err()
+        .detail,
         lifecycle::changed()
     );
     assert_eq!(
@@ -566,6 +598,7 @@ fn a_delayed_delete_does_not_admit_a_replacement_at_the_same_slug() {
         "live profile reached Trash"
     ))
     .unwrap_err()
+    .detail
     .contains("in use"));
     drop(owner);
     delete_in(&game, &cache, "survival", &|p| {
@@ -582,7 +615,10 @@ fn a_delayed_delete_does_not_admit_a_replacement_at_the_same_slug() {
         panic!("stale Delete reached Trash")
     })
     .unwrap_err();
-    assert!(error.contains("changed since you reviewed"), "{error}");
+    assert!(
+        error.detail.contains("changed since you reviewed"),
+        "{error}"
+    );
     assert_eq!(
         fs::read(replacement.home.join("saves/New/level.dat")).unwrap(),
         b"a different world"
@@ -620,14 +656,15 @@ fn a_replacement_detached_after_admission_is_restored_without_overwriting() {
         .unwrap_err();
         let retained = retained.unwrap();
         let replacement = if name_reused {
-            assert!(error.contains(&*retained.to_string_lossy()), "{error}");
+            assert_eq!(error.retained.as_ref(), Some(&retained));
             assert_eq!(
                 fs::read(visible.join("new-occupant")).unwrap(),
                 b"third profile"
             );
             retained
         } else {
-            assert_eq!(error, lifecycle::changed());
+            assert_eq!(error.detail, lifecycle::changed());
+            assert!(error.retained.is_none());
             assert!(!retained.parent().unwrap().exists());
             visible
         };
@@ -671,6 +708,39 @@ fn profile_snapshot_refuses_a_busy_world_created_after_enumeration() {
 }
 
 #[test]
+fn a_metadata_write_failure_after_the_rename_reports_the_retained_folder() {
+    let root = tempfile::tempdir().unwrap();
+    let (game, data) = (root.path().join("game"), root.path().join("data"));
+    let profile = create_in(&game, &data, "Survival", None).unwrap();
+    put(&profile.home.join("saves/Base/level.dat"), "base");
+    let home = profile.home.clone();
+    let failure = delete_selected_at(
+        &game,
+        &data,
+        profile,
+        |from, to| {
+            durable::move_new_directory(from, to)?;
+            // The metadata path was readable before detach. Make its atomic write fail now.
+            fs::remove_file(data.join(FILE))?;
+            fs::create_dir(data.join(FILE))
+        },
+        &|_| panic!("the move to Trash must not run after a metadata error"),
+    )
+    .unwrap_err();
+    let text = failure.to_string();
+    let retained = failure
+        .retained
+        .expect("the location of the detached profile");
+    assert!(text.contains(&*retained.to_string_lossy()));
+    assert!(!home.exists());
+    assert_eq!(
+        fs::read(retained.join("saves/Base/level.dat")).unwrap(),
+        b"base"
+    );
+    assert!(failure.detail.contains(FILE));
+}
+
+#[test]
 fn a_trash_failure_preserves_the_whole_detached_profile() {
     let root = scratch("failed-trash");
     let (game, cache) = (root.join("game"), root.join("cache"));
@@ -685,7 +755,8 @@ fn a_trash_failure_preserves_the_whole_detached_profile() {
         Err("trash unavailable".into())
     })
     .unwrap_err();
-    assert!(error.contains("trash unavailable"));
+    assert!(error.detail.contains("trash unavailable"));
+    assert_eq!(error.retained.as_ref(), kept.get());
     assert!(!selected.home.exists());
     assert_eq!(
         fs::read(kept.get().unwrap().join("saves/Mine/level.dat")).unwrap(),

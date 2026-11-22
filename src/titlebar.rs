@@ -175,7 +175,11 @@ pub fn render(theme: &Theme, window: &Window) -> Option<Div> {
                             style.text_color(close_hover)
                         }),
                 )
-                .on_click(|_, window, _| window.remove_window()),
+                .on_click(|_, window, cx| {
+                    if !crate::profile_delete::defer_shutdown(cx) {
+                        window.remove_window();
+                    }
+                }),
         ),
     )
 }

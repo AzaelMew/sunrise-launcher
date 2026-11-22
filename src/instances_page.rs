@@ -46,7 +46,7 @@ impl Instances {
 
 impl Launcher {
     pub(super) fn reload_instances(&mut self) {
-        self.instances.list = instances::list();
+        self.refresh_instances_list();
         // A saved selection an earlier launcher made (a ported pack) can't be used: it is
         // cleared once, with a line saying so, and Sunrise shows.
         if let Some(id) = instances::retired_selection() {
@@ -54,6 +54,10 @@ impl Launcher {
             self.save_settings();
             crate::glass_toast::say(instances::retired_selection_message(&id));
         }
+    }
+
+    pub(super) fn refresh_instances_list(&mut self) {
+        self.instances.list = instances::list();
         // A picture may have come or gone with the change.
         self.instances
             .icons
