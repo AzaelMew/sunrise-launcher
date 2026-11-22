@@ -199,6 +199,9 @@ impl Launcher {
                         let _ = tx.send(Msg::SwitchProgress(stage));
                     },
                     registry_crates: Some(&|inventory| {
+                        if stop.is_stopped() {
+                            return false;
+                        }
                         let (answer, reply) = std::sync::mpsc::channel();
                         tx.send(Msg::NativeRegistryConsent(inventory.clone(), answer))
                             .is_ok()
@@ -206,6 +209,9 @@ impl Launcher {
                     }),
                     at_cutoff: &|| Ok(()),
                     approve: &|question| {
+                        if stop.is_stopped() {
+                            return Ok(SwitchDecision::Cancel);
+                        }
                         let (answer, reply) = std::sync::mpsc::channel();
                         tx.send(Msg::SwitchQuestion(Box::new(question.clone()), answer))
                             .map_err(|_| tr("Switch cancelled.").to_owned())?;
@@ -246,7 +252,7 @@ impl Launcher {
             .switching
             .running
             .as_mut()
-            .filter(|_| self.ui.sheet == Some(Sheet::Switching))
+            .filter(|run| self.ui.sheet == Some(Sheet::Switching) && !run.stop.is_stopped())
         {
             running.question = Some((question, reply));
             self.ui.sheets.details = false;

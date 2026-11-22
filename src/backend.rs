@@ -702,23 +702,23 @@ fn parse_releases(
     assets: &[Option<&str>],
     keep: fn(&str) -> bool,
 ) -> Vec<Release> {
-    let mut out = parse_releases_from(list, assets, keep, crate::signed::asset_url);
-    out.sort_by(|(a, a_published), (b, b_published)| {
-        compare_game_versions(&b.tag, &a.tag).then_with(|| {
+    let mut out: Vec<_> = parse_releases_from(list, assets, keep, crate::signed::asset_url)
+        .into_iter()
+        .map(|release| {
             // More than one Dev build can be published on a build day. The abbreviated
-            // commit disambiguates them, but does not order them.
-            if dev_date(&a.tag).is_some() {
-                match (
-                    chrono::DateTime::parse_from_rfc3339(b_published),
-                    chrono::DateTime::parse_from_rfc3339(a_published),
-                ) {
-                    (Ok(b), Ok(a)) => b.cmp(&a),
-                    _ => b_published.cmp(a_published),
-                }
-            } else {
-                std::cmp::Ordering::Equal
-            }
+            // commit disambiguates them, but does not order them. Parse once so mixed UTC
+            // offsets compare by instant and invalid timestamps stay consistently last
+            // within the build day.
+            let published = dev_date(&release.tag).and_then(|_| {
+                chrono::DateTime::parse_from_rfc3339(&release.published_at)
+                    .ok()
+                    .map(chrono::DateTime::<chrono::Utc>::from)
+            });
+            (release, published)
         })
+        .collect();
+    out.sort_by(|(a, a_published), (b, b_published)| {
+        compare_game_versions(&b.tag, &a.tag).then_with(|| b_published.cmp(a_published))
     });
     out.into_iter().map(|(release, _)| release).collect()
 }
@@ -734,16 +734,16 @@ pub(crate) fn parse_launcher_releases(
         is_launcher_tag,
         crate::signed::launcher_asset_url,
     );
-    out.sort_by(|(a, _), (b, _)| compare_versions(&b.tag, &a.tag));
-    out.into_iter().map(|(release, _)| release).collect()
+    out.sort_by(|a, b| compare_versions(&b.tag, &a.tag));
+    out
 }
 
-fn parse_releases_from<'a>(
-    list: &'a [serde_json::Value],
+fn parse_releases_from(
+    list: &[serde_json::Value],
     assets: &[Option<&str>],
     keep: fn(&str) -> bool,
     url: fn(&str, &str) -> String,
-) -> Vec<(Release, &'a str)> {
+) -> Vec<Release> {
     let mut out = Vec::new();
     for r in list {
         let tag = r["tag_name"].as_str().unwrap_or_default();
@@ -757,20 +757,17 @@ fn parse_releases_from<'a>(
             })
         });
         let published = r["published_at"].as_str().unwrap_or_default();
-        out.push((
-            Release {
-                tag: tag.into(),
-                name: r["name"].as_str().unwrap_or_default().into(),
-                body: r["body"].as_str().unwrap_or_default().replace("\r\n", "\n"),
-                date: published.chars().take(10).collect(),
-                time: published.get(11..16).unwrap_or_default().into(),
-                published_at: published.into(),
-                asset: found,
-                prerelease: r["prerelease"].as_bool().unwrap_or(false),
-                nightly: None,
-            },
-            published,
-        ));
+        out.push(Release {
+            tag: tag.into(),
+            name: r["name"].as_str().unwrap_or_default().into(),
+            body: r["body"].as_str().unwrap_or_default().replace("\r\n", "\n"),
+            date: published.chars().take(10).collect(),
+            time: published.get(11..16).unwrap_or_default().into(),
+            published_at: published.into(),
+            asset: found,
+            prerelease: r["prerelease"].as_bool().unwrap_or(false),
+            nightly: None,
+        });
     }
     out
 }
@@ -1532,7 +1529,10 @@ pub fn install_cancellable(
     if matches!(outcome, InstallOutcome::Installed(_)) {
         // Preparation has its own admission. Never hold the cache publication lock here;
         // managed First Play instead prepares through its profile-owned staged handoff.
-        reuse_prepared_for(tag);
+        reuse_prepared_for_cancellable(tag, stop);
+        if let Some(stop) = stop {
+            stop.check()?;
+        }
     }
     Ok(outcome)
 }
@@ -2137,6 +2137,13 @@ pub(crate) fn reuse_prepared(versions: &Path, tag: &str) -> Option<String> {
 /// another installed version's resources if it has none, whatever its resources lack, then its
 /// data file.
 pub(crate) fn reuse_prepared_for(tag: &str) {
+    reuse_prepared_for_cancellable(tag, None);
+}
+
+fn reuse_prepared_for_cancellable(tag: &str, stop: Option<&crate::native_mods::Cancellation>) {
+    if stop.is_some_and(crate::native_mods::Cancellation::is_stopped) {
+        return;
+    }
     let about = crate::native_mods::about(tag);
     let tag = about.as_ref().map_or(tag, |about| about.base.as_str());
     let Ok(preparation) = prepare_lock(tag) else {
@@ -2144,12 +2151,18 @@ pub(crate) fn reuse_prepared_for(tag: &str) {
     };
     let versions = versions_dir();
     reuse_prepared(&versions, tag);
+    if stop.is_some_and(crate::native_mods::Cancellation::is_stopped) {
+        return;
+    }
     if check_prepared(tag) {
-        if let Err(error) = finish_preparation(tag, &preparation) {
+        if let Err(error) = finish_preparation_cancellable(tag, &preparation, stop) {
             eprintln!("{tag}: {error}");
         }
     }
     drop(preparation);
+    if stop.is_some_and(crate::native_mods::Cancellation::is_stopped) {
+        return;
+    }
     let (root, resources) = (version_dir(tag), resources(tag));
     let spawned = std::thread::Builder::new()
         .name("Prepared data file".into())
@@ -2376,6 +2389,14 @@ fn complete_assets_in(
     log: &dyn Fn(String),
     handoff: Option<&crate::preparer::Handoff<'_>>,
 ) {
+    let stopped = || {
+        handoff
+            .and_then(crate::preparer::Handoff::stop)
+            .is_some_and(crate::native_mods::Cancellation::is_stopped)
+    };
+    if stopped() {
+        return;
+    }
     // The versions tried this run. Held while adding: the start, an install and Play can complete one version at once.
     static TRIED: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
     let root = versions.join(tag);
@@ -2392,6 +2413,9 @@ fn complete_assets_in(
         Ok(_) => return,
         Err(e) => return log(format!("{tag}: {e}")),
     };
+    if stopped() {
+        return;
+    }
     let mut tried = TRIED.lock().unwrap_or_else(|e| e.into_inner());
     if tried.contains(&root) {
         return;
@@ -2399,10 +2423,13 @@ fn complete_assets_in(
     if let Err(error) = Resources::invalidate(&root) {
         return log(format!("{tag}: {error}"));
     }
-    tried.push(root.clone());
     let kinds: Vec<String> = lacking.iter().map(|(kind, _)| kind.clone()).collect();
-    match crate::preparer::add_extras(&binary, &root, &resources, &kinds, &folders(), log, handoff)
-    {
+    let result =
+        crate::preparer::add_extras(&binary, &root, &resources, &kinds, &folders(), log, handoff);
+    if !stopped() {
+        tried.push(root.clone());
+    }
+    match result {
         Ok(Some(added)) => {
             for (kind, error) in added.failed {
                 let what = lacking
@@ -2912,7 +2939,15 @@ pub fn finish_preparation(
     tag: &str,
     preparation: &crate::preparer::Preparation,
 ) -> Result<(), String> {
-    Resources::prepare(&resources_owner(tag), preparation, None).map(drop)
+    finish_preparation_cancellable(tag, preparation, None)
+}
+
+fn finish_preparation_cancellable(
+    tag: &str,
+    preparation: &crate::preparer::Preparation,
+    stop: Option<&crate::native_mods::Cancellation>,
+) -> Result<(), String> {
+    Resources::prepare_cancellable(&resources_owner(tag), preparation, None, stop).map(drop)
 }
 
 /// Makes sure `jar` holds the server jar `manifest` names: one already cached whose sha1 is not
@@ -4765,7 +4800,7 @@ fn monitor(
     let child = Arc::new(Mutex::new(child));
     let waited = child.clone();
     std::thread::spawn(move || {
-        let _tracked = tracked;
+        let tracked = tracked;
         if !relayed {
             for r in readers {
                 let _ = r.join();
@@ -4795,6 +4830,7 @@ fn monitor(
         if group {
             crate::process::owned::CHILDREN.release(pid);
         }
+        drop(tracked);
         let cancelled = stop.as_ref().is_some_and(|stop| stop.is_stopped());
         let result = if cancelled {
             runtime.game_exited();
@@ -4803,7 +4839,7 @@ fn monitor(
             status.map_err(|e| e.to_string()).and_then(|s| {
                 let result = match prepare {
                     Some((tag, preparation)) if s.success() => {
-                        finish_preparation(&tag, &preparation)
+                        finish_preparation_cancellable(&tag, &preparation, stop.as_ref())
                     }
                     _ if s.success() => Ok(()),
                     _ => Err(format!("Exited with {s}")),
@@ -6017,6 +6053,69 @@ pub fn {f}("
         assert!(select_after_update(Some(OLDER), &installed, NEWEST));
         assert!(!select_after_update(Some(OLDER), &installed, NIGHTLY));
         assert!(!select_after_update(Some(STABLE), &[STABLE.into()], NEWEST));
+    }
+
+    #[test]
+    fn dev_same_day_sort_handles_mixed_offsets_and_invalid_dates_without_panicking() {
+        let zip = "sunrise-windows-x64.zip";
+        let files = serde_json::json!([{"name": zip, "size": 1}]);
+        // Lexicographic text order ("12:00+02:00" > "11:00 bad" > "10:15Z" > "09:30-01:00")
+        // disagrees with UTC instant order (10:30Z > 10:15Z > 10:00Z). Parsing each timestamp once
+        // keeps valid instants newest first and invalid or missing timestamps consistently last
+        // within the build day regardless of input order.
+        let mut entries = vec![
+            serde_json::json!({
+                "tag_name": "dev-2026-11-13-1111111",
+                "name": "Dev 2026-11-13 · 1111111",
+                "prerelease": true,
+                "published_at": "2026-11-13T12:00:00+02:00",
+                "assets": files,
+            }),
+            serde_json::json!({
+                "tag_name": "dev-2026-11-13-bad0000",
+                "name": "Dev 2026-11-13 · bad0000",
+                "prerelease": true,
+                "published_at": "2026-11-13T11:00:00 not-rfc3339",
+                "assets": files,
+            }),
+            serde_json::json!({
+                "tag_name": "dev-2026-11-13-3333333",
+                "name": "Dev 2026-11-13 · 3333333",
+                "prerelease": true,
+                "published_at": "2026-11-13T09:30:00-01:00",
+                "assets": files,
+            }),
+            serde_json::json!({
+                "tag_name": "dev-2026-11-13-2222222",
+                "name": "Dev 2026-11-13 · 2222222",
+                "prerelease": true,
+                "published_at": "2026-11-13T10:15:00Z",
+                "assets": files,
+            }),
+            serde_json::json!({
+                "tag_name": "dev-2026-11-12-0000000",
+                "name": "Dev 2026-11-12 · 0000000",
+                "prerelease": true,
+                "published_at": "2026-11-12T23:59:59Z",
+                "assets": files,
+            }),
+        ];
+        for reversed in [false, true] {
+            if reversed {
+                entries.reverse();
+            }
+            let releases = game_releases_with(&entries, &[Some(zip)]);
+            assert_eq!(
+                releases.iter().map(|r| r.tag.as_str()).collect::<Vec<_>>(),
+                [
+                    "dev-2026-11-13-3333333",
+                    "dev-2026-11-13-2222222",
+                    "dev-2026-11-13-1111111",
+                    "dev-2026-11-13-bad0000",
+                    "dev-2026-11-12-0000000",
+                ]
+            );
+        }
     }
 
     /// The ARM64 Windows launcher installs the ARM64 build where a release has one, and the x64
@@ -7957,7 +8056,7 @@ esac"#
             .status()
             .unwrap();
         assert!(zipped.success());
-        unpack(&zip, "release.zip", &work.join("unpacked")).unwrap();
+        unpack(&zip, "release.zip", &work.join("unpacked"), None).unwrap();
         let new = find_app(&work.join("unpacked")).unwrap();
         replace_bundle(&new, &installed).unwrap();
         let version = fs::read_to_string(installed.join("Contents/Resources/version")).unwrap();
@@ -8167,6 +8266,64 @@ esac"#
         assert_eq!(result.unwrap_err(), crate::native_mods::CANCELLED);
         assert!(started.elapsed() < Duration::from_secs(5));
         assert!(!dest.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cancelling_finish_preparation_stops_running_data_file_helper() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::time::{Duration, Instant};
+
+        struct Cleanup(PathBuf);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ = fs::remove_dir_all(&self.0);
+            }
+        }
+
+        let tag = format!("cancel-finish-{}", std::process::id());
+        let root = version_dir(&tag);
+        let _cleanup = Cleanup(root.clone());
+        let resources = resources_at(&root);
+        fs::create_dir_all(&resources).unwrap();
+        fs::write(resources.join(RESOURCES_MANIFEST), b"{}").unwrap();
+        let started_marker = root.join("data-file-started");
+        let binary = root.join("sunrise-prepare");
+        fs::write(
+            &binary,
+            format!(
+                "#!/bin/sh\ncase \"$1\" in\n\
+                 missing-extras) printf '%s\\n' '{{\"format\": 1, \"prepared\": true, \"missing\": []}}' ;;\n\
+                 data-file) printf started > \"{}\"; exec sleep 30 ;;\n\
+                 *) exit 2 ;;\n\
+                 esac\n",
+                started_marker.display()
+            ),
+        )
+        .unwrap();
+        fs::set_permissions(&binary, fs::Permissions::from_mode(0o700)).unwrap();
+
+        let stop = crate::native_mods::Cancellation::default();
+        let cancel_on_start = stop.clone();
+        let marker = started_marker.clone();
+        let watcher = std::thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !marker.exists() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            cancel_on_start.stop();
+        });
+
+        let preparation = prepare_lock(&tag).unwrap();
+        let started = Instant::now();
+        let result = finish_preparation_cancellable(&tag, &preparation, Some(&stop));
+        watcher.join().unwrap();
+        assert!(
+            started_marker.exists(),
+            "data-file helper should have started"
+        );
+        assert_eq!(result.unwrap_err(), crate::native_mods::CANCELLED);
+        assert!(started.elapsed() < Duration::from_secs(5));
     }
 }
 

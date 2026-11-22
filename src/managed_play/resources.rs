@@ -46,20 +46,51 @@ impl Resources {
         preparation: &preparer::Preparation,
         profile: Option<crate::process::leases::ProfileHandoff<'_>>,
     ) -> Result<Self, String> {
+        Self::prepare_cancellable(base, preparation, profile, None)
+    }
+
+    pub(crate) fn prepare_cancellable(
+        base: &str,
+        preparation: &preparer::Preparation,
+        profile: Option<crate::process::leases::ProfileHandoff<'_>>,
+        stop: Option<&crate::native_mods::Cancellation>,
+    ) -> Result<Self, String> {
+        if let Some(stop) = stop {
+            stop.check()?;
+        }
         backend::need_base_prepared(base, Some(preparation))?;
-        let handoff = preparation.handoff(profile);
+        let handoff = match stop {
+            Some(stop) => preparation.handoff_cancellable(profile, stop),
+            None => preparation.handoff(profile),
+        };
         backend::complete_assets_staged(base, &handoff);
+        if let Some(stop) = stop {
+            stop.check()?;
+        }
         let root = backend::version_dir(base);
         Self::seal(&root, &backend::resources(base), |resources| {
-            let binary = preparer::binary(&root)?;
+            if let Some(stop) = stop {
+                stop.check()?;
+            }
+            let Some(binary) = preparer::binary(&root) else {
+                return Ok(None);
+            };
             match preparer::data_file(&binary, &root, resources, Some(&handoff)) {
-                Ok(Some(true)) => digest_file(&resources.join(preparer::DATA_FILE))
-                    .ok()
-                    .flatten(),
-                Ok(_) => None,
+                Ok(Some(true)) => {
+                    if let Some(stop) = stop {
+                        stop.check()?;
+                    }
+                    Ok(digest_file(&resources.join(preparer::DATA_FILE))
+                        .ok()
+                        .flatten())
+                }
+                Ok(_) => Ok(None),
+                Err(error) if stop.is_some_and(crate::native_mods::Cancellation::is_stopped) => {
+                    Err(error)
+                }
                 Err(error) => {
                     eprintln!("{error}");
-                    None
+                    Ok(None)
                 }
             }
         })
@@ -109,7 +140,7 @@ impl Resources {
     fn seal(
         root: &Path,
         source: &Path,
-        accelerator: impl FnOnce(&Path) -> Option<[u8; 32]>,
+        accelerator: impl FnOnce(&Path) -> Result<Option<[u8; 32]>, String>,
     ) -> Result<Self, String> {
         let relative = source.strip_prefix(root).map_err(|_| setup_error(source))?;
         if relative.as_os_str().is_empty()
@@ -153,7 +184,7 @@ impl Resources {
                 (stage.path(), &snapshot)
             };
             durable::move_new_directory(from, to).map_err(|e| at(to, e))?;
-            let digest = accelerator(&resources);
+            let digest = accelerator(&resources)?;
             if let Some(digest) = digest {
                 write_receipt(&evidence, &digest)?;
             }
@@ -258,7 +289,7 @@ mod tests {
         fs::create_dir(&source).unwrap();
         fs::write(source.join("sunrise-resources.json"), "{}").unwrap();
         for source in [source, root.join("../prepared")] {
-            assert!(Resources::seal(&root, &source, |_| None).is_err());
+            assert!(Resources::seal(&root, &source, |_| Ok(None)).is_err());
         }
         assert!(!parent(&root).exists());
     }
@@ -270,12 +301,15 @@ mod tests {
         let source = root.join(".local/prepared");
         fs::create_dir_all(&source).unwrap();
         fs::write(source.join("sunrise-resources.json"), "{}").unwrap();
-        let prepared = Resources::seal(root, &source, |_| None).unwrap();
+        let prepared = Resources::seal(root, &source, |_| Ok(None)).unwrap();
         let path = prepared.path_at(root);
         for missing in [&path, path.parent().unwrap()] {
             fs::remove_dir_all(missing).unwrap();
             assert_eq!(Resources::current(root).unwrap(), None);
-            assert_eq!(Resources::seal(root, &source, |_| None).unwrap(), prepared);
+            assert_eq!(
+                Resources::seal(root, &source, |_| Ok(None)).unwrap(),
+                prepared
+            );
             assert_eq!(Resources::current(root).unwrap().as_ref(), Some(&prepared));
         }
     }
@@ -293,7 +327,7 @@ mod tests {
             let data = dir.join(preparer::DATA_FILE);
             assert!(!data.exists());
             fs::write(&data, b"generated from the snapshot").unwrap();
-            digest_file(&data).unwrap()
+            Ok(digest_file(&data).unwrap())
         })
         .unwrap();
         let snapshot = parent(root).join(key(prepared.primary)).join("resources");
@@ -311,7 +345,7 @@ mod tests {
         assert_eq!(Resources::current(root).unwrap(), None);
         Resources::invalidate(root).unwrap();
         assert_eq!(Resources::current(root).unwrap(), None);
-        let changed = Resources::seal(root, &source, |_| None).unwrap();
+        let changed = Resources::seal(root, &source, |_| Ok(None)).unwrap();
         assert_ne!(prepared.primary, changed.primary);
         assert_eq!(Resources::current(root).unwrap(), Some(changed));
         fs::write(snapshot.join(preparer::DATA_FILE), b"different cache").unwrap();
