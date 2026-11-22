@@ -15,7 +15,7 @@ pub(super) use jobs::Event;
 pub(super) use project::{short_sha, source_error};
 
 const FRESH: Duration = Duration::from_secs(600);
-const SOURCE_ID_CONFLICT: &str = "Another installed mod uses this ID.";
+pub(super) const SOURCE_ID_CONFLICT: &str = "Another installed mod uses this ID.";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SourcePresence<'a> {
@@ -28,6 +28,19 @@ enum SourcePresence<'a> {
 }
 
 impl InstalledRows {
+    fn source_project<'a>(
+        &self,
+        id: &str,
+        file: &str,
+        catalogue: Option<&'a Catalogue>,
+    ) -> Option<&'a Source> {
+        let source = find_source(catalogue?, id)?;
+        match self.source_presence(source) {
+            SourcePresence::Installed { file: owned, .. } if owned == file => Some(source),
+            _ => None,
+        }
+    }
+
     fn source_presence(&self, source: &Source) -> SourcePresence<'_> {
         let id = source.id();
         if self
@@ -56,6 +69,14 @@ impl InstalledRows {
             SourcePresence::Conflict
         }
     }
+}
+
+fn find_source<'a>(catalogue: &'a Catalogue, id: &str) -> Option<&'a Source> {
+    let i = catalogue
+        .sources
+        .binary_search_by(|source| source.id().cmp(id))
+        .ok()?;
+    Some(&catalogue.sources[i])
 }
 
 fn source_matches_origin(source: &Source, origin: &sunrise_launcher::github_mods::Origin) -> bool {
@@ -367,9 +388,9 @@ impl Launcher {
         crate::frame::scrolls("nightly-discover").set_offset(gpui::point(px(0.), px(0.)));
     }
 
-    pub(super) fn source_catalogue_pending(&self) -> bool {
-        let state = &self.ui.mods.nightly;
-        state.catalogue.is_none() && state.reading
+    pub(super) fn installed_source_project(&self, id: &str, file: &str) -> Option<&Source> {
+        self.discover_installed()?
+            .source_project(id, file, self.ui.mods.nightly.catalogue.as_ref())
     }
 
     pub(super) fn source_listing(
@@ -377,11 +398,7 @@ impl Launcher {
         origin: &sunrise_launcher::github_mods::Origin,
     ) -> Option<&Source> {
         let catalogue = self.ui.mods.nightly.catalogue.as_ref()?;
-        let i = catalogue
-            .sources
-            .binary_search_by(|source| source.id().cmp(&origin.id))
-            .ok()?;
-        let source = &catalogue.sources[i];
+        let source = find_source(catalogue, &origin.id)?;
         source_matches_origin(source, origin).then_some(source)
     }
 
@@ -612,7 +629,7 @@ fn source_time(time: SystemTime) -> String {
 mod tests {
     use super::*;
 
-    fn receipt_fixture() -> (Source, model::Local) {
+    pub(super) fn receipt_fixture() -> (Source, model::Local) {
         let source = Source::for_origin(
             "lantern",
             "Fixture/Lantern",
@@ -667,6 +684,51 @@ mod tests {
                 file: &rows.local[0].file
             }
         );
+    }
+
+    #[test]
+    fn installed_project_only_promotes_the_selected_archive_to_a_listed_source() {
+        let (listing, local) = receipt_fixture();
+        let file = local.file.clone();
+        let mut rows = InstalledRows {
+            local: vec![local.clone()],
+            ..Default::default()
+        };
+        let mut catalogue = Catalogue {
+            sources: Vec::new().into(),
+            collections: Vec::new().into(),
+            saved_at: None,
+            checked_at: SystemTime::UNIX_EPOCH,
+            error: Some("Offline".into()),
+        };
+        // Neither a pending reply nor a failed reply without a listing replaces local details.
+        assert_eq!(rows.source_project(&local.id, &file, None), None);
+        assert_eq!(
+            rows.source_project(&local.id, &file, Some(&catalogue)),
+            None
+        );
+        catalogue.sources = vec![listing.clone()].into();
+        catalogue.error = None;
+        assert_eq!(
+            rows.source_project(&local.id, &file, Some(&catalogue)),
+            Some(&listing)
+        );
+        assert_eq!(
+            rows.source_project(&local.id, "different.smod", Some(&catalogue)),
+            None
+        );
+        // A duplicate forces Installed back to the selected archive's own details, while
+        // Discover still sees a conflict and cannot install over either package.
+        rows.local.push(model::Local {
+            file: "copy.smod".into(),
+            github: None,
+            ..local.clone()
+        });
+        assert_eq!(
+            rows.source_project(&local.id, &file, Some(&catalogue)),
+            None
+        );
+        assert_eq!(rows.source_presence(&listing), SourcePresence::Conflict);
     }
 
     #[test]

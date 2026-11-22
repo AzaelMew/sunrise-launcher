@@ -308,20 +308,17 @@ impl Launcher {
                 .is_some_and(|entry| entry.project == open.id),
         });
         let installed_row = installed.map(|i| &rows[i]);
+        // These controls mutate by mod ID, so showing a specific archive mustn't choose
+        // which duplicate to mutate.
+        let conflict = installed_row.is_some_and(|row| {
+            rows.iter()
+                .any(|other| other.id == row.id && other.archive_file() != row.archive_file())
+        });
         let p = match (&open.page, installed_row) {
             (_, None) if open.installed.is_some() => {
                 return page
                     .child(header)
                     .child(muted(tr("No mod is open.")))
-                    .into_any_element();
-            }
-            (_, Some(row))
-                if nightly::installed_source(row).is_some()
-                    && (self.source_catalogue_pending() || row.source_listing.is_some()) =>
-            {
-                return page
-                    .child(header)
-                    .child(muted(tr("Loading…")))
                     .into_any_element();
             }
             (Some(Ok(p)), _) => (**p).clone(),
@@ -500,7 +497,8 @@ impl Launcher {
         }));
 
         // The right column: the action and what it changes, then the facts.
-        let busy = self.mods_busy()
+        let busy = conflict
+            || self.mods_busy()
             || self.mods_locked().is_some()
             || self
                 .ui
@@ -823,15 +821,18 @@ impl Launcher {
                     })),
             );
         let installed_controls = installed_row.zip(cells.as_ref()).map(|(row, cells)| {
-            let refusal = nightly::installed_source(row).and_then(|origin| {
-                let problem = self
-                    .source_outcome(&row.id)
-                    .and_then(|status| status.as_ref().err())
-                    .or_else(|| self.source_update_issue(&row.id))?;
-                let repo = format!("{}/{}", origin.owner, origin.repo);
-                let refused = super::refused::Refused::one(&row.title, Some(repo), true, problem)?;
-                Some(self.refused_line("alt-project-source-refused", refused, cx))
-            });
+            let refusal = nightly::installed_source(row)
+                .filter(|_| !conflict)
+                .and_then(|origin| {
+                    let problem = self
+                        .source_outcome(&row.id)
+                        .and_then(|status| status.as_ref().err())
+                        .or_else(|| self.source_update_issue(&row.id))?;
+                    let repo = format!("{}/{}", origin.owner, origin.repo);
+                    let refused =
+                        super::refused::Refused::one(&row.title, Some(repo), true, problem)?;
+                    Some(self.refused_line("alt-project-source-refused", refused, cx))
+                });
             let origin = row.local.as_ref().and_then(|local| local.github.as_ref());
             div()
                 .flex()
@@ -844,6 +845,7 @@ impl Launcher {
                         .map(|tag| note(trf("Release: {tag}", &[("tag", tag)]))),
                 )
                 .children(refusal)
+                .children(conflict.then(|| note(tr(nightly::SOURCE_ID_CONFLICT))))
                 .child(self.installed_project_controls(row, cells, busy, cx))
         });
         let source_button = match &p.source {

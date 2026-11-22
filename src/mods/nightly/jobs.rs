@@ -15,7 +15,7 @@ pub(in crate::mods) enum Event {
 }
 
 pub(in crate::mods) struct Open {
-    pub(super) source: Source,
+    pub(in crate::mods) source: Source,
     pub(super) from: Page,
     pub(super) scope: OpenScope,
     pub(super) request: u64,
@@ -168,7 +168,9 @@ impl Launcher {
     ) {
         let scope = self.mods_page_scope();
         self.ui.page = Page::Project;
-        self.ui.mods.open = None;
+        if from != Page::Installed {
+            self.ui.mods.open = None;
+        }
         let state = &mut self.ui.mods.nightly;
         if state.open.as_ref().is_none_or(|open| open.source != source) {
             crate::frame::scrolls("project").set_offset(gpui::point(px(0.), px(0.)));

@@ -515,7 +515,9 @@ impl Launcher {
             Page::Project if self.ui.mods.nightly.collection.is_some() => {
                 self.source_collection(cx)
             }
-            Page::Project if self.ui.mods.nightly.open.is_some() => self.nightly_project(cx),
+            Page::Project if self.ui.mods.open.is_none() && self.ui.mods.nightly.open.is_some() => {
+                self.nightly_project(cx)
+            }
             Page::Project => {
                 let scope = self.mods_page_scope();
                 if self
@@ -542,19 +544,22 @@ impl Launcher {
                     let Some(InstalledProject::Local(file)) = &open.installed else {
                         return None;
                     };
-                    let origin = self
-                        .discover_installed()?
-                        .local
-                        .iter()
-                        .find(|local| local.file == *file && local.id == open.id)?
-                        .github
-                        .as_ref()?;
-                    self.source_listing(origin).cloned()
+                    self.installed_source_project(&open.id, file).cloned()
                 });
                 if let Some(source) = listing {
-                    self.inspect_nightly_from(source, false, Page::Installed);
+                    if self
+                        .ui
+                        .mods
+                        .nightly
+                        .open
+                        .as_ref()
+                        .is_none_or(|open| open.source != source)
+                    {
+                        self.inspect_nightly_from(source, false, Page::Installed);
+                    }
                     self.nightly_project(cx)
                 } else {
+                    self.ui.mods.nightly.open = None;
                     self.project(cx)
                 }
             }
