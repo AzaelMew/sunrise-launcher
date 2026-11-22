@@ -149,11 +149,13 @@ pub(super) struct Create {
 /// What the sidebar shows of the Servers page: its list once the page has read it, and whether
 /// a server answers.
 impl Servers {
+    /// Work still owned by this launcher, not the lifetime of a dedicated server.
+    pub(super) fn writing(&self) -> bool {
+        self.busy.is_some() || self.creating || self.applying || !self.queued.is_empty()
+    }
+
     pub(super) fn location_busy(&self) -> bool {
-        self.busy.is_some()
-            || self.creating
-            || self.applying
-            || !self.queued.is_empty()
+        self.writing()
             || self
                 .statuses
                 .values()
@@ -1324,6 +1326,30 @@ fn setting_name(key: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_running_server_is_not_a_launcher_write_but_its_hosting_workers_are() {
+        let mut servers = Servers::new();
+        servers.statuses.insert(
+            PathBuf::from("server"),
+            Status {
+                phase: "running".into(),
+                ..Status::default()
+            },
+        );
+        assert!(servers.location_busy());
+        assert!(!servers.writing());
+        servers.creating = true;
+        assert!(servers.writing());
+        servers.creating = false;
+        servers.busy = Some("Restoring a backup".into());
+        assert!(servers.writing());
+        servers.busy = None;
+        servers.applying = true;
+        assert!(servers.writing());
+        servers.applying = false;
+        assert!(!servers.writing());
+    }
 
     #[cfg(unix)]
     #[test]
