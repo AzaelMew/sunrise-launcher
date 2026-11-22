@@ -39,6 +39,7 @@ pub(super) enum Action {
         message: Option<String>,
         error: String,
         details: bool,
+        recovery: Option<instances::InterruptedDeletion>,
     },
 }
 
@@ -62,6 +63,10 @@ impl Launcher {
                     notice.acknowledge();
                 }
             }
+            Some(Action::Problem {
+                recovery: Some(notice),
+                ..
+            }) => notice.acknowledge(),
             _ => {}
         }
     }
@@ -122,6 +127,7 @@ impl Launcher {
                         ),
                         error,
                         details: false,
+                        recovery: None,
                     })
                 } else {
                     crate::glass_toast::say(heading);
@@ -130,14 +136,15 @@ impl Launcher {
             }
             Err(error) => Some(Action::Problem {
                 heading: trf("Couldn't move {name} to the Trash", &[("name", name)]),
-                message: error.retained.map(|path| {
+                message: error.retained.as_ref().map(|notice| {
                     trf(
                         "The profile was kept in {folder}",
-                        &[("folder", &path.to_string_lossy())],
+                        &[("folder", &notice.folder().to_string_lossy())],
                     )
                 }),
                 error: error.detail,
                 details: false,
+                recovery: error.retained,
             }),
         };
     }
@@ -188,6 +195,7 @@ impl Launcher {
                 message,
                 error,
                 details,
+                ..
             } => body
                 .child(title(heading.clone()))
                 .children(message.clone().map(crate::selectable::selectable))
@@ -429,6 +437,7 @@ mod tests {
                 .retained
                 .as_ref()
                 .unwrap()
+                .folder()
                 .is_dir());
             launcher.finish_profile_delete(&profile.id, &profile.name, trashed);
             assert!(matches!(

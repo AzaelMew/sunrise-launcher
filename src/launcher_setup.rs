@@ -233,6 +233,13 @@ impl Launcher {
             this.ui.page = frame::Page::Settings;
             this.ui.settings.section = section;
         }
+        if !this.location_unavailable {
+            let interrupted = instances::interrupted_deletions();
+            if !interrupted.is_empty() {
+                this.ui.sheets.profile_action =
+                    Some(profile_delete::Action::Interrupted(interrupted));
+            }
+        }
         this.reload_instances();
         if this.bench.is_some() {
             this.perf.keep_local_log(false);
@@ -252,13 +259,6 @@ impl Launcher {
                 let _ = tx.send(Msg::Reused(reused));
             }
         });
-        if !this.location_unavailable {
-            let interrupted = instances::interrupted_deletions();
-            if !interrupted.is_empty() {
-                this.ui.sheets.profile_action =
-                    Some(profile_delete::Action::Interrupted(interrupted));
-            }
-        }
         this.load_profile_heads();
         this.load_auth_statuses(true);
         this.check_updates(UpdateCheck::Startup);

@@ -49,10 +49,18 @@ impl Launcher {
         self.refresh_instances_list();
         // A saved selection an earlier launcher made (a ported pack) can't be used: it is
         // cleared once, with a line saying so, and Sunrise shows.
-        if let Some(id) = instances::retired_selection() {
+        if let Some(id) =
+            instances::retired_selection(&self.instances.list, self.settings.instance.as_deref())
+        {
             self.settings.instance = None;
             self.save_settings();
-            crate::glass_toast::say(instances::retired_selection_message(&id));
+            if !matches!(
+                &self.ui.sheets.profile_action,
+                Some(crate::profile_delete::Action::Interrupted(notices))
+                    if notices.iter().any(|notice| notice.id() == id)
+            ) {
+                crate::glass_toast::say(instances::retired_selection_message(&id));
+            }
         }
     }
 
