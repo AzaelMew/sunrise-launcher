@@ -29,8 +29,10 @@ archive("windows-programs", [name + ".exe" for name in programs] + companions + 
 ])
 for system, extension in [("linux", "so"), ("macos", "dylib")]:
     archive(f"{system}-runtime", ["bin/sunrise-client", f"bin/libstd-fixture.{extension}",
-                                  f"deps/libsunrise_fixture.{extension}", "sunrise-prebuilt.json"])
+                                  f"deps/libsunrise_fixture.{extension}", "deps/liblink-only.a",
+                                  "sunrise-prebuilt.json"])
 archive("windows-runtime", [
     "bin/sunrise-client.exe", "bin/std-fixture.dll", "bin/libgcc_s_seh-1.dll",
-    "bin/libwinpthread-1.dll", "deps/sunrise_fixture.dll", "sunrise-prebuilt.json",
+    "bin/libwinpthread-1.dll", "deps/sunrise_fixture.dll", "deps/libsunrise_fixture.dll.a",
+    "deps/liblink-only.a", "sunrise-prebuilt.json",
 ])

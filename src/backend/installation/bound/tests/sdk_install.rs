@@ -24,15 +24,58 @@ const SLICES: [&[u8]; 2] = [
     include_bytes!("sdk-fixture/unix-programs.tar.xz"),
 ];
 
-fn offer(tag: &str, assets: &[&str]) -> Release {
-    game_releases(&[serde_json::json!({
+fn row(tag: &str, assets: &[&str]) -> serde_json::Value {
+    serde_json::json!({
         "tag_name": tag,
         "name": "Dev 2026-11-13 · 0123456",
         "prerelease": tag == DEV,
         "assets": assets.iter().map(|name| serde_json::json!({"name": name, "size": 1})).collect::<Vec<_>>(),
-    })])
-    .pop()
-    .unwrap()
+    })
+}
+
+#[test]
+fn a_newer_sdk_without_both_client_slices_does_not_win_update_or_first_play() {
+    use crate::instances::Channel::Stable;
+    const OLDER: &str = "26.3-0.1.7";
+    const NEWER: &str = "26.3-0.1.8";
+    let settings = Settings::default();
+    let Some(triple) = sdk_target(selected_game_architecture(&settings)) else {
+        return;
+    };
+    let mirror = tempfile::tempdir().unwrap();
+    let base = Base::Folder(mirror.path().to_owned());
+    let (key, _) = SigningKey::generate().unwrap();
+    let keys = [key.public()];
+    let names = [Kind::Runtime, Kind::Programs].map(|kind| Asset::name(kind, triple, Side::Client));
+    let slices = [
+        (names[0].as_str(), SLICES[0]),
+        (names[1].as_str(), SLICES[1]),
+    ];
+    let list = [row(OLDER, &[INDEX]), row(NEWER, &[INDEX])];
+    let full = index_of(&slices, "1.0.0").to_json();
+    let publish_index = |tag, index: &str| {
+        publish(mirror.path(), tag, tag, &key, index.as_bytes(), &[]);
+    };
+    publish_index(OLDER, &full);
+    publish_index(NEWER, &index_of(&slices[..1], "1.0.0").to_json());
+    let releases = game_releases_from(&list, &settings, &base, &keys);
+    assert_eq!(releases[0].tag, NEWER);
+    assert!(releases[0].asset.is_none());
+    assert_eq!(sunrise_update(&releases, &[], Stable).unwrap().tag, OLDER);
+    let target = Stable.play_target(&releases, &[], None, None).unwrap();
+    let first = crate::managed_play::FirstBuild::download(
+        release_selection::by_tag(&releases, target).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(first.base_tag(), OLDER);
+
+    // A parseable replacement with both slices does not become eligible until it is signed.
+    fs::write(mirror.path().join(NEWER).join(INDEX), &full).unwrap();
+    let releases = game_releases_from(&list, &settings, &base, &keys);
+    assert_eq!(sunrise_update(&releases, &[], Stable).unwrap().tag, OLDER);
+    publish_index(NEWER, &full);
+    let releases = game_releases_from(&list, &settings, &base, &keys);
+    assert_eq!(sunrise_update(&releases, &[], Stable).unwrap().tag, NEWER);
 }
 
 #[test]
@@ -49,7 +92,10 @@ fn first_play_proves_and_installs_the_two_sdk_slices() {
             let base = Base::from_env();
             let (key, _) = SigningKey::generate().unwrap();
             let keys = [key.public()];
-            let release = offer(DEV, &[INDEX]);
+            // Exercise the install boundary even when an earlier offer no longer matches.
+            let release = game_releases_with(&[row(DEV, &[INDEX])], &[Some(INDEX)])
+                .pop()
+                .unwrap();
             assert!(crate::managed_play::FirstBuild::download(&release).is_ok());
             let download = GameDownload::select(&release).unwrap();
             let names =
@@ -59,7 +105,7 @@ fn first_play_proves_and_installs_the_two_sdk_slices() {
                 (names[1].as_str(), SLICES[1]),
             ];
             let game = version_dir(DEV);
-            let install = |files: &[(&str, &[u8])], tamper: bool| {
+            let install = |files: &[(&str, &[u8])], sdk_rust: &str, tamper: bool| {
                 // A playable runtime does not need a matching launcher Rust toolchain.
                 let index = index_of(files, "1.0.0").to_json();
                 publish(
@@ -70,7 +116,15 @@ fn first_play_proves_and_installs_the_two_sdk_slices() {
                     index.as_bytes(),
                     &[(RELEASE_FILE, FACTS)],
                 );
-                publish(&mirror, &sdk_tag, &sdk_tag, &key, index.as_bytes(), files);
+                let sdk_index = index_of(files, sdk_rust).to_json();
+                publish(
+                    &mirror,
+                    &sdk_tag,
+                    &sdk_tag,
+                    &key,
+                    sdk_index.as_bytes(),
+                    files,
+                );
                 if tamper {
                     let mut damaged = SLICES[0].to_vec();
                     let offset = damaged.len() / 2;
@@ -93,20 +147,27 @@ fn first_play_proves_and_installs_the_two_sdk_slices() {
                 );
                 (proof, outcome)
             };
-            let (_, missing) = install(&slices[..1], false);
+            let (_, missing) = install(&slices[..1], "1.0.0", false);
             assert_eq!(
                 missing.unwrap_err(),
                 format!("{DEV} has no build for the selected game architecture.")
             );
             assert!(!game.exists());
-            let (_, tampered) = install(&slices, true);
+            let (_, mismatch) = install(&slices, "1.0.1", false);
+            let error = mismatch.unwrap_err();
+            assert!(
+                error.contains(INDEX) && error.contains("signed checksum"),
+                "{error}"
+            );
+            assert!(!game.exists());
+            let (_, tampered) = install(&slices, "1.0.0", true);
             let error = tampered.unwrap_err();
             assert!(
                 error.contains(&names[0]) && error.contains("checksum"),
                 "{error}"
             );
             assert!(!game.exists());
-            let (proof, installed) = install(&slices, false);
+            let (proof, installed) = install(&slices, "1.0.0", false);
             assert!(matches!(
                 installed.unwrap(),
                 InstallOutcome::Installed(None)
@@ -129,7 +190,9 @@ fn first_play_proves_and_installs_the_two_sdk_slices() {
             ] {
                 assert!(game.join(file).is_file(), "missing {file}");
             }
+            assert!(!game.join("liblink-only.a").exists());
             if cfg!(windows) {
+                assert!(!game.join("libsunrise_fixture.dll.a").exists());
                 assert!(game.join("dxcompiler.dll").is_file());
                 assert!(game.join("libgcc_s_seh-1.dll").is_file());
             }
@@ -161,7 +224,7 @@ fn player_archive_still_installs_when_the_index_is_listed() {
         "sdk_install::player_archive_still_installs_when_the_index_is_listed",
         || {
             let Some(asset) = ASSET else { return };
-            let release = offer(TAG, &[INDEX, asset]);
+            let release = game_releases(&[row(TAG, &[INDEX, asset])]).pop().unwrap();
             let download = GameDownload::select(&release).unwrap();
             assert_eq!(download.file, asset);
             let bytes = if asset.ends_with(".zip") {

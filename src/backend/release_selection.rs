@@ -34,11 +34,22 @@ pub(super) fn dev(tag: &str) -> Result<Option<Release>, String> {
         .map_or((super::ASSET, super::GAME_FALLBACK), |(asset, fallback)| {
             (Some(asset), fallback)
         });
-    let sdk = super::installation::sdk_target(super::selected_game_architecture(&settings))
-        .map(|_| sunrise_launcher_sdk::INDEX);
-    dev_in(&[release], tag, &[asset, fallback, sdk])
-        .map(Some)
-        .ok_or_else(missing)
+    let target = super::installation::sdk_target(super::selected_game_architecture(&settings));
+    let mut dev = dev_in(
+        &[release],
+        tag,
+        &[asset, fallback, target.map(|_| sunrise_launcher_sdk::INDEX)],
+    )
+    .ok_or_else(missing)?;
+    if let Some(target) = target {
+        super::check_sdk_offer(
+            &mut dev,
+            target,
+            &crate::native_mods::sdk_cache::Base::from_env(),
+            &sunrise_launcher_release_verify::trusted_keys_for(super::GAME_REPO),
+        );
+    }
+    Ok(Some(dev))
 }
 
 /// The Dev build tagged `tag` in `list` (GitHub's answer for it).
@@ -212,7 +223,7 @@ impl WorldBuildOrder {
 }
 
 fn world_order_releases(list: &[serde_json::Value]) -> Vec<Release> {
-    let mut releases = super::game_releases(list);
+    let mut releases = super::game_releases_with(list, &[]);
     // Use each Dev source once for provenance, independent of the picker and update filters.
     releases.retain(|r| Channel::of(&r.tag) != Some(Channel::Dev));
     releases.extend(

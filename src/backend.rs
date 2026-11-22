@@ -778,7 +778,20 @@ pub fn releases() -> Result<Vec<Release>, String> {
 /// The game's builds in `list`, newest first. A Nightly is listed under the version it installs as
 /// ([`crate::nightly::version_of`]); only the current one (`nightly`) is an update.
 pub(crate) fn game_releases(list: &[serde_json::Value]) -> Vec<Release> {
-    let settings = Settings::load();
+    game_releases_from(
+        list,
+        &Settings::load(),
+        &crate::native_mods::sdk_cache::Base::from_env(),
+        &sunrise_launcher_release_verify::trusted_keys_for(GAME_REPO),
+    )
+}
+
+fn game_releases_from(
+    list: &[serde_json::Value],
+    settings: &Settings,
+    base: &crate::native_mods::sdk_cache::Base,
+    keys: &[sunrise_launcher_release_verify::PublicKey],
+) -> Vec<Release> {
     let assets = game_assets_for(
         std::env::consts::OS,
         native_windows_architecture(),
@@ -788,12 +801,40 @@ pub(crate) fn game_releases(list: &[serde_json::Value]) -> Vec<Release> {
     let (asset, fallback) = assets.map_or((ASSET, GAME_FALLBACK), |(asset, fallback)| {
         (Some(asset), fallback)
     });
-    let sdk = installation::sdk_target(selected_game_architecture(&settings))
-        .map(|_| sunrise_launcher_sdk::INDEX);
-    game_releases_with(list, &[asset, fallback, sdk])
+    let target = installation::sdk_target(selected_game_architecture(settings));
+    let mut releases = game_releases_with(
+        list,
+        &[asset, fallback, target.map(|_| sunrise_launcher_sdk::INDEX)],
+    );
+    if let Some(target) = target {
+        for release in &mut releases {
+            check_sdk_offer(release, target, base, keys);
+        }
+    }
+    releases
 }
 
-/// [`game_releases`] with explicit asset preferences (native archive, fallback, SDK index).
+/// Only SDK candidates need an index lookup; static archives take precedence without one.
+fn check_sdk_offer(
+    release: &mut Release,
+    target: &str,
+    base: &crate::native_mods::sdk_cache::Base,
+    keys: &[sunrise_launcher_release_verify::PublicKey],
+) {
+    if asset_installed(release, Some(sunrise_launcher_sdk::INDEX), None).is_some()
+        && !crate::native_mods::sdk_cache::offers_game(
+            &release.tag,
+            release.nightly.as_deref().unwrap_or(&release.tag),
+            target,
+            base,
+            keys,
+        )
+    {
+        release.asset = None;
+    }
+}
+
+/// Parse game releases with explicit asset preferences; SDK candidates are checked after parsing.
 fn game_releases_with(list: &[serde_json::Value], assets: &[Option<&str>]) -> Vec<Release> {
     use sunrise_launcher_release_verify::{build_title_version, Channel, NIGHTLY};
     let keep = |tag: &str| tag == NIGHTLY || dev_date(tag).is_some() || is_game_tag(tag);
