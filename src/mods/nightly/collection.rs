@@ -2,7 +2,6 @@
 use super::*;
 use crate::mods_page::install::{stage_label, SourcePicks};
 use std::collections::BTreeSet;
-use sunrise_launcher::browser::sunrise::SourceError;
 use sunrise_launcher_smod::index::Collection;
 
 /// The open collection and the mods ticked on its page.
@@ -224,31 +223,19 @@ impl Launcher {
             } else {
                 failed.map(|_| status("information-circle", tr("Couldn’t add"), palette().warning))
             };
-            let why = failed.map(|error| {
-                let log = match error {
-                    SourceError::Build { log: Some(log), .. } => Some(log.clone()),
-                    _ => None,
-                };
-                div()
-                    .flex()
-                    .flex_col()
-                    .items_start()
-                    .gap(px(6.))
-                    .pt(px(4.))
-                    .child(note(
-                        source_error(error, Some(source)).unwrap_or_else(|| error.to_string()),
-                    ))
-                    // The checker's whole reason, with what the author can do.
-                    .children(
-                        matches!(
-                            error,
-                            SourceError::Unproved(_)
-                                | SourceError::DoesNotFit(_)
-                                | SourceError::Dependency { .. }
-                        )
-                        .then(|| muted(error.to_string()).text_size(px(tokens::SMALL))),
-                    )
-                    .children(log.map(|log| self.nightly_log_button(source.name(), log, cx)))
+            // Why it was refused, in the one modal every refusal uses.
+            let why = failed.and_then(|error| {
+                let refused = crate::mods::refused::Refused::one(
+                    source.name(),
+                    Some(source.repo().to_owned()),
+                    false,
+                    error,
+                )?;
+                Some(div().pt(px(4.)).child(self.refused_line(
+                    ("nightly-collection-refused", i),
+                    refused,
+                    cx,
+                )))
             });
             let tick = checkbox(("nightly-collection-box", i), on).tab_stop(false);
             let member = source.id().to_owned();

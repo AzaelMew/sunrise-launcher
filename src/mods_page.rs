@@ -128,6 +128,7 @@ impl Launcher {
         let mut changed = false;
         let mut loaded = Vec::new();
         let mut github_feedback = None;
+        let mut refused_here = None;
         let mut done = false;
         while let Ok(event) = self.mods.rx.try_recv() {
             changed = true;
@@ -143,6 +144,9 @@ impl Launcher {
                 Event::Registry(event) => {
                     if let Some(feedback) = m.installs.github_feedback(&event) {
                         github_feedback = Some(feedback);
+                    }
+                    if let Some(refused) = m.installs.refused(&event) {
+                        refused_here = Some(refused);
                     }
                     if let Some(error) = m.installs.mutation_failure(&event) {
                         m.message = Some(Err(error));
@@ -183,6 +187,12 @@ impl Launcher {
         }
         if let Some(feedback) = github_feedback {
             self.show_github_result(feedback);
+        }
+        // The profile that asked hears why at once; another one finds it on the mod's page.
+        if let Some((home, refused)) = refused_here {
+            if self.selected_instance().is_some_and(|i| i.home == home) {
+                self.open_refused(refused);
+            }
         }
         self.start_registry_queue() || changed
     }

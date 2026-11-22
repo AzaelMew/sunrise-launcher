@@ -161,6 +161,10 @@ struct RunningSource {
     ids: Vec<String>,
     visible: bool,
     names: Vec<String>,
+    /// Each mod asked for: its id, the name people know, and its `owner/repo`.
+    members: Vec<(String, String, String)>,
+    /// It updates installed mods rather than adding new ones.
+    update: bool,
     cancellation: Cancellation,
     rejected: BTreeMap<String, SourceError>,
 }
@@ -328,8 +332,22 @@ impl Installs {
             Err(InstallError::Cancelled | InstallError::Source(SourceError::Cancelled)) => {
                 return None
             }
-            Err(error @ InstallError::Source(source)) => {
-                Err((failure_line(error).into(), refusal_detail(source)))
+            Err(InstallError::Source(error)) => {
+                let names: Vec<&str> = match &input.selection {
+                    GithubSelection::Source(sources) => {
+                        sources.iter().map(PreparedSource::name).collect()
+                    }
+                    GithubSelection::Add(packages) => {
+                        packages.iter().map(|p| p.name.as_str()).collect()
+                    }
+                    GithubSelection::Update(package) => vec![package.name.as_str()],
+                };
+                let name = match names.as_slice() {
+                    [one] => (*one).to_owned(),
+                    _ => tr("One of these mods").to_owned(),
+                };
+                let refusal = crate::mods::refused::Refusal::of(&name, error)?;
+                Err((refusal.said, refusal.details))
             }
             Err(error) => Err((failure_line(error).into(), error.to_string())),
         };
@@ -339,6 +357,63 @@ impl Installs {
             result,
             retry,
         })
+    }
+
+    /// The modal a finished source Add or Update opens, for the profile that asked: every mod
+    /// refused on its own, or, when the run failed as a whole and nothing names a mod, its one
+    /// reason. GitHub Adds say theirs in the GitHub form (`github_feedback`).
+    pub(super) fn refused(
+        &self,
+        event: &Worker,
+    ) -> Option<(PathBuf, crate::mods::refused::Refused)> {
+        use crate::mods::refused::{Refusal, Refused, RefusedMod};
+        let run = self.running.as_ref()?;
+        let source = run.source.as_ref().filter(|_| run.github.is_none())?;
+        let batch = match event {
+            Worker::Done(Err(error)) => Some(match error {
+                InstallError::Cancelled => SourceError::Cancelled,
+                InstallError::NotForVersion(why) => SourceError::DoesNotFit(why.clone()),
+                InstallError::Source(error) => error.clone(),
+                error => SourceError::Unproved(error.to_string()),
+            }),
+            Worker::Mixed(done) => done.sources.clone().err(),
+            Worker::Done(Ok(_)) => None,
+            _ => return None,
+        };
+        let mut mods: Vec<RefusedMod> = source
+            .members
+            .iter()
+            .filter_map(|(id, name, repo)| {
+                Some(RefusedMod {
+                    name: name.clone(),
+                    repo: Some(repo.clone()),
+                    refusal: Refusal::of(name, source.rejected.get(id)?)?,
+                })
+            })
+            .collect();
+        let mut names: Vec<String> = mods.iter().map(|m| m.name.clone()).collect();
+        if mods.is_empty() {
+            let error = batch?;
+            let (name, repo) = match source.members.as_slice() {
+                [(_, name, repo)] => (name.clone(), Some(repo.clone())),
+                _ => (tr("One of these mods").to_owned(), None),
+            };
+            mods.push(RefusedMod {
+                refusal: Refusal::of(&name, &error)?,
+                name,
+                repo,
+            });
+            names = source.names.clone();
+        }
+        Some((
+            run.profile.home.clone(),
+            Refused {
+                update: source.update,
+                names,
+                mods,
+                details: false,
+            },
+        ))
     }
 
     pub(super) fn mutation_failure(&self, event: &Worker) -> Option<String> {
@@ -354,38 +429,13 @@ impl Installs {
                 Err(InstallError::Cancelled) => (),
                 Err(_) => failures.extend(run.requests[0].ids.iter().cloned()),
             }
-            if let Err(error) = &done.sources {
-                if !matches!(error, SourceError::Cancelled) || done.registry.is_ok() {
-                    failures.extend(run.source.as_ref()?.names.iter().cloned());
-                }
-            }
+            // A source that didn't update says why in the refused modal (`refused`).
             return (!failures.is_empty()).then(|| {
                 trf(
                     "These mods didn't update: {mods}",
                     &[("mods", &crate::mods::names(&failures))],
                 )
             });
-        }
-        // A refused source Add is also said where the Mods page shows its notices, not only on
-        // the mod's own page: a player may have clicked from a collection or moved on.
-        if let (Some(source), Worker::Done(Err(error))) = (&run.source, event) {
-            if matches!(
-                error,
-                InstallError::Cancelled | InstallError::Source(SourceError::Cancelled)
-            ) {
-                return None;
-            }
-            let why = match error {
-                InstallError::Source(error) => {
-                    Some(refusal_detail(error)).filter(|d| !d.is_empty())
-                }
-                _ => None,
-            }
-            .unwrap_or_else(|| failure_line(error).to_owned());
-            return Some(trf(
-                "Couldn't add {mods}. {why}",
-                &[("mods", &crate::mods::names(&source.names)), ("why", &why)],
-            ));
         }
         if matches!(
             run.requests[0].kind,
@@ -424,9 +474,16 @@ impl Installs {
                         eprintln!("Nightly source update batch: {error}");
                     }
                 }
+                // A batch of several that failed as a whole is said once, by the modal, not
+                // pinned on each member as if each were refused.
+                let several = source.ids.len() > 1 && done.sources.is_err();
                 for id in source.ids {
-                    self.source_outcomes
-                        .insert((run.identity, id), done.sources.clone());
+                    if several {
+                        self.source_outcomes.remove(&(run.identity, id));
+                    } else {
+                        self.source_outcomes
+                            .insert((run.identity, id), done.sources.clone());
+                    }
                 }
                 if done.sources.is_err()
                     && self.play.as_ref().is_some_and(|(home, intent)| {
@@ -483,15 +540,21 @@ impl Installs {
                             eprintln!("Nightly source edit: {error}");
                         }
                     }
+                    let several = run.requests[0].ids.len() > 1;
                     for id in &run.requests[0].ids {
                         let key = (run.identity, id.clone());
-                        if matches!(outcome, Err(SourceError::Cancelled)) {
+                        let result = match source.rejected.remove(id) {
+                            Some(error) => Err(error),
+                            // Several that failed as a whole: said once, by the modal.
+                            None if several && outcome.is_err() => {
+                                self.source_outcomes.remove(&key);
+                                continue;
+                            }
+                            None => outcome.clone(),
+                        };
+                        if matches!(result, Err(SourceError::Cancelled)) {
                             self.source_outcomes.remove(&key);
                         } else {
-                            let result = source
-                                .rejected
-                                .remove(id)
-                                .map_or_else(|| outcome.clone(), Err);
                             self.source_outcomes.insert(key, result);
                         }
                     }
@@ -742,20 +805,6 @@ impl Launcher {
             .installs
             .source_outcomes
             .get(&(Identity::of(home).ok()?, id.to_owned()))
-    }
-
-    /// Forget a source's last refusal, so checking it again starts from a clean page.
-    pub(crate) fn forget_source_outcome(&mut self, id: &str) {
-        let Some(identity) = self
-            .selected_instance()
-            .and_then(|instance| Identity::of(&instance.home).ok())
-        else {
-            return;
-        };
-        self.mods
-            .installs
-            .source_outcomes
-            .remove(&(identity, id.to_owned()));
     }
 
     pub(crate) fn source_question(&self) -> Option<&SourceQuestion> {
@@ -1120,6 +1169,12 @@ impl Launcher {
         let batch = Arc::new(Mutex::new(
             (request.view.kind == Kind::Install).then(|| request.view.ids.clone()),
         ));
+        // Pressing Add again reads the source again: its last refusal goes until this run says.
+        let identity = request.identity;
+        self.mods
+            .installs
+            .source_outcomes
+            .retain(|(who, id), _| *who != identity || !request.view.ids.contains(id));
         let kind = request.view.kind;
         let ids = request.view.ids.clone();
         let cancellation = Cancellation::default();
@@ -1131,6 +1186,37 @@ impl Launcher {
         let source = matches!(kind, Kind::Source | Kind::Mixed).then(|| RunningSource {
             ids: ids.clone(),
             visible: !mixed,
+            members: if let Some(picks) = &request.picks {
+                picks
+                    .listings()
+                    .iter()
+                    .map(|source| {
+                        (
+                            source.id().to_owned(),
+                            source.name().to_owned(),
+                            source.repo().to_owned(),
+                        )
+                    })
+                    .collect()
+            } else {
+                request
+                    .source_inputs()
+                    .iter()
+                    .map(|source| {
+                        let origin = source.origin();
+                        (
+                            origin.id.clone(),
+                            source.name().to_owned(),
+                            format!("{}/{}", origin.owner, origin.repo),
+                        )
+                    })
+                    .collect()
+            },
+            update: mixed
+                || request
+                    .source_inputs()
+                    .iter()
+                    .any(PreparedSource::is_update),
             names: if let Some(picks) = &request.picks {
                 picks
                     .listings()
@@ -1460,17 +1546,6 @@ pub(crate) fn stage_fraction(step: InstallProgress) -> Option<f32> {
     }
 }
 
-/// The checker's own words for a refusal the player can read and act on. Compiler output and
-/// download errors stay in the log and the build log, as the headline already says what failed.
-fn refusal_detail(error: &SourceError) -> String {
-    match error {
-        SourceError::Unproved(detail)
-        | SourceError::DoesNotFit(detail)
-        | SourceError::Dependency { detail, .. } => detail.clone(),
-        _ => String::new(),
-    }
-}
-
 fn failure_line(error: &InstallError) -> &'static str {
     match error {
         InstallError::Refused(_) => tr("Can't install these mods together"),
@@ -1491,6 +1566,9 @@ fn failure_line(error: &InstallError) -> &'static str {
             tr("The profile or game build changed. Check the source again; nothing was changed.")
         }
         InstallError::Source(SourceError::Cancelled) => tr("Install cancelled."),
+        InstallError::Source(SourceError::Busy) => {
+            tr("Sunrise is building mods right now. Try again when that finishes.")
+        }
         InstallError::Source(SourceError::Build { .. }) => tr("Couldn't build on this computer."),
         InstallError::GithubBuild(_) => tr("Could not build the selected mods."),
         InstallError::Download(_) => tr("Download failed. Try again"),
@@ -1593,34 +1671,46 @@ mod tests {
     }
 
     #[test]
-    fn refused_source_add_says_which_mod_and_why_but_keeps_compiler_output_out() {
+    fn a_refused_source_add_opens_one_modal_naming_each_refused_member() {
         let root = homes();
         let mut installs = with_running(root.path());
+        let member =
+            |id: &str, name: &str| (id.to_owned(), name.to_owned(), format!("someone/{id}"));
         installs.running.as_mut().unwrap().source = Some(RunningSource {
             ids: vec!["jade".into()],
             visible: true,
             names: vec!["Jade".into()],
+            members: vec![member("jade", "Jade")],
+            update: false,
             cancellation: Default::default(),
             rejected: BTreeMap::new(),
         });
-        let refused = Worker::Done(Err(InstallError::Source(SourceError::Unproved(
-            "Its author can commit the list.".into(),
+        let refused = Worker::Done(Err(InstallError::Source(SourceError::DoesNotFit(
+            "jade pins build ed3ac19".into(),
         ))));
-        assert_eq!(
-            installs.mutation_failure(&refused).as_deref(),
-            Some("Couldn't add Jade. Its author can commit the list.")
-        );
-        let built = Worker::Done(Err(InstallError::Source(SourceError::Build {
-            detail: "error[E0425]: cannot find value".into(),
-            log: None,
-            failed: Vec::new(),
-        })));
-        assert_eq!(
-            installs.mutation_failure(&built).as_deref(),
-            Some("Couldn't add Jade. Couldn't build on this computer.")
-        );
+        let (_, modal) = installs.refused(&refused).unwrap();
+        assert_eq!(modal.mods.len(), 1);
+        assert_eq!(modal.mods[0].name, "Jade");
+        assert_eq!(modal.mods[0].repo.as_deref(), Some("someone/jade"));
+        assert!(modal.mods[0].refusal.said.starts_with("Jade isn't ready"));
+        assert_eq!(modal.mods[0].refusal.details, "jade pins build ed3ac19");
         let cancelled = Worker::Done(Err(InstallError::Source(SourceError::Cancelled)));
-        assert_eq!(installs.mutation_failure(&cancelled), None);
+        assert_eq!(installs.refused(&cancelled), None);
+
+        // A collection that added the rest names only the member it skipped.
+        let source = installs.running.as_mut().unwrap().source.as_mut().unwrap();
+        source.ids = vec!["jade".into(), "minimap".into()];
+        source.names = vec!["Jade".into(), "Minimap".into()];
+        source.members = vec![member("jade", "Jade"), member("minimap", "Minimap")];
+        source.rejected.insert("minimap".into(), SourceError::Busy);
+        let (_, modal) = installs
+            .refused(&Worker::Done(Ok(InstalledBatch::default())))
+            .unwrap();
+        assert_eq!(modal.names, ["Minimap"]);
+        assert_eq!(modal.mods[0].name, "Minimap");
+        assert!(installs
+            .refused(&Worker::Progress(InstallProgress::Checking))
+            .is_none());
     }
 
     #[test]

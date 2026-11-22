@@ -230,7 +230,7 @@ fn resolve_link(
     }
     if update.is_none() && found.assets.is_empty() {
         let sources = sunrise::read_pasted_sources(link, &found, cancellation)
-            .map_err(pasted_source_error)?;
+            .map_err(|error| pasted_source_error(&found.repo, error))?;
         return Ok(Resolution::Ready(Box::new(PickInput::Source(
             found, sources,
         ))));
@@ -264,26 +264,17 @@ fn resolve_link(
     Ok(Resolution::Ready(Box::new(PickInput::Assets(found, mods))))
 }
 
-fn pasted_source_error(error: SourceError) -> FormError {
+/// A source the GitHub form couldn't take, said as every refusal is (`mods::refused`): what it
+/// means for the mod people know as `name`, with the checker's words behind Show details.
+fn pasted_source_error(name: &str, error: SourceError) -> FormError {
     eprintln!("GitHub source preflight: {error}");
-    let line = match error {
-        SourceError::Github(Failure::Offline(_) | Failure::RateLimited { .. }) => {
-            return FormError::transport(String::new());
-        }
-        SourceError::DoesNotFit(_) => tr("Not available for your version").into(),
-        SourceError::Github(Failure::NoManifest) => tr("No Sunrise mod at this commit.").into(),
-        SourceError::Dependency {
-            required: Some(id), ..
-        } => trf(
-            "Needs {mod}. Install a fitting version first.",
-            &[("mod", &id)],
-        ),
-        SourceError::Dependency { required: None, .. } => {
-            tr("Can't install these mods together").into()
-        }
-        _ => tr("Couldn't check that the mods fit").into(),
-    };
-    FormError::new(&line, String::new())
+    if let SourceError::Github(Failure::Offline(_) | Failure::RateLimited { .. }) = error {
+        return FormError::transport(String::new());
+    }
+    match crate::mods::refused::Refusal::of(name, &error) {
+        Some(refusal) => FormError::new(&refusal.said, refusal.details),
+        None => FormError::new(tr("Install cancelled."), String::new()),
+    }
 }
 
 impl Launcher {
@@ -506,11 +497,15 @@ impl Launcher {
                     return;
                 }
             };
-            let selected = choices
+            let selected: Vec<_> = choices
                 .iter()
                 .filter(|package| pick.selected.contains(&package.origin().id))
                 .cloned()
                 .collect();
+            let name = match selected.as_slice() {
+                [one] => one.name().to_owned(),
+                _ => tr("One of these mods").to_owned(),
+            };
             let cancellation = Cancellation::default();
             let (tx, rx) = crate::wake::channel();
             self.github.stage = Stage::Checking(Box::new(SourceCheck {
@@ -526,7 +521,7 @@ impl Launcher {
                     selected,
                     &cancellation,
                 )
-                .map_err(pasted_source_error);
+                .map_err(|error| pasted_source_error(&name, error));
                 let _ = tx.send(result);
             });
         } else if let Some(target) = self.github.target.take() {
@@ -656,9 +651,21 @@ impl Launcher {
                     .child(rows)
                     .children(pick.error.as_ref().map(|error| {
                         div()
-                            .text_size(px(tokens::LABEL))
-                            .text_color(rgb(palette().danger))
-                            .child(error.line.clone())
+                            .flex()
+                            .flex_col()
+                            .gap(px(8.))
+                            .child(
+                                div()
+                                    .text_size(px(tokens::LABEL))
+                                    .text_color(rgb(palette().danger))
+                                    .child(error.line.clone()),
+                            )
+                            .children((!error.detail.is_empty()).then(|| {
+                                crate::mods::refused::details_box(
+                                    "github-pick-error-detail",
+                                    error.detail.clone(),
+                                )
+                            }))
                     })),
                 button,
             )
@@ -775,7 +782,11 @@ impl Launcher {
                                 .child(error.line.clone()),
                         )
                         .children((!error.detail.is_empty()).then(|| {
-                            button("github-add-details", tr("Details")).on_click(cx.listener(
+                            button(
+                                "github-add-details",
+                                crate::mods::refused::details_label(*expanded),
+                            )
+                            .on_click(cx.listener(
                                 |this, _: &ClickEvent, _, cx| {
                                     match &mut this.github.stage {
                                         Stage::Failed(_, expanded)
@@ -788,18 +799,10 @@ impl Launcher {
                         })),
                 );
                 if *expanded {
-                    body = body.child(
-                        div()
-                            .id("github-add-error-detail")
-                            .max_h(px(120.))
-                            .overflow_y_scroll()
-                            .p(px(10.))
-                            .rounded(crate::tokens::r(tokens::R_SMALL))
-                            .bg(rgb(palette().background))
-                            .text_size(px(tokens::LABEL))
-                            .text_color(rgb(palette().muted))
-                            .child(crate::selectable::selectable(error.detail.clone())),
-                    );
+                    body = body.child(crate::mods::refused::details_box(
+                        "github-add-error-detail",
+                        error.detail.clone(),
+                    ));
                 }
             }
             let next = primary(
