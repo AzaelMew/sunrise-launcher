@@ -39,6 +39,7 @@ impl Fixture {
                 .env("XDG_CONFIG_HOME", root.join("config"))
                 .env("XDG_DATA_HOME", root.join("xdg"))
                 .env("SUNRISE_MOD_INDEX", root.join("index.json"))
+                .env("SUNRISE_LAUNCHER_DEVELOPER_OFFLINE", "1")
                 .env("SUNRISE_LAUNCHER_DEVELOPER_TOOL", root.join("sdk-tool"))
                 .env("SUNRISE_LAUNCHER_DEVELOPER_SDK", root.join("sdk"))
                 .env("FIXTURE_NATIVE_ROOT", &root)
@@ -161,6 +162,15 @@ impl Fixture {
     }
 
     fn apply_on(&self, base: &str, action: Action<'_>) -> Result<InstalledBatch, InstallError> {
+        self.apply_resolving(base, action, None)
+    }
+
+    fn apply_resolving(
+        &self,
+        base: &str,
+        action: Action<'_>,
+        resolve: Option<&dyn Fn(&ResolveQuestion) -> bool>,
+    ) -> Result<InstalledBatch, InstallError> {
         registry_edit(
             &self.instance,
             install_target(&self.instance).unwrap(),
@@ -168,10 +178,13 @@ impl Fixture {
             || FirstBuild::installed(base),
             InstallHooks {
                 progress: &|_| {},
-                native: &|question| panic!("unexpected native consent question: {question:?}"),
+                native: &|question| {
+                    assert!(resolve.is_some(), "unexpected native consent: {question:?}");
+                    Ok(true)
+                },
                 registry_crates: None,
                 continue_after_failure: &|_| false,
-                resolve: None,
+                resolve,
             },
             |source, local| {
                 let (catalogue, bytes, authority) = fetch_with_official(source, local)?;
@@ -179,8 +192,12 @@ impl Fixture {
                     authority.is_none(),
                     "a local override must never carry authority"
                 );
-                let authority = OfficialRegistry::fixture(&catalogue);
-                Ok((catalogue, bytes, Some(authority)))
+                // Conflict resolution re-fetches the complete index through the ordinary
+                // local override. Keep both reads on the same, nonofficial authority.
+                let authority = resolve
+                    .is_none()
+                    .then(|| OfficialRegistry::fixture(&catalogue));
+                Ok((catalogue, bytes, authority))
             },
             None,
         )
@@ -192,6 +209,10 @@ impl Fixture {
     }
 
     fn first_play(&self) {
+        self.play_on(BUILD);
+    }
+
+    fn play_on(&self, base: &str) {
         let cancel = native_mods::Cancellation::default();
         let mut profile = Profile::open(self.home(), None).unwrap();
         if profile
@@ -202,7 +223,7 @@ impl Fixture {
             return;
         }
         let first = profile
-            .begin_first(|| FirstBuild::installed(BUILD), |_| {})
+            .begin_first(|| FirstBuild::installed(base), |_| {})
             .unwrap();
         first.prepare(&|_| {}).unwrap();
         let image = first

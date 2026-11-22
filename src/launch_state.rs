@@ -37,6 +37,7 @@ pub(crate) struct Facts {
     /// The game's own files were not found.
     pub prepare_error: Option<String>,
     pub native_error: Option<String>,
+    pub build_result: Option<String>,
     pub install_error: Option<String>,
     pub crash: Option<String>,
     /// The build the profile stays on can't be built for any more (`build_gone`).
@@ -74,6 +75,8 @@ pub(crate) enum Main {
 pub(crate) enum Act {
     /// Stops the build of native mods.
     StopBuild,
+    /// Reopens the stopped managed Play build, with its results and retry.
+    BuildResult,
     /// Opens the problem's whole text: "Fix…" with a way out of it, "Details…" with only more
     /// to read.
     Notice {
@@ -243,6 +246,7 @@ impl Facts {
         let step = |step: Step, error: &Option<String>| error.clone().map(|e| (step, e));
         let problem = step(Step::Start, &self.client_error)
             .or_else(|| step(Step::Prepare, &self.prepare_error))
+            .or_else(|| step(Step::Build, &self.build_result))
             .or_else(|| step(Step::Build, &self.native_error).filter(|_| self.held.is_none()))
             .or_else(|| step(Step::Install, &self.install_error))
             .or_else(|| step(Step::Crash, &self.crash));
@@ -286,6 +290,8 @@ impl Facts {
                 text: detail.clone(),
                 way_out: Some(WayOut::ProfileFolder(home.clone())),
             })
+        } else if failed_at == Some(Step::Build) && self.build_result.is_some() {
+            Some(Act::BuildResult)
         } else if let Some(text) = problem.filter(|_| way_out.is_some() || more) {
             Some(Act::Notice { text, way_out })
         } else if hold.is_some() && !busy {
@@ -371,7 +377,7 @@ impl Act {
                 way_out: Some(_), ..
             }
             | Act::Resolve => tr("Fix…"),
-            Act::Notice { way_out: None, .. } => tr("Details…"),
+            Act::BuildResult | Act::Notice { way_out: None, .. } => tr("Details…"),
             Act::Update => tr("Update game"),
         }
     }
@@ -400,7 +406,7 @@ impl View {
             return Some((self.main.label(), act));
         }
         match (&self.said, &self.act) {
-            (Some(said), Some(act @ Act::Notice { .. })) if self.failed => {
+            (Some(said), Some(act @ (Act::BuildResult | Act::Notice { .. }))) if self.failed => {
                 Some((said.clone().into(), StripAct::Act(act.clone())))
             }
             (Some(said), _) if self.failed => Some((said.clone().into(), StripAct::Home)),
@@ -467,6 +473,12 @@ impl Launcher {
                 .cloned(),
             prepare_error: self.prepare_error.clone(),
             native_error: self.native_error.clone(),
+            build_result: self.build_here().and_then(|run| match &run.end {
+                Some(crate::mods::build_run::End::Stopped(detail)) if run.for_play => {
+                    Some(detail.clone())
+                }
+                _ => None,
+            }),
             install_error: self.install_error.as_ref().map(|(_, e)| e.clone()),
             crash: self.crash.as_ref().map(|c| c.summary.clone()),
             build_gone: self.build_gone(),
@@ -494,6 +506,7 @@ impl Launcher {
     pub(crate) fn launch_act(&mut self, act: &Act) {
         match act {
             Act::StopBuild => self.stop_build(),
+            Act::BuildResult => self.open_sheet(Sheet::ModBuild),
             Act::Notice { text, way_out } => self.open_notice(text.clone(), way_out.clone()),
             Act::Resolve => self.open_sheet(Sheet::Resolve),
             Act::Update => {

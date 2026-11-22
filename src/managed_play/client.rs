@@ -234,10 +234,10 @@ impl Client<'_> {
         let first = profile.begin_first(choose, |fraction| {
             progress(Progress::Download(fraction));
         })?;
-        check_build(first.base(), first.variant().as_ref())?;
-        progress(Progress::Prepare);
-        first.prepare(&|line| progress(Progress::Line(line)))?;
-        let (image, notices) = {
+        let ready = (|| {
+            check_build(first.base(), first.variant().as_ref())?;
+            progress(Progress::Prepare);
+            first.prepare(&|line| progress(Progress::Line(line)))?;
             let _manifest = game_lock(&home)?;
             crate::browser::installed::recover_game_install(&home).map_err(StartError::Journal)?;
             first.verify_inputs()?;
@@ -250,11 +250,26 @@ impl Client<'_> {
                     native_consent,
                 )
                 .map_err(StartError::Native)?;
-            (image, notices)
-        };
-        // Resource preparation takes a version lock. Don't take it under the game
-        // manifest lock; commit rechecks the frozen input epoch before publication.
-        Ok((first.commit(&image, cancellation)?, notices))
+            Ok((image, notices))
+        })();
+        match ready {
+            // Resource preparation takes a version lock. Don't take it under the game
+            // manifest lock; commit rechecks the frozen input epoch before publication.
+            Ok((image, notices)) => first
+                .commit(&image, cancellation)
+                .map(|active| (active, notices))
+                .map_err(|error| {
+                    if error == native_mods::CANCELLED {
+                        StartError::Native(native_mods::Failed::Other(error))
+                    } else {
+                        StartError::Other(error)
+                    }
+                }),
+            Err(error) => {
+                first.abandon()?;
+                Err(error)
+            }
+        }
     }
 }
 

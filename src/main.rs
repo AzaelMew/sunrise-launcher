@@ -298,6 +298,7 @@ struct Launcher {
     client: Option<Running>,
     client_error: Option<String>,
     play_admission: Option<launcher_play::PlayIntent>,
+    play_retry: Option<launcher_play::PlayRetry>,
     play_install_recovery: Option<(std::path::PathBuf, String)>,
     pinning_build: bool,
     /// The latest Play's registry warnings, shown until dismissed or a new Play is accepted.

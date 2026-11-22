@@ -2,6 +2,7 @@
 use super::*;
 
 /// Who and what Play was accepted for, before any install, preparation or build.
+#[derive(Clone)]
 pub(crate) struct PlayIntent {
     pub instance: String,
     pub incarnation: Option<instances::Incarnation>,
@@ -19,6 +20,33 @@ impl PlayIntent {
 
     pub(super) fn matches_profile(&self, current: &instances::Instance) -> bool {
         current.id == self.instance && current.incarnation == self.incarnation
+    }
+}
+
+/// The accepted profile, account and arguments of one managed Play attempt.
+#[derive(Clone)]
+pub(crate) struct PlayRetry {
+    pub intent: PlayIntent,
+    destination: Option<(&'static str, String)>,
+    invite: Option<String>,
+}
+
+impl Launcher {
+    pub(crate) fn retry_managed_play(&mut self) {
+        if self.client.is_some() || (self.launch_busy() && !self.registry_accepts_play()) {
+            return;
+        }
+        let Some(request) = self.play_retry.clone().filter(|request| {
+            self.selected_instance()
+                .is_some_and(|current| request.intent.matches_profile(current))
+        }) else {
+            return;
+        };
+        self.quick_play = request.destination;
+        self.joining = request.invite;
+        self.client_error = None;
+        self.prepare_error = None;
+        self.resume_play(request.intent);
     }
 }
 
@@ -232,6 +260,14 @@ impl Launcher {
         };
         let destination = self.quick_play.take();
         let invite = self.joining.take();
+        self.play_retry = Some(PlayRetry {
+            intent: intent.clone(),
+            destination: destination.clone(),
+            invite: invite.clone(),
+        });
+        if self.ui.mods.build.as_ref().is_some_and(|run| run.for_play) {
+            self.ui.mods.build = None;
+        }
         self.starting_pack = None;
         self.play_install_recovery = None;
         self.native_error = None;

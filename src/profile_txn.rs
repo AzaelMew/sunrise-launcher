@@ -353,7 +353,7 @@ impl Admission {
 
     fn recover(&self) -> Result<(), String> {
         if let Some(record) = read(&self.home)? {
-            record.complete(&self.home, |_| {}, || {})?;
+            record.complete(&self.home, true, |_| {}, || {})?;
         } else {
             // No mutation is in flight. A retained cleanup record cannot block Play.
             let _ = clean_retired(&self.home);
@@ -738,6 +738,16 @@ impl<'a> Staging<'a> {
         self.record.bootstrap.is_some()
     }
 
+    /// A returned first-Play error cannot resume an unsealed attempt. Keep the stage for
+    /// recovery under the next exclusive admission; a worker may still hold its claim.
+    pub(crate) fn abandon_bootstrap(self) -> Result<(), String> {
+        let mut record = self.live_record()?;
+        if record.operation()?.ready.is_some() || record.bootstrap.take().is_none() {
+            return Err(unsettled());
+        }
+        write(self.lease.home(), &record)
+    }
+
     /// Borrow this stage's existing admission for a preparation or native worker. The
     /// worker may outlive the launcher, but only the launcher may seal proved output.
     pub fn handoff(&self) -> crate::process::leases::ProfileHandoff<'_> {
@@ -899,9 +909,28 @@ impl Sealed<'_> {
         self.publish_observed(cutoff, |_, _| Ok(()))
     }
 
+    /// On an explicitly declined cutoff, roll back without saving the first-Play choice.
+    /// An interruption still uses ordinary recovery, which preserves that choice.
+    pub(crate) fn publish_or_abandon<G>(
+        self,
+        cutoff: impl FnOnce() -> Result<G, String>,
+        abandon: impl FnOnce(&str) -> bool,
+    ) -> Result<(), String> {
+        self.publish_checked(cutoff, abandon, |_, _| Ok(()))
+    }
+
     pub(crate) fn publish_observed<G>(
         self,
         cutoff: impl FnOnce() -> Result<G, String>,
+        boundary: impl FnMut(usize, Boundary) -> Result<(), String>,
+    ) -> Result<(), String> {
+        self.publish_checked(cutoff, |_| false, boundary)
+    }
+
+    fn publish_checked<G>(
+        self,
+        cutoff: impl FnOnce() -> Result<G, String>,
+        abandon: impl FnOnce(&str) -> bool,
         boundary: impl FnMut(usize, Boundary) -> Result<(), String>,
     ) -> Result<(), String> {
         let home = self.0.lease.home();
@@ -909,8 +938,13 @@ impl Sealed<'_> {
         if record.digest()? != self.0.record.digest()? {
             return Err(unsettled());
         }
-        let result = record.publish_at(home, cutoff, boundary);
-        if record.complete(home, |_| {}, || {})? {
+        let mut restore_bootstrap = true;
+        let result = record.publish_at(
+            home,
+            || cutoff().inspect_err(|reason| restore_bootstrap = !abandon(reason)),
+            boundary,
+        );
+        if record.complete(home, restore_bootstrap, |_| {}, || {})? {
             Ok(())
         } else {
             result
@@ -1225,6 +1259,7 @@ impl Record {
     fn complete(
         &self,
         home: &Path,
+        restore_bootstrap: bool,
         mut restored: impl FnMut(usize),
         retired: impl FnOnce(),
     ) -> Result<bool, String> {
@@ -1311,7 +1346,7 @@ impl Record {
             return Err(at(&pointer, unsettled()));
         }
         let file = home.join(RECORD);
-        if !committed {
+        if !committed && restore_bootstrap {
             if let Some(binding) = self.undo_binding()? {
                 let saved = Self::preallocated_binding(&stage, &binding)?;
                 durable::restore_move(&saved, &file).map_err(|e| at(&saved, e))?;

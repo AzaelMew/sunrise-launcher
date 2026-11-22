@@ -439,7 +439,7 @@ impl Launcher {
                         .into_any_element()
                     }
                 }
-                (Some(_), ..) => div()
+                (Some(version), ..) => div()
                     .h(px(tokens::ACTION))
                     .flex()
                     .items_center()
@@ -448,9 +448,11 @@ impl Launcher {
                     .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
                     .border_1()
                     .border_color(c(palette().divider))
-                    .text_color(c(palette().success))
-                    .child(blocks::icon("check", 14., c(palette().success)))
-                    .child(tr("Installed"))
+                    .child(super::discover::install_fact(
+                        version,
+                        self.discover_installed()
+                            .is_some_and(|rows| rows.registry_pending(&p.id)),
+                    ))
                     .into_any_element(),
                 (None, _, fit, Some(_)) if fit.fits() && can_install => {
                     let b = primary("alt-project-add", self.registry_install_label())

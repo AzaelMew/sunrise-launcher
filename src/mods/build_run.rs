@@ -75,8 +75,9 @@ pub(crate) struct Run {
     pub end: Option<End>,
     /// Whether Details is open.
     pub details: bool,
-    /// Play started it: the game starts by itself when it ends well.
+    /// Play started it; keep that identity until its worker reports the result.
     pub for_play: bool,
+    pub stop_requested: bool,
     /// When it ended with its window closed: the strip says how it went for [`SAID_FOR`].
     pub said_at: Option<Instant>,
 }
@@ -117,6 +118,7 @@ impl Run {
             end: None,
             details: false,
             for_play,
+            stop_requested: false,
             said_at: None,
         }
     }
@@ -265,7 +267,9 @@ impl Run {
         let counts = self.counts();
         let count = counts.built.to_string();
         match (&self.end, counts.built) {
-            (None, _) if self.for_play => tr("Getting ready to play").into(),
+            (None, _) if self.for_play && !self.stop_requested => {
+                tr("Getting ready to play").into()
+            }
             (None, _) => tr("Building your mods").into(),
             (Some(End::Cancelled), _) => tr("Build cancelled").into(),
             (Some(End::Stopped(_)), _) => tr("The build stopped").into(),
@@ -357,7 +361,7 @@ impl Run {
 pub(crate) fn stop_asked(run: Option<&mut Run>, wanted: &mut Option<PlayIntent>) {
     *wanted = None;
     if let Some(run) = run {
-        run.for_play = false;
+        run.stop_requested = true;
     }
 }
 
@@ -654,7 +658,8 @@ mod tests {
         let mut late = self::run(true);
         let mut wanted = Some(press_play());
         stop_asked(Some(&mut late), &mut wanted);
-        assert!(!late.for_play);
+        assert!(late.for_play && late.stop_requested);
+        assert_eq!(late.headline(), "Building your mods");
         assert!(play_on_finish(wanted, &built, playing).is_none());
         late.done();
         assert_eq!(late.headline(), "Your mods are ready");

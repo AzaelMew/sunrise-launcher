@@ -91,6 +91,27 @@ fn pending_native_mods_change_the_idle_play_label_and_leave_the_gates_in_place()
 }
 
 #[test]
+fn a_stopped_managed_build_opens_its_result_from_home_and_the_strip() {
+    let view = Facts {
+        build_result: Some("A mod couldn't be built.".into()),
+        native_error: Some(LONG.into()),
+        pending_mods: true,
+        ..idle()
+    }
+    .view();
+    assert_eq!(view.main, Main::BuildAndPlay);
+    assert!(view.enabled);
+    assert_eq!(view.act, Some(Act::BuildResult));
+    assert_eq!(
+        view.strip(),
+        Some((
+            "A mod couldn't be built.".into(),
+            StripAct::Act(Act::BuildResult)
+        ))
+    );
+}
+
+#[test]
 fn signed_out_play_is_disabled_and_only_its_tooltip_says_why() {
     let out = Facts {
         signed_in: false,

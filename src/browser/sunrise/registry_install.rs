@@ -646,6 +646,7 @@ fn registry_edit<'a>(
             }
         }
         let defer = matches!(action, Action::Install(_))
+            && disabled.is_empty()
             && entries.keys().all(|id| !before.contains_key(id));
         let mut result = InstalledBatch::default();
         let proof = if defer {
@@ -941,6 +942,8 @@ fn prove_edit(
 
 fn build_progress(step: native_mods::Step, progress: &dyn Fn(InstallProgress)) {
     progress(match step {
+        // Registry actions already opened their progress before asking for build proof.
+        native_mods::Step::Starting => return,
         native_mods::Step::Rust(fraction) => InstallProgress::Rust(fraction),
         native_mods::Step::Tools { done, total, .. } => InstallProgress::Tools { done, total },
         native_mods::Step::Install | native_mods::Step::Done { .. } => {

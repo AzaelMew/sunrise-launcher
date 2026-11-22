@@ -135,14 +135,13 @@ impl Launcher {
                     self.native_cancellation = None;
                     self.native_step = None;
                     self.native_progress = None;
+                    let cancelled = matches!(result.as_ref(),
+                        Err(StartError::Native(native_mods::Failed::Other(detail)) | StartError::Other(detail))
+                            if detail == native_mods::CANCELLED);
                     if let (Some(run), Err(error)) = (&mut self.ui.mods.build, result.as_ref()) {
                         if run.for_play && run.running() {
                             match error {
-                                StartError::Native(native_mods::Failed::Other(detail))
-                                    if detail == native_mods::CANCELLED =>
-                                {
-                                    run.cancelled()
-                                }
+                                _ if cancelled => run.cancelled(),
                                 StartError::Native(native_mods::Failed::Mods {
                                     left,
                                     error,
@@ -170,6 +169,12 @@ impl Launcher {
                                 }
                             }
                         }
+                    }
+                    if !self.ui.mods.build.as_ref().is_some_and(|run| {
+                        run.for_play
+                            && matches!(run.end, Some(crate::mods::build_run::End::Stopped(_)))
+                    }) {
+                        self.play_retry = None;
                     }
                     self.starting_client = None;
                     self.play_step = None;
@@ -211,6 +216,7 @@ impl Launcher {
                             }
                             self.client_error = Some(refused.in_window());
                         }
+                        Err(_) if cancelled => (),
                         Err(StartError::Native(native_mods::Failed::NoConsent)) => {
                             self.request_native_build_consent();
                         }

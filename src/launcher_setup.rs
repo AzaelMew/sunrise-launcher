@@ -157,6 +157,7 @@ impl Launcher {
             client: None,
             client_error: None,
             play_admission: None,
+            play_retry: None,
             play_install_recovery: None,
             pinning_build: false,
             play_registry_notices: Vec::new(),

@@ -93,7 +93,7 @@ impl Launcher {
                         ),
                 )
                 .children(
-                    run.for_play
+                    (run.for_play && !run.stop_requested)
                         .then(|| muted(tr("The game starts by itself when this is done."))),
                 )
                 .children(run.first_build.map(|bytes| {
@@ -227,7 +227,12 @@ impl Launcher {
                 },
             ))
         });
-        let retry = stopped && run.for_play && self.build_here().is_some();
+        let retry = stopped
+            && run.for_play
+            && self.play_retry.as_ref().is_some_and(|request| {
+                self.selected_instance()
+                    .is_some_and(|instance| request.intent.matches_profile(instance))
+            });
         let foot = if running {
             div()
                 .flex()
@@ -262,7 +267,7 @@ impl Launcher {
                     button("play-build-retry", tr("Try again")).on_click(cx.listener(
                         |this, _, _, cx| {
                             this.close_sheet();
-                            this.press_play();
+                            this.retry_managed_play();
                             cx.notify();
                         },
                     ))

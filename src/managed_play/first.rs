@@ -637,6 +637,13 @@ impl FirstAttempt<'_> {
         )
     }
 
+    /// Allow edits after an observed failure, without altering interrupted publications.
+    pub(super) fn abandon(self) -> Result<(), String> {
+        let _manifest = game_lock(&self.home)?;
+        let _references = ReferencePublication::begin(&self.home)?;
+        self.stage.abandon_bootstrap()
+    }
+
     /// No failed or partially compiled output enters a generation. Keep the worker's
     /// original native permission revision through the last check and publication.
     pub fn commit(
@@ -644,8 +651,16 @@ impl FirstAttempt<'_> {
         image: &str,
         cancellation: &native_mods::Cancellation,
     ) -> Result<Active, String> {
-        if native_mods::is_native(image) {
-            cancellation.admit_native_work().map_err(String::from)?;
+        let admitted = if native_mods::is_native(image) {
+            cancellation.admit_native_work().map_err(String::from)
+        } else {
+            cancellation.check()
+        };
+        if let Err(error) = admitted {
+            if error == native_mods::CANCELLED {
+                self.abandon()?;
+            }
+            return Err(error);
         }
         // The pending binding already reserves the base. Do not hold the cache-wide
         // publication fence while waiting on a preparer child for this one version.
@@ -705,13 +720,16 @@ fn publish_generation(
         ));
     }
     let pointer = serde_json::to_vec(&active).map_err(|e| e.to_string())?;
-    stage.seal(pointer, &files)?.publish(|| {
-        active.verify_artifacts()?;
-        if inputs(home, None)? != epoch {
-            return Err(unsettled());
-        }
-        cancellation.publication_guard()
-    })?;
+    stage.seal(pointer, &files)?.publish_or_abandon(
+        || {
+            active.verify_artifacts()?;
+            if inputs(home, None)? != epoch {
+                return Err(unsettled());
+            }
+            cancellation.publication_guard()
+        },
+        |reason| reason == native_mods::CANCELLED,
+    )?;
     Ok(active)
 }
 
