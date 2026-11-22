@@ -410,6 +410,36 @@ fn allow_all(rule: &Value, grant: bool) -> bool {
     }
 }
 
+/// A rule that lets shared friends reach every port: its sources take in everyone (`*`) or shared
+/// friends (`autogroup:shared`), and its destination is every port of every node. This exposes the
+/// computer even when the Minecraft port is unknown.
+pub fn shares_entire_computer(policy: &Value) -> bool {
+    let reaches_shared = |src: &Value| {
+        src.as_array()
+            .is_some_and(|a| a.iter().any(|s| s == "*" || s == SHARED))
+    };
+    let every_port = |rule: &Value, grant: bool| {
+        if grant {
+            is_star(&rule["dst"]) && is_star(&rule["ip"])
+        } else {
+            rule["action"] == "accept"
+                && [&rule["dst"], &rule["ports"]]
+                    .iter()
+                    .any(|d| d.as_array().is_some_and(|a| a.iter().any(|d| d == "*:*")))
+        }
+    };
+    [("acls", false), ("grants", true)]
+        .into_iter()
+        .any(|(key, grant)| {
+            policy[key].as_array().is_some_and(|rules| {
+                rules.iter().any(|rule| {
+                    (reaches_shared(&rule["src"]) || (!grant && reaches_shared(&rule["users"])))
+                        && every_port(rule, grant)
+                })
+            })
+        })
+}
+
 fn members_all(rule: &Value, grant: bool) -> bool {
     if grant {
         is_members(&rule["src"]) && is_star(&rule["dst"]) && is_star(&rule["ip"])

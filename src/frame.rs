@@ -411,6 +411,7 @@ impl Launcher {
 
     pub(super) fn navigate(&mut self, page: Page) {
         let before = self.ui.page;
+        self.multiplayer.target = None;
         match page {
             Page::Discover => self.open_mods(),
             Page::Packs => self.open_packs(),
@@ -425,6 +426,9 @@ impl Launcher {
             _ => self.ui.page = page,
         }
         if self.ui.page != before {
+            if before == Page::Hosting {
+                self.servers.reset_public_lookup();
+            }
             self.storage_builds.confirm = None;
             self.refresh_open_storage_builds();
         }
@@ -559,6 +563,9 @@ impl Launcher {
         }
         crate::selectable::begin();
         crate::tokens::set_roundness(self.corner_roundness());
+        // The plates drawn with `glass::backdrop` (the title bar, dialogs' backdrops) take the
+        // theme's own plate colour, not the Outline look's default.
+        crate::glass::set_panel(self.theme.look.plate);
         self.modal_before(window, cx);
         self.servers.note_focus(window, cx);
         self.friend_focused = self.friend_focus.is_focused(window);
@@ -696,7 +703,7 @@ impl Launcher {
                 cx.stop_propagation();
                 cx.notify();
             }))
-            .children(titlebar::render(&self.theme, window))
+            .children(titlebar::render(&self.theme, window, cx))
             .children(self.settings_save_notice(cx))
             .child(
                 div()
