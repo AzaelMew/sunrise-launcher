@@ -616,42 +616,6 @@ impl Github {
         found.ok_or(Failure::NoManifest)
     }
 
-    fn branch_metadata(&self, source: &Source, allow_fetch: bool) -> Option<SourceMetadata> {
-        let Tracker::Branch(branch) = source.tracker() else {
-            return None;
-        };
-        let repo = source.repo();
-        let path = source.manifest();
-        let key = digest(format!("{repo}\0{branch}\0{path}").as_bytes());
-        let target = self.cache.join(format!("manifest-{key}.toml"));
-        let cached = cached_bytes(&target, MAX_MANIFEST).and_then(|(bytes, fresh)| {
-            source_manifest(source, &bytes).map(|manifest| (manifest, fresh))
-        });
-        let manifest = match cached {
-            Some((manifest, true)) => manifest,
-            saved if !allow_fetch => saved?.0,
-            saved => match self.raw(
-                &mut State::default(),
-                repo,
-                &format!("refs/heads/{branch}"),
-                path,
-                MAX_MANIFEST,
-            ) {
-                Ok(Some(bytes)) => {
-                    let manifest = source_manifest(source, &bytes)?;
-                    let _ = self.save(&target, &bytes);
-                    manifest
-                }
-                Ok(None) => return None,
-                Err(_) => saved?.0,
-            },
-        };
-        Some(SourceMetadata {
-            authors: manifest.authors,
-            build_pin: manifest.native.map(|native| native.sunrise),
-        })
-    }
-
     fn readme(
         &self,
         state: &mut State,
@@ -660,42 +624,39 @@ impl Github {
         refresh: bool,
     ) -> Result<Option<(String, Vec<u8>)>, Failure> {
         #[derive(Deserialize)]
-        struct Metadata {
+        struct Document {
             path: String,
             size: u64,
             #[serde(rename = "type")]
             kind: String,
+            encoding: String,
+            content: String,
         }
+        use base64::{engine::general_purpose::STANDARD, Engine as _};
         let key = (self.cache.clone(), format!("{}/{sha}", source.repo()));
         if !refresh && state.missing_readmes.contains(&key) {
             return Ok(None);
         }
-        let found: Option<Metadata> = self.api(state, source.repo(), &["readme"], Some(sha))?;
-        if let Some(found) = found.filter(|found| {
+        // GitHub's pinned README response already contains the document. Its API body is
+        // bounded, and a 128 KiB README fits inside that bound even with base64 line breaks.
+        let found: Option<Document> = self.api(state, source.repo(), &["readme"], Some(sha))?;
+        if let Some(mut found) = found.filter(|found| {
             found.kind == "file"
+                && found.encoding == "base64"
                 && safe_path(&found.path)
                 && readme::markdown_file(&found.path)
                 && found.size <= readme::MAX_README
         }) {
-            if let Some(bytes) =
-                self.raw(state, source.repo(), sha, &found.path, readme::MAX_README)?
-            {
-                return Ok(Some((found.path, bytes)));
+            found.content.retain(|c| !c.is_ascii_whitespace());
+            if let Ok(bytes) = STANDARD.decode(&found.content) {
+                if bytes.len() as u64 == found.size {
+                    return Ok(Some((found.path, bytes)));
+                }
             }
         }
         state.missing_readmes.insert(key);
         Ok(None)
     }
-}
-
-/// Display metadata, separate from the pinned inspection that authorizes a build.
-pub struct SourceMetadata {
-    pub authors: Vec<String>,
-    pub build_pin: Option<String>,
-}
-
-pub fn branch_metadata(source: &Source, allow_fetch: bool) -> Option<SourceMetadata> {
-    Github::current().branch_metadata(source, allow_fetch)
 }
 
 fn source_manifest(source: &Source, bytes: &[u8]) -> Option<Manifest> {

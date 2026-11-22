@@ -777,20 +777,9 @@ impl Launcher {
                             .into_any_element()
                     }
                 });
-            let remove = row.selectable_archive().then(|| {
-                let b = button("alt-project-remove", tr("Remove")).text_color(c(palette().danger));
-                if busy {
-                    dim(b)
-                } else {
-                    let names = super::installed_view::remove_names(&rows, &labels);
-                    let id = row.id.clone();
-                    let home = self.mods_home();
-                    b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        this.ask_remove(&home, vec![id.clone()], names.clone());
-                        cx.notify();
-                    }))
-                }
-            });
+            let remove = row
+                .selectable_archive()
+                .then(|| self.remove_mod_button(&row.id, busy, cx));
             div()
                 .flex()
                 .flex_col()

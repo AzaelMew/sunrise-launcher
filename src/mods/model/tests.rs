@@ -1250,7 +1250,7 @@ fn installed_card(
     cards: &[Card],
     have: &std::collections::HashSet<String>,
 ) -> bool {
-    collection::installed(c, cards, have)
+    collection::installed(c, cards, |id| have.contains(id))
 }
 
 /// The farm where `cow`, a member, is itself a library: `owl` needs it, and it needs `lib`.
