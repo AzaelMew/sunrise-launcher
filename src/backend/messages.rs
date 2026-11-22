@@ -43,9 +43,9 @@ pub enum Msg {
     LookSaved(String, u64, Box<crate::account::look::Outcome>),
     /// Skin files added to account `.0`'s saved skins: each one, or why not.
     SkinsAdded(String, Vec<Result<crate::skin_library::Saved, String>>),
-    /// A saved or default skin's file for the Skins tab, by the page's key for it (none: it
-    /// couldn't be read).
-    SkinFile(String, Option<Vec<u8>>),
+    /// A saved or default skin's file for the Skins tab, by the page's key for it and the
+    /// number of the read that asked for it (none: it couldn't be read).
+    SkinFile(String, u64, Option<Vec<u8>>),
     /// The skin account `.0` wears, at URL `.1`, kept among its saved skins, or why not.
     SkinKept(String, String, Result<crate::skin_library::Saved, String>),
     /// The owner gate's answer for the game about to start: the selected account's session

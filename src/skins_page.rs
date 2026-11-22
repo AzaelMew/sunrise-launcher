@@ -189,7 +189,8 @@ enum Picture {
 /// A picture read from disk (a saved or default skin).
 #[derive(Clone, Debug)]
 enum File {
-    Pending,
+    /// Being read by the request numbered so: only its answer counts.
+    Pending(u64),
     Ready(Rc<Vec<u8>>),
     /// None to be had: read again when the page is opened again.
     Missing,
@@ -258,7 +259,7 @@ pub(crate) struct Skins {
     /// Pictures read from disk (default and saved skins), by key.
     files: RefCell<HashMap<String, File>>,
     /// Files asked for while the page was drawn, by key: read once it has been.
-    wanted: RefCell<Vec<(String, PathBuf)>>,
+    wanted: RefCell<Vec<(String, PathBuf, u64)>>,
     /// Pictures decoded, by key.
     textures: RefCell<HashMap<String, Option<Rc<Texture>>>>,
     /// Tile pictures as the window draws them, by key and scale.
@@ -369,11 +370,11 @@ impl SkinsPages {
     }
 
     /// A file was read: every page that asked for it gets it.
-    fn file_read(&mut self, key: &str, png: Option<Vec<u8>>) {
+    fn file_read(&mut self, key: &str, id: u64, png: Option<Vec<u8>>) {
         let png = png.map(Rc::new);
         for page in self.pages_mut() {
             let files = page.files.get_mut();
-            if matches!(files.get(key), Some(File::Pending)) {
+            if matches!(files.get(key), Some(File::Pending(asked)) if *asked == id) {
                 files.insert(
                     key.to_owned(),
                     png.clone().map_or(File::Missing, File::Ready),
@@ -565,7 +566,7 @@ impl Skins {
         }
         if let Kept::Kept { url, saved } = &outcome.kept {
             self.kept.insert(url.clone(), saved.id.clone());
-            self.forget_file(&format!("saved:{}", saved.id));
+            self.forget_file(&saved_key(self.uuid.as_deref(), &saved.id));
         }
         let accepted = |change: &Option<Change>| change.as_ref().is_some_and(Change::accepted);
         if matches!(outcome.skin, Some(Change::Unconfirmed(_))) {
@@ -635,7 +636,7 @@ impl Skins {
     fn file(&self, key: &str, path: impl FnOnce() -> Option<PathBuf>) -> Png {
         if let Some(file) = self.files.borrow().get(key) {
             return match file {
-                File::Pending => Png::Pending,
+                File::Pending(_) => Png::Pending,
                 File::Ready(png) => Png::Ready(png.clone()),
                 File::Missing => Png::Missing,
             };
@@ -646,10 +647,11 @@ impl Skins {
                 .insert(key.to_owned(), File::Missing);
             return Png::Missing;
         };
+        let id = request_id();
         self.files
             .borrow_mut()
-            .insert(key.to_owned(), File::Pending);
-        self.wanted.borrow_mut().push((key.to_owned(), path));
+            .insert(key.to_owned(), File::Pending(id));
+        self.wanted.borrow_mut().push((key.to_owned(), path, id));
         Png::Pending
     }
 
@@ -689,7 +691,7 @@ impl Skins {
             match result {
                 Ok(saved) => {
                     // Its picture may have been written anew.
-                    self.forget_file(&format!("saved:{}", saved.id));
+                    self.forget_file(&saved_key(self.uuid.as_deref(), &saved.id));
                     last = Some(saved);
                 }
                 Err(why) => self.added.push(why),
@@ -719,7 +721,7 @@ impl Skins {
     /// forgotten.
     fn removed(&mut self, id: &str) {
         self.kept.retain(|_, kept| kept != id);
-        self.forget_file(&format!("saved:{id}"));
+        self.forget_file(&saved_key(self.uuid.as_deref(), id));
     }
 }
 
@@ -767,6 +769,12 @@ fn said(outcome: &look::Outcome) -> Vec<Result<String, String>> {
         )));
     }
     lines
+}
+
+/// The key of the saved skin `id` of account `uuid` among the files a page reads: each
+/// account's own, as each has its own folder.
+fn saved_key(uuid: Option<&str>, id: &str) -> String {
+    format!("saved:{}:{id}", uuid.unwrap_or_default())
 }
 
 /// A default skin's file in the prepared game files.
@@ -994,8 +1002,8 @@ impl Launcher {
     }
 
     /// A skin file was read (`Msg::SkinFile`).
-    pub(crate) fn skins_file(&mut self, key: String, png: Option<Vec<u8>>) {
-        self.skins.file_read(&key, png);
+    pub(crate) fn skins_file(&mut self, key: String, id: u64, png: Option<Vec<u8>>) {
+        self.skins.file_read(&key, id, png);
     }
 
     /// The skin the shown page's account wears now, as its profile says (else accounts.json).
@@ -1057,7 +1065,7 @@ impl Launcher {
         page.keeping.remove(&url);
         match kept {
             Ok(saved) => {
-                page.forget_file(&format!("saved:{}", saved.id));
+                page.forget_file(&saved_key(Some(&uuid), &saved.id));
                 page.kept.insert(url, saved.id);
                 let worn = page.worn(recorded.as_ref(), default_slim);
                 page.settle(&worn);
@@ -1100,7 +1108,7 @@ impl Launcher {
                 (key, png)
             }
             SkinPick::Saved(id) => {
-                let key = format!("saved:{id}");
+                let key = saved_key(Some(uuid), id);
                 let png = self.skins.file(&key, || {
                     Some(skin_library::folder(uuid).ok()?.join(format!("{id}.png")))
                 });
@@ -1124,11 +1132,11 @@ impl Launcher {
     /// now is asked for again when the page is next drawn (a file read ending redraws it).
     fn skins_read_files(&mut self) {
         let wanted = std::mem::take(self.skins.wanted.get_mut());
-        for (key, path) in wanted {
+        for (key, path, id) in wanted {
             let (tx, name) = (self.tx.clone(), key.clone());
             let job = Box::new(move || {
                 let png = skin_library::read_skin_file(&path).ok();
-                let _ = tx.send(Msg::SkinFile(name, png));
+                let _ = tx.send(Msg::SkinFile(name, id, png));
             });
             match self.skins.disk.push("skins-files", job) {
                 Ok(()) => {}
@@ -2660,22 +2668,46 @@ mod tests {
     }
 
     #[test]
-    fn a_file_is_asked_for_once_and_reaches_every_page_waiting_for_it() {
+    fn a_file_is_read_once_and_only_the_latest_read_of_it_counts() {
         let mut pages = SkinsPages::default();
         pages.show("a", |_| true);
         let path = || Some(PathBuf::from("x.png"));
+        let asked = |pages: &SkinsPages, key: &str| {
+            pages
+                .wanted
+                .borrow()
+                .iter()
+                .rev()
+                .find(|(k, _, _)| k == key)
+                .map(|(_, _, id)| *id)
+                .unwrap()
+        };
         assert!(matches!(pages.file("saved:x", path), Png::Pending));
         assert!(matches!(pages.file("saved:x", path), Png::Pending));
         assert_eq!(pages.wanted.borrow().len(), 1, "read once");
         assert!(matches!(pages.file("saved:none", || None), Png::Missing));
-        pages.file_read("saved:x", Some(vec![7]));
+        let x = asked(&pages, "saved:x");
+        pages.file_read("saved:x", x, Some(vec![7]));
         assert!(matches!(pages.file("saved:x", path), Png::Ready(png) if *png == [7]));
         // One that couldn't be read is missing, and read again once forgotten.
         assert!(matches!(pages.file("saved:y", path), Png::Pending));
-        pages.file_read("saved:y", None);
+        let first = asked(&pages, "saved:y");
+        pages.file_read("saved:y", first, None);
         assert!(matches!(pages.file("saved:y", path), Png::Missing));
+        // Forgotten while a read is under way (its picture written anew): the read from before
+        // is no answer to the one after.
         pages.forget_file("saved:y");
         assert!(matches!(pages.file("saved:y", path), Png::Pending));
+        let stale = asked(&pages, "saved:y");
+        pages.forget_file("saved:y");
+        assert!(matches!(pages.file("saved:y", path), Png::Pending));
+        let latest = asked(&pages, "saved:y");
+        pages.file_read("saved:y", stale, Some(vec![1]));
+        assert!(matches!(pages.file("saved:y", path), Png::Pending));
+        pages.file_read("saved:y", latest, Some(vec![2]));
+        assert!(matches!(pages.file("saved:y", path), Png::Ready(png) if *png == [2]));
+        // Each account's saved skins are its own files.
+        assert_ne!(saved_key(Some("a"), "x"), saved_key(Some("b"), "x"));
     }
 
     #[test]
