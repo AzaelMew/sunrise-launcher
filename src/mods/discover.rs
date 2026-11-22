@@ -21,7 +21,7 @@ impl Launcher {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let page = self.discover_shell(false, window, focus, cx);
-        let (cards, categories): (Vec<Card>, Vec<String>) = match &self.ui.mods.catalog {
+        let (cards, categories): (Rc<[Card]>, Rc<[String]>) = match &self.ui.mods.catalog {
             Catalog::Ready(cards, cats) => (cards.clone(), cats.clone()),
             Catalog::Failed(e) => {
                 let e = e.clone();
