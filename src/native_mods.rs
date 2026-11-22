@@ -15,10 +15,10 @@ use sunrise_launcher_smod::dependencies;
 mod build_log;
 mod bundle;
 use build_log::log_warning;
-pub(crate) use build_log::root;
 pub use build_log::{
     append_log, clear_log, compiling as compiling_mod, failure, log_path, Refusal, CANCELLED,
 };
+pub(crate) use build_log::{root, snapshot as log_snapshot};
 use bundle::{bundle_files, is_revision};
 pub use bundle::{
     bundle_in, bundles, copy_bundle, digest, scan_bundles, source_digest, Bundle, Target,

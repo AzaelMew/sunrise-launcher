@@ -1,6 +1,6 @@
 //! Read-only inspection and explicit update offers. Only the shared installer can publish.
 use super::*;
-use crate::mods_page::install::SourceTarget;
+use crate::mods_page::install::{SourcePicks, SourceTarget};
 use std::collections::BTreeMap;
 use sunrise_launcher::browser::sunrise::{PreparedSource, SourceError, SourceRequest};
 use sunrise_launcher::github_mods::{Origin, SourceTrack};
@@ -13,7 +13,6 @@ pub(in crate::mods) enum Event {
     Icon(sources::SourceIcon, Option<PathBuf>),
     Metadata((Source, bool), Option<sources::SourceMetadata>),
     Updates(Box<CheckedUpdates>),
-    Collection(Box<super::collection::PreparedCollection>),
 }
 
 pub(in crate::mods) struct Open {
@@ -26,7 +25,6 @@ pub(in crate::mods) struct Open {
 
 pub(in crate::mods) struct Inspection {
     pub(super) data: sources::Details,
-    pub(super) candidate: Result<(SourceTarget, PreparedSource), SourceError>,
 }
 
 pub(in crate::mods) struct CheckedUpdates {
@@ -93,7 +91,6 @@ impl Launcher {
                 state.work.checking = false;
                 state.work.updates = Some(*checked);
             }
-            Event::Collection(done) => self.collection_prepared(*done),
         }
     }
 
@@ -126,7 +123,6 @@ impl Launcher {
 
     pub(super) fn check_nightly(&mut self, source: Source, refresh: bool, build_requested: bool) {
         let scope = self.mods_page_scope();
-        let target = self.source_target();
         self.ui.page = Page::Project;
         self.ui.mods.open = None;
         let state = &mut self.ui.mods.nightly;
@@ -146,30 +142,9 @@ impl Launcher {
         let tx = self.ui.mods.tx.clone();
         std::thread::spawn(move || {
             let data = sources::details(&source, refresh);
-            let candidate = (|| {
-                if let Some(error) = &data.error {
-                    return Err(SourceError::Github(error.clone()));
-                }
-                let pin = data
-                    .commit
-                    .clone()
-                    .ok_or(SourceError::Github(sources::Failure::NoManifest))?;
-                let target = target.map_err(SourceError::Unproved)?;
-                let candidate = sunrise::prepare_source(
-                    target.instance(),
-                    target.identity(),
-                    target.base(),
-                    SourceRequest::Add(pin),
-                    &Cancellation::default(),
-                )?;
-                Ok((target, candidate))
-            })();
-            if let Err(error) = &candidate {
-                eprintln!("Nightly source preflight ({}): {error}", source.id());
-            }
             let _ = tx.send(super::super::Event::Nightly(Event::Detail(
                 request,
-                Box::new(Inspection { data, candidate }),
+                Box::new(Inspection { data }),
             )));
         });
     }
@@ -230,14 +205,23 @@ impl Launcher {
     }
 
     pub(super) fn nightly_busy(&self) -> bool {
-        self.mutating()
-            || self.mods_locked().is_some()
-            || self
-                .ui
-                .mods
-                .snapshot
-                .as_ref()
-                .is_none_or(|snap| !snap.ready())
+        self.mods_locked_for(true).is_some()
+            || (!self.mutating()
+                && self
+                    .ui
+                    .mods
+                    .snapshot
+                    .as_ref()
+                    .is_none_or(|snap| !snap.ready()))
+    }
+
+    pub(crate) fn source_picks_listed(&self, picks: &[Source]) -> bool {
+        self.ui
+            .mods
+            .nightly
+            .catalogue
+            .as_ref()
+            .is_some_and(|list| picks.iter().all(|source| list.sources.contains(source)))
     }
 
     pub(super) fn nightly_installed(&self, pin: &sources::SourceCommit) -> bool {
@@ -261,48 +245,24 @@ impl Launcher {
     }
 
     pub(super) fn build_nightly(&mut self) {
-        if !self.nightly_catalogue_current() || !self.guard() || self.nightly_busy() {
+        if !self.nightly_catalogue_current() || self.nightly_busy() {
             return;
         }
         let scope = self.mods_page_scope();
-        let already_installed = self
+        let Some(pin) = self
             .ui
             .mods
             .nightly
             .open
             .as_ref()
+            .filter(|open| open.scope == scope)
             .and_then(|open| open.inspection.as_ref()?.data.commit.as_ref())
-            .is_some_and(|pin| self.nightly_installed(pin));
-        if already_installed {
-            return;
-        }
-        let state = &mut self.ui.mods.nightly;
-        let Some(open) = state.open.as_mut().filter(|open| open.scope == scope) else {
+            .filter(|pin| !self.nightly_installed(pin))
+            .cloned()
+        else {
             return;
         };
-        if !state
-            .catalogue
-            .as_ref()
-            .is_some_and(|list| list.sources.contains(&open.source))
-        {
-            self.ui.mods.notice = Some(Err(tr(
-                "This source listing changed. Open it again from Discover.",
-            )
-            .into()));
-            return;
-        }
-        let Some(inspection) = open.inspection.as_mut() else {
-            return;
-        };
-        if inspection.candidate.is_err() {
-            return;
-        }
-        let candidate = std::mem::replace(&mut inspection.candidate, Err(SourceError::Cancelled));
-        if let Ok((target, candidate)) = candidate {
-            if let Err(error) = self.queue_sources(target, vec![candidate]) {
-                self.ui.mods.notice = Some(Err(error));
-            }
-        }
+        self.queue_source_build(SourcePicks::One(Box::new(pin)));
     }
 
     pub(super) fn nightly_catalogue_current(&self) -> bool {

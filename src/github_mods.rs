@@ -20,7 +20,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 mod source;
-pub(crate) use source::{forward, pack_pasted, pack_pin};
+pub(crate) use source::{forward, pack_pasted, pack_pin, pack_pins};
 pub use source::{SourceOrigin, SourceTrack};
 
 /// What a player is told before a mod from GitHub is installed.

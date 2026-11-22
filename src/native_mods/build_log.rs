@@ -16,7 +16,7 @@ pub fn log_path() -> PathBuf {
 
 /// Snapshot the exact attempt while its lease excludes another writer. Keep the final
 /// 256 KiB if a very large build log would otherwise travel through the UI.
-pub(super) fn snapshot() -> Option<Arc<str>> {
+pub(crate) fn snapshot() -> Option<Arc<str>> {
     const LIMIT: u64 = 256 << 10;
     let mut file = fs::File::open(log_path()).ok()?;
     let skip = file.metadata().ok()?.len().saturating_sub(LIMIT);

@@ -98,6 +98,7 @@ pub(super) struct SourceBatch<'a> {
     pub(super) active: Option<&'a managed_play::Active>,
     pub(super) cancellation: &'a native_mods::Cancellation,
     pub(super) authorize: &'a dyn Fn() -> Result<bool, String>,
+    pub(super) step: Option<&'a source::SourceStep<'a>>,
 }
 
 pub(super) fn edit_github(
@@ -249,7 +250,27 @@ pub(super) fn edit_github(
             progress: &progress,
             ..hooks
         };
-        prove_edit(&edit, home, instance, cancellation, &proof_hooks).map_err(|e| match &e {
+        let proof = if let Some(observe) = source.and_then(|source| source.step) {
+            edit.prove(
+                home,
+                instance.native_profile,
+                cancellation,
+                |step| {
+                    // Install is emitted with the native cache lease held, after the fenced
+                    // compiler has exited and its output has been imported.
+                    let log = match step {
+                        native_mods::Step::Install => native_mods::log_snapshot(),
+                        _ => None,
+                    };
+                    observe(&step, log);
+                    build_progress(step, proof_hooks.progress);
+                },
+                proof_hooks.registry_crates,
+            )
+        } else {
+            prove_edit(&edit, home, instance, cancellation, &proof_hooks)
+        };
+        proof.map_err(|e| match &e {
             native_mods::Failed::Mods { left, .. }
                 if left.iter().any(|item| {
                     matches!(item.why, native_mods::Why::Unfit(_))
@@ -264,10 +285,12 @@ pub(super) fn edit_github(
                 compiling: true,
                 error,
                 log,
+                left,
                 ..
             } if source.is_some() => InstallError::Source(SourceError::Build {
                 detail: error.clone(),
                 log: log.clone(),
+                failed: left.iter().map(|entry| entry.id.clone()).collect(),
             }),
             native_mods::Failed::Tools(_) if source.is_some() => {
                 InstallError::Source(SourceError::Tools(e.into()))

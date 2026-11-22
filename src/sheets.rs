@@ -44,6 +44,7 @@ pub(crate) enum Sheet {
     RegistryPlay,
     GithubAdd,
     NightlySourceLog,
+    SourceBuild,
 }
 
 /// The way out of a problem the play bar raised, as the Notice sheet's one action.
@@ -549,7 +550,7 @@ impl Launcher {
                     None
                 }
             },
-            Some(Sheet::ModBuild) => {
+            Some(Sheet::ModBuild | Sheet::SourceBuild) => {
                 let sheet = self.build_modal(cx);
                 if sheet.is_none() {
                     self.ui.sheet = None;

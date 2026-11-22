@@ -57,6 +57,10 @@ fn dispatch_enable(
 impl Launcher {
     /// Why nothing may change now: the game, a launch step or a build is under way.
     pub(crate) fn mods_locked(&self) -> Option<&'static str> {
+        self.mods_locked_for(false)
+    }
+
+    pub(crate) fn mods_locked_for(&self, queue_behind_native_build: bool) -> Option<&'static str> {
         if self.client.is_some()
             || self.starting_client.is_some()
             || self.starting_play.is_some()
@@ -74,7 +78,7 @@ impl Launcher {
             Some(tr(
                 "Sunrise is getting ready to play. Wait for it to finish before changing mods.",
             ))
-        } else if self.native_step.is_some() {
+        } else if self.native_step.is_some() && !queue_behind_native_build {
             Some(tr(
                 "A native build is running. Wait for it to finish before changing mods.",
             ))

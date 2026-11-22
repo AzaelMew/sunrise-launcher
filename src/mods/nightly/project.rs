@@ -46,7 +46,10 @@ impl Launcher {
         let details = inspection.map(|i| &i.data);
         let readme = details.and_then(|d| d.readme.as_ref());
         let commit = details.and_then(|d| d.commit.as_ref());
-        let failure = inspection.and_then(|i| i.candidate.as_ref().err());
+        let failure = details
+            .and_then(|detail| detail.error.clone())
+            .map(SourceError::Github);
+        let job = self.source_build_for(source.id());
         let failed_job = self
             .source_outcome(source.id())
             .and_then(|outcome| outcome.as_ref().err());
@@ -62,7 +65,13 @@ impl Launcher {
             }))
         };
         let worked = commit.is_some_and(|pin| self.nightly_installed(pin));
-        let build_label = if let Some(activity) = current.as_ref() {
+        let queued = job.is_some_and(|id| {
+            let build = &self.source_builds()[id];
+            build.run.running() && !build.started
+        });
+        let build_label = if queued {
+            tr("Queued").into()
+        } else if let Some(activity) = current.as_ref() {
             if activity.progress == sunrise::InstallProgress::Publishing {
                 tr("Finishing…").into()
             } else {
@@ -82,9 +91,14 @@ impl Launcher {
             .catalogue
             .as_ref()
             .is_some_and(|list| list.sources.contains(source));
-        let can_build = !offline && listed && inspection.is_some_and(|i| i.candidate.is_ok());
+        let can_build = !offline && listed && commit.is_some();
         let busy = self.nightly_busy();
-        let build = if busy || worked {
+        let build = if let Some(id) = job.filter(|id| self.source_builds()[*id].run.running()) {
+            build.on_click(cx.listener(move |this, _, _, cx| {
+                this.open_source_build(id);
+                cx.notify();
+            }))
+        } else if busy || worked {
             dim(build)
         } else if can_build {
             build.on_click(cx.listener(|this, _, _, cx| {
@@ -100,7 +114,7 @@ impl Launcher {
         } else {
             dim(build)
         };
-        let failure_panel = failed_job.or(failure).and_then(|error| {
+        let failure_panel = failed_job.or(failure.as_ref()).and_then(|error| {
             let dependency = match error {
                 SourceError::Dependency { required: Some(id), .. } => state.catalogue.as_ref()
                     .and_then(|list| list.sources.iter().find(|source| source.id() == id)).cloned(),
@@ -118,7 +132,14 @@ impl Launcher {
                         this.inspect_nightly(source.clone(), false);
                         cx.notify();
                     }))))
-                .children(log.map(|log| self.nightly_log_button(source.name(), log, cx)))
+                .children(if let Some(id) = job {
+                    Some(button("nightly-build-result", tr("Show the build")).on_click(cx.listener(move |this, _, _, cx| {
+                        this.open_source_build(id);
+                        cx.notify();
+                    })))
+                } else {
+                    log.map(|log| self.nightly_log_button(source.name(), log, cx))
+                })
                 .children(matches!(error, SourceError::Github(_) | SourceError::Changed(_))
                     .then(|| if matches!(error, SourceError::Github(sources::Failure::RateLimited { retry_at: Some(at) }) if *at > SystemTime::now()) {
                         dim(button("nightly-detail-retry", tr("Try again")))

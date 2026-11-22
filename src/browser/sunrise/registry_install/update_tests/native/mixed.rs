@@ -120,6 +120,7 @@ fn exercise(test: &str, case: Case) {
                 cancellation: &Cancellation::default(),
                 authorize: &|_| Ok(true),
                 approve_worlds: &no_world_question,
+                step: None,
             },
         )
         .unwrap();
