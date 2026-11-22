@@ -416,7 +416,10 @@ enum Generation<'a> {
         resources: Resources,
         variant: Option<Box<BoundVariant>>,
     },
-    Advance(&'a Active),
+    Advance {
+        previous: &'a Active,
+        resources: Option<Resources>,
+    },
     Switch {
         previous: &'a Active,
         resources: Resources,
@@ -714,16 +717,19 @@ impl Active {
                 resources,
                 variant,
             } => (profile, 1, resources, Vec::new(), variant),
-            Generation::Advance(old) => {
-                if base != old.base {
+            Generation::Advance {
+                previous,
+                resources,
+            } => {
+                if base != previous.base {
                     return Err(unsettled());
                 }
                 (
-                    old.profile,
-                    old.generation.checked_add(1).ok_or_else(unsettled)?,
-                    old.resources.clone(),
-                    old.receipts.clone(),
-                    old.variant.clone(),
+                    previous.profile,
+                    previous.generation.checked_add(1).ok_or_else(unsettled)?,
+                    resources.unwrap_or_else(|| previous.resources.clone()),
+                    previous.receipts.clone(),
+                    previous.variant.clone(),
                 )
             }
             Generation::Switch {

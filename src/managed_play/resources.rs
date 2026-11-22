@@ -1,7 +1,7 @@
 //! Managed Play reads the exact prepared tree saved with its generation. The ordinary
 //! preparation cache remains available for a later Prepare, without changing an active game.
 use super::{artifact, digest_file, optional_bytes, plain_file, require_dir, unsettled};
-use crate::{backend, preparer, profile_txn::durable};
+use crate::{backend, preparer, process::leases::ProfileHandoff, profile_txn::durable};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use std::{
@@ -35,26 +35,70 @@ impl Resources {
     }
 
     fn current(root: &Path) -> Result<Option<Self>, String> {
-        Ok(optional_bytes(&receipt(root)?)?
-            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-            .filter(|resources: &Self| {
-                backend::check_play_output(root, &resources.path_at(root)).is_ok()
-            }))
+        let Some(resources) = optional_bytes(&receipt(root)?)?
+            .and_then(|bytes| serde_json::from_slice::<Self>(&bytes).ok())
+        else {
+            return Ok(None);
+        };
+        match backend::check_play_output(root, &resources.path_at(root)) {
+            Ok(()) => Ok(Some(resources)),
+            Err(backend::Unprepared::Incomplete | backend::Unprepared::ServerOnly) => Ok(None),
+            Err(issue) => Err(issue.message(unsettled)),
+        }
+    }
+
+    /// Select current resources for first Play or advance an old profile on the same base.
+    /// The version lock and the admitted profile are inherited by any preparer children.
+    pub(super) fn for_play(
+        base: &str,
+        profile: ProfileHandoff<'_>,
+        log: &dyn Fn(String),
+    ) -> Result<Self, String> {
+        let preparation = backend::prepare_lock(base)?;
+        if let Some(resources) = Self::current(&backend::version_dir(base))? {
+            return Ok(resources);
+        }
+        let handoff = preparation.handoff(Some(profile));
+        if !backend::check_prepared(base) {
+            backend::reuse_prepared(&backend::versions_dir(), base);
+            if !backend::check_prepared(base) {
+                let minecraft = backend::Settings::load()
+                    .minecraft_dir
+                    .unwrap_or_else(|| preparer::minecraft_dir(None));
+                let (command, minecraft) = backend::preparer_staged(
+                    base,
+                    &minecraft,
+                    backend::MinecraftFrom::Install,
+                    log,
+                    &handoff,
+                )?;
+                backend::sounds_staged(base, &minecraft, log, &handoff);
+                preparer::run_staged(command, &handoff, log)?;
+            }
+        }
+        Self::seal_prepared(base, &preparation, &handoff)
     }
 
     /// Finish the shared preparation under its existing lock, before a profile needs it.
     pub(crate) fn prepare(
         base: &str,
         preparation: &preparer::Preparation,
-        profile: Option<crate::process::leases::ProfileHandoff<'_>>,
+        profile: Option<ProfileHandoff<'_>>,
+    ) -> Result<Self, String> {
+        Self::seal_prepared(base, preparation, &preparation.handoff(profile))
+    }
+
+    fn seal_prepared(
+        base: &str,
+        preparation: &preparer::Preparation,
+        handoff: &preparer::Handoff<'_>,
     ) -> Result<Self, String> {
         backend::need_base_prepared(base, Some(preparation))?;
-        let handoff = preparation.handoff(profile);
-        backend::complete_assets_staged(base, &handoff);
+        backend::complete_assets_staged(base, handoff);
         let root = backend::version_dir(base);
         Self::seal(&root, &backend::resources(base), |resources| {
             let binary = preparer::binary(&root)?;
-            match preparer::data_file(&binary, &root, resources, Some(&handoff)) {
+            match preparer::data_file(&binary, &root, resources, Some(handoff)) {
                 Ok(Some(true)) => digest_file(&resources.join(preparer::DATA_FILE))
                     .ok()
                     .flatten(),
@@ -77,6 +121,11 @@ impl Resources {
 
     fn path_at(&self, root: &Path) -> PathBuf {
         parent(root).join(key(self.primary)).join("resources")
+    }
+
+    pub(super) fn check_play_output(&self, base: &str) -> Result<(), backend::Unprepared> {
+        let root = backend::version_dir(base);
+        backend::check_play_output(&root, &self.path_at(&root))
     }
 
     pub(super) fn verify(&self, base: &str) -> Result<(), String> {

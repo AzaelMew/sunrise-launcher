@@ -272,6 +272,22 @@ impl Client<'_> {
         let log = |output| progress(Progress::NativeLog(output));
         if let Some(old) = profile.active()? {
             check_build(old.base(), old.variant.as_deref())?;
+            // Prepare without the game-manifest lock. The profile stays admitted and the
+            // saved generation continues to reserve this base until refresh commits.
+            let replacement = match old.resources.check_play_output(old.base()) {
+                Ok(()) => None,
+                Err(backend::Unprepared::Incomplete | backend::Unprepared::ServerOnly) => {
+                    // The preparer is part of the saved image. Verify it before starting it.
+                    old.verify_artifacts()?;
+                    progress(Progress::Prepare);
+                    Some(super::Resources::for_play(
+                        old.base(),
+                        profile.handoff(),
+                        &|line| progress(Progress::Line(line)),
+                    )?)
+                }
+                Err(issue) => return Err(issue.message(unsettled).into()),
+            };
             // Legacy writers still use the game lock, not profile admission. Keep
             // them out until refresh has staged the exact set we checked.
             let _manifest = game_lock(&home)?;
@@ -286,6 +302,7 @@ impl Client<'_> {
                     native_consent,
                     registry.as_deref(),
                     Some(&log),
+                    replacement,
                 )
                 .map_err(|error| native_failure(error, || Some(Build::Active(old))))?
                 .ok_or_else(unsettled)?;

@@ -581,19 +581,149 @@ esac
 }
 
 #[test]
-fn cli_never_plays_a_server_only_preparation() {
+fn cli_advances_a_committed_stale_snapshot_to_current_resources_before_launch() {
     let fixture = Fixture::new();
-    let manifest = fixture
-        .build()
-        .join(".local/sunrise-client/26.3/sunrise-resources.json");
-    let server = r#"{"profile":"server"}"#;
+    fs::write(fixture.home.join("finish"), []).unwrap();
+    let build = fixture.build();
+    let stamp = "sunrise-prepare.json";
+    let local = build.join(".local/sunrise-client/26.3").join(stamp);
+    fs::write(&local, r#"{"output_version":7}"#).unwrap();
+    let play = || {
+        let played = fixture.launcher(&["play"]).output().unwrap();
+        assert_eq!(
+            played.status.code(),
+            Some(7),
+            "{}",
+            String::from_utf8_lossy(&played.stderr)
+        );
+        let args = fixture.game_arguments();
+        assert_resource_args(&fixture, &args);
+        let selected = args
+            .windows(2)
+            .find(|pair| pair[0] == "--resources")
+            .unwrap();
+        (
+            PathBuf::from(&selected[1]),
+            serde_json::from_slice::<Value>(&fixture.pointer()).unwrap(),
+        )
+    };
+    // Without the declaration the fixture can publish the same valid old receipt that a
+    // launcher without stamp enforcement would have written. The executable is unchanged.
+    let (old, old_pointer) = play();
+    assert_eq!(
+        fs::read_to_string(old.join(stamp)).unwrap(),
+        r#"{"output_version":7}"#
+    );
+    let lib = build.join("crates/sunrise-prepare/src/lib.rs");
+    fs::create_dir_all(lib.parent().unwrap()).unwrap();
+    fs::write(lib, "pub const OUTPUT_VERSION: u32 = 8;\n").unwrap();
+    fs::write(&local, r#"{"output_version":8}"#).unwrap();
+
+    let (new, new_pointer) = play();
+    assert_ne!(new, old);
+    assert_eq!(
+        fs::read_to_string(new.join(stamp)).unwrap(),
+        r#"{"output_version":8}"#
+    );
+    assert_eq!(
+        fs::read_to_string(old.join(stamp)).unwrap(),
+        r#"{"output_version":7}"#
+    );
+    assert_eq!(old_pointer["base"], new_pointer["base"]);
+    assert_eq!(old_pointer["profile"], new_pointer["profile"]);
+    assert_eq!(new_pointer["generation"].as_u64(), Some(2));
+}
+
+#[test]
+fn cli_refuses_server_only_play_but_accepts_it_for_dedicated_launch() {
+    let fixture = Fixture::new();
+    let build = fixture.build();
+    let lib = build.join("crates/sunrise-prepare/src/lib.rs");
+    fs::create_dir_all(lib.parent().unwrap()).unwrap();
+    fs::write(
+        lib,
+        "pub const OUTPUT_VERSION: u32 = 8;\npub const SERVER_OUTPUT_VERSION: u32 = 1;\n",
+    )
+    .unwrap();
+    let resources = build.join(".local/sunrise-client/26.3");
+    let manifest = resources.join("sunrise-resources.json");
+    let server = r#"{"profile":"server","schema":7,"minecraft":"26.3"}"#;
     fs::write(&manifest, server).unwrap();
+    fs::write(
+        resources.join("sunrise-prepare.json"),
+        r#"{"output_version":1}"#,
+    )
+    .unwrap();
+
     let refused = fixture.launcher(&["play"]).output().unwrap();
     assert!(!refused.status.success());
     let error = String::from_utf8_lossy(&refused.stderr);
-    assert!(error.contains("prepared for a dedicated server"), "{error}");
+    assert!(error.contains("for a dedicated server only"), "{error}");
     assert!(!fixture.home.join("args").exists());
     assert_eq!(fs::read_to_string(manifest).unwrap(), server);
+
+    // The startup extras pass must not even query the preparer for a server profile.
+    script(
+        &build.join("sunrise-prepare"),
+        "#!/bin/sh\ntouch \"$SUNRISE_HOME/preparer-called\"\nexit 2\n",
+    );
+    let list = fixture
+        .launcher(&["versions", "--installed"])
+        .output()
+        .unwrap();
+    assert!(
+        list.status.success(),
+        "{}",
+        String::from_utf8_lossy(&list.stderr)
+    );
+    assert!(!fixture.home.join("preparer-called").exists());
+
+    let dedicated = fixture.root.join("dedicated");
+    fs::create_dir_all(&dedicated).unwrap();
+    fs::write(dedicated.join("finish"), []).unwrap();
+    let started = fixture
+        .launcher(&[
+            "server",
+            "--dir",
+            dedicated.to_str().unwrap(),
+            "--version",
+            BUILD,
+            "--accept-eula",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(
+        started.status.code(),
+        Some(7),
+        "{}",
+        String::from_utf8_lossy(&started.stderr)
+    );
+    let args = fs::read_to_string(dedicated.join("args")).unwrap();
+    assert!(
+        args.lines()
+            .collect::<Vec<_>>()
+            .windows(2)
+            .any(|args| args == ["--resources", resources.to_str().unwrap()]),
+        "{args}"
+    );
+    assert!(args.lines().any(|arg| arg == "--dedicated"));
+    assert!(!fixture.home.join("args").exists());
+}
+
+#[test]
+fn cli_reports_an_unreadable_preparer_source_instead_of_using_legacy_output() {
+    let fixture = Fixture::new();
+    let lib = fixture.build().join("crates/sunrise-prepare/src/lib.rs");
+    fs::create_dir_all(lib.parent().unwrap()).unwrap();
+    fs::write(lib, [0xff]).unwrap();
+    let refused = fixture.launcher(&["play"]).output().unwrap();
+    assert!(!refused.status.success());
+    let error = String::from_utf8_lossy(&refused.stderr);
+    assert!(
+        error.contains("Could not read the build's preparer source"),
+        "{error}"
+    );
+    assert!(!fixture.home.join("args").exists());
 }
 
 #[test]

@@ -1692,15 +1692,32 @@ pub fn forget_prepared() {
     lock_prepared(&PREPARED).0.clear();
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub(crate) enum Unprepared {
     Incomplete,
     ServerOnly,
+    PreparerSource(std::io::Error),
 }
 
-pub(crate) fn server_only_resources() -> String {
-    crate::i18n::tr("This folder was prepared for a dedicated server and cannot be used to play.")
-        .into()
+impl Unprepared {
+    pub(crate) fn message(self, incomplete: impl FnOnce() -> String) -> String {
+        match self {
+            Self::Incomplete => incomplete(),
+            Self::ServerOnly => server_only_resources(),
+            Self::PreparerSource(error) => preparer_source_error(&error),
+        }
+    }
+}
+
+fn preparer_source_error(error: &std::io::Error) -> String {
+    crate::i18n::trf(
+        "Could not read the build's preparer source: {error}",
+        &[("error", &error.to_string())],
+    )
+}
+
+fn server_only_resources() -> String {
+    crate::i18n::tr("These files are for a dedicated server only.").into()
 }
 
 fn server_profile(manifest: &serde_json::Value) -> bool {
@@ -1724,7 +1741,8 @@ fn play_manifest(resources: &Path, required: Option<u32>) -> Result<serde_json::
 
 /// Check profile and stamp on a sealed tree, whose files are verified separately by digest.
 pub(crate) fn check_play_output(root: &Path, resources: &Path) -> Result<(), Unprepared> {
-    play_manifest(resources, output_version_at(root)).map(drop)
+    let required = output_version_at(root).map_err(Unprepared::PreparerSource)?;
+    play_manifest(resources, required).map(drop)
 }
 
 /// A full, current preparation whose top-level tables were not left empty by an interrupted run.
@@ -1787,7 +1805,7 @@ pub fn resources_summary(prepared: bool, sounds: bool, version: &str) -> String 
 /// (tools/prepare_output.py), so a release that changes the preparer's code but not its output
 /// keeps the resources. Preparers from before the number are known by their sources
 /// (`LEGACY_OUTPUT_VERSIONS`); older ones still are compared file by file (`same_preparer`).
-fn resources_compatible(from: &Path, to: &Path, resources: &Path) -> bool {
+fn resources_compatible(from: &Path, to: &Path, resources: &Path, legacy: &[(&str, u32)]) -> bool {
     let pins = |dir: &Path| {
         read_json(&dir.join("research-lock.json")).map(|lock| {
             ["version", "client_sha1", "server_sha1"].map(|k| lock["minecraft"][k].clone())
@@ -1799,17 +1817,22 @@ fn resources_compatible(from: &Path, to: &Path, resources: &Path) -> bool {
     if a != b || a.iter().any(|v| !v.is_string()) {
         return false;
     }
-    let required = output_version_at(to);
-    let Ok(manifest) = play_manifest(resources, required) else {
+    let declared = |root: &Path| {
+        output_version_at(root).inspect_err(|error| {
+            eprintln!("{}: {}", root.display(), preparer_source_error(error));
+        })
+    };
+    let (Ok(source), Ok(target)) = (declared(from), declared(to)) else {
         return false;
     };
-    let compat_version = |dir, declared: Option<u32>| {
-        declared.or_else(|| legacy_output_version(dir, &LEGACY_OUTPUT_VERSIONS))
+    // Reject unstamped output from a declared preparer even when the destination's same
+    // compatibility version came from a historical source fingerprint.
+    let Ok(manifest) = play_manifest(resources, source.or(target)) else {
+        return false;
     };
-    match (
-        compat_version(from, output_version_at(from)),
-        compat_version(to, required),
-    ) {
+    let compat_version =
+        |dir, declared: Option<u32>| declared.or_else(|| legacy_output_version(dir, legacy));
+    match (compat_version(from, source), compat_version(to, target)) {
         (Some(a), Some(b)) => a == b,
         (None, None) => same_preparer(from, to, &manifest),
         _ => false,
@@ -1817,14 +1840,18 @@ fn resources_compatible(from: &Path, to: &Path, resources: &Path) -> bool {
 }
 
 /// The build's own preparer declares the output version it records in its stamp.
-fn output_version_at(dir: &Path) -> Option<u32> {
-    let lib = fs::read_to_string(dir.join(PREPARER_CRATE).join("src/lib.rs")).ok()?;
-    lib.lines().find_map(|line| {
+fn output_version_at(dir: &Path) -> std::io::Result<Option<u32>> {
+    let lib = match fs::read_to_string(dir.join(PREPARER_CRATE).join("src/lib.rs")) {
+        Ok(lib) => lib,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    Ok(lib.lines().find_map(|line| {
         line.strip_prefix("pub const OUTPUT_VERSION: u32 = ")?
             .strip_suffix(';')?
             .parse()
             .ok()
-    })
+    }))
 }
 
 /// Fingerprints let two preparers agree where older builds did not declare a version or write a
@@ -2035,7 +2062,7 @@ pub(crate) fn reuse_prepared(versions: &Path, tag: &str) -> Option<String> {
             continue;
         };
         let from = resources_at(&source);
-        if !resources_compatible(&source, &target, &from) {
+        if !resources_compatible(&source, &target, &from, &LEGACY_OUTPUT_VERSIONS) {
             continue;
         }
         // Copied beside it and renamed when complete: an interrupted copy is never "prepared".
@@ -2271,6 +2298,9 @@ fn refill_own_store(tag: &str, handoff: &crate::preparer::Handoff<'_>) {
     let own = data_dir().join("minecraft");
     let root = versions_dir().join(tag);
     let resources = resources_at(&root);
+    if read_json(&resources.join(RESOURCES_MANIFEST)).is_none_or(|m| server_profile(&m)) {
+        return;
+    }
     let missing = crate::preparer::binary(&root).and_then(|binary| {
         crate::preparer::missing_extras(&binary, &root, &resources, Some(handoff))
             .ok()
@@ -2313,7 +2343,7 @@ fn complete_assets_in(
     static TRIED: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
     let root = versions.join(tag);
     let resources = resources_at(&root);
-    if !resources.join(RESOURCES_MANIFEST).exists() {
+    if read_json(&resources.join(RESOURCES_MANIFEST)).is_none_or(|m| server_profile(&m)) {
         return;
     }
     // A version whose preparer has no `missing-extras` (from before it) keeps what it has.
@@ -2686,6 +2716,7 @@ pub(crate) fn preparer_staged(
     if read_json(&resources.join(RESOURCES_MANIFEST)).is_some_and(|m| server_profile(&m)) {
         return Err(server_only_resources());
     }
+    output_version_at(&dir).map_err(|error| preparer_source_error(&error))?;
     let binary = crate::preparer::binary(&dir).ok_or_else(|| crate::preparer::too_old(tag))?;
     // The version's own answer: a sibling's verified import is linked in when found, and whether its exporters ship.
     let needs = crate::preparer::needs(&binary, &dir, log, Some(handoff))?
@@ -3380,23 +3411,22 @@ pub(crate) fn need_base_prepared(
     tag: &str,
     preparation: Option<&crate::preparer::Preparation>,
 ) -> Result<(), String> {
-    match check_build_preparation(tag) {
-        Ok(()) => {
-            let _owned = preparation
-                .is_none()
-                .then(|| prepare_lock(tag))
-                .transpose()?;
-            complete_reports(&versions_dir(), tag);
-            Ok(())
-        }
-        Err(Unprepared::ServerOnly) => Err(server_only_resources()),
-        Err(Unprepared::Incomplete) => Err(format!(
-            "{tag} is not prepared yet. Prepare it first: `sunrise-launcher prepare --version {tag}` \
-             uses your own Minecraft {v}, or downloads it from Mojang for the signed-in account \
-             that owns it.",
-            v = game_version(tag)
-        )),
-    }
+    check_build_preparation(tag).map_err(|issue| issue.message(|| prepare_first(tag)))?;
+    let _owned = preparation
+        .is_none()
+        .then(|| prepare_lock(tag))
+        .transpose()?;
+    complete_reports(&versions_dir(), tag);
+    Ok(())
+}
+
+fn prepare_first(tag: &str) -> String {
+    format!(
+        "{tag} is not prepared yet. Prepare it first: `sunrise-launcher prepare --version {tag}` \
+         uses your own Minecraft {v}, or downloads it from Mojang for the signed-in account \
+         that owns it.",
+        v = game_version(tag)
+    )
 }
 
 /// A step Play waits on before the game starts that the window says by name (`Msg::PlayStep`).
@@ -3446,8 +3476,7 @@ pub fn server(tag: &str, folder: &Path, accept_eula: bool) -> Result<Command, St
     if let Some(error) = game_architecture_launch_error(tag) {
         return Err(error);
     }
-    need_prepared(tag)?;
-    dedicated::verify_paths(tag, &command)?;
+    dedicated::need_prepared(tag, &command)?;
     if accept_eula {
         agree_eula(folder)?;
     }
@@ -7454,10 +7483,29 @@ pub fn {f}("
         let legacy = [(fingerprint.as_str(), 1)];
         let at = |tag: &str| {
             let root = versions.join(tag);
-            output_version_at(&root).or_else(|| legacy_output_version(&root, &legacy))
+            output_version_at(&root)
+                .unwrap()
+                .or_else(|| legacy_output_version(&root, &legacy))
         };
         assert_eq!(at("v0.2.64"), Some(1));
         assert_eq!(at("v0.3.2"), Some(2));
+        // The destination's historical fingerprint is not a reason to trust an unstamped
+        // folder that came from a source that declared a version.
+        let (versioned, unstamped) = (versions.join("v0.3.0"), versions.join("v0.2.64"));
+        let source_resources = resources_at(&versioned);
+        assert!(resources_compatible(
+            &versioned,
+            &unstamped,
+            &source_resources,
+            &legacy
+        ));
+        fs::remove_file(source_resources.join(PREPARATION_STAMP)).unwrap();
+        assert!(!resources_compatible(
+            &versioned,
+            &unstamped,
+            &source_resources,
+            &legacy
+        ));
         // Line endings as checked out don't count; an exporter's or the sources' change does.
         write(
             "v0.2.64",

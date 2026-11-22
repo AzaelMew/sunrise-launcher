@@ -354,11 +354,13 @@ fn replace_installed(
     if in_use(tag) {
         return Err(cache_error(crate::storage::Error::Busy));
     }
-    // Only a complete predecessor has prepared resources to keep.
+    // Same-tag repair preserves local preparation regardless of what can be selected for
+    // Play. Keep its Minecraft folder name even if the replacement carries a different pin.
     if completion_marker(target).map_err(|e| e.to_string())? {
-        let from = resources_at(target);
-        let to = resources_at(top);
-        if !to.exists() && resources_compatible(target, top, &from) {
+        let game = game_version_at(target);
+        let from = resources_for_game(target, &game);
+        let to = resources_for_game(top, &game);
+        if !to.exists() && read_json(&from.join(RESOURCES_MANIFEST)).is_some() {
             copy_dir_except(&from, &to, Some(&from.join(crate::preparer::DATA_FILE)))
                 .map_err(|e| e.to_string())?;
         }

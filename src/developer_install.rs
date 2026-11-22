@@ -101,13 +101,17 @@ const CHECKOUT_RESOURCES: &str = ".local/sunrise-client";
 /// started game can both copy.
 static PARTIAL: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
-/// Puts a prepared resources folder, `from`, where `to` expects it, which the caller found without
-/// resources. A copy, not a link: preparing `to` again rewrites files where they are, which would
-/// change `from` too (`backend::reuse_prepared` copies between versions for that same reason), and
-/// the base then keeps working once the checkout moves or is deleted. The copy is made beside `to`
-/// and renamed when complete, so one that stops never counts as prepared. Returns whether it put
-/// the folder there; false when `to` was prepared meanwhile.
-fn copy_prepared(from: &Path, to: &Path) -> std::io::Result<bool> {
+/// Copy current checkout resources into a missing or stale full folder. A copy, not a link:
+/// preparing again must not change the checkout. Never replace a server-only preparation.
+fn copy_prepared(root: &Path, from: &Path, to: &Path) -> std::io::Result<bool> {
+    let replaceable = || match backend::check_play_resources(root, to) {
+        Err(backend::Unprepared::Incomplete) => Ok(true),
+        Ok(()) | Err(backend::Unprepared::ServerOnly) => Ok(false),
+        Err(issue) => Err(std::io::Error::other(issue.message(String::new))),
+    };
+    if !replaceable()? || backend::check_play_resources(root, from).is_err() {
+        return Ok(false);
+    }
     // Without the data file: it names its own root, so a copy of it could not be read.
     let data_file = from.join(crate::preparer::DATA_FILE);
     let version = to.file_name().unwrap_or_default().to_string_lossy();
@@ -118,9 +122,10 @@ fn copy_prepared(from: &Path, to: &Path) -> std::io::Result<bool> {
     ));
     let _ = fs::remove_dir_all(&partial);
     let copied = backend::copy_dir_except(from, &partial, Some(&data_file)).and_then(|()| {
-        if backend::prepared_at(to) {
+        if !replaceable()? {
             return Ok(false); // Prepared meanwhile, by Play or another command.
         }
+        crate::managed_play::Resources::invalidate(root)?;
         let _ = fs::remove_dir_all(to);
         fs::rename(&partial, to).map(|()| true)
     });
@@ -130,25 +135,16 @@ fn copy_prepared(from: &Path, to: &Path) -> std::io::Result<bool> {
 
 /// Gives the developer base `tag` the resources the checkout it was built from prepared in its own
 /// folder, so the base is ready to play without the official launcher's folder, a signed-in account
-/// or a `prepare` that has no Minecraft install to read (#4315). Does nothing when the base has
-/// resources already, or when the checkout has none prepared. Returns whether it copied them.
+/// or a `prepare` that has no Minecraft install to read (#4315). Returns whether it copied them.
 pub(crate) fn reuse_checkout_resources(checkout: &Path, tag: &str) -> std::io::Result<bool> {
     let _preparation = backend::prepare_lock(tag).map_err(std::io::Error::other)?;
     let to = backend::resources(tag);
-    if backend::prepared_at(&to) {
-        return Ok(false);
-    }
     // The packager ships the checkout's pin, so both name the same Minecraft version.
     let Some(version) = to.file_name() else {
         return Ok(false);
     };
     let from = checkout.join(CHECKOUT_RESOURCES).join(version);
-    let root = backend::version_dir(tag);
-    if backend::check_play_resources(&root, &from).is_err() {
-        return Ok(false);
-    }
-    crate::managed_play::Resources::invalidate(&root)?;
-    let copied = copy_prepared(&from, &to)?;
+    let copied = copy_prepared(&backend::version_dir(tag), &from, &to)?;
     backend::forget_prepared();
     Ok(copied)
 }
@@ -448,10 +444,9 @@ mod tests {
             .join(CHECKOUT_RESOURCES)
             .join("26.3");
         prepared_folder(&from, "checkout tables");
-        let to = folder
-            .path()
-            .join("versions/developer-abc/.local/sunrise-client/26.3");
-        assert!(copy_prepared(&from, &to).unwrap());
+        let root = folder.path().join("versions/developer-abc");
+        let to = root.join(".local/sunrise-client/26.3");
+        assert!(copy_prepared(&root, &from, &to).unwrap());
         // What `prepare` counts as prepared: the manifest and its tables (`backend::prepared_at`).
         assert!(backend::prepared_at(&to));
         assert_eq!(
@@ -473,6 +468,37 @@ mod tests {
         assert!(from.join(crate::preparer::DATA_FILE).exists());
     }
     #[test]
+    fn developer_reimport_replaces_stale_full_output_but_not_server_output() {
+        let folder = tempfile::tempdir().unwrap();
+        let root = folder.path().join("versions/developer-abc");
+        let lib = root.join("crates/sunrise-prepare/src/lib.rs");
+        fs::create_dir_all(lib.parent().unwrap()).unwrap();
+        fs::write(lib, "pub const OUTPUT_VERSION: u32 = 8;\n").unwrap();
+        let from = folder.path().join("checkout/.local/sunrise-client/26.3");
+        let to = root.join(".local/sunrise-client/26.3");
+        prepared_folder(&from, "current checkout tables");
+        prepared_folder(&to, "stale installed tables");
+        let stamp = "sunrise-prepare.json";
+        let current = r#"{"output_version":8}"#;
+        fs::write(from.join(stamp), current).unwrap();
+        fs::write(to.join(stamp), r#"{"output_version":7}"#).unwrap();
+
+        assert!(copy_prepared(&root, &from, &to).unwrap());
+        assert_eq!(fs::read_to_string(to.join(stamp)).unwrap(), current);
+        assert_eq!(
+            fs::read_to_string(to.join("registries.json")).unwrap(),
+            "current checkout tables"
+        );
+
+        let manifest = to.join("sunrise-resources.json");
+        let server = r#"{"profile":"server"}"#;
+        fs::write(&manifest, server).unwrap();
+        fs::write(to.join(stamp), r#"{"output_version":1}"#).unwrap();
+        assert!(!copy_prepared(&root, &from, &to).unwrap());
+        assert_eq!(fs::read_to_string(manifest).unwrap(), server);
+    }
+
+    #[test]
     fn resources_the_base_gained_meanwhile_are_left_alone() {
         let folder = tempfile::tempdir().unwrap();
         let from = folder
@@ -481,11 +507,10 @@ mod tests {
             .join(CHECKOUT_RESOURCES)
             .join("26.3");
         prepared_folder(&from, "checkout tables");
-        let to = folder
-            .path()
-            .join("versions/developer-abc/.local/sunrise-client/26.3");
+        let root = folder.path().join("versions/developer-abc");
+        let to = root.join(".local/sunrise-client/26.3");
         prepared_folder(&to, "the base's own tables");
-        assert!(!copy_prepared(&from, &to).unwrap());
+        assert!(!copy_prepared(&root, &from, &to).unwrap());
         assert_eq!(
             fs::read_to_string(to.join("registries.json")).unwrap(),
             "the base's own tables"
