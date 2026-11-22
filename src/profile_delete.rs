@@ -427,6 +427,7 @@ mod tests {
                 body: String::new(),
                 date: String::new(),
                 time: String::new(),
+                published_at: String::new(),
                 asset: None,
                 prerelease: false,
                 nightly: None,

@@ -91,11 +91,25 @@ fn home_update<'a>(
     let release = channel.builds(releases).next()?;
     match backend::compare_game_versions(&release.tag, base) {
         std::cmp::Ordering::Greater => Some(release),
-        std::cmp::Ordering::Equal
-            if channel != Channel::Stable && release.tag != base && !release.time.is_empty() =>
-        {
-            // Different commits on the same day are not necessarily newer. Compare their
-            // publication times, including Nightly's saved time for the previous rolling build.
+        std::cmp::Ordering::Equal if channel != Channel::Stable && release.tag != base => {
+            // Different commits on the same day are not necessarily newer. Compare full
+            // publication timestamps when available, including Nightly's saved timestamp for
+            // the previous rolling build, falling back to HH:MM only when full timestamps
+            // are absent.
+            let old_published = releases
+                .iter()
+                .find(|row| row.tag == base && !row.published_at.is_empty())
+                .map(|row| row.published_at.clone())
+                .or_else(|| sunrise_launcher::nightly::published_at(base));
+            if let (Some(new_ts), Some(old_ts)) = (
+                parse_published_at(&release.published_at),
+                old_published.as_deref().and_then(parse_published_at),
+            ) {
+                return (new_ts > old_ts).then_some(release);
+            }
+            if release.time.is_empty() {
+                return None;
+            }
             let nightly_time = sunrise_launcher::nightly::same_day_time(base);
             let old_time = releases
                 .iter()
@@ -106,6 +120,12 @@ fn home_update<'a>(
         }
         _ => None,
     }
+}
+
+fn parse_published_at(value: &str) -> Option<chrono::DateTime<chrono::FixedOffset>> {
+    (!value.is_empty())
+        .then(|| chrono::DateTime::parse_from_rfc3339(value).ok())
+        .flatten()
 }
 
 /// Pick one tag for both the Home picker and Play. A pin is never replaced by another
@@ -291,23 +311,73 @@ mod tests {
         let old = "dev-2026-11-22-aaaaaaa";
         let other = "dev-2026-11-22-bbbbbbb";
         let profile = home_profile("dev", Channel::Dev, None);
-        let dev = |tag: &str, time: &str| Release {
+        let dev = |tag: &str, time: &str, published_at: &str| Release {
             prerelease: true,
             nightly: Some(tag.into()),
             time: time.into(),
+            published_at: published_at.into(),
             ..release(tag, false, true)
         };
         let offer = |releases: &[Release]| {
             home_update(&profile, releases, |_| Ok(Some(active(old, old))))
                 .map(|release| release.tag.clone())
         };
-        let previous = dev(old, "12:30");
-        assert_eq!(offer(&[dev(other, "12:20"), previous.clone()]), None);
-        assert_eq!(offer(&[dev(other, "12:30"), previous.clone()]), None);
-        assert_eq!(offer(&[dev(other, "12:40")]), None);
+        let previous = dev(old, "12:30", "2026-11-22T12:30:10Z");
         assert_eq!(
-            offer(&[dev(other, "12:40"), previous]).as_deref(),
+            offer(&[
+                dev(other, "12:20", "2026-11-22T12:20:00Z"),
+                previous.clone()
+            ]),
+            None
+        );
+        assert_eq!(
+            offer(&[
+                dev(other, "12:30", "2026-11-22T12:30:05Z"),
+                previous.clone()
+            ]),
+            None
+        );
+        assert_eq!(
+            offer(&[
+                dev(other, "12:30", "2026-11-22T12:30:10Z"),
+                previous.clone()
+            ]),
+            None
+        );
+        assert_eq!(offer(&[dev(other, "12:40", "2026-11-22T12:40:00Z")]), None);
+        // Two Dev builds in the same minute still order by full publication timestamp.
+        assert_eq!(
+            offer(&[
+                dev(other, "12:30", "2026-11-22T12:30:45Z"),
+                previous.clone()
+            ])
+            .as_deref(),
             Some(other)
+        );
+        assert_eq!(
+            offer(&[dev(other, "12:40", "2026-11-22T12:40:00Z"), previous]).as_deref(),
+            Some(other)
+        );
+    }
+
+    #[test]
+    fn home_offers_a_same_minute_rolling_nightly_using_its_remembered_timestamp() {
+        let old = "nightly-2035-08-09-aaaaaaa";
+        let newer = "nightly-2035-08-09-bbbbbbb";
+        let profile = home_profile("nightly", Channel::Nightly, None);
+        let nightly = |tag: &str, published_at: &str| Release {
+            time: "12:30".into(),
+            published_at: published_at.into(),
+            ..release(tag, true, true)
+        };
+        let first = nightly(old, "2035-08-09T12:30:10Z");
+        let second = nightly(newer, "2035-08-09T12:30:45Z");
+        sunrise_launcher::nightly::note_published(&[first]);
+        sunrise_launcher::nightly::note_published(&[second.clone()]);
+        assert_eq!(
+            home_update(&profile, &[second], |_| Ok(Some(active(old, old))))
+                .map(|release| release.tag.as_str()),
+            Some(newer)
         );
     }
 
@@ -460,6 +530,7 @@ mod tests {
             body: String::new(),
             date: String::new(),
             time: String::new(),
+            published_at: String::new(),
             asset: asset.then(|| ("sunrise.tar.gz".into(), 1)),
             prerelease: false,
             nightly: nightly.then(|| "nightly".into()),

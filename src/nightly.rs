@@ -69,6 +69,9 @@ pub fn day(date: &str) -> String {
 /// The Nightlies of the last release list read that share their day with another, and the time
 /// (`HH:MM` UTC) each came out: [`same_day_time`] reads it for every screen that names a version.
 static SAME_DAY: std::sync::RwLock<Vec<(String, String)>> = std::sync::RwLock::new(Vec::new());
+/// Full RFC 3339 publication timestamps seen for rolling Nightlies, kept even after the rolling
+/// tag rotates to a newer build so same-day updates compare full timestamps.
+static PUBLISHED: std::sync::RwLock<Vec<(String, String)>> = std::sync::RwLock::new(Vec::new());
 
 const CURRENT_INSTALL: &str = ".nightly-current";
 const FAILED_INSTALL_RECEIPT: &str = ".nightly-receipt-failed";
@@ -153,6 +156,24 @@ pub(crate) fn known_install<'a>(
             return Some(tag);
         }
     }
+    let mut stamped: Vec<_> = candidates
+        .iter()
+        .map(|tag| {
+            let published =
+                fs::read_to_string(versions.join(tag).join(INSTALLED_PUBLISHED)).ok()?;
+            Some((
+                chrono::DateTime::parse_from_rfc3339(published.trim()).ok()?,
+                *tag,
+            ))
+        })
+        .collect::<Option<_>>()
+        .unwrap_or_default();
+    stamped.sort_unstable_by_key(|(time, _)| *time);
+    if let [.., (prior, _), (latest, tag)] = stamped.as_slice() {
+        if latest > prior {
+            return Some(tag);
+        }
+    }
     let mut timed: Vec<_> = candidates
         .iter()
         .map(|tag| {
@@ -177,11 +198,18 @@ pub(crate) fn known_install<'a>(
 
 /// The publication time kept beside an installed Nightly so it survives a launcher restart.
 pub(crate) const INSTALLED_TIME: &str = ".nightly-time";
+/// The full RFC 3339 publication timestamp kept beside an installed Nightly.
+pub(crate) const INSTALLED_PUBLISHED: &str = ".nightly-published";
 
 /// Keeps the publication time that came with an installed Nightly.
 pub(crate) fn record_install_time(dir: &Path, release: &Release) -> std::io::Result<()> {
-    if release.nightly.as_deref().is_some_and(is_nightly) && !release.time.is_empty() {
-        fs::write(dir.join(INSTALLED_TIME), &release.time)?;
+    if release.nightly.as_deref().is_some_and(is_nightly) {
+        if !release.time.is_empty() {
+            fs::write(dir.join(INSTALLED_TIME), &release.time)?;
+        }
+        if !release.published_at.is_empty() {
+            fs::write(dir.join(INSTALLED_PUBLISHED), &release.published_at)?;
+        }
     }
     Ok(())
 }
@@ -189,15 +217,23 @@ pub(crate) fn record_install_time(dir: &Path, release: &Release) -> std::io::Res
 /// Publication times saved beside installed Nightlies, including ones no longer in the release
 /// list after a restart.
 fn installed_times() -> Vec<(String, String)> {
+    installed_field(INSTALLED_TIME)
+}
+
+fn installed_published() -> Vec<(String, String)> {
+    installed_field(INSTALLED_PUBLISHED)
+}
+
+fn installed_field(file: &str) -> Vec<(String, String)> {
     backend::installed()
         .into_iter()
         .filter_map(|tag| {
             date_of(&tag)?;
-            let time = fs::read_to_string(backend::version_dir(&tag).join(INSTALLED_TIME))
+            let value = fs::read_to_string(backend::version_dir(&tag).join(file))
                 .ok()?
                 .trim()
                 .to_owned();
-            (!time.is_empty()).then_some((tag, time))
+            (!value.is_empty()).then_some((tag, value))
         })
         .collect()
 }
@@ -211,6 +247,51 @@ pub fn note_published(releases: &[Release]) {
         .write()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     *kept = same_day_times(&kept, releases, &installed);
+    let installed_full = installed_published();
+    let mut full = PUBLISHED
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    *full = merge_published(&full, releases, &installed_full);
+}
+
+fn merge_published(
+    kept: &[(String, String)],
+    releases: &[Release],
+    installed: &[(String, String)],
+) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = releases
+        .iter()
+        .filter(|r| r.nightly.as_deref().is_some_and(is_nightly) && !r.published_at.is_empty())
+        .map(|r| (r.tag.clone(), r.published_at.clone()))
+        .collect();
+    for (tag, published) in kept.iter().chain(installed) {
+        if !published.is_empty()
+            && date_of(tag).is_some()
+            && out.iter().all(|(existing, _)| existing != tag)
+        {
+            out.push((tag.clone(), published.clone()));
+        }
+    }
+    out
+}
+
+/// Full RFC 3339 publication timestamp seen or saved for Nightly `version`, when known.
+pub fn published_at(version: &str) -> Option<String> {
+    if let Some(found) = PUBLISHED
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .iter()
+        .find(|(tag, _)| tag == version)
+        .map(|(_, published)| published.clone())
+    {
+        return Some(found);
+    }
+    date_of(version)?;
+    let saved = fs::read_to_string(backend::version_dir(version).join(INSTALLED_PUBLISHED))
+        .ok()?
+        .trim()
+        .to_owned();
+    (!saved.is_empty()).then_some(saved)
 }
 
 /// Rebuilds the same-day table from the current releases, process-local history, and times saved
@@ -294,6 +375,7 @@ mod tests {
             body: String::new(),
             date: date.into(),
             time: String::new(),
+            published_at: String::new(),
             asset: Some(("https://example/sunrise.zip".into(), 1)),
             prerelease: true,
             nightly: None,
@@ -456,11 +538,34 @@ mod tests {
     #[test]
     fn an_installed_nightly_records_its_publication_time() {
         let dir = tempfile::tempdir().unwrap();
-        let release = nightly_release("nightly-2033-06-07-bbbbbbb", "2033-06-07", "18:05");
+        let mut release = nightly_release("nightly-2033-06-07-bbbbbbb", "2033-06-07", "18:05");
+        release.published_at = "2033-06-07T18:05:42Z".into();
         record_install_time(dir.path(), &release).unwrap();
         assert_eq!(
             fs::read_to_string(dir.path().join(INSTALLED_TIME)).unwrap(),
             "18:05"
+        );
+        assert_eq!(
+            fs::read_to_string(dir.path().join(INSTALLED_PUBLISHED)).unwrap(),
+            "2033-06-07T18:05:42Z"
+        );
+    }
+
+    #[test]
+    fn a_rotated_nightly_keeps_its_full_publication_timestamp() {
+        let mut early = nightly_release("nightly-2034-07-08-aaaaaaa", "2034-07-08", "12:30");
+        early.published_at = "2034-07-08T12:30:10Z".into();
+        let mut late = nightly_release("nightly-2034-07-08-bbbbbbb", "2034-07-08", "12:30");
+        late.published_at = "2034-07-08T12:30:45Z".into();
+        note_published(&[early]);
+        note_published(&[late]);
+        assert_eq!(
+            published_at("nightly-2034-07-08-aaaaaaa").as_deref(),
+            Some("2034-07-08T12:30:10Z")
+        );
+        assert_eq!(
+            published_at("nightly-2034-07-08-bbbbbbb").as_deref(),
+            Some("2034-07-08T12:30:45Z")
         );
     }
 

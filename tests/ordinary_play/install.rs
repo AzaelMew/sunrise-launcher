@@ -1054,6 +1054,34 @@ fn channel_choice_is_committed_after_the_same_fit_check_but_not_after_cancel() {
 }
 
 #[test]
+fn channel_choice_survives_failed_preference_write_at_publication() {
+    let fixture = Fixture::new();
+    let (registry, _) = fixture.content_index();
+    fixture.publish_registry(&registry);
+    fixture.switch_target(NIGHTLY);
+    fixture.install_mod("extra_mod");
+    let prefs = fixture.data.join("instances.json");
+    let mut saved: Value = serde_json::from_slice(&fs::read(&prefs).unwrap()).unwrap();
+    saved["instances"]["sunrise"]["channel"] = "stable".into();
+    let previous = serde_json::to_vec(&saved).unwrap();
+    fs::write(&prefs, &previous).unwrap();
+    let pointer = fixture.pointer();
+
+    // A failure before the journal commits leaves active-build, mods and preferences untouched.
+    fixture.decision_worker("channel-cutoff-fails");
+    assert_eq!(fs::read(&prefs).unwrap(), previous);
+    assert_eq!(fixture.pointer(), pointer);
+
+    // If instances.json cannot be written at publication, active-build.json still carries
+    // the committed choice so listing and future writes stay aligned with Play.
+    fixture.decision_worker("channel-pref-write-fails");
+    assert_eq!(Active::parse(&fixture.pointer()).unwrap().base(), NIGHTLY);
+    let healed: Value = serde_json::from_slice(&fs::read(&prefs).unwrap()).unwrap();
+    assert_eq!(healed["instances"]["sunrise"]["channel"], "dev");
+    assert!(healed["instances"]["sunrise"].get("version").is_none());
+}
+
+#[test]
 fn queued_switch_refuses_a_replaced_profile_before_recovery() {
     let fixture = Fixture::new();
     fixture.decision_worker("switch-replaced-profile");
@@ -1070,7 +1098,11 @@ fn profile_decision_worker() {
     let identity = install_target(&instance).unwrap();
     if mode.starts_with("channel-") {
         let cancel = mode == "channel-cancel";
+        let cutoff_fails = mode == "channel-cutoff-fails";
+        let pref_fails = mode == "channel-pref-write-fails";
         let checked = std::cell::Cell::new(false);
+        let prefs = sunrise_launcher::backend::data_dir().join("instances.json");
+        let old_prefs = pref_fails.then(|| fs::read(&prefs).unwrap());
         let result = switch_profile_build(
             &instance,
             identity,
@@ -1095,14 +1127,58 @@ fn profile_decision_worker() {
                 },
                 at_cutoff: &|| {
                     assert!(!cancel);
+                    if cutoff_fails {
+                        return Err("simulated cutoff failure".into());
+                    }
+                    if pref_fails {
+                        fs::remove_file(&prefs).unwrap();
+                        fs::create_dir(&prefs).unwrap();
+                    }
                     Ok(())
                 },
             },
         );
         assert!(checked.get());
+        if cutoff_fails {
+            assert!(result.err().unwrap().contains("simulated cutoff failure"));
+            let saved = instances::selection().unwrap();
+            assert_eq!(saved.channel, instances::Channel::Stable);
+            assert_eq!(saved.version.as_deref(), Some(BUILD));
+            return;
+        }
         match (cancel, result.unwrap()) {
             (true, Switched::Stayed) | (false, Switched::Changed(_)) => (),
             _ => panic!("the worker did not respect the picker decision"),
+        }
+        if pref_fails {
+            // Even while instances.json is still unwritable, listing recovers the committed
+            // channel and clears the old pin from active-build.json.
+            assert!(prefs.is_dir());
+            let recovered = instances::selection().unwrap();
+            assert_eq!(recovered.channel, instances::Channel::Nightly);
+            assert_eq!(recovered.version, None);
+
+            // Restoring the pre-switch instances.json (as if the launcher exited between
+            // active-build.json and instances.json) recovers the committed channel on next read,
+            // persists it, and lets a later manual edit take precedence.
+            fs::remove_dir(&prefs).unwrap();
+            fs::write(&prefs, old_prefs.as_ref().unwrap()).unwrap();
+            let healed = instances::selection().unwrap();
+            assert_eq!(healed.channel, instances::Channel::Nightly);
+            assert_eq!(healed.version, None);
+            let on_disk: Value = serde_json::from_slice(&fs::read(&prefs).unwrap()).unwrap();
+            assert_eq!(on_disk["instances"]["sunrise"]["channel"], "nightly");
+            assert!(on_disk["instances"]["sunrise"].get("version").is_none());
+
+            instances::edit(&instance.id, |meta| {
+                meta.channel = Some(instances::Channel::Dev);
+                meta.version = None;
+            })
+            .unwrap();
+            assert_eq!(
+                instances::selection().unwrap().channel,
+                instances::Channel::Dev
+            );
         }
         return;
     }

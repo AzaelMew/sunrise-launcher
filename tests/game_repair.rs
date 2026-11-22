@@ -123,6 +123,7 @@ fn next_install_recovers_before_requiring_a_download() {
         body: String::new(),
         date: String::new(),
         time: String::new(),
+        published_at: String::new(),
         asset: None,
         prerelease: false,
         nightly: Some("nightly".into()),

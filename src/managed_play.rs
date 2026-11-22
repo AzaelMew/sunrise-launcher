@@ -142,6 +142,37 @@ fn at(path: &Path, error: impl std::fmt::Display) -> String {
     format!("{}: {error}", path.display())
 }
 
+/// The channel or exact pin committed alongside an `Active` switch generation.
+/// Synced into `instances.json` after publication; recovered from here if that write fails
+/// or the launcher exits between the two writes.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CommittedBuildChoice {
+    pub id: [u8; 16],
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel: Option<crate::instances::Channel>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+}
+
+impl CommittedBuildChoice {
+    pub(crate) fn new(
+        channel: Option<crate::instances::Channel>,
+        version: Option<String>,
+    ) -> Result<Self, String> {
+        let mut id = [0u8; 16];
+        getrandom::fill(&mut id).map_err(|e| e.to_string())?;
+        if id == [0; 16] {
+            return Err(unsettled());
+        }
+        Ok(Self {
+            id,
+            channel,
+            version,
+        })
+    }
+}
+
 /// Only this pointer selects a game's executable once its managed profile is initialized.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -156,6 +187,8 @@ pub struct Active {
     resources: Resources,
     inputs: [u8; 32],
     receipts: Vec<Receipt>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    build_choice: Option<CommittedBuildChoice>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -432,6 +465,13 @@ pub enum DisplayActiveError {
 /// Read only the last settled pointer for display. The Installed list must distinguish a
 /// temporarily busy reader from a settled profile with no holds.
 pub fn try_display_active(home: &Path) -> Result<Option<Active>, DisplayActiveError> {
+    try_display_active_at(&crate::backend::data_dir(), home)
+}
+
+pub(crate) fn try_display_active_at(
+    data: &Path,
+    home: &Path,
+) -> Result<Option<Active>, DisplayActiveError> {
     use sunrise_launcher_smod::{
         locks::LockMode,
         runtime_leases::{Error, Registry},
@@ -443,7 +483,7 @@ pub fn try_display_active(home: &Path) -> Result<Option<Active>, DisplayActiveEr
             return Err(DisplayActiveError::Read(unsettled()))
         }
     };
-    let _publication = match Registry::existing(&crate::backend::data_dir())
+    let _publication = match Registry::existing(data)
         .and_then(|registry| registry.publication(LockMode::Shared))
     {
         Ok(lock) => Some(lock),
@@ -602,6 +642,14 @@ impl Active {
                 }
             }
         }
+        if let Some(choice) = &value.build_choice {
+            if choice.id == [0; 16] || (choice.channel.is_none() && choice.version.is_none()) {
+                return Err(unsettled());
+            }
+            if let Some(version) = &choice.version {
+                validate_tag(version)?;
+            }
+        }
         Ok(value)
     }
 
@@ -634,6 +682,10 @@ impl Active {
 
     pub fn base(&self) -> &str {
         &self.base.tag
+    }
+
+    pub fn build_choice(&self) -> Option<&CommittedBuildChoice> {
+        self.build_choice.as_ref()
     }
 
     pub fn generation(&self) -> u64 {
@@ -708,12 +760,12 @@ impl Active {
         } else {
             Artifact::capture(executable)?
         };
-        let (profile, generation, resources, receipts, variant) = match previous {
+        let (profile, generation, resources, receipts, variant, build_choice) = match previous {
             Generation::First {
                 profile,
                 resources,
                 variant,
-            } => (profile, 1, resources, Vec::new(), variant),
+            } => (profile, 1, resources, Vec::new(), variant, None),
             Generation::Advance(old) => {
                 if base != old.base {
                     return Err(unsettled());
@@ -724,6 +776,7 @@ impl Active {
                     old.resources.clone(),
                     old.receipts.clone(),
                     old.variant.clone(),
+                    old.build_choice.clone(),
                 )
             }
             Generation::Switch {
@@ -740,6 +793,7 @@ impl Active {
                     resources,
                     previous.receipts.clone(),
                     variant,
+                    previous.build_choice.clone(),
                 )
             }
         };
@@ -753,6 +807,7 @@ impl Active {
             resources,
             inputs: epoch,
             receipts,
+            build_choice,
         })
     }
 }

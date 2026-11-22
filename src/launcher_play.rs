@@ -179,6 +179,14 @@ impl Launcher {
     }
 
     pub(crate) fn install(&mut self, release: &Release) {
+        self.install_cancellable(release, None);
+    }
+
+    pub(crate) fn install_cancellable(
+        &mut self,
+        release: &Release,
+        stop: Option<native_mods::Cancellation>,
+    ) {
         if release.asset.is_none() || self.removing.contains(&release.tag) {
             return;
         }
@@ -192,7 +200,7 @@ impl Launcher {
             let progress = |p| {
                 let _ = tx.send(Msg::Progress(tag.clone(), p));
             };
-            let result = backend::install(&release, progress);
+            let result = backend::install_cancellable(&release, stop.as_ref(), progress);
             let _ = tx.send(Msg::Installed(tag, result));
         });
     }
@@ -207,6 +215,15 @@ impl Launcher {
     }
 
     pub(crate) fn prepare_version(&mut self, tag: String, from: backend::MinecraftFrom) {
+        self.prepare_version_cancellable(tag, from, None);
+    }
+
+    pub(crate) fn prepare_version_cancellable(
+        &mut self,
+        tag: String,
+        from: backend::MinecraftFrom,
+        stop: Option<native_mods::Cancellation>,
+    ) {
         sunrise_launcher::mojang::CANCEL.store(false, Ordering::Relaxed);
         let minecraft = self
             .settings
@@ -225,10 +242,24 @@ impl Launcher {
             };
             let result = (|| {
                 let lock = backend::prepare_lock(&tag)?;
-                let (cmd, minecraft) = backend::preparer(&tag, &minecraft, from, &log, &lock)?;
-                backend::sounds(&tag, &minecraft, &log, &lock);
+                let (cmd, minecraft) = match &stop {
+                    Some(stop) => {
+                        backend::preparer_cancellable(&tag, &minecraft, from, &log, &lock, stop)?
+                    }
+                    None => backend::preparer(&tag, &minecraft, from, &log, &lock)?,
+                };
+                match &stop {
+                    Some(stop) => backend::sounds_cancellable(&tag, &minecraft, &log, &lock, stop),
+                    None => backend::sounds(&tag, &minecraft, &log, &lock),
+                }
                 backend::set_prepare_step(backend::PrepareStep::Prepare);
-                backend::spawn_holding(Job::Prepare, cmd, tx.clone(), Some((tag, lock)))
+                backend::spawn_holding_cancellable(
+                    Job::Prepare,
+                    cmd,
+                    tx.clone(),
+                    Some((tag, lock)),
+                    stop,
+                )
             })();
             // A running preparer sends its own Exit when it ends.
             if let Err(e) = result {

@@ -147,6 +147,7 @@ fn staging_distinguishes_a_missing_manifest_from_an_unavailable_feed() {
         body: String::new(),
         date: String::new(),
         time: String::new(),
+        published_at: String::new(),
         asset: Some(("https://example.test/launcher".into(), 1)),
         prerelease: false,
         nightly: None,

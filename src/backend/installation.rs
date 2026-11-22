@@ -173,6 +173,7 @@ fn save_nightly_receipt(root: &Path, tag: &str) -> Option<ReceiptFailure> {
         })
 }
 
+#[cfg(test)]
 pub(crate) fn install_as(
     release: &Release,
     tag: &str,
@@ -180,6 +181,29 @@ pub(crate) fn install_as(
     requested_architecture: Option<GameArchitecture>,
     release_facts: Option<(&[u8], &str)>,
     intent: InstallIntent,
+    progress: impl Fn(f32),
+) -> Result<Option<ReceiptFailure>, String> {
+    install_as_cancellable(
+        release,
+        tag,
+        sha256,
+        requested_architecture,
+        release_facts,
+        intent,
+        None,
+        progress,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn install_as_cancellable(
+    release: &Release,
+    tag: &str,
+    sha256: &str,
+    requested_architecture: Option<GameArchitecture>,
+    release_facts: Option<(&[u8], &str)>,
+    intent: InstallIntent,
+    stop: Option<&crate::native_mods::Cancellation>,
     progress: impl Fn(f32),
 ) -> Result<Option<ReceiptFailure>, String> {
     let (url, size) = release
@@ -190,13 +214,14 @@ pub(crate) fn install_as(
         release,
         tag,
         intent,
+        stop,
         &progress,
         |target| Artifact::matches_archive(target, tag, sha256),
         |stage| {
             let archive = stage.join("download");
-            download(url, *size, sha256, &archive, &progress)?;
+            download_cancellable(url, *size, sha256, &archive, stop, &progress)?;
             let unpacked = stage.join("unpacked");
-            unpack(&archive, url, &unpacked)?;
+            unpack(&archive, url, &unpacked, stop)?;
             progress(0.97);
             // The archives usually hold one top folder; install its contents.
             let entries: Vec<_> = fs::read_dir(&unpacked)
@@ -249,10 +274,14 @@ fn install_image(
     release: &Release,
     tag: &str,
     intent: InstallIntent,
+    stop: Option<&crate::native_mods::Cancellation>,
     progress: &impl Fn(f32),
     matches: impl Fn(&Path) -> bool,
     stage_tree: impl FnOnce(&Path) -> Result<PathBuf, String>,
 ) -> Result<Option<ReceiptFailure>, String> {
+    if let Some(stop) = stop {
+        stop.check()?;
+    }
     let root = versions_dir();
     let target = version_dir(tag);
     if intent == InstallIntent::Exact {
@@ -272,6 +301,9 @@ fn install_image(
         .tempdir_in(&root)
         .map_err(|e| e.to_string())?;
     let top = stage_tree(stage.path())?;
+    if let Some(stop) = stop {
+        stop.check()?;
+    }
     intent.download().mark(&top)?;
     crate::nightly::record_install_time(&top, release).map_err(|e| e.to_string())?;
     // Transfer and unpack privately. Only the visibility boundary fences readers.
@@ -285,6 +317,9 @@ fn install_image(
     let _publication = registry
         .publication(mode)
         .map_err(|e| crate::native_mods::cache_error(e.into()))?;
+    if let Some(stop) = stop {
+        stop.check()?;
+    }
     let replaced = if intent == InstallIntent::Repair {
         // A pending First Play can reserve this name before its tree exists.
         // Only the exact managed path may publish its frozen game image in that case.

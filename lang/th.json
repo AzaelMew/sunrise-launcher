@@ -1646,5 +1646,6 @@
   "No Dev build yet.": "No Dev build yet.",
   "Switch to {build}": "Switch to {build}",
   "This profile stays on this build until you change it.": "This profile stays on this build until you change it.",
-  "The build is ready, but the profile choice could not be saved: {error}": "The build is ready, but the profile choice could not be saved: {error}"
+  "The build is ready, but the profile choice could not be saved: {error}": "The build is ready, but the profile choice could not be saved: {error}",
+  "Cancelling…": "Cancelling…"
 }

@@ -635,6 +635,7 @@ mod tests {
             body: "A shorter route to your installed packs.".into(),
             date: String::new(),
             time: String::new(),
+            published_at: String::new(),
             asset: None,
             prerelease: false,
             nightly: None,

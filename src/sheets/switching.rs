@@ -113,6 +113,7 @@ impl Launcher {
             }
         };
         let release = self.release_to_install(&tag);
+        let stop = native_mods::Cancellation::default();
         self.ui.sheets.switching.running = Some(Running {
             tag: tag.clone(),
             back: self.ui.sheet,
@@ -122,14 +123,14 @@ impl Launcher {
                 choice,
             }),
             progress: InstallProgress::PreparingBuild,
-            stop: native_mods::Cancellation::default(),
+            stop: stop.clone(),
             question: None,
         });
         self.open_sheet(Sheet::Switching);
         if let Some(release) = release {
             self.ui.sheets.switching.cache_download = Some(tag);
             self.switch_progress(InstallProgress::Downloading(0.));
-            self.install(&release);
+            self.install_cancellable(&release, Some(stop));
         } else {
             self.prepare_switch();
         }
@@ -146,9 +147,9 @@ impl Launcher {
         if backend::check_prepared(&running.tag) {
             self.start_switch_worker();
         } else {
-            let tag = running.tag.clone();
+            let (tag, stop) = (running.tag.clone(), running.stop.clone());
             self.switch_progress(InstallProgress::PreparingBuild);
-            self.prepare_version(tag, backend::MinecraftFrom::Install);
+            self.prepare_version_cancellable(tag, backend::MinecraftFrom::Install, Some(stop));
         }
     }
 
@@ -259,13 +260,14 @@ impl Launcher {
         home: &std::path::Path,
         result: Result<Switched, String>,
     ) {
-        let back = self
-            .ui
-            .sheets
-            .switching
-            .running
-            .take()
-            .and_then(|run| run.back);
+        let running = self.ui.sheets.switching.running.take();
+        let stopped = running.as_ref().is_some_and(|run| run.stop.is_stopped());
+        let back = running.and_then(|run| run.back);
+        let result = if result.is_err() && stopped {
+            Ok(Switched::Stayed)
+        } else {
+            result
+        };
         self.refresh_installed();
         if matches!(result, Ok(Switched::Changed(_) | Switched::AlreadySelected)) {
             self.refresh_instances_list();
@@ -434,29 +436,36 @@ impl Launcher {
                         ),
                 )
         } else {
+            let stopping = running.stop.is_stopped();
             div()
                 .flex()
                 .flex_col()
                 .child(title(trf("Switch to {build}", &[("build", &build)])))
-                .child(muted(if running.progress == InstallProgress::Publishing {
+                .child(muted(if stopping {
+                    tr("Cancelling…").into()
+                } else if running.progress == InstallProgress::Publishing {
                     tr("Applying the switch.").into()
                 } else {
                     stage_label(running.progress)
                 }))
                 .children(
-                    stage_fraction(running.progress)
+                    (!stopping)
+                        .then(|| stage_fraction(running.progress))
+                        .flatten()
                         .map(|f| crate::widgets::progress_bar(Some((f, f)), &self.theme)),
                 )
-                .children((running.progress != InstallProgress::Publishing).then(|| {
-                    div().flex().justify_end().child(
-                        button("cancel-switch", tr("Cancel")).on_click(cx.listener(
-                            |this, _, _, cx| {
-                                this.close_sheet();
-                                cx.notify();
-                            },
-                        )),
-                    )
-                }))
+                .children(
+                    (!stopping && running.progress != InstallProgress::Publishing).then(|| {
+                        div().flex().justify_end().child(
+                            button("cancel-switch", tr("Cancel")).on_click(cx.listener(
+                                |this, _, _, cx| {
+                                    this.cancel_switch();
+                                    cx.notify();
+                                },
+                            )),
+                        )
+                    }),
+                )
         };
         frame("switch-game", 610., body, cx)
     }

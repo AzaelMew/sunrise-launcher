@@ -302,6 +302,7 @@ impl Profile {
         }
         active.generation = 1;
         active.receipts.clear();
+        active.build_choice = None;
         let bytes = serde_json::to_vec(&active).map_err(|e| e.to_string())?;
         profile_txn::write_copy_pointer(destination, &bytes)?;
         Ok(active)

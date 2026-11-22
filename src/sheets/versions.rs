@@ -926,6 +926,7 @@ mod tests {
             body: String::new(),
             date: date.into(),
             time: String::new(),
+            published_at: String::new(),
             asset: Some((String::new(), 1)),
             prerelease: false,
             nightly: nightly.then(|| "nightly".to_owned()),

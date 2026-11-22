@@ -45,6 +45,7 @@ fn game_slices(triple: &str) -> [(Kind, String); 2] {
 }
 
 /// `game_index` and its digest come from the signed game release, not from the SDK host.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn stage_game(
     stage: &Path,
     version: &str,
@@ -52,8 +53,15 @@ pub(crate) fn stage_game(
     (game_index, digest): (&[u8], &str),
     base: &Base,
     keys: &[PublicKey],
+    stop: Option<&crate::native_mods::Cancellation>,
     progress: &dyn Fn(f32),
 ) -> Result<(PathBuf, GameSlices), Refusal> {
+    if let Some(stop) = stop {
+        stop.check().map_err(|why| Refusal::Refused {
+            build: version.to_owned(),
+            why,
+        })?;
+    }
     let commit = game_commit(
         version,
         sunrise_launcher_release_verify::Channel::of(version),
@@ -87,7 +95,7 @@ pub(crate) fn stage_game(
     // Always unpack into the private installation stage. SDK cache stamps check sizes, not
     // file hashes, and are not proof of the bytes in a newly installed game.
     for (name, into) in &wanted {
-        fetch_into(&sdk, base, name, into, &mut fetched, &report)?;
+        fetch_into_cancellable(&sdk, base, name, into, &mut fetched, stop, &report)?;
     }
     let [(_, runtime), (_, programs)] = wanted;
     let bin = runtime.join("bin");
