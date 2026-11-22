@@ -198,7 +198,8 @@ impl Launcher {
             .px(px(24.))
             .pt(px(18.))
             .pb(px(24.))
-            .child(servers.max_w(px(720.)))
+            // The list fills the page at every width, as Versions' does.
+            .child(servers)
             .into_any_element()
     }
 
@@ -407,8 +408,13 @@ impl Launcher {
         server: sunrise_launcher::server_list::Server,
         icon: Option<std::sync::Arc<gpui::Image>>,
         cx: &mut Context<Self>,
-    ) -> Div {
+    ) -> Stateful<Div> {
         use multiplayer_page::Reach;
+        let target = self
+            .multiplayer
+            .target
+            .as_ref()
+            .filter(|target| target.matches(i, &server));
         let reach = self
             .multiplayer
             .reach
@@ -429,6 +435,7 @@ impl Launcher {
         let join = if offline {
             join.opacity(0.4)
                 .cursor_default()
+                .tab_stop(false)
                 .tooltip(crate::glass_ui::tip(tr(
                     "This server doesn't answer right now",
                 )))
@@ -471,6 +478,18 @@ impl Launcher {
             &server.name,
         );
         div()
+            .id(("alt-server-row", i))
+            .relative()
+            .when_some(target, |row, target| {
+                row.track_focus(&target.focus)
+                    .bg(rgb(palette().hover))
+                    .focus(|s| s.border_color(rgb(palette().focus)))
+                    .child(crate::mods::reveal(
+                        crate::frame::scrolls("join"),
+                        target.revealed.clone(),
+                        Some(target.focus.clone()),
+                    ))
+            })
             .flex()
             .items_center()
             .gap(px(12.))

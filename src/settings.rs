@@ -26,6 +26,13 @@ pub(super) enum Section {
     Launcher,
 }
 
+/// The section list's width, the room beside it and the widest a section gets: together, the
+/// block Settings centres on a wide window.
+const NAV_WIDTH: f32 = 180.;
+const COLUMN_GAP: f32 = 28.;
+const PANE_WIDTH: f32 = 760.;
+const COLUMNS: f32 = NAV_WIDTH + COLUMN_GAP + PANE_WIDTH;
+
 /// The Settings section the window opens on, when what the last start left needs one: a data
 /// folder that did not open or a move that failed or finished (Storage has its recoveries).
 pub(super) fn startup_section(location_error: bool, location_note: bool) -> Option<Section> {
@@ -52,6 +59,20 @@ impl Section {
             Section::Storage => "Storage",
             Section::Privacy => "Privacy",
             Section::Launcher => "Launcher",
+        }
+    }
+
+    /// Its icon in the list, from the glass set the top tabs draw theirs from.
+    fn icon(self) -> &'static str {
+        match self {
+            Section::Account => "user",
+            Section::Game => "game-controller-01",
+            Section::Appearance => "color-picker",
+            Section::Mods => "puzzle",
+            Section::Storage => "folder-01",
+            Section::Privacy => "shield",
+            // Language and network: no launcher or app icon in the set.
+            Section::Launcher => "globe-02",
         }
     }
 
@@ -290,24 +311,32 @@ impl Launcher {
             .flex()
             .flex_col()
             .gap(px(2.))
-            .w(px(180.))
+            .w(px(NAV_WIDTH))
             .flex_none();
         for (n, s) in Section::ALL.into_iter().enumerate() {
             let on = s == section;
+            let colour = if on { palette().text } else { palette().muted };
             nav = nav.child(
                 div()
                     .id(ElementId::named_usize("alt-settings-nav", n))
+                    .group("alt-settings-nav")
                     .reach()
                     .h(px(tokens::FIELD))
                     .px(px(12.))
                     .flex()
                     .items_center()
+                    .gap(px(7.))
                     .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
                     .cursor_pointer()
                     .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(rgb(if on { palette().text } else { palette().muted }))
+                    .text_color(rgb(colour))
                     .when(on, |d| d.bg(rgb(palette().selected)))
                     .hover(|d| d.text_color(rgb(palette().text)))
+                    // The top tabs' icon size and gap; it lights up with its label.
+                    .child(
+                        crate::glass_ui::icon(s.icon(), 16., rgb(colour).into())
+                            .group_hover("alt-settings-nav", |d| d.text_color(rgb(palette().text))),
+                    )
                     .child(tr(s.label()))
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                         this.settings_open(s);
@@ -327,7 +356,7 @@ impl Launcher {
         let pane = div()
             .flex_1()
             .min_w_0()
-            .max_w(px(760.))
+            .max_w(px(PANE_WIDTH))
             .flex()
             .flex_col()
             .gap(px(14.))
@@ -354,7 +383,11 @@ impl Launcher {
             .flex_col()
             .text_color(rgb(palette().text))
             .child(
+                // Over the section list, wherever the block sits.
                 div()
+                    .w_full()
+                    .max_w(px(COLUMNS + 2. * 32.))
+                    .mx_auto()
                     .px(px(32.))
                     .pt(px(24.))
                     .pb(px(20.))
@@ -375,9 +408,13 @@ impl Launcher {
                         div()
                             .id("alt-settings-columns")
                             .track_scroll(self.settings_sticky.row())
+                            // On a wide window the block keeps its width, in the middle.
+                            .w_full()
+                            .max_w(px(COLUMNS))
+                            .mx_auto()
                             .flex()
                             .items_start()
-                            .gap(px(28.))
+                            .gap(px(COLUMN_GAP))
                             .child(nav)
                             .child(pane),
                     ),
@@ -1010,7 +1047,15 @@ impl Launcher {
                 }))
                 .cursor_pointer()
                 .focus_visible(|s| s.border_color(rgb(palette().focus)))
-                .child("?")
+                // One line the size of the ring's inside, its text centred: the "?" sits in the
+                // middle both ways, whatever width its text element measures.
+                .child(
+                    div()
+                        .w_full()
+                        .text_center()
+                        .line_height(px(16. - 2.))
+                        .child("?"),
+                )
                 .on_hover(cx.listener(move |this, over: &bool, _, cx| {
                     let hover = &mut this.collection.sent_hover;
                     match *over {
@@ -1046,7 +1091,7 @@ impl Launcher {
                                     .p(px(12.))
                                     .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
                                     .border_1()
-                                    .border_color(rgb(palette().line))
+                                    .border_color(palette().input_edge())
                                     .bg(rgb(palette().raised))
                                     .shadow_lg()
                                     .occlude()
@@ -1383,7 +1428,7 @@ impl Launcher {
                 .p(px(6.))
                 .rounded(tokens::r(tokens::R_CONTROL))
                 .border_1()
-                .border_color(rgb(palette().line))
+                .border_color(palette().input_edge())
                 .bg(rgb(palette().raised))
                 .shadow_lg()
                 .occlude()

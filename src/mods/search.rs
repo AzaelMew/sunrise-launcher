@@ -47,7 +47,7 @@ impl Launcher {
     pub(crate) fn open_installed(&mut self, to: Installed) {
         self.leave_section(!matches!(
             to,
-            Installed::ModsOff | Installed::Mod(_) | Installed::ModNamed(_)
+            Installed::Mods | Installed::ModsOff | Installed::Mod(_) | Installed::ModNamed(_)
         ));
         self.ui.page = self.ui.mods.enter(&to);
         self.game_packs.confirm_remove = None;
@@ -59,6 +59,8 @@ impl Launcher {
 /// A place in Installed that another page opens.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Installed {
+    /// Mods › Installed, with every mod listed and no filters.
+    Mods,
     /// Mods › Installed, the mods that are turned off.
     ModsOff,
     /// Mods › Installed with every mod listed, at the mod with this ID.
@@ -100,6 +102,7 @@ impl ModsState {
         self.reveal = None;
         self.revealed.set(false);
         match to {
+            Installed::Mods => {}
             Installed::ModsOff => self.row_filter.show = model::Show::Off,
             Installed::Mod(id) => self.reveal = Some(Reveal::Mod(id.clone())),
             Installed::Shelf(_) => {}
@@ -202,6 +205,16 @@ mod tests {
     }
 
     #[test]
+    fn manage_mods_does_not_keep_the_turned_off_shortcuts_filter() {
+        let mut m = left_behind();
+        m.enter(&Installed::ModsOff);
+        assert_eq!(shown(&m), ["trail"]);
+        assert!(m.enter(&Installed::Mods) == Page::Installed);
+        assert_eq!(shown(&m), ["lantern", "rain", "trail"]);
+        assert_eq!(m.row_filter, RowFilter::default());
+    }
+
+    #[test]
     fn a_mod_is_opened_by_its_id_among_all_of_them() {
         // Left on "Turned off" with another kind chosen: a mod that is on would be hidden.
         let mut m = left_behind();
@@ -230,8 +243,7 @@ mod tests {
     }
 
     #[test]
-    fn everything_home_counts_as_turned_off_has_a_place_that_lists_it() {
-        use crate::home_mods::Kind as Counted;
+    fn home_destinations_open_the_requested_installed_filter_or_shelf() {
         // Wherever Mods and Packs were left: Packs on Discover, its Installed on the data
         // packs' shelf, a name typed that matches nothing.
         let left = || {
@@ -243,16 +255,16 @@ mod tests {
             m
         };
         let mut m = left();
-        assert!(m.enter(&Counted::Mod.turned_off()) == Page::Installed);
+        assert!(m.enter(&Installed::ModsOff) == Page::Installed);
         assert_eq!(shown(&m), ["trail"], "the mods that are off");
-        for (counted, shelf) in [
-            (Counted::Resource, Shelf::Resource),
-            (Counted::Shader, Shelf::Shader),
+        for (kind, shelf) in [
+            (Kind::Resource, Shelf::Resource),
+            (Kind::Shader, Shelf::Shader),
         ] {
             let mut m = left();
-            assert!(m.enter(&counted.turned_off()) == Page::Packs, "Installed");
-            assert_eq!(m.shelf, shelf, "the shelf of what was counted");
-            assert_eq!(shelf.kind().map(Counted::of), Some(counted));
+            assert!(m.enter(&Installed::Shelf(kind)) == Page::Packs, "Installed");
+            assert_eq!(m.shelf, shelf, "the requested shelf");
+            assert_eq!(shelf.kind(), Some(kind));
             // Every pack of the shelf is listed: no name is searched for.
             assert_eq!((m.have.text(), m.row_filter.text.as_str()), ("", ""));
             assert!(m.last_packs == Some(Page::Packs));

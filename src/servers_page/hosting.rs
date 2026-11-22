@@ -112,13 +112,13 @@ impl Launcher {
             .px(px(12.))
             .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
             .border_1()
-            .border_color(rgb(if invalid {
-                palette().danger
+            .border_color(if invalid {
+                rgb(palette().danger).into()
             } else if focused {
-                palette().focus
+                rgb(palette().focus).into()
             } else {
-                palette().line
-            }))
+                palette().input_edge()
+            })
             .bg(rgb(palette().field))
             .text_size(px(tokens::LABEL))
             .text_color(rgb(palette().text))
@@ -220,10 +220,15 @@ impl Launcher {
             .open
             .clone()
             .filter(|dir| self.servers.list.iter().any(|e| &e.dir == dir));
+        // The list of servers fills the page, as Versions' does; one server's page keeps its
+        // width.
+        let listing = open.is_none();
         let body = match open {
             Some(dir) => self.host_server(&dir, cx),
             None => {
-                self.servers.open = None;
+                if self.servers.open.take().is_some() {
+                    self.servers.reset_public_lookup();
+                }
                 self.host_list(cx)
             }
         };
@@ -236,7 +241,12 @@ impl Launcher {
             .pt(px(18.))
             .pb(px(24.))
             .text_color(rgb(palette().text))
-            .child(body.max_w(px(1180.)).flex().flex_col().gap(px(18.)))
+            .child(
+                body.when(!listing, |b| b.max_w(px(1180.)))
+                    .flex()
+                    .flex_col()
+                    .gap(px(18.)),
+            )
             .into_any_element()
     }
 
@@ -281,7 +291,7 @@ impl Launcher {
             Fix::Prepare if !self.selected().is_some_and(|tag| backend::is_prepared(tag)) => {
                 self.servers.problem = None;
                 self.servers.create = None;
-                self.ui.page = crate::frame::Page::Home;
+                self.navigate(crate::frame::Page::Home);
                 self.play_game(crate::launcher_play::PlayDestination::Home);
             }
             fix => self.fix(fix, cx),
@@ -403,8 +413,12 @@ impl Launcher {
                 this.stop_server()
             })
         } else {
+            // Only a server the engine reported stopped: an unknown status (not polled yet, or a
+            // failed poll) may be a server started elsewhere, which Start would claim as this
+            // launcher's and stop when it quits.
+            let stopped = status.phase == "stopped";
             primary(
-                self.host_button("host-start", tr("Start"), idle, cx, |this, _| {
+                self.host_button("host-start", tr("Start"), idle && stopped, cx, |this, _| {
                     this.start_server()
                 }),
             )
@@ -487,6 +501,7 @@ impl Launcher {
                         .child(tr("All servers"))
                         .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                             this.servers.open = None;
+                            this.servers.reset_public_lookup();
                             this.servers.polled = None;
                             this.servers.problem = None;
                             this.servers.note = None;
@@ -553,6 +568,9 @@ impl Launcher {
             .into_iter()
             .map(|(tab, name)| {
                 let pick: Choose = Rc::new(move |this, _| {
+                    if this.servers.tab == Tab::Overview && tab != Tab::Overview {
+                        this.servers.reset_public_lookup();
+                    }
                     this.servers.tab = tab;
                     this.servers.confirm_restore = None;
                 });
@@ -574,56 +592,8 @@ impl Launcher {
     // ----- Overview -------------------------------------------------------------------------
 
     fn host_overview(&mut self, status: &Status, cx: &mut Context<Self>) -> Div {
-        let port = self
-            .servers
-            .shown("server", "port")
-            .parse::<u64>()
-            .unwrap_or(25565);
-        let address = match servers::lan_address() {
-            Some(ip) if port == 25565 => ip.to_string(),
-            Some(ip) => format!("{ip}:{port}"),
-            None => format!("localhost:{port}"),
-        };
-        let copied = self
-            .servers
-            .copied
-            .is_some_and(|at| at.elapsed() < Duration::from_secs(2));
-        let copy = address.clone();
-        let here = card()
-            .gap(px(8.))
-            .p(px(16.))
-            .child(label("Address on this network"))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(12.))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .font_family(theme::MONO)
-                            .text_size(px(tokens::HEADING))
-                            .child(address),
-                    )
-                    .child(self.host_button(
-                        "host-address-copy",
-                        tr(if copied { "Copied" } else { "Copy" }),
-                        true,
-                        cx,
-                        move |this, cx| {
-                            copy_to_clipboard(cx, gpui::ClipboardItem::new_string(copy.clone()));
-                            this.servers.copied = Some(Instant::now());
-                        },
-                    )),
-            )
-            .child(hint(tr(
-                "Friends on the same Wi-Fi: Multiplayer, Add Server, then paste this address.",
-            )))
-            .child(hint(trf(
-                "Friends elsewhere can't reach it as it is: use Tailscale below, or forward TCP port {port} on your router to this computer.",
-                &[("port", &port.to_string())],
-            )));
+        let (listener, saved) = self.servers.share_address(status);
+        let here = self.host_address_card(listener, saved, status, cx);
         let on = status.running();
         let dash = || "–".to_string();
         let stat = |value: String, name: &str| {
@@ -706,7 +676,7 @@ impl Launcher {
             );
         }
         right = right.child(self.host_console(on, cx));
-        let sharing = self.hosting_share(port as u16, cx);
+        let sharing = self.hosting_share(listener, cx);
         div()
             .flex()
             .items_start()
@@ -722,6 +692,184 @@ impl Launcher {
                     .child(sharing),
             )
             .child(right)
+    }
+
+    fn host_address_card(
+        &mut self,
+        listener: Option<std::net::SocketAddr>,
+        saved: Option<u16>,
+        status: &Status,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let s = &self.servers;
+        let internet = s.internet_address;
+        let lookup = s.public_lookup;
+        let last = s.last_public_address;
+        let port = listener.map(|address| address.port());
+        let local_only = listener.is_some_and(|address| address.ip().is_loopback());
+        let public_port = listener
+            .filter(|address| address.is_ipv4() && !address.ip().is_loopback())
+            .map(|address| address.port());
+        let lan = listener
+            .filter(|_| !internet && !local_only)
+            .and_then(|address| {
+                if address.ip().is_unspecified() {
+                    servers::lan_address().filter(|ip| ip.is_ipv4() == address.is_ipv4())
+                } else {
+                    Some(address.ip())
+                }
+            });
+        let address = if internet {
+            last.filter(|_| lookup == PublicLookup::Detected)
+                .zip(public_port)
+                .map(|(ip, port)| servers::network::address(ip.into(), port))
+        } else {
+            listener.filter(|_| !local_only).map(|listener| {
+                lan.map_or_else(
+                    || format!("localhost:{}", listener.port()),
+                    |ip| servers::network::address(ip, listener.port()),
+                )
+            })
+        };
+
+        let modes = chip_group(
+            "host-address-network",
+            &[("lan", "Local network"), ("internet", "Internet")],
+            if internet { "internet" } else { "lan" },
+            cx,
+            |this, value| {
+                let internet = value == "internet";
+                if internet != this.servers.internet_address {
+                    this.servers.internet_address = internet;
+                    this.servers.reset_public_lookup();
+                }
+            },
+        );
+        let copied = s
+            .copied
+            .is_some_and(|at| at.elapsed() < Duration::from_secs(2));
+        let shown = address.clone().unwrap_or_else(|| {
+            tr(match (internet, lookup) {
+                _ if local_only => "Local connections only",
+                (true, _) if listener.is_some() && public_port.is_none() => {
+                    "Public IPv4 unavailable for this listener"
+                }
+                (true, PublicLookup::Idle) => "Public IP not detected",
+                (true, PublicLookup::Loading(_)) => "Finding public IP…",
+                (true, PublicLookup::Failed) => "Public IP unavailable",
+                _ => "Server port unavailable",
+            })
+            .to_owned()
+        });
+        let mut panel = card()
+            .gap(px(8.))
+            .p(px(16.))
+            .child(label("Address to share"))
+            .child(modes)
+            .child(label(if internet {
+                "Last detected public address"
+            } else {
+                "Address on this network"
+            }))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(12.))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .font_family(theme::MONO)
+                            .text_size(px(tokens::HEADING))
+                            .child(shown),
+                    )
+                    .child(self.host_button(
+                        "host-address-copy",
+                        tr(if copied { "Copied" } else { "Copy" }),
+                        address.is_some(),
+                        cx,
+                        move |this, cx| {
+                            if let Some(address) = &address {
+                                copy_to_clipboard(
+                                    cx,
+                                    gpui::ClipboardItem::new_string(address.clone()),
+                                );
+                                this.servers.copied = Some(Instant::now());
+                            }
+                        },
+                    )),
+            );
+
+        if local_only {
+            panel = panel.child(hint(tr("This server listens only on this computer.")));
+        } else if internet && (listener.is_none() || public_port.is_some()) {
+            if listener.is_none() {
+                panel = panel.child(hint(tr("Server port unavailable")));
+            }
+            if let Some(ip) =
+                last.filter(|_| lookup != PublicLookup::Detected || public_port.is_none())
+            {
+                panel = panel.child(hint(trf(
+                    "Last detected public IP: {ip}.",
+                    &[("ip", &ip.to_string())],
+                )));
+            }
+            panel = panel
+                .child(hint(tr(
+                    "Detecting your public IPv4 sends a direct request to ipify outside the launcher proxy. ipify sees this connection's IP address. The request does not check whether your server is reachable.",
+                )))
+                .child(self.host_button(
+                    "host-public-address-detect",
+                    tr(if lookup == PublicLookup::Detected {
+                        "Refresh public IP"
+                    } else {
+                        "Detect public IP"
+                    }),
+                    s.public_lookup_in_flight.is_none(),
+                    cx,
+                    |this, _| this.find_server_public_address(),
+                ));
+            if lookup == PublicLookup::Failed {
+                panel = panel.child(warning(tr(
+                    "Could not find your public IP. Check your internet connection and try again.",
+                )));
+            }
+            if let Some(port) = public_port {
+                panel = panel.child(hint(trf(
+                    "Forward TCP port {port} on your router to this computer and allow it through your firewall. If your provider uses CGNAT, you need a public IP or a tunnel.",
+                    &[("port", &port.to_string())],
+                )));
+            }
+        } else if !internet && lan.is_some() {
+            panel = panel.child(hint(tr(
+                "Friends on the same Wi-Fi: Multiplayer, Add Server, then paste this address.",
+            )));
+        } else if !internet && listener.is_some() {
+            panel = panel.child(hint(tr(
+                "No local network address was found. localhost works only on this computer.",
+            )));
+        }
+
+        if let Some(port) = public_port.filter(|_| !internet && lan.is_some()) {
+            panel = panel.child(hint(trf(
+                "Friends elsewhere can't reach it as it is: use Tailscale below, or forward TCP port {port} on your router to this computer.",
+                &[("port", &port.to_string())],
+            )));
+        }
+        if let Some((running, saved)) = port
+            .zip(saved)
+            .filter(|(running, saved)| status.phase == "running" && running != saved)
+        {
+            panel = panel.child(hint(trf(
+                "The server is running on port {running}. Restart to use saved port {saved}.",
+                &[
+                    ("running", &running.to_string()),
+                    ("saved", &saved.to_string()),
+                ],
+            )));
+        }
+        panel
     }
 
     fn host_console(&mut self, running: bool, cx: &mut Context<Self>) -> Div {
@@ -1646,7 +1794,7 @@ impl Launcher {
                         .px(px(12.))
                         .rounded(crate::tokens::r(crate::tokens::R_PANEL))
                         .border_1()
-                        .border_color(rgb(palette().line))
+                        .border_color(palette().input_edge())
                         .text_size(px(tokens::LABEL))
                         .cursor_pointer()
                         .child(friend)
