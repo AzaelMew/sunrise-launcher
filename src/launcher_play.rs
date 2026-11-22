@@ -500,9 +500,34 @@ impl Launcher {
         self.begin_sign_in(None);
     }
 
+    /// Signs an account in again on the sign-in screen, where its code is shown (#110).
     pub(crate) fn re_sign_in(&mut self, uuid: &str) {
-        if let Some(account) = self.accounts.find(uuid).cloned() {
-            self.begin_sign_in(Some(account));
+        self.sign_in_from_action(SignInClick::Renew(uuid));
+    }
+
+    /// Retry the original account when the current screen has a target.
+    pub(crate) fn retry_sign_in(&mut self) {
+        let target = self
+            .sign_in_target
+            .as_ref()
+            .map(|account| account.uuid.clone());
+        self.sign_in_from_action(SignInClick::Retry(target.as_deref()));
+    }
+
+    fn sign_in_from_action(&mut self, click: SignInClick<'_>) {
+        let start = click.target(self.account_locked(), |uuid| {
+            self.accounts.find(uuid).cloned()
+        });
+        if let Err(refusal) = dispatch_sign_in(start, |account| {
+            self.begin_sign_in(account);
+            self.owner_screen_open = true;
+        }) {
+            match refusal {
+                SignInRefusal::Busy => self.say_account_locked(),
+                SignInRefusal::AccountRemoved => crate::glass_toast::say(tr(
+                    "This account was signed out. Add it again to sign in.",
+                )),
+            }
         }
     }
 
@@ -551,9 +576,92 @@ impl Launcher {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum SignInRefusal {
+    Busy,
+    AccountRemoved,
+}
+
+enum SignInClick<'a> {
+    Renew(&'a str),
+    Retry(Option<&'a str>),
+}
+
+impl SignInClick<'_> {
+    fn target(
+        self,
+        locked: bool,
+        find: impl FnOnce(&str) -> Option<account::Account>,
+    ) -> Result<Option<account::Account>, SignInRefusal> {
+        if locked {
+            return Err(SignInRefusal::Busy);
+        }
+        match self {
+            Self::Renew(uuid) | Self::Retry(Some(uuid)) => {
+                find(uuid).map(Some).ok_or(SignInRefusal::AccountRemoved)
+            }
+            Self::Retry(None) => Ok(None),
+        }
+    }
+}
+
+/// Dispatches the worker and screen-open action together.
+fn dispatch_sign_in(
+    target: Result<Option<account::Account>, SignInRefusal>,
+    start: impl FnOnce(Option<account::Account>),
+) -> Result<(), SignInRefusal> {
+    target.map(start)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn renewing_and_retrying_start_only_the_requested_account() {
+        let account = account::Account {
+            uuid: "a1".into(),
+            name: "Original account".into(),
+            skin: None,
+            cape: None,
+        };
+        let find = |uuid: &str| (uuid == account.uuid).then(|| account.clone());
+        let mut attempt = None;
+        dispatch_sign_in(SignInClick::Renew("a1").target(false, find), |target| {
+            attempt = target.map(|account| account.uuid);
+        })
+        .unwrap();
+        assert_eq!(attempt.as_deref(), Some("a1"));
+
+        let retry = attempt.as_deref();
+        let mut retried = None;
+        dispatch_sign_in(SignInClick::Retry(retry).target(false, find), |target| {
+            retried = target.map(|account| account.uuid);
+        })
+        .unwrap();
+        assert_eq!(retried, attempt);
+
+        let must_not_start = |_| panic!("No worker or sign-in screen should start");
+        assert_eq!(
+            dispatch_sign_in(
+                SignInClick::Retry(retry).target(false, |_| None),
+                must_not_start
+            ),
+            Err(SignInRefusal::AccountRemoved)
+        );
+        assert_eq!(
+            dispatch_sign_in(SignInClick::Renew("a1").target(true, find), must_not_start),
+            Err(SignInRefusal::Busy)
+        );
+        assert_eq!(
+            dispatch_sign_in(SignInClick::Retry(retry).target(true, find), must_not_start),
+            Err(SignInRefusal::Busy)
+        );
+        dispatch_sign_in(SignInClick::Retry(None).target(false, find), |target| {
+            assert!(target.is_none());
+        })
+        .unwrap();
+    }
 
     #[test]
     fn a_retained_legacy_copy_does_not_stop_play_at_the_mod_check() {

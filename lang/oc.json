@@ -1482,5 +1482,6 @@
   "{version} available · {status}": "{version} available · {status}",
   "Sign in": "Sign in",
   "Finishing the previous download…": "Finishing the previous download…",
-  "The launcher update could not be verified.": "The launcher update could not be verified."
+  "The launcher update could not be verified.": "The launcher update could not be verified.",
+  "This account was signed out. Add it again to sign in.": "This account was signed out. Add it again to sign in."
 }
