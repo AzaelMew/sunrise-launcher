@@ -502,10 +502,29 @@ impl Launcher {
 
     /// Signs an account in again on the sign-in screen, where its code is shown (#110).
     pub(crate) fn re_sign_in(&mut self, uuid: &str) {
-        if self.account_locked() {
-            self.say_account_locked();
-            return;
+        let known = |id: &str| self.accounts.find(id).is_some();
+        match sign_in_start(self.account_locked(), Some(uuid), known) {
+            SignInStart::Refused => self.say_account_locked(),
+            SignInStart::Again(uuid) => self.sign_in_again(&uuid),
+            // Signed out since the click: there is nothing to renew.
+            SignInStart::New => {}
         }
+    }
+
+    /// The sign-in screen's own button: after a failed Sign in again it retries that same
+    /// account, so a different Microsoft account is still refused and who plays stays as it was;
+    /// otherwise it signs any account in.
+    pub(crate) fn retry_sign_in(&mut self) {
+        let target = self.sign_in_target.as_ref().map(|a| a.uuid.clone());
+        let known = |id: &str| self.accounts.find(id).is_some();
+        match sign_in_start(self.account_locked(), target.as_deref(), known) {
+            SignInStart::Refused => self.say_account_locked(),
+            SignInStart::Again(uuid) => self.sign_in_again(&uuid),
+            SignInStart::New => self.begin_sign_in(None),
+        }
+    }
+
+    fn sign_in_again(&mut self, uuid: &str) {
         if let Some(account) = self.accounts.find(uuid).cloned() {
             self.begin_sign_in(Some(account));
             self.owner_screen_open = true;
@@ -557,9 +576,60 @@ impl Launcher {
     }
 }
 
+/// What a sign-in click starts (#110).
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum SignInStart {
+    /// The game is starting and who plays is settled: nothing starts and nothing opens.
+    Refused,
+    /// That account again: the sign-in refuses any other Microsoft account and leaves who plays
+    /// as it was (`account::accept_sign_in`).
+    Again(String),
+    /// A sign-in for any account, which then becomes the one that plays.
+    New,
+}
+
+/// `wanted` is the account a click is for: Sign in again's, or the one a failed attempt on the
+/// sign-in screen was for. `known` says whether it is still signed in here.
+pub(crate) fn sign_in_start(
+    locked: bool,
+    wanted: Option<&str>,
+    known: impl Fn(&str) -> bool,
+) -> SignInStart {
+    if locked {
+        return SignInStart::Refused;
+    }
+    match wanted {
+        Some(uuid) if known(uuid) => SignInStart::Again(uuid.to_owned()),
+        _ => SignInStart::New,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sign_in_again_and_its_retry_stay_on_the_account_and_wait_for_the_game_to_start() {
+        let known = |id: &str| id == "a1";
+        // Sign in again on an account here: the screen opens on a sign-in for that account.
+        assert_eq!(
+            sign_in_start(false, Some("a1"), known),
+            SignInStart::Again("a1".into())
+        );
+        // The sign-in screen's button after that attempt failed (for example Microsoft answered
+        // with another account): still that account, never an open sign-in that could save and
+        // select the other one.
+        assert_eq!(
+            sign_in_start(false, Some("a1"), known),
+            SignInStart::Again("a1".into())
+        );
+        // While the game is starting nothing starts, retry or not, and the screen stays shut.
+        assert_eq!(sign_in_start(true, Some("a1"), known), SignInStart::Refused);
+        assert_eq!(sign_in_start(true, None, known), SignInStart::Refused);
+        // No account to renew (Add account, or one signed out meanwhile): any account.
+        assert_eq!(sign_in_start(false, None, known), SignInStart::New);
+        assert_eq!(sign_in_start(false, Some("gone"), known), SignInStart::New);
+    }
 
     #[test]
     fn a_retained_legacy_copy_does_not_stop_play_at_the_mod_check() {

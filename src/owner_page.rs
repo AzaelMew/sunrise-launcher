@@ -12,11 +12,22 @@ impl Launcher {
     /// screen, or Microsoft still answering) is shown as it is, not started over.
     pub(crate) fn sign_in_to_play(&mut self) {
         self.owner_screen_open = true;
-        let under_way = self.sign_in.is_some()
-            && !matches!(self.sign_in_state, None | Some(SignInState::Done(_)));
-        if !under_way {
+        if !self.sign_in_under_way() {
             self.start_sign_in();
         }
+    }
+
+    /// The screen's own sign-in button. After a failed Sign in again it retries that same
+    /// account, so a different Microsoft account is still refused and who plays stays as it was.
+    fn sign_in_from_screen(&mut self) {
+        self.owner_screen_open = true;
+        if !self.sign_in_under_way() {
+            self.retry_sign_in();
+        }
+    }
+
+    fn sign_in_under_way(&self) -> bool {
+        self.sign_in.is_some() && !matches!(self.sign_in_state, None | Some(SignInState::Done(_)))
     }
 
     /// Closes it; it comes back with the next refused Play.
@@ -221,7 +232,7 @@ impl Launcher {
                     .seen()
                     .focus_visible(|s| s.shadow(crate::frame::focus_ring(palette().focus)))
                     .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                        this.sign_in_to_play();
+                        this.sign_in_from_screen();
                         cx.notify();
                     })),
             ),
@@ -455,7 +466,7 @@ impl Launcher {
                     &t,
                 )
                 .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                    this.sign_in_to_play();
+                    this.sign_in_from_screen();
                     cx.notify();
                 }))
                 .into_any_element(),
