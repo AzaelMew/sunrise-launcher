@@ -482,13 +482,11 @@ impl Launcher {
                     .justify_end()
                     .gap(px(8.))
                     .children(show.then(|| {
-                        button("receipt-copy", tr("Copy report")).on_click(cx.listener(
-                            move |_, _, _, cx| {
-                                cx.write_to_clipboard(gpui::ClipboardItem::new_string(
-                                    copy.as_ref().clone(),
-                                ));
-                            },
-                        ))
+                        crate::frame::copy_button(
+                            "receipt-copy",
+                            tr("Copy report"),
+                            copy.as_ref().clone(),
+                        )
                     }))
                     .children(show.then(|| {
                         button("receipt-save", tr("Save report")).on_click(cx.listener(

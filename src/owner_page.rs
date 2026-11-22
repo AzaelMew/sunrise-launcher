@@ -3,7 +3,7 @@
 //! without one (those who played offline before the gate), and again whenever Play is refused.
 //! The sign-in runs on it, code and all.
 use super::*;
-use crate::frame::{button, button_base, primary, Reach as _};
+use crate::frame::{button, primary, Reach as _};
 use crate::paint::palette;
 use gpui::rgb;
 
@@ -573,7 +573,7 @@ impl Launcher {
         text: String,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        copy_button_face(kind, label, self.sign_in_copies.shown(kind))
+        crate::frame::copy_face(kind.id(), label, self.sign_in_copies.shown(kind))
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                 crate::widgets::copy_quietly(cx, gpui::ClipboardItem::new_string(text.clone()));
                 this.sign_in_copies.copy(kind);
@@ -585,41 +585,6 @@ impl Launcher {
                 .detach();
             }))
             .into_any_element()
-    }
-}
-
-/// Keep the focusable element in place while the label and decorative children change.
-fn copy_button_face(kind: CopyButton, label: &str, shown: Option<usize>) -> Stateful<Div> {
-    let id = kind.id();
-    let accent: gpui::Hsla = rgb(palette().accent).into();
-    let base = button_base(
-        id,
-        shown.map_or_else(|| label.to_string(), |_| tr("Copied").into()),
-    )
-    .relative()
-    .gap(px(6.));
-    match shown {
-        Some(n) => base
-            .border_color(accent.opacity(0.5))
-            .hover(move |s| s.border_color(accent.opacity(0.75)))
-            .child(crate::code_box::tick(
-                &SharedString::from(id),
-                n,
-                16.,
-                rgb(palette().text).into(),
-            ))
-            .child(
-                div()
-                    .absolute()
-                    .inset_0()
-                    .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
-                    .with_animation(
-                        ElementId::named_usize(SharedString::from(format!("{id}-tint")), n),
-                        crate::code_box::played(Duration::from_millis(200)),
-                        move |d, t| d.bg(accent.opacity(0.16 * t)),
-                    ),
-            ),
-        None => base.hover(|s| s.bg(rgb(palette().hover))),
     }
 }
 
@@ -651,17 +616,17 @@ mod tests {
         let mut copies = SignInCopies::default();
         for kind in [CopyButton::Code, CopyButton::Link] {
             let expected = Some(ElementId::from(kind.id()));
-            let mut initial = copy_button_face(kind, "Copy", copies.shown(kind));
+            let mut initial = crate::frame::copy_face(kind.id(), "Copy", copies.shown(kind));
             assert_eq!(initial.interactivity().element_id, expected);
 
             copies.copy(kind);
             assert!(copies.shown(kind).is_some());
-            let mut copied = copy_button_face(kind, "Copy", copies.shown(kind));
+            let mut copied = crate::frame::copy_face(kind.id(), "Copy", copies.shown(kind));
             assert_eq!(copied.interactivity().element_id, expected);
 
             copies.clear();
             assert!(copies.shown(kind).is_none());
-            let mut reset = copy_button_face(kind, "Copy", copies.shown(kind));
+            let mut reset = crate::frame::copy_face(kind.id(), "Copy", copies.shown(kind));
             assert_eq!(reset.interactivity().element_id, expected);
         }
 

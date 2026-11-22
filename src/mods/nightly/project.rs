@@ -419,15 +419,11 @@ impl Launcher {
                         .flex()
                         .justify_end()
                         .gap(px(8.))
-                        .child(
-                            button("nightly-log-copy", tr("Copy log")).on_click(cx.listener(
-                                move |_, _, _, cx| {
-                                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(
-                                        log.clone(),
-                                    ));
-                                },
-                            )),
-                        )
+                        .child(crate::frame::copy_button(
+                            "nightly-log-copy",
+                            tr("Copy log"),
+                            log,
+                        ))
                         .child(
                             button("nightly-log-close", tr("Close")).on_click(cx.listener(
                                 |this, _, _, cx| {
