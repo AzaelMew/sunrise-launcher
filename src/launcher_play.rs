@@ -507,8 +507,7 @@ impl Launcher {
 
     /// Retry the original account when the current screen has a target.
     pub(crate) fn retry_sign_in(&mut self) {
-        let target = SignInHost::retry_target(self);
-        sign_in_click(self, target);
+        retry_click(self);
     }
 
     pub(crate) fn begin_sign_in(&mut self, target: Option<account::Account>) {
@@ -570,8 +569,10 @@ trait SignInHost {
     fn account(&self, uuid: &str) -> Option<account::Account>;
     /// The account the sign-in screen on show was for, if any.
     fn retry_target(&self) -> Option<String>;
-    /// Starts the sign-in worker for `target` and shows its screen.
-    fn start(&mut self, target: Option<account::Account>);
+    /// Starts the sign-in worker for `target`.
+    fn start_worker(&mut self, target: Option<account::Account>);
+    /// Shows the sign-in screen, where the worker's code appears.
+    fn open_screen(&mut self);
     fn refuse(&mut self, refusal: SignInRefusal);
 }
 
@@ -590,8 +591,11 @@ impl SignInHost for Launcher {
             .map(|account| account.uuid.clone())
     }
 
-    fn start(&mut self, target: Option<account::Account>) {
+    fn start_worker(&mut self, target: Option<account::Account>) {
         self.begin_sign_in(target);
+    }
+
+    fn open_screen(&mut self) {
         self.owner_screen_open = true;
     }
 
@@ -618,7 +622,14 @@ fn sign_in_click(host: &mut impl SignInHost, uuid: Option<String>) {
             None => return host.refuse(SignInRefusal::AccountRemoved),
         },
     };
-    host.start(target);
+    host.start_worker(target);
+    host.open_screen();
+}
+
+/// Retry on the sign-in screen: the account that screen was for, or a new one.
+fn retry_click(host: &mut impl SignInHost) {
+    let target = host.retry_target();
+    sign_in_click(host, target);
 }
 
 #[cfg(test)]
@@ -645,9 +656,11 @@ mod tests {
         fn retry_target(&self) -> Option<String> {
             self.target.clone()
         }
-        fn start(&mut self, target: Option<account::Account>) {
+        fn start_worker(&mut self, target: Option<account::Account>) {
             self.target = target.as_ref().map(|account| account.uuid.clone());
             self.started.push(self.target.clone());
+        }
+        fn open_screen(&mut self) {
             self.screen_open = true;
         }
         fn refuse(&mut self, refusal: SignInRefusal) {
@@ -670,15 +683,13 @@ mod tests {
         // Sign in again opens the screen for that account; a retry after an error reuses it.
         sign_in_click(&mut host, Some("a1".into()));
         assert!(host.screen_open);
-        let retry = host.retry_target();
-        sign_in_click(&mut host, retry);
+        retry_click(&mut host);
         assert_eq!(host.started, [Some("a1".into()), Some("a1".into())]);
 
         // The account was removed meanwhile: retry starts nothing.
         host.accounts.clear();
         host.screen_open = false;
-        let retry = host.retry_target();
-        sign_in_click(&mut host, retry);
+        retry_click(&mut host);
         assert_eq!(host.started.len(), 2);
         assert!(!host.screen_open);
         assert_eq!(host.refused, [SignInRefusal::AccountRemoved]);
@@ -690,15 +701,15 @@ mod tests {
             ..FakeSignIn::default()
         };
         sign_in_click(&mut starting, Some("a1".into()));
-        let retry = starting.retry_target();
-        sign_in_click(&mut starting, retry);
+        retry_click(&mut starting);
         assert!(starting.started.is_empty() && !starting.screen_open);
         assert_eq!(starting.refused, [SignInRefusal::Busy, SignInRefusal::Busy]);
 
         // A screen with no account behind it signs a new account in.
         let mut fresh = FakeSignIn::default();
-        sign_in_click(&mut fresh, None);
+        retry_click(&mut fresh);
         assert_eq!(fresh.started, [None]);
+        assert!(fresh.screen_open);
     }
 
     #[test]
