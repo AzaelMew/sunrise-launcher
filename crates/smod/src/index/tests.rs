@@ -511,3 +511,41 @@ fn a_listed_dependency_claim_must_be_what_the_manifest_declares() {
         );
     }
 }
+
+/// The publish job doesn't count collection downloads yet (#193), so every published index omits
+/// the field. A count it does publish, 0 included, reads and writes back as given; a missing one
+/// stays missing rather than becoming 0.
+#[test]
+fn a_collection_keeps_a_published_download_count_and_a_missing_one_apart() {
+    let mut text: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(fixtures().join("index-v1.json")).unwrap())
+            .unwrap();
+    // A collection lists 2 to 64 mods; the sample has one, so list it twice under two ids.
+    let mut second = text["projects"][0].clone();
+    second["id"] = "coords_hud_two".into();
+    text["projects"].as_array_mut().unwrap().push(second);
+    for published in [Some(42), Some(0), None] {
+        let mut collection = serde_json::json!({
+            "id": "hud_pack", "name": "HUD pack", "summary": "Overlays.",
+            "description": "Markdown.", "owners": ["Someone"],
+            "icon": "https://example.test/icon.png", "members": [{"id": "coords_hud"}, {"id": "coords_hud_two"}],
+        });
+        if let Some(count) = published {
+            collection["downloads"] = count.into();
+        }
+        text["collections"] = serde_json::json!([collection]);
+        let index = Index::parse(&text.to_string()).unwrap();
+        assert_eq!(
+            index.collection("hud_pack").unwrap().downloads,
+            published,
+            "{published:?}"
+        );
+        let written = serde_json::to_value(&index).unwrap();
+        assert_eq!(
+            written["collections"][0].get("downloads").cloned(),
+            published.map(serde_json::Value::from),
+            "a published 0 is written; a missing count is not"
+        );
+        assert_eq!(Index::parse(&written.to_string()).unwrap(), index);
+    }
+}
