@@ -109,7 +109,7 @@ impl Launcher {
             }
             Event::Updates(checked) => {
                 state.work.checking = false;
-                state.work.updates = Some(*checked);
+                state.work.updates = Some(merge_checked(state.work.updates.take(), *checked));
             }
         }
         if add {
@@ -329,7 +329,10 @@ impl Launcher {
         }
         let only = only.map(|origin| origin.id.clone());
         self.ui.mods.nightly.work.checking = true;
-        self.ui.mods.nightly.work.updates = None;
+        // One project's check keeps what the last profile-wide check found for the others.
+        if only.is_none() {
+            self.ui.mods.nightly.work.updates = None;
+        }
         let refresh_catalogue = !self.nightly_catalogue_current();
         let tx = self.ui.mods.tx.clone();
         std::thread::spawn(move || {
@@ -524,6 +527,37 @@ impl Launcher {
     }
 }
 
+/// What a check found, laid over the last one: a profile-wide check replaces it, and one
+/// project's check replaces only that project's offer or issue, on the same profile and build.
+/// Offline, nothing was checked, so every earlier finding stays.
+fn merge_checked(previous: Option<CheckedUpdates>, checked: CheckedUpdates) -> CheckedUpdates {
+    let Some(id) = checked.only.clone() else {
+        return checked;
+    };
+    let same_target = |earlier: &Option<SourceTarget>| match (earlier, &checked.target) {
+        (Some(earlier), Some(now)) => {
+            earlier.identity() == now.identity() && earlier.base() == now.base()
+        }
+        (_, None) => true,
+        (None, Some(_)) => false,
+    };
+    let Some(mut merged) =
+        previous.filter(|earlier| earlier.scope == checked.scope && same_target(&earlier.target))
+    else {
+        return checked;
+    };
+    if checked.target.is_some() {
+        merged.candidates.remove(&id);
+        merged.issues.remove(&id);
+        merged.target = checked.target;
+    }
+    merged.candidates.extend(checked.candidates);
+    merged.issues.extend(checked.issues);
+    merged.only = checked.only;
+    merged.notice = checked.notice;
+    merged
+}
+
 fn tracked_origins(local: &[model::Local], only: Option<&Origin>) -> Vec<Origin> {
     local
         .iter()
@@ -561,6 +595,48 @@ fn source_for_update(predecessor: &Origin) -> Result<Option<Source>, sources::Fa
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn one_projects_check_keeps_the_other_mods_findings() {
+        let scope = || OpenScope {
+            profile: Some("p".into()),
+            home: PathBuf::from("home"),
+            target: None,
+            game: "nightly".into(),
+        };
+        let issue = |why: &str| SourceError::Unproved(why.into());
+        let earlier = CheckedUpdates {
+            scope: scope(),
+            only: None,
+            target: None,
+            candidates: BTreeMap::new(),
+            issues: BTreeMap::from([("a".into(), issue("old a")), ("b".into(), issue("b"))]),
+            notice: Some("Finished checking for source updates.".into()),
+        };
+        let one = CheckedUpdates {
+            scope: scope(),
+            only: Some("a".into()),
+            target: None,
+            candidates: BTreeMap::new(),
+            issues: BTreeMap::from([("a".into(), issue("new a"))]),
+            notice: Some("Finished checking for source updates.".into()),
+        };
+        let merged = merge_checked(Some(earlier), one);
+        assert_eq!(merged.issues.get("b"), Some(&issue("b")));
+        assert_eq!(merged.issues.get("a"), Some(&issue("new a")));
+        assert_eq!(merged.only.as_deref(), Some("a"));
+
+        // A profile-wide check replaces everything.
+        let all = CheckedUpdates {
+            scope: scope(),
+            only: None,
+            target: None,
+            candidates: BTreeMap::new(),
+            issues: BTreeMap::new(),
+            notice: None,
+        };
+        assert!(merge_checked(Some(merged), all).issues.is_empty());
+    }
 
     #[test]
     fn project_check_uses_only_its_exact_current_receipt() {
