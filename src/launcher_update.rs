@@ -308,6 +308,15 @@ impl Launcher {
                     .as_ref()
                     .is_some_and(|dialog| dialog.busy)
                 || !self.removing.is_empty()
+                || matches!(
+                    self.ui.sheets.profile_action,
+                    Some(
+                        profile_delete::Action::Deleting(_)
+                            | profile_delete::Action::Problem { .. }
+                            | profile_delete::Action::Interrupted(_)
+                    )
+                )
+                || self.settings_save_error.is_some()
                 || self.storage_pending
                 || self.finishing_game > 0
                 || !self.auth_busy.is_empty()
@@ -362,29 +371,37 @@ impl Launcher {
 
     /// Only the player's update action arms a restart. Closing the window still drops the stage.
     pub(super) fn restart_launcher_if_ready(&mut self, cx: &mut Context<Self>) {
-        if crate::profile_delete::moving(cx) {
-            return;
-        }
-        let Some(release) = self.self_update.ready_to_restart(
-            self.restart_for_launcher_update,
-            backend::self_update_allowed(),
-            || self.launcher_update_wait(),
-        ) else {
+        self.try_restart_launcher(backend::self_update_allowed(), cx, |cx| {
+            if update_handoff::start_now()? {
+                servers_page::keep_running_through_update();
+                shut_down(cx);
+                Ok(())
+            } else {
+                Err(backend::restart())
+            }
+        });
+    }
+
+    pub(super) fn try_restart_launcher(
+        &mut self,
+        allowed: bool,
+        cx: &mut Context<Self>,
+        hand_off: impl FnOnce(&mut Context<Self>) -> Result<(), String>,
+    ) {
+        let Some(release) =
+            self.self_update
+                .ready_to_restart(self.restart_for_launcher_update, allowed, || {
+                    self.launcher_update_wait()
+                })
+        else {
             return;
         };
         self.restart_for_launcher_update = false;
-        let error = match update_handoff::start_now() {
-            Ok(true) => {
-                servers_page::keep_running_through_update();
-                shut_down(cx);
-                return;
-            }
-            Ok(false) => backend::restart(),
-            Err(error) => error,
-        };
-        self.self_update = SelfUpdate::Failed(release.clone(), error);
-        // This can run on a tick with no messages, just after an Update press.
-        cx.notify();
+        if let Err(error) = hand_off(cx) {
+            self.self_update = SelfUpdate::Failed(release.clone(), error);
+            // This can run on a tick with no messages, just after an Update press.
+            cx.notify();
+        }
     }
 
     pub(super) fn launcher_update_control(&self, cx: &mut Context<Self>) -> Option<Div> {

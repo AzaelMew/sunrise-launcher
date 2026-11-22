@@ -252,6 +252,13 @@ impl Launcher {
                 let _ = tx.send(Msg::Reused(reused));
             }
         });
+        if !this.location_unavailable {
+            let interrupted = instances::interrupted_deletions();
+            if !interrupted.is_empty() {
+                this.ui.sheets.profile_action =
+                    Some(profile_delete::Action::Interrupted(interrupted));
+            }
+        }
         this.load_profile_heads();
         this.load_auth_statuses(true);
         this.check_updates(UpdateCheck::Startup);

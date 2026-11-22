@@ -125,6 +125,8 @@ fn run_launcher() {
                 .expect("bundled fonts");
             cx.bind_keys(key_bindings());
             cx.on_action(|_: &Quit, cx| shut_down(cx));
+            // AppKit's Dock Quit can reach this without the cancellable window-close hook.
+            // The profile mover records its recovery location before touching the profile.
             cx.on_app_quit(|_| {
                 sunrise_launcher::process::owned::stop_all();
                 async {}

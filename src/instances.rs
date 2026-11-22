@@ -16,9 +16,11 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+mod deletion_recovery;
 pub(crate) mod lifecycle;
 use crate::managed_play::{Profile as ManagedProfile, ReferencePublication};
 use crate::profile_txn::{durable, Identity, NameGate};
+pub use deletion_recovery::{interrupted_deletions, InterruptedDeletion};
 use lifecycle::{initial_choices, GATES, INITIAL, RETIRED};
 
 /// The default instance's id: the game's home itself.
@@ -952,10 +954,14 @@ fn delete_selected_at(
     let root = game_home.canonicalize().map_err(|e| problem(&e))?;
     let retired = creation_parent(&root, RETIRED).map_err(|e| problem(&e))?;
     let private = tempfile::tempdir_in(&retired).map_err(|e| problem(&e))?;
+    let gone = private
+        .path()
+        .join(work.file_name().ok_or_else(lifecycle::changed)?);
+    let recovery = deletion_recovery::record(&retired, private.path(), &instance.id)
+        .map_err(|e| problem(&e))?;
     // From this point neither an ancillary error nor a destructor may empty the detached
     // folder. If Trash is unavailable, preserve the whole profile in the recovery folder.
     let private = private.keep();
-    let gone = private.join(work.file_name().ok_or_else(lifecycle::changed)?);
     let detached = (|| {
         let _references = ReferencePublication::begin_at(data, game_home, profile.home())?;
         Store::mutate(data, |store| {
@@ -976,7 +982,7 @@ fn delete_selected_at(
         })
     })();
     let trashed = detached.and_then(|()| trash(&gone));
-    let _ = fs::remove_dir(&private); // Never recursive: rename may already have won.
+    deletion_recovery::settled(&private, recovery); // Never remove the retained folder.
     trashed.map_err(|detail| DeleteError {
         retained: gone.is_dir().then_some(gone),
         detail,
