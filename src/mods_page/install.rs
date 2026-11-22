@@ -482,11 +482,16 @@ impl Installs {
                         build
                     });
                     for id in &run.requests[0].ids {
-                        let result = attempt
-                            .as_deref()
-                            .map_or_else(|| outcome.clone(), |build| build.outcome(id, &outcome));
-                        self.source_outcomes
-                            .insert((run.identity, id.clone()), result);
+                        let key = (run.identity, id.clone());
+                        if matches!(outcome, Err(SourceError::Cancelled)) {
+                            self.source_outcomes.remove(&key);
+                        } else {
+                            let result = attempt.as_deref().map_or_else(
+                                || outcome.clone(),
+                                |build| build.outcome(id, &outcome),
+                            );
+                            self.source_outcomes.insert(key, result);
+                        }
                     }
                 } else {
                     for request in run.requests {

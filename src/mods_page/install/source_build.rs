@@ -82,12 +82,9 @@ impl SourceBuild {
         id: &str,
         result: &Result<(), SourceError>,
     ) -> Result<(), SourceError> {
-        if !matches!(result, Err(SourceError::Cancelled)) {
-            if let Some(error) = self.rejected.get(id) {
-                return Err(error.clone());
-            }
-        }
-        result.clone()
+        self.rejected
+            .get(id)
+            .map_or_else(|| result.clone(), |error| Err(error.clone()))
     }
 
     fn failed(&self) -> bool {
@@ -504,6 +501,21 @@ mod tests {
         installs.handle(Worker::Done(Ok(InstalledBatch::default())));
         assert_eq!(installs.source_outcomes[&key], Ok(()));
         assert_eq!(installs.source_builds[joint].run.counts().built, 2);
+
+        let previous = &installs.source_builds[joint];
+        let cancelled = installs
+            .enqueue_source_build(previous.target.clone(), previous.picks.clone())
+            .unwrap();
+        start(&mut installs, cancelled, &["butterflies", "creature"]);
+        installs.handle(Worker::SourceRejected(
+            "butterflies".into(),
+            SourceError::Github(sources::Failure::NoManifest),
+        ));
+        installs.handle(Worker::Done(Err(InstallError::Source(
+            SourceError::Cancelled,
+        ))));
+        assert!(!installs.source_outcomes.contains_key(&key));
+        assert_eq!(installs.source_builds[cancelled].run.counts().failed, 0);
     }
 
     #[test]
@@ -517,10 +529,11 @@ mod tests {
         build.finish(&result);
         assert_eq!(build.run.end, Some(End::Cancelled));
         assert_eq!(build.run.counts().failed, 0);
-        assert_eq!(
-            build.outcome("butterflies", &result),
-            Err(SourceError::Cancelled)
-        );
+        assert!(build
+            .run
+            .lines
+            .iter()
+            .all(|line| line.state == State::Waiting));
     }
 
     #[test]
