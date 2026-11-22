@@ -61,6 +61,8 @@ pub(super) struct State {
     pub after_install: Option<(crate::launcher_play::PlayIntent, String)>,
     /// A Play (including a destination) that explicitly asked for the sign-in now under way.
     pub after_sign_in: Option<crate::launcher_play::PlayIntent>,
+    /// The sidebar's last open or close, while it may still be easing there.
+    pub rail: Option<crate::motion::Fade>,
 }
 
 /// The keyboard's ring, in `color`, around a filled control that has no edge of its own to turn
@@ -574,6 +576,9 @@ impl Launcher {
             window.focus(&self.root_focus, cx);
         }
         let rail = self.sidebar(cx);
+        if self.ui.rail.is_some_and(|fade| fade.moving(now)) {
+            window.request_animation_frame();
+        }
         let header = self.header(cx);
         let content = match page {
             Page::Settings => self.settings(window, cx),

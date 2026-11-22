@@ -8,13 +8,20 @@ use gpui::{rgb, MouseButton, MouseDownEvent};
 use instances::{Icon, Instance, Kind};
 use std::{cell::Cell, rc::Rc};
 
-/// How wide the sidebar is, open or closed.
-pub(crate) fn rail_width(open: bool) -> f32 {
-    if open {
-        204.
-    } else {
-        54.
-    }
+/// How wide the sidebar is closed, and open.
+const CLOSED: f32 = 54.;
+const OPEN: f32 = 204.;
+/// The room a row has inside the closed sidebar: its padding and both borders taken off.
+const CLOSED_ROW: f32 = CLOSED - 2. * 5. - 2. - 2.;
+
+/// How wide the sidebar is, `open` of the way from closed (0) to open (1).
+pub(crate) fn rail_width(open: f32) -> f32 {
+    CLOSED + (OPEN - CLOSED) * open
+}
+
+/// A label's opacity as the sidebar opens: it waits for room before showing.
+fn label_opacity(open: f32) -> f32 {
+    ((open - 0.3) / 0.7).clamp(0., 1.)
 }
 
 /// The column a sidebar icon is centred in, open or closed: a closed row's inside (the closed
@@ -23,7 +30,7 @@ pub(crate) fn rail_width(open: bool) -> f32 {
 fn icon_slot(icon: impl IntoElement) -> Div {
     div()
         .flex_none()
-        .w(px(rail_width(false) - 2. * (1. + 5. + 1.)))
+        .w(px(CLOSED_ROW))
         .flex()
         .items_center()
         .justify_center()
@@ -54,8 +61,25 @@ fn profile_lock_reason(
 
 impl Launcher {
     pub(super) fn toggle_sidebar(&mut self) {
-        self.settings.sidebar_expanded = !self.settings.sidebar_expanded;
+        let open = !self.settings.sidebar_expanded;
+        self.settings.sidebar_expanded = open;
+        // From wherever the last toggle had got to: a second press turns it around there.
+        let mut fade = crate::motion::Fade::toward(self.ui.rail, open, std::time::Instant::now());
+        fade.motion = crate::motion::RAIL;
+        self.ui.rail = Some(fade);
         self.save_settings();
+    }
+
+    /// How open the sidebar is drawn now: 0 closed, 1 open, between while it eases.
+    pub(crate) fn rail_open(&self) -> f32 {
+        let at_rest = if self.settings.sidebar_expanded {
+            1.
+        } else {
+            0.
+        };
+        self.ui.rail.map_or(at_rest, |fade| {
+            fade.value(std::time::Instant::now()).clamp(0., 1.)
+        })
     }
 
     fn profile_lock(&self) -> Option<&'static str> {
@@ -150,6 +174,9 @@ impl Launcher {
 
     pub(super) fn sidebar(&mut self, cx: &mut Context<Self>) -> Div {
         let wide = self.settings.sidebar_expanded;
+        let open = self.rail_open();
+        // Labels are drawn once there is any room for them; they fade in as it opens.
+        let labelled = open > 0.;
         let p = palette();
         let lock = self.profile_lock();
         let row = |id: ElementId, label: String, on: bool| {
@@ -171,8 +198,9 @@ impl Launcher {
                 .when(on, |d| d.bg(rgb(p.chrome_raised)))
                 .flex()
                 .items_center()
+                // Icons stay in their column (`icon_slot`); the room after the label eases in.
                 .gap(px(4.))
-                .when(wide, |d| d.pr(px(8.)))
+                .pr(px(8. * open))
                 .when(lock.is_none(), |d| {
                     d.cursor_pointer().hover(|d| d.bg(rgb(p.chrome_raised)))
                 })
@@ -183,7 +211,11 @@ impl Launcher {
             div()
                 .min_w_0()
                 .flex_1()
-                .truncate()
+                .overflow_hidden()
+                .whitespace_nowrap()
+                // An ellipsis would flicker along a label still being uncovered.
+                .when(open >= 1., |d| d.text_ellipsis())
+                .opacity(label_opacity(open))
                 .text_size(px(tokens::LABEL))
                 .child(s)
         };
@@ -233,7 +265,7 @@ impl Launcher {
                 20.,
                 rgb(p.chrome_text).into(),
             )))
-            .when(wide, |d| d.child(txt(tr("New profile").into())))
+            .when(labelled, |d| d.child(txt(tr("New profile").into())))
             .when(lock.is_none(), |d| {
                 d.on_click(cx.listener(|this, _, _, cx| {
                     if this.profile_lock().is_none() {
@@ -261,8 +293,8 @@ impl Launcher {
                 on,
             )
             .child(icon_slot(self.profile_mark(&i, 28.)))
-            .when(wide, |d| d.child(txt(i.name.clone())))
-            .when(wide && more, |d| d.pr(px(36.)))
+            .when(labelled, |d| d.child(txt(i.name.clone())))
+            .when(labelled && more, |d| d.pr(px(36.)))
             .when(deletable, |d| {
                 let i = i.clone();
                 d.on_mouse_down(
@@ -280,7 +312,15 @@ impl Launcher {
                 div()
                     .id(SharedString::from(format!("profile-actions-{}", i.id)))
                     .reach()
-                    .when(wide, |d| d.absolute().top(px(6.)).right(px(5.)).w(px(28.)))
+                    // Beside the name once the sidebar opens, fading in with it; under the
+                    // mark when closed.
+                    .when(labelled, |d| {
+                        d.absolute()
+                            .top(px(6.))
+                            .right(px(5.))
+                            .w(px(28.))
+                            .opacity(label_opacity(open))
+                    })
                     .h(px(28.))
                     .flex()
                     .items_center()
@@ -319,7 +359,7 @@ impl Launcher {
         let mut rail = div()
             .flex()
             .flex_col()
-            .w(px(rail_width(wide)))
+            .w(px(rail_width(open)))
             .min_h_0()
             .flex_none()
             .gap(px(4.))
@@ -364,7 +404,7 @@ impl Launcher {
                     18.,
                     rgb(p.chrome_muted).into(),
                 )))
-                .when(wide, |d| d.child(txt(label.into())))
+                .when(labelled, |d| d.child(txt(label.into())))
                 .when(settings || !url.is_empty(), |d| {
                     d.on_click(cx.listener(move |this, _, _, cx| {
                         if settings {
@@ -385,6 +425,17 @@ impl Launcher {
 mod tests {
     use super::*;
     use crate::launch_state::Facts;
+
+    #[test]
+    fn icons_keep_the_closed_rows_column_and_labels_wait_for_room() {
+        // The icon column is a closed row's inside: the rail less its edges, padding and the
+        // row's own edges, as `icon_slot` was sized from before the sidebar eased.
+        assert_eq!(CLOSED_ROW, rail_width(0.) - 2. * (1. + 5. + 1.));
+        assert_eq!(rail_width(0.), 54.);
+        assert_eq!(rail_width(1.), 204.);
+        assert_eq!(label_opacity(0.2), 0.);
+        assert_eq!(label_opacity(1.), 1.);
+    }
 
     #[test]
     fn profiles_unlock_when_starting_finishes_even_while_the_game_runs() {

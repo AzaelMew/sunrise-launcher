@@ -843,15 +843,11 @@ impl Launcher {
         self.ui.page = page;
     }
 
-    /// The width a page's own content has: the window less its edges, the sidebar (open or
-    /// closed), the gap beside it, the pane's border and the page's margins.
+    /// The width a page's own content has: the window less its edges, the sidebar (open, closed or
+    /// on its way), the gap beside it, the pane's border and the page's margins.
     pub(super) fn content_width(&self) -> f32 {
         let edges = 2. * crate::tokens::FRAME_INSET + 12.;
-        self.window_width
-            - edges
-            - crate::rail::rail_width(self.settings.sidebar_expanded)
-            - 2.
-            - 48.
+        self.window_width - edges - crate::rail::rail_width(self.rail_open()) - 2. - 48.
     }
 
     pub(crate) fn mods_home(&self) -> PathBuf {
