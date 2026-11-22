@@ -17,7 +17,7 @@ use serde_json::{Map, Value};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
 use sunrise_launcher_smod::{
@@ -993,12 +993,16 @@ impl SeenPackage {
                 repo,
                 commit,
                 version,
-            } => self.github_origin(home).is_some_and(|row| {
-                &row.owner == owner
-                    && &row.repo == repo
-                    && &row.commit == commit
-                    && &row.version == version
-            }),
+            } => self
+                .verified_github_origin(home)
+                .ok()
+                .flatten()
+                .is_some_and(|row| {
+                    &row.owner == owner
+                        && &row.repo == repo
+                        && &row.commit == commit
+                        && &row.version == version
+                }),
         }
     }
 
@@ -1014,6 +1018,45 @@ impl SeenPackage {
             })
         })
     }
+
+    /// Reads and verifies the GitHub receipt at `origin_path(home, id)` when present.
+    /// Source-tracked receipts require the canonical native archive path; legacy receipts
+    /// match by id, version and SHA-256 even when the `.smod` was renamed or moved.
+    fn verified_github_origin(
+        &self,
+        home: &Path,
+    ) -> Result<Option<crate::github_mods::Origin>, ()> {
+        let id = &self.package.manifest.id;
+        let origin_at = crate::github_mods::origin_path(home, id);
+        let origin = match fs::symlink_metadata(&origin_at) {
+            Ok(meta) if meta.is_file() => crate::github_mods::origin(home, id).ok_or(())?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            _ => return Err(()),
+        };
+        let matches = if origin.source.is_some() {
+            self.github_origin(home).as_ref() == Some(&origin)
+        } else {
+            origin.id == *id
+                && origin.version == self.package.manifest.version
+                && self
+                    .digest
+                    .as_deref()
+                    .is_some_and(|digest| origin.sha256.eq_ignore_ascii_case(digest))
+        };
+        if matches {
+            Ok(Some(origin))
+        } else {
+            Err(())
+        }
+    }
+}
+
+fn portable_row_path(home: &Path, file: &str) -> Option<(String, PathBuf)> {
+    let normalized = file.replace('\\', "/");
+    installed::in_folders(&normalized).then(|| {
+        let path = home.join(&normalized);
+        (normalized, path)
+    })
 }
 
 type Inventory = BTreeMap<String, SeenPackage>;
@@ -1030,15 +1073,18 @@ fn inventory(home: &Path, authority: Option<&OfficialRegistry>) -> Result<Invent
             let row: Option<installed::Entry> = doc
                 .row(&id)?
                 .and_then(|row| serde_json::from_value(row.clone()).ok());
-            let claim = row.as_ref().zip(digest.as_deref()).filter(|(row, _)| {
-                row.source == SourceId::Sunrise
-                    && row.kind == Kind::Mod
-                    && row.path(home).as_ref() == Some(&p.path)
-            });
+            let claim = row
+                .as_ref()
+                .zip(digest.as_deref())
+                .and_then(|(row, digest)| {
+                    let (normalized, path) = portable_row_path(home, &row.file)?;
+                    (row.source == SourceId::Sunrise && row.kind == Kind::Mod && path == p.path)
+                        .then_some((normalized, digest))
+                });
             let registry_claim = claim.is_some();
-            let owned = if let Some((row, digest)) = claim {
+            let owned = if let Some((normalized, digest)) = claim {
                 doc.rows
-                    .check_other_claims(home, &id, &row.file)
+                    .check_other_claims(home, &id, &normalized)
                     .map_err(|error| error.render(trf))?;
                 authority.is_some_and(|proof| proof.proves_archive(&id, digest))
             } else {

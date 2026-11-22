@@ -206,9 +206,14 @@ pub(crate) fn read(home: &Path) -> Vec<Item> {
         }
     }));
     if let Ok(Some(active)) = sunrise_launcher::managed_play::Active::read_pointer(home) {
-        // A Switch hold is shown in Installed, not as a Home mod or in its off count.
+        // Switch holds stay off on the committed build: keep them out of Home's enabled list,
+        // but count them as turned off so the link opens Installed's off filter.
         let held: HashSet<_> = active.holds().map(|hold| hold.id()).collect();
-        mods.retain(|item| !held.contains(item.id.as_str()));
+        for item in &mut mods {
+            if held.contains(item.id.as_str()) {
+                item.on = false;
+            }
+        }
     }
     mods.sort_by_key(|item| item.name.to_lowercase());
     let pack = |pack: packs::Pack| Item {
@@ -863,6 +868,59 @@ mod tests {
         assert_eq!(snapshot.tabs.mods_off, 1);
         assert!(!snapshot.tabs.resources[0].on);
         assert_eq!(snapshot.launch.mods_off, 0);
+        std::fs::remove_dir_all(&home).unwrap();
+    }
+
+    #[test]
+    fn switch_held_mods_count_as_turned_off_on_home() {
+        let home = profile("held");
+        let extra = sunrise_launcher_smod::Package::write_files(
+            "id='creature'\nname='Creature Library'\nversion='1.0.0'\napi='0.2'\nside='both'\ncapabilities=['registries']\n",
+            &[],
+        )
+        .unwrap();
+        let mods_dir = home.join("sunrise-mods");
+        std::fs::create_dir_all(&mods_dir).unwrap();
+        std::fs::write(mods_dir.join("creature.smod"), &extra).unwrap();
+        std::fs::create_dir_all(home.join("mod-browser")).unwrap();
+        std::fs::write(
+            home.join("mod-browser/active-build.json"),
+            serde_json::json!({
+                "version": 1,
+                "profile": vec![1u8; 16],
+                "generation": 1,
+                "base": {"tag": "dev-2026-11-22-bbbbbbb", "executable": vec![2u8; 32], "runtime": vec![2u8; 32]},
+                "executable": {"tag": "dev-2026-11-22-bbbbbbb", "executable": vec![2u8; 32], "runtime": vec![2u8; 32]},
+                "resources": {"primary": vec![3u8; 32], "accelerator": null},
+                "inputs": vec![4u8; 32],
+                "receipts": [{
+                    "id": vec![5u8; 16],
+                    "waiting_for_update": [{
+                        "id": "creature",
+                        "title": "Creature Library",
+                        "digest": vec![6u8; 32],
+                        "root": "content",
+                        "leaf": "creature.smod",
+                        "source": {"kind": "local", "version": "1.0.0"},
+                        "enabled_before": true,
+                        "reason": {"kind": "unproved", "build": "dev-2026-11-22-bbbbbbb"}
+                    }],
+                    "removed": [],
+                    "acknowledged": false
+                }]
+            })
+            .to_string(),
+        )
+        .unwrap();
+        assert!(
+            sunrise_launcher::managed_play::Active::read_pointer(&home)
+                .unwrap()
+                .is_some(),
+            "fixture pointer must parse"
+        );
+        let tabs: Collections = read(&home).into_iter().collect();
+        assert_eq!(names(&tabs.mods), ["Lanternlight"]);
+        assert_eq!(tabs.mods_off, 1);
         std::fs::remove_dir_all(&home).unwrap();
     }
 }
