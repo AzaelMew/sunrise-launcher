@@ -10,16 +10,34 @@ use sunrise_launcher::update_handoff;
 pub(super) enum Status<'a> {
     Available,
     Downloading(f32),
+    Discarding,
     Ready,
     Disabled,
     Stuck(Option<&'a str>),
     Failed(&'a str),
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Wait {
     Game,
     Work,
+}
+
+impl Wait {
+    fn for_activity(
+        game: bool,
+        importing_build: bool,
+        hosting_writes: bool,
+        other_work: bool,
+    ) -> Option<Self> {
+        if game {
+            Some(Self::Game)
+        } else if importing_build || hosting_writes || other_work {
+            Some(Self::Work)
+        } else {
+            None
+        }
+    }
 }
 
 pub(super) struct Offer<'a> {
@@ -41,14 +59,15 @@ impl<'a> Offer<'a> {
             SelfUpdate::Idle => (found?, Status::Available),
             SelfUpdate::Downloading(release, progress) => (release, Status::Downloading(*progress)),
             SelfUpdate::Ready(release) => (release, Status::Ready),
+            SelfUpdate::Discarding => (found?, Status::Discarding),
             SelfUpdate::Stuck(error) => (found?, Status::Stuck(error.as_deref())),
             SelfUpdate::Failed(release, error) => (release, Status::Failed(error)),
         };
         let version = backend::launcher_version(&release.tag)?;
-        let status = if !allowed {
-            Status::Disabled
-        } else if managed {
+        let status = if managed {
             Status::Stuck(None)
+        } else if !allowed {
+            Status::Disabled
         } else {
             status
         };
@@ -97,6 +116,7 @@ impl<'a> Offer<'a> {
                 None => tr("Ready to restart").into(),
             },
             Status::Ready => tr("Ready to restart").into(),
+            Status::Discarding => tr("Finishing the previous download…").into(),
             Status::Stuck(error) => launcher.launcher_update_help(error),
             Status::Failed(error) => trf("the update failed: {error}", &[("error", error)]),
             Status::Disabled => tr("Automatic launcher updates are disabled.").into(),
@@ -119,26 +139,91 @@ impl SelfUpdate {
     }
 }
 
-impl Launcher {
-    pub(super) fn note_launcher_offer(&mut self, found: Option<&Release>) {
-        match &self.self_update {
-            SelfUpdate::Failed(attempt, _)
-                if found.is_none_or(|release| release.tag != attempt.tag) =>
-            {
-                self.self_update = SelfUpdate::Idle;
+impl SelfUpdate {
+    /// Keep an attempt pinned while the download or the player's request is still in flight.
+    fn reconcile_offer(
+        &mut self,
+        latest: Option<&Release>,
+        armed: bool,
+        drop_stage: impl FnOnce(),
+    ) {
+        match self {
+            Self::Failed(attempt, _) if latest.is_none_or(|release| release.tag != attempt.tag) => {
+                *self = Self::Idle;
             }
-            SelfUpdate::Ready(staged)
-                if !self.restart_for_launcher_update
-                    && found.is_some_and(|release| {
+            Self::Ready(staged)
+                if !armed
+                    && latest.is_some_and(|release| {
                         backend::compare_versions(&release.tag, &staged.tag).is_gt()
                     }) =>
             {
-                // A paused restart can't keep a newer release hidden behind the old version's dot.
-                update_handoff::forget();
-                self.self_update = SelfUpdate::Idle;
+                drop_stage();
+                *self = Self::Idle;
             }
             _ => {}
         }
+    }
+
+    /// A fetch error doesn't revoke trust, but a rejected manifest does. A download already
+    /// writing its stage keeps the slot until its worker reports completion.
+    fn withdraw(&mut self, tag: &str, drop_stage: impl FnOnce()) -> bool {
+        let next = match self {
+            Self::Downloading(release, _) if release.tag == tag => Self::Discarding,
+            Self::Ready(release) if release.tag == tag => {
+                drop_stage();
+                Self::Idle
+            }
+            Self::Failed(release, _) if release.tag == tag => Self::Idle,
+            _ => return false,
+        };
+        *self = next;
+        true
+    }
+}
+
+impl Launcher {
+    pub(super) fn note_launcher_check(
+        &mut self,
+        result: Result<Option<Release>, backend::LauncherCheckError>,
+    ) {
+        match result {
+            Ok(release) => {
+                self.updates.launcher = release;
+                self.updates.launcher_error = None;
+            }
+            Err(error) => {
+                if let backend::LauncherCheckError::Rejected { tag, .. } = &error {
+                    if self
+                        .updates
+                        .launcher
+                        .as_ref()
+                        .is_some_and(|release| release.tag == *tag)
+                    {
+                        self.updates.launcher = None;
+                    }
+                    if self.self_update.withdraw(tag, update_handoff::forget) {
+                        self.restart_for_launcher_update = false;
+                    }
+                }
+                settings::log_launcher_check_failure(error.message(), |line| eprintln!("{line}"));
+                self.updates.launcher_error = Some(error);
+            }
+        }
+        self.reconcile_launcher_offer();
+    }
+
+    pub(super) fn cancel_launcher_restart(&mut self) {
+        self.restart_for_launcher_update = false;
+        self.reconcile_launcher_offer();
+    }
+
+    fn reconcile_launcher_offer(&mut self) {
+        let found = self.updates.launcher.as_ref();
+        self.self_update.reconcile_offer(
+            found,
+            self.restart_for_launcher_update,
+            update_handoff::forget,
+        );
         if found.is_some()
             && matches!(self.self_update, SelfUpdate::Idle)
             && backend::self_update_allowed()
@@ -147,10 +232,7 @@ impl Launcher {
         {
             self.self_update = SelfUpdate::Stuck(None);
         }
-        if found.is_none()
-            && self.ui.sheet == Some(Sheet::LauncherUpdate)
-            && matches!(self.self_update, SelfUpdate::Idle | SelfUpdate::Stuck(_))
-        {
+        if self.ui.sheet == Some(Sheet::LauncherUpdate) && self.launcher_update_offer().is_none() {
             // No sheet left to close: don't answer any other dialog on top of it.
             self.ui.sheet = None;
         }
@@ -167,17 +249,23 @@ impl Launcher {
     }
 
     pub(super) fn launcher_update_wait(&self) -> Option<Wait> {
-        if self.client.is_some() || self.starting_client.is_some() || self.starting_pack.is_some() {
-            Some(Wait::Game)
-        } else if self.launch_busy()
-            || self.finishing_game > 0
-            || !self.auth_busy.is_empty()
-            || (self.sign_in.is_some() && !matches!(self.sign_in_state, Some(SignInState::Done(_))))
-        {
-            Some(Wait::Work)
-        } else {
-            None
-        }
+        Wait::for_activity(
+            self.client.is_some() || self.starting_client.is_some() || self.starting_pack.is_some(),
+            self.importing_build,
+            self.servers.writing(),
+            self.launch_busy()
+                || self
+                    .instances
+                    .dialog
+                    .as_ref()
+                    .is_some_and(|dialog| dialog.busy)
+                || !self.removing.is_empty()
+                || self.storage_pending
+                || self.finishing_game > 0
+                || !self.auth_busy.is_empty()
+                || (self.sign_in.is_some()
+                    && !matches!(self.sign_in_state, Some(SignInState::Done(_)))),
+        )
     }
 
     pub(super) fn request_launcher_update(&mut self) {
@@ -204,7 +292,9 @@ impl Launcher {
                 });
             }
             Status::Ready => {}
-            Status::Downloading(_) | Status::Disabled | Status::Stuck(_) => return,
+            Status::Downloading(_) | Status::Discarding | Status::Disabled | Status::Stuck(_) => {
+                return
+            }
         }
         self.restart_for_launcher_update = true;
     }
@@ -213,6 +303,14 @@ impl Launcher {
         &mut self,
         result: Result<Option<backend::Staged>, String>,
     ) {
+        if matches!(self.self_update, SelfUpdate::Discarding) {
+            if let Ok(Some(staged)) = result {
+                backend::remove_stage(&backend::update_work_dir(), &staged.payload);
+            }
+            self.self_update = SelfUpdate::Idle;
+            self.reconcile_launcher_offer();
+            return;
+        }
         let SelfUpdate::Downloading(release, _) = &self.self_update else {
             return;
         };
@@ -227,6 +325,7 @@ impl Launcher {
                 SelfUpdate::Failed(release, error)
             }
         };
+        self.reconcile_launcher_offer();
     }
 
     /// Only the player's update action arms a restart. Closing the window still drops the stage.
@@ -376,7 +475,7 @@ impl Launcher {
         let cancel = self.restart_for_launcher_update.then(|| {
             button("launcher-update-cancel-restart", tr("Cancel restart")).on_click(cx.listener(
                 |this, _, _, cx| {
-                    this.restart_for_launcher_update = false;
+                    this.cancel_launcher_restart();
                     cx.notify();
                 },
             ))
@@ -445,12 +544,18 @@ impl Launcher {
                     .gap(px(8.))
                     .children(dismiss)
                     .child(
-                        button("launcher-update-later", tr("Later")).on_click(cx.listener(
-                            |this, _, _, cx| {
-                                this.close_sheet();
-                                cx.notify();
+                        button(
+                            "launcher-update-later",
+                            if self.restart_for_launcher_update {
+                                tr("Close")
+                            } else {
+                                tr("Later")
                             },
-                        )),
+                        )
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.close_sheet();
+                            cx.notify();
+                        })),
                     )
                     .children(cancel)
                     .children(action.map(|label| {
@@ -525,6 +630,9 @@ mod tests {
             assert_eq!(offer.dot, dot);
         }
         assert!(Settings::parse("{}").dismissed_launcher_update.is_none());
+        let malformed = Settings::parse(r#"{"dismissed_launcher_update":42,"skip_opening":true}"#);
+        assert!(malformed.dismissed_launcher_update.is_none());
+        assert!(malformed.skip_opening);
     }
 
     #[test]
@@ -535,8 +643,83 @@ mod tests {
         assert!(offer.action(None, false).is_none());
         assert_eq!(offer.version, "1.3.0");
         assert_eq!(offer.release.body, found.body);
-        let offer = Offer::new(&SelfUpdate::Idle, Some(&found), None, true, true).unwrap();
-        assert_eq!(offer.status, Status::Stuck(None));
+        for allowed in [true, false] {
+            let offer = Offer::new(&SelfUpdate::Idle, Some(&found), None, allowed, true).unwrap();
+            assert_eq!(offer.status, Status::Stuck(None));
+            assert!(offer.action(None, false).is_none());
+        }
+    }
+
+    #[test]
+    fn a_download_that_finishes_during_a_write_waits_for_its_worker() {
+        for (importing, hosting, other_work) in [
+            (true, false, false),
+            (false, true, false),
+            (false, false, true),
+        ] {
+            let ready = SelfUpdate::Ready(release("v1.3.0"));
+            let wait = Wait::for_activity(false, importing, hosting, other_work);
+            assert_eq!(wait, Some(Wait::Work));
+            assert!(ready
+                .ready_to_restart(true, true, || wait.is_none())
+                .is_none());
+            // Completion of the write, not completion of the update download, permits the restart.
+            assert!(ready
+                .ready_to_restart(true, true, || Wait::for_activity(
+                    false, false, false, false
+                )
+                .is_none())
+                .is_some());
+        }
+    }
+
+    #[test]
+    fn canceling_a_restart_exposes_the_newer_verified_release_without_another_check() {
+        let old = release("v1.3.0");
+        let latest = release("v1.3.1");
+        for canceled_before_completion in [true, false] {
+            let mut state = SelfUpdate::Downloading(old.clone(), 0.5);
+            state.reconcile_offer(Some(&latest), !canceled_before_completion, || {
+                panic!("the download still owns its stage")
+            });
+            assert!(
+                Offer::new(&state, Some(&latest), Some("1.3.0"), true, false)
+                    .unwrap()
+                    .dot
+            );
+            state = SelfUpdate::Ready(old.clone());
+            if !canceled_before_completion {
+                state.reconcile_offer(Some(&latest), true, || panic!("the restart is still armed"));
+                assert!(
+                    Offer::new(&state, Some(&latest), Some("1.3.0"), true, false)
+                        .unwrap()
+                        .dot
+                );
+            }
+            let mut dropped = false;
+            state.reconcile_offer(Some(&latest), false, || dropped = true);
+            assert!(dropped);
+            let offer = Offer::new(&state, Some(&latest), Some("1.3.0"), true, false).unwrap();
+            assert_eq!(offer.version, "1.3.1");
+            assert!(!offer.dot);
+        }
+    }
+
+    #[test]
+    fn a_rejected_manifest_invalidates_only_its_attempt_and_never_restarts_it() {
+        let found = release("v1.3.0");
+        let mut staged = SelfUpdate::Ready(found.clone());
+        assert!(!staged.withdraw("v1.3.1", || panic!("unrelated tag")));
+        let mut dropped = false;
+        assert!(staged.withdraw(&found.tag, || dropped = true));
+        assert!(dropped);
+        assert!(staged.ready_to_restart(true, true, || true).is_none());
+        let mut downloading = SelfUpdate::Downloading(found.clone(), 0.5);
+        assert!(downloading.withdraw(&found.tag, || panic!("stage is still being written")));
+        assert!(Offer::new(&downloading, None, None, true, false).is_none());
+        let fresh = release("v1.3.1");
+        let offer = Offer::new(&downloading, Some(&fresh), None, true, false).unwrap();
+        assert_eq!(offer.version, "1.3.1");
         assert!(offer.action(None, false).is_none());
     }
 

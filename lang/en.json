@@ -77,5 +77,8 @@
   "Later": "Later",
   "{version} available · {status}": "{version} available · {status}",
   "Sign in": "Sign in",
-  "{version} available": "{version} available"
+  "{version} available": "{version} available",
+  "Finishing the previous download…": "Finishing the previous download…",
+  "The launcher update could not be verified.": "The launcher update could not be verified.",
+  "Close": "Close"
 }

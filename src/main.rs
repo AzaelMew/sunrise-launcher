@@ -151,6 +151,8 @@ impl Page {
 enum SelfUpdate {
     Idle,
     Downloading(Release, f32),
+    /// A rejected manifest invalidated the download; its worker still owns the stage.
+    Discarding,
     /// Downloaded and checked. Only an explicit update request hands it to the installer.
     Ready(Release),
     /// A newer launcher can't go in here: this copy can't replace itself

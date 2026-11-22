@@ -113,9 +113,21 @@ fn an_update_offer_requires_a_signed_manifest_for_its_platform() {
             .tag,
         tag
     );
-    assert!(signed_launcher_offer(&list, asset, &keys, |_| Ok(None)).is_err());
-    assert!(
-        signed_launcher_offer(&list, asset, &keys, |_| Ok(Some(sums.as_bytes().to_vec()))).is_err()
+    for invalid in [None, Some(sums.as_bytes().to_vec())] {
+        let error = signed_launcher_offer(&list, asset, &keys, |url| {
+            Ok(if url.ends_with(".sig") {
+                invalid.clone()
+            } else {
+                Some(sums.as_bytes().to_vec())
+            })
+        })
+        .unwrap_err();
+        assert!(matches!(error, LauncherCheckError::Rejected { tag: ref seen, .. } if seen == tag));
+        assert_eq!(serde_json::to_value(&error).unwrap(), error.message());
+    }
+    assert_eq!(
+        signed_launcher_offer(&list, asset, &keys, |_| Err("offline".into())).unwrap_err(),
+        LauncherCheckError::Unavailable("offline".into()),
     );
     assert!(
         signed_launcher_offer(&list, "different-platform.tar.gz", &keys, |_| panic!(
@@ -190,12 +202,18 @@ fn a_failed_launcher_list_is_reported_not_up_to_date_and_keeps_the_game_result()
             },
             Vec::new,
             Some(Stable),
-            || Err("offline".into()),
+            || Err(LauncherCheckError::Unavailable("offline".into())),
             |r| published = Some(r.unwrap()),
         );
         assert_eq!(published.unwrap()[0].tag, format!("26.3-0.1.{day}"));
         assert!(updates.launcher.is_none());
-        assert_eq!(updates.launcher_error.as_deref(), Some("offline"));
+        assert_eq!(
+            updates
+                .launcher_error
+                .as_ref()
+                .map(LauncherCheckError::message),
+            Some("offline")
+        );
         assert!(updates.sunrise_error.is_none());
     }
     assert_eq!(requests.load(Ordering::Relaxed), 2);

@@ -829,13 +829,18 @@ fn game_releases_with(
 
 /// Check the launcher's own release feed. An explicit check must ask GitHub even if the
 /// cache is fresh, and must not report old cached results as a successful check.
-pub fn refresh_launcher_update() -> Result<Option<Release>, String> {
+pub fn refresh_launcher_update() -> Result<Option<Release>, LauncherCheckError> {
     checked_launcher_update(crate::github::CachePolicy::Revalidate)
 }
 
+pub use crate::signed::LauncherCheckError;
+
 /// Advertise a newer launcher only when its manifest was signed for this tag and platform.
-fn checked_launcher_update(policy: crate::github::CachePolicy) -> Result<Option<Release>, String> {
-    let list = crate::github::release_list(LAUNCHER_REPO, policy)?;
+fn checked_launcher_update(
+    policy: crate::github::CachePolicy,
+) -> Result<Option<Release>, LauncherCheckError> {
+    let list = crate::github::release_list(LAUNCHER_REPO, policy)
+        .map_err(LauncherCheckError::Unavailable)?;
     let Some(asset) = launcher_asset() else {
         return Ok(None);
     };
@@ -852,7 +857,7 @@ fn signed_launcher_offer(
     asset: &str,
     keys: &[sunrise_launcher_release_verify::PublicKey],
     fetch: impl Fn(&str) -> Result<Option<Vec<u8>>, String>,
-) -> Result<Option<Release>, String> {
+) -> Result<Option<Release>, LauncherCheckError> {
     let Some(release) = launcher_update(&parse_launcher_releases(list, Some(asset))) else {
         return Ok(None);
     };
@@ -3451,7 +3456,7 @@ pub struct Updates {
     pub sunrise: Option<Release>,
     pub launcher: Option<Release>,
     pub sunrise_error: Option<String>,
-    pub launcher_error: Option<String>,
+    pub launcher_error: Option<LauncherCheckError>,
 }
 
 /// An update stays on the profile's followed channel. Installed builds on another channel
@@ -3505,7 +3510,7 @@ fn releases_and_updates_with(
     load: impl FnOnce() -> Result<Vec<serde_json::Value>, String>,
     installed: impl FnOnce() -> Vec<String>,
     channel: Option<crate::instances::Channel>,
-    launcher: impl FnOnce() -> Result<Option<Release>, String>,
+    launcher: impl FnOnce() -> Result<Option<Release>, LauncherCheckError>,
     on_releases: impl FnOnce(Result<Vec<Release>, String>),
 ) -> Updates {
     let mut updates = Updates::default();
@@ -4075,7 +4080,8 @@ pub fn stage_update(release: &Release, progress: impl Fn(f32)) -> Result<Option<
         launcher_asset().unwrap_or_default(),
         &sunrise_launcher_release_verify::trusted_launcher_keys(),
         fetch_small,
-    )?;
+    )
+    .map_err(|error| error.to_string())?;
     let work = update_work_dir();
     remove_abandoned_stages(&work, std::time::SystemTime::now(), process_alive);
     let stage = new_stage_folder(&work)?;
@@ -4840,6 +4846,13 @@ impl Settings {
                 .is_some_and(|v| !v.is_boolean())
             {
                 fields.remove("sidebar_expanded");
+            }
+            // A bad dismissal should only restore the full update control.
+            if fields
+                .get("dismissed_launcher_update")
+                .is_some_and(|value| !value.is_string())
+            {
+                fields.remove("dismissed_launcher_update");
             }
             if fields.get("source_mod_grants").is_some_and(|grants| {
                 serde_json::from_value::<Vec<SourceModGrant>>(grants.clone()).is_err()

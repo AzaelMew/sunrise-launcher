@@ -399,32 +399,17 @@ impl Launcher {
                 Msg::Updates(updates) => {
                     self.checking_updates = false;
                     self.launcher_checked_now = None;
-                    let mut updates = *updates;
-                    if let Some(error) = &updates.launcher_error {
-                        settings::log_launcher_check_failure(error, |line| eprintln!("{line}"));
-                        // A network error doesn't take back the update we already verified.
-                        updates.launcher = self.updates.launcher.take();
-                    } else {
-                        self.note_launcher_offer(updates.launcher.as_ref());
-                    }
-                    self.updates = updates;
+                    let updates = *updates;
+                    self.updates.sunrise = updates.sunrise;
+                    self.updates.sunrise_error = updates.sunrise_error;
+                    self.note_launcher_check(
+                        updates.launcher_error.map_or(Ok(updates.launcher), Err),
+                    );
                 }
                 Msg::LauncherChecked(result) => {
                     self.checking_updates = false;
                     self.launcher_checked_now = result.is_ok().then(Instant::now);
-                    match *result {
-                        Ok(release) => {
-                            self.note_launcher_offer(release.as_ref());
-                            self.updates.launcher = release;
-                            self.updates.launcher_error = None;
-                        }
-                        Err(error) => {
-                            settings::log_launcher_check_failure(&error, |line| {
-                                eprintln!("{line}")
-                            });
-                            self.updates.launcher_error = Some(error)
-                        }
-                    }
+                    self.note_launcher_check(*result);
                 }
                 Msg::NativeConsentRead(read, inputs) => {
                     if let Some(pending) = &mut self.pending_consent {
@@ -451,6 +436,10 @@ impl Launcher {
                     // have been picked, or its version changed, meanwhile).
                     let wanted = self.play_after_build.take();
                     let cancelled = matches!(&result, Err(native_mods::Failed::Other(error)) if error == native_mods::CANCELLED);
+                    // Keep the window and its diagnostic when a build needs the player's attention.
+                    if result.is_err() && !cancelled {
+                        self.cancel_launcher_restart();
+                    }
                     self.refresh_installed();
                     self.reload_instances();
                     // No permission: the question is the answer, not the refusal's words.
@@ -538,7 +527,7 @@ impl Launcher {
                     }
                 }
                 Msg::ClientObservationLost(error) => {
-                    self.restart_for_launcher_update = false;
+                    self.cancel_launcher_restart();
                     self.client = None;
                     self.client_run = None;
                     self.client_started = None;
@@ -630,7 +619,7 @@ impl Launcher {
                                 .and_then(|since| backend::crash_report_since(&home, since));
                             // Don't restart over a crash report (even if the download is still running).
                             if error.is_some() || report.is_some() {
-                                self.restart_for_launcher_update = false;
+                                self.cancel_launcher_restart();
                             }
                             let switched = if error.is_some() && report.is_none() {
                                 self.switched_from_vulkan()

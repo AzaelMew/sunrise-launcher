@@ -19,7 +19,7 @@ pub enum Msg {
     ClientObservationLost(String),
     /// Boxed: two releases, the largest message by far.
     Updates(Box<Updates>),
-    LauncherChecked(Box<Result<Option<Release>, String>>),
+    LauncherChecked(Box<Result<Option<Release>, LauncherCheckError>>),
     LauncherProgress(f32),
     LauncherUpdated(Result<Option<Staged>, String>),
     /// `reuse_prepared_everywhere` prepared these versions.

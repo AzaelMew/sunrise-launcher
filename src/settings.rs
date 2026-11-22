@@ -1441,13 +1441,24 @@ impl Launcher {
                     .on_click(move |_, _, cx| cx.open_url(&url))
             })
         };
-        let (about, action, bad) = if let Some(offer) = self.launcher_update_offer() {
+        let offer = self.launcher_update_offer();
+        let retry_download = offer
+            .as_ref()
+            .is_some_and(|offer| matches!(offer.status, Status::Failed(_)))
+            .then(recovery)
+            .flatten();
+        let rejected = matches!(
+            self.updates.launcher_error,
+            Some(backend::LauncherCheckError::Rejected { .. })
+        );
+        let verification_error = || warning(tr("The launcher update could not be verified."));
+        let (about, action, bad) = if let Some(offer) = &offer {
             let armed = self.restart_for_launcher_update;
             let action = if armed {
                 Some(
                     button("alt-launcher-cancel", tr("Cancel restart")).on_click(cx.listener(
                         |this, _, _, cx| {
-                            this.restart_for_launcher_update = false;
+                            this.cancel_launcher_restart();
                             cx.notify();
                         },
                     )),
@@ -1490,11 +1501,18 @@ impl Launcher {
                 false,
             )
         } else {
-            let (about, bad) = launcher_check_line(
-                self.updates.launcher_error.as_deref(),
-                self.launcher_checked_now,
-                self.checked.is_some(),
-            );
+            let (about, bad) = if rejected {
+                (String::new(), true)
+            } else {
+                launcher_check_line(
+                    self.updates
+                        .launcher_error
+                        .as_ref()
+                        .map(backend::LauncherCheckError::message),
+                    self.launcher_checked_now,
+                    self.checked.is_some(),
+                )
+            };
             let check = button("alt-launcher-check", tr("Check now")).on_click(cx.listener(
                 |this, _, _, cx| {
                     this.check_updates(UpdateCheck::ManualLauncher);
@@ -1512,8 +1530,22 @@ impl Launcher {
             .flex()
             .items_center()
             .gap(px(16.))
-            .child(words.flex_1().min_w_0())
-            .child(div().flex_none().children(action))
+            .child(
+                words
+                    .flex_1()
+                    .min_w_0()
+                    .children(rejected.then(verification_error)),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .flex()
+                    .flex_col()
+                    .items_end()
+                    .gap(px(6.))
+                    .children(action)
+                    .children(retry_download),
+            )
     }
 
     /// One line of text in this look, saved as it is typed.
