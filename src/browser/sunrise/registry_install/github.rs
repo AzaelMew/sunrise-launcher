@@ -98,8 +98,6 @@ pub(super) struct SourceBatch<'a> {
     pub(super) active: Option<&'a managed_play::Active>,
     pub(super) cancellation: &'a native_mods::Cancellation,
     pub(super) authorize: &'a dyn Fn() -> Result<bool, String>,
-    pub(super) step: Option<&'a dyn Fn(&native_mods::Step)>,
-    pub(super) log: Option<&'a dyn Fn(Arc<str>)>,
 }
 
 pub(super) fn edit_github(
@@ -144,11 +142,9 @@ pub(super) fn edit_github(
         }
         predecessors(&instance.home, packages)?
     };
-    let edit = profile.begin_edit(
-        choose,
-        |f| (hooks.progress)(InstallProgress::Downloading(f)),
-        &|_| (hooks.progress)(InstallProgress::Preparing),
-    )?;
+    let edit = profile.begin_edit(choose, |f| {
+        (hooks.progress)(InstallProgress::Downloading(f))
+    })?;
     if matches!(check, Check::Base(base) if edit.base() != base) {
         return Err(InstallError::Refused(
             super::source::changed_source_target().to_string(),
@@ -171,9 +167,15 @@ pub(super) fn edit_github(
         Some(conflict) => Err(InstallError::Refused(conflict.reason)),
         None => Ok(()),
     };
-    if source.is_some() {
-        super::source::check_source_set(home, &staged.off, edit.base(), cancellation)
-            .map_err(InstallError::Source)?;
+    if source.is_some() || previous.is_empty() {
+        super::source::check_source_set(home, &staged.off, edit.base(), cancellation).map_err(
+            |error| match error {
+                SourceError::DoesNotFit(why) if source.is_none() => {
+                    InstallError::NotForVersion(why)
+                }
+                error => InstallError::Source(error),
+            },
+        )?;
     } else {
         check_graph()?;
     }
@@ -238,6 +240,17 @@ pub(super) fn edit_github(
     cancellation
         .admit_native_work()
         .map_err(|e| InstallError::Unproved(e.into()))?;
+    if previous.is_empty() {
+        return edit
+            .publish_pending(home, reviewed_inputs, cancellation, || {
+                unchanged_candidate()?;
+                predecessors(&instance.home, packages).map_err(|e| e.to_string())?;
+                (hooks.progress)(InstallProgress::Publishing);
+                Ok(())
+            })
+            .map_err(Into::into);
+    }
+    edit.prepare_first(&|_| (hooks.progress)(InstallProgress::Preparing))?;
     let tools = std::cell::Cell::new(false);
     let progress = |progress: InstallProgress| {
         tools.set(matches!(
@@ -255,14 +268,9 @@ pub(super) fn edit_github(
             home,
             instance.native_profile,
             cancellation,
-            |step| {
-                if let Some(observe) = source.and_then(|source| source.step) {
-                    observe(&step);
-                }
-                build_progress(step, proof_hooks.progress);
-            },
+            |step| build_progress(step, proof_hooks.progress),
             proof_hooks.registry_crates,
-            source.and_then(|source| source.log),
+            None,
         );
         proof.map_err(|e| match &e {
             native_mods::Failed::Mods { left, .. }

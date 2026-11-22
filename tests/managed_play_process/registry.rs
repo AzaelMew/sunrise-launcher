@@ -91,7 +91,7 @@ pub(super) fn ordinary_install() {
         files[0].2
     );
     let pointer = home.join("mod-browser/active-build.json");
-    let before = fs::read(&pointer).unwrap();
+    assert!(!pointer.exists());
     println!("registry Play fixture: CLI Play");
     let mut game = Guard(launcher(&["play"]).stdin(Stdio::null()).spawn().unwrap());
     await_event(|| {
@@ -101,6 +101,7 @@ pub(super) fn ordinary_install() {
         );
         home.join("game-ready").is_file()
     });
+    let before = fs::read(&pointer).unwrap();
     let mut mcp = Guard(
         launcher(&["mcp"])
             .stdin(Stdio::piped())
@@ -137,7 +138,7 @@ pub(super) fn ordinary_install() {
     println!("registry Play fixture: MCP Install after Play exits");
     let done = rpc(3, "tools/call", install);
     assert_ne!(done["isError"], true, "{done}");
-    assert_ne!(fs::read(pointer).unwrap(), before);
+    assert_eq!(fs::read(pointer).unwrap(), before);
     for (project, file, bytes) in files {
         assert_eq!(
             fs::read(home.join(mod_list::DIR).join(file)).unwrap(),
@@ -150,5 +151,5 @@ pub(super) fn ordinary_install() {
     }
     drop(to);
     assert!(mcp.0.wait().unwrap().success());
-    println!("Shipped CLI Install/Play and MCP Install advanced only a free profile");
+    println!("Shipped CLI and MCP Install publish only in a free profile; Play selects the image");
 }

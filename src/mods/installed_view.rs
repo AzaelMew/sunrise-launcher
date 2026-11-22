@@ -426,9 +426,9 @@ impl Launcher {
                                 &[("title", title), ("count", &count.to_string())],
                             ))),
                     );
-                if let Some(waiting) = build.filter(|_| g == Group::NeedsYou) {
+                if build.is_some() && g == Group::NeedsYou {
                     // The button has as much room above and below as beside it.
-                    head = head.py(px(14.)).child(self.build_button(waiting, busy, cx));
+                    head = head.py(px(14.)).child(self.build_button(busy, cx));
                 }
                 list = list.child(head);
             }

@@ -274,7 +274,7 @@ fn github_add_cli_refuses_the_entire_fresh_batch() {
     )
     .unwrap_err();
     assert!(
-        error.contains("Refused Mod") && error.contains("Nothing was installed"),
+        error.contains("Refused Mod") && error.contains("never_installed"),
         "{error}"
     );
     for (id, _) in packages {

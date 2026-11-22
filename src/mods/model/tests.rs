@@ -752,7 +752,7 @@ fn every_row_fills_the_same_columns_whatever_it_has_to_say() {
     assert_eq!(addon.need, Some(Need::Build));
     assert_eq!(
         cells(addon, None, None, true).status.unwrap().label,
-        "Needs a build"
+        "Added · builds when you play"
     );
     for (at, label, tone) in [
         (BuildState::Waiting, "Waiting", Tone::Muted),

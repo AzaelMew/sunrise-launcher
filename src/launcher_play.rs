@@ -241,6 +241,8 @@ impl Launcher {
         self.play_pressed = Some(Instant::now());
         self.starting_client = Some(target.clone().unwrap_or_default());
         self.play_step = Some(backend::PlayStep::Assets);
+        let cancellation = native_mods::Cancellation::default();
+        self.native_cancellation = Some(cancellation.clone());
         let tx = self.tx.clone();
         std::thread::spawn(move || {
             let result = Client {
@@ -278,17 +280,26 @@ impl Launcher {
                     })
                     .map_err(|error| error.to_string())
                 },
-                Some(&|inventory: &native_mods::Consent| {
-                    let (reply, answer) = std::sync::mpsc::channel();
-                    tx.send(Msg::NativeRegistryConsent(inventory.clone(), reply))
-                        .is_ok()
-                        && answer.recv().unwrap_or(false)
-                }),
+                (
+                    &cancellation,
+                    Some(&|inventory: &native_mods::Consent| {
+                        let (reply, answer) = std::sync::mpsc::channel();
+                        tx.send(Msg::NativeRegistryConsent(inventory.clone(), reply))
+                            .is_ok()
+                            && answer.recv().unwrap_or(false)
+                    }),
+                ),
                 |progress| {
                     let msg = match progress {
                         Progress::Download(_) => Msg::PlayStep(backend::PlayStep::Download),
                         Progress::Prepare => Msg::PlayStep(backend::PlayStep::Prepare),
-                        Progress::Native(_) => Msg::PlayStep(backend::PlayStep::Native),
+                        Progress::NativeBuild { base, mods } => Msg::ManagedBuild {
+                            instance: instance.id.clone(),
+                            profile: instance.name.clone(),
+                            base,
+                            mods,
+                        },
+                        Progress::Native(step) => Msg::NativeProgress(step),
                         Progress::SignIn => Msg::PlayStep(backend::PlayStep::SignIn),
                         Progress::Line(line) | Progress::HookLine(line) => {
                             Msg::Line(Job::Prepare, line)

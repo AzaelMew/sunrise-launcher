@@ -161,17 +161,17 @@ fn rejected_dependency_leaves_the_old_profile_unchanged_then_cli_install_and_pla
             id
         ));
     }
-    let pointer = fixture.pointer();
+    assert!(!fixture.home.join("mod-browser/active-build.json").exists());
     let mut play = Running(fixture.registry_client(&["play"]).spawn().unwrap());
     let args = fixture.game_arguments();
     assert_resource_args(&fixture, &args);
     fs::write(fixture.home.join("finish"), []).unwrap();
     assert_eq!(play.0.wait().unwrap().code(), Some(7));
-    assert_eq!(fixture.pointer(), pointer);
+    assert_eq!(Active::parse(&fixture.pointer()).unwrap().base(), BUILD);
 }
 
 #[test]
-fn generated_mcp_install_advances_only_a_free_profile_and_keeps_existing_packages() {
+fn generated_mcp_add_changes_only_a_free_profile_and_keeps_the_active_image() {
     let fixture = Fixture::new();
     let (registry, archives) = fixture.content_index();
     fixture.publish_registry(&registry);
@@ -190,9 +190,10 @@ fn generated_mcp_install_advances_only_a_free_profile_and_keeps_existing_package
     let install = |project| json!({"name":"mods_install", "arguments":{"project":project,"source":"sunrise"}});
     let answer = rpc(2, "tools/call", install("root_mod"));
     assert_ne!(answer["isError"], true, "{answer}");
-    let pointer = fixture.pointer();
+    assert!(!fixture.home.join("mod-browser/active-build.json").exists());
     let mut play = Running(fixture.registry_client(&["play"]).spawn().unwrap());
     assert_resource_args(&fixture, &fixture.game_arguments());
+    let pointer = fixture.pointer();
     let refused = rpc(3, "tools/call", install("extra_mod"));
     assert_eq!(refused["isError"], true, "{refused}");
     assert_eq!(fixture.pointer(), pointer);
@@ -205,7 +206,7 @@ fn generated_mcp_install_advances_only_a_free_profile_and_keeps_existing_package
     assert_eq!(play.0.wait().unwrap().code(), Some(7));
     let answer = rpc(4, "tools/call", install("extra_mod"));
     assert_ne!(answer["isError"], true, "{answer}");
-    assert_ne!(fixture.pointer(), pointer);
+    assert_eq!(fixture.pointer(), pointer);
     for (id, bytes) in archives {
         assert_eq!(
             fs::read(fixture.home.join(mod_list::DIR).join(format!("{id}.smod"))).unwrap(),
@@ -230,7 +231,8 @@ fn registry_change_after_proof_cannot_publish_any_candidate_file_or_pointer() {
         .output()
         .unwrap();
     assert!(out.status.success(), "{out:?}");
-    let pointer = fixture.pointer();
+    let pointer = fixture.home.join("mod-browser/active-build.json");
+    assert!(!pointer.exists());
     let installed = fixture.home.join(index::browser_state::MANIFEST);
     let rows = fs::read(&installed).unwrap();
     let list = fs::read(fixture.home.join(mod_list::FILE)).unwrap();
@@ -249,7 +251,7 @@ fn registry_change_after_proof_cannot_publish_any_candidate_file_or_pointer() {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    assert_eq!(fixture.pointer(), pointer);
+    assert!(!pointer.exists());
     assert_eq!(fs::read(installed).unwrap(), rows);
     assert_eq!(fs::read(fixture.home.join(mod_list::FILE)).unwrap(), list);
     assert!(!fixture
@@ -425,6 +427,15 @@ impl Fixture {
             "{}",
             String::from_utf8_lossy(&result.stderr)
         );
+        self.commit_play();
+    }
+
+    fn commit_play(&self) {
+        fs::write(self.home.join("finish"), []).unwrap();
+        let out = self.registry_client(&["play"]).output().unwrap();
+        assert_eq!(out.status.code(), Some(7), "{out:?}");
+        fs::remove_file(self.home.join("finish")).unwrap();
+        fs::remove_file(self.home.join("args")).unwrap();
     }
 
     fn decision_worker(&self, mode: &str) {
@@ -997,6 +1008,8 @@ fn resolve_default_and_stale_approval_keep_exact_bytes_then_only_proved_blocker_
         fixture.publish_registry(&registry);
     }
     fixture.decision_worker("resolve-accept");
+    assert_eq!(fixture.pointer(), pointer);
+    fixture.commit_play();
     let active = Active::parse(&fixture.pointer()).unwrap();
     assert_eq!(active.base(), BUILD);
     assert_eq!(active.generation(), 2);

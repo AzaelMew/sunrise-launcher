@@ -237,10 +237,14 @@ impl Launcher {
             }
             if let Some(rows) = installed {
                 facts.extend(match collection {
-                    Some(collection) => collection_install_fact(collection, |id| {
-                        rows.registry_version(id).is_some()
-                    }),
-                    None => version.map(install_fact),
+                    Some(collection) => collection_install_fact(
+                        collection,
+                        |id| rows.registry_version(id).is_some(),
+                        |id| rows.registry_pending(id),
+                    ),
+                    None => {
+                        version.map(|version| install_fact(version, rows.registry_pending(&id)))
+                    }
                 });
             }
             let open = id.clone();
@@ -438,27 +442,39 @@ impl Launcher {
 }
 
 impl InstalledRows {
+    fn registry_entry(&self, id: &str) -> Option<&Entry> {
+        self.entries.iter().find(|entry| {
+            entry.source == SourceId::Sunrise && entry.kind == Kind::Mod && entry.project == id
+        })
+    }
+
     fn registry_version(&self, id: &str) -> Option<&str> {
-        self.entries
-            .iter()
-            .find(|entry| {
-                entry.source == SourceId::Sunrise && entry.kind == Kind::Mod && entry.project == id
-            })
-            .map(|entry| entry.number.as_str())
+        self.registry_entry(id).map(|entry| entry.number.as_str())
+    }
+
+    pub(super) fn registry_pending(&self, id: &str) -> bool {
+        self.registry_entry(id)
+            .and_then(sunrise::mod_id)
+            .is_some_and(|id| self.unbuilt.contains(id))
     }
 }
 
-pub(super) fn install_fact(version: &str) -> Div {
-    status(
-        "tick-02",
-        trf("Installed · {version}", &[("version", version)]),
-        palette().success,
-    )
+pub(super) fn install_fact(version: &str, pending: bool) -> Div {
+    if pending {
+        status("clock", tr(ADDED_PENDING), palette().warning)
+    } else {
+        status(
+            "tick-02",
+            trf("Installed · {version}", &[("version", version)]),
+            palette().success,
+        )
+    }
 }
 
 pub(super) fn collection_install_fact(
     collection: &sunrise_launcher_smod::index::Collection,
     installed: impl Fn(&str) -> bool,
+    pending: impl Fn(&str) -> bool,
 ) -> Option<Div> {
     let count = collection
         .members
@@ -466,13 +482,22 @@ pub(super) fn collection_install_fact(
         .filter(|member| installed(&member.id))
         .count();
     (count > 0).then(|| {
-        muted(trf(
-            "{installed} of {total} installed",
-            &[
-                ("installed", &count.to_string()),
-                ("total", &collection.members.len().to_string()),
-            ],
-        ))
+        let waiting = collection
+            .members
+            .iter()
+            .any(|member| installed(&member.id) && pending(&member.id));
+        div()
+            .flex()
+            .flex_wrap()
+            .gap(px(8.))
+            .child(muted(trf(
+                "{added} of {total} added",
+                &[
+                    ("added", &count.to_string()),
+                    ("total", &collection.members.len().to_string()),
+                ],
+            )))
+            .children(waiting.then(|| status("clock", tr(ADDED_PENDING), palette().warning)))
     })
 }
 

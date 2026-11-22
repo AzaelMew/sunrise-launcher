@@ -374,11 +374,10 @@ pub fn remove_mods(
     (hooks.progress)(InstallProgress::Checking);
     let mut profile =
         Profile::open_for(&instance.home, None, Some(identity)).map_err(String::from)?;
-    let edit = profile.begin_edit(
-        choose,
-        |f| (hooks.progress)(InstallProgress::Downloading(f)),
-        &|_| (hooks.progress)(InstallProgress::Preparing),
-    )?;
+    let edit = profile.begin_edit(choose, |f| {
+        (hooks.progress)(InstallProgress::Downloading(f))
+    })?;
+    edit.prepare_first(&|_| (hooks.progress)(InstallProgress::Preparing))?;
     let old = edit.candidate()?;
     let next = edit.candidate()?;
     let home = next.path();

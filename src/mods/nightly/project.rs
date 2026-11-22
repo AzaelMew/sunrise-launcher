@@ -49,10 +49,9 @@ impl Launcher {
         let failure = details
             .and_then(|detail| detail.error.clone())
             .map(SourceError::Github);
-        let job = self.source_build_for(source.id());
-        let presence = self
-            .discover_installed()
-            .map(|rows| rows.source_presence(source));
+        let rows = self.discover_installed();
+        let presence = rows.map(|rows| rows.source_presence(source));
+        let pending = rows.is_some_and(|rows| rows.unbuilt.contains(source.id()));
         let installed = match presence {
             Some(SourcePresence::Installed(origin)) => Some(origin),
             _ => None,
@@ -73,13 +72,7 @@ impl Launcher {
                 cx.notify();
             }))
         };
-        let queued = job.is_some_and(|id| {
-            let build = &self.source_builds()[id];
-            build.run.running() && !build.started
-        });
-        let build_label = if queued {
-            tr("Queued").into()
-        } else if let Some(activity) = current.as_ref() {
+        let build_label = if let Some(activity) = current.as_ref() {
             if activity.progress == sunrise::InstallProgress::Publishing {
                 tr("Finishing…").into()
             } else {
@@ -88,7 +81,7 @@ impl Launcher {
         } else if matches!(failed_job, Some(SourceError::Tools(_))) {
             tr("Retry download").into()
         } else {
-            tr("Build from source…").into()
+            tr("Add from source…").into()
         };
         let build = primary("nightly-build-source", build_label)
             .w_full()
@@ -100,12 +93,7 @@ impl Launcher {
         let can_build =
             !offline && listed && details.and_then(sources::Details::checked_commit).is_some();
         let busy = self.nightly_busy();
-        let build = if let Some(id) = job.filter(|id| self.source_builds()[*id].run.running()) {
-            build.on_click(cx.listener(move |this, _, _, cx| {
-                this.open_source_build(id);
-                cx.notify();
-            }))
-        } else if busy {
+        let build = if busy || current.is_some() {
             dim(build)
         } else if can_build {
             build.on_click(cx.listener(|this, _, _, cx| {
@@ -158,7 +146,7 @@ impl Launcher {
                 .flex()
                 .flex_col()
                 .gap(px(8.))
-                .child(install_fact(short_sha(&origin.commit)))
+                .child(install_fact(short_sha(&origin.commit), pending))
                 .children(update)
                 .child(self.remove_mod_button(&origin.id, locked, cx))
                 .children(
@@ -191,14 +179,7 @@ impl Launcher {
                         this.inspect_nightly(source.clone(), false);
                         cx.notify();
                     }))))
-                .children(if let Some(id) = job {
-                    Some(button("nightly-build-result", tr("Show the build")).on_click(cx.listener(move |this, _, _, cx| {
-                        this.open_source_build(id);
-                        cx.notify();
-                    })))
-                } else {
-                    log.map(|log| self.nightly_log_button(source.name(), log, cx))
-                })
+                .children(log.map(|log| self.nightly_log_button(source.name(), log, cx)))
                 .children(matches!(error, SourceError::Github(_) | SourceError::Changed(_))
                     .then(|| if busy || matches!(error, SourceError::Github(sources::Failure::RateLimited { retry_at: Some(at) }) if *at > SystemTime::now()) {
                         dim(button("nightly-detail-retry", tr("Try again")))
@@ -506,7 +487,7 @@ impl Launcher {
                     ),
             );
         }
-        let approve = primary("nightly-consent-build", tr("Build")).on_click(cx.listener(
+        let approve = primary("nightly-consent-build", tr("Allow")).on_click(cx.listener(
             |this, _, _, cx| {
                 let Some(question) = this.source_question() else {
                     return;
@@ -526,7 +507,7 @@ impl Launcher {
         ));
         Some(div().flex().flex_col().gap(px(12.))
             .child(div().text_size(px(tokens::HEADING)).font_weight(FontWeight::BOLD)
-                .child(tr("Build unreviewed source code?")))
+                .child(tr("Allow unreviewed source code?")))
             .child(note(trf("Game build: {build}", &[("build", &base)])))
             .child(div().id("nightly-consent-mods").max_h(px(185.)).overflow_y_scroll().child(list))
             .child(note(tr("Sunrise hasn't reviewed this code. Building and playing run the author's code on your computer.")))

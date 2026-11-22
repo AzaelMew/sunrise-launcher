@@ -1,5 +1,4 @@
-//! A source collection's page: its mods to pick from, one Build. Each picked mod builds from its
-//! own repository through the same source flow as a single mod, with one consent for all of them.
+//! A source collection's page: pick mods to add, with one native consent for the selection.
 use super::*;
 use crate::mods_page::install::{stage_label, SourcePicks};
 use std::collections::BTreeSet;
@@ -29,39 +28,35 @@ impl Launcher {
         });
     }
 
-    /// Source mods already built into this profile, by id.
-    fn built_sources(&self) -> BTreeSet<String> {
-        self.ui
-            .mods
-            .snapshot
-            .as_ref()
+    /// Source mods already added to this profile.
+    fn added_sources(&self) -> BTreeSet<String> {
+        self.discover_installed()
             .into_iter()
-            .flat_map(|snapshot| &snapshot.rows.local)
+            .flat_map(|rows| &rows.local)
             .filter_map(|local| local.github.as_ref())
             .map(|origin| origin.id.clone())
             .collect()
     }
 
-    /// The selected rows become one request, even if another build is running.
-    fn build_source_collection(&mut self) {
+    fn add_source_collection(&mut self) {
         if !self.nightly_catalogue_current() || self.nightly_busy() {
             return;
         }
-        let built = self.built_sources();
+        let added = self.added_sources();
         let state = &self.ui.mods.nightly;
         let (Some(open), Some(catalogue)) = (&state.collection, &state.catalogue) else {
             return;
         };
-        let picks = collection_picks(catalogue, &open.id, &open.ticked, &built);
+        let picks = collection_picks(catalogue, &open.id, &open.ticked, &added);
         if !picks.is_empty() {
-            self.queue_source_build(SourcePicks::Collection(picks));
+            self.add_sources(SourcePicks::Collection(picks));
         }
     }
 
     pub(in crate::mods) fn source_collection(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let activity: Option<(Vec<String>, sunrise::InstallProgress)> =
             self.source_activity().map(|a| (a.ids.to_vec(), a.progress));
-        let built = self.built_sources();
+        let added = self.added_sources();
         let can_start = self.nightly_catalogue_current() && !self.nightly_busy();
         let state = &self.ui.mods.nightly;
         let back = super::super::project::back(tr("Nightly mods")).on_click(cx.listener(
@@ -151,7 +146,7 @@ impl Launcher {
         // The list: a header that picks all, then one row per mod.
         let pickable: Vec<&Source> = members
             .iter()
-            .filter(|source| !built.contains(source.id()))
+            .filter(|source| !added.contains(source.id()))
             .collect();
         let picked = pickable
             .iter()
@@ -190,7 +185,7 @@ impl Launcher {
             }));
         let mut rows = card().child(list_head);
         for (i, source) in members.iter().enumerate() {
-            let installed = built.contains(source.id());
+            let installed = added.contains(source.id());
             let on = installed || ticked.contains(source.id());
             let open = source.clone();
             let name = div()
@@ -217,12 +212,17 @@ impl Launcher {
                 .source_outcome(source.id())
                 .and_then(|outcome| outcome.as_ref().err())
                 .filter(|_| !installed && running.is_none());
-            let right = if installed {
+            let pending = self
+                .discover_installed()
+                .is_some_and(|rows| rows.unbuilt.contains(source.id()));
+            let right = if installed && pending {
+                Some(status("clock", tr(ADDED_PENDING), palette().warning))
+            } else if installed {
                 Some(status("check", tr("Installed"), palette().success))
             } else if let Some((_, progress)) = running {
                 Some(status("hammer", stage_label(*progress), palette().muted))
             } else {
-                failed.map(|_| status("information-circle", tr("Build failed"), palette().warning))
+                failed.map(|_| status("information-circle", tr("Couldn’t add"), palette().warning))
             };
             let why = failed.map(|error| {
                 let log = match error {
@@ -290,18 +290,18 @@ impl Launcher {
             );
         }
 
-        // The side panel: the one Build, and what it does.
-        let label = if pickable.is_empty() {
-            tr("Installed").into()
-        } else {
-            trf("Build {count} mods", &[("count", &picked.to_string())])
+        // The side panel: one Add for the selected mods.
+        let label = match picked {
+            _ if pickable.is_empty() => tr("Installed").into(),
+            1 => tr("Add 1 mod").into(),
+            count => trf("Add {count} mods", &[("count", &count.to_string())]),
         };
         let action = crate::frame::primary("nightly-collection-build", label)
             .w_full()
             .h(px(tokens::ACTION));
         let action = if can_start && picked > 0 {
             action.on_click(cx.listener(|this, _, _, cx| {
-                this.build_source_collection();
+                this.add_source_collection();
                 cx.notify();
             }))
         } else {
@@ -341,7 +341,7 @@ impl Launcher {
                 "Each mod builds from its own repository on this computer. You're asked once, for all of them.",
             )))
             .child(muted(tr(
-                "Build directly from GitHub. Listed source code is not reviewed.",
+                "Adds source code from GitHub. Native mods build when you play.",
             )));
         let (above, beside) = match self.content_width() < 860. {
             true => (Some(right), None),
@@ -395,7 +395,7 @@ fn collection_picks(
     catalogue: &sources::Catalogue,
     id: &str,
     ticked: &BTreeSet<String>,
-    built: &BTreeSet<String>,
+    added: &BTreeSet<String>,
 ) -> Vec<Source> {
     catalogue
         .collections
@@ -403,7 +403,7 @@ fn collection_picks(
         .find(|collection| collection.id == id)
         .into_iter()
         .flat_map(|collection| &collection.members)
-        .filter(|member| ticked.contains(&member.id) && !built.contains(&member.id))
+        .filter(|member| ticked.contains(&member.id) && !added.contains(&member.id))
         .filter_map(|member| catalogue.sources.iter().find(|s| s.id() == member.id))
         .cloned()
         .collect()

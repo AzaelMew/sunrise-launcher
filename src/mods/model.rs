@@ -693,7 +693,7 @@ pub(super) fn cells(
             ),
             (_, Some(Need::Build)) => say(
                 "clock",
-                tr("Needs a build").into(),
+                tr(super::ADDED_PENDING).into(),
                 Tone::Warning,
                 tr("Not built for this computer yet").into(),
             ),

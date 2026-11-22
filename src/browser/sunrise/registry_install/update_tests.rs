@@ -188,6 +188,27 @@ impl Fixture {
 
     fn install(&self, ids: &[&str]) {
         self.apply(Action::Install(projects(ids))).unwrap();
+        self.first_play();
+    }
+
+    fn first_play(&self) {
+        let cancel = native_mods::Cancellation::default();
+        let mut profile = Profile::open(self.home(), None).unwrap();
+        if profile
+            .refresh(self.instance.native_profile, &cancel, |_| {}, None, None)
+            .unwrap()
+            .is_some()
+        {
+            return;
+        }
+        let first = profile
+            .begin_first(|| FirstBuild::installed(BUILD), |_| {})
+            .unwrap();
+        first.prepare(&|_| {}).unwrap();
+        let image = first
+            .exact_image(self.instance.native_profile, &cancel, |_| {}, None)
+            .unwrap();
+        first.commit(&image, &cancel).unwrap();
     }
 
     fn update(

@@ -626,7 +626,7 @@ fn home_read_recovers_the_first_switch_receipt_after_a_killed_commit() {
         assert!(!crate::browser::mod_list::is_enabled(&home, "fireflies"));
         assert!(crate::browser::mod_list::is_enabled(&home, "moths"));
         let edit = profile
-            .begin_edit(|| panic!("the build is already committed"), |_| {}, &|_| {})
+            .begin_edit(|| panic!("the build is already committed"), |_| {})
             .unwrap();
         let candidate = edit.candidate().unwrap();
         let replacement = package("fireflies", "Fireflies", "2.0");

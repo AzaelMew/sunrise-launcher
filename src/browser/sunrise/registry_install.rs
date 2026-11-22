@@ -32,7 +32,7 @@ mod switch;
 pub use conflicts::ResolveQuestion;
 use source::MixedSources;
 pub use source::{
-    apply_queued_sources, apply_sources, pack_sources, prepare_pasted_sources, prepare_source,
+    add_sources, apply_sources, pack_sources, prepare_pasted_sources, prepare_source,
     read_pasted_sources, update_registry_and_sources, CombinedUpdate, PastedSource, PreparedSource,
     SourceError, SourceHooks, SourceRequest,
 };
@@ -266,11 +266,9 @@ fn registry_edit<'a>(
     // Reject a replaced home before recovery or any live edit.
     let mut profile =
         Profile::open_for(&instance.home, None, Some(identity)).map_err(String::from)?;
-    let edit = profile.begin_edit(
-        choose,
-        |f| (hooks.progress)(InstallProgress::Downloading(f)),
-        &|_| (hooks.progress)(InstallProgress::Preparing),
-    )?;
+    let edit = profile.begin_edit(choose, |f| {
+        (hooks.progress)(InstallProgress::Downloading(f))
+    })?;
     let game = backend::game_version(edit.base());
     let cancelled = native_mods::Cancellation::default();
     let old = edit.candidate()?;
@@ -647,97 +645,149 @@ fn registry_edit<'a>(
                 Err(error) => return Err(InstallError::Unproved(error.into())),
             }
         }
-        let prove = || prove_edit(&edit, next.path(), instance, &cancelled, &hooks);
+        let defer = matches!(action, Action::Install(_))
+            && entries.keys().all(|id| !before.contains_key(id));
         let mut result = InstalledBatch::default();
-        let proof = match prove() {
-            Ok(proof) => proof,
-            Err(native_mods::Failed::Mods {
-                left,
-                error,
-                compiling: false,
-                ..
-            }) if !left.is_empty()
-                && left.iter().all(|failure| match &failure.why {
-                    native_mods::Why::Needs(_) => true,
-                    native_mods::Why::Unfit(_) => entries
-                        .get(&failure.id)
-                        .is_some_and(|entry| entry.version == failure.version),
-                    _ => false,
-                }) =>
-            {
-                let first = unfit.len();
-                for failed in left
-                    .into_iter()
-                    .filter(|f| matches!(f.why, native_mods::Why::Unfit(_)))
-                {
-                    let (_, version) = versions
-                        .iter()
-                        .find(|(p, v)| p.id == failed.id && v.version == failed.version)
-                        .expect("the no-fit names a checked staged release");
-                    remember_unfit(edit.base(), version);
-                    unfit.insert((failed.id, failed.version));
-                }
-                if first == unfit.len() {
-                    return Err(InstallError::Unproved(error));
-                }
-                last_sdk_refusal = Some(error);
-                continue;
-            }
-            Err(native_mods::Failed::Mods {
-                left,
-                error,
-                compiling: true,
-                log,
-            }) => {
-                let mut failed = BTreeMap::new();
-                for failure in left {
-                    match failure.why {
-                        native_mods::Why::Needs(_) => (),
-                        native_mods::Why::DidNotBuild
-                            if entries
-                                .get(&failure.id)
-                                .is_some_and(|entry| entry.version == failure.version) =>
-                        {
-                            failed.insert(failure.id, installed::InstallHold::Compile);
+        let proof = if defer {
+            let routes = if build_packages.is_empty() {
+                Vec::new()
+            } else {
+                native_mods::source_routes(next.path(), edit.base(), &cancelled)
+                    .map_err(|error| {
+                        InstallError::Unproved(match error {
+                            native_mods::SourceCheckError::Dependency(detail) => detail,
+                            native_mods::SourceCheckError::Fit(failed) => failed.into(),
+                        })
+                    })?
+                    .mods
+            };
+            let mut rejection = None;
+            for (id, route) in routes {
+                match route {
+                    native_mods::Route::Prebuilt | native_mods::Route::Fits { .. } => (),
+                    native_mods::Route::Unfit { line, .. } => {
+                        let Some((_, release)) = versions.iter().find(|(project, release)| {
+                            project.id == id
+                                && entries
+                                    .get(&id)
+                                    .is_some_and(|entry| entry.version == release.version)
+                        }) else {
+                            return Err(InstallError::NotForVersion(line));
+                        };
+                        remember_unfit(edit.base(), release);
+                        if !unfit.insert((id, release.version.clone())) {
+                            return Err(InstallError::NotForVersion(line));
                         }
-                        _ => return Err(InstallError::Unproved(error)),
+                        rejection = Some(line);
+                    }
+                    native_mods::Route::Unchecked { reason }
+                    | native_mods::Route::Invalid { reason } => {
+                        return Err(InstallError::Unproved(reason));
                     }
                 }
-                if failed.is_empty() {
-                    return Err(InstallError::Unproved(error));
-                }
-                let changes = restore_or_disable(
-                    old.path(),
-                    next.path(),
-                    &before,
-                    &mut entries,
-                    &mut doc,
-                    failed,
-                )?;
-                if let Some(conflict) =
-                    manifest_conflict(next.path(), Some(&catalogue), authority, |id| {
-                        entries.contains_key(id)
-                    })?
-                {
-                    return Err(InstallError::Refused(conflict.reason));
-                }
-                let notice = BuildNotice {
-                    changes,
-                    detail: error,
-                    log,
-                };
-                if !disabled.is_empty() || !(hooks.continue_after_failure)(&notice) {
-                    return Err(InstallError::Compile(notice));
-                }
-                result.failure = Some(notice);
-                let proof = prove().map_err(|e| InstallError::Unproved(e.into()))?;
-                if entries.is_empty() {
-                    // Only the already-live predecessors survived. No pointer needs advancing.
-                    return Ok(result);
-                }
-                proof
             }
-            Err(error) => return Err(InstallError::Unproved(error.into())),
+            if let Some(reason) = rejection {
+                last_sdk_refusal = Some(reason);
+                continue;
+            }
+            None
+        } else {
+            edit.prepare_first(&|_| (hooks.progress)(InstallProgress::Preparing))?;
+            let prove = || prove_edit(&edit, next.path(), instance, &cancelled, &hooks);
+            Some(match prove() {
+                Ok(proof) => proof,
+                Err(native_mods::Failed::Mods {
+                    left,
+                    error,
+                    compiling: false,
+                    ..
+                }) if !left.is_empty()
+                    && left.iter().all(|failure| match &failure.why {
+                        native_mods::Why::Needs(_) => true,
+                        native_mods::Why::Unfit(_) => entries
+                            .get(&failure.id)
+                            .is_some_and(|entry| entry.version == failure.version),
+                        _ => false,
+                    }) =>
+                {
+                    let first = unfit.len();
+                    for failed in left
+                        .into_iter()
+                        .filter(|f| matches!(f.why, native_mods::Why::Unfit(_)))
+                    {
+                        let (_, version) = versions
+                            .iter()
+                            .find(|(p, v)| p.id == failed.id && v.version == failed.version)
+                            .expect("the no-fit names a checked staged release");
+                        remember_unfit(edit.base(), version);
+                        unfit.insert((failed.id, failed.version));
+                    }
+                    if first == unfit.len() {
+                        return Err(InstallError::Unproved(error));
+                    }
+                    last_sdk_refusal = Some(error);
+                    continue;
+                }
+                Err(native_mods::Failed::Mods {
+                    left,
+                    error,
+                    compiling: true,
+                    log,
+                }) => {
+                    let mut failed = BTreeMap::new();
+                    for failure in left {
+                        match failure.why {
+                            native_mods::Why::Needs(_) => (),
+                            native_mods::Why::DidNotBuild
+                                if entries
+                                    .get(&failure.id)
+                                    .is_some_and(|entry| entry.version == failure.version) =>
+                            {
+                                failed.insert(failure.id, installed::InstallHold::Compile);
+                            }
+                            _ => return Err(InstallError::Unproved(error)),
+                        }
+                    }
+                    if failed.is_empty() {
+                        return Err(InstallError::Unproved(error));
+                    }
+                    let changes = restore_or_disable(
+                        old.path(),
+                        next.path(),
+                        &before,
+                        &mut entries,
+                        &mut doc,
+                        failed,
+                    )?;
+                    if let Some(conflict) =
+                        manifest_conflict(next.path(), Some(&catalogue), authority, |id| {
+                            entries.contains_key(id)
+                        })?
+                    {
+                        return Err(InstallError::Refused(conflict.reason));
+                    }
+                    let notice = BuildNotice {
+                        changes,
+                        detail: error,
+                        log,
+                    };
+                    if !disabled.is_empty() || !(hooks.continue_after_failure)(&notice) {
+                        return Err(InstallError::Compile(notice));
+                    }
+                    result.failure = Some(notice);
+                    let proof = prove().map_err(|e| InstallError::Unproved(e.into()))?;
+                    if entries.is_empty() {
+                        // Only the already-live predecessors survived. No pointer needs advancing.
+                        return Ok(result);
+                    }
+                    proof
+                }
+                Err(error) => return Err(InstallError::Unproved(error.into())),
+            })
+        };
+        let committed_inputs = match &proof {
+            Some(proof) => proof.inputs(),
+            None => managed_play::inputs(next.path(), None)?,
         };
         let resolve_fence = if let Some(approve) = hooks.resolve.filter(|_| !disabled.is_empty()) {
             let question =
@@ -787,7 +837,6 @@ fn registry_edit<'a>(
                 return Err(held_change_refusal(id));
             }
         }
-        let committed_inputs = proof.inputs();
         let reviewed_worlds = match &action {
             Action::Install(_) if resolve_fence.is_some() => Vec::new(),
             Action::Install(_) => guard_replacements(
@@ -833,7 +882,7 @@ fn registry_edit<'a>(
             .filter(|id| entries.contains_key(id))
             .collect();
         (hooks.progress)(InstallProgress::Publishing);
-        let published = edit.publish_install(proof, &cancelled, &retired_holds, || {
+        let authorize = || {
             let (_, current, current_authority) = if resolve_fence.is_some() {
                 super::complete_index(&source, local)?
             } else {
@@ -848,9 +897,14 @@ fn registry_edit<'a>(
             } else {
                 mutations::bind_worlds(&instance.home, &suspect, &reviewed_worlds).map(Some)
             }
-        })?;
-        if let Some(mixed) = &mut mixed {
-            mixed.published(published, committed_inputs);
+        };
+        if let Some(proof) = proof {
+            let published = edit.publish_install(proof, &cancelled, &retired_holds, authorize)?;
+            if let Some(mixed) = &mut mixed {
+                mixed.published(published, committed_inputs);
+            }
+        } else {
+            edit.publish_pending(next.path(), committed_inputs, &cancelled, authorize)?;
         }
         for (id, entry) in entries {
             if let Some(previous) = before.get(&id) {

@@ -75,6 +75,46 @@ fn pair(home: &Path, switching: bool, committed: bool) {
     }
 }
 
+#[test]
+fn files_only_edit_keeps_the_exact_pointer_and_rolls_back_before_the_commit_marker() {
+    for has_pointer in [false, true] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path();
+        let before = has_pointer.then(|| OLD.to_vec());
+        if has_pointer {
+            fs::create_dir(home.join("mod-browser")).unwrap();
+            fs::write(home.join(POINTER), OLD).unwrap();
+        }
+        let mut owner = Admission::open(home, None).unwrap();
+        for commit in [false, true] {
+            let stage = owner
+                .reserve(Intent::Install, BTreeSet::from(["nightly-old".into()]))
+                .unwrap();
+            let candidate = stage.path().join("candidate.smod");
+            fs::write(&candidate, package("2.0.0")).unwrap();
+            let result = stage
+                .seal_files(None, &[(PACK.into(), Some(candidate))])
+                .unwrap()
+                .publish_observed(
+                    || Ok(()),
+                    |_, boundary| {
+                        let refs = references(home)?;
+                        assert_eq!(refs.pointer, before);
+                        assert!(refs.after.is_none());
+                        if boundary == Boundary::BeforeMarker && !commit {
+                            return Err("interrupted after the file renames".into());
+                        }
+                        Ok(())
+                    },
+                );
+            assert_eq!(result.is_ok(), commit);
+            assert_eq!(pointer_bytes(home).unwrap(), before);
+            assert_eq!(home.join(PACK).is_file(), commit);
+            assert!(!recovery_pending(home).unwrap());
+        }
+    }
+}
+
 const FIRST_POINTER: &[u8] = b"{\"base\":\"nightly-original\",\"generation\":1}\n";
 
 fn first_binding() -> Bootstrap {

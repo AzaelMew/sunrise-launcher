@@ -612,6 +612,10 @@ fn github_add_and_checked_update_share_the_candidate_proof() {
             assert_eq!(fs::read(home.join(ARCHIVE)).unwrap(), first);
             assert!(mod_list::is_enabled(&home, ID));
             let old_sidecar = fs::read(&sidecar).unwrap();
+            assert!(!home.join(crate::profile_txn::POINTER).exists());
+            assert!(!fixture.root.join("compiled").exists());
+            assert_eq!(crate::native_status::pending(&home, None), [ID]);
+            fixture.first_play();
             let old_pointer = fs::read(home.join(crate::profile_txn::POINTER)).unwrap();
 
             let next = release(&mut fixture, "1.1.0", 'a', SOURCE);
@@ -781,8 +785,6 @@ fn pinned_source_preflight_refusal_cancel_and_failed_update_keep_the_profile() {
                         cancellation,
                         authorize,
                         approve_worlds,
-                        step: None,
-                        log: None,
                     },
                 )
             };
@@ -822,6 +824,9 @@ fn pinned_source_preflight_refusal_cancel_and_failed_update_keep_the_profile() {
             );
             assert!(!recorded.is_release_asset());
             let old_bytes = fs::read(home.join(ARCHIVE)).unwrap();
+            assert!(!home.join(crate::profile_txn::POINTER).exists());
+            assert!(!fixture.root.join("compiled").exists());
+            fixture.first_play();
             let snapshot = || {
                 [
                     crate::profile_txn::POINTER,

@@ -1481,7 +1481,10 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
                         add_arguments(cmd)
                     },
                     |cmd| jars::prepare_for_command(cmd, jar_permission).map_err(|e| e.to_string()),
-                    Some(&registry_consent),
+                    (
+                        &native_mods::Cancellation::default(),
+                        Some(&registry_consent),
+                    ),
                     |progress| match progress {
                         managed_play::Progress::Prepare => {
                             backend::play_step("preparing the game's files")
