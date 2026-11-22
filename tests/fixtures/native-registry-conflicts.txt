@@ -1,0 +1,28 @@
+Mods in Cargo's dependency report: mod_lights, mod_motion_blur.
+
+log: the game locks 0.4.34, but resolution without the game's constraint selected 0.4.35.
+syn: the game locks 3.0.6, but resolution without the game's constraint selected 3.0.10.
+
+Resolving registry dependency pins failed (exit status: 101).
+error: failed to select a version for `syn`.
+    ... required by package `sunrise-game-pins-fixture v0.0.0 (/build/visual-fixture/a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1/work/sunrise-game-pins-fixture)`
+versions that meet the requirements `=3.0.6` are: 3.0.6
+
+all possible versions conflict with previously selected packages
+
+  previously selected package `syn v3.0.10`
+    ... which satisfies dependency `syn = "=3.0.10"` of package `mod_16 v0.1.1 (/build/visual-fixture/a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1/work/native-api/mod_motion_blur)`
+
+failed to select a version for `syn` which could resolve this conflict
+
+error: failed to select a version for `log`.
+    ... required by package `lighting_core v0.3.0`
+    ... which satisfies dependency `lighting_core = "^0.3"` of package `mod_12 v0.3.0 (/build/visual-fixture/a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1/work/native-api/mod_lights)`
+versions that meet the requirements `=0.4.35` are: 0.4.35
+
+all possible versions conflict with previously selected packages
+
+  previously selected package `log v0.4.34`
+    ... which satisfies dependency `log = "=0.4.34"` of package `sunrise-game-pins-fixture v0.0.0 (/build/visual-fixture/a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1/work/sunrise-game-pins-fixture)`
+
+failed to select a version for `log` which could resolve this conflict

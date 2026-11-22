@@ -626,7 +626,12 @@ fn choices(
                 .then_with(|| a.digest.cmp(&b.digest))
         });
         for choice in &available {
-            todo.extend(required(&choice.manifest).map(|(id, _)| id.clone()));
+            todo.extend(
+                choice
+                    .manifest
+                    .required_client_dependencies()
+                    .map(|(id, _)| id.clone()),
+            );
         }
         slots.insert(id, available);
     }
@@ -648,15 +653,6 @@ pub(super) fn sha256_bytes(hex: &str) -> Result<[u8; 32], String> {
         *out = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).map_err(|_| unproved_switch())?;
     }
     Ok(bytes)
-}
-
-fn required(
-    manifest: &Manifest,
-) -> impl Iterator<Item = (&String, &sunrise_launcher_smod::manifest::Dependency)> {
-    manifest.dependencies.iter().filter(|(_, need)| {
-        let need = need.details();
-        !need.optional && need.side != Side::Server
-    })
 }
 
 fn best_survivor_set<'a>(
@@ -742,12 +738,16 @@ fn activate<'a>(id: &'a str, set: &Set<'a>, selected: &mut BTreeSet<&'a str>) ->
     if !selected.insert(id) {
         return true;
     }
-    required(&set[id].manifest).all(|(dep, need)| {
-        set.get_key_value(dep.as_str()).is_some_and(|(&key, pkg)| {
-            parse_version(&pkg.manifest.version).is_ok_and(|v| need.details().version.matches(&v))
-                && activate(key, set, selected)
+    set[id]
+        .manifest
+        .required_client_dependencies()
+        .all(|(dep, need)| {
+            set.get_key_value(dep.as_str()).is_some_and(|(&key, pkg)| {
+                parse_version(&pkg.manifest.version)
+                    .is_ok_and(|v| need.details().version.matches(&v))
+                    && activate(key, set, selected)
+            })
         })
-    })
 }
 
 fn enabled_set<'a>(
@@ -966,7 +966,11 @@ fn spread_to_dependents<'a>(set: &Set<'a>, omitted: &mut BTreeSet<&'a str>) {
     while before != omitted.len() {
         before = omitted.len();
         for (&id, package) in set {
-            if required(&package.manifest).any(|(dep, _)| omitted.contains(dep.as_str())) {
+            if package
+                .manifest
+                .required_client_dependencies()
+                .any(|(dep, _)| omitted.contains(dep.as_str()))
+            {
                 omitted.insert(id);
             }
         }

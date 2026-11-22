@@ -19,7 +19,7 @@ use std::{
 };
 use sunrise_launcher_smod::install_lock::{lock_home, HomeLockGuard};
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
 enum Selection {
     Cached { base: Artifact, preferred: Artifact },
@@ -28,6 +28,7 @@ enum Selection {
 
 /// The candidate resolved on the first admitted Play. A committed pointer or an
 /// interrupted binding wins over this chooser on every later Play.
+#[derive(Debug, PartialEq, Eq)]
 pub struct FirstBuild {
     base: String,
     image: String,
@@ -573,6 +574,11 @@ impl FirstAttempt<'_> {
 
     pub fn handoff(&self) -> ProfileHandoff<'_> {
         self.stage.handoff()
+    }
+
+    pub(super) fn recovery_selection(&self) -> Result<FirstBuild, String> {
+        self.bound.verify_image()?;
+        FirstBuild::installed(self.preferred_image())
     }
 
     pub(super) fn variant(&self) -> Option<BoundVariant> {

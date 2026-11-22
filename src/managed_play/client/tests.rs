@@ -3,6 +3,365 @@ use serde_json::json;
 use std::{fs, sync::Arc};
 use sunrise_launcher_smod::{index, manifest, mod_list};
 
+fn recovery_mod(home: &Path, id: &str, name: &str, native: bool, dependencies: &str) {
+    let body = format!(
+        "id='{id}'\nname='{name}'\nversion='1.0.1'\napi='{}'\n{dependencies}",
+        manifest::API
+    );
+    let body = if native {
+        format!(
+            "{body}\n[native]\ngame='26.3'\nsunrise='{}'\n",
+            "a".repeat(40)
+        )
+    } else {
+        body
+    };
+    let cargo = format!("[package]\nname='{id}'\nversion='1.0.1'\n");
+    let files = [
+        ("Cargo.toml", cargo.as_bytes()),
+        ("src/lib.rs", &b"fn fixture() {}"[..]),
+    ];
+    let bytes = manifest::Package::write_files(&body, if native { &files } else { &[] }).unwrap();
+    let folder = home.join(if native {
+        mod_list::NATIVE_DIR
+    } else {
+        mod_list::DIR
+    });
+    fs::create_dir_all(&folder).unwrap();
+    fs::write(folder.join(format!("{id}.smod")), bytes).unwrap();
+}
+
+fn off() -> Vec<(String, String)> {
+    vec![("blur".into(), "1.0.1".into())]
+}
+
+#[test]
+fn recovery_refuses_a_required_dependent_but_keeps_an_optional_one() {
+    let scratch = tempfile::tempdir().unwrap();
+    let home = scratch.path();
+    recovery_mod(home, "blur", "Motion Blur", true, "");
+    recovery_mod(home, "map", "Map", false, "[dependencies]\nblur='^1'\n");
+    let list = home.join(mod_list::FILE);
+    let original = b"mod.blur:true\r\nmod.map:true\r\nkey.blur.toggle:key.keyboard.x";
+    fs::write(&list, original).unwrap();
+    let error = turn_off_mods(home, &off(), |_, _| unreachable!()).unwrap_err();
+    assert_eq!(error, "Map needs Motion Blur. No mods were turned off.");
+    assert_eq!(fs::read(&list).unwrap(), original);
+
+    for declaration in [
+        "{version='^1', optional=true}",
+        "{version='^1', side='server'}",
+    ] {
+        recovery_mod(
+            home,
+            "map",
+            "Map",
+            false,
+            &format!("[dependencies]\nblur={declaration}\n"),
+        );
+        turn_off_mods(home, &off(), |mut file, bytes| file.write_all(bytes)).unwrap();
+        assert_eq!(
+            fs::read(&list).unwrap(),
+            b"mod.map:true\r\nkey.blur.toggle:key.keyboard.x"
+        );
+        fs::write(&list, original).unwrap();
+    }
+    assert!(turn_off_mods(
+        home,
+        &[("blur".into(), "1.0.0".into())],
+        |_, _| unreachable!()
+    )
+    .unwrap_err()
+    .contains("No mods were turned off"));
+    assert_eq!(fs::read(&list).unwrap(), original);
+}
+
+fn write_recovery_world(home: &Path, saved_mod: &str) {
+    use sunrise_launcher_nbt::{self as nbt, Limits, Tag};
+    let dir = home.join("saves/world");
+    fs::create_dir_all(&dir).unwrap();
+    let root = Tag::compound([
+        (
+            "Data",
+            Tag::compound([("LevelName", Tag::String("Lantern Lake".into()))]),
+        ),
+        (
+            "sunrise",
+            Tag::compound([(
+                "ContentModList",
+                Tag::List(vec![Tag::compound([
+                    ("ModId", Tag::String(saved_mod.into())),
+                    ("ModVersion", Tag::String("1.0.1".into())),
+                ])]),
+            )]),
+        ),
+    ]);
+    fs::write(
+        dir.join("level.dat"),
+        nbt::write_named(
+            &nbt::NamedTag {
+                name: "".into(),
+                tag: root,
+            },
+            Limits::default(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+}
+
+#[test]
+fn recovery_refuses_a_saved_world_and_never_begins_play() {
+    const TEST: &str =
+        "managed_play::client::tests::recovery_refuses_a_saved_world_and_never_begins_play";
+    const FIXTURE: &str = "PLAY_SAVED_WORLD_RECOVERY_FIXTURE";
+    const BUILD: &str = "v0.1.2";
+    if std::env::var_os(FIXTURE).is_none() {
+        let root = tempfile::tempdir().unwrap();
+        assert!(Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", TEST, "--nocapture"])
+            .env(FIXTURE, "1")
+            .env("SUNRISE_HOME", root.path().join("game"))
+            .env("SUNRISE_LAUNCHER_HOME", root.path().join("launcher"))
+            .env(
+                "SUNRISE_LAUNCHER_LOCATION_FILE",
+                root.path().join("location")
+            )
+            .env("SUNRISE_NO_KEYCHAIN", "1")
+            .status()
+            .unwrap()
+            .success());
+        return;
+    }
+    let home = backend::game_home();
+    let list = home.join(mod_list::FILE);
+    let original = b"mod.blur:true\nkey.blur.toggle:key.keyboard.x\n";
+    recovery_mod(&home, "blur", "Motion Blur", true, "");
+    fs::write(&list, original).unwrap();
+    write_recovery_world(&home, "blur");
+    let install = backend::version_dir(BUILD);
+    fs::create_dir_all(&install).unwrap();
+    fs::write(install.join(".installed"), []).unwrap();
+    fs::write(install.join(backend::CLIENT), b"not a game").unwrap();
+    let instance = instances::selection().unwrap();
+    let recover = || {
+        Client {
+            instance: &instance,
+            accepted_account: Some("fixture"),
+            explicit_account: false,
+            piped: false,
+        }
+        .start_with_recovery(
+            Some(ModRecovery {
+                build: Arc::new(FailedBuild(Build::First(
+                    FirstBuild::installed(BUILD).unwrap(),
+                ))),
+                mods: off(),
+            }),
+            || FirstBuild::installed(BUILD),
+            |_| unreachable!("recovery must not start a game"),
+            |_| unreachable!(),
+            (&native_mods::Cancellation::default(), None),
+            |_| unreachable!("recovery must stop before preparing or starting the game"),
+        )
+    };
+    assert!(
+        matches!(recover(), Err(StartError::Other(detail)) if detail ==
+        "Turning off these mods could remove content from: Lantern Lake. No mods were turned off.")
+    );
+    assert_eq!(fs::read(&list).unwrap(), original);
+    // A broken roster is also a refusal, not proof that no world is at risk.
+    fs::remove_dir_all(home.join("saves")).unwrap();
+    fs::write(home.join("saves"), b"not a directory").unwrap();
+    assert!(
+        matches!(recover(), Err(StartError::Other(detail)) if detail ==
+        "Sunrise couldn't check the saved worlds. No mods were turned off.")
+    );
+    assert_eq!(fs::read(&list).unwrap(), original);
+}
+
+#[test]
+fn recovery_proceeds_when_no_saved_world_uses_the_mod() {
+    let scratch = tempfile::tempdir().unwrap();
+    let home = scratch.path();
+    let list = home.join(mod_list::FILE);
+    write_recovery_world(home, "map");
+    recovery_mod(home, "blur", "Motion Blur", true, "");
+    fs::write(&list, b"mod.blur:true\nmod.map:true\n").unwrap();
+    turn_off_mods(home, &off(), |mut file, bytes| file.write_all(bytes)).unwrap();
+    assert_eq!(fs::read(&list).unwrap(), b"mod.map:true\n");
+}
+
+#[test]
+fn a_failed_enable_list_write_does_not_replace_the_original() {
+    let scratch = tempfile::tempdir().unwrap();
+    let home = scratch.path();
+    let list = home.join(mod_list::FILE);
+    let original = b"mod.blur:true\r\nkey.blur.toggle:key.keyboard.x\r\n";
+    recovery_mod(home, "blur", "Motion Blur", true, "");
+    fs::write(&list, original).unwrap();
+    let error = turn_off_mods(home, &off(), |mut file, bytes| {
+        file.write_all(&bytes[..10])?;
+        Err(io::Error::new(
+            io::ErrorKind::StorageFull,
+            "fixture disk full",
+        ))
+    })
+    .unwrap_err();
+    assert!(error.contains("fixture disk full"));
+    assert_eq!(fs::read(&list).unwrap(), original);
+    assert_eq!(
+        fs::read_dir(home).unwrap().count(),
+        2,
+        "temporary file removed"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn recovery_does_not_follow_or_replace_a_linked_enable_list() {
+    let scratch = tempfile::tempdir().unwrap();
+    let home = scratch.path();
+    let list = home.join(mod_list::FILE);
+    let target = home.join("target-list");
+    let original = b"mod.blur:true\n";
+    recovery_mod(home, "blur", "Motion Blur", true, "");
+    fs::write(&target, original).unwrap();
+    std::os::unix::fs::symlink(&target, &list).unwrap();
+    assert!(turn_off_mods(home, &off(), |_, _| unreachable!()).is_err());
+    assert_eq!(fs::read_link(&list).unwrap(), target);
+    assert_eq!(fs::read(&target).unwrap(), original);
+}
+
+#[test]
+fn recovery_binds_first_play_and_refuses_a_result_from_before_switch() {
+    const TEST: &str = "managed_play::client::tests::recovery_binds_first_play_and_refuses_a_result_from_before_switch";
+    const FIXTURE: &str = "PLAY_TURN_OFF_FIXTURE";
+    const BEFORE: &str = "v0.1.1";
+    const AFTER: &str = "v0.1.2";
+    if std::env::var_os(FIXTURE).is_none() {
+        let root = tempfile::tempdir().unwrap();
+        assert!(Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", TEST, "--nocapture"])
+            .env(FIXTURE, "1")
+            .env("SUNRISE_HOME", root.path().join("game"))
+            .env("SUNRISE_LAUNCHER_HOME", root.path().join("launcher"))
+            .env(
+                "SUNRISE_LAUNCHER_LOCATION_FILE",
+                root.path().join("location")
+            )
+            .env("SUNRISE_NO_KEYCHAIN", "1")
+            .status()
+            .unwrap()
+            .success());
+        return;
+    }
+    for tag in [BEFORE, AFTER] {
+        fs::create_dir_all(backend::resources(tag)).unwrap();
+        fs::write(
+            backend::resources(tag).join("sunrise-resources.json"),
+            b"{}",
+        )
+        .unwrap();
+        fs::write(backend::version_dir(tag).join(".installed"), []).unwrap();
+        fs::write(backend::version_dir(tag).join(backend::CLIENT), tag).unwrap();
+    }
+    let home = backend::game_home();
+    let list = home.join(mod_list::FILE);
+    let original = b"mod.blur:true\n";
+    recovery_mod(&home, "blur", "Motion Blur", true, "");
+    fs::write(&list, original).unwrap();
+    assert!(crate::native_status::build_mods(&home)
+        .iter()
+        .any(|m| m.id == "blur" && m.title == "Motion Blur"));
+    let instance = instances::selection().unwrap();
+    let cancelled = native_mods::Cancellation::default();
+    let recover = |selection: Build| ModRecovery {
+        build: Arc::new(FailedBuild(selection)),
+        mods: off(),
+    };
+    let refuses = |recovery, tag| {
+        let result = Client {
+            instance: &instance,
+            accepted_account: Some("fixture"),
+            explicit_account: false,
+            piped: false,
+        }
+        .start_with_recovery(
+            Some(recovery),
+            || FirstBuild::installed(tag),
+            |_| unreachable!("stale result cannot start a game"),
+            |_| unreachable!(),
+            (&cancelled, None),
+            |_| {},
+        );
+        assert!(
+            matches!(result, Err(StartError::Other(detail)) if detail == "The profile's game build changed. No mods were turned off.")
+        );
+        assert_eq!(fs::read(&list).unwrap(), original);
+    };
+    let first = {
+        let mut profile = Profile::open(&home, None).unwrap();
+        let attempt = profile
+            .begin_first(|| FirstBuild::installed(BEFORE), |_| {})
+            .unwrap();
+        let first = attempt.recovery_selection().unwrap();
+        drop(attempt);
+        profile.release_failed_first_play().unwrap();
+        first
+    };
+    refuses(recover(Build::First(first)), AFTER);
+
+    let active = {
+        let mut profile = Profile::open(&home, None).unwrap();
+        let recovery = recover(Build::First(FirstBuild::installed(BEFORE).unwrap()));
+        let selected = {
+            let _manifest = profile.lock_inputs().unwrap();
+            let selected = recovery
+                .verify(&profile, &mut Some(|| FirstBuild::installed(BEFORE)))
+                .unwrap()
+                .unwrap();
+            turn_off_mods(&home, &recovery.mods, |mut file, bytes| {
+                file.write_all(bytes)
+            })
+            .unwrap();
+            selected
+        };
+        assert!(fs::read(&list).unwrap().is_empty());
+        let active = profile
+            .begin_first(|| Ok(selected), |_| {})
+            .unwrap()
+            .commit(BEFORE, &cancelled)
+            .unwrap();
+        let switch = profile.begin_switch(AFTER).unwrap().unwrap();
+        let candidate = switch.candidate().unwrap();
+        let proof = switch
+            .prove(
+                candidate.path(),
+                native_mods::Profile::Optimized,
+                &cancelled,
+                |_| {},
+                None,
+                None,
+            )
+            .unwrap();
+        let switched = switch
+            .publish_switch(
+                proof,
+                &cancelled,
+                vec![],
+                Default::default(),
+                || Ok(()),
+                || Ok(()),
+            )
+            .unwrap();
+        assert_eq!(switched.base(), AFTER);
+        active
+    };
+    fs::write(&list, original).unwrap();
+    refuses(recover(Build::Active(active)), AFTER);
+}
+
 #[test]
 fn play_checks_hash_only_takedowns_after_proving_the_actual_package() {
     const TEST: &str = "managed_play::client::tests::play_checks_hash_only_takedowns_after_proving_the_actual_package";

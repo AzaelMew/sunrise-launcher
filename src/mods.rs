@@ -647,20 +647,22 @@ impl Launcher {
     /// title, version and picture.
     pub(crate) fn mods_lines(&mut self) -> Vec<(String, String, String, Option<String>)> {
         self.mods_refresh();
-        self.build_lines(native_status::enabled(&self.mods_home()), true)
+        self.build_lines(native_status::build_mods(&self.mods_home()), true)
     }
 
     pub(crate) fn build_lines(
         &self,
-        inputs: Vec<native_status::Mod>,
+        inputs: Vec<native_status::BuildMod>,
         selected: bool,
     ) -> Vec<(String, String, String, Option<String>)> {
         let rows = if selected { self.rows() } else { Vec::new() };
         inputs
             .into_iter()
-            .map(|(id, version, _)| match rows.iter().find(|r| r.id == id) {
-                Some(row) => (id, row.title.clone(), version, row.icon.clone()),
-                None => (id.clone(), id, version, None),
+            .map(|native_status::BuildMod { id, title, version }| {
+                match rows.iter().find(|r| r.id == id && r.version == version) {
+                    Some(row) => (id, row.title.clone(), version, row.icon.clone()),
+                    None => (id, title, version, None),
+                }
             })
             .collect()
     }
