@@ -40,9 +40,29 @@ pub(in crate::browser::sunrise::registry_install) fn complete_source_add(
 ) -> Result<SourceAdd, SourceError> {
     let before = inventory(home, None)?;
     let enabled = mutations::enabled(home)?;
+    let held_ids: BTreeSet<_> = active
+        .iter()
+        .flat_map(|active| active.holds())
+        .map(|held| held.id())
+        .collect();
+    let mut unavailable = BTreeMap::new();
+    for (id, existing) in &before {
+        if !enabled.contains(id) {
+            unavailable.insert(
+                id.clone(),
+                trf(
+                    "Required mod {mod} is installed but off. Enable it first.",
+                    &[("mod", &existing.package.manifest.name)],
+                ),
+            );
+        }
+    }
+    for &id in &held_ids {
+        unavailable.insert(id.to_owned(), held_change_refusal(id).to_string());
+    }
     let mut manifests = before
         .iter()
-        .filter(|(id, _)| enabled.contains(*id))
+        .filter(|(id, _)| enabled.contains(*id) && !held_ids.contains(id.as_str()))
         .map(|(id, seen)| (id.clone(), seen.package.manifest.clone()))
         .collect::<BTreeMap<_, _>>();
     let mut pending = roots
@@ -59,11 +79,8 @@ pub(in crate::browser::sunrise::registry_install) fn complete_source_add(
             continue;
         }
         if !manifests.contains_key(&id) {
-            if let Some(existing) = before.get(&id) {
-                return Err(SourceError::Catalogue(trf(
-                    "Required mod {mod} is installed but off. Enable it first.",
-                    &[("mod", &existing.package.manifest.name)],
-                )));
+            if let Some(reason) = unavailable.get(&id) {
+                return Err(SourceError::Catalogue(reason.clone()));
             }
             if instance.channel == Channel::Stable {
                 // The solver can walk the registry versions' own transitive requirements.
@@ -86,10 +103,20 @@ pub(in crate::browser::sunrise::registry_install) fn complete_source_add(
                         &[("mod", &id)],
                     ))
                 })?;
-            let pin = sources::resolve(listing, false).map_err(SourceError::Github)?;
+            let dep_github = |failure| {
+                if cancellation.is_stopped() {
+                    SourceError::Cancelled
+                } else {
+                    SourceError::DependencyGithub {
+                        name: listing.name().to_owned(),
+                        failure,
+                    }
+                }
+            };
+            let pin = sources::resolve(listing, false).map_err(dep_github)?;
             cancellation.check()?;
             let (package, mut origin) =
-                github_mods::pack_pin(&pin, cancellation).map_err(SourceError::Github)?;
+                github_mods::pack_pin(&pin, cancellation).map_err(dep_github)?;
             origin.added_from = Some(AddedFrom::Discover);
             let bundle = index::native::Bundle::read(&package.file)?;
             manifests.insert(id.clone(), bundle.manifest);
@@ -115,12 +142,7 @@ pub(in crate::browser::sunrise::registry_install) fn complete_source_add(
                     .into(),
             ));
         }
-        let (catalogue, _, authority) = fetch_with_official(&location, local)?;
-        if !catalogue.left_out.is_empty() {
-            return Err(SourceError::Catalogue(
-                tr("The mod registry didn't send a complete index. Nothing was installed.").into(),
-            ));
-        }
+        let (catalogue, _, authority) = sunrise::complete_index(&location, local)?;
         (catalogue, authority)
     } else {
         (index::Index::default(), None)
@@ -153,6 +175,7 @@ pub(in crate::browser::sunrise::registry_install) fn complete_source_add(
             &catalogue,
             &requests,
             &fixed,
+            &unavailable,
             &game,
             Side::Client,
             resolve::WholeOptions {
@@ -218,6 +241,7 @@ pub(in crate::browser::sunrise::registry_install) fn complete_source_add(
                 &before,
                 project,
                 version,
+                Some(cancellation),
                 |fraction| progress(InstallProgress::Downloading(fraction)),
             )?;
             entry.dependency = true;
@@ -231,9 +255,17 @@ pub(in crate::browser::sunrise::registry_install) fn complete_source_add(
         }
         doc.write(stage.path())?;
         // All solver candidates (fixed and downloaded) have checked digests at this point.
-        if let Some(conflict) =
-            manifest_conflict(stage.path(), Some(&catalogue), authority.as_ref(), |_| true)?
-        {
+        let conflict = match manifest_conflict(
+            stage.path(),
+            Some(&catalogue),
+            authority.as_ref(),
+            Side::Client,
+            |_| true,
+        )? {
+            Some(conflict) => Some(conflict),
+            None => client_graph_conflict(stage.path(), authority.as_ref())?,
+        };
+        if let Some(conflict) = conflict {
             if conflicts.contains(&conflict) {
                 return Err(SourceError::Unproved(conflict.reason));
             }
@@ -241,15 +273,26 @@ pub(in crate::browser::sunrise::registry_install) fn complete_source_add(
             conflicts.push(conflict);
             continue;
         }
-        for (id, route) in source_fit(stage.path(), base, cancellation)?.mods {
-            if let native_mods::Route::Unfit { line, .. } = &route {
-                if let Some(row) = plan.install.iter().find(|row| row.id == id) {
-                    last_refusal = Some(SourceError::DoesNotFit(line.clone()));
-                    unfit.insert((id, row.version.clone()));
-                    continue 'trials;
+        let routes = source_fit(stage.path(), base, cancellation)?;
+        let mut rejected = None;
+        for (id, route) in routes.mods {
+            match route {
+                native_mods::Route::Prebuilt | native_mods::Route::Fits { .. } => (),
+                native_mods::Route::Unfit { line, .. } => {
+                    let Some(row) = plan.install.iter().find(|row| row.id == id) else {
+                        return Err(SourceError::DoesNotFit(line));
+                    };
+                    if !unfit.insert((id, row.version.clone())) {
+                        return Err(SourceError::DoesNotFit(line));
+                    }
+                    rejected.get_or_insert(line);
                 }
+                other => checked_source_route(other)?,
             }
-            checked_source_route(route)?;
+        }
+        if let Some(line) = rejected {
+            last_refusal = Some(SourceError::DoesNotFit(line));
+            continue 'trials;
         }
         return Ok(SourceAdd {
             dependencies: added,
@@ -259,4 +302,102 @@ pub(in crate::browser::sunrise::registry_install) fn complete_source_add(
     Err(SourceError::Unproved(
         tr("Not every compatible version could be checked. Nothing was installed.").into(),
     ))
+}
+
+/// Apply the client dispatch and native link rules to the staged candidate, returning any
+/// proven graph conflict on the affected set so the solver can try alternate versions.
+fn client_graph_conflict(
+    home: &Path,
+    authority: Option<&OfficialRegistry>,
+) -> Result<Option<resolve::ManifestConflict>, SourceError> {
+    use sunrise_launcher_smod::dependencies;
+
+    let packages = inventory(home, authority)?;
+    let enabled: BTreeMap<_, _> = packages
+        .iter()
+        .filter(|(id, _)| mod_list::is_enabled(home, id))
+        .map(|(id, p)| (id.as_str(), &p.package.manifest))
+        .collect();
+    let overrides = dependencies::Overrides::read(&home.join(mod_list::MODS_DIR))?;
+    let file_for = |id: &str| {
+        let package = &packages[id];
+        resolve::InstalledMod {
+            id: id.to_owned(),
+            version: package.package.manifest.version.clone(),
+            sha256: package.digest.clone(),
+        }
+    };
+    let conflict_for = |ids: &[&str], reason: String| -> Option<resolve::ManifestConflict> {
+        let mut unique = BTreeSet::new();
+        for &id in ids {
+            if !enabled.contains_key(id) {
+                return None;
+            }
+            unique.insert(id);
+        }
+        (!unique.is_empty()).then(|| resolve::ManifestConflict {
+            files: unique.into_iter().map(file_for).collect(),
+            reason,
+        })
+    };
+    let graph_error = |error: dependencies::Error, prefix: &str| {
+        let reason = if prefix.is_empty() {
+            error.to_string()
+        } else {
+            format!("{prefix}{error}")
+        };
+        match &error {
+            dependencies::Error::Cycle { mods } => {
+                let ids: Vec<_> = mods.iter().map(String::as_str).collect();
+                match conflict_for(&ids, reason.clone()) {
+                    Some(conflict) => Ok(Some(conflict)),
+                    None => Err(SourceError::Unproved(reason)),
+                }
+            }
+            dependencies::Error::Incompatible { owner, target, .. }
+            | dependencies::Error::Version { owner, target, .. }
+            | dependencies::Error::NoApi { owner, target, .. }
+            | dependencies::Error::CargoConflict { owner, target }
+            | dependencies::Error::Missing { owner, target, .. } => {
+                match conflict_for(&[owner.as_str(), target.as_str()], reason.clone()) {
+                    Some(conflict) => Ok(Some(conflict)),
+                    None => Err(SourceError::Dependency {
+                        required: None,
+                        detail: reason,
+                    }),
+                }
+            }
+            dependencies::Error::Duplicate(_) | dependencies::Error::Manifest { .. } => {
+                Err(SourceError::Unproved(reason))
+            }
+        }
+    };
+    let applicable: Vec<_> = enabled.values().copied().collect();
+    if let Err(error) = dependencies::resolve_manifests(&applicable, Side::Client, &overrides) {
+        return graph_error(error, "");
+    }
+    let native: Vec<_> = enabled
+        .values()
+        .copied()
+        .filter(|manifest| manifest.native.is_some())
+        .collect();
+    let declared: Vec<_> = native
+        .iter()
+        .map(|manifest| dependencies::from_manifest(&manifest.dependencies, Side::Client))
+        .collect();
+    let inputs: Vec<_> = native
+        .iter()
+        .zip(&declared)
+        .map(|(manifest, deps)| dependencies::Mod {
+            id: &manifest.id,
+            version: &manifest.version,
+            has_api: true,
+            code: true,
+            dependencies: deps,
+        })
+        .collect();
+    if let Err(error) = dependencies::resolve_links(&inputs) {
+        return graph_error(error, "code link requirements refused: ");
+    }
+    Ok(None)
 }

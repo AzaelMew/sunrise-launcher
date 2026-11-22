@@ -180,10 +180,11 @@ pub(super) fn edit_github(
     };
     let home = additions.home(home);
     let catalogue = super::super::fetched_index();
-    let check_graph = || match manifest_conflict(home, catalogue.as_deref(), None, |_| false)? {
-        Some(conflict) => Err(InstallError::Refused(conflict.reason)),
-        None => Ok(()),
-    };
+    let check_graph =
+        || match manifest_conflict(home, catalogue.as_deref(), None, Side::Client, |_| false)? {
+            Some(conflict) => Err(InstallError::Refused(conflict.reason)),
+            None => Ok(()),
+        };
     match (source, previous.is_empty()) {
         (Some(_), true) => (), // Fresh source adds checked their whole catalogue plan above.
         (source, fresh) if source.is_some() || fresh => {

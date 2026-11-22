@@ -67,6 +67,10 @@ impl PreparedSource {
 pub enum SourceError {
     Cancelled,
     Github(Failure),
+    DependencyGithub {
+        name: String,
+        failure: Failure,
+    },
     Dependency {
         required: Option<String>,
         detail: String,
@@ -101,6 +105,17 @@ impl std::fmt::Display for SourceError {
             }
             Self::Github(Failure::NoManifest) => f.write_str(tr("No Sunrise mod at this commit.")),
             Self::Github(Failure::Offline(detail) | Failure::Other(detail)) => f.write_str(detail),
+            Self::DependencyGithub {
+                failure: Failure::Offline(detail),
+                ..
+            } => f.write_str(detail),
+            Self::DependencyGithub { name, failure } => {
+                let why = Self::Github(failure.clone()).to_string();
+                f.write_str(&trf(
+                    "{mod} couldn't be read from GitHub. {why}",
+                    &[("mod", name), ("why", &why)],
+                ))
+            }
             Self::Busy => f.write_str(tr(
                 "A native build or cache cleanup is running. Try again when it finishes.",
             )),
@@ -517,7 +532,9 @@ pub(super) fn check_source_set(
             }
         }
         let catalogue = super::super::fetched_index();
-        if let Some(conflict) = manifest_conflict(home, catalogue.as_deref(), None, |_| false)? {
+        if let Some(conflict) =
+            manifest_conflict(home, catalogue.as_deref(), None, Side::Client, |_| false)?
+        {
             return Err(SourceError::Dependency {
                 required: None,
                 detail: conflict.reason,

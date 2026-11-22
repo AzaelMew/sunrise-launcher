@@ -1625,9 +1625,11 @@ fn failure_line(error: &InstallError) -> &'static str {
         InstallError::Source(SourceError::Dependency { .. } | SourceError::Catalogue(_)) => {
             tr("Can't install these mods together")
         }
-        InstallError::Source(SourceError::Unproved(_) | SourceError::Github(_)) => {
-            tr("Fit could not be verified")
-        }
+        InstallError::Source(
+            SourceError::Unproved(_)
+            | SourceError::Github(_)
+            | SourceError::DependencyGithub { .. },
+        ) => tr("Fit could not be verified"),
         InstallError::Source(SourceError::Tools(_)) => {
             tr("Couldn't download build tools. Check your connection and try again.")
         }

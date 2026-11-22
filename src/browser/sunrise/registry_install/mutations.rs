@@ -481,7 +481,7 @@ pub fn remove_mods(
     }
     let disabled_ids = unavailable.iter().map(String::as_str).collect::<Vec<_>>();
     mod_list::set_all_enabled(home, &disabled_ids, false)?;
-    if let Some(conflict) = manifest_conflict(home, None, None, |_| false)? {
+    if let Some(conflict) = manifest_conflict(home, None, None, Side::Both, |_| false)? {
         return Err(InstallError::Refused(conflict.reason));
     }
     let removed = archives

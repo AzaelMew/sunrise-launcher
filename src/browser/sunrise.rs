@@ -1138,13 +1138,34 @@ fn fetch(
     local: bool,
     progress: &dyn Fn(f32),
 ) -> Result<PathBuf, String> {
+    fetch_cancellable(file, folder, local, None, progress)
+}
+
+fn fetch_cancellable(
+    file: &FileRef,
+    folder: &Path,
+    local: bool,
+    cancellation: Option<&crate::native_mods::Cancellation>,
+    progress: &dyn Fn(f32),
+) -> Result<PathBuf, String> {
     match file.url.strip_prefix("file://").filter(|_| local) {
         Some(path) => {
+            if let Some(cancellation) = cancellation {
+                cancellation.check()?;
+            }
             let path = local_path(path);
             let reader = fs::File::open(path).map_err(|e| format!("{path}: {e}"))?;
-            download::save_from_anywhere(file, reader, folder, progress)
+            match cancellation {
+                Some(cancellation) => download::save_from_anywhere(
+                    file,
+                    cancellation.reader(reader),
+                    folder,
+                    progress,
+                ),
+                None => download::save_from_anywhere(file, reader, folder, progress),
+            }
         }
-        None => download::fetch(file, folder, progress),
+        None => download::fetch_cancellable(file, folder, cancellation, progress),
     }
 }
 

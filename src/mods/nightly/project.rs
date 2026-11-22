@@ -199,8 +199,8 @@ impl Launcher {
             let words = source_error(error, Some(source))?;
             Some(div().flex().flex_col().items_start().gap(px(7.))
                 .child(note(words))
-                .children(matches!(error, SourceError::Github(_) | SourceError::Changed(_))
-                    .then(|| if busy || matches!(error, SourceError::Github(sources::Failure::RateLimited { retry_at: Some(at) }) if *at > SystemTime::now()) {
+                .children(matches!(error, SourceError::Github(_) | SourceError::DependencyGithub { .. } | SourceError::Changed(_))
+                    .then(|| if busy || matches!(error, SourceError::Github(sources::Failure::RateLimited { retry_at: Some(at) }) | SourceError::DependencyGithub { failure: sources::Failure::RateLimited { retry_at: Some(at) }, .. } if *at > SystemTime::now()) {
                         dim(button("nightly-detail-retry", tr("Try again")))
                     } else { retry("nightly-detail-retry", cx) })))
         });
@@ -516,7 +516,15 @@ impl Launcher {
             list = list.child(
                 card()
                     .p(px(9.))
-                    .child(dependency_label(&dependency.name, &dependency.version)),
+                    .flex()
+                    .flex_col()
+                    .gap(px(3.))
+                    .child(
+                        div()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(dependency_label(&dependency.name, &dependency.version)),
+                    )
+                    .child(note(tr("Sunrise mods"))),
             );
         }
         let approve =
@@ -606,6 +614,17 @@ pub(in crate::mods) fn source_error(
             }
             sources::Failure::Other(_) => tr("Couldn't check this source.").into(),
         },
+        SourceError::DependencyGithub { name, failure } => {
+            let why = source_error(&SourceError::Github(failure.clone()), None)?;
+            if matches!(failure, sources::Failure::Offline(_)) {
+                why
+            } else {
+                trf(
+                    "{mod} couldn't be read from GitHub. {why}",
+                    &[("mod", name), ("why", &why)],
+                )
+            }
+        }
         SourceError::Dependency {
             required: Some(id), ..
         } => trf(

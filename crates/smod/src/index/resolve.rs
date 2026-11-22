@@ -143,10 +143,10 @@ pub enum WholeRefusal {
     Unproved(String),
 }
 
-/// One incompatible pair established from checked archives, not a rejection of either alone.
+/// One incompatible set established from checked archives, not a rejection of any member alone.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ManifestConflict {
-    pub files: [InstalledMod; 2],
+    pub files: Vec<InstalledMod>,
     pub reason: String,
 }
 
@@ -171,7 +171,7 @@ pub fn install_whole(
         game,
         side,
         options.native_fits,
-        (options.messages, Some((options.conflicts, None, &[]))),
+        (options.messages, Some((options.conflicts, None, &[], None))),
     );
     refusal.map_or(Ok(plan), Err)
 }
@@ -198,6 +198,7 @@ pub fn install_with_fixed(
     index: &Index,
     requests: &[Request],
     fixed: &[FixedMod<'_>],
+    unavailable: &BTreeMap<String, String>,
     game: &str,
     side: Side,
     options: WholeOptions<'_, impl Fn(&Project, &Version) -> bool>,
@@ -209,7 +210,10 @@ pub fn install_with_fixed(
         game,
         side,
         options.native_fits,
-        (options.messages, Some((options.conflicts, None, fixed))),
+        (
+            options.messages,
+            Some((options.conflicts, None, fixed, Some(unavailable))),
+        ),
     );
     refusal.map_or(Ok(plan), Err)
 }
@@ -249,7 +253,7 @@ pub fn update_whole(
         options.native_fits,
         (
             options.messages,
-            Some((options.conflicts, Some(targets), &[])),
+            Some((options.conflicts, Some(targets), &[], None)),
         ),
     );
     refusal.map_or(Ok(plan), Err)
@@ -259,6 +263,7 @@ type WholeConstraints<'a> = (
     &'a [ManifestConflict],
     Option<UpdateTargets<'a>>,
     &'a [FixedMod<'a>],
+    Option<&'a BTreeMap<String, String>>,
 );
 
 fn plan_install(
@@ -304,7 +309,9 @@ fn plan_install(
         }
     }
     let mut catalog = Catalog::new(index, game, side, native_fits, &present);
-    let fixed = conflicts.as_ref().map_or(&[][..], |(_, _, fixed)| *fixed);
+    let fixed = conflicts
+        .as_ref()
+        .map_or(&[][..], |(_, _, fixed, _)| *fixed);
     for row in fixed {
         let (required, optional) = dependency_ranges(
             row.dependencies.iter(),
@@ -326,8 +333,9 @@ fn plan_install(
             }],
         );
     }
-    if let Some((blocked, update, _)) = conflicts {
+    if let Some((blocked, update, _, unavailable)) = conflicts {
         catalog.conflicts = blocked;
+        catalog.unavailable = unavailable;
         if let Some(targets) = update {
             catalog.above = Some(targets.above);
             catalog.minimum = Some(targets.minimum);
@@ -549,6 +557,7 @@ struct Catalog<'a> {
     game: &'a str,
     mods: BTreeMap<&'a str, Vec<Candidate<'a>>>,
     conflicts: &'a [ManifestConflict],
+    unavailable: Option<&'a BTreeMap<String, String>>,
     message: Messages,
     above: Option<&'a BTreeMap<String, semver::Version>>,
     minimum: Option<&'a BTreeMap<String, semver::Version>>,
@@ -754,6 +763,7 @@ impl<'a> Catalog<'a> {
             game,
             mods,
             conflicts: &[],
+            unavailable: None,
             message: english,
             above: None,
             minimum: None,
@@ -762,6 +772,9 @@ impl<'a> Catalog<'a> {
     }
 
     fn choices(&self, id: &str, need: &Need<'_>) -> Result<Vec<&Candidate<'a>>, String> {
+        if let Some(reason) = self.unavailable.and_then(|blocked| blocked.get(id)) {
+            return Err(reason.clone());
+        }
         let message = self.message;
         let describe = || {
             let needs = need.describe(message);
