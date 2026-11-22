@@ -500,7 +500,7 @@ impl Launcher {
             ))
         } else {
             button("home-manage-mods", tr("Manage mods")).on_click(cx.listener(|this, _, _, cx| {
-                this.show_installed_mods();
+                this.open_installed(Installed::Mods);
                 cx.notify();
             }))
         };

@@ -47,7 +47,7 @@ impl Launcher {
     pub(crate) fn open_installed(&mut self, to: Installed) {
         self.leave_section(!matches!(
             to,
-            Installed::ModsOff | Installed::Mod(_) | Installed::ModNamed(_)
+            Installed::Mods | Installed::ModsOff | Installed::Mod(_) | Installed::ModNamed(_)
         ));
         self.ui.page = self.ui.mods.enter(&to);
         self.game_packs.confirm_remove = None;
@@ -59,6 +59,8 @@ impl Launcher {
 /// A place in Installed that another page opens.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Installed {
+    /// Mods › Installed, with every mod listed and no filters.
+    Mods,
     /// Mods › Installed, the mods that are turned off.
     ModsOff,
     /// Mods › Installed with every mod listed, at the mod with this ID.
@@ -100,6 +102,7 @@ impl ModsState {
         self.reveal = None;
         self.revealed.set(false);
         match to {
+            Installed::Mods => {}
             Installed::ModsOff => self.row_filter.show = model::Show::Off,
             Installed::Mod(id) => self.reveal = Some(Reveal::Mod(id.clone())),
             Installed::Shelf(_) => {}
@@ -199,6 +202,16 @@ mod tests {
         assert_eq!(m.row_filter.show, Show::Off);
         assert_eq!((m.have.text(), m.row_filter.text.as_str()), ("", ""));
         assert_eq!(shown(&m), ["trail"]);
+    }
+
+    #[test]
+    fn manage_mods_does_not_keep_the_turned_off_shortcuts_filter() {
+        let mut m = left_behind();
+        m.enter(&Installed::ModsOff);
+        assert_eq!(shown(&m), ["trail"]);
+        assert!(m.enter(&Installed::Mods) == Page::Installed);
+        assert_eq!(shown(&m), ["lantern", "rain", "trail"]);
+        assert_eq!(m.row_filter, RowFilter::default());
     }
 
     #[test]
