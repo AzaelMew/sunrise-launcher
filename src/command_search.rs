@@ -603,7 +603,7 @@ impl Launcher {
                         true,
                         false,
                         false,
-                        "Search pages, profiles, worlds, mods, settings and shortcuts",
+                        "Search pages, profiles, worlds, mods, settings and shortcuts…",
                     )),
             )
             .child(
