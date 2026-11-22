@@ -126,7 +126,7 @@ pub struct Tools<'a> {
 
 const OTHER_ACCOUNT: &str = "The Minecraft services answered with another account's profile.";
 const CHANGED_ELSEWHERE: &str =
-    "Your skin was changed somewhere else since this page read it, so it wasn't replaced. The page now shows the one you wear: choose its arms again, then Save.";
+    "It was changed somewhere else since this page read it. The page now shows the skin you wear: check it, then Save again.";
 const SKIN_NOT_SHOWN: &str =
     "The Minecraft services took the skin, but your profile doesn't show it yet.";
 const SKIN_NOT_CHECKED: &str =
