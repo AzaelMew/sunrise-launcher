@@ -328,7 +328,7 @@ impl Launcher {
                         check
                     } else {
                         check.on_click(cx.listener(|this, _, _, cx| {
-                            this.check_source_updates();
+                            this.check_source_updates(None);
                             cx.notify();
                         }))
                     });
@@ -440,7 +440,7 @@ impl Launcher {
         };
 
         let mut list = div().flex().flex_col().children(
-            self.source_update_notice()
+            self.source_update_notice(None)
                 .map(|notice| note(notice.to_owned()).p(px(10.))),
         );
         let mut n = 0;
@@ -1043,10 +1043,11 @@ impl Launcher {
                 }
                 _ => {
                     let id = r.id.clone();
+                    let origin = nightly::installed_source(r).cloned();
                     Some(button("alt-unfit-check", tr("Check for update")).on_click(
                         cx.listener(move |this, _: &ClickEvent, _, cx| {
-                            if this.rows().iter().find(|row| row.id == id).and_then(nightly::installed_source).is_some() {
-                                this.check_source_updates();
+                            if let Some(origin) = &origin {
+                                this.check_source_updates(Some(origin));
                             } else {
                                 this.check_mod_update(&id);
                             }

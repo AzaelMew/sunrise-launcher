@@ -143,8 +143,9 @@ impl Launcher {
                             cx.notify();
                         }))
                     } else {
-                        b.on_click(cx.listener(|this, _, _, cx| {
-                            this.check_source_updates();
+                        let origin = origin.clone();
+                        b.on_click(cx.listener(move |this, _, _, cx| {
+                            this.check_source_updates(Some(&origin));
                             cx.notify();
                         }))
                     }
@@ -168,7 +169,7 @@ impl Launcher {
                 .children(update)
                 .children(controls)
                 .children(
-                    self.source_update_notice()
+                    self.source_update_notice(Some(&origin.id))
                         .map(|notice| note(notice.to_owned())),
                 )
         });
