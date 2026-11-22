@@ -297,8 +297,6 @@ fn switch_in(
     })?;
     let (next, mut proof, kept, replaced) = selected.ok_or_else(unproved_switch)?;
     let mut holds = Vec::new();
-    let mut held = Vec::new();
-    let mut unknown = Vec::new();
     for (id, old) in &original.mods {
         let manifest = &old.seen.package.manifest;
         if !kept.contains(id) && !original.removed.contains_key(id) && !old.held {
@@ -335,11 +333,6 @@ fn switch_in(
                     detail: None,
                 },
             };
-            if reason.unproved() {
-                unknown.push(manifest.name.clone());
-            } else {
-                held.push(manifest.name.clone());
-            }
             holds.push(Held::new(
                 id.clone(),
                 manifest.name.replace(char::is_control, " "),
@@ -351,6 +344,7 @@ fn switch_in(
             )?);
         }
     }
+    let (held, unknown) = omission_labels(&holds);
     let affected = crate::worlds::unproved_mod_effects(
         old.path(),
         edit.current(),
@@ -479,14 +473,9 @@ impl<'a> Originals<'a> {
         let mut removed = BTreeMap::new();
         for (id, seen) in inventory(home, official)? {
             let manifest = &seen.package.manifest;
-            let origin_at = crate::github_mods::origin_path(home, &id);
-            let github = match fs::symlink_metadata(&origin_at) {
-                Ok(meta) if meta.is_file() => {
-                    Some(crate::github_mods::origin(home, &id).ok_or_else(unproved_switch)?)
-                }
-                Err(error) if error.kind() == io::ErrorKind::NotFound => None,
-                _ => return Err(unproved_switch()),
-            };
+            let github = seen
+                .verified_github_origin(home)
+                .map_err(|()| unproved_switch())?;
             let has_row = doc.row(&id)?.is_some();
             if has_row != seen.registry_claim || (has_row && github.is_some()) {
                 return Err(unproved_switch());
@@ -497,18 +486,6 @@ impl<'a> Originals<'a> {
                 .as_ref()
                 .is_some_and(|origin| origin.source.is_some());
             let source = if let Some(origin) = github {
-                let matches = if built_from_source {
-                    seen.github_origin(home).as_ref() == Some(&origin)
-                } else {
-                    // Older GitHub receipts can sit beside a flat, local package. They
-                    // identify its bytes for holds but do not grant registry ownership.
-                    origin.id == id
-                        && origin.version == manifest.version
-                        && seen.digest.as_deref() == Some(&origin.sha256)
-                };
-                if !matches {
-                    return Err(unproved_switch());
-                }
                 HeldSource::Github {
                     owner: origin.owner,
                     repo: origin.repo,
@@ -796,13 +773,38 @@ pub(super) fn sha256_bytes(hex: &str) -> Result<[u8; 32], String> {
     Ok(bytes)
 }
 
+fn omission_labels(holds: &[Held]) -> (Vec<String>, Vec<String>) {
+    let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+    for hold in holds {
+        *counts.entry(hold.title().to_lowercase()).or_default() += 1;
+    }
+    let mut held = Vec::new();
+    let mut unproved = Vec::new();
+    for hold in holds {
+        let label = if counts[&hold.title().to_lowercase()] > 1 {
+            format!("{} ({})", hold.title(), hold.id())
+        } else {
+            hold.title().to_owned()
+        };
+        if hold.reason().unproved() {
+            unproved.push(label);
+        } else {
+            held.push(label);
+        }
+    }
+    (held, unproved)
+}
+
 // A bare native archive pinned to a different build has no cross-build proof to try.
 // Keep alternate versions eligible and leave any supplied uses list to the target SDK.
+// Local developer builds require the exact checkout revision, so a mismatch there is a
+// known incompatibility rather than an unverified fit.
 fn prune_missing_uses(
     slots: &mut Choices,
     original: &Originals<'_>,
     tag: &str,
 ) -> Result<BTreeSet<String>, String> {
+    let developer = crate::developer_install::uses_developer(tag);
     let mut revision = None;
     let mut omitted = BTreeSet::new();
     for (id, choices) in slots.iter_mut().filter(|(_, choices)| !choices.is_empty()) {
@@ -831,7 +833,7 @@ fn prune_missing_uses(
             }
             choices.push(choice);
         }
-        if choices.is_empty() {
+        if choices.is_empty() && !developer {
             omitted.insert(id.clone());
         }
     }
@@ -845,9 +847,18 @@ fn prune_dependents(slots: &mut Choices, unproved: &BTreeSet<String>) -> BTreeSe
             .filter(|(_, choices)| !choices.is_empty())
             .map(|(id, choices)| (id.as_str(), choices.iter()))
     };
+    let mut unfit: BTreeSet<_> = slots
+        .iter()
+        .filter(|(id, choices)| choices.is_empty() && !unproved.contains(*id))
+        .map(|(id, _)| id.as_str())
+        .collect();
+    spread_to_dependents(variants(), &mut unfit);
     let mut unknown: BTreeSet<_> = unproved.iter().map(String::as_str).collect();
     spread_to_dependents(variants(), &mut unknown);
-    let unknown = unknown.into_iter().map(str::to_owned).collect();
+    let unknown = unknown
+        .difference(&unfit)
+        .map(|&id| id.to_owned())
+        .collect();
     let mut unavailable: BTreeSet<_> = slots
         .iter()
         .filter(|(_, choices)| choices.is_empty())
@@ -1330,5 +1341,268 @@ mod tests {
             }
             assert_eq!(fs::read(archive).unwrap(), old);
         }
+    }
+
+    #[test]
+    fn reranks_to_a_fitting_version_and_keeps_dependents_enabled_after_sdk_rejection() {
+        let before = tempfile::tempdir().unwrap();
+        let candidate = tempfile::tempdir().unwrap();
+        let download = tempfile::tempdir().unwrap();
+        let mut catalogue = super::super::super::tests::sample();
+        let template = catalogue.projects[0].clone();
+        catalogue.projects.clear();
+
+        let pack_native = |version: &str, sunrise_pin: char| {
+            let manifest = format!(
+                "id='light_core'\nname='Light Core'\nversion='{version}'\napi='{}'\nside='both'\ncapabilities=['registries']\n[native]\nsunrise='{}'\nmixins='{}'\ngame='26.3'\n",
+                sunrise_launcher_smod::manifest::API,
+                sunrise_pin.to_string().repeat(40),
+                "c".repeat(40),
+            );
+            let cargo = format!("[package]\nname='light_core'\nversion='{version}'\n");
+            sunrise_launcher_smod::Package::write_files(
+                &manifest,
+                &[
+                    ("Cargo.toml", cargo.as_bytes()),
+                    ("src/lib.rs", b""),
+                    (sunrise_launcher_smod::manifest::USES_FILE, b"{}"),
+                ],
+            )
+            .unwrap()
+        };
+        let bytes_v1 = pack_native("1.0.0", 'a');
+        let bytes_v2 = pack_native("2.0.0", 'a');
+        let file_v1 = download.path().join("light_core-1.0.0.smod");
+        let file_v2 = download.path().join("light_core-2.0.0.smod");
+        fs::write(&file_v1, &bytes_v1).unwrap();
+        fs::write(&file_v2, &bytes_v2).unwrap();
+
+        let make_version = |kind: &index::Kind,
+                            version: &str,
+                            file: &Path,
+                            bytes: &[u8],
+                            deps: Vec<index::Dependency>| {
+            let facts = index::inspect(kind, file).unwrap();
+            let mut row = template.versions[0].clone();
+            row.version = version.into();
+            row.game = "26.3".into();
+            row.api = facts.api;
+            row.side = facts.side;
+            row.capabilities =
+                serde_json::from_value(serde_json::json!(facts.capabilities)).unwrap();
+            row.dependencies = Some(deps);
+            row.file = index::File {
+                name: file.file_name().unwrap().to_str().unwrap().to_owned(),
+                url: format!("file://{}", file.display()),
+                size: bytes.len() as u64,
+                sha256: index::sha256(bytes),
+                signature: None,
+            };
+            row
+        };
+
+        let dep_bytes = sunrise_launcher_smod::Package::write_files(
+            &format!(
+                "id='lanterns'\nname='Lanterns'\nversion='1.0.0'\napi='{}'\nside='both'\ncapabilities=['registries']\n[dependencies]\nlight_core='>=1.0.0'\n",
+                sunrise_launcher_smod::manifest::API
+            ),
+            &[],
+        )
+        .unwrap();
+        let dep_file = download.path().join("lanterns-1.0.0.smod");
+        fs::write(&dep_file, &dep_bytes).unwrap();
+
+        catalogue.projects.push(index::Project {
+            id: "light_core".into(),
+            name: "Light Core".into(),
+            kind: index::Kind::NativeMod,
+            key: None,
+            versions: vec![
+                make_version(
+                    &index::Kind::NativeMod,
+                    "2.0.0",
+                    &file_v2,
+                    &bytes_v2,
+                    Vec::new(),
+                ),
+                make_version(
+                    &index::Kind::NativeMod,
+                    "1.0.0",
+                    &file_v1,
+                    &bytes_v1,
+                    Vec::new(),
+                ),
+            ],
+            ..template.clone()
+        });
+        catalogue.projects.push(index::Project {
+            id: "lanterns".into(),
+            name: "Lanterns".into(),
+            kind: index::Kind::Mod,
+            key: None,
+            versions: vec![make_version(
+                &index::Kind::Mod,
+                "1.0.0",
+                &dep_file,
+                &dep_bytes,
+                vec![index::Dependency {
+                    id: "light_core".into(),
+                    version: ">=1.0.0".into(),
+                    optional: false,
+                    side: None,
+                }],
+            )],
+            ..template
+        });
+
+        let install_entry = |id: &str, name: &str, version: &str, dir: &str, bytes: &[u8]| {
+            let rel = format!("{dir}/{id}.smod");
+            for root in [before.path(), candidate.path()] {
+                fs::create_dir_all(root.join(dir)).unwrap();
+                fs::write(root.join(&rel), bytes).unwrap();
+            }
+            installed::Entry {
+                source: SourceId::Sunrise,
+                project: id.into(),
+                slug: id.into(),
+                title: name.into(),
+                kind: Kind::Mod,
+                version: version.into(),
+                number: version.into(),
+                file: rel,
+                checksum: format!("SHA-256:{}", index::sha256(bytes)),
+                page: String::new(),
+                dependency: false,
+                verdict: None,
+                install_hold: None,
+            }
+        };
+        let core_row = install_entry(
+            "light_core",
+            "Light Core",
+            "2.0.0",
+            native_mods::INSTALLED,
+            &bytes_v2,
+        );
+        let dep_row = install_entry(
+            "lanterns",
+            "Lanterns",
+            "1.0.0",
+            mod_list::MODS_DIR,
+            &dep_bytes,
+        );
+        for root in [before.path(), candidate.path()] {
+            let mut doc = Document::read(root).unwrap();
+            doc.replace(&core_row).unwrap();
+            doc.replace(&dep_row).unwrap();
+            doc.write(root).unwrap();
+            mod_list::set_all_enabled(root, &["light_core", "lanterns"], true).unwrap();
+        }
+
+        let authority = OfficialRegistry::fixture(&catalogue);
+        let originals = Originals::read(before.path(), None, &catalogue, Some(&authority)).unwrap();
+        let mut options = choices(
+            &originals,
+            &catalogue,
+            true,
+            "26.3",
+            download.path(),
+            &|_| {},
+        )
+        .unwrap();
+        let cancellation = native_mods::Cancellation::default();
+        let mut omissions = Omissions::default();
+        let mut seen_versions = Vec::new();
+        best_survivor_set(&mut options, &originals.mods, |set| {
+            let enabled = enabled_set(&set, &originals.mods).unwrap();
+            let core_version = set["light_core"].manifest.version.clone();
+            seen_versions.push((core_version.clone(), set.contains_key("lanterns")));
+            if core_version == "2.0.0" {
+                let mut rejected = BTreeSet::new();
+                let outcome = exact_image(
+                    Err(native_mods::Failed::Mods {
+                        left: vec![native_mods::LeftOut {
+                            id: "light_core".into(),
+                            version: "2.0.0".into(),
+                            why: native_mods::Why::Unfit("hook changed".into()),
+                            detail: None,
+                        }],
+                        error: "Light Core 2.0.0 does not fit".into(),
+                        compiling: false,
+                        log: None,
+                    }),
+                    &set,
+                    &enabled,
+                    &cancellation,
+                    &mut omissions,
+                    &mut rejected,
+                )?;
+                assert!(outcome.is_none());
+                return Ok(Trial::reject(rejected));
+            }
+            apply(candidate.path(), &originals, &set, &enabled)?;
+            Ok(Trial::Fit)
+        })
+        .unwrap();
+
+        assert_eq!(
+            seen_versions,
+            vec![("2.0.0".into(), true), ("1.0.0".into(), true)]
+        );
+        assert_eq!(
+            fs::read(candidate.path().join(&core_row.file)).unwrap(),
+            bytes_v1
+        );
+        assert!(mod_list::is_enabled(candidate.path(), "light_core"));
+        assert!(mod_list::is_enabled(candidate.path(), "lanterns"));
+    }
+
+    #[test]
+    fn omission_labels_append_mod_ids_when_display_names_collide() {
+        let hold = |id: &str, title: &str, unproved: bool| {
+            Held::new(
+                id.into(),
+                title.into(),
+                [7; 32],
+                (HeldRoot::Native, format!("{id}.smod")),
+                HeldSource::Local {
+                    version: "1.0.0".into(),
+                },
+                true,
+                if unproved {
+                    HeldReason::Unproved {
+                        build: "dev-2026-11-22".into(),
+                    }
+                } else {
+                    HeldReason::NoFit {
+                        build: "dev-2026-11-22".into(),
+                        detail: None,
+                    }
+                },
+            )
+            .unwrap()
+        };
+        let holds = vec![
+            hold("alpha_lantern", "Lanterns", false),
+            hold("beetles", "Beetles", true),
+            hold("beta_lantern", "lanterns", true),
+        ];
+        let (held, unproved) = omission_labels(&holds);
+        assert_eq!(held, ["Lanterns (alpha_lantern)"]);
+        assert_eq!(unproved, ["Beetles", "lanterns (beta_lantern)"]);
+        let question = SwitchQuestion {
+            build: "dev-2026-11-22".into(),
+            worlds: Question::default(),
+            held,
+            unproved,
+            removed: Vec::new(),
+        };
+        let lines: Vec<_> = question.hold_lines().collect();
+        assert!(lines[0].contains("Lanterns (alpha_lantern)"), "{lines:?}");
+        assert!(
+            lines[1].contains("Beetles") && !lines[1].contains("(beetles)"),
+            "{lines:?}"
+        );
+        assert!(lines[2].contains("lanterns (beta_lantern)"), "{lines:?}");
     }
 }

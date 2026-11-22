@@ -448,6 +448,92 @@ fn remove_accepts_local_and_github_archives_but_not_unpacked_folders() {
 }
 
 #[test]
+fn remove_cleans_renamed_legacy_github_receipts_and_windows_browser_rows() {
+    let fixture = Fixture::new();
+    let (registry, _) = fixture.content_index();
+    install_root(&fixture, &registry);
+
+    // A legacy GitHub receipt sits at <id>.origin.json even when the .smod was renamed.
+    let (canonical, github_bytes) = local(&fixture, "renamed_lamp", "", true);
+    let renamed = canonical.with_file_name("custom-lamp-copy.smod");
+    fs::rename(&canonical, &renamed).unwrap();
+    let receipt = canonical.with_extension("origin.json");
+    fs::write(
+        &receipt,
+        json!({
+            "id": "renamed_lamp",
+            "version": "1.0.0",
+            "owner": "fixture",
+            "repo": "lanterns",
+            "commit": "a".repeat(40),
+            "sha256": index::sha256(&github_bytes),
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    // Another browser entry claiming the receipt path must still block removing it.
+    let manifest_path = fixture.home.join(index::browser_state::MANIFEST);
+    let saved_manifest = fs::read(&manifest_path).unwrap();
+    let mut conflict: Value = serde_json::from_slice(&saved_manifest).unwrap();
+    conflict["entries"].as_array_mut().unwrap().push(json!({
+        "source": "sunrise",
+        "project": "other_row",
+        "slug": "other_row",
+        "title": "Other Row",
+        "kind": "mod",
+        "version": "1.0.0",
+        "number": "1.0.0",
+        "file": format!("{}/renamed_lamp.origin.json", mod_list::NATIVE_DIR),
+        "checksum": format!("SHA-256:{}", "0".repeat(64)),
+        "page": "",
+        "dependency": false,
+    }));
+    fs::write(&manifest_path, serde_json::to_vec(&conflict).unwrap()).unwrap();
+    let (ok, text) = run(&fixture, &["mods", "remove", "renamed_lamp"]);
+    assert!(!ok && text.contains("Other Row"), "{text}");
+    assert!(renamed.is_file());
+    assert!(receipt.is_file());
+
+    // Without the conflicting claim, Remove deletes both the renamed archive and its receipt.
+    fs::write(&manifest_path, &saved_manifest).unwrap();
+    let (ok, text) = run(&fixture, &["mods", "remove", "renamed_lamp"]);
+    assert!(ok && text.contains(&index::sha256(&github_bytes)), "{text}");
+    assert!(!renamed.exists());
+    assert!(!receipt.exists());
+
+    // A Windows-style backslash path in mod-browser.json is matched and removed with the archive.
+    let (win_path, win_bytes) = local(&fixture, "win_lamp", "", false);
+    let mut rows: Value = serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+    rows["entries"].as_array_mut().unwrap().push(json!({
+        "source": "sunrise",
+        "project": "win_lamp",
+        "slug": "win_lamp",
+        "title": "Win Lamp",
+        "kind": "mod",
+        "version": "1.0.0",
+        "number": "1.0.0",
+        "file": format!("{}\\win_lamp.smod", mod_list::DIR),
+        "checksum": format!("SHA-256:{}", index::sha256(&win_bytes)),
+        "page": "",
+        "dependency": false,
+    }));
+    fs::write(&manifest_path, serde_json::to_vec(&rows).unwrap()).unwrap();
+    let (ok, text) = run(&fixture, &["mods", "remove", "win_lamp"]);
+    assert!(ok && text.contains(&index::sha256(&win_bytes)), "{text}");
+    assert!(!win_path.exists());
+    let after: Value = serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+    assert!(
+        !after["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["project"] == "win_lamp"),
+        "Windows row survived removal: {after}"
+    );
+}
+
+#[test]
 fn remove_refuses_running_game_and_disables_exact_dependents_in_place_in_one_commit() {
     let fixture = Fixture::new();
     let (registry, archives) = fixture.content_index();

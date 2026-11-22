@@ -425,15 +425,12 @@ pub(super) fn stage_removal<'a>(
             }
             retired.insert(id.to_owned());
         }
-        if rows
-            .row(id)?
-            .is_some_and(|row| row["kind"] == "mod" && row["file"].as_str() == Some(file.as_str()))
-        {
+        if item.registry_claim {
             rows.remove(id)?;
             changed_rows = true;
         }
-        if item.github_origin(home).is_some() {
-            let origin = item.package.path.with_extension("origin.json");
+        if item.verified_github_origin(home).ok().flatten().is_some() {
+            let origin = crate::github_mods::origin_path(home, id);
             let origin_name = origin.strip_prefix(home).map_err(|_| unverified())?;
             let origin_name = origin_name
                 .to_str()

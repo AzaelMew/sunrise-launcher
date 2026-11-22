@@ -392,28 +392,40 @@ fn switch_creature_mods(decision: SwitchDecision) {
             &[]
         };
         let bytes = Package::write_files(&manifest, files).unwrap();
-        let path = fixture.home.join(layer).join(format!("{id}.smod"));
+        let file_name = if id == "beetles" {
+            "beetles-renamed.smod".to_owned()
+        } else {
+            format!("{id}.smod")
+        };
+        let path = fixture.home.join(layer).join(file_name);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, &bytes).unwrap();
         sunrise_launcher::browser::mod_list::set_enabled(&fixture.home, id, true).unwrap();
         archives.insert(id, (path, bytes));
     }
-    let (path, bytes) = &archives["creature"];
-    let origin = path.with_extension("origin.json");
-    let receipt = serde_json::to_vec(&sunrise_launcher::github_mods::Origin {
-        id: "creature".into(),
-        version: "1.0.0".into(),
-        owner: "fixture".into(),
-        repo: "creature".into(),
-        tag: None,
-        commit: "c".repeat(40),
-        asset: None,
-        sha256: index::sha256(bytes),
-        added_from: None,
-        source: None,
-    })
-    .unwrap();
-    fs::write(&origin, &receipt).unwrap();
+    let mut origins = Vec::new();
+    for id in ["creature", "beetles"] {
+        let (_, bytes) = &archives[id];
+        let origin = fixture
+            .home
+            .join(mod_list::NATIVE_DIR)
+            .join(format!("{id}.origin.json"));
+        let receipt = serde_json::to_vec(&sunrise_launcher::github_mods::Origin {
+            id: id.into(),
+            version: "1.0.0".into(),
+            owner: "fixture".into(),
+            repo: id.into(),
+            tag: None,
+            commit: "c".repeat(40),
+            asset: None,
+            sha256: index::sha256(bytes),
+            added_from: None,
+            source: None,
+        })
+        .unwrap();
+        fs::write(&origin, &receipt).unwrap();
+        origins.push((origin, receipt));
+    }
     let selection = fixture.home.join(mod_list::FILE);
     let before = (fixture.pointer(), fs::read(&selection).unwrap());
     let config = fixture.home.join("config/creature.toml");
@@ -440,7 +452,7 @@ fn switch_creature_mods(decision: SwitchDecision) {
             assert_eq!(active.holds().count(), archives.len());
             assert!(active
                 .holds()
-                .all(|hold| hold.reason().unproved() && hold.matches_archive(&fixture.home)));
+                .all(|hold| !hold.reason().unproved() && hold.matches_archive(&fixture.home)));
         }
         SwitchDecision::Remove => {
             assert_eq!(active.base(), OTHER);
@@ -466,10 +478,12 @@ fn switch_creature_mods(decision: SwitchDecision) {
             decision == SwitchDecision::Cancel
         );
     }
-    if decision == SwitchDecision::Remove {
-        assert!(!origin.exists());
-    } else {
-        assert_eq!(fs::read(origin).unwrap(), receipt);
+    for (origin, receipt) in origins {
+        if decision == SwitchDecision::Remove {
+            assert!(!origin.exists());
+        } else {
+            assert_eq!(fs::read(origin).unwrap(), receipt);
+        }
     }
     if let Some((path, bytes)) = save {
         assert_eq!(fs::read(path).unwrap(), bytes);
@@ -492,16 +506,132 @@ fn switch_pinned_mods_removes_only_the_listed_archives_and_receipts() {
     switch_creature_mods(SwitchDecision::Remove);
 }
 
+#[test]
+fn switch_signed_release_prunes_mismatched_pinned_mods_as_unproved() {
+    use sunrise_launcher::rust_toolchain;
+    use sunrise_launcher_release_verify::{sha256_hex, sums_file, SigningKey, SIGNATURE_V2, SUMS};
+    use sunrise_launcher_sdk::{self as sdk, Asset, Kind, Side};
+
+    const TARGET: &str = "dev-2026-11-22-bbbbbbb";
+    let fixture = Fixture::new();
+    let (registry, _) = fixture.content_index();
+    fixture.publish_registry(&registry);
+    fixture.install_mod("extra_mod");
+    fixture.other_build();
+    let versions = fixture.data.join("versions");
+    let target = versions.join(TARGET);
+    fs::rename(versions.join(OTHER), &target).unwrap();
+    fs::remove_file(target.join("developer.json")).unwrap();
+    fs::write(
+        target.join("research-lock.json"),
+        r#"{"minecraft":{"version":"26.3"}}"#,
+    )
+    .unwrap();
+    fs::rename(
+        target.join(".local/sunrise-client/26.4"),
+        target.join(".local/sunrise-client/26.3"),
+    )
+    .unwrap();
+
+    for (i, (id, title)) in CREATURE_MODS.into_iter().enumerate() {
+        let native = i < 10;
+        let dependency = match id {
+            "creature" => "",
+            "vulture_nests" => "[dependencies]\nvultures='^1'\n",
+            _ => "[dependencies]\ncreature='^1'\n",
+        };
+        let layer = if native {
+            mod_list::NATIVE_DIR
+        } else {
+            mod_list::DIR
+        };
+        let mut manifest = format!(
+            "id='{id}'\nname='{title}'\nversion='1.0.0'\napi='{}'\nside='both'\ncapabilities=['registries']\n{dependency}",
+            manifest::API
+        );
+        let cargo = format!("[package]\nname='{id}'\nversion='1.0.0'\n");
+        let files: &[(&str, &[u8])] = if native {
+            manifest.push_str(&format!(
+                "[native]\nsunrise='{}'\nmixins='{}'\ngame='26.3'\n",
+                "a".repeat(40),
+                "c".repeat(40)
+            ));
+            &[("Cargo.toml", cargo.as_bytes()), ("src/lib.rs", b"")]
+        } else {
+            &[]
+        };
+        let bytes = Package::write_files(&manifest, files).unwrap();
+        let path = fixture.home.join(layer).join(format!("{id}.smod"));
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, &bytes).unwrap();
+        sunrise_launcher::browser::mod_list::set_enabled(&fixture.home, id, true).unwrap();
+    }
+
+    let host = rust_toolchain::host().expect("a supported SDK host");
+    let asset = Asset::name(Kind::Tool, host.target, Side::Client);
+    let commit = "b".repeat(40);
+    let sdk_base = fixture.root.join("sdk");
+    let index = json!({
+        "schema": sdk::SCHEMA,
+        "package_format": sdk::PACKAGE_FORMAT,
+        "build": {"commit": commit, "game": "26.3", "date": "2026-11-22"},
+        "toolchain": {"rust": rust_toolchain::VERSION},
+        "content_api": manifest::API,
+        "surface": {"hash": "ab".repeat(16)},
+        "mixins": {"rev": "c".repeat(40), "patch": "0".repeat(64)},
+        "inputs": serde_json::from_str::<Value>(include_str!("../../../crates/sdk/src/sdk/inputs.json")).unwrap(),
+        "assets": {&asset: {"sha256": "0".repeat(64), "size": 0, "kind": "tool", "codec": "xz", "target": host.target}},
+    })
+    .to_string();
+    let signer = SigningKey::generate().unwrap().0;
+    let sums = sums_file(&[(sdk::INDEX.into(), sha256_hex(index.as_bytes()))]);
+    let release = sdk_base.join(TARGET);
+    fs::create_dir_all(&release).unwrap();
+    fs::write(release.join(sdk::INDEX), &index).unwrap();
+    fs::write(release.join(SUMS), &sums).unwrap();
+    fs::write(
+        release.join(SIGNATURE_V2),
+        signer.sign(TARGET, sums.as_bytes()),
+    )
+    .unwrap();
+
+    let output = fixture
+        .decision_worker_command("switch-creatures-signed-unproved")
+        .env("SUNRISE_SDK_BASE", sdk_base)
+        .env("SUNRISE_SDK_TRUSTED_KEY", signer.public_base64())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let active = Active::parse(&fixture.pointer()).unwrap();
+    assert_eq!(active.base(), TARGET);
+    assert_eq!(active.holds().count(), CREATURE_MODS.len());
+    assert!(active
+        .holds()
+        .all(|hold| hold.reason().unproved() && hold.matches_archive(&fixture.home)));
+    assert!(sunrise_launcher::browser::mod_list::is_enabled(
+        &fixture.home,
+        "extra_mod"
+    ));
+}
+
 pub(super) fn creature_decision_worker(
     mode: &str,
     instance: &instances::Instance,
     identity: sunrise_launcher::profile_txn::Identity,
 ) {
     use std::cell::Cell;
-    let decision = match mode {
-        "switch-creatures-cancel" => SwitchDecision::Cancel,
-        "switch-creatures-off" => SwitchDecision::TurnOff,
-        "switch-creatures-remove" => SwitchDecision::Remove,
+    let (tag, decision, expect_unproved) = match mode {
+        "switch-creatures-cancel" => (OTHER, SwitchDecision::Cancel, false),
+        "switch-creatures-off" => (OTHER, SwitchDecision::TurnOff, false),
+        "switch-creatures-remove" => (OTHER, SwitchDecision::Remove, false),
+        "switch-creatures-signed-unproved" => {
+            ("dev-2026-11-22-bbbbbbb", SwitchDecision::TurnOff, true)
+        }
         _ => unreachable!(),
     };
     let trials = Cell::new(0);
@@ -510,7 +640,7 @@ pub(super) fn creature_decision_worker(
     let result = switch_build(
         instance,
         identity,
-        OTHER,
+        tag,
         SwitchHooks {
             cancellation: &Cancellation::default(),
             progress: &|step| {
@@ -523,8 +653,13 @@ pub(super) fn creature_decision_worker(
                 questions.set(questions.get() + 1);
                 let mut names: Vec<_> = CREATURE_MODS.iter().map(|(_, name)| *name).collect();
                 names.sort_unstable();
-                assert_eq!(q.unproved, names);
-                assert!(q.held.is_empty());
+                if expect_unproved {
+                    assert_eq!(q.unproved, names);
+                    assert!(q.held.is_empty());
+                } else {
+                    assert_eq!(q.held, names);
+                    assert!(q.unproved.is_empty());
+                }
                 assert_eq!(q.worlds.needed(), decision == SwitchDecision::Remove);
                 if decision == SwitchDecision::Remove {
                     assert_eq!(q.worlds.affected[0].world, "Glass Basin");
