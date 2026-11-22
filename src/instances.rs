@@ -16,9 +16,11 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+mod deletion_recovery;
 pub(crate) mod lifecycle;
 use crate::managed_play::{Profile as ManagedProfile, ReferencePublication};
 use crate::profile_txn::{durable, Identity, NameGate};
+pub use deletion_recovery::{interrupted_deletions, InterruptedDeletion};
 use lifecycle::{initial_choices, GATES, INITIAL, RETIRED};
 
 /// The default instance's id: the game's home itself.
@@ -869,7 +871,7 @@ pub fn trash_confirmed(instance: Instance) -> Result<Instance, DeleteError> {
 pub struct DeleteError {
     pub detail: String,
     /// Set when the folder left its original path but could not reach the Trash.
-    pub retained: Option<PathBuf>,
+    pub retained: Option<InterruptedDeletion>,
 }
 
 impl From<String> for DeleteError {
@@ -884,7 +886,7 @@ impl From<String> for DeleteError {
 impl std::fmt::Display for DeleteError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if let Some(path) = &self.retained {
-            let folder = path.to_string_lossy();
+            let folder = path.folder().to_string_lossy();
             write!(
                 f,
                 "{}: {}",
@@ -952,10 +954,14 @@ fn delete_selected_at(
     let root = game_home.canonicalize().map_err(|e| problem(&e))?;
     let retired = creation_parent(&root, RETIRED).map_err(|e| problem(&e))?;
     let private = tempfile::tempdir_in(&retired).map_err(|e| problem(&e))?;
+    let gone = private
+        .path()
+        .join(work.file_name().ok_or_else(lifecycle::changed)?);
+    let recovery = InterruptedDeletion::record(&retired, gone.clone(), instance.id.clone())
+        .map_err(|e| problem(&e))?;
     // From this point neither an ancillary error nor a destructor may empty the detached
     // folder. If Trash is unavailable, preserve the whole profile in the recovery folder.
-    let private = private.keep();
-    let gone = private.join(work.file_name().ok_or_else(lifecycle::changed)?);
+    let _ = private.keep();
     let detached = (|| {
         let _references = ReferencePublication::begin_at(data, game_home, profile.home())?;
         Store::mutate(data, |store| {
@@ -976,11 +982,8 @@ fn delete_selected_at(
         })
     })();
     let trashed = detached.and_then(|()| trash(&gone));
-    let _ = fs::remove_dir(&private); // Never recursive: rename may already have won.
-    trashed.map_err(|detail| DeleteError {
-        retained: gone.is_dir().then_some(gone),
-        detail,
-    })?;
+    let retained = recovery.retained();
+    trashed.map_err(|detail| DeleteError { retained, detail })?;
     Ok(instance)
 }
 
@@ -1009,7 +1012,7 @@ pub fn selected() -> Instance {
 /// The saved selection when it names an instance that isn't listed any more: a pack an earlier
 /// launcher ported, or a setup it made for another game. Its folder is still there, untouched,
 /// but nothing here can use it.
-fn retired_in(all: &[Instance], saved: Option<&str>) -> Option<String> {
+pub fn retired_selection(all: &[Instance], saved: Option<&str>) -> Option<String> {
     let id = saved?;
     (!all.iter().any(|i| i.id == id)).then(|| id.to_string())
 }
@@ -1020,11 +1023,6 @@ fn retired_message(id: &str) -> String {
         "The selected profile {name} was made by an earlier launcher and isn't supported any more. Its files are untouched. Choose another: sunrise-launcher instance select <name>",
         &[("name", name)],
     )
-}
-
-/// The saved selection when it is no longer an instance of this launcher.
-pub fn retired_selection() -> Option<String> {
-    retired_in(&list(), backend::Settings::load().instance.as_deref())
 }
 
 /// The message for a retired selection ([`retired_selection`]).
@@ -1047,7 +1045,7 @@ pub fn selection() -> Result<Instance, String> {
 }
 
 fn selection_in(all: &[Instance], saved: Option<&str>) -> Result<Instance, String> {
-    if let Some(id) = retired_in(all, saved) {
+    if let Some(id) = retired_selection(all, saved) {
         return Err(retired_message(&id));
     }
     Ok(saved

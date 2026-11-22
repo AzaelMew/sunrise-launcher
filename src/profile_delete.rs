@@ -18,12 +18,8 @@ struct MoveInFlight {
 
 impl Global for MoveInFlight {}
 
-pub(super) fn moving(cx: &App) -> bool {
-    cx.has_global::<MoveInFlight>()
-}
-
 pub(super) fn defer_shutdown(cx: &mut App) -> bool {
-    if !moving(cx) {
+    if !cx.has_global::<MoveInFlight>() {
         return false;
     }
     cx.global_mut::<MoveInFlight>().quit_requested = true;
@@ -37,11 +33,13 @@ pub(super) enum Action {
     },
     Confirm(Instance),
     Deleting(String),
+    Interrupted(Vec<instances::InterruptedDeletion>),
     Problem {
         heading: String,
         message: Option<String>,
         error: String,
         details: bool,
+        recovery: Option<instances::InterruptedDeletion>,
     },
 }
 
@@ -58,8 +56,18 @@ impl Launcher {
     }
 
     pub(super) fn close_profile_action(&mut self) {
-        if !matches!(self.ui.sheets.profile_action, Some(Action::Deleting(_))) {
-            self.ui.sheets.profile_action = None;
+        match self.ui.sheets.profile_action.take() {
+            Some(action @ Action::Deleting(_)) => self.ui.sheets.profile_action = Some(action),
+            Some(Action::Interrupted(notices)) => {
+                for notice in notices {
+                    notice.acknowledge();
+                }
+            }
+            Some(Action::Problem {
+                recovery: Some(notice),
+                ..
+            }) => notice.acknowledge(),
+            _ => {}
         }
     }
 
@@ -102,13 +110,8 @@ impl Launcher {
         // settings and commit them here, not from a second copy in the Trash worker.
         let failed_save = if removed && instances::clear_deleted_selection(&mut self.settings, id) {
             self.clear_profile_notices();
-            match self.settings.save() {
-                Ok(()) => {
-                    self.settings_save_error = None;
-                    None
-                }
-                Err(error) => Some(error),
-            }
+            self.save_settings();
+            self.settings_save_error.clone()
         } else {
             None
         };
@@ -124,6 +127,7 @@ impl Launcher {
                         ),
                         error,
                         details: false,
+                        recovery: None,
                     })
                 } else {
                     crate::glass_toast::say(heading);
@@ -132,14 +136,15 @@ impl Launcher {
             }
             Err(error) => Some(Action::Problem {
                 heading: trf("Couldn't move {name} to the Trash", &[("name", name)]),
-                message: error.retained.map(|path| {
+                message: error.retained.as_ref().map(|notice| {
                     trf(
                         "The profile was kept in {folder}",
-                        &[("folder", &path.to_string_lossy())],
+                        &[("folder", &notice.folder().to_string_lossy())],
                     )
                 }),
                 error: error.detail,
                 details: false,
+                recovery: error.retained,
             }),
         };
     }
@@ -176,11 +181,21 @@ impl Launcher {
             Action::Deleting(name) => {
                 body.child(title(trf("Moving {name} to the Trash…", &[("name", name)])))
             }
+            Action::Interrupted(notices) => body
+                .child(title(tr("Profile deletion was interrupted").into()))
+                .children(notices.iter().map(|notice| {
+                    crate::selectable::selectable(trf(
+                        "The profile was kept in {folder}",
+                        &[("folder", &notice.folder().to_string_lossy())],
+                    ))
+                }))
+                .child(footer().child(close("profile-recovery-close", tr("Close"), cx))),
             Action::Problem {
                 heading,
                 message,
                 error,
                 details,
+                ..
             } => body
                 .child(title(heading.clone()))
                 .children(message.clone().map(crate::selectable::selectable))
@@ -279,34 +294,43 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
+    fn scratch_child(test: &str) -> Option<PathBuf> {
+        const CHILD: &str = "SUNRISE_PROFILE_DELETE_TEST";
+        if let Some(root) = std::env::var_os(CHILD) {
+            return Some(root.into());
+        }
+        let scratch = tempfile::tempdir().unwrap();
+        let root = scratch.path();
+        let nowhere = "http://127.0.0.1:9";
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", &format!("profile_delete::tests::{test}")])
+            .env(CHILD, root)
+            .env("SUNRISE_HOME", root.join("game"))
+            .env("SUNRISE_LAUNCHER_HOME", root.join("launcher"))
+            .env("SUNRISE_LAUNCHER_LOCATION_FILE", root.join("location.json"))
+            .env("SUNRISE_LAUNCHER_TRASH", root.join("trash"))
+            .env("SUNRISE_NO_KEYCHAIN", "1")
+            .env("SUNRISE_LAUNCHER_NO_SELF_UPDATE", "1")
+            .env("SUNRISE_TELEMETRY_URL", "off")
+            .env("XDG_DATA_HOME", root.join("data"))
+            .env("XDG_CONFIG_HOME", root.join("config"))
+            .env("HTTP_PROXY", nowhere)
+            .env("HTTPS_PROXY", nowhere)
+            .env("ALL_PROXY", nowhere)
+            .env_remove("NO_PROXY")
+            .env_remove("SUNRISE_GITHUB_MIRROR")
+            .env_remove("SUNRISE_LAUNCHER_BENCH")
+            .status()
+            .unwrap();
+        assert!(status.success());
+        None
+    }
+
     #[test]
     fn a_download_save_and_install_prompt_survive_a_profile_delete() {
-        const CHILD: &str = "SUNRISE_PROFILE_DELETE_TEST";
-        let Some(root) = std::env::var_os(CHILD).map(PathBuf::from) else {
-            let scratch = tempfile::tempdir().unwrap();
-            let root = scratch.path();
-            let nowhere = "http://127.0.0.1:9";
-            let status = std::process::Command::new(std::env::current_exe().unwrap())
-                .args(["--exact", "profile_delete::tests::a_download_save_and_install_prompt_survive_a_profile_delete"])
-                .env(CHILD, root)
-                .env("SUNRISE_HOME", root.join("game"))
-                .env("SUNRISE_LAUNCHER_HOME", root.join("launcher"))
-                .env("SUNRISE_LAUNCHER_LOCATION_FILE", root.join("location.json"))
-                .env("SUNRISE_LAUNCHER_TRASH", root.join("trash"))
-                .env("SUNRISE_NO_KEYCHAIN", "1")
-                .env("SUNRISE_LAUNCHER_NO_SELF_UPDATE", "1")
-                .env("SUNRISE_TELEMETRY_URL", "off")
-                .env("XDG_DATA_HOME", root.join("data"))
-                .env("XDG_CONFIG_HOME", root.join("config"))
-                .env("HTTP_PROXY", nowhere)
-                .env("HTTPS_PROXY", nowhere)
-                .env("ALL_PROXY", nowhere)
-                .env_remove("NO_PROXY")
-                .env_remove("SUNRISE_GITHUB_MIRROR")
-                .env_remove("SUNRISE_LAUNCHER_BENCH")
-                .status()
-                .unwrap();
-            assert!(status.success());
+        let Some(root) =
+            scratch_child("a_download_save_and_install_prompt_survive_a_profile_delete")
+        else {
             return;
         };
         let profile = instances::create("To Delete", None).unwrap();
@@ -372,5 +396,89 @@ mod tests {
         assert!(saved.instance.is_none());
         assert_eq!(saved.selected.as_deref(), Some("26.3-0.1.1"));
         assert!(root.join("trash").join(&profile.id).is_dir());
+    }
+
+    #[test]
+    fn a_queued_update_waits_for_the_recovery_error_and_settings_retry() {
+        let Some(root) =
+            scratch_child("a_queued_update_waits_for_the_recovery_error_and_settings_retry")
+        else {
+            return;
+        };
+        let profile = instances::create("Cabin", None).unwrap();
+        let mut settings = Settings::load();
+        settings.instance = Some(profile.id.clone());
+        settings.save().unwrap();
+        std::fs::write(root.join("trash"), b"not a folder").unwrap();
+        let settings_path = root.join("launcher/settings.json");
+
+        let mut app = gpui::TestAppContext::single();
+        let (shell, cx) = app.add_window_view(crate::window_root::Shell::new);
+        let launcher = shell.read_with(cx, |shell, _| shell.launcher());
+        launcher.update(cx, |launcher, cx| {
+            launcher.self_update = SelfUpdate::Ready(Release {
+                tag: "v1.3.0".into(),
+                name: String::new(),
+                body: String::new(),
+                date: String::new(),
+                time: String::new(),
+                asset: None,
+                prerelease: false,
+                nightly: None,
+            });
+            launcher.restart_for_launcher_update = true;
+            launcher.ui.sheets.profile_action = Some(Action::Deleting(profile.name.clone()));
+            launcher.try_restart_launcher(true, cx, |_| panic!("move is in progress"));
+
+            let trashed = instances::trash_confirmed(profile.clone());
+            assert!(trashed
+                .as_ref()
+                .unwrap_err()
+                .retained
+                .as_ref()
+                .unwrap()
+                .folder()
+                .is_dir());
+            launcher.finish_profile_delete(&profile.id, &profile.name, trashed);
+            assert!(matches!(
+                launcher.ui.sheets.profile_action,
+                Some(Action::Problem { .. })
+            ));
+            launcher.try_restart_launcher(true, cx, |_| panic!("recovery error is open"));
+            assert!(launcher.restart_for_launcher_update);
+            assert!(launcher.sheet_escape());
+            let mut handed_over = false;
+            launcher.try_restart_launcher(true, cx, |_| {
+                handed_over = true;
+                Ok(())
+            });
+            assert!(handed_over);
+            assert!(!launcher.restart_for_launcher_update);
+
+            // A different move succeeds but the cleared selection cannot be saved yet.
+            let profile = instances::create("Summer Cabin", None).unwrap();
+            launcher.settings.instance = Some(profile.id.clone());
+            std::fs::remove_file(root.join("trash")).unwrap();
+            std::fs::remove_file(&settings_path).unwrap();
+            std::fs::create_dir(&settings_path).unwrap();
+            let trashed = instances::trash_confirmed(profile.clone());
+            assert!(trashed.is_ok(), "{trashed:?}");
+            launcher.finish_profile_delete(&profile.id, &profile.name, trashed);
+            assert!(launcher.settings.instance.is_none());
+            launcher.restart_for_launcher_update = true;
+            assert!(launcher.sheet_escape());
+            assert!(launcher.settings_save_notice(cx).is_some());
+            launcher.try_restart_launcher(true, cx, |_| panic!("settings still need Retry"));
+            std::fs::remove_dir(&settings_path).unwrap();
+            assert!(launcher.save_settings());
+            assert!(launcher.settings_save_notice(cx).is_none());
+            let mut handed_over = false;
+            launcher.try_restart_launcher(true, cx, |_| {
+                handed_over = true;
+                Ok(())
+            });
+            assert!(handed_over);
+            assert!(Settings::load().instance.is_none());
+        });
     }
 }

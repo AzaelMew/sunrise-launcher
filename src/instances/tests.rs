@@ -656,7 +656,10 @@ fn a_replacement_detached_after_admission_is_restored_without_overwriting() {
         .unwrap_err();
         let retained = retained.unwrap();
         let replacement = if name_reused {
-            assert_eq!(error.retained.as_ref(), Some(&retained));
+            assert_eq!(
+                error.retained.as_ref().map(InterruptedDeletion::folder),
+                Some(retained.as_path())
+            );
             assert_eq!(
                 fs::read(visible.join("new-occupant")).unwrap(),
                 b"third profile"
@@ -731,10 +734,10 @@ fn a_metadata_write_failure_after_the_rename_reports_the_retained_folder() {
     let retained = failure
         .retained
         .expect("the location of the detached profile");
-    assert!(text.contains(&*retained.to_string_lossy()));
+    assert!(text.contains(&*retained.folder().to_string_lossy()));
     assert!(!home.exists());
     assert_eq!(
-        fs::read(retained.join("saves/Base/level.dat")).unwrap(),
+        fs::read(retained.folder().join("saves/Base/level.dat")).unwrap(),
         b"base"
     );
     assert!(failure.detail.contains(FILE));
@@ -756,10 +759,27 @@ fn a_trash_failure_preserves_the_whole_detached_profile() {
     })
     .unwrap_err();
     assert!(error.detail.contains("trash unavailable"));
-    assert_eq!(error.retained.as_ref(), kept.get());
-    assert!(!selected.home.exists());
+    let kept = kept.into_inner().unwrap();
     assert_eq!(
-        fs::read(kept.get().unwrap().join("saves/Mine/level.dat")).unwrap(),
+        error.retained.as_ref().map(InterruptedDeletion::folder),
+        Some(kept.as_path())
+    );
+    assert!(!selected.home.exists());
+    assert!(deletion_recovery::interrupted_in(&game).is_empty());
+    drop(error); // Quit before the result is delivered or while it remains open.
+    let mut notices = deletion_recovery::interrupted_in(&game);
+    assert_eq!(notices.len(), 1);
+    let notice = notices.pop().unwrap();
+    // The worker canonicalizes its root; startup can see a Windows short-name alias.
+    assert_eq!(
+        notice.folder().canonicalize().unwrap(),
+        kept.canonicalize().unwrap()
+    );
+    assert_eq!(notice.id(), selected.id);
+    notice.acknowledge();
+    assert!(deletion_recovery::interrupted_in(&game).is_empty());
+    assert_eq!(
+        fs::read(kept.join("saves/Mine/level.dat")).unwrap(),
         b"keep this world"
     );
     assert!(create_in(&game, &cache, "Survival", None).is_ok());
@@ -845,7 +865,7 @@ fn a_retired_selection_is_refused_not_replaced_by_sunrise() {
     assert!(refused.contains("old-pack"), "{refused}");
     assert!(refused.contains("instance select"), "{refused}");
     assert_eq!(
-        retired_in(&all, Some("port:old-pack")).as_deref(),
+        retired_selection(&all, Some("port:old-pack")).as_deref(),
         Some("port:old-pack")
     );
 
@@ -854,8 +874,8 @@ fn a_retired_selection_is_refused_not_replaced_by_sunrise() {
     assert_eq!(selection_in(&all, None).unwrap().id, DEFAULT);
     assert_eq!(selection_in(&all, Some(DEFAULT)).unwrap().id, DEFAULT);
     assert_eq!(selection_in(&all, Some(&made.id)).unwrap().id, made.id);
-    assert_eq!(retired_in(&all, Some(&made.id)), None);
-    assert_eq!(retired_in(&all, None), None);
+    assert_eq!(retired_selection(&all, Some(&made.id)), None);
+    assert_eq!(retired_selection(&all, None), None);
     assert_eq!(
         files(&home.join("ports")),
         ported,
@@ -885,7 +905,7 @@ fn a_retired_java_selection_is_refused_by_name() {
     let refused = selection_in(&all, Some("vanilla")).unwrap_err();
     assert!(refused.contains("vanilla"), "{refused}");
     assert_eq!(
-        retired_in(&all, Some("vanilla")).as_deref(),
+        retired_selection(&all, Some("vanilla")).as_deref(),
         Some("vanilla")
     );
     assert_eq!(selection_in(&all, None).unwrap().id, DEFAULT);
