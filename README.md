@@ -568,7 +568,9 @@ and OS (read on a thread after the first frame: on Windows those queries take se
 to an issue about the launcher being slow. `sunrise-launcher benchmark` measures on purpose: it starts the launcher `--repeats` times (5; the first start is the cold one, as far
 as the OS's file cache allows), switches pages for a few seconds in each, rests 3 seconds to
 measure idle CPU, fetches the release list 3 times, and writes one report there with means and
-95% confidence intervals. Its window has to be on a screen that is awake. Session logs stay on
+95% confidence intervals. It scrolls the build picker's list; with
+`SUNRISE_LAUNCHER_BENCH_LIST=installed` it scrolls Mods › Installed for the selected profile
+instead, a report of its own (`benchmark-installed`). Its window has to be on a screen that is awake. Session logs stay on
 your machine; a `benchmark` report is uploaded, dated to the day, only if you allowed benchmark
 uploads ([data collection](https://github.com/sunrise-org/sunrise/blob/main/docs/telemetry.md)).
 

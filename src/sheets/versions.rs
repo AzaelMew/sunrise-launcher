@@ -693,7 +693,10 @@ pub(crate) fn bench_wheel(launcher: gpui::WeakEntity<Launcher>, window: &mut Win
         };
         let this = entity.read(cx);
         let timed = this.bench.as_ref().is_some_and(perf::Bench::timing_scroll);
-        let (target, bounds) = this.bench_target(timed);
+        let (target, bounds) = match this.bench.as_ref().map(perf::Bench::list) {
+            Some(perf::List::Installed) => this.installed_bench_target(),
+            _ => this.bench_target(timed),
+        };
         let now = std::time::Instant::now();
         let step = entity.update(cx, |l, _| l.bench.as_mut()?.after_frame(now, target));
         if let Some(step) = step {

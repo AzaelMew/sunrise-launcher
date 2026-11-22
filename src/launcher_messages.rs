@@ -47,9 +47,12 @@ impl Launcher {
                 changed = true;
             }
             Some(perf::Step::Scroll) => {
-                // The build picker's list, the longest the launcher has, scrolled as a wheel
-                // does it rather than from inside a frame.
-                self.open_versions();
+                // The build picker's list, the longest the launcher has, or Installed, scrolled
+                // as a wheel does it rather than from inside a frame.
+                match self.bench.as_ref().map(perf::Bench::list) {
+                    Some(perf::List::Installed) => self.show_installed_mods(),
+                    _ => self.open_versions(),
+                }
                 let launcher = cx.weak_entity();
                 let _ = cx.update_window(window, |_, w, _| crate::sheets::bench_wheel(launcher, w));
                 changed = true;

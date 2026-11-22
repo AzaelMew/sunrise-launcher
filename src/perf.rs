@@ -269,6 +269,35 @@ const LIST_WAIT: Duration = Duration::from_secs(30);
 const IDLE: Duration = Duration::from_secs(3);
 /// The environment variable that makes a launcher window measure itself into the file it names.
 const BENCH_ENV: &str = "SUNRISE_LAUNCHER_BENCH";
+/// Which list the benchmark scrolls ([`List`]): `installed` for Mods › Installed, else the
+/// build picker's.
+const LIST_ENV: &str = "SUNRISE_LAUNCHER_BENCH_LIST";
+
+/// The list a benchmark scrolls once page switching is over.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum List {
+    /// The build picker's: the longest list every setup has.
+    Builds,
+    /// Mods › Installed, for a profile with many mods: each row has its own controls.
+    Installed,
+}
+
+impl List {
+    fn from_env() -> List {
+        match std::env::var(LIST_ENV).as_deref() {
+            Ok("installed") => List::Installed,
+            _ => List::Builds,
+        }
+    }
+
+    /// The report's scenario, so runs over different lists are never compared.
+    fn scenario(self) -> &'static str {
+        match self {
+            List::Builds => "benchmark",
+            List::Installed => "benchmark-installed",
+        }
+    }
+}
 
 /// How far one scripted wheel step moves the list.
 const WHEEL_STEP: f32 = 24.;
@@ -284,6 +313,7 @@ const WHEEL_STEP: f32 = 24.;
 /// wait for the release list and the gaps of the resting phase are not samples at all.
 pub struct Bench {
     out: PathBuf,
+    list: List,
     began: Option<Instant>,
     page: usize,
     /// When the last page switch was, which paces the next: the pump also runs between ticks,
@@ -376,13 +406,13 @@ enum Skip {
 impl Skip {
     fn says(self) -> &'static str {
         match self {
-            Skip::NoProfile => "no profile is selected, so the build picker has no list",
-            Skip::Closed => "the build picker was closed before it could be scrolled",
-            Skip::Empty => "the build list had no rows",
-            Skip::Fits => "the build list fits without scrolling",
+            Skip::NoProfile => "no profile is selected, so there is no list",
+            Skip::Closed => "the list was closed before it could be scrolled",
+            Skip::Empty => "the list had no rows",
+            Skip::Fits => "the list fits without scrolling",
             Skip::ReleasesLate => "the release list didn't load in time",
-            Skip::NotLaidOut => "the build picker didn't draw its rows in time",
-            Skip::NeverMoved => "the build list didn't move",
+            Skip::NotLaidOut => "the list didn't draw its rows in time",
+            Skip::NeverMoved => "the list didn't move",
         }
     }
 }
@@ -401,6 +431,7 @@ impl Bench {
     fn new(out: PathBuf) -> Bench {
         Bench {
             out,
+            list: List::from_env(),
             began: None,
             page: 0,
             switched: None,
@@ -424,6 +455,11 @@ impl Bench {
     #[cfg(test)]
     pub(crate) fn scroll_samples(&self) -> &[f32] {
         &self.scroll_ms
+    }
+
+    /// The list [`Step::Scroll`] opens and scrolls.
+    pub fn list(&self) -> List {
+        self.list
     }
 
     /// Between [`Step::Scroll`] and the end of scrolling: a wheel step goes in on every frame.
@@ -611,7 +647,7 @@ impl Bench {
 pub fn benchmark(repeats: usize) -> Result<PathBuf, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let mut report = Report::new(Kind::Launcher, app());
-    report.conditions.scenario = Some("benchmark".into());
+    report.conditions.scenario = Some(List::from_env().scenario().into());
     report.conditions.repeats = Some(repeats as u32);
     report.conditions.power = sunrise_bench::power_source().map(str::to_owned);
     report.conditions.load_avg_1m = sunrise_bench::load_average();

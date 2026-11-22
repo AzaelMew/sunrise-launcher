@@ -681,6 +681,29 @@ impl Launcher {
         self.choose_view(Page::Installed);
     }
 
+    /// `sunrise-launcher benchmark` with `SUNRISE_LAUNCHER_BENCH_LIST=installed`: how the last
+    /// frame left the Installed list, and where a wheel step goes over it.
+    pub(crate) fn installed_bench_target(
+        &self,
+    ) -> (crate::perf::Target, gpui::Bounds<gpui::Pixels>) {
+        use crate::perf::Target;
+        if self.ui.page != Page::Installed {
+            return (Target::Closed, gpui::Bounds::default());
+        }
+        let drawn = crate::frame::drawn_scroll("installed");
+        match drawn.filter(|_| self.ui.mods.snapshot.is_some()) {
+            // Still reading the profile's mods, or not drawn with them yet.
+            None => (Target::LayingOut, gpui::Bounds::default()),
+            Some(handle) => (
+                Target::Laid {
+                    offset: f32::from(handle.offset().y),
+                    max: f32::from(handle.max_offset().y),
+                },
+                handle.bounds(),
+            ),
+        }
+    }
+
     /// Mods › Discover itself, whatever Mods last showed.
     pub(crate) fn show_discover(&mut self) {
         self.leave_section(false);
