@@ -241,7 +241,13 @@ impl Launcher {
     }
 
     fn host_problem(&self, cx: &mut Context<Self>) -> Option<Div> {
-        let p = self.servers.problem.clone()?;
+        let (p, settings_for) = if let Some(problem) = &self.servers.problem {
+            (problem.clone(), None)
+        } else {
+            let dir = self.servers.open.as_ref()?;
+            let problem = self.servers.settings_outcomes.get(dir)?.problem.clone()?;
+            (problem, Some(dir.clone()))
+        };
         let mut actions = div();
         if let Some(fix) = p.fix.clone() {
             let name = match &fix {
@@ -250,10 +256,12 @@ impl Launcher {
                 Fix::AgreeEula => tr("I agree to the EULA").into(),
                 Fix::ShowLog => tr("Open the logs").into(),
             };
+            let settings_for = settings_for.clone();
             actions =
                 actions.child(
                     self.host_button("host-fix", name, true, cx, move |this, cx| {
-                        this.host_fix(fix.clone(), cx)
+                        this.servers.dismiss_problem(settings_for.as_deref());
+                        this.host_fix(fix.clone(), cx);
                     }),
                 );
         }
@@ -262,7 +270,7 @@ impl Launcher {
             tr("Dismiss"),
             true,
             cx,
-            |this, _| this.servers.problem = None,
+            move |this, _| this.servers.dismiss_problem(settings_for.as_deref()),
         ));
         Some(notice(palette().danger, p.message, actions))
     }
@@ -406,10 +414,7 @@ impl Launcher {
             tr("Restart"),
             idle && running,
             cx,
-            |this, _| {
-                this.servers.restart_needed.clear();
-                this.restart_server();
-            },
+            |this, _| this.restart_server(),
         );
         let panel_dir = dir.to_path_buf();
         let panel = self.host_button(
@@ -517,10 +522,14 @@ impl Launcher {
         if let Some(note) = self.servers.note.clone() {
             page = page.child(notice(palette().success, note, div()));
         }
-        if running && !self.servers.restart_needed.is_empty() {
-            let names: Vec<String> = self
-                .servers
-                .restart_needed
+        if let Some(outcome) = self
+            .servers
+            .settings_outcomes
+            .get(dir)
+            .filter(|outcome| running && !outcome.restart.is_empty())
+        {
+            let names: Vec<String> = outcome
+                .restart
                 .iter()
                 .map(|k| tr(setting_name(k)).to_string())
                 .collect();
@@ -535,10 +544,7 @@ impl Launcher {
                     tr("Restart now"),
                     idle,
                     cx,
-                    |this, _| {
-                        this.servers.restart_needed.clear();
-                        this.restart_server();
-                    },
+                    |this, _| this.restart_server(),
                 )),
             ));
         }
@@ -570,8 +576,8 @@ impl Launcher {
     fn host_overview(&mut self, status: &Status, cx: &mut Context<Self>) -> Div {
         let port = self
             .servers
-            .setting("server", "port")
-            .and_then(Value::as_u64)
+            .shown("server", "port")
+            .parse::<u64>()
             .unwrap_or(25565);
         let address = match servers::lan_address() {
             Some(ip) if port == 25565 => ip.to_string(),
@@ -909,8 +915,8 @@ impl Launcher {
 
         let friends_only = self
             .servers
-            .setting("server", "whitelist")
-            .and_then(Value::as_bool)
+            .shown("server", "whitelist")
+            .parse::<bool>()
             .unwrap_or(true);
         let mut allowed = vec![row(
             tr("Friends only"),
@@ -1087,8 +1093,8 @@ impl Launcher {
         };
         let accounts = self
             .servers
-            .setting("server", "online_mode")
-            .and_then(Value::as_bool)
+            .shown("server", "online_mode")
+            .parse::<bool>()
             .unwrap_or(false);
         let service = self.servers.service.unwrap_or(false);
         let background = switch("host-background", service);
@@ -1221,7 +1227,7 @@ impl Launcher {
             .unwrap_or_default();
         let ready = !status.running()
             && self.servers.busy.is_none()
-            && !self.servers.applying
+            && self.servers.applying.is_none()
             && self.servers.queued.is_empty()
             && self.servers.service == Some(false);
         let wait = if status.running() {
@@ -1363,7 +1369,7 @@ impl Launcher {
                     this.servers.confirm_restore = None;
                     if let Some(dir) = this.servers.open.clone() {
                         let (name, restored) = (name.clone(), restored.clone());
-                        this.server_job("Restoring", move |log| {
+                        this.servers.start_job("Restoring", move |log| {
                             servers::run_streamed(&dir, &["restore", &name, "--yes"], log)
                                 .map(|_| restored)
                         });
@@ -1451,9 +1457,10 @@ impl Launcher {
                             "Updated to Sunrise {tag}. The world was backed up first (Backups).",
                             &[("tag", &tag)],
                         );
-                        this.server_job(trf("Updating to {tag}", &[("tag", &tag)]), move |log| {
-                            servers::run_streamed(&dir, &["update"], log).map(|_| done)
-                        });
+                        this.servers
+                            .start_job(trf("Updating to {tag}", &[("tag", &tag)]), move |log| {
+                                servers::run_streamed(&dir, &["update"], log).map(|_| done)
+                            });
                     }
                 },
             )),

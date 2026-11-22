@@ -139,6 +139,32 @@ fn an_update_offer_requires_a_signed_manifest_for_its_platform() {
 }
 
 #[test]
+fn staging_distinguishes_a_missing_manifest_from_an_unavailable_feed() {
+    let tag = "v9999.0.0";
+    let release = Release {
+        tag: tag.into(),
+        name: tag.into(),
+        body: String::new(),
+        date: String::new(),
+        time: String::new(),
+        asset: Some(("https://example.test/launcher".into(), 1)),
+        prerelease: false,
+        nightly: None,
+    };
+    let no_progress = |_| panic!("an unverified release must not begin downloading");
+    let rejected = stage_update_with(&release, no_progress, |_| Ok(None)).unwrap_err();
+    assert!(
+        matches!(rejected, StageUpdateError::Check(LauncherCheckError::Rejected { tag: rejected, .. }) if rejected == tag)
+    );
+    let offline = stage_update_with(&release, no_progress, |_| Err("offline".into())).unwrap_err();
+    assert!(matches!(
+        &offline,
+        StageUpdateError::Check(LauncherCheckError::Unavailable(_))
+    ));
+    assert_eq!(String::from(offline), "offline");
+}
+
+#[test]
 fn a_game_list_error_still_checks_the_launcher() {
     for error in [
         "No connection: offline",
