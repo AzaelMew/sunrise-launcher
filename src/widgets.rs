@@ -349,11 +349,12 @@ enum Copied {
 }
 
 fn copied(text: &str) -> Copied {
-    let text = text.trim();
+    // Counted as copied: blank lines at the edges are lines too. Only the one-line preview is trimmed.
     let lines = text.lines().count();
     if lines > 1 {
         return Copied::Lines(lines);
     }
+    let text = text.trim();
     if text.chars().nth(COPIED_SHOWN).is_none() {
         return Copied::Text(text.to_string());
     }
@@ -588,5 +589,6 @@ mod tests {
             Copied::Text("é".repeat(COPIED_SHOWN))
         );
         assert_eq!(copied("error: one\n  two\n\nthree\n"), Copied::Lines(4));
+        assert_eq!(copied("\nerror\n\n"), Copied::Lines(3));
     }
 }
