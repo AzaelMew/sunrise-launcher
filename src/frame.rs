@@ -699,7 +699,7 @@ impl Launcher {
                 cx.stop_propagation();
                 cx.notify();
             }))
-            .children(titlebar::render(&self.theme, window))
+            .children(titlebar::render(&self.theme, window, cx))
             .children(self.settings_save_notice(cx))
             .child(
                 div()
