@@ -1087,10 +1087,9 @@ impl Package {
                             return Err("native package exceeds its entry or size limit".into());
                         }
                         files.insert(name, std::fs::read(path).map_err(|e| e.to_string())?);
-                    } else if name.ends_with(".rs") || (name.ends_with(".toml") && name != MANIFEST)
-                    {
-                        return Err(format!("unexpected package path: {name}"));
                     }
+                    // Anything else (a repository tool's `module.toml`, notes, scripts) stays
+                    // out, like a folder's other files: Cargo builds only the source set.
                 }
                 Ok(())
             }
@@ -1748,6 +1747,11 @@ capabilities = ["registries"]
         std::fs::create_dir_all(&sdk).unwrap();
         std::fs::write(sdk.join("lib.rs"), "pub fn api() {}\n").unwrap();
         std::fs::write(root.join(".sunrise/sdk/sdk.json"), "{}").unwrap();
+        // A repository's own tool files beside the mod are left out, not refused.
+        std::fs::create_dir_all(root.join("sources/horizon")).unwrap();
+        std::fs::write(root.join("module.toml"), "id = 'ruby'\n").unwrap();
+        std::fs::write(root.join("sources/sounds.toml"), "[sounds]\n").unwrap();
+        std::fs::write(root.join("sources/horizon/keys.rs"), "fn keys() {}\n").unwrap();
         let bytes = Package::pack_directory(&root).unwrap();
         let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
         assert_eq!(Package::read_zip(&mut zip).unwrap().manifest.id, "ruby");
@@ -1759,6 +1763,9 @@ capabilities = ["registries"]
         assert_eq!(packed_lock, registry_lock);
         assert!(zip.by_name(".git/hooks/pre-commit").is_err());
         assert!(zip.by_name("target/generated/bad.rs").is_err());
+        assert!(zip.by_name("module.toml").is_err());
+        assert!(zip.by_name("sources/sounds.toml").is_err());
+        assert!(zip.by_name("sources/horizon/keys.rs").is_err());
         assert!(
             zip.file_names_raw()
                 .all(|name| !name.starts_with(b".sunrise")),
