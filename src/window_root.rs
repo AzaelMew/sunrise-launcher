@@ -11,6 +11,12 @@ impl Shell {
         let launcher = cx.new(|cx| Launcher::new(window, cx));
         Self { launcher }
     }
+
+    /// The launcher it draws, for tests that drive the window as it opens.
+    #[cfg(test)]
+    pub(crate) fn launcher(&self) -> Entity<Launcher> {
+        self.launcher.clone()
+    }
 }
 
 impl Render for Shell {

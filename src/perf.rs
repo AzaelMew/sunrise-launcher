@@ -254,14 +254,18 @@ pub enum Step {
     Wait,
     /// Show this page (an index into `frame::Page::BENCH`, wrapping).
     Go(usize),
-    /// Open the build picker and scroll its list, a wheel step per frame
-    /// (`Launcher::bench_wheel`), while [`Bench::scrolling`].
+    /// Open the build picker and scroll its list, a wheel step per frame (`sheets::bench_wheel`),
+    /// while [`Bench::scrolling`].
     Scroll,
     Quit,
 }
 
 const SWITCHING: Duration = Duration::from_secs(4);
+/// How long the list is scrolled, from the first frame that drew it with its loaded rows.
 const SCROLLING: Duration = Duration::from_secs(3);
+/// How long the opened picker may wait for the release list and the rows it brings: a cold
+/// start's fetch can take longer than the scrolling itself.
+const LIST_WAIT: Duration = Duration::from_secs(30);
 const IDLE: Duration = Duration::from_secs(3);
 /// The environment variable that makes a launcher window measure itself into the file it names.
 const BENCH_ENV: &str = "SUNRISE_LAUNCHER_BENCH";
@@ -270,13 +274,14 @@ const BENCH_ENV: &str = "SUNRISE_LAUNCHER_BENCH";
 const WHEEL_STEP: f32 = 24.;
 
 /// A launcher window measuring itself: after its first frame it switches pages every
-/// [`crate::wake::TICK`] for a few seconds, scrolls the build picker's list for a few more, then
-/// rests, then writes what it measured for `benchmark` and quits.
+/// [`crate::wake::TICK`] for a few seconds, opens the build picker and, once the release list
+/// has loaded and the picker has drawn its rows, scrolls the list for a few more; then it rests,
+/// writes what it measured for `benchmark` and quits.
 ///
 /// Its samples are frame intervals while something was due on screen: during page switching,
 /// from each frame to the next, or from a switch to the first frame after it; while scrolling,
 /// only frames on which the list moved. A slow frame in either phase is kept, however long; the
-/// gaps of the resting phase are not samples at all.
+/// wait for the release list and the gaps of the resting phase are not samples at all.
 pub struct Bench {
     out: PathBuf,
     began: Option<Instant>,
@@ -294,7 +299,15 @@ pub struct Bench {
 }
 
 struct Scroll {
-    began: Instant,
+    /// When the picker was opened, which bounds the wait for its rows ([`LIST_WAIT`]).
+    opened: Instant,
+    /// When the timed phase began: the first frame after which the list was drawn with its
+    /// loaded rows. None while the picker waits for them.
+    began: Option<Instant>,
+    /// What the list waited for when last looked at, to say why it never came.
+    waiting: Target,
+    /// Why nothing was scrolled, once that is known.
+    skipped: Option<Skip>,
     ended: bool,
     /// Heading for the bottom of the list, else back to the top.
     down: bool,
@@ -303,6 +316,71 @@ struct Scroll {
     /// The interval of the frame just drawn, until [`Bench::after_frame`] knows whether it
     /// moved the list.
     pending: Option<Duration>,
+}
+
+impl Scroll {
+    fn opened(now: Instant) -> Scroll {
+        Scroll {
+            opened: now,
+            began: None,
+            waiting: Target::Loading,
+            skipped: None,
+            ended: false,
+            down: true,
+            last_offset: None,
+            pending: None,
+        }
+    }
+
+    /// Ends the phase with nothing measured, for `why` (the first reason found stays).
+    fn skip(&mut self, why: Skip) {
+        self.skipped.get_or_insert(why);
+        self.ended = true;
+    }
+}
+
+/// The build picker's list as the benchmark finds it after a frame (`sheets::bench_wheel`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Target {
+    /// No profile is selected, so the picker has no list.
+    NoProfile,
+    /// The picker isn't the sheet on screen.
+    Closed,
+    /// The release list is still being fetched.
+    Loading,
+    /// Loaded, and the list has not one row.
+    Empty,
+    /// Loaded, but the window hasn't drawn the list with its loaded rows yet.
+    LayingOut,
+    /// Drawn with its loaded rows: its offset (GPUI's sign, negative below the top) and how far
+    /// it can scroll.
+    Laid { offset: f32, max: f32 },
+}
+
+/// Why a benchmark scrolled nothing, as the CLI says it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Skip {
+    NoProfile,
+    Closed,
+    Empty,
+    Fits,
+    ReleasesLate,
+    NotLaidOut,
+    NeverMoved,
+}
+
+impl Skip {
+    fn says(self) -> &'static str {
+        match self {
+            Skip::NoProfile => "no profile is selected, so the build picker has no list",
+            Skip::Closed => "the build picker was closed before it could be scrolled",
+            Skip::Empty => "the build list had no rows",
+            Skip::Fits => "the build list fits without scrolling",
+            Skip::ReleasesLate => "the release list didn't load in time",
+            Skip::NotLaidOut => "the build picker didn't draw its rows in time",
+            Skip::NeverMoved => "the build list didn't move",
+        }
+    }
 }
 
 impl Bench {
@@ -330,18 +408,12 @@ impl Bench {
         }
     }
 
-    /// A benchmark already in its scroll phase, for tests that drive a real list.
+    /// A benchmark whose page switching is over, writing its result to `out`: the next tick
+    /// opens the build picker. For tests that drive a real launcher window.
     #[cfg(test)]
-    pub(crate) fn scrolling_for_test() -> Bench {
-        let mut bench = Bench::new(PathBuf::new());
+    pub(crate) fn switched_for_test(out: PathBuf) -> Bench {
+        let mut bench = Bench::new(out);
         bench.began = Some(Instant::now() - SWITCHING);
-        bench.scroll = Some(Scroll {
-            began: Instant::now(),
-            ended: false,
-            down: true,
-            last_offset: None,
-            pending: None,
-        });
         bench
     }
 
@@ -355,9 +427,17 @@ impl Bench {
         self.scroll.as_ref().is_some_and(|s| !s.ended)
     }
 
+    /// While scrolling, once the timed phase has begun: the list was drawn with its rows.
+    pub fn timing_scroll(&self) -> bool {
+        self.scroll
+            .as_ref()
+            .is_some_and(|s| !s.ended && s.began.is_some())
+    }
+
     /// A frame drawn at `now`, `gap` after the one before ([`Perf::frame`]). Called while the
     /// frame is built, so it reads nothing on screen: whether a scrolling frame moved the list
-    /// is told after it ([`Bench::after_frame`]).
+    /// is told after it ([`Bench::after_frame`]). The frames that open the picker and wait for
+    /// its rows are no samples.
     pub fn frame(&mut self, now: Instant, gap: Option<Duration>) {
         let Some(gap) = gap else {
             return;
@@ -371,19 +451,51 @@ impl Bench {
                 };
                 self.pages_ms.push(sample.as_secs_f32() * 1000.0);
             }
-            Some(scroll) if !scroll.ended => scroll.pending = Some(gap),
+            Some(scroll) if !scroll.ended && scroll.began.is_some() => {
+                scroll.pending = Some(gap);
+            }
             _ => {}
         }
     }
 
-    /// After a frame, where it left the scroll target (its offset, and how far it can scroll),
-    /// read outside the frame so reading it changes nothing the frame caches. Counts the frame
-    /// as a scroll sample if it moved the list, and gives the wheel step for the next one, in
-    /// GPUI's sign (negative scrolls down): [`WHEEL_STEP`] towards the end it is heading for,
-    /// the last step only as far as that end, then back the other way. None when the list
-    /// can't move, or while not scrolling.
-    pub fn after_frame(&mut self, offset: f32, max: f32) -> Option<f32> {
+    /// After a frame, at `now`, how it left the build list, read outside the frame so reading
+    /// it changes nothing the frame caches.
+    ///
+    /// The timed phase begins at the first frame that drew the list with its loaded rows; with
+    /// no list, an empty one or one that fits, it ends at once with nothing measured. While
+    /// timed, counts the frame as a scroll sample if it moved the list, and gives the wheel step
+    /// for the next one, in GPUI's sign (negative scrolls down): [`WHEEL_STEP`] towards the end
+    /// it is heading for, the last step only as far as that end, then back the other way. None
+    /// while waiting for the rows, or when not scrolling.
+    pub fn after_frame(&mut self, now: Instant, target: Target) -> Option<f32> {
         let scroll = self.scroll.as_mut().filter(|s| !s.ended)?;
+        let (offset, max) = match target {
+            Target::Laid { offset, max } => (offset, max),
+            Target::Loading | Target::LayingOut => {
+                if scroll.began.is_none() {
+                    scroll.waiting = target;
+                }
+                // A frame that drew the list without its loaded rows is no sample.
+                scroll.pending = None;
+                return None;
+            }
+            Target::NoProfile | Target::Closed | Target::Empty => {
+                scroll.skip(match target {
+                    Target::NoProfile => Skip::NoProfile,
+                    Target::Closed => Skip::Closed,
+                    _ => Skip::Empty,
+                });
+                return None;
+            }
+        };
+        if scroll.began.is_none() {
+            if max < 0.5 {
+                scroll.skip(Skip::Fits);
+                return None;
+            }
+            scroll.began = Some(now);
+            scroll.pending = None;
+        }
         let moved = scroll
             .last_offset
             .is_some_and(|was| (was - offset).abs() >= 0.5);
@@ -413,22 +525,22 @@ impl Bench {
             return Step::Go(self.page);
         }
         match &mut self.scroll {
+            // The last switch's frame hasn't come yet. It is a page sample, a stall included,
+            // so the picker waits for it rather than being drawn in the same frame.
+            None if self.awaiting.is_some() => return Step::Wait,
             None => {
-                self.scroll = Some(Scroll {
-                    began: Instant::now(),
-                    ended: false,
-                    down: true,
-                    last_offset: None,
-                    pending: None,
-                });
+                self.scroll = Some(Scroll::opened(Instant::now()));
                 return Step::Scroll;
             }
-            Some(scroll) if !scroll.ended => {
-                if scroll.began.elapsed() < SCROLLING {
-                    return Step::Wait;
-                }
-                scroll.ended = true;
-            }
+            Some(scroll) if !scroll.ended => match scroll.began {
+                None if scroll.opened.elapsed() < LIST_WAIT => return Step::Wait,
+                None => scroll.skip(match scroll.waiting {
+                    Target::Loading => Skip::ReleasesLate,
+                    _ => Skip::NotLaidOut,
+                }),
+                Some(began) if began.elapsed() < SCROLLING => return Step::Wait,
+                Some(_) => scroll.ended = true,
+            },
             Some(_) => {}
         }
         let pid = std::process::id();
@@ -456,6 +568,14 @@ impl Bench {
             "pages_ms": self.pages_ms,
             // None when the list never moved: no scrolling was measured, not a fast one.
             "scroll_ms": (!self.scroll_ms.is_empty()).then_some(&self.scroll_ms),
+            // And then why: no profile, no rows, rows that fit, or a list that never came.
+            "scroll_skipped": self.scroll_ms.is_empty().then(|| {
+                self.scroll
+                    .as_ref()
+                    .and_then(|s| s.skipped)
+                    .unwrap_or(Skip::NeverMoved)
+                    .says()
+            }),
             "rss_mb": sunrise_bench::rss_bytes(pid).map(|b| b as f64 / f64::from(1 << 20)),
             "cpu_idle_pct": cpu_idle_pct,
             "draws": perf.draws,
@@ -546,7 +666,12 @@ pub fn benchmark(repeats: usize) -> Result<PathBuf, String> {
             starts.last().unwrap_or(&0.0),
             summary(&pages),
             if scroll.is_empty() {
-                "nothing: the build list had nothing to scroll".to_owned()
+                format!(
+                    "nothing: {}",
+                    result["scroll_skipped"]
+                        .as_str()
+                        .unwrap_or(Skip::NeverMoved.says())
+                )
             } else {
                 summary(&scroll)
             },
@@ -664,24 +789,38 @@ mod tests {
         Duration::from_millis(ms)
     }
 
-    /// Ends switching, then starts scrolling.
-    fn to_scrolling(bench: &mut Bench, perf: &Perf) {
-        bench.began = Some(Instant::now() - SWITCHING);
-        assert!(matches!(bench.tick(perf), Step::Scroll));
-        assert!(bench.scrolling());
+    fn laid(offset: f32, max: f32) -> Target {
+        Target::Laid { offset, max }
     }
 
-    /// Ends scrolling and resting; the next tick writes the result.
+    /// Ends switching, the last switch drawn, then opens the picker.
+    fn to_scrolling(bench: &mut Bench, perf: &Perf) {
+        bench.began = Some(Instant::now() - SWITCHING);
+        bench.awaiting = None;
+        assert!(matches!(bench.tick(perf), Step::Scroll));
+        assert!(bench.scrolling());
+        assert!(!bench.timing_scroll(), "not before the list has its rows");
+    }
+
+    /// Ends scrolling, if it is still on, and resting; the next tick writes the result.
     fn finish(bench: &mut Bench, perf: &Perf) -> serde_json::Value {
-        bench.scroll.as_mut().unwrap().began = Instant::now() - SCROLLING;
-        assert!(matches!(bench.tick(perf), Step::Wait), "scrolling ends");
+        let scroll = bench.scroll.as_mut().unwrap();
+        if !scroll.ended {
+            scroll.began = Some(Instant::now() - SCROLLING);
+            assert!(matches!(bench.tick(perf), Step::Wait), "scrolling ends");
+        }
         assert!(!bench.scrolling());
+        if bench.idle_cpu.is_none() {
+            assert!(matches!(bench.tick(perf), Step::Wait), "resting begins");
+        }
         bench.idle_cpu.as_mut().unwrap().0 = Instant::now() - IDLE;
         assert!(
             matches!(bench.tick(perf), Step::Quit),
             "the result, then quit"
         );
-        serde_json::from_str(&std::fs::read_to_string(&bench.out).unwrap()).unwrap()
+        let result = serde_json::from_str(&std::fs::read_to_string(&bench.out).unwrap()).unwrap();
+        let _ = std::fs::remove_file(&bench.out);
+        result
     }
 
     fn out(name: &str) -> PathBuf {
@@ -723,54 +862,117 @@ mod tests {
     }
 
     #[test]
-    fn scrolling_counts_only_frames_that_move_the_list_and_writes_the_result() {
+    fn the_picker_waits_for_the_last_switch_to_be_drawn() {
+        let perf = drawn();
+        let mut bench = Bench::new(out("boundary"));
+        assert!(matches!(bench.tick(&perf), Step::Go(1)));
+        let switched = bench.switched.unwrap();
+        // Switching time is up before the window has drawn the last switch.
+        bench.began = Some(Instant::now() - SWITCHING);
+        for _ in 0..3 {
+            assert!(matches!(bench.tick(&perf), Step::Wait), "the picker waits");
+            assert!(!bench.scrolling());
+        }
+        // The frame comes 700 ms late: a page sample, the stall in full.
+        bench.frame(switched + ms(700), Some(ms(900)));
+        assert_eq!(bench.pages_ms, [700.]);
+        assert!(matches!(bench.tick(&perf), Step::Scroll));
+    }
+
+    #[test]
+    fn scrolling_is_timed_from_the_frame_that_drew_the_loaded_rows() {
         let mut perf = drawn();
         let mut bench = Bench::new(out("scroll"));
-        assert!(matches!(bench.tick(&perf), Step::Go(1)));
         to_scrolling(&mut bench, &perf);
         let now = Instant::now();
-        // The first frame laid it out at the top: nothing has moved; the first step goes in.
+        // A cold start: the release list is still on its way, longer than the scroll phase.
+        bench.scroll.as_mut().unwrap().opened = now - SCROLLING - ms(500);
+        for target in [Target::Loading, Target::Loading, Target::LayingOut] {
+            bench.frame(now, Some(ms(40)));
+            assert_eq!(
+                bench.after_frame(now, target),
+                None,
+                "nothing to scroll yet"
+            );
+            assert!(matches!(bench.tick(&perf), Step::Wait));
+            assert!(bench.scrolling() && !bench.timing_scroll(), "still waiting");
+        }
+        // The first frame that drew the rows: the timing begins; the first step goes in.
         bench.frame(now, Some(ms(16)));
-        assert_eq!(bench.after_frame(0., 100.), Some(-24.));
+        assert_eq!(bench.after_frame(now, laid(0., 100.)), Some(-24.));
+        assert!(bench.timing_scroll());
+        assert!(matches!(bench.tick(&perf), Step::Wait), "timed from here");
         // That step moved it: a sample.
         bench.frame(now, Some(ms(17)));
-        assert_eq!(bench.after_frame(-24., 100.), Some(-24.));
+        assert_eq!(bench.after_frame(now, laid(-24., 100.)), Some(-24.));
         // A frame that didn't move it isn't one.
         bench.frame(now, Some(ms(16)));
-        bench.after_frame(-24., 100.);
+        bench.after_frame(now, laid(-24., 100.));
         // A real stall while scrolling is kept.
         bench.frame(now, Some(ms(400)));
-        bench.after_frame(-48., 100.);
-        assert_eq!(bench.scroll_ms, [17., 400.]);
+        bench.after_frame(now, laid(-48., 100.));
+        assert_eq!(
+            bench.scroll_ms,
+            [17., 400.],
+            "the wait for the rows is none"
+        );
         // Drawn while resting: no sample of either kind.
         perf.frame(now + ms(16));
         let result = finish(&mut bench, &perf);
         bench.frame(now, Some(ms(16)));
-        assert_eq!(bench.after_frame(-72., 100.), None, "the wheel has stopped");
+        assert_eq!(
+            bench.after_frame(now, laid(-72., 100.)),
+            None,
+            "the wheel has stopped"
+        );
         assert_eq!(bench.scroll_ms.len(), 2);
         assert_eq!(result["scroll_ms"], serde_json::json!([17., 400.]));
+        assert!(result["scroll_skipped"].is_null());
         assert_eq!(result["pages_ms"], serde_json::json!([]));
         assert!(result["first_frame_epoch_ms"].as_f64().is_some());
-        let _ = std::fs::remove_file(&bench.out);
     }
 
     #[test]
-    fn a_list_that_cannot_move_reports_no_scrolling() {
-        let perf = drawn();
-        let mut bench = Bench::new(out("still"));
-        assert!(matches!(bench.tick(&perf), Step::Go(1)));
-        to_scrolling(&mut bench, &perf);
-        let now = Instant::now();
-        for _ in 0..5 {
+    fn no_list_an_empty_one_or_one_that_fits_ends_scrolling_at_once() {
+        for (target, says) in [
+            (Target::NoProfile, Skip::NoProfile),
+            (Target::Closed, Skip::Closed),
+            (Target::Empty, Skip::Empty),
+            (laid(0., 0.), Skip::Fits),
+        ] {
+            let perf = drawn();
+            let mut bench = Bench::new(out("still"));
+            to_scrolling(&mut bench, &perf);
+            let now = Instant::now();
             bench.frame(now, Some(ms(16)));
-            assert_eq!(bench.after_frame(0., 0.), None, "nothing to scroll");
+            assert_eq!(bench.after_frame(now, target), None, "{target:?}");
+            assert!(!bench.scrolling(), "{target:?}: no frames asked for");
+            let result = finish(&mut bench, &perf);
+            assert!(
+                result["scroll_ms"].is_null(),
+                "{target:?}: no result, not an empty fast one"
+            );
+            assert_eq!(result["scroll_skipped"], says.says(), "{target:?}");
         }
-        let result = finish(&mut bench, &perf);
-        assert!(
-            result["scroll_ms"].is_null(),
-            "no result, not an empty fast one"
-        );
-        let _ = std::fs::remove_file(&bench.out);
+    }
+
+    #[test]
+    fn a_list_that_never_comes_ends_with_why() {
+        for (waiting, says) in [
+            (Target::Loading, Skip::ReleasesLate),
+            (Target::LayingOut, Skip::NotLaidOut),
+        ] {
+            let perf = drawn();
+            let mut bench = Bench::new(out("late"));
+            to_scrolling(&mut bench, &perf);
+            assert_eq!(bench.after_frame(Instant::now(), waiting), None);
+            bench.scroll.as_mut().unwrap().opened = Instant::now() - LIST_WAIT;
+            assert!(matches!(bench.tick(&perf), Step::Wait));
+            assert!(!bench.scrolling(), "{waiting:?}: given up on");
+            let result = finish(&mut bench, &perf);
+            assert!(result["scroll_ms"].is_null());
+            assert_eq!(result["scroll_skipped"], says.says(), "{waiting:?}");
+        }
     }
 
     #[test]

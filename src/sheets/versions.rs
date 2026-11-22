@@ -260,6 +260,27 @@ impl Launcher {
         !self.launch_busy() && self.client.is_none() && !self.removing.iter().any(|t| t == tag)
     }
 
+    /// The list the picker shows for `instance`, whose Play target is `plays`.
+    fn version_lines(&self, instance: &instances::Instance, plays: Option<&str>) -> Vec<Line> {
+        let releases: &[Release] = match &self.releases {
+            Load::Ready(rows) => rows,
+            _ => &[],
+        };
+        lines(
+            releases,
+            &self.installed,
+            plays,
+            instance.channel,
+            self.ui.sheets.versions.find.text(),
+        )
+    }
+
+    /// How tall the list of `lines` is drawn: as tall as what it lists, up to the room the
+    /// window has; past that it scrolls.
+    fn versions_list_height(&self, lines: usize) -> f32 {
+        (lines as f32 * LINE_H).min((self.window_height - 330.).clamp(LINE_H * 4., LINE_H * 9.))
+    }
+
     fn versions_content(&mut self, cx: &mut Context<Self>) -> Div {
         let Some(instance) = self.selected_instance() else {
             return div().child(tr("No profile selected."));
@@ -267,19 +288,10 @@ impl Launcher {
         let plays = self.profile_target(instance);
         let is_pack = instance.kind == instances::Kind::Pack;
         let home = instance.home.clone();
-        let releases: &[Release] = match &self.releases {
-            Load::Ready(rows) => rows,
-            _ => &[],
-        };
         let current = plays.as_deref();
         let query = self.ui.sheets.versions.find.text().to_owned();
-        let list = Rc::new(lines(
-            releases,
-            &self.installed,
-            current,
-            instance.channel,
-            &query,
-        ));
+        let list = Rc::new(self.version_lines(instance, current));
+        let list_height = self.versions_list_height(list.len());
         let pick = self.ui.sheets.versions.pick.clone();
 
         let focus = self
@@ -417,9 +429,7 @@ impl Launcher {
             }),
         )
         .track_scroll(&scroll)
-        // As tall as what it lists, up to the room the window has; past that it scrolls.
-        .h(px((list.len() as f32 * LINE_H)
-            .min((self.window_height - 330.).clamp(LINE_H * 4., LINE_H * 9.))));
+        .h(px(list_height));
         let nothing = list.is_empty().then(|| {
             muted(match (&self.releases, query.trim().is_empty()) {
                 (Load::Loading, _) => tr("Reading the list of builds…"),
@@ -621,31 +631,88 @@ impl Launcher {
     }
 }
 
-/// The build list's scroll, which `sunrise-launcher benchmark` scrolls.
-fn bench_scroll_target(sheets: &super::SheetsState) -> gpui::ScrollHandle {
-    sheets.versions.scroll.0.borrow().base_handle.clone()
+impl Launcher {
+    /// The build list as `sunrise-launcher benchmark` finds it after a frame, and the bounds a
+    /// wheel step goes over. Read between frames, never while one is built: a read inside one
+    /// would make the list a dependency of the launcher's view and turn off the scroll-only
+    /// reuse a player's wheel gets.
+    ///
+    /// Once `timed`, the rows are known to be drawn and only the list's place is read: working
+    /// out the rows again (the profile's build is read from disk) would add work to every
+    /// measured frame that a player's wheel doesn't cause.
+    fn bench_target(&self, timed: bool) -> (perf::Target, gpui::Bounds<gpui::Pixels>) {
+        use perf::Target;
+        let scroll = self.ui.sheets.versions.scroll.0.borrow();
+        let bounds = scroll.base_handle.bounds();
+        let laid = || Target::Laid {
+            offset: f32::from(scroll.base_handle.offset().y),
+            max: f32::from(scroll.base_handle.max_offset().y),
+        };
+        let target = if self.ui.sheet != Some(Sheet::Versions) {
+            Target::Closed
+        } else if timed {
+            laid()
+        } else if let Some(instance) = self.selected_instance() {
+            if matches!(self.releases, Load::Loading) {
+                Target::Loading
+            } else {
+                let plays = self.profile_target(instance);
+                let rows = self.version_lines(instance, plays.as_deref()).len();
+                // The last frame laid the list out with every loaded row, at its height: not
+                // the short list drawn before the releases arrived.
+                let drawn = scroll.last_item_size.is_some_and(|size| {
+                    (f32::from(size.contents.height) - rows as f32 * LINE_H).abs() < 0.5
+                        && (f32::from(bounds.size.height) - self.versions_list_height(rows)).abs()
+                            < 0.5
+                });
+                match (rows, drawn) {
+                    (0, _) => Target::Empty,
+                    (_, false) => Target::LayingOut,
+                    (_, true) => laid(),
+                }
+            }
+        } else {
+            Target::NoProfile
+        };
+        (target, bounds)
+    }
 }
 
-/// `sunrise-launcher benchmark`: after each frame, reads where the build list was left and
-/// sends one wheel step over it through the window's ordinary input path, so the list scrolls,
-/// caches and redraws as it does under a player's wheel. Nothing is read inside a frame.
+/// `sunrise-launcher benchmark`: after each frame, looks at the build list and sends one wheel
+/// step over it through the window's ordinary input path, so the list scrolls, caches and
+/// redraws as it does under a player's wheel. Nothing is read inside a frame.
 ///
-/// With no profile there is no list, and no frames are asked for. A list with nothing to scroll
-/// is given up on only once the releases have loaded and its place has held for a few frames,
-/// so one that grows when the releases arrive is still scrolled.
+/// It keeps looking while the release list loads and the picker lays out the rows it brings;
+/// the benchmark's timed phase only begins once they are drawn ([`perf::Bench::after_frame`]).
+/// With no profile, no rows, or rows that fit, the phase ends there and no more frames are
+/// asked for.
 pub(crate) fn bench_wheel(launcher: gpui::WeakEntity<Launcher>, window: &mut Window) {
-    wheel_after_frame(launcher, window, None, 0);
+    window.on_next_frame(move |window, cx| {
+        let Some(entity) = launcher.upgrade() else {
+            return;
+        };
+        let this = entity.read(cx);
+        let timed = this.bench.as_ref().is_some_and(perf::Bench::timing_scroll);
+        let (target, bounds) = this.bench_target(timed);
+        let now = std::time::Instant::now();
+        let step = entity.update(cx, |l, _| l.bench.as_mut()?.after_frame(now, target));
+        if let Some(step) = step {
+            window.dispatch_event(bench_wheel_event(bounds, step), cx);
+        }
+        let scrolling = entity
+            .read(cx)
+            .bench
+            .as_ref()
+            .is_some_and(perf::Bench::scrolling);
+        if scrolling {
+            bench_wheel(launcher, window);
+        }
+    });
 }
-
-/// Frames a loaded list's place must hold before it counts as settled.
-const SETTLED: u32 = 10;
 
 /// The wheel event a benchmark sends: `step` pixels down (negative) or up, at the middle of
 /// `bounds`.
-pub(crate) fn bench_wheel_event(
-    bounds: gpui::Bounds<gpui::Pixels>,
-    step: f32,
-) -> gpui::PlatformInput {
+fn bench_wheel_event(bounds: gpui::Bounds<gpui::Pixels>, step: f32) -> gpui::PlatformInput {
     gpui::PlatformInput::Scroll(gpui::ScrollEvent {
         position: bounds.center(),
         delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(step))),
@@ -653,118 +720,149 @@ pub(crate) fn bench_wheel_event(
     })
 }
 
-fn wheel_after_frame(
-    launcher: gpui::WeakEntity<Launcher>,
-    window: &mut Window,
-    last: Option<gpui::Bounds<gpui::Pixels>>,
-    held: u32,
-) {
-    window.on_next_frame(move |window, cx| {
-        let Some(entity) = launcher.upgrade() else {
-            return;
-        };
-        let this = entity.read(cx);
-        if !this
-            .bench
-            .as_ref()
-            .is_some_and(crate::perf::Bench::scrolling)
-            || this.selected_instance().is_none()
-        {
-            return;
-        }
-        let loaded = !matches!(this.releases, Load::Loading);
-        let handle = bench_scroll_target(&this.ui.sheets);
-        let bounds = handle.bounds();
-        let laid_out = bounds.size.height > px(0.);
-        let held = if loaded && laid_out && Some(bounds) == last {
-            held + 1
-        } else {
-            0
-        };
-        if laid_out {
-            let (offset, max) = (
-                f32::from(handle.offset().y),
-                f32::from(handle.max_offset().y),
-            );
-            match entity.update(cx, |l, _| l.bench.as_mut()?.after_frame(offset, max)) {
-                Some(step) => {
-                    window.dispatch_event(bench_wheel_event(bounds, step), cx);
-                }
-                // Loaded, laid out, settled and nothing to scroll: no more frames for it.
-                None if held >= SETTLED => return,
-                None => {}
-            }
-        }
-        wheel_after_frame(launcher, window, Some(bounds), held);
-    });
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// A long list in a short window, scrolled by the benchmark's own wheel events through GPUI's
-    /// input path, as `bench_wheel` sends them between frames.
-    struct Rows {
-        scroll: gpui::UniformListScrollHandle,
-    }
-
-    impl Render for Rows {
-        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-            div().size_full().child(
-                gpui::uniform_list(
-                    "bench-rows",
-                    200,
-                    cx.processor(|_, range: std::ops::Range<usize>, _, _| {
-                        range
-                            .map(|n| div().id(("row", n)).h(px(40.)).w_full())
-                            .collect::<Vec<_>>()
-                    }),
-                )
-                .size_full()
-                .track_scroll(&self.scroll),
-            )
-        }
-    }
-
+    /// `sunrise-launcher benchmark`'s scroll phase in a real launcher window: the pump's tick
+    /// opens the build picker and schedules the wheel (`Launcher::drain`), the release list
+    /// arrives only after that, as on a cold start, and the timing waits for it. Then the
+    /// benchmark's own wheel events move the populated list, and the frames that moved it are
+    /// its samples.
+    ///
+    /// Runs in a child of the test binary with scratch homes, no keychain and an unreachable
+    /// proxy, so the window it opens reads and writes no player's data and fetches nothing.
     #[test]
-    fn the_benchmarks_wheel_moves_a_populated_list_and_counts_the_frame() {
-        let mut app = gpui::TestAppContext::single();
-        let (rows, cx) = app.add_window_view(|_, _| Rows {
-            scroll: gpui::UniformListScrollHandle::new(),
-        });
-        let handle = rows.read_with(cx, |rows, _| rows.scroll.0.borrow().base_handle.clone());
-        cx.run_until_parked();
-        let mut bench = crate::perf::Bench::scrolling_for_test();
-        let read = |handle: &gpui::ScrollHandle| {
-            (
-                f32::from(handle.offset().y),
-                f32::from(handle.max_offset().y),
-            )
+    fn the_benchmark_scrolls_the_populated_build_picker_once_its_rows_arrive() {
+        const CHILD: &str = "SUNRISE_BENCH_PICKER_TEST";
+        let Some(root) = std::env::var_os(CHILD).map(PathBuf::from) else {
+            let scratch = tempfile::tempdir().unwrap();
+            let root = scratch.path();
+            let nowhere = "http://127.0.0.1:9";
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "sheets::versions::tests::the_benchmark_scrolls_the_populated_build_picker_once_its_rows_arrive",
+                    "--nocapture",
+                ])
+                .env(CHILD, root)
+                .env("SUNRISE_LAUNCHER_HOME", root.join("launcher"))
+                .env("SUNRISE_HOME", root.join("game"))
+                .env("SUNRISE_LAUNCHER_LOCATION_FILE", root.join("location.json"))
+                .env("SUNRISE_NO_KEYCHAIN", "1")
+                .env("SUNRISE_LAUNCHER_NO_SELF_UPDATE", "1")
+                .env("XDG_DATA_HOME", root.join("data"))
+                .env("XDG_CONFIG_HOME", root.join("config"))
+                .env("HTTPS_PROXY", nowhere)
+                .env("HTTP_PROXY", nowhere)
+                .env("ALL_PROXY", nowhere)
+                .env_remove("NO_PROXY")
+                .env_remove("SUNRISE_GITHUB_MIRROR")
+                .env_remove("SUNRISE_LAUNCHER_BENCH")
+                .status()
+                .unwrap();
+            assert!(status.success());
+            return;
         };
-        let (top, max) = read(&handle);
-        assert!(max > 1000., "a populated list overflows: {max}");
-        assert_eq!(top, 0.);
-        // After the first frame: nothing moved yet, the first step goes in.
-        bench.frame(
-            std::time::Instant::now(),
-            Some(std::time::Duration::from_millis(16)),
-        );
-        let step = bench.after_frame(top, max).expect("a list that can move");
-        assert!(step < 0., "down first");
-        cx.update(|window, cx| {
-            window.dispatch_event(bench_wheel_event(handle.bounds(), step), cx);
+        let mut app = gpui::TestAppContext::single();
+        // The window as the launcher opens it: the launcher drawn as a cached view of its root.
+        let (shell, cx) = app.add_window_view(crate::window_root::Shell::new);
+        let launcher = shell.read_with(cx, |shell, _| shell.launcher());
+        let handle = cx.update(|window, _| window.window_handle());
+        // The start-up fetch fails at once through the proxy; take its answer, so nothing
+        // replaces the list this test gives the picker.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while launcher.read_with(cx, |l, _| matches!(l.releases, Load::Loading)) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the release fetch answered"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            launcher.update(cx, |l, cx| l.drain(handle, cx));
+            cx.run_until_parked();
+        }
+        let out = root.join("bench.json");
+        launcher.update(cx, |l, _| {
+            assert!(
+                l.selected_instance().is_some(),
+                "a fresh home has a profile"
+            );
+            // A cold start: the picker opens while the release list is still on its way.
+            l.releases = Load::Loading;
+            l.bench = Some(crate::perf::Bench::switched_for_test(out.clone()));
         });
+        // The tick that opens the picker and schedules the wheel, as the pump runs it.
+        launcher.update(cx, |l, cx| l.drain(handle, cx));
         cx.run_until_parked();
-        // The next frame drew the list moved: that frame is a scroll sample.
-        bench.frame(
-            std::time::Instant::now(),
-            Some(std::time::Duration::from_millis(17)),
+        let read = |cx: &mut gpui::VisualTestContext| {
+            launcher.read_with(cx, |l, _| {
+                let bench = l.bench.as_ref().unwrap();
+                let list = &l.ui.sheets.versions.scroll.0.borrow().base_handle;
+                (
+                    bench.scrolling(),
+                    bench.timing_scroll(),
+                    bench.scroll_samples().len(),
+                    f32::from(list.offset().y),
+                )
+            })
+        };
+        // A frame from the platform: the wheel's callbacks run, then the window draws.
+        let frame = |cx: &mut gpui::VisualTestContext| {
+            let ran = cx.update(|window, cx| window.simulate_next_frame(cx));
+            cx.run_until_parked();
+            ran
+        };
+        assert_eq!(
+            launcher.read_with(cx, |l, _| l.ui.sheet),
+            Some(Sheet::Versions)
         );
-        let (moved, _) = read(&handle);
-        assert_eq!(moved, step, "the wheel moved the list by its step");
-        bench.after_frame(moved, max);
-        assert_eq!(bench.scroll_samples(), [17.]);
+        for _ in 0..5 {
+            assert_eq!(frame(cx), 1, "the wheel looks after every frame");
+            let (scrolling, timed, samples, offset) = read(cx);
+            assert!(scrolling && !timed, "waiting for the release list, untimed");
+            assert_eq!((samples, offset), (0, 0.));
+        }
+        // The releases arrive, as the pump hands them over.
+        let releases: Vec<Release> = (1..=28)
+            .flat_map(|day| {
+                [10, 11].map(|month| {
+                    let date = format!("2026-{month}-{day:02}");
+                    release(&format!("nightly-{date}-aaaaaaa"), &date, true)
+                })
+            })
+            .collect();
+        launcher.update(cx, |l, _| l.releases = Load::Ready(releases));
+        // The platform's next frame runs the callbacks before it draws: the list is loaded
+        // but still laid out empty, which is neither a list that fits nor the timing's start.
+        frame(cx);
+        let (scrolling, timed, _, _) = read(cx);
+        assert!(
+            scrolling && !timed,
+            "waiting for the loaded rows to be drawn"
+        );
+        launcher.update(cx, |_, cx| cx.notify());
+        cx.run_until_parked();
+        // The frame after the one that drew the long list: from here the phase is timed.
+        frame(cx);
+        let (scrolling, timed, samples, offset) = read(cx);
+        assert!(scrolling && timed, "timed once the rows are drawn");
+        assert_eq!(samples, 0, "drawing the rows is no scroll sample");
+        assert!(offset < 0., "the first wheel step moved the list: {offset}");
+        let mut last = offset;
+        for _ in 0..3 {
+            frame(cx);
+            let (_, _, _, offset) = read(cx);
+            assert!(
+                offset < last,
+                "the list keeps moving down: {offset} after {last}"
+            );
+            last = offset;
+        }
+        let (_, _, samples, _) = read(cx);
+        assert!(
+            samples >= 3,
+            "each frame that moved the list is a sample: {samples}"
+        );
     }
 
     #[test]
