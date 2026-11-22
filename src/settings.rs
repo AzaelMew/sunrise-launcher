@@ -153,17 +153,6 @@ fn stacked(title: impl Into<SharedString>, about: impl Into<SharedString>, below
         .child(below)
 }
 
-/// What the launcher-update row says under its title when a newer launcher exists. A build that
-/// does not replace itself (a package wrapper, or `SUNRISE_LAUNCHER_NO_SELF_UPDATE`) leaves its
-/// Update button off, so the row says what to do instead.
-fn idle_update_about(version: &str, self_update_allowed: bool) -> String {
-    if self_update_allowed {
-        trf("{version} available", &[("version", version)])
-    } else {
-        tr("Update this launcher with your package manager.").to_string()
-    }
-}
-
 /// How many characters a settings text box shows at this window width. The pane is as wide as
 /// the window less the sidebar, the categories and the margins (a little over 500 px, so a
 /// guess here errs short), up to 760 px; the box takes 26 px of padding and edge, and a
@@ -1444,95 +1433,75 @@ impl Launcher {
             "Sunrise Launcher {version}",
             &[("version", backend::VERSION)],
         );
-        let failed = |error: &str| trf("the update failed: {error}", &[("error", error)]);
-        let (about, action, bad) = match &self.self_update {
-            SelfUpdate::Downloading(version, done) => (
-                trf(
-                    "downloading {version}, {percent}%",
-                    &[
-                        ("version", version),
-                        ("percent", &format!("{:.0}", done * 100.)),
-                    ],
-                ),
-                None,
-                false,
-            ),
-            SelfUpdate::Ready(version) => (
-                trf("{version} available", &[("version", version)]),
+        use crate::launcher_update::Status;
+        let recovery = || {
+            self.launcher_download_available().then(|| {
+                let url = backend::download_page(&self.links.website);
+                button("alt-launcher-download", tr("Download again"))
+                    .on_click(move |_, _, cx| cx.open_url(&url))
+            })
+        };
+        let (about, action, bad) = if let Some(offer) = self.launcher_update_offer() {
+            let armed = self.restart_for_launcher_update;
+            let action = if armed {
                 Some(
-                    button("alt-launcher-update", tr("Update")).on_click(cx.listener(
-                        |this, _: &ClickEvent, _, cx| {
-                            this.apply_launcher_update(cx);
+                    button("alt-launcher-cancel", tr("Cancel restart")).on_click(cx.listener(
+                        |this, _, _, cx| {
+                            this.restart_for_launcher_update = false;
                             cx.notify();
                         },
                     )),
+                )
+            } else if let Some(label) = offer.action(self.launcher_update_wait(), armed) {
+                Some(button("alt-launcher-update", label).on_click(cx.listener(
+                    |this, _, _, cx| {
+                        this.request_launcher_update();
+                        cx.notify();
+                    },
+                )))
+            } else if matches!(offer.status, Status::Stuck(_)) {
+                recovery()
+            } else {
+                None
+            };
+            let available = offer.about(self);
+            let about = match offer.status {
+                Status::Available | Status::Downloading(_) => available,
+                _ => trf(
+                    "{version} available · {status}",
+                    &[("version", offer.version), ("status", &available)],
                 ),
+            };
+            (
+                about,
+                action,
+                matches!(offer.status, Status::Failed(_) | Status::Stuck(Some(_))),
+            )
+        } else if let SelfUpdate::Stuck(error) = &self.self_update {
+            (
+                self.launcher_update_help(error.as_deref()),
+                recovery(),
+                error.is_some(),
+            )
+        } else if self.checking_updates {
+            (
+                String::new(),
+                Some(off(button("alt-launcher-check", tr("Checking…")))),
                 false,
-            ),
-            SelfUpdate::Stuck(error) => {
-                let url = backend::download_page(&self.links.website);
-                (
-                    self.launcher_update_help(error.as_deref()),
-                    self.launcher_download_available().then(|| {
-                        button("alt-launcher-download", tr("Download again"))
-                            .on_click(move |_, _, cx| cx.open_url(&url))
-                    }),
-                    error.is_some(),
-                )
-            }
-            SelfUpdate::Failed(error) => {
-                let url = backend::download_page(&self.links.website);
-                (
-                    failed(error),
-                    self.launcher_download_available().then(|| {
-                        button("alt-launcher-download", tr("Download again"))
-                            .on_click(move |_, _, cx| cx.open_url(&url))
-                    }),
-                    true,
-                )
-            }
-            SelfUpdate::Idle => match &self.updates.launcher {
-                Some(release) => {
-                    let version = backend::launcher_version(&release.tag).unwrap_or_default();
-                    let about = idle_update_about(version, backend::self_update_allowed());
-                    let release = release.clone();
-                    let get = button(
-                        "alt-launcher-get",
-                        trf("Update to {version}", &[("version", version)]),
-                    );
-                    (
-                        about,
-                        Some(if backend::self_update_allowed() {
-                            get.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                this.update_launcher(release.clone());
-                                cx.notify();
-                            }))
-                        } else {
-                            off(get)
-                        }),
-                        false,
-                    )
-                }
-                None if self.checking_updates => (
-                    String::new(),
-                    Some(off(button("alt-launcher-check", tr("Checking…")))),
-                    false,
-                ),
-                None => {
-                    let (about, bad) = launcher_check_line(
-                        self.updates.launcher_error.as_deref(),
-                        self.launcher_checked_now,
-                        self.checked.is_some(),
-                    );
-                    let check = button("alt-launcher-check", tr("Check now")).on_click(
-                        cx.listener(|this, _: &ClickEvent, _, cx| {
-                            this.check_updates(UpdateCheck::ManualLauncher);
-                            cx.notify();
-                        }),
-                    );
-                    (about, Some(check), bad)
-                }
-            },
+            )
+        } else {
+            let (about, bad) = launcher_check_line(
+                self.updates.launcher_error.as_deref(),
+                self.launcher_checked_now,
+                self.checked.is_some(),
+            );
+            let check = button("alt-launcher-check", tr("Check now")).on_click(cx.listener(
+                |this, _, _, cx| {
+                    this.check_updates(UpdateCheck::ManualLauncher);
+                    cx.notify();
+                },
+            ));
+            (about, Some(check), bad)
         };
         let mut words = div().flex().flex_col().gap(px(2.));
         words = words.child(div().font_weight(FontWeight::SEMIBOLD).child(title));
@@ -1627,15 +1596,6 @@ mod tests {
         // The view sizes the proxy box through `fit_field`; a Launcher needs a window to build.
         let source = include_str!("settings.rs");
         assert!(source.contains("fit_field(&mut self.proxy_input, self.window_width);"));
-    }
-
-    #[test]
-    fn a_launcher_that_does_not_update_itself_says_where_updates_come_from() {
-        assert_eq!(idle_update_about("1.2.3", true), "1.2.3 available");
-        assert_eq!(
-            idle_update_about("1.2.3", false),
-            "Update this launcher with your package manager."
-        );
     }
 
     #[test]

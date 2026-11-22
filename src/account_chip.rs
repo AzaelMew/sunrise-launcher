@@ -117,7 +117,7 @@ impl Launcher {
 
     /// The top bar's account control: the chip, or Microsoft's sign-in button when nobody is
     /// signed in.
-    pub(crate) fn account_chip(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
+    pub(crate) fn account_chip(&mut self, compact: bool, cx: &mut Context<Self>) -> Stateful<Div> {
         if self.accounts.accounts.is_empty() {
             let p = palette();
             let label = tr("Sign in with Microsoft");
@@ -136,7 +136,11 @@ impl Launcher {
                 .reach_edge()
                 .tooltip(crate::glass_ui::tip(label))
                 .child(crate::microsoft::logo(18.))
-                .child(div().min_w_0().truncate().child(label))
+                .child(div().min_w_0().truncate().child(if compact {
+                    tr("Sign in")
+                } else {
+                    label
+                }))
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.account_action(Action::Add);
                     cx.notify();
@@ -174,31 +178,36 @@ impl Launcher {
                     .inset_0(),
             )
             .child(face)
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    // The two lines close together: the type's own leading spread them apart.
-                    .gap(px(1.))
-                    .line_height(gpui::relative(1.15))
-                    .min_w_0()
-                    .max_w(px(160.))
-                    .child(
-                        div()
-                            .truncate()
-                            .text_size(px(tokens::BODY))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(rgb(palette().chrome_text))
-                            .child(name),
-                    )
-                    .child(
-                        div()
-                            .truncate()
-                            .text_size(px(tokens::CAPTION))
-                            .text_color(rgb(palette().chrome_muted))
-                            .child(tr("Microsoft account")),
-                    ),
-            )
+            .when(compact, |chip| {
+                chip.tooltip(crate::glass_ui::tip(name.clone()))
+            })
+            .when(!compact, |chip| {
+                chip.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        // The two lines close together: the type's own leading spread them apart.
+                        .gap(px(1.))
+                        .line_height(gpui::relative(1.15))
+                        .min_w_0()
+                        .max_w(px(160.))
+                        .child(
+                            div()
+                                .truncate()
+                                .text_size(px(tokens::BODY))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(rgb(palette().chrome_text))
+                                .child(name),
+                        )
+                        .child(
+                            div()
+                                .truncate()
+                                .text_size(px(tokens::CAPTION))
+                                .text_color(rgb(palette().chrome_muted))
+                                .child(tr("Microsoft account")),
+                        ),
+                )
+            })
             .child(crate::glass_ui::icon(
                 "arrow-down-01",
                 14.,

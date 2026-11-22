@@ -52,6 +52,8 @@ pub enum Msg {
     },
     /// The exit worker has tried to save the completed profile's play time.
     PlayRecorded,
+    /// The exit worker finished, including the profile's post-exit command.
+    GameExitSettled,
     /// The worker checked the game's journal for the selected profile before Play changed it.
     PlayAdmission(
         PathBuf,

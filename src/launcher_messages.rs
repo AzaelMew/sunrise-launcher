@@ -241,6 +241,7 @@ impl Launcher {
                     }
                 }
                 Msg::PlayRecorded => self.reload_instances(),
+                Msg::GameExitSettled => self.finishing_game -= 1,
                 Msg::PlayAdmission(home, result) => {
                     let Some(intent) = self.play_admission.take() else {
                         continue;
@@ -398,19 +399,22 @@ impl Launcher {
                 Msg::Updates(updates) => {
                     self.checking_updates = false;
                     self.launcher_checked_now = None;
+                    let mut updates = *updates;
                     if let Some(error) = &updates.launcher_error {
                         settings::log_launcher_check_failure(error, |line| eprintln!("{line}"));
+                        // A network error doesn't take back the update we already verified.
+                        updates.launcher = self.updates.launcher.take();
+                    } else {
+                        self.note_launcher_offer(updates.launcher.as_ref());
                     }
-                    self.updates = *updates;
-                    if let Some(release) = self.updates.launcher.clone() {
-                        self.update_launcher(release);
-                    }
+                    self.updates = updates;
                 }
                 Msg::LauncherChecked(result) => {
                     self.checking_updates = false;
                     self.launcher_checked_now = result.is_ok().then(Instant::now);
                     match *result {
                         Ok(release) => {
+                            self.note_launcher_offer(release.as_ref());
                             self.updates.launcher = release;
                             self.updates.launcher_error = None;
                         }
@@ -513,19 +517,7 @@ impl Launcher {
                         *f = p;
                     }
                 }
-                Msg::LauncherUpdated(result) => {
-                    let version = match &self.self_update {
-                        SelfUpdate::Downloading(v, _) => v.clone(),
-                        _ => String::new(),
-                    };
-                    self.self_update = match result {
-                        Ok(staged) => {
-                            sunrise_launcher::update_handoff::set_pending(staged);
-                            SelfUpdate::Ready(version)
-                        }
-                        Err(e) => SelfUpdate::Failed(e),
-                    };
-                }
+                Msg::LauncherUpdated(result) => self.launcher_update_finished(result),
                 // Old versions log their session; it never reaches the window.
                 Msg::Line(_, line) if line.contains("Session ID is") => {}
                 Msg::Line(job, line) => {
@@ -546,6 +538,7 @@ impl Launcher {
                     }
                 }
                 Msg::ClientObservationLost(error) => {
+                    self.restart_for_launcher_update = false;
                     self.client = None;
                     self.client_run = None;
                     self.client_started = None;
@@ -597,6 +590,7 @@ impl Launcher {
                             self.game_packs.stale();
                             let mut other_profile = None;
                             if let Some((played, started)) = self.client_run.take() {
+                                self.finishing_game += 1;
                                 if self.selected_instance().is_some_and(|selected| {
                                     selected.id != played.id
                                         || selected.incarnation != played.incarnation
@@ -625,6 +619,7 @@ impl Launcher {
                                         );
                                         let _ = tx.send(Msg::PlayRecorded);
                                     }
+                                    let _ = tx.send(Msg::GameExitSettled);
                                 });
                             }
                             // The run's own game folder: an instance's or a pack's keeps its reports.
@@ -633,6 +628,10 @@ impl Launcher {
                                 .client_started
                                 .take()
                                 .and_then(|since| backend::crash_report_since(&home, since));
+                            // Don't restart over a crash report (even if the download is still running).
+                            if error.is_some() || report.is_some() {
+                                self.restart_for_launcher_update = false;
+                            }
                             let switched = if error.is_some() && report.is_none() {
                                 self.switched_from_vulkan()
                             } else {
@@ -719,6 +718,7 @@ impl Launcher {
             self.check_updates(UpdateCheck::Scheduled);
             changed = true;
         }
+        self.restart_launcher_if_ready(cx);
         if changed {
             cx.notify();
         }

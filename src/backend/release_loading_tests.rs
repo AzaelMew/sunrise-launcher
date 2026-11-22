@@ -53,7 +53,7 @@ fn shared(
         load,
         installed_fixture,
         Some(Stable),
-        || Ok(Vec::new()),
+        || Ok(None),
         |r| releases = Some(r.unwrap()),
     );
     (releases.unwrap(), updates)
@@ -77,13 +77,53 @@ fn one_response_preserves_both_startup_results() {
     );
 }
 
-fn newer_launcher() -> Vec<Release> {
-    parse_launcher_releases(
+fn newer_launcher() -> Option<Release> {
+    launcher_update(&parse_launcher_releases(
         &[serde_json::json!({"tag_name": "v99.0.0", "assets": [{
             "name": LAUNCHER_ASSET.unwrap_or("unsupported"), "browser_download_url": "u", "size": 1
         }]})],
         LAUNCHER_ASSET,
-    )
+    ))
+}
+
+#[test]
+fn an_update_offer_requires_a_signed_manifest_for_its_platform() {
+    use sunrise_launcher_release_verify::{launcher_message, sha256_hex, sums_file, SigningKey};
+    let tag = "v99.0.0";
+    let asset = "launcher-fixture.tar.gz";
+    let list = [serde_json::json!({"tag_name": tag, "assets": [{"name": asset, "size": 1}]})];
+    let (key, _) = SigningKey::generate().unwrap();
+    let keys = [key.public()];
+    let sums = sums_file(&[(asset.into(), sha256_hex(b"launcher"))]);
+    let signature = key.sign_bytes(&launcher_message(tag, sums.as_bytes()));
+    let signed = |url: &str| {
+        Ok(Some(
+            if url.ends_with(".sig") {
+                signature.as_bytes()
+            } else {
+                sums.as_bytes()
+            }
+            .to_vec(),
+        ))
+    };
+    assert_eq!(
+        signed_launcher_offer(&list, asset, &keys, signed)
+            .unwrap()
+            .unwrap()
+            .tag,
+        tag
+    );
+    assert!(signed_launcher_offer(&list, asset, &keys, |_| Ok(None)).is_err());
+    assert!(
+        signed_launcher_offer(&list, asset, &keys, |_| Ok(Some(sums.as_bytes().to_vec()))).is_err()
+    );
+    assert!(
+        signed_launcher_offer(&list, "different-platform.tar.gz", &keys, |_| panic!(
+            "no manifest needed"
+        ))
+        .unwrap()
+        .is_none()
+    );
 }
 
 #[test]
@@ -177,7 +217,7 @@ fn empty_or_prebuilt_only_fork_has_no_game_or_launcher_update() {
             || Ok(list),
             Vec::new,
             Some(Stable),
-            || Ok(Vec::new()),
+            || Ok(None),
             |result| games = Some(result.unwrap()),
         );
         assert!(games.unwrap().is_empty());

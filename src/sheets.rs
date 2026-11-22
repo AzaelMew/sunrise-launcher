@@ -37,6 +37,7 @@ pub(crate) enum Sheet {
     BuildChanges,
     /// Who plays, under the account chip (`account_chip`).
     AccountMenu,
+    LauncherUpdate,
     Search,
     /// The build window (`mods::build_modal`): closing it leaves the build running.
     ModBuild,
@@ -521,6 +522,7 @@ impl Launcher {
             Some(Sheet::Switching) => Some(self.switch_sheet(cx)),
             Some(Sheet::BuildChanges) => self.switch_receipt_sheet(cx),
             Some(Sheet::AccountMenu) => self.account_menu(cx),
+            Some(Sheet::LauncherUpdate) => self.launcher_update_sheet(cx),
             Some(Sheet::Search) => Some(self.command_search(cx)),
             Some(Sheet::RegistryPlay) => match self.registry_stage() {
                 Some(stage) => {
