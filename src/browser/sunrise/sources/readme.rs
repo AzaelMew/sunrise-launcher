@@ -218,24 +218,32 @@ fn parser(markdown: &str) -> Parser<'_> {
 fn strip_html(markdown: String) -> String {
     let mut clean = String::with_capacity(markdown.len());
     let mut next = 0;
-    // The parser hands over block HTML a line at a time: read each run of HTML as one fragment.
+    // The parser hands over block HTML a line at a time: read each block as one fragment.
     let mut fragment = String::new();
+    let mut in_block = false;
     for (event, span) in parser(&markdown).into_offset_iter() {
-        let html = match &event {
-            Event::Html(html) | Event::InlineHtml(html) => html,
+        let (html, inline) = match &event {
+            Event::Start(Tag::HtmlBlock) => {
+                in_block = true;
+                continue;
+            }
+            Event::End(TagEnd::HtmlBlock) => {
+                in_block = false;
+                push_images(&mut clean, &mut fragment);
+                continue;
+            }
+            Event::Html(html) => (html, false),
+            Event::InlineHtml(html) => (html, true),
             _ => continue,
         };
         if next < span.start {
-            // Only text ends the fragment: the parser leaves out a CRLF's `\r`, and a blank line
-            // between HTML lines changes nothing.
-            let gap = &markdown[next..span.start];
-            if !gap.trim().is_empty() {
-                push_images(&mut clean, &mut fragment);
-            }
-            clean.push_str(gap);
+            clean.push_str(&markdown[next..span.start]);
         }
         next = next.max(span.end);
         fragment.push_str(html);
+        if inline || !in_block {
+            push_images(&mut clean, &mut fragment);
+        }
     }
     push_images(&mut clean, &mut fragment);
     clean.push_str(&markdown[next..]);
