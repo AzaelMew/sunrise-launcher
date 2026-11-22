@@ -1605,5 +1605,7 @@
   "Local connections only": "Только локальные подключения",
   "This server listens only on this computer.": "Сервер принимает подключения только с этого компьютера.",
   "Public IPv4 unavailable for this listener": "Подключение по внешнему IPv4 недоступно",
-  "No game address is available through Tailscale.": "Адрес игрового сервера в Tailscale недоступен."
+  "No game address is available through Tailscale.": "Адрес игрового сервера в Tailscale недоступен.",
+  "Friends you share this computer with can reach all of it, not only Minecraft.": "Друзья, которым вы предоставите доступ к этому компьютеру, смогут подключаться к любым его портам, включая порты других приложений.",
+  "The game port is unavailable, so Sunrise can't check access to that port.": "Игровой порт недоступен, поэтому Sunrise не может проверить доступ к нему."
 }

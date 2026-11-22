@@ -287,6 +287,25 @@ impl Launcher {
         }
 
         let idle = !self.internet.busy;
+        match &self.internet.policy {
+            Some(Ok((policy, _))) if tailscale::shares_entire_computer(policy) => {
+                d = d.child(warning(tr(
+                    "Friends you share this computer with can reach all of it, not only Minecraft.",
+                )));
+            }
+            Some(Err(e)) => {
+                d = d.child(hint(trf(
+                    "Couldn't read your access controls: {error}",
+                    &[("error", e)],
+                )));
+            }
+            _ => {}
+        }
+        if port.is_none() {
+            d = d.child(hint(tr(
+                "The game port is unavailable, so Sunrise can't check access to that port.",
+            )));
+        }
         d = d
             .child(
                 div()
@@ -397,14 +416,7 @@ impl Launcher {
                     port,
                 )
             }),
-            Some(Err(e)) => {
-                d = d.child(hint(trf(
-                    "Couldn't read your access controls: {error}",
-                    &[("error", e)],
-                )));
-                None
-            }
-            None => None,
+            _ => None,
         };
         if let Some((reach, policy, etag, port)) = reach {
             let at = format!("{ip}:{port}");
@@ -444,17 +456,13 @@ impl Launcher {
                                 ))),
                         )
                 }
-                Reach::Everything => div()
-                    .child(crate::selectable::selectable(tr(
-                        "Friends you share this computer with can reach all of it, not only Minecraft (Tailscale's default).",
-                    )))
-                    .child(div().flex().child(self.share_button(
-                        "share-limit",
-                        tr("Limit them to Minecraft…"),
-                        idle,
-                        cx,
-                        |this, _| this.internet.confirm_limit = true,
-                    ))),
+                Reach::Everything => div().flex().child(self.share_button(
+                    "share-limit",
+                    tr("Limit them to Minecraft…"),
+                    idle,
+                    cx,
+                    |this, _| this.internet.confirm_limit = true,
+                )),
                 Reach::ServerOnly => {
                     let undo = tailscale::unlimit_shared(&policy, ip, port);
                     div().child(
