@@ -92,6 +92,8 @@ struct Pick {
     input: PickInput,
     selected: BTreeSet<String>,
     error: Option<FormError>,
+    /// The error's own words show (Show details).
+    details: bool,
 }
 
 impl Pick {
@@ -105,6 +107,7 @@ impl Pick {
             input,
             selected,
             error: None,
+            details: false,
         }
     }
 
@@ -373,12 +376,9 @@ impl Launcher {
                     if let Some(failure) = failure {
                         self.github.pending_failure = Some(failure);
                     }
-                    let message = if detail.is_empty() {
-                        line
-                    } else {
-                        format!("{line}\n{detail}")
-                    };
-                    self.mods.message = Some(Err(message));
+                    // The notice says what it means; the checker's words stay with the form,
+                    // behind Show details, when the player opens it again.
+                    self.mods.message = Some(Err(line));
                 }
             }
         }
@@ -661,6 +661,22 @@ impl Launcher {
                                     .child(error.line.clone()),
                             )
                             .children((!error.detail.is_empty()).then(|| {
+                                div().flex().child(
+                                    crate::frame::button(
+                                        "github-pick-details",
+                                        crate::mods::refused::details_label(pick.details),
+                                    )
+                                    .on_click(cx.listener(
+                                        |this, _: &ClickEvent, _, cx| {
+                                            if let Stage::Pick(pick) = &mut this.github.stage {
+                                                pick.details ^= true;
+                                            }
+                                            cx.notify();
+                                        },
+                                    )),
+                                )
+                            }))
+                            .children((pick.details && !error.detail.is_empty()).then(|| {
                                 crate::mods::refused::details_box(
                                     "github-pick-error-detail",
                                     error.detail.clone(),
@@ -853,6 +869,30 @@ impl Launcher {
 pub(crate) mod tests {
     use super::*;
     use sunrise_launcher_smod::{index, Package};
+
+    #[test]
+    fn a_refused_github_source_says_what_it_means_and_keeps_the_checkers_words_for_details() {
+        let fit = pasted_source_error(
+            "Jade",
+            SourceError::DoesNotFit("jade pins build ed3ac19 and carries no list".into()),
+        );
+        assert!(fit
+            .line
+            .starts_with("Jade isn't ready for your game version yet."));
+        assert_eq!(fit.detail, "jade pins build ed3ac19 and carries no list");
+        assert!(!fit.retry);
+
+        let raw = pasted_source_error(
+            "Jade",
+            SourceError::Unproved("Permission denied: /home/someone/profile".into()),
+        );
+        assert_eq!(raw.line, "Sunrise couldn't add Jade.");
+        assert!(!raw.line.contains("/home/"));
+
+        let offline =
+            pasted_source_error("Jade", SourceError::Github(Failure::Offline("dns".into())));
+        assert!(offline.retry);
+    }
 
     pub(crate) fn checked_subset(target: GithubTarget) -> Arc<GithubInput> {
         let release = "https://github.com/fixture/add/releases/download/v1";

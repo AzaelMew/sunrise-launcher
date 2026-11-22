@@ -20,6 +20,8 @@ pub(in crate::mods) struct Open {
     pub(super) scope: OpenScope,
     pub(super) request: u64,
     pub(super) inspection: Option<Inspection>,
+    /// Add was pressed after a refusal: add the source once it has been read again.
+    pub(super) add_when_read: bool,
 }
 
 pub(in crate::mods) struct Inspection {
@@ -48,6 +50,7 @@ pub(in crate::mods) struct Work {
 
 impl Launcher {
     pub(in crate::mods) fn nightly_event(&mut self, event: Event) {
+        let mut add = false;
         let state = &mut self.ui.mods.nightly;
         match event {
             Event::Catalogue(catalogue) => {
@@ -95,6 +98,7 @@ impl Launcher {
                     state.work.card_pins.remove(&open.source);
                 }
                 open.inspection = Some(*detail);
+                add = std::mem::take(&mut open.add_when_read);
             }
             Event::Image(image, path) => {
                 state.work.images.insert(image, Some(path));
@@ -106,6 +110,18 @@ impl Launcher {
                 state.work.checking = false;
                 state.work.updates = Some(*checked);
             }
+        }
+        if add {
+            self.build_nightly();
+        }
+    }
+
+    /// Add after a refusal: the author may have fixed the source since, so it is read again
+    /// first, and added at the commit that read finds.
+    pub(in crate::mods) fn reread_and_add(&mut self, source: Source) {
+        self.inspect_nightly(source, true);
+        if let Some(open) = &mut self.ui.mods.nightly.open {
+            open.add_when_read = true;
         }
     }
 
@@ -166,6 +182,7 @@ impl Launcher {
             scope,
             request,
             inspection: None,
+            add_when_read: false,
         });
         if refresh {
             self.read_nightly_catalogue(true);

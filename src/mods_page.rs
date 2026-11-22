@@ -189,8 +189,10 @@ impl Launcher {
             self.show_github_result(feedback);
         }
         // The profile that asked hears why at once; another one finds it on the mod's page.
-        if let Some((home, refused)) = refused_here {
-            if self.selected_instance().is_some_and(|i| i.home == home) {
+        if let Some((profile, refused)) = refused_here {
+            if self.selected_instance().is_some_and(|i| {
+                i.home == profile.home && i.id == profile.id && i.incarnation == profile.incarnation
+            }) {
                 self.open_refused(refused);
             }
         }
