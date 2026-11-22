@@ -584,9 +584,10 @@ frames, those that took longer than a refresh. An animation inside the launcher'
 that whole view each frame; one in a view of its own (`cx.new`, as Home's corner blocks) redraws
 only itself.
 
-Long lists on Mods (results, installed entries, coverage reports and project versions), Versions
-and Patch notes build only nearby rows, including on their first frame. Variable row heights
-are measured as they enter view; hidden ranges share spacers in the existing page scrollbar.
+Mods › Installed, Home's worlds and the build picker build only nearby rows, including on their
+first frame. Installed's rows (`cull.rs`) have variable heights, measured as they enter view; hidden
+ranges share spacers in the existing page scrollbar. Discover's cards are built a page at a time
+("Show more"), all of them once shown.
 On Windows, `cargo test --bin sunrise-launcher desktop_list_renders_the_viewport_after_scrollbar_jumps
 -- --ignored` checks 10,000 rows of different heights in a real GPUI window (requires an awake desktop/GPU).
 

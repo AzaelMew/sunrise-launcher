@@ -457,36 +457,71 @@ impl Launcher {
             self.source_update_notice(None)
                 .map(|notice| note(notice.to_owned()).p(px(10.))),
         );
+        // Collection headings, gaps and rows in one flat list, so only those near the
+        // screen are built: a big pack has hundreds of rows, each with its own controls.
+        enum Item<'a> {
+            Head(&'a str, usize),
+            Gap,
+            /// Index into `rows`, and the row's place among the rows shown.
+            Row(usize, usize),
+        }
+        let mut items = Vec::new();
         let mut n = 0;
         for (collection, group) in model::installed_groups(&rows, &visible) {
             if let Some(title) = collection {
-                let head = div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .px(px(14.))
-                    .min_h(px(tokens::FIELD))
-                    .bg(c(palette().background))
-                    .child(
-                        div()
-                            .text_size(px(tokens::CAPTION))
-                            .text_color(c(palette().muted))
-                            .child(crate::selectable::selectable(trf(
-                                "{title} · {count}",
-                                &[("title", title), ("count", &group.len().to_string())],
-                            ))),
-                    );
-                list = list.child(head);
+                items.push(Item::Head(title, group.len()));
             } else if n != 0 {
                 // A gap ends the previous collection without giving loose mods a heading.
-                list = list.child(div().h(px(12.)).bg(c(palette().background)));
+                items.push(Item::Gap);
             }
             for &i in group {
-                let r = rows[i].clone();
-                list = list.child(self.row(n, r, labels[i].clone(), shown.clone(), busy, cx));
+                items.push(Item::Row(i, n));
                 n += 1;
             }
         }
+        let cull = self.mods.installed_list.clone();
+        let scroll = crate::frame::scrolls("installed");
+        list = list.child(cull.column(
+            &scroll,
+            items.len(),
+            0.,
+            |_| false,
+            |k| {
+                match items[k] {
+                    Item::Head(title, count) => div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .px(px(14.))
+                        .min_h(px(tokens::FIELD))
+                        .bg(c(palette().background))
+                        .child(
+                            div()
+                                .text_size(px(tokens::CAPTION))
+                                .text_color(c(palette().muted))
+                                .child(crate::selectable::selectable(trf(
+                                    "{title} · {count}",
+                                    &[("title", title), ("count", &count.to_string())],
+                                ))),
+                        )
+                        .into_any_element(),
+                    Item::Gap => div()
+                        .h(px(12.))
+                        .bg(c(palette().background))
+                        .into_any_element(),
+                    Item::Row(i, n) => self
+                        .row(
+                            n,
+                            rows[i].clone(),
+                            labels[i].clone(),
+                            shown.clone(),
+                            busy,
+                            cx,
+                        )
+                        .into_any_element(),
+                }
+            },
+        ));
         if visible.is_empty() && refresh_ready {
             list = list.child(
                 div()
