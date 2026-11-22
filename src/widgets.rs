@@ -326,11 +326,42 @@ pub(crate) fn button(
 /// Copies to the clipboard, or into `SUNRISE_LAUNCHER_CLIPBOARD` when a test run sets it
 /// (`sunrise_launcher::desktop_seams`).
 pub(crate) fn copy_to_clipboard(cx: &mut App, item: gpui::ClipboardItem) {
-    match item.text() {
-        Some(text) => glass_toast::say_with("Copied {text}", &text),
+    match item.text().as_deref().map(copied) {
+        Some(Copied::Text(shown)) => glass_toast::say_with("Copied {text}", &shown),
+        Some(Copied::Lines(n)) => {
+            glass_toast::say(trf("Copied {count} lines", &[("count", &n.to_string())]))
+        }
         None => glass_toast::say(tr("Copied the picture")),
     }
     copy_quietly(cx, item);
+}
+
+/// The longest copy the toast repeats in full; a longer line ends in an ellipsis.
+const COPIED_SHOWN: usize = 64;
+
+/// What the toast says about a copy.
+#[derive(Debug, PartialEq)]
+enum Copied {
+    /// One line, as copied or cut short.
+    Text(String),
+    /// More than one: a build log would fill the window, so only their count.
+    Lines(usize),
+}
+
+fn copied(text: &str) -> Copied {
+    let text = text.trim();
+    let lines = text.lines().count();
+    if lines > 1 {
+        return Copied::Lines(lines);
+    }
+    if text.chars().nth(COPIED_SHOWN).is_none() {
+        return Copied::Text(text.to_string());
+    }
+    let end = text
+        .char_indices()
+        .nth(COPIED_SHOWN - 1)
+        .map_or(text.len(), |(i, _)| i);
+    Copied::Text(format!("{}…", text[..end].trim_end()))
 }
 
 /// Copies like [`copy_to_clipboard`] without its toast, for a button that shows the copy itself.
@@ -537,5 +568,25 @@ pub(crate) fn progress_bar(fraction: Option<(f32, f32)>, t: &Theme) -> Div {
                 |d, p| d.left(relative(-0.3 + 1.3 * p)),
             ),
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_copy_shows_in_the_toast_only_while_it_fits_on_a_line() {
+        assert_eq!(copied("AB12-CD\n"), Copied::Text("AB12-CD".into()));
+        let long = "x".repeat(200);
+        assert_eq!(
+            copied(&long),
+            Copied::Text(format!("{}…", "x".repeat(COPIED_SHOWN - 1)))
+        );
+        assert_eq!(
+            copied("é".repeat(COPIED_SHOWN).as_str()),
+            Copied::Text("é".repeat(COPIED_SHOWN))
+        );
+        assert_eq!(copied("error: one\n  two\n\nthree\n"), Copied::Lines(4));
     }
 }
