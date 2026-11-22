@@ -9,7 +9,7 @@ tend to get wrong here.
 - Start from a fresh base: `git fetch origin` and branch from `origin/main`. Don't build on a
   stale `main`.
 - Sign off every commit (`git commit -s`). The DCO check fails a PR without it;
-  `git rebase --signoff origin/main` fixes a branch.
+  `git rebase --signoff origin/main` fixes your own commits (not someone else's).
 - Never push to `main`, force-push it, or move or delete release tags. `main` only changes
   through PRs, and each one needs a code owner's approval.
 - One concern per PR. A move or rename goes in its own PR, with no behaviour change, so a
@@ -20,13 +20,16 @@ tend to get wrong here.
 
 ## Before you open a PR
 
-Run what CI runs (`.github/workflows/ci.yml`; the Rust version is in `tools/ci/rust-version`):
+A local checklist (the Rust version is in `tools/ci/rust-version`):
 
     cargo fmt --all --check
     cargo clippy --all-targets --locked -- -D warnings
     cargo test --locked --workspace --lib --bins
-    cargo test --locked --test developer_install --test storage_consent
-    cargo test --locked --workspace --doc
+
+`.github/workflows/ci.yml` is the full, platform-specific list. It also runs the Play, game
+relay, lifecycle and modpack fence fixtures everywhere, `developer_install` and
+`storage_consent` only on Windows, doc tests only on Linux, and the release signing tests on
+Linux and macOS. Run the ones your change touches.
 
 - The full `cargo test` takes a while, and the `storage` tests alone take about 90 s. A slow test
   isn't a hung one; wait for it to finish before deciding.
@@ -36,10 +39,10 @@ Run what CI runs (`.github/workflows/ci.yml`; the Rust version is in `tools/ci/r
 
 ## The PR description
 
-Follow [the PR template](.github/pull_request_template.md):
+Follow the PR template (`.github/pull_request_template.md`):
 
-- **First line:** say who you are, e.g.
-  `> 🤖 Opened by <name>'s AI agent (<tool, model>), not by <name> personally.`
+- **First line:** the disclosure that applies to you, saying who opened the PR and on whose
+  behalf, e.g. `> 🤖 Opened by <name>'s AI agent, not by <name> personally.`
 - **What changed** and **Why**. For a bug, include the cause and how you found it, not only the
   fix.
 - **Self-check:** the exact head SHA, the commands you ran and on which OS, what you tried in
@@ -54,17 +57,23 @@ Follow [the PR template](.github/pull_request_template.md):
 
 ## Running the launcher
 
-- Point test runs at a scratch home: `SUNRISE_LAUNCHER_HOME=<temp dir>`, plus
-  `SUNRISE_LAUNCHER_NO_SELF_UPDATE=1`. Never write into the player's real data folder.
-  `tools/lab.py` (`game_env`) sets up a full scratch environment for scripts.
+- Point test runs at scratch folders, never the player's real data:
+  `SUNRISE_LAUNCHER_HOME` and `SUNRISE_HOME` each set to a fresh temp dir,
+  `SUNRISE_LAUNCHER_LOCATION_FILE` set to a scratch path, plus
+  `SUNRISE_LAUNCHER_NO_SELF_UPDATE=1`. With only the launcher home set, the game folder still
+  resolves to the player's (No AI writes its `sunrise-extras.txt` there), and startup takes the
+  migration lock beside the real location file. `tools/lab.py` (`game_env`) sets up a scratch
+  environment for scripts, but it keeps home overrides you've already exported.
 - Judge performance only in a release build (`cargo build --release`). A debug build stutters on
   its own.
 - To measure frames: `cargo build --release --features frame-stats`, then run with
   `SUNRISE_LAUNCHER_FRAME_OVERLAY=1`. `sunrise-launcher benchmark` and the session log in
   `benchmarks/` are covered in the README's "Performance log".
-- GPUI caps a window to one frame per 33 ms while it's unfocused and under the system's
-  power-saver profile (`WindowOptions` in `src/startup.rs`). A 60 Hz display rounds that up to
-  ~21 fps. If an animation looks choppy, rule these out before tuning curves.
+- GPUI caps an unfocused window to one frame per 33 ms (~21 fps on a 60 Hz display), except in
+  benchmark mode (`WindowOptions` in `src/startup.rs`). The main window opts out of GPUI's
+  whole-window power-saver cap; instead, repeating effects (a shuttle, a pulse, rain) hold
+  themselves back while the system saves power (`motion::endless`). If an animation looks
+  choppy, rule these out before tuning curves.
 - Under reduced motion nothing animates: use `motion::eased` and `motion::still()` (`src/motion.rs`)
   rather than raw GPUI animations.
 
