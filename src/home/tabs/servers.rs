@@ -77,7 +77,7 @@ impl Launcher {
         Content {
             count: Some(count),
             manage: (count > 0).then_some(manage),
-            extra: None,
+            turned_off: 0,
             items,
         }
     }

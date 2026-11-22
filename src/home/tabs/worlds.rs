@@ -58,7 +58,7 @@ impl Launcher {
         Content {
             count,
             manage: None,
-            extra: None,
+            turned_off: 0,
             items,
         }
     }

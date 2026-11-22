@@ -1,6 +1,7 @@
 //! A fixed panel; only the selected collection owns a vertical viewport.
 use super::*;
 use crate::frame::Page;
+use crate::mods::Installed;
 use gpui::{ScrollHandle, StatefulInteractiveElement};
 
 mod scrollbar;
@@ -101,7 +102,7 @@ impl Tabs {
 
 pub(crate) struct Content {
     pub(crate) count: Option<usize>,
-    pub(crate) extra: Option<Stateful<Div>>,
+    pub(crate) turned_off: usize,
     pub(crate) manage: Option<Stateful<Div>>,
     pub(crate) items: Div,
 }
@@ -256,13 +257,38 @@ impl Launcher {
         let Content {
             count,
             manage,
-            extra,
+            turned_off,
             items,
         } = match active {
             Tab::Servers => self.home_servers(instance, compact, cx),
             Tab::Worlds => self.home_worlds(instance, window, cx),
             Tab::Packs | Tab::Mods => self.home_installed_tab(active == Tab::Packs, cx),
         };
+        let count = count.map(|count| {
+            if turned_off > 0 {
+                trf("{count} enabled", &[("count", &count.to_string())])
+            } else {
+                active.count(count)
+            }
+        });
+        let off_link = (turned_off > 0).then(|| {
+            div()
+                .id("home-off-mods")
+                .reach()
+                .min_w_0()
+                .truncate()
+                .cursor_pointer()
+                .underline()
+                .hover(|s| s.text_color(rgb(palette().text)))
+                .child(trf(
+                    "{count} turned off",
+                    &[("count", &turned_off.to_string())],
+                ))
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.open_installed(Installed::ModsOff);
+                    cx.notify();
+                }))
+        });
         let view = &self.ui.home.tabs.views[active.index()];
         let scroll = view.scroll.clone();
         crate::frame::scrolls_with(&scroll);
@@ -307,13 +333,19 @@ impl Launcher {
                     .child(
                         div()
                             .flex()
+                            .flex_1()
                             .items_center()
                             .min_w_0()
-                            .gap(px(10.))
-                            .children(count.map(|count| muted(active.count(count)).truncate()))
-                            .children(extra),
+                            .gap(px(5.))
+                            .text_size(px(tokens::SMALL))
+                            .text_color(rgb(palette().muted))
+                            .children(count.map(|label| div().min_w_0().truncate().child(label)))
+                            .when(off_link.is_some(), |d| {
+                                d.child(div().flex_none().child("·"))
+                            })
+                            .children(off_link),
                     )
-                    .children(manage),
+                    .children(manage.map(|button| button.flex_none())),
             )
             .child(
                 div()

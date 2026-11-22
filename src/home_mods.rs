@@ -512,7 +512,7 @@ impl Launcher {
         let Some(snapshot) = self.ui.home.mods.snapshot.clone() else {
             return Content {
                 count: None,
-                extra: None,
+                turned_off: 0,
                 manage: Some(manage),
                 items: div(),
             };
@@ -522,17 +522,7 @@ impl Launcher {
         } else {
             &snapshot.tabs.mods
         };
-        let off = if packs { 0 } else { snapshot.tabs.mods_off };
-        let extra = (off > 0).then(|| {
-            button(
-                "home-off-mods",
-                trf("{count} turned off", &[("count", &off.to_string())]),
-            )
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.open_installed(Installed::ModsOff);
-                cx.notify();
-            }))
-        });
+        let turned_off = if packs { 0 } else { snapshot.tabs.mods_off };
         if list.is_empty() {
             let items = if packs {
                 tabs::empty(
@@ -548,7 +538,7 @@ impl Launcher {
                         )),
                     ),
                 )
-            } else if off == 0 {
+            } else if turned_off == 0 {
                 tabs::empty(
                     "puzzle",
                     tr("No mods yet"),
@@ -572,8 +562,8 @@ impl Launcher {
             };
             return Content {
                 count: Some(0),
-                extra,
-                manage: (off > 0).then_some(manage),
+                turned_off,
+                manage: (turned_off > 0).then_some(manage),
                 items,
             };
         }
@@ -673,7 +663,7 @@ impl Launcher {
         }
         Content {
             count: Some(list.len()),
-            extra,
+            turned_off,
             manage: Some(manage),
             items: place(rows),
         }
