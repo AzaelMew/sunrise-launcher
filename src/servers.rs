@@ -453,9 +453,12 @@ fn publish_host_runtime(dir: &Path, resources: Option<&Path>) -> Result<(), Stri
         Some(path) => path,
         None => {
             let probed = match engine_command(dir) {
+                // A live supervisor handles the verb itself, even if the installed release
+                // cannot describe a ready engine or still needs its own resources prepared.
+                Ok(Some((_, resources))) if resources.pending && status(dir).running() => {
+                    return Ok(());
+                }
                 Ok(probed) => probed,
-                // A supervisor that already runs answers the verb itself; the probe only
-                // serves a start that publishes leases first, and no start is made here.
                 Err(_) if status(dir).running() => return Ok(()),
                 Err(problem) => return Err(problem.message),
             };
@@ -562,10 +565,9 @@ fn prepare_host_resources(
     run(dir, &["init", "--yes"])?;
     match engine_command(dir)? {
         Some((engine, resources)) if !resources.pending => Ok((engine, resources.path)),
-        _ => Err(Problem {
-            message: tr("The server's game files are still not prepared.").into(),
-            fix: Some(Fix::Prepare),
-        }),
+        _ => Err(Problem::plain(tr(
+            "The server's game files are still not prepared.",
+        ))),
     }
 }
 

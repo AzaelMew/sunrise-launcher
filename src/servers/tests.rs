@@ -405,7 +405,9 @@ esac
     ] {
         let flag = server.join(mode);
         fs::write(&flag, []).unwrap();
-        assert_eq!(start().unwrap_err().message, error);
+        let problem = start().unwrap_err();
+        assert_eq!(problem.message, error);
+        assert!(problem.fix.is_none());
         assert_eq!(fs::read_to_string(&trace).unwrap(), verbs);
         assert!(!resources.exists());
         assert!(!release.join(".installed").exists());
