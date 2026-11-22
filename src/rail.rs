@@ -4,8 +4,9 @@ use crate::{
     frame::{Page, Reach},
     paint::palette,
 };
-use gpui::rgb;
-use instances::{Icon, Instance};
+use gpui::{rgb, MouseButton, MouseDownEvent};
+use instances::{Icon, Instance, Kind};
+use std::{cell::Cell, rc::Rc};
 
 /// How wide the sidebar is, open or closed.
 pub(crate) fn rail_width(open: bool) -> f32 {
@@ -63,13 +64,17 @@ impl Launcher {
             .is_some_and(|i| i.id == instance.id)
         {
             self.select_instance(instance);
-            self.client_error = None;
-            self.prepare_error = None;
-            self.install_error = None;
-            self.crash = None;
+            self.clear_profile_notices();
         }
         self.navigate(Page::Home);
         cx.notify();
+    }
+
+    pub(super) fn clear_profile_notices(&mut self) {
+        self.client_error = None;
+        self.prepare_error = None;
+        self.install_error = None;
+        self.crash = None;
     }
 
     pub(super) fn profile_mark(&mut self, i: &Instance, size: f32) -> Div {
@@ -229,17 +234,67 @@ impl Launcher {
             .track_scroll(&crate::frame::scrolls("sidebar"));
         for (n, i) in self.instances.list.clone().into_iter().enumerate() {
             let on = selected.as_ref() == Some(&i.id);
-            list = list.child(
-                row(
-                    ElementId::named_usize("sidebar-profile", n),
-                    i.name.clone(),
-                    on,
+            let deletable = i.kind == Kind::Own && !self.location_unavailable;
+            let more = on && deletable;
+            let profile = row(
+                ElementId::named_usize("sidebar-profile", n),
+                i.name.clone(),
+                on,
+            )
+            .child(self.profile_mark(&i, 28.))
+            .when(wide, |d| d.child(txt(i.name.clone())))
+            .when(wide && more, |d| d.pr(px(36.)))
+            .when(deletable, |d| {
+                let i = i.clone();
+                d.on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
+                        this.open_profile_menu(&i, f32::from(ev.position.y));
+                        cx.notify();
+                    }),
                 )
-                .child(self.profile_mark(&i, 28.))
-                .when(wide, |d| d.child(txt(i.name.clone())))
-                .when(lock.is_none(), |d| {
-                    d.on_click(cx.listener(move |this, _, _, cx| this.switch_profile(&i, cx)))
-                }),
+            });
+            let actions = more.then(|| {
+                let top = Rc::new(Cell::new(0.));
+                let read_top = top.clone();
+                let i = i.clone();
+                div()
+                    .id(SharedString::from(format!("profile-actions-{}", i.id)))
+                    .reach()
+                    .when(wide, |d| d.absolute().top(px(6.)).right(px(5.)).w(px(28.)))
+                    .h(px(28.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .cursor_pointer()
+                    .hover(|d| d.bg(rgb(p.chrome_raised)))
+                    .tooltip(crate::glass_ui::tip(tr("Profile actions")))
+                    .child(div().flex().gap(px(2.)).children(
+                        (0..3).map(|_| div().size(px(3.)).rounded_full().bg(rgb(p.chrome_text))),
+                    ))
+                    .child(
+                        gpui::canvas(
+                            move |bounds, _, _| top.set(f32::from(bounds.top())),
+                            |_, _, _, _| {},
+                        )
+                        .absolute()
+                        .inset_0(),
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.open_profile_menu(&i, read_top.get());
+                        cx.notify();
+                    }))
+            });
+            list = list.child(
+                div()
+                    .relative()
+                    .flex()
+                    .flex_col()
+                    .flex_none()
+                    .child(profile.when(lock.is_none(), |d| {
+                        d.on_click(cx.listener(move |this, _, _, cx| this.switch_profile(&i, cx)))
+                    }))
+                    .children(actions),
             );
         }
         let mut rail = div()

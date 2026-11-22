@@ -303,7 +303,7 @@ impl Launcher {
         }
     }
 
-    pub(in crate::mods) fn nightly_catalogue_current(&self) -> bool {
+    pub(crate) fn nightly_catalogue_current(&self) -> bool {
         self.ui.mods.nightly.catalogue.as_ref().is_some_and(|list| {
             list.saved_at.is_some()
                 && list.error.is_none()

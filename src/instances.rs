@@ -16,9 +16,11 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+mod deletion_recovery;
 pub(crate) mod lifecycle;
 use crate::managed_play::{Profile as ManagedProfile, ReferencePublication};
 use crate::profile_txn::{durable, Identity, NameGate};
+pub use deletion_recovery::{interrupted_deletions, InterruptedDeletion};
 use lifecycle::{initial_choices, GATES, INITIAL, RETIRED};
 
 /// The default instance's id: the game's home itself.
@@ -834,10 +836,10 @@ pub fn delete_with_selection(query: &str) -> Result<(Instance, Result<(), String
         &backend::data_dir(),
         query,
         &crate::desktop_seams::to_trash,
-    )?;
+    )
+    .map_err(|error| error.to_string())?;
     let mut settings = backend::Settings::load();
-    let saved = if settings.instance.as_ref() == Some(&gone.id) {
-        settings.instance = None;
+    let saved = if clear_deleted_selection(&mut settings, &gone.id) {
         settings.save()
     } else {
         Ok(())
@@ -846,22 +848,64 @@ pub fn delete_with_selection(query: &str) -> Result<(Instance, Result<(), String
     Ok((gone, saved))
 }
 
+/// Takes the same fallback as the command, without overwriting other live window settings.
+pub fn clear_deleted_selection(settings: &mut backend::Settings, id: &str) -> bool {
+    settings
+        .instance
+        .take_if(|selected| selected == id)
+        .is_some()
+}
+
+/// Move the exact folder shown in the window's confirmation, not a fresh lookup by slug.
+/// The caller saves its selection once the move settles.
+pub fn trash_confirmed(instance: Instance) -> Result<Instance, DeleteError> {
+    delete_selected(
+        &backend::game_home(),
+        &backend::data_dir(),
+        instance,
+        &crate::desktop_seams::to_trash,
+    )
+}
+
+#[derive(Debug)]
+pub struct DeleteError {
+    pub detail: String,
+    /// Set when the folder left its original path but could not reach the Trash.
+    pub retained: Option<InterruptedDeletion>,
+}
+
+impl From<String> for DeleteError {
+    fn from(detail: String) -> Self {
+        Self {
+            detail,
+            retained: None,
+        }
+    }
+}
+
+impl std::fmt::Display for DeleteError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(path) = &self.retained {
+            let folder = path.folder().to_string_lossy();
+            write!(
+                f,
+                "{}: {}",
+                crate::i18n::trf("The profile was kept in {folder}", &[("folder", &folder)]),
+                self.detail
+            )
+        } else {
+            f.write_str(&self.detail)
+        }
+    }
+}
+
 fn delete_in(
     game_home: &Path,
     data: &Path,
     query: &str,
     trash: &dyn Fn(&Path) -> Result<(), String>,
-) -> Result<Instance, String> {
+) -> Result<Instance, DeleteError> {
     let instance = find_in(&list_with_snapshot(game_home, data, false, || {}), query)?;
-    if instance.kind == Kind::Pack {
-        return Err(registry_pack::remove_unavailable());
-    }
-    if instance.kind == Kind::Default {
-        return Err(crate::i18n::trf(
-            "{name} is the game's own folder: it can't be deleted.",
-            &[("name", &instance.name)],
-        ));
-    }
     delete_selected(game_home, data, instance, trash)
 }
 
@@ -870,7 +914,17 @@ fn delete_selected(
     data: &Path,
     instance: Instance,
     trash: &dyn Fn(&Path) -> Result<(), String>,
-) -> Result<Instance, String> {
+) -> Result<Instance, DeleteError> {
+    if instance.kind == Kind::Pack {
+        return Err(registry_pack::remove_unavailable().into());
+    }
+    if instance.kind == Kind::Default {
+        return Err(crate::i18n::trf(
+            "{name} is the game's own folder: it can't be deleted.",
+            &[("name", &instance.name)],
+        )
+        .into());
+    }
     delete_selected_at(
         game_home,
         data,
@@ -886,7 +940,7 @@ fn delete_selected_at(
     instance: Instance,
     detach: impl FnOnce(&Path, &Path) -> std::io::Result<()>,
     trash: &dyn Fn(&Path) -> Result<(), String>,
-) -> Result<Instance, String> {
+) -> Result<Instance, DeleteError> {
     let work = &instance.work;
     let expected = instance.incarnation.ok_or_else(lifecycle::changed)?;
     let profile =
@@ -900,10 +954,14 @@ fn delete_selected_at(
     let root = game_home.canonicalize().map_err(|e| problem(&e))?;
     let retired = creation_parent(&root, RETIRED).map_err(|e| problem(&e))?;
     let private = tempfile::tempdir_in(&retired).map_err(|e| problem(&e))?;
+    let gone = private
+        .path()
+        .join(work.file_name().ok_or_else(lifecycle::changed)?);
+    let recovery = InterruptedDeletion::record(&retired, gone.clone(), instance.id.clone())
+        .map_err(|e| problem(&e))?;
     // From this point neither an ancillary error nor a destructor may empty the detached
     // folder. If Trash is unavailable, preserve the whole profile in the recovery folder.
-    let private = private.keep();
-    let gone = private.join(work.file_name().ok_or_else(lifecycle::changed)?);
+    let _ = private.keep();
     let detached = (|| {
         let _references = ReferencePublication::begin_at(data, game_home, profile.home())?;
         Store::mutate(data, |store| {
@@ -914,8 +972,8 @@ fn delete_selected_at(
                 return match durable::move_new_directory(&gone, work) {
                     Ok(()) => Err(changed),
                     Err(error) => Err(crate::i18n::trf(
-                        "The profile changed and could not be restored: {error}. Check {folder} for the detached profile.",
-                        &[("error", &error.to_string()), ("folder", &gone.to_string_lossy())],
+                        "The profile changed and could not be restored: {error}.",
+                        &[("error", &error.to_string())],
                     )),
                 };
             }
@@ -923,22 +981,9 @@ fn delete_selected_at(
             Ok(())
         })
     })();
-    if let Err(error) = detached {
-        let _ = fs::remove_dir(&private); // Never recursive: rename may already have won.
-        return Err(error);
-    }
-    let trashed = trash(&gone).map_err(|error| {
-        crate::i18n::trf(
-            "{name} was moved to {folder}, but could not go to the Trash: {error}",
-            &[
-                ("name", &instance.name),
-                ("folder", &gone.to_string_lossy()),
-                ("error", &error),
-            ],
-        )
-    });
-    let _ = fs::remove_dir(&private);
-    trashed?;
+    let trashed = detached.and_then(|()| trash(&gone));
+    let retained = recovery.retained();
+    trashed.map_err(|detail| DeleteError { retained, detail })?;
     Ok(instance)
 }
 
@@ -967,7 +1012,7 @@ pub fn selected() -> Instance {
 /// The saved selection when it names an instance that isn't listed any more: a pack an earlier
 /// launcher ported, or a setup it made for another game. Its folder is still there, untouched,
 /// but nothing here can use it.
-fn retired_in(all: &[Instance], saved: Option<&str>) -> Option<String> {
+pub fn retired_selection(all: &[Instance], saved: Option<&str>) -> Option<String> {
     let id = saved?;
     (!all.iter().any(|i| i.id == id)).then(|| id.to_string())
 }
@@ -978,11 +1023,6 @@ fn retired_message(id: &str) -> String {
         "The selected profile {name} was made by an earlier launcher and isn't supported any more. Its files are untouched. Choose another: sunrise-launcher instance select <name>",
         &[("name", name)],
     )
-}
-
-/// The saved selection when it is no longer an instance of this launcher.
-pub fn retired_selection() -> Option<String> {
-    retired_in(&list(), backend::Settings::load().instance.as_deref())
 }
 
 /// The message for a retired selection ([`retired_selection`]).
@@ -1005,7 +1045,7 @@ pub fn selection() -> Result<Instance, String> {
 }
 
 fn selection_in(all: &[Instance], saved: Option<&str>) -> Result<Instance, String> {
-    if let Some(id) = retired_in(all, saved) {
+    if let Some(id) = retired_selection(all, saved) {
         return Err(retired_message(&id));
     }
     Ok(saved
