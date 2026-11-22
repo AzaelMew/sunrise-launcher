@@ -384,6 +384,46 @@ impl Github {
         )
     }
 
+    /// A README attachment, `https://github.com/user-attachments/assets/<uuid>`. GitHub answers
+    /// with one redirect to a short-lived signed address on its asset host; that one redirect is
+    /// followed when it stays on GitHub's asset hosts, and nothing else is.
+    pub(super) fn attachment(
+        &self,
+        state: &mut State,
+        uuid: &str,
+        max: u64,
+    ) -> Result<Option<Vec<u8>>, Failure> {
+        let url = format!("https://github.com/user-attachments/assets/{uuid}");
+        if self.fixture.is_some() {
+            let fixture = Path::new("user-attachments").join(uuid);
+            return self.fetch(state, &url, &fixture, max);
+        }
+        self.ready(state, SystemTime::now())?;
+        let get = |url: &str| -> Result<ureq::Response, Failure> {
+            match crate::net::anonymous_get_no_redirect(url)
+                .map_err(Failure::Other)?
+                .timeout(REQUEST_TIMEOUT)
+                .call()
+            {
+                Ok(response) | Err(ureq::Error::Status(_, response)) => Ok(response),
+                Err(error) => Err(Failure::Offline(error.to_string())),
+            }
+        };
+        let first = get(&url)?;
+        let Some(location) = matches!(first.status(), 301 | 302 | 303 | 307 | 308)
+            .then(|| first.header("location"))
+            .flatten()
+            .filter(|location| readme::asset_redirect(location))
+        else {
+            return Ok(None);
+        };
+        let asset = get(location)?;
+        if asset.status() != 200 {
+            return Ok(None);
+        }
+        bounded(asset.into_reader(), max).map(Some).map_err(other)
+    }
+
     fn repository(&self, state: &mut State, repo: &str) -> Result<Repository, Failure> {
         let shown: Repository = self
             .api(state, repo, &[], None)?

@@ -65,10 +65,107 @@ fn only_eight_same_repository_pinned_images_can_be_loaded() {
     assert_eq!(images.len(), 8);
     assert_eq!(images[0].alt(), "First camp");
     assert_eq!(images[0].destination(), "media/first.png");
-    assert_eq!(images[0].path, "docs/media/first.png");
-    assert_eq!(images[1].path, "other.jpg");
-    assert_eq!(images[7].path, "media/5.webp");
+    assert_eq!(images[0].location, repo("docs/media/first.png"));
+    assert_eq!(images[1].location, repo("other.jpg"));
+    assert_eq!(images[7].location, repo("media/5.webp"));
     assert!(images.iter().all(|image| !image.allow_fetch));
+}
+
+fn repo(path: &str) -> Location {
+    Location::Repo(path.into())
+}
+
+const UUID: &str = "9e2ab0ff-bbf4-4f08-bed4-1e84f4f2c0f6";
+
+#[test]
+fn html_img_tags_become_images_under_the_same_rules_and_other_html_is_dropped() {
+    let markdown = format!(
+        "# Cam\n\n<img width=\"921\" alt=\"Zoom [view]\" src=\"https://github.com/user-attachments/assets/{UUID}\" />\n\
+         <IMG SRC='media/shot.png'>\n\n\
+         Inline <img src=https://raw.githubusercontent.com/{REPO}/{SHA}/a.png alt=x> text.\n\n\
+         <p><img src=\"https://example.test/track.png\"><b>bold</b></p>\n\n\
+         <img src=\"https://github.com/user-attachments/assets/{UUID}?x=1\">\n\n\
+         <img src=\"a b.png\"><img src=\"x>y.png\"><imgx src=\"no.png\">\n"
+    );
+    let readme = Saved {
+        path: "README.md".into(),
+        markdown,
+    }
+    .parse(REPO, SHA, true);
+    for tag in ["<img", "<IMG", "<p>", "<b>"] {
+        assert!(!readme.markdown().contains(tag), "{}", readme.markdown());
+    }
+    assert!(!readme.markdown().contains("bold"));
+    let images = readme.images();
+    let found: Vec<_> = images.iter().map(|i| (i.alt(), &i.location)).collect();
+    assert_eq!(
+        found,
+        [
+            ("Zoom [view]", &Location::Attachment(UUID.into())),
+            ("", &repo("media/shot.png")),
+            ("x", &repo("a.png")),
+        ]
+    );
+    assert_eq!(
+        images[0].destination(),
+        format!("https://github.com/user-attachments/assets/{UUID}")
+    );
+}
+
+#[test]
+fn only_github_attachment_ids_are_attachments() {
+    let at = |dest: &str| image_location(REPO, SHA, "README.md", dest);
+    assert_eq!(
+        at(&format!(
+            "https://github.com/user-attachments/assets/{UUID}"
+        )),
+        Some(Location::Attachment(UUID.into()))
+    );
+    for refused in [
+        "https://github.com/user-attachments/assets/".to_owned(),
+        format!("https://github.com/user-attachments/assets/{UUID}/x"),
+        format!("https://github.com/user-attachments/assets/{UUID}?raw=1"),
+        "https://github.com/user-attachments/assets/9e2ab0ff-bbf4-4f08-bed4".to_owned(),
+        "https://github.com/user-attachments/assets/zzzzzzzz-bbf4-4f08-bed4-1e84f4f2c0f6"
+            .to_owned(),
+        format!("http://github.com/user-attachments/assets/{UUID}"),
+        format!("https://github.com/user-attachments/files/{UUID}"),
+        format!("https://evil.test/user-attachments/assets/{UUID}"),
+        format!("https://raw.githubusercontent.com/someone/else/{SHA}/a.png"),
+        format!("https://github.com/someone/else/blob/{SHA}/a.png"),
+    ] {
+        assert_eq!(at(&refused), None, "{refused}");
+    }
+    assert_eq!(
+        at(&format!("https://github.com/{REPO}/blob/{SHA}/docs/a.png")),
+        Some(repo("docs/a.png"))
+    );
+}
+
+#[test]
+fn an_attachment_follows_one_redirect_only_to_github_asset_hosts() {
+    for allowed in [
+        "https://github-production-user-asset-6210df.s3.amazonaws.com/1/2.png?X-Amz-Expires=300",
+        "https://private-user-images.githubusercontent.com/1/2.png?jwt=x",
+        "https://objects.githubusercontent.com/a",
+    ] {
+        assert!(asset_redirect(allowed), "{allowed}");
+    }
+    for refused in [
+        "http://github-production-user-asset-6210df.s3.amazonaws.com/1.png",
+        "https://github-production-user-asset-.s3.amazonaws.com/1.png",
+        "https://evil.s3.amazonaws.com/1.png",
+        "https://github-production-user-asset-6210df.s3.amazonaws.com.evil.test/1.png",
+        "https://githubusercontent.com.evil.test/1.png",
+        "https://evilgithubusercontent.com/1.png",
+        "https://user@objects.githubusercontent.com/1.png",
+        "https://objects.githubusercontent.com:8443/1.png",
+        "https://github.com/user-attachments/assets/x",
+        "/relative.png",
+        "",
+    ] {
+        assert!(!asset_redirect(refused), "{refused}");
+    }
 }
 
 #[test]

@@ -1,5 +1,6 @@
-//! Pinned native Markdown and its optional same-repository images. Reading a README never loads
-//! an image: each typed image is fetched only when its rendering code needs it.
+//! Pinned native Markdown and its optional images: files of the same repository at the pinned
+//! commit, or GitHub's own README attachments. Reading a README never loads an image: each typed
+//! image is fetched only when its rendering code needs it.
 use super::{
     bounded, digest,
     github::{Failure, Github, STATE},
@@ -60,8 +61,18 @@ pub struct ReadmeImage {
     alt: String,
     repo: String,
     sha: String,
-    path: String,
+    location: Location,
     allow_fetch: bool,
+}
+
+/// Where an image's bytes come from.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum Location {
+    /// A file of the listed repository at the pinned commit.
+    Repo(String),
+    /// `https://github.com/user-attachments/assets/<uuid>`: an image uploaded to GitHub for the
+    /// README, which answers with one redirect to GitHub's asset host.
+    Attachment(String),
 }
 
 impl ReadmeImage {
@@ -82,6 +93,42 @@ pub(super) fn markdown_file(path: &str) -> bool {
                 .iter()
                 .any(|kind| extension.eq_ignore_ascii_case(kind))
         })
+}
+
+const ATTACHMENTS: &str = "https://github.com/user-attachments/assets/";
+
+fn image_location(repo: &str, sha: &str, readme_path: &str, dest: &str) -> Option<Location> {
+    if let Some(uuid) = dest.strip_prefix(ATTACHMENTS) {
+        return attachment_id(uuid).then(|| Location::Attachment(uuid.to_owned()));
+    }
+    image_path(repo, sha, readme_path, dest).map(Location::Repo)
+}
+
+/// A GitHub attachment id: a UUID, with nothing after it.
+fn attachment_id(uuid: &str) -> bool {
+    let groups: Vec<_> = uuid.split('-').collect();
+    groups.len() == 5
+        && groups
+            .iter()
+            .zip([8, 4, 4, 4, 12])
+            .all(|(group, len)| group.len() == len && group.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+
+/// The one redirect an attachment may take: plain HTTPS to GitHub's own asset hosts.
+pub(super) fn asset_redirect(location: &str) -> bool {
+    let Ok(url) = Url::parse(location) else {
+        return false;
+    };
+    let host = url.host_str().unwrap_or_default();
+    url.scheme() == "https"
+        && url.username().is_empty()
+        && url.password().is_none()
+        && url.port().is_none()
+        && (host.ends_with(".githubusercontent.com")
+            || host
+                .strip_prefix("github-production-user-asset-")
+                .and_then(|rest| rest.strip_suffix(".s3.amazonaws.com"))
+                .is_some_and(|id| !id.is_empty() && id.bytes().all(|b| b.is_ascii_alphanumeric())))
 }
 
 fn image_path(repo: &str, sha: &str, readme_path: &str, dest: &str) -> Option<String> {
@@ -132,13 +179,14 @@ impl Saved {
                 }
                 Event::End(TagEnd::Image) => {
                     if let Some((destination, alt)) = looking.take() {
-                        if let Some(path) = image_path(repo, sha, &self.path, &destination) {
+                        if let Some(location) = image_location(repo, sha, &self.path, &destination)
+                        {
                             images.push(ReadmeImage {
                                 destination,
                                 alt,
                                 repo: repo.to_owned(),
                                 sha: sha.to_owned(),
-                                path,
+                                location,
                                 allow_fetch,
                             });
                             if images.len() == MAX_IMAGES {
@@ -165,19 +213,100 @@ fn parser(markdown: &str) -> Parser<'_> {
     )
 }
 
+/// Remove all HTML. An `<img>` tag's `src` and `alt` stay, as a Markdown image, so it meets the
+/// same image rules as one written in Markdown.
 fn strip_html(markdown: String) -> String {
     let mut clean = String::with_capacity(markdown.len());
     let mut next = 0;
     for (event, span) in parser(&markdown).into_offset_iter() {
-        if matches!(event, Event::Html(_) | Event::InlineHtml(_)) {
-            if next <= span.start {
-                clean.push_str(&markdown[next..span.start]);
+        let (html, block) = match &event {
+            Event::Html(html) => (html, true),
+            Event::InlineHtml(html) => (html, false),
+            _ => continue,
+        };
+        if next <= span.start {
+            clean.push_str(&markdown[next..span.start]);
+        }
+        next = next.max(span.end);
+        for (alt, src) in html_images(html) {
+            clean.push_str("![");
+            for c in alt.chars().filter(|c| !c.is_control()) {
+                if c.is_ascii_punctuation() {
+                    clean.push('\\');
+                }
+                clean.push(c);
             }
-            next = next.max(span.end);
+            clean.push_str("](<");
+            clean.push_str(&src);
+            clean.push_str(">)");
+            if block {
+                clean.push_str("\n\n");
+            }
         }
     }
     clean.push_str(&markdown[next..]);
     clean
+}
+
+/// The `alt` and `src` of each `<img>` tag in one HTML fragment. A `src` that could break out of a
+/// Markdown destination is dropped.
+fn html_images(html: &str) -> Vec<(String, String)> {
+    let lower = html.to_ascii_lowercase();
+    let mut found = Vec::new();
+    let mut at = 0;
+    while let Some(start) = lower[at..].find("<img").map(|n| at + n + 4) {
+        at = start;
+        if !html[start..].starts_with(|c: char| c.is_ascii_whitespace() || c == '/') {
+            continue;
+        }
+        let (mut alt, mut src) = (String::new(), None);
+        // Attributes up to the tag's first unquoted `>`.
+        let mut rest = &html[start..];
+        loop {
+            rest = rest.trim_start_matches(|c: char| c.is_ascii_whitespace() || c == '/');
+            let name_end = rest
+                .find(|c: char| c.is_ascii_whitespace() || matches!(c, '=' | '/' | '>'))
+                .unwrap_or(rest.len());
+            if name_end == 0 {
+                break;
+            }
+            let name = rest[..name_end].to_ascii_lowercase();
+            rest = rest[name_end..].trim_start();
+            let mut value = "";
+            if let Some(after) = rest.strip_prefix('=') {
+                let after = after.trim_start();
+                let (text, tail) = match after.chars().next() {
+                    Some(quote @ ('"' | '\'')) => {
+                        let body = &after[1..];
+                        let close = body.find(quote).unwrap_or(body.len());
+                        (&body[..close], body.get(close + 1..).unwrap_or(""))
+                    }
+                    _ => {
+                        let close = after
+                            .find(|c: char| c.is_ascii_whitespace() || c == '>')
+                            .unwrap_or(after.len());
+                        (&after[..close], &after[close..])
+                    }
+                };
+                value = text;
+                rest = tail;
+            }
+            match name.as_str() {
+                "src" => src = Some(value.to_owned()),
+                "alt" => alt = value.to_owned(),
+                _ => (),
+            }
+        }
+        at = html.len() - rest.len();
+        if let Some(src) = src.filter(|src| {
+            !src.is_empty()
+                && !src
+                    .contains(|c: char| c.is_whitespace() || c.is_control() || c == '<' || c == '>')
+        }) {
+            found.push((alt, src));
+        }
+    }
+    found
 }
 
 pub(super) fn load(
@@ -259,7 +388,10 @@ fn check_image(bytes: &[u8]) -> Result<&'static str, String> {
 
 pub fn readme_image(image: &ReadmeImage) -> Result<PathBuf, String> {
     let github = Github::current();
-    let key = digest(format!("{}/{}/{}", image.repo, image.sha, image.path).as_bytes());
+    let key = match &image.location {
+        Location::Repo(path) => digest(format!("{}/{}/{path}", image.repo, image.sha).as_bytes()),
+        Location::Attachment(uuid) => digest(format!("user-attachments/{uuid}").as_bytes()),
+    };
     let unavailable = || tr("README image unavailable.").to_string();
     let target = |suffix| github.cache.join(format!("image-{key}.{suffix}"));
     let mut state = STATE.lock().unwrap_or_else(|e| e.into_inner());
@@ -276,10 +408,12 @@ pub fn readme_image(image: &ReadmeImage) -> Result<PathBuf, String> {
     if !image.allow_fetch {
         return Err(unavailable());
     }
-    let bytes = github
-        .raw(&mut state, &image.repo, &image.sha, &image.path, MAX_IMAGE)
-        .map_err(|_| unavailable())?
-        .ok_or_else(unavailable)?;
+    let bytes = match &image.location {
+        Location::Repo(path) => github.raw(&mut state, &image.repo, &image.sha, path, MAX_IMAGE),
+        Location::Attachment(uuid) => github.attachment(&mut state, uuid, MAX_IMAGE),
+    }
+    .map_err(|_| unavailable())?
+    .ok_or_else(unavailable)?;
     let file = target(check_image(&bytes)?);
     github.save(&file, &bytes).map_err(|_| unavailable())?;
     Ok(file)
