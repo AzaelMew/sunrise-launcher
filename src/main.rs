@@ -422,6 +422,9 @@ actions!(sunrise_launcher, [Quit, CloseWindow]);
 /// What closing the last window does: stop the servers this launcher started, send the telemetry,
 /// exit. A game that is running keeps running. Cmd+Q goes through here too.
 fn shut_down(cx: &mut App) {
+    if profile_delete::defer_shutdown(cx) {
+        return;
+    }
     servers_page::stop_on_quit();
     telemetry::send_before_exit();
     sunrise_launcher::update_handoff::forget();

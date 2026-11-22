@@ -362,6 +362,9 @@ impl Launcher {
 
     /// Only the player's update action arms a restart. Closing the window still drops the stage.
     pub(super) fn restart_launcher_if_ready(&mut self, cx: &mut Context<Self>) {
+        if crate::profile_delete::moving(cx) {
+            return;
+        }
         let Some(release) = self.self_update.ready_to_restart(
             self.restart_for_launcher_update,
             backend::self_update_allowed(),

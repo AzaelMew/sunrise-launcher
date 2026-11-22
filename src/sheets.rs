@@ -38,8 +38,6 @@ pub(crate) enum Sheet {
     BuildChanges,
     /// Who plays, under the account chip (`account_chip`).
     AccountMenu,
-    /// Profile switcher menu, then the confirmation or the result of deleting a profile.
-    ProfileActions,
     LauncherUpdate,
     Search,
     /// The build window (`mods::build_modal`): closing it leaves the build running.
@@ -285,7 +283,7 @@ impl Launcher {
             || self.mods.installs.world.is_some()
             || self.owner_screen_open
             || self.instances.dialog.is_some()
-            || self.ui.sheet == Some(Sheet::ProfileActions)
+            || self.ui.sheets.profile_action.is_some()
             || (self.ui.page == crate::frame::Page::Hosting && self.servers.create.is_some())
     }
 
@@ -323,15 +321,6 @@ impl Launcher {
     /// built or changed by it: a pending permission is declined, a pending library question is
     /// answered no, a held update stays held.
     pub(crate) fn close_sheet(&mut self) {
-        if self.ui.sheet == Some(Sheet::ProfileActions) {
-            if matches!(
-                self.ui.sheets.profile_action,
-                Some(crate::profile_delete::Action::Deleting(_))
-            ) {
-                return;
-            }
-            self.ui.sheets.profile_action = None;
-        }
         if self.ui.sheet == Some(Sheet::GithubAdd) {
             self.github.close();
         }
@@ -361,12 +350,16 @@ impl Launcher {
 
     /// Escape: true when a sheet was open and is closed now.
     pub(crate) fn sheet_escape(&mut self) -> bool {
-        let open = self.ui.sheets.registry.is_some()
+        let prompt_open = self.ui.sheets.registry.is_some()
             || self.pending_consent.is_some()
             || self.source_question().is_some()
             || self.mods.installs.question.is_some()
-            || self.mods.installs.world.is_some()
-            || self.ui.sheet.is_some();
+            || self.mods.installs.world.is_some();
+        if !prompt_open && self.ui.sheets.profile_action.is_some() {
+            self.close_profile_action();
+            return true;
+        }
+        let open = prompt_open || self.ui.sheet.is_some();
         if open {
             self.close_sheet();
         }
@@ -527,6 +520,9 @@ impl Launcher {
                 );
             return Some(frame("registry-world-impact", 690., body, cx));
         }
+        if let Some(profile_action) = self.profile_action_sheet(cx) {
+            return Some(profile_action);
+        }
         match self.ui.sheet {
             Some(Sheet::Build) => Some(self.build_sheet(cx)),
             Some(Sheet::Notice) => Some(self.notice_sheet(cx)),
@@ -545,7 +541,6 @@ impl Launcher {
             Some(Sheet::Switching) => Some(self.switch_sheet(cx)),
             Some(Sheet::BuildChanges) => self.switch_receipt_sheet(cx),
             Some(Sheet::AccountMenu) => self.account_menu(cx),
-            Some(Sheet::ProfileActions) => self.profile_action_sheet(cx),
             Some(Sheet::LauncherUpdate) => self.launcher_update_sheet(cx),
             Some(Sheet::Search) => Some(self.command_search(cx)),
             Some(Sheet::RegistryPlay) => match self.registry_stage() {
