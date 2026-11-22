@@ -10,7 +10,7 @@ use std::{
     sync::{Arc, Mutex},
     time::{Duration, Instant, SystemTime},
 };
-use sunrise_launcher_smod::manifest;
+use sunrise_launcher_smod::{index::Collection, manifest};
 
 mod github;
 mod readme;
@@ -218,11 +218,20 @@ fn safe_ref(name: &str) -> bool {
             .all(|part| !part.starts_with('.') && !part.ends_with(".lock"))
 }
 
-fn parse(bytes: &[u8]) -> Result<Arc<[Source]>, String> {
+/// The parsed list: its sources, and the collections whose every member it lists.
+#[derive(Clone, Default)]
+struct Feed {
+    sources: Arc<[Source]>,
+    collections: Arc<[Collection]>,
+}
+
+fn parse(bytes: &[u8]) -> Result<Feed, String> {
     #[derive(Deserialize)]
     struct Wire {
         format: u32,
         sources: Vec<Source>,
+        #[serde(default)]
+        collections: Vec<Collection>,
     }
     if bytes.len() as u64 > MAX_CATALOG {
         return Err(tr("Nightly list is larger than 2 MiB.").into());
@@ -230,6 +239,7 @@ fn parse(bytes: &[u8]) -> Result<Arc<[Source]>, String> {
     let Wire {
         format,
         mut sources,
+        mut collections,
     } = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
     if format != 1 {
         return Err(tr("This Nightly list format is not supported.").into());
@@ -246,12 +256,32 @@ fn parse(bytes: &[u8]) -> Result<Arc<[Source]>, String> {
         }
         last = Some(source.id());
     }
-    Ok(sources.into())
+    // A collection shows only when every member is listed once, and its icon is one of the
+    // list's own Pages files.
+    let mut ids = HashSet::new();
+    collections.retain(|collection| {
+        let mut members = HashSet::new();
+        ids.insert(collection.id.clone())
+            && !collection.members.is_empty()
+            && collection.icon.starts_with("icons/")
+            && safe_path(&collection.icon)
+            && collection.members.iter().all(|member| {
+                members.insert(&member.id)
+                    && sources
+                        .binary_search_by(|source| source.id.as_str().cmp(&member.id))
+                        .is_ok()
+            })
+    });
+    Ok(Feed {
+        sources: sources.into(),
+        collections: collections.into(),
+    })
 }
 
 #[derive(Clone)]
 pub struct Catalogue {
     pub sources: Arc<[Source]>,
+    pub collections: Arc<[Collection]>,
     pub saved_at: Option<SystemTime>,
     pub checked_at: SystemTime,
     /// Failure of the latest check. An offline snapshot cannot authorize a new build.
@@ -269,7 +299,7 @@ struct Header {
 struct Saved {
     header: Header,
     json: Vec<u8>,
-    sources: Arc<[Source]>,
+    feed: Feed,
 }
 
 fn bounded(mut body: impl Read, max: u64) -> io::Result<Vec<u8>> {
@@ -294,10 +324,10 @@ impl Saved {
         let split = bytes.iter().position(|&b| b == b'\n')?;
         let header: Header = serde_json::from_slice(&bytes[..split]).ok()?;
         let json = &bytes[split + 1..];
-        let sources = parse(json).ok()?;
+        let feed = parse(json).ok()?;
         Some(Self {
             header,
-            sources,
+            feed,
             json: json.into(),
         })
     }
@@ -343,7 +373,7 @@ fn check_catalogue(
                     etag: saved.header.etag.clone(),
                 },
                 json: saved.json.clone(),
-                sources: saved.sources.clone(),
+                feed: saved.feed.clone(),
             })
             .ok_or_else(|| tr("The Nightly list had no saved copy to refresh.").into()),
         Reply::New(json, etag) => Ok(Saved {
@@ -351,7 +381,7 @@ fn check_catalogue(
                 saved_at: now,
                 etag,
             },
-            sources: parse(&json)?,
+            feed: parse(&json)?,
             json,
         }),
     });
@@ -364,11 +394,10 @@ fn check_catalogue(
         }
         Err(error) => (saved, Some(error)),
     };
+    let feed = saved.as_ref().map(|s| s.feed.clone()).unwrap_or_default();
     let view = Catalogue {
-        sources: saved
-            .as_ref()
-            .map(|s| s.sources.clone())
-            .unwrap_or_default(),
+        sources: feed.sources,
+        collections: feed.collections,
         saved_at: saved.as_ref().map(|s| s.header.saved_at),
         checked_at: now,
         error,

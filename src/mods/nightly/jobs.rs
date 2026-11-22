@@ -13,6 +13,7 @@ pub(in crate::mods) enum Event {
     Icon(sources::SourceIcon, Option<PathBuf>),
     Metadata((Source, bool), Option<sources::SourceMetadata>),
     Updates(Box<CheckedUpdates>),
+    Collection(Box<super::collection::PreparedCollection>),
 }
 
 pub(in crate::mods) struct Open {
@@ -92,6 +93,7 @@ impl Launcher {
                 state.work.checking = false;
                 state.work.updates = Some(*checked);
             }
+            Event::Collection(done) => self.collection_prepared(*done),
         }
     }
 
@@ -130,6 +132,7 @@ impl Launcher {
         let state = &mut self.ui.mods.nightly;
         state.detail_request += 1;
         let request = state.detail_request;
+        state.collection = None;
         state.open = Some(Open {
             source: source.clone(),
             scope,
