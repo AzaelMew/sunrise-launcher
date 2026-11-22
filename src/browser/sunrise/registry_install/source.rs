@@ -69,6 +69,8 @@ pub enum SourceError {
         detail: String,
     },
     DoesNotFit(String),
+    /// Another native build or a cache cleanup holds the build folder: a later try may pass.
+    Busy,
     Unproved(String),
     Changed(String),
     Tools(String),
@@ -94,6 +96,9 @@ impl std::fmt::Display for SourceError {
             }
             Self::Github(Failure::NoManifest) => f.write_str(tr("No Sunrise mod at this commit.")),
             Self::Github(Failure::Offline(detail) | Failure::Other(detail)) => f.write_str(detail),
+            Self::Busy => f.write_str(tr(
+                "A native build or cache cleanup is running. Try again when it finishes.",
+            )),
             Self::Dependency { detail, .. }
             | Self::Build { detail, .. }
             | Self::DoesNotFit(detail)
@@ -488,11 +493,12 @@ pub(super) fn check_source_set(
                     SourceError::DoesNotFit(error)
                 }
                 native_mods::SourceCheckError::Fit(why) => SourceError::Unproved(why.to_string()),
+                native_mods::SourceCheckError::Busy => SourceError::Busy,
             })?;
         for (_, route) in routes.mods {
             match route {
                 native_mods::Route::Prebuilt | native_mods::Route::Fits { .. } => (),
-                native_mods::Route::Unfit { line, .. } => {
+                native_mods::Route::Unfit { line, .. } | native_mods::Route::Unproven { line } => {
                     return Err(SourceError::DoesNotFit(line))
                 }
                 native_mods::Route::Unchecked { reason }

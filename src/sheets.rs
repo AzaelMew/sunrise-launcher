@@ -45,6 +45,8 @@ pub(crate) enum Sheet {
     RegistryPlay,
     GithubAdd,
     NightlySourceLog,
+    /// Why an Add or Update was refused (`mods::refused`).
+    Refused,
 }
 
 /// The way out of a problem the play bar raised, as the Notice sheet's one action.
@@ -515,6 +517,13 @@ impl Launcher {
             Some(Sheet::Build) => Some(self.build_sheet(cx)),
             Some(Sheet::Notice) => Some(self.notice_sheet(cx)),
             Some(Sheet::GithubAdd) => Some(self.github_add_sheet(window, cx)),
+            Some(Sheet::Refused) => {
+                let sheet = self.refused_sheet(cx);
+                if sheet.is_none() {
+                    self.ui.sheet = None;
+                }
+                sheet
+            }
             Some(Sheet::NightlySourceLog) => self
                 .source_log_body(cx)
                 .map(|body| frame("nightly-source-log", 690., body, cx)),
