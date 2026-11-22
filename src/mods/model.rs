@@ -79,6 +79,9 @@ pub(super) struct Card {
     /// A library (`collection::libraries`): found by
     /// searching, never in the browse list.
     pub(super) library: bool,
+    /// Id, name, summary and authors in lower case, what the search box matches. Made once
+    /// in [`cards`]: Discover filters on every frame it draws.
+    haystack: String,
 }
 
 pub(super) fn make_of(p: &index::Project) -> Option<Make> {
@@ -153,11 +156,15 @@ pub(super) fn cards(index: &Index, game: &str) -> Vec<Card> {
                 members: None,
                 part_of: part_of.get(p.id.as_str()).map(|c| c.name.clone()),
                 library: libraries.contains(&p.id),
+                haystack: String::new(),
             })
         })
         .collect();
     let collections = collection::cards(index, &cards);
     cards.extend(collections);
+    for c in &mut cards {
+        c.haystack = format!("{} {} {} {}", c.id, c.name, c.summary, c.authors).to_lowercase();
+    }
     cards
 }
 
@@ -209,8 +216,7 @@ pub(super) fn discover(cards: &[Card], f: &Filters) -> Vec<usize> {
     let mut shown: Vec<usize> = (0..cards.len())
         .filter(|&i| {
             let c = &cards[i];
-            let hay = format!("{} {} {} {}", c.id, c.name, c.summary, c.authors).to_lowercase();
-            words.iter().all(|w| hay.contains(w.as_str()))
+            words.iter().all(|w| c.haystack.contains(w.as_str()))
                 && f.category.as_ref().is_none_or(|k| c.categories.contains(k))
                 && f.make.is_none_or(|m| c.make == m)
                 && (!f.fits_only || c.fit.fits())
@@ -233,7 +239,7 @@ pub(super) fn discover(cards: &[Card], f: &Filters) -> Vec<usize> {
                 .cmp(&cards[a].first)
                 .then(cards[b].downloads.cmp(&cards[a].downloads))
         }),
-        Sort::Name => shown.sort_by_key(|&i| cards[i].name.to_lowercase()),
+        Sort::Name => shown.sort_by_cached_key(|&i| cards[i].name.to_lowercase()),
     }
     shown
 }
