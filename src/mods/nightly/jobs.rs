@@ -15,7 +15,8 @@ pub(in crate::mods) enum Event {
 }
 
 pub(in crate::mods) struct Open {
-    pub(super) source: Source,
+    pub(in crate::mods) source: Source,
+    pub(super) from: Page,
     pub(super) scope: OpenScope,
     pub(super) request: u64,
     pub(super) inspection: Option<Inspection>,
@@ -29,6 +30,7 @@ pub(in crate::mods) struct Inspection {
 
 pub(in crate::mods) struct CheckedUpdates {
     scope: OpenScope,
+    only: Option<String>,
     target: Option<SourceTarget>,
     candidates: BTreeMap<String, (Origin, PreparedSource)>,
     issues: BTreeMap<String, SourceError>,
@@ -132,9 +134,9 @@ impl Launcher {
         let scope = self.mods_page_scope();
         let state = &mut self.ui.mods.nightly;
         if state.open.as_ref().is_some_and(|open| open.scope != scope) {
-            state.open = None;
+            let from = state.open.take().map_or(Page::Discover, |open| open.from);
             if self.ui.page == Page::Project {
-                self.ui.page = Page::Discover;
+                self.ui.page = from;
             }
         }
         if state
@@ -148,15 +150,38 @@ impl Launcher {
     }
 
     pub(in crate::mods) fn inspect_nightly(&mut self, source: Source, refresh: bool) {
+        let from = self
+            .ui
+            .mods
+            .nightly
+            .open
+            .as_ref()
+            .filter(|_| self.ui.page == Page::Project)
+            .map_or(Page::Discover, |open| open.from);
+        self.inspect_nightly_from(source, refresh, from);
+    }
+
+    pub(in crate::mods) fn inspect_nightly_from(
+        &mut self,
+        source: Source,
+        refresh: bool,
+        from: Page,
+    ) {
         let scope = self.mods_page_scope();
         self.ui.page = Page::Project;
-        self.ui.mods.open = None;
+        if from != Page::Installed {
+            self.ui.mods.open = None;
+        }
         let state = &mut self.ui.mods.nightly;
+        if state.open.as_ref().is_none_or(|open| open.source != source) {
+            crate::frame::scrolls("project").set_offset(gpui::point(px(0.), px(0.)));
+        }
         state.detail_request += 1;
         let request = state.detail_request;
         state.collection = None;
         state.open = Some(Open {
             source: source.clone(),
+            from,
             scope,
             request,
             inspection: None,
@@ -275,7 +300,7 @@ impl Launcher {
         }
     }
 
-    pub(super) fn nightly_catalogue_current(&self) -> bool {
+    pub(in crate::mods) fn nightly_catalogue_current(&self) -> bool {
         self.ui.mods.nightly.catalogue.as_ref().is_some_and(|list| {
             list.saved_at.is_some()
                 && list.error.is_none()
@@ -283,7 +308,7 @@ impl Launcher {
         })
     }
 
-    pub(in crate::mods) fn check_source_updates(&mut self) {
+    pub(in crate::mods) fn check_source_updates(&mut self, only: Option<&Origin>) {
         if self.ui.mods.nightly.work.checking || !self.guard() {
             return;
         }
@@ -295,22 +320,14 @@ impl Launcher {
                 return;
             }
         };
-        let origins: Vec<Origin> = self
-            .ui
-            .mods
-            .snapshot
-            .as_ref()
-            .into_iter()
-            .flat_map(|snapshot| &snapshot.rows.local)
-            .filter_map(|local| local.github.as_ref())
-            .filter(|origin| {
-                origin
-                    .source
-                    .as_ref()
-                    .is_some_and(|source| !matches!(source.track, SourceTrack::Pinned))
-            })
-            .cloned()
-            .collect();
+        let Some(rows) = self.discover_installed() else {
+            return;
+        };
+        let origins = tracked_origins(&rows.local, only);
+        if origins.is_empty() {
+            return;
+        }
+        let only = only.map(|origin| origin.id.clone());
         self.ui.mods.nightly.work.checking = true;
         self.ui.mods.nightly.work.updates = None;
         let refresh_catalogue = !self.nightly_catalogue_current();
@@ -318,6 +335,7 @@ impl Launcher {
         std::thread::spawn(move || {
             let mut checked = CheckedUpdates {
                 scope,
+                only,
                 target: None,
                 candidates: BTreeMap::new(),
                 issues: BTreeMap::new(),
@@ -409,8 +427,11 @@ impl Launcher {
         self.source_updates_here()?.issues.get(id)
     }
 
-    pub(in crate::mods) fn source_update_notice(&self) -> Option<&str> {
-        self.source_updates_here()?.notice.as_deref()
+    pub(in crate::mods) fn source_update_notice(&self, only: Option<&str>) -> Option<&str> {
+        let checked = self.source_updates_here()?;
+        (checked.only.as_deref() == only)
+            .then_some(checked.notice.as_deref())
+            .flatten()
     }
 
     fn source_updates_here(&self) -> Option<&CheckedUpdates> {
@@ -503,6 +524,21 @@ impl Launcher {
     }
 }
 
+fn tracked_origins(local: &[model::Local], only: Option<&Origin>) -> Vec<Origin> {
+    local
+        .iter()
+        .filter_map(|local| local.github.as_ref())
+        .filter(|origin| only.is_none_or(|only| only == *origin))
+        .filter(|origin| {
+            origin
+                .source
+                .as_ref()
+                .is_some_and(|source| !matches!(source.track, SourceTrack::Pinned))
+        })
+        .cloned()
+        .collect()
+}
+
 fn source_for_update(predecessor: &Origin) -> Result<Option<Source>, sources::Failure> {
     let Some(source) = predecessor.source.as_ref() else {
         return Ok(None);
@@ -520,4 +556,39 @@ fn source_for_update(predecessor: &Origin) -> Result<Option<Source>, sources::Fa
         tracker,
     )
     .map(Some)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn project_check_uses_only_its_exact_current_receipt() {
+        let (_, first) = super::super::tests::receipt_fixture();
+        let mut second = first.clone();
+        second.id = "other".into();
+        second.github.as_mut().unwrap().id = second.id.clone();
+        let mut pinned = first.clone();
+        pinned
+            .github
+            .as_mut()
+            .unwrap()
+            .source
+            .as_mut()
+            .unwrap()
+            .track = SourceTrack::Pinned;
+        let only = first.github.clone().unwrap();
+        let other = second.github.clone().unwrap();
+        let locals = [first, second, pinned];
+        assert_eq!(tracked_origins(&locals, None), [only.clone(), other]);
+        assert_eq!(
+            tracked_origins(&locals, Some(&only)),
+            std::slice::from_ref(&only)
+        );
+        let stale = Origin {
+            commit: "9".repeat(40),
+            ..only
+        };
+        assert!(tracked_origins(&locals, Some(&stale)).is_empty());
+    }
 }

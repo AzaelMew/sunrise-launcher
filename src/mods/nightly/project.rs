@@ -1,4 +1,5 @@
 //! The pinned source detail. GitHub content is data; it never selects the profile or executes code.
+use super::super::project::{about_row, back, prose};
 use super::*;
 use crate::mods_page::install::{stage_label, SourceQuestion};
 use sunrise_launcher::browser::sunrise::SourceError;
@@ -51,9 +52,9 @@ impl Launcher {
         let rows = self.discover_installed();
         let presence = rows.map(|rows| rows.source_presence(source));
         let pending = rows.is_some_and(|rows| rows.unbuilt.contains(source.id()));
-        let installed = match presence {
-            Some(SourcePresence::Installed(origin)) => Some(origin),
-            _ => None,
+        let (installed, installed_file) = match presence {
+            Some(SourcePresence::Installed { origin, file }) => (Some(origin), Some(file)),
+            _ => (None, None),
         };
         let missing = presence == Some(SourcePresence::Missing);
         let conflict = presence == Some(SourcePresence::Conflict);
@@ -61,6 +62,13 @@ impl Launcher {
             .then(|| self.source_outcome(source.id())?.as_ref().err())
             .flatten();
         let offline = !self.nightly_catalogue_current();
+        let from = open.from;
+        let installed_row = installed_file.and_then(|file| {
+            self.labeled_installed_rows()
+                .0
+                .into_iter()
+                .find(|row| row.archive_file() == Some(file))
+        });
         let current = self
             .source_activity()
             .filter(|a| a.ids.iter().any(|id| id == source.id()));
@@ -135,21 +143,33 @@ impl Launcher {
                             cx.notify();
                         }))
                     } else {
-                        b.on_click(cx.listener(|this, _, _, cx| {
-                            this.check_source_updates();
+                        let origin = origin.clone();
+                        b.on_click(cx.listener(move |this, _, _, cx| {
+                            this.check_source_updates(Some(&origin));
                             cx.notify();
                         }))
                     }
                 });
+            let controls = installed_row.as_ref().map(|row| {
+                let cells = model::cells(
+                    row,
+                    self.ui.mods.errors.get(&row.id).map(String::as_str),
+                    self.build_here()
+                        .filter(|_| row.on)
+                        .and_then(|run| run.state_of(&row.id, &row.version)),
+                    self.settings.native_mods_allowed_at.is_some(),
+                );
+                self.installed_project_controls(row, &cells, locked, cx)
+            });
             div()
                 .flex()
                 .flex_col()
                 .gap(px(8.))
                 .child(install_fact(short_sha(&origin.commit), pending))
                 .children(update)
-                .child(self.remove_mod_button(&origin.id, locked, cx))
+                .children(controls)
                 .children(
-                    self.source_update_notice()
+                    self.source_update_notice(Some(&origin.id))
                         .map(|notice| note(notice.to_owned())),
                 )
         });
@@ -175,7 +195,7 @@ impl Launcher {
                 Some(self.refused_line("nightly-refused", refused, cx))
             });
         // Reading the source itself failed: what to do about it, in place.
-        let failure_panel = (!installed.is_some()).then_some(failure).flatten().and_then(|error| {
+        let failure_panel = failure.filter(|_| installed.is_none()).and_then(|error| {
             let words = source_error(error, Some(source))?;
             Some(div().flex().flex_col().items_start().gap(px(7.))
                 .child(note(words))
@@ -190,31 +210,49 @@ impl Launcher {
                 .and_then(|pin| pin.release_tag())
                 .unwrap_or(tr("Release")),
         };
-        let pin = commit.map_or_else(
-            || tr("Not checked").to_owned(),
-            |pin| {
-                trf(
-                    "{track} @ {commit}",
-                    &[("track", tracking), ("commit", short_sha(pin.sha()))],
-                )
-            },
-        );
+        let pin = if let Some(origin) = installed {
+            origin.tag.as_deref().map_or_else(
+                || short_sha(&origin.commit).to_owned(),
+                |tag| {
+                    trf(
+                        "{track} @ {commit}",
+                        &[("track", tag), ("commit", short_sha(&origin.commit))],
+                    )
+                },
+            )
+        } else {
+            commit.map_or_else(
+                || tr("Not checked").to_owned(),
+                |pin| {
+                    trf(
+                        "{track} @ {commit}",
+                        &[("track", tracking), ("commit", short_sha(pin.sha()))],
+                    )
+                },
+            )
+        };
         let repo_url = format!("https://github.com/{}", source.repo());
         let allow_icon_fetch = !offline
             && details
                 .and_then(|details| details.error.as_ref())
                 .is_none_or(|error| *error == sources::Failure::NoManifest);
-        let badge = made_for_build(
+        let badge = project_made_for_build(
             self.nightly_build_revision().as_deref(),
+            commit.map(|pin| pin.sha()),
+            installed.map(|origin| origin.commit.as_str()),
             details.and_then(|detail| detail.build_pin.as_deref()),
         )
         .then(|| div().flex().child(badge(tr("Made for this build"))));
+        let package = installed_row
+            .as_ref()
+            .and_then(|row| self.archive_display(row))
+            .and_then(|archive| archive.icon.clone());
         let title = div()
             .flex()
             .items_center()
             .min_w_0()
-            .gap(px(12.))
-            .child(self.nightly_icon_tile(source, commit, allow_icon_fetch, 56., cx))
+            .gap(px(16.))
+            .child(self.source_tile(source, commit, allow_icon_fetch, package, 64., cx))
             .child(
                 div()
                     .flex_1()
@@ -228,7 +266,7 @@ impl Launcher {
                             .font_weight(FontWeight::BOLD)
                             .child(crate::selectable::selectable(source.name().to_owned())),
                     )
-                    .child(muted(source.repo().to_owned()))
+                    .child(note(trf("by {authors}", &[("authors", source.owner())])))
                     .children(badge),
             );
         let panel = card()
@@ -245,11 +283,9 @@ impl Launcher {
             .children(refused_line)
             .children(conflict.then(|| note(tr(SOURCE_ID_CONFLICT))))
             .children(installed_actions)
-            .child(super::super::project::about_row(tr("Source"), pin))
-            .child(super::super::project::about_row(
-                tr("Game build"),
-                self.discover_target_name(),
-            ))
+            .child(about_row(tr("Source code"), source.repo().to_owned()))
+            .child(about_row(tr("Commit"), pin))
+            .child(about_row(tr("Game build"), self.discover_target_name()))
             .children(
                 (offline && missing)
                     .then(|| note(tr("Connect to check the source and build this mod."))),
@@ -272,44 +308,21 @@ impl Launcher {
                         .on_click(cx.listener(move |_, _, _, cx| cx.open_url(&repo_url))),
                 ),
             );
-        let mut left = div()
-            .flex()
-            .flex_col()
-            .flex_1()
-            .min_w_0()
-            .gap(px(12.))
-            .child(title);
-        let (above, beside) = if self.content_width() < 610. {
-            (Some(panel), None)
-        } else {
-            (
-                None,
-                Some(
-                    panel
-                        .w(px(if self.content_width() < 860. {
-                            228.
-                        } else {
-                            315.
-                        }))
-                        .flex_none(),
-                ),
-            )
-        };
-        left = left.children(above).children(gallery);
         let saved_readme = readme.is_some()
             && matches!(
                 details.and_then(|details| details.error.as_ref()),
                 Some(sources::Failure::Offline(_) | sources::Failure::RateLimited { .. })
             );
-        if registry_page.is_none() {
-            left = left.child(muted(if saved_readme {
+        let readme_label = registry_page.is_none().then(|| {
+            muted(if saved_readme {
                 tr("README from the repository · saved copy")
             } else {
                 tr("README from the repository")
-            }));
-        }
+            })
+            .into_any_element()
+        });
         let body = if let Some((description, _)) = &registry_page {
-            super::super::project::prose(self.theme, description)
+            prose(self.theme, description)
         } else if let Some(readme) = readme {
             // Its pictures are in the gallery above.
             crate::markdown::render_pinned(readme, &self.theme, |_| div().into_any_element())
@@ -334,44 +347,29 @@ impl Launcher {
                 )
                 .into_any_element()
         };
-        left = left.child(body);
-        div()
-            .size_full()
-            .min_h_0()
+        let header = div()
             .flex()
             .flex_col()
-            .p(px(24.))
-            .gap(px(12.))
-            .children(self.strip(cx))
+            .gap(px(14.))
             .child(
-                div()
-                    .id("nightly-project-scroll")
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_y_scroll()
-                    .track_scroll(&crate::frame::scrolls("nightly-project"))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap(px(14.))
-                            .child(super::super::project::back(tr("Discover")).on_click(
-                                cx.listener(|this, _, _, cx| {
-                                    this.choose_view(Page::Discover);
-                                    cx.notify();
-                                }),
-                            ))
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_start()
-                                    .gap(px(18.))
-                                    .child(left)
-                                    .children(beside),
-                            ),
-                    ),
+                back(if from == Page::Installed {
+                    tr("Installed")
+                } else {
+                    tr("Discover")
+                })
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.choose_view(from);
+                    cx.notify();
+                })),
             )
-            .into_any_element()
+            .children(self.strip(cx));
+        self.project_layout(
+            header,
+            title,
+            gallery,
+            readme_label.into_iter().chain([body]),
+            panel,
+        )
     }
 
     pub(in crate::mods) fn nightly_log_button(
@@ -515,6 +513,16 @@ impl Launcher {
     }
 }
 
+fn project_made_for_build(
+    profile: Option<&str>,
+    inspected: Option<&str>,
+    installed: Option<&str>,
+    pin: Option<&str>,
+) -> bool {
+    inspected.is_some_and(|inspected| installed.is_none_or(|installed| installed == inspected))
+        && made_for_build(profile, pin)
+}
+
 fn source_grant(origin: &sunrise_launcher::github_mods::Origin) -> Option<backend::SourceModGrant> {
     Some(backend::SourceModGrant {
         repo_id: origin.source.as_ref()?.repo_id,
@@ -589,6 +597,24 @@ pub(in crate::mods) fn source_error(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn build_badge_describes_the_installed_commit_not_a_newer_inspection() {
+        let build = "1".repeat(40);
+        let old = "2".repeat(40);
+        let newest = "3".repeat(40);
+        let stamp =
+            |shown| project_made_for_build(Some(&build), Some(&newest), shown, Some(&build));
+        assert!(stamp(None));
+        assert!(stamp(Some(&newest)));
+        assert!(!stamp(Some(&old)));
+        assert!(!project_made_for_build(
+            Some(&build),
+            None,
+            Some(&old),
+            Some(&build)
+        ));
+    }
 
     #[test]
     fn source_status_keeps_local_paths_out_of_regular_copy() {
