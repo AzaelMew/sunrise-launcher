@@ -24,7 +24,8 @@ pub(in crate::mods) struct Open {
 
 pub(in crate::mods) struct Inspection {
     pub(super) data: sources::Details,
-    pub(super) candidate: Result<(SourceTarget, PreparedSource), SourceError>,
+    /// Only a confirmed vacant mod ID can start an Add preflight.
+    pub(super) candidate: Option<Result<(SourceTarget, PreparedSource), SourceError>>,
 }
 
 pub(in crate::mods) struct CheckedUpdates {
@@ -136,7 +137,10 @@ impl Launcher {
 
     pub(in crate::mods) fn inspect_nightly(&mut self, source: Source, refresh: bool) {
         let scope = self.mods_page_scope();
-        let target = self.source_target();
+        let add = self
+            .discover_installed()
+            .is_some_and(|rows| rows.source_presence(&source) == SourcePresence::Missing);
+        let target = add.then(|| self.source_target());
         self.ui.page = Page::Project;
         self.ui.mods.open = None;
         let state = &mut self.ui.mods.nightly;
@@ -155,7 +159,7 @@ impl Launcher {
         let tx = self.ui.mods.tx.clone();
         std::thread::spawn(move || {
             let data = sources::details(&source, refresh);
-            let candidate = (|| {
+            let candidate = target.map(|target| {
                 if let Some(error) = &data.error {
                     return Err(SourceError::Github(error.clone()));
                 }
@@ -172,8 +176,8 @@ impl Launcher {
                     &Cancellation::default(),
                 )?;
                 Ok((target, candidate))
-            })();
-            if let Err(error) = &candidate {
+            });
+            if let Some(Err(error)) = &candidate {
                 eprintln!("Nightly source preflight ({}): {error}", source.id());
             }
             let _ = tx.send(super::super::Event::Nightly(Event::Detail(
@@ -250,7 +254,7 @@ impl Launcher {
             .nightly
             .open
             .as_ref()
-            .is_some_and(|open| rows.github_origin(open.source.id()).is_some())
+            .is_none_or(|open| rows.source_presence(&open.source) != SourcePresence::Missing)
         {
             return;
         }
@@ -269,13 +273,17 @@ impl Launcher {
             .into()));
             return;
         }
-        let Some(inspection) = open.inspection.as_mut() else {
+        let Some(candidate) = open
+            .inspection
+            .as_mut()
+            .and_then(|inspection| inspection.candidate.as_mut())
+        else {
             return;
         };
-        if inspection.candidate.is_err() {
+        if candidate.is_err() {
             return;
         }
-        let candidate = std::mem::replace(&mut inspection.candidate, Err(SourceError::Cancelled));
+        let candidate = std::mem::replace(candidate, Err(SourceError::Cancelled));
         if let Ok((target, candidate)) = candidate {
             if let Err(error) = self.queue_sources(target, vec![candidate]) {
                 self.ui.mods.notice = Some(Err(error));
@@ -321,6 +329,7 @@ impl Launcher {
             .collect();
         self.ui.mods.nightly.work.checking = true;
         self.ui.mods.nightly.work.updates = None;
+        let refresh_catalogue = !self.nightly_catalogue_current();
         let tx = self.ui.mods.tx.clone();
         std::thread::spawn(move || {
             let mut checked = CheckedUpdates {
@@ -330,7 +339,7 @@ impl Launcher {
                 issues: BTreeMap::new(),
                 notice: None,
             };
-            let catalogue = sources::catalogue(false);
+            let catalogue = sources::catalogue(refresh_catalogue);
             if catalogue.error.is_some() {
                 checked.notice = Some(tr("No source updates were checked while offline.").into());
             } else {

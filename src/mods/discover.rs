@@ -446,13 +446,6 @@ impl InstalledRows {
             })
             .map(|entry| entry.number.as_str())
     }
-
-    pub(super) fn github_origin(&self, id: &str) -> Option<&sunrise_launcher::github_mods::Origin> {
-        self.local
-            .iter()
-            .filter_map(|row| row.github.as_ref())
-            .find(|origin| origin.id == id)
-    }
 }
 
 pub(super) fn install_fact(version: &str) -> Div {

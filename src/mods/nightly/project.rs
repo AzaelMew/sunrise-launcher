@@ -46,10 +46,19 @@ impl Launcher {
         let details = inspection.map(|i| &i.data);
         let readme = details.and_then(|d| d.readme.as_ref());
         let commit = details.and_then(|d| d.commit.as_ref());
-        let failure = inspection.and_then(|i| i.candidate.as_ref().err());
-        let failed_job = self
-            .source_outcome(source.id())
-            .and_then(|outcome| outcome.as_ref().err());
+        let candidate = inspection.and_then(|i| i.candidate.as_ref());
+        let presence = self
+            .discover_installed()
+            .map(|rows| rows.source_presence(source));
+        let installed = match presence {
+            Some(SourcePresence::Installed(origin)) => Some(origin),
+            _ => None,
+        };
+        let missing = presence == Some(SourcePresence::Missing);
+        let conflict = presence == Some(SourcePresence::Conflict);
+        let failed_job = (!conflict && presence.is_some())
+            .then(|| self.source_outcome(source.id())?.as_ref().err())
+            .flatten();
         let offline = !self.nightly_catalogue_current();
         let current = self
             .source_activity()
@@ -61,15 +70,22 @@ impl Launcher {
                 cx.notify();
             }))
         };
-        let installed = self
-            .discover_installed()
-            .and_then(|rows| rows.github_origin(source.id()));
+        let listed = state
+            .catalogue
+            .as_ref()
+            .is_some_and(|list| list.sources.contains(source));
+        let can_build = !offline && listed && candidate.is_some_and(Result::is_ok);
+        // A previously installed mod may have just been removed, or the profile may have still
+        // been reading its installed rows when the page opened. In either case, check on demand.
+        let can_check = !offline && listed && inspection.is_some() && candidate.is_none();
         let build_label = if let Some(activity) = current.as_ref() {
             if activity.progress == sunrise::InstallProgress::Publishing {
                 tr("Finishing…").into()
             } else {
                 stage_label(activity.progress)
             }
+        } else if can_check {
+            tr("Check source").into()
         } else if matches!(failed_job, Some(SourceError::Tools(_))) {
             tr("Retry download").into()
         } else {
@@ -78,11 +94,6 @@ impl Launcher {
         let build = primary("nightly-build-source", build_label)
             .w_full()
             .h(px(tokens::ACTION));
-        let listed = state
-            .catalogue
-            .as_ref()
-            .is_some_and(|list| list.sources.contains(source));
-        let can_build = !offline && listed && inspection.is_some_and(|i| i.candidate.is_ok());
         let busy = self.nightly_busy();
         let build = if busy {
             dim(build)
@@ -91,7 +102,7 @@ impl Launcher {
                 this.build_nightly();
                 cx.notify();
             }))
-        } else if !offline && failed_job.is_some() {
+        } else if can_check || (!offline && failed_job.is_some()) {
             let source = source.clone();
             build.on_click(cx.listener(move |this, _, _, cx| {
                 this.inspect_nightly(source.clone(), true);
@@ -117,7 +128,7 @@ impl Launcher {
                         tr("Check for update").into()
                     };
                     let b = primary("nightly-update-source", label).w_full();
-                    if busy || checking || offline {
+                    if busy || checking {
                         dim(b)
                     } else if candidate.is_some() {
                         let id = origin.id.clone();
@@ -146,8 +157,10 @@ impl Launcher {
         });
         let failure = if installed.is_some() {
             self.source_update_issue(source.id())
+        } else if missing {
+            candidate.and_then(|candidate| candidate.as_ref().err())
         } else {
-            failure
+            None
         };
         let failure_panel = failed_job.or(failure).and_then(|error| {
             let dependency = match error {
@@ -169,8 +182,13 @@ impl Launcher {
                     }))))
                 .children(log.map(|log| self.nightly_log_button(source.name(), log, cx)))
                 .children(matches!(error, SourceError::Github(_) | SourceError::Changed(_))
-                    .then(|| if matches!(error, SourceError::Github(sources::Failure::RateLimited { retry_at: Some(at) }) if *at > SystemTime::now()) {
+                    .then(|| if busy || matches!(error, SourceError::Github(sources::Failure::RateLimited { retry_at: Some(at) }) if *at > SystemTime::now()) {
                         dim(button("nightly-detail-retry", tr("Try again")))
+                    } else if installed.is_some() {
+                        button("nightly-detail-retry", tr("Try again")).on_click(cx.listener(|this, _, _, cx| {
+                            this.check_source_updates();
+                            cx.notify();
+                        }))
                     } else { retry("nightly-detail-retry", cx) })))
         });
         let tracking = match source.tracker() {
@@ -230,7 +248,8 @@ impl Launcher {
                     .font_weight(FontWeight::SEMIBOLD)
                     .child(source.name().to_owned()),
             )
-            .children(installed.is_none().then_some(build))
+            .children(missing.then_some(build))
+            .children(conflict.then(|| note(tr(SOURCE_ID_CONFLICT))))
             .children(installed_actions)
             .child(super::super::project::about_row(tr("Source"), pin))
             .child(super::super::project::about_row(
@@ -238,7 +257,7 @@ impl Launcher {
                 self.discover_target_name(),
             ))
             .children(
-                (offline && installed.is_none())
+                (offline && missing)
                     .then(|| note(tr("Connect to check the source and build this mod."))),
             )
             .children((!offline && !listed).then(|| {
@@ -247,7 +266,7 @@ impl Launcher {
                 ))
             }))
             .children(
-                (!busy && offline && !self.ui.mods.nightly.reading)
+                (!busy && missing && offline && !self.ui.mods.nightly.reading)
                     .then(|| retry("nightly-refresh-catalogue", cx)),
             )
             .children(failure_panel)

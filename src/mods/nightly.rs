@@ -14,6 +14,46 @@ pub(super) use jobs::Event;
 pub(super) use project::{short_sha, source_error};
 
 const FRESH: Duration = Duration::from_secs(600);
+const SOURCE_ID_CONFLICT: &str = "Another installed mod uses this ID.";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SourcePresence<'a> {
+    Missing,
+    Installed(&'a sunrise_launcher::github_mods::Origin),
+    Conflict,
+}
+
+impl InstalledRows {
+    fn source_presence(&self, source: &Source) -> SourcePresence<'_> {
+        let id = source.id();
+        if self
+            .entries
+            .iter()
+            .any(|entry| sunrise::mod_id(entry) == Some(id))
+        {
+            return SourcePresence::Conflict;
+        }
+        let mut local = self.local.iter().filter(|row| row.id == id);
+        let Some(row) = local.next() else {
+            return SourcePresence::Missing;
+        };
+        if local.next().is_some() {
+            return SourcePresence::Conflict;
+        }
+        let Some(origin) = &row.github else {
+            return SourcePresence::Conflict;
+        };
+        if origin.owner.eq_ignore_ascii_case(source.owner())
+            && origin.source.as_ref().is_some_and(|receipt| {
+                receipt.repo_id == source.repo_id() && receipt.manifest == source.manifest()
+            })
+        {
+            SourcePresence::Installed(origin)
+        } else {
+            SourcePresence::Conflict
+        }
+    }
+}
 
 #[derive(Default)]
 pub(super) struct State {
@@ -153,7 +193,15 @@ impl Launcher {
                     ];
                     if let Some(rows) = installed {
                         facts.extend(collection_install_fact(collection, |id| {
-                            rows.github_origin(id).is_some()
+                            catalogue
+                                .sources
+                                .binary_search_by(|source| source.id().cmp(id))
+                                .is_ok_and(|i| {
+                                    matches!(
+                                        rows.source_presence(&catalogue.sources[i]),
+                                        SourcePresence::Installed(_)
+                                    )
+                                })
                         }));
                     }
                     let collections = catalogue.collections.clone();
@@ -202,9 +250,18 @@ impl Launcher {
                             &[("collection", &catalogue.collections[i].name)],
                         )));
                     }
-                    if let Some(origin) = installed.and_then(|rows| rows.github_origin(source.id()))
-                    {
-                        facts.push(install_fact(short_sha(&origin.commit)));
+                    if let Some(rows) = installed {
+                        match rows.source_presence(source) {
+                            SourcePresence::Installed(origin) => {
+                                facts.push(install_fact(short_sha(&origin.commit)))
+                            }
+                            SourcePresence::Conflict => facts.push(status(
+                                "information-circle",
+                                tr(SOURCE_ID_CONFLICT),
+                                palette().warning,
+                            )),
+                            SourcePresence::Missing => {}
+                        }
                     }
                     let sources = catalogue.sources.clone();
                     browse_card(
@@ -487,6 +544,88 @@ fn source_time(time: SystemTime) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn receipt_fixture() -> (Source, model::Local) {
+        let source = Source::for_origin(
+            "lantern",
+            "Fixture/Lantern",
+            42,
+            "sunrise-mod.toml",
+            sources::Tracker::Branch("main".into()),
+        )
+        .unwrap();
+        let origin = sunrise_launcher::github_mods::Origin {
+            id: "lantern".into(),
+            version: "1.0.0".into(),
+            owner: "fixture".into(),
+            repo: "Lantern".into(),
+            commit: "1".repeat(40),
+            sha256: "0".repeat(64),
+            tag: None,
+            asset: None,
+            source: Some(sunrise_launcher::github_mods::SourceOrigin {
+                repo_id: 42,
+                manifest: "sunrise-mod.toml".into(),
+                track: sunrise_launcher::github_mods::SourceTrack::Branch("main".into()),
+                published_at: None,
+            }),
+        };
+        let local = model::Local {
+            id: origin.id.clone(),
+            version: origin.version.clone(),
+            name: "Lantern".into(),
+            file: "sunrise-native-mods/lantern.smod".into(),
+            github: Some(origin),
+            native: true,
+            unreadable: false,
+        };
+        (source, local)
+    }
+
+    #[test]
+    fn an_older_commit_of_the_same_listing_is_installed() {
+        let (listing, local) = receipt_fixture();
+        let rows = InstalledRows {
+            local: vec![local],
+            ..Default::default()
+        };
+        let origin = rows.local[0].github.as_ref().unwrap();
+        // The installed commit is the receipt's commit, independent of where the branch is now.
+        assert_eq!(origin.commit, "1".repeat(40));
+        assert_eq!(
+            rows.source_presence(&listing),
+            SourcePresence::Installed(origin)
+        );
+    }
+
+    #[test]
+    fn an_occupied_id_without_the_listings_receipt_is_a_conflict() {
+        let (listing, local) = receipt_fixture();
+        let mut rows = InstalledRows {
+            local: vec![local],
+            ..Default::default()
+        };
+        let matches = rows.local[0].github.clone().unwrap();
+        let mut other = matches.clone();
+        other.source.as_mut().unwrap().repo_id += 1;
+        rows.local[0].github = Some(other);
+        assert_eq!(rows.source_presence(&listing), SourcePresence::Conflict);
+        let mut other = matches.clone();
+        other.owner = "DifferentOwner".into();
+        rows.local[0].github = Some(other);
+        assert_eq!(rows.source_presence(&listing), SourcePresence::Conflict);
+        let mut other = matches.clone();
+        other.source.as_mut().unwrap().manifest = "other/sunrise-mod.toml".into();
+        rows.local[0].github = Some(other);
+        assert_eq!(rows.source_presence(&listing), SourcePresence::Conflict);
+        rows.local[0].github = Some(sunrise_launcher::github_mods::Origin {
+            source: None,
+            ..matches
+        });
+        assert_eq!(rows.source_presence(&listing), SourcePresence::Conflict);
+        rows.local.clear();
+        assert_eq!(rows.source_presence(&listing), SourcePresence::Missing);
+    }
 
     #[test]
     fn source_kind_and_search_apply_to_the_combined_name_order() {
