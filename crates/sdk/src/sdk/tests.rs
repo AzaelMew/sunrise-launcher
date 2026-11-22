@@ -154,7 +154,7 @@ fn a_game_releases_copy_names_its_build_before_the_build_is_known() {
 #[test]
 fn each_bad_index_is_refused_by_name() {
     let good = json(&index(&[(ENGINE, b"engine")]));
-    let cases: [(&str, fn(&mut serde_json::Value), Refusal); 8] = [
+    let cases: [(&str, fn(&mut serde_json::Value), Refusal); 7] = [
         (
             "unknown schema",
             |v| v["schema"] = 2.into(),
@@ -179,14 +179,6 @@ fn each_bad_index_is_refused_by_name() {
             Refusal::Codec {
                 asset: ENGINE.into(),
                 codec: "zstd".into(),
-            },
-        ),
-        (
-            "unknown kind",
-            |v| v["assets"][ENGINE]["kind"] = "slice".into(),
-            Refusal::Kind {
-                asset: ENGINE.into(),
-                kind: "slice".into(),
             },
         ),
         (
@@ -326,6 +318,33 @@ fn asset_names_state_kind_target_and_side() {
     ] {
         assert_eq!(Asset::parts_of(name), parts, "{name}");
     }
+}
+
+#[test]
+fn a_newer_sdks_asset_kind_is_left_out_and_refused_only_by_a_route_that_needs_it() {
+    const PROGRAMS: &str = "programs-x86_64-unknown-linux-gnu.tar.xz";
+    let mut newer = json(&index(&[(ENGINE, b"engine")]));
+    newer["assets"][PROGRAMS] = serde_json::json!({
+        "sha256": sha256_hex(b"programs"), "size": 8, "kind": "programs", "codec": "zstd",
+        "target": "x86_64-unknown-linux-gnu", "side": "client",
+    });
+    newer["inputs"]["routes"]["play"] = serde_json::json!({"sdk": ["runtime", "programs"]});
+    let read = Index::read(newer.to_string().as_bytes(), COMMIT).unwrap();
+    // Everything this reader knows still reads: the engine route and its asset.
+    assert!(read.asset(ENGINE).is_ok());
+    assert!(read.inputs.route("engine").is_ok());
+    // The new kind's asset is not listed, and its route is refused when it is asked for.
+    assert_eq!(
+        read.asset(PROGRAMS),
+        Err(Refusal::Unlisted(PROGRAMS.into()))
+    );
+    assert_eq!(
+        read.route_assets("play", "x86_64-unknown-linux-gnu", Side::Client),
+        Err(Refusal::Kind {
+            asset: "play".into(),
+            kind: "programs".into(),
+        })
+    );
 }
 
 #[test]
