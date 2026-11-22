@@ -1456,5 +1456,8 @@
   "Removed 1 mod.": "Removed 1 mod.",
   "Turned off 1 mod. The game reads this when it starts.": "Turned off 1 mod. The game reads this when it starts.",
   "Updated 1 mod, checked against the registry.": "Updated 1 mod, checked against the registry.",
-  "Sign in with Microsoft": "Đăng nhập bằng Microsoft"
+  "Sign in with Microsoft": "Đăng nhập bằng Microsoft",
+  "Sunrise mods": "Sunrise mods",
+  "Commit": "Commit",
+  "{author} · {source}": "{author} · {source}"
 }

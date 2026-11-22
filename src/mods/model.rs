@@ -151,7 +151,7 @@ pub(super) fn cards(index: &Index, game: &str) -> Vec<Card> {
                         .installable(p, game)
                         .is_some_and(|v| v.native_binaries.is_empty()),
                 members: None,
-                part_of: part_of.get(p.id.as_str()).map(|name| (*name).to_owned()),
+                part_of: part_of.get(p.id.as_str()).map(|c| c.name.clone()),
                 library: libraries.contains(&p.id),
             })
         })
@@ -455,6 +455,21 @@ pub(super) enum Need {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub(super) struct CollectionGroup {
+    pub(super) id: String,
+    pub(super) name: String,
+}
+
+impl From<&index::Collection> for CollectionGroup {
+    fn from(collection: &index::Collection) -> Self {
+        Self {
+            id: collection.id.clone(),
+            name: collection.name.clone(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub(super) struct Row {
     pub(super) id: String,
     pub(super) title: String,
@@ -474,6 +489,8 @@ pub(super) struct Row {
     /// Not installed by the registry; no registry update.
     pub(super) local: Option<Local>,
     pub(super) icon: Option<String>,
+    pub(super) source_listing: Option<sunrise_launcher::browser::sunrise::sources::Source>,
+    pub(super) collection: Option<CollectionGroup>,
     pub(super) entry: Option<Entry>,
     /// It can't run on the game this setup plays: the build left it out.
     pub(super) unfit: Option<Unfit>,
@@ -720,20 +737,6 @@ pub(super) fn cells(
             },
         );
     }
-    if let Some(local) = &row.local {
-        say(
-            "folder-01",
-            match local.github.is_some() {
-                true => tr("From GitHub").into(),
-                false => tr("Local file").into(),
-            },
-            Tone::Muted,
-            match local.github.is_some() {
-                true => tr("Get updates from GitHub, not the registry.").into(),
-                false => tr("Replace the local file to update this mod.").into(),
-            },
-        );
-    }
     let popover = row.unfit.is_some()
         && said
             .first()
@@ -767,11 +770,40 @@ pub(super) fn cells(
 }
 
 impl Row {
+    pub(super) fn archive_file(&self) -> Option<&str> {
+        self.local
+            .as_ref()
+            .map(|l| l.file.as_str())
+            .or_else(|| self.entry.as_ref().map(|e| e.file.as_str()))
+    }
+
+    pub(super) fn source_label(&self) -> &str {
+        use sunrise_launcher::github_mods::AddedFrom;
+        let Some(local) = &self.local else {
+            return tr("Sunrise mods");
+        };
+        let Some(origin) = &local.github else {
+            return tr("Local file");
+        };
+        match &origin.added_from {
+            Some(AddedFrom::Collection { name, .. }) => name,
+            Some(AddedFrom::Discover) => tr("Sunrise mods"),
+            Some(AddedFrom::Github) => tr("From GitHub"),
+            // Only the paste flow installed GitHub packages without a source tracker.
+            None if origin.source.is_none() => tr("From GitHub"),
+            None => tr("Source"),
+        }
+    }
+
     pub(super) fn installed_details(&self) -> Page {
         Page {
             id: self.id.clone(),
             name: self.title.clone(),
-            authors: Vec::new(),
+            authors: if self.authors.is_empty() {
+                Vec::new()
+            } else {
+                vec![self.authors.clone()]
+            },
             description: String::new(),
             source: self
                 .local
@@ -900,6 +932,8 @@ pub(super) fn rows(entries: &[Entry], w: &World) -> Vec<Row> {
                 pinned: w.chosen.contains_key(&e.project),
                 local: None,
                 icon: p.and_then(|p| p.icon.clone()),
+                source_listing: None,
+                collection: None,
                 entry: Some(e.clone()),
                 unfit: None,
                 held_for: None,
@@ -918,7 +952,11 @@ pub(super) fn rows(entries: &[Entry], w: &World) -> Vec<Row> {
             id: l.id.clone(),
             title: l.name.clone(),
             authors: String::new(),
-            make: l.native.then_some(Make::Native),
+            make: match (l.native, l.unreadable) {
+                (true, _) => Some(Make::Native),
+                (false, false) => Some(Make::Content),
+                (false, true) => None,
+            },
             version: l.version.clone(),
             on,
             need,
@@ -928,6 +966,8 @@ pub(super) fn rows(entries: &[Entry], w: &World) -> Vec<Row> {
             pinned: false,
             local: Some(l.clone()),
             icon: None,
+            source_listing: None,
+            collection: None,
             entry: None,
             unfit: None,
             held_for: None,
@@ -1023,7 +1063,62 @@ impl Default for RowFilter {
     }
 }
 
-/// Indexes into `rows` that pass the filter; the order of `rows` (grouped, by name) is kept.
+/// Installed uses collection order first, keeping the status and name order within each group.
+pub(super) fn group_installed(rows: &mut [Row]) {
+    sort(rows);
+    rows.sort_by(|a, b| match (&a.collection, &b.collection) {
+        (Some(a), Some(b)) => a.id.cmp(&b.id),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => std::cmp::Ordering::Equal,
+    });
+}
+
+pub(super) fn installed_groups<'a>(
+    rows: &'a [Row],
+    visible: &'a [usize],
+) -> impl Iterator<Item = (Option<&'a str>, &'a [usize])> {
+    let collection = |i: usize| rows[i].collection.as_ref();
+    visible
+        .chunk_by(move |a, b| collection(*a).map(|c| &c.id) == collection(*b).map(|c| &c.id))
+        .map(move |group| (collection(group[0]).map(|c| c.name.as_str()), group))
+}
+
+pub(super) struct FilterCounts {
+    pub(super) shows: Vec<(Show, usize)>,
+    pub(super) kinds: Vec<(Make, usize)>,
+}
+
+/// Omit empty filters and their controls; a filter that disappears cannot remain selected.
+pub(super) fn counted_filters(rows: &[Row], filter: &mut RowFilter) -> FilterCounts {
+    let on = rows.iter().filter(|row| row.on).count();
+    let shows: Vec<_> = [
+        (Show::All, rows.len()),
+        (Show::On, on),
+        (Show::Off, rows.len() - on),
+    ]
+    .into_iter()
+    .filter(|(_, count)| *count != 0)
+    .collect();
+    if !shows.iter().any(|(show, _)| *show == filter.show) {
+        filter.show = Show::All;
+    }
+    let kinds: Vec<_> = Make::ALL
+        .into_iter()
+        .map(|kind| {
+            (
+                kind,
+                rows.iter().filter(|row| row.make == Some(kind)).count(),
+            )
+        })
+        .filter(|(_, count)| *count != 0)
+        .collect();
+    filter
+        .makes
+        .retain(|make| kinds.iter().any(|(kind, _)| kind == make));
+    FilterCounts { shows, kinds }
+}
+
 pub(super) fn visible_count(rows: &[Row], visible: &[usize]) -> String {
     trf(
         "{shown} of {total} mods shown",
