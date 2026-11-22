@@ -1518,10 +1518,8 @@
   "The skin you wear now couldn't be kept, so it wasn't replaced: {why}": "The skin you wear now couldn't be kept, so it wasn't replaced: {why}",
   "The Minecraft services answered with another account's profile.": "The Minecraft services answered with another account's profile.",
   "Skin saved. Everyone sees it.": "Skin saved. Everyone sees it.",
-  "The Minecraft services took your skin, but it isn't confirmed yet, so it won't be sent again: {why}": "The Minecraft services took your skin, but it isn't confirmed yet, so it won't be sent again: {why}",
   "Your skin wasn't changed: {why}": "Your skin wasn't changed: {why}",
   "Cape changed. Everyone sees it.": "Cape changed. Everyone sees it.",
-  "The Minecraft services took your cape change, but it isn't confirmed yet, so it won't be sent again: {why}": "The Minecraft services took your cape change, but it isn't confirmed yet, so it won't be sent again: {why}",
   "Your cape wasn't changed: {why}": "Your cape wasn't changed: {why}",
   "The saved skin's arms couldn't be kept: {why}": "The saved skin's arms couldn't be kept: {why}",
   "The launcher couldn't note down what was saved: {why}": "The launcher couldn't note down what was saved: {why}",
@@ -1559,5 +1557,7 @@
   "Close the game and servers, and wait for downloads, builds, imports, sign-in and the skin being saved on the Skins tab to finish before moving data.": "Close the game and servers, and wait for downloads, builds, imports, sign-in and the skin being saved on the Skins tab to finish before moving data.",
   "Could not reach the Minecraft services. Check your internet connection.": "Could not reach the Minecraft services. Check your internet connection.",
   "There are too many saved skins. Remove some, then add this one again.": "There are too many saved skins. Remove some, then add this one again.",
-  "Wait for the skin being saved on the Skins tab to finish, then try again.": "Wait for the skin being saved on the Skins tab to finish, then try again."
+  "Wait for the skin being saved on the Skins tab to finish, then try again.": "Wait for the skin being saved on the Skins tab to finish, then try again.",
+  "Your new skin isn't confirmed yet, so it won't be sent again: {why}": "Your new skin isn't confirmed yet, so it won't be sent again: {why}",
+  "Your cape change isn't confirmed yet, so it won't be sent again: {why}": "Your cape change isn't confirmed yet, so it won't be sent again: {why}"
 }

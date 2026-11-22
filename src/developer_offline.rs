@@ -20,9 +20,7 @@ pub fn enabled(tag: &str) -> bool {
     let native = crate::native_mods::about(tag);
     let base = native
         .as_ref()
-        .map(|a| a.base.clone())
-        .or_else(|| crate::build_import::about(tag).map(|a| a.base))
-        .unwrap_or_else(|| tag.to_owned());
+        .map_or_else(|| base(tag), |a| a.base.clone());
     eligible(
         &base,
         &crate::backend::version_dir(&base),
@@ -33,28 +31,47 @@ pub fn enabled(tag: &str) -> bool {
 /// A file's time and size, if it is there.
 pub type Stamp = Option<(std::time::SystemTime, u64)>;
 
-/// Every file [`enabled`] reads for `tag`, with its time and size: the build's own lineage
-/// records (a native build's `native-mods.json`, an imported build's record), then the base
-/// build's install mark and developer record. While these stay the same, so does [`enabled`]'s
-/// answer for `tag`, so a caller can keep it instead of asking at every frame.
-pub fn inputs(tag: &str) -> Vec<(std::path::PathBuf, Stamp)> {
-    let stamp = |path: std::path::PathBuf| {
-        let meta = std::fs::metadata(&path).ok();
-        let stamp = meta.and_then(|m| Some((m.modified().ok()?, m.len())));
-        (path, stamp)
-    };
+/// `path` with its time and size.
+pub fn stamp(path: std::path::PathBuf) -> (std::path::PathBuf, Stamp) {
+    let meta = std::fs::metadata(&path).ok();
+    let stamp = meta.and_then(|m| Some((m.modified().ok()?, m.len())));
+    (path, stamp)
+}
+
+/// The lineage records [`enabled`] reads for `tag`: a native build's `native-mods.json`, an
+/// imported build's record. They name its base build ([`base`]).
+pub fn records(tag: &str) -> [std::path::PathBuf; 2] {
     let own = crate::backend::version_dir(tag);
-    let base = crate::native_mods::about(tag)
+    [
+        own.join(crate::native_mods::RECORD),
+        own.join(crate::build_import::RECORD),
+    ]
+}
+
+/// The build `tag` is made from, as its lineage records say ([`records`]), else itself: the
+/// build whose records [`enabled`] checks.
+pub fn base(tag: &str) -> String {
+    crate::native_mods::about(tag)
         .map(|a| a.base)
         .or_else(|| crate::build_import::about(tag).map(|a| a.base))
-        .unwrap_or_else(|| tag.to_owned());
-    let base = crate::backend::version_dir(&base);
-    vec![
-        stamp(own.join(crate::native_mods::RECORD)),
-        stamp(own.join(crate::build_import::RECORD)),
-        stamp(base.join(".installed")),
-        stamp(base.join("developer.json")),
-    ]
+        .unwrap_or_else(|| tag.to_owned())
+}
+
+/// The base build's records [`enabled`] reads: its install mark and developer record.
+pub fn base_records(base: &str) -> [std::path::PathBuf; 2] {
+    let dir = crate::backend::version_dir(base);
+    [dir.join(".installed"), dir.join("developer.json")]
+}
+
+/// Every file [`enabled`] reads for `tag`, with its time and size: [`records`], then the
+/// [`base_records`] of its [`base`]. While these stay the same, so does [`enabled`]'s answer for
+/// `tag`, so a caller can keep it instead of asking at every frame.
+pub fn inputs(tag: &str) -> Vec<(std::path::PathBuf, Stamp)> {
+    records(tag)
+        .into_iter()
+        .chain(base_records(&base(tag)))
+        .map(stamp)
+        .collect()
 }
 
 fn eligible(base: &str, directory: &std::path::Path, native_revision: Option<&str>) -> bool {

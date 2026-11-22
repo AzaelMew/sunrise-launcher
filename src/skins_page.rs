@@ -67,13 +67,16 @@ fn request_id() -> u64 {
 }
 
 /// What decides whether the offline developer view is on, besides the environment: the build
-/// the selected profile plays, and every file `developer_offline::enabled` reads for it
-/// (`developer_offline::inputs`). The answer is kept while these stay the same, so drawing the
-/// page reads no profile files.
-type OfflineKey = (
-    Option<String>,
-    Vec<(PathBuf, sunrise_launcher::developer_offline::Stamp)>,
-);
+/// the selected profile plays and every file `developer_offline::enabled` reads for it (its
+/// lineage records, then its base build's install and developer records, with their times and
+/// sizes). The answer is kept while these stay the same.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct OfflineKey {
+    played: Option<String>,
+    own: Vec<(PathBuf, sunrise_launcher::developer_offline::Stamp)>,
+    base: String,
+    base_files: Vec<(PathBuf, sunrise_launcher::developer_offline::Stamp)>,
+}
 
 /// Runs `work` on a thread of its own: false when no thread could be started (the caller says
 /// so), rather than a panic on the UI thread.
@@ -882,7 +885,7 @@ fn said(outcome: &look::Outcome) -> Vec<Result<String, String>> {
         None => {}
         Some(Change::Done) => lines.push(Ok(tr("Skin saved. Everyone sees it.").to_string())),
         Some(Change::Unconfirmed(why)) => lines.push(Err(trf(
-            "The Minecraft services took your skin, but it isn't confirmed yet, so it won't be sent again: {why}",
+            "Your new skin isn't confirmed yet, so it won't be sent again: {why}",
             &[("why", why)],
         ))),
         Some(Change::Failed(why)) => lines.push(Err(match &outcome.kept {
@@ -897,13 +900,12 @@ fn said(outcome: &look::Outcome) -> Vec<Result<String, String>> {
         None => {}
         Some(Change::Done) => lines.push(Ok(tr("Cape changed. Everyone sees it.").to_string())),
         Some(Change::Unconfirmed(why)) => lines.push(Err(trf(
-            "The Minecraft services took your cape change, but it isn't confirmed yet, so it won't be sent again: {why}",
+            "Your cape change isn't confirmed yet, so it won't be sent again: {why}",
             &[("why", why)],
         ))),
-        Some(Change::Failed(why)) => lines.push(Err(trf(
-            "Your cape wasn't changed: {why}",
-            &[("why", why)],
-        ))),
+        Some(Change::Failed(why)) => {
+            lines.push(Err(trf("Your cape wasn't changed: {why}", &[("why", why)])))
+        }
     }
     if let Some(why) = &outcome.arms {
         lines.push(Err(trf(
@@ -1051,19 +1053,39 @@ impl Launcher {
 
     /// The offline developer mode for the build played, as `enabled` says, asked only when what
     /// it depends on ([`OfflineKey`]) changed since it was last asked.
+    ///
+    /// At a drawing this costs four file times, no reads: the base build named by the build's
+    /// lineage records is read again only when those records change.
     fn offline_cached(&self, enabled: impl FnOnce(&str) -> bool) -> bool {
+        use sunrise_launcher::developer_offline as offline_play;
         let played = self.selected().cloned();
-        let inputs = played
-            .as_deref()
-            .map(sunrise_launcher::developer_offline::inputs)
-            .unwrap_or_default();
-        let key = (played, inputs);
+        let Some(tag) = played.clone() else {
+            return false;
+        };
+        let own: Vec<_> = offline_play::records(&tag)
+            .into_iter()
+            .map(offline_play::stamp)
+            .collect();
+        let known_base = self.skins.offline.borrow().as_ref().and_then(|(key, _)| {
+            (key.played == played && key.own == own).then(|| key.base.clone())
+        });
+        let base = known_base.unwrap_or_else(|| offline_play::base(&tag));
+        let base_files = offline_play::base_records(&base)
+            .into_iter()
+            .map(offline_play::stamp)
+            .collect();
+        let key = OfflineKey {
+            played,
+            own,
+            base,
+            base_files,
+        };
         if let Some((known, offline)) = &*self.skins.offline.borrow() {
             if *known == key {
                 return *offline;
             }
         }
-        let offline = key.0.as_deref().is_some_and(enabled);
+        let offline = enabled(&tag);
         *self.skins.offline.borrow_mut() = Some((key, offline));
         offline
     }
@@ -3570,6 +3592,25 @@ mod tests {
                 std::fs::create_dir_all(&dir).unwrap();
                 std::fs::write(dir.join(".installed"), "").unwrap();
                 assert!(!l.offline_cached(|_| false));
+                // An imported build: its base's records count, read through its own record.
+                let imported = "imported-base-test";
+                let own = backend::version_dir(imported);
+                std::fs::create_dir_all(&own).unwrap();
+                std::fs::write(
+                    own.join("imported.json"),
+                    r#"{"base": "developer-b", "file": "x.jar"}"#,
+                )
+                .unwrap();
+                l.installed.push(imported.into());
+                pin(l, imported);
+                assert_eq!(l.selected().map(String::as_str), Some(imported));
+                assert!(l.offline_cached(|_| true));
+                assert!(l.offline_cached(|_| false), "kept");
+                // The base reinstalled under the same tag.
+                let base = backend::version_dir("developer-b");
+                std::fs::create_dir_all(&base).unwrap();
+                std::fs::write(base.join(".installed"), "").unwrap();
+                assert!(!l.offline_cached(|_| false), "worked out again");
             },
         );
     }
@@ -3824,6 +3865,9 @@ mod tests {
                 let reading = l.skins.read_asked();
                 let other = "b09600dff4354d4fb56776eec1e55083";
                 l.skins.show(other, |_| true);
+                // The page shown has pictures of its own not asked for yet: an answer for another
+                // account starts nothing for it either.
+                l.skins.profile = Some(Ok(profile(ALEX, false, None)));
                 l.skins_profile(UUID.into(), reading, Ok(profile(SKIN, false, Some("c1"))));
                 let page = l.skins.page_mut(UUID).unwrap();
                 assert_eq!(page.reading, None, "answered: the next opening reads again");
@@ -3832,7 +3876,12 @@ mod tests {
                     page.pictures.is_empty(),
                     "nothing asked for a page not shown"
                 );
-                assert_eq!(l.skins.profile, None, "the page shown is left alone");
+                assert_eq!(
+                    l.skins.profile,
+                    Some(Ok(profile(ALEX, false, None))),
+                    "the page shown is left alone"
+                );
+                assert!(l.skins.pictures.is_empty(), "and asks for nothing");
                 // In the offline view an answer is not taken in, but the reading is over.
                 l.skins.offline_for_test = Some(true);
                 l.skins.show(UUID, |_| true);
