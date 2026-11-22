@@ -16,6 +16,7 @@
   "Finished checking for source updates.": "Finished checking for source updates.",
   "Game build: {build}": "Game build: {build}",
   "Getting build tools · {done} of {total}": "Getting build tools · {done} of {total}",
+  "Getting the build ready…": "Getting the build ready…",
   "GitHub’s request limit was reached. Try again after {time}.": "GitHub’s request limit was reached. Try again after {time}.",
   "GitHub’s request limit was reached. Try again later.": "GitHub’s request limit was reached. Try again later.",
   "Loading the Nightly list…": "Loading the Nightly list…",

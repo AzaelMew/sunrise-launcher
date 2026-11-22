@@ -108,12 +108,13 @@ pub fn switch_build(
     if instance.kind == InstanceKind::Pack {
         return Err(tr("Choose an ordinary profile to switch builds.").into());
     }
-    (hooks.progress)(InstallProgress::Checking);
+    (hooks.progress)(InstallProgress::PreparingBuild);
     let mut profile =
         Profile::open_for(&instance.home, None, Some(identity)).map_err(String::from)?;
     let Some(edit) = profile.begin_switch(tag)? else {
         return Ok(Switched::AlreadySelected);
     };
+    (hooks.progress)(InstallProgress::Checking);
     let game = backend::switch_game_version(edit.base())?;
     let source = location();
     let local = super::super::local();

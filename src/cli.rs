@@ -1422,6 +1422,7 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
             if code != 0 {
                 return Ok(code);
             }
+            backend::finish_preparation(&tag, &preparation)?;
             println!("{tag} is prepared.");
         }
         Cmd::Play {

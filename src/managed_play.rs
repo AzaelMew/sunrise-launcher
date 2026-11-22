@@ -69,7 +69,7 @@ impl ReferencePublication {
 
 use crate::{backend::installation::BoundVariant, native_mods, native_status};
 pub(crate) use artifact::Artifact;
-use resources::Resources;
+pub(crate) use resources::Resources;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -689,6 +689,7 @@ impl Active {
 
     /// Capture a full immutable generation after owning the admitted profile and checking
     /// the chosen image. Only the journal's Switch arm may advance to a distinct base.
+    /// Verify the bound resources at the publication cutoff, not while assembling the pointer.
     fn capture(
         base: &str,
         executable: &str,
@@ -717,7 +718,6 @@ impl Active {
                 if base != old.base {
                     return Err(unsettled());
                 }
-                old.resources.verify(&base.tag)?;
                 (
                     old.profile,
                     old.generation.checked_add(1).ok_or_else(unsettled)?,
@@ -734,7 +734,6 @@ impl Active {
                 if base.tag == previous.base() {
                     return Err(unsettled());
                 }
-                resources.verify(&base.tag)?;
                 (
                     previous.profile,
                     previous.generation.checked_add(1).ok_or_else(unsettled)?,
