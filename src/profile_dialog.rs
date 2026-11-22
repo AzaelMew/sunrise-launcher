@@ -25,7 +25,11 @@ impl Launcher {
             error: None,
             busy: false,
             pin: None,
-            channel: Channel::Stable,
+            channel: if self.stable_available() {
+                Channel::Stable
+            } else {
+                Channel::Nightly
+            },
             discarding: false,
         });
         cx.notify();
@@ -186,25 +190,30 @@ impl Launcher {
                 ("new-nightly", Channel::Nightly, tr("Nightly")),
                 ("new-dev", Channel::Dev, tr("Dev")),
             ] {
-                channels = channels.child(
-                    button(id, label)
-                        .when(c == channel, |d| {
-                            d.bg(rgb(p.selected)).border_color(rgb(p.accent_ink))
-                        })
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            if let Some(d) = this.instances.dialog.as_mut().filter(|d| !d.busy) {
-                                d.channel = c;
-                                d.pin = None;
-                            }
-                            cx.notify();
-                        })),
-                );
+                // A channel with no build to follow can't be chosen.
+                let none = match c {
+                    Channel::Stable => !self.stable_available(),
+                    Channel::Dev => self.profile_build_choices(Channel::Dev).is_empty(),
+                    Channel::Nightly => false,
+                };
+                let b = button(id, label).when(c == channel, |d| {
+                    d.bg(rgb(p.selected)).border_color(rgb(p.accent_ink))
+                });
+                channels = channels.child(if none {
+                    b.opacity(0.5).cursor_default().tab_stop(false)
+                } else {
+                    b.on_click(cx.listener(move |this, _, _, cx| {
+                        if let Some(d) = this.instances.dialog.as_mut().filter(|d| !d.busy) {
+                            d.channel = c;
+                            d.pin = None;
+                        }
+                        cx.notify();
+                    }))
+                });
             }
             let hint = match channel {
-                Channel::Stable if !self.stable_available() => {
-                    Some(tr("No stable release yet. Plays Nightly for now."))
-                }
-                Channel::Dev if tags.is_empty() => Some(tr("No Dev build for this platform yet.")),
+                Channel::Stable if !self.stable_available() => Some(tr("No Stable build yet.")),
+                Channel::Dev if tags.is_empty() => Some(tr("No Dev build yet.")),
                 _ => None,
             };
             let mut versions = div()
