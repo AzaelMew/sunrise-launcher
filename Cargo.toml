@@ -125,6 +125,8 @@ libc = "0.2"
 # Tokenize source strings for the translation completeness test, including multiline calls.
 syn = "2"
 proc-macro2 = "1"
+# GPUI's headless test windows, for driving a list with the benchmark's own wheel events.
+gpui = { package = "gpui-fast", version = "0.1.13", features = ["test-support"] }
 
 [profile.release]
 strip = true

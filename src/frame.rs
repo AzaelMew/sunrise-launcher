@@ -539,17 +539,12 @@ impl Launcher {
         );
         scrolls_begin();
         // Records start-up and UI frame times, and lets a benchmark window begin once the
-        // window has drawn. Reading where the build list is scrolled to doesn't touch it: the
-        // benchmark moves it with wheel input between frames (`bench_wheel`).
+        // window has drawn. Nothing on screen is read here: a benchmark reads where the build
+        // list was left, and moves it, between frames (`bench_wheel`).
         let now = std::time::Instant::now();
         let gap = self.perf.frame(now);
         if let Some(bench) = &mut self.bench {
-            let offset = bench
-                .scrolling()
-                .then(|| crate::sheets::bench_scroll_target(&self.ui.sheets))
-                .filter(|h| h.bounds().size.height > px(0.))
-                .map(|h| f32::from(h.offset().y));
-            bench.frame(now, gap, offset);
+            bench.frame(now, gap);
         }
         crate::selectable::begin();
         crate::tokens::set_roundness(self.corner_roundness());

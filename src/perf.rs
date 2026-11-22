@@ -281,8 +281,12 @@ pub struct Bench {
     out: PathBuf,
     began: Option<Instant>,
     page: usize,
-    /// When the last page switch was: the pump also runs between ticks, when messages arrive.
+    /// When the last page switch was, which paces the next: the pump also runs between ticks,
+    /// when messages arrive.
     switched: Option<Instant>,
+    /// The first switch the window hasn't drawn yet. A second switch before that frame
+    /// doesn't move it, so a stall across both is timed from the first.
+    awaiting: Option<Instant>,
     scroll: Option<Scroll>,
     idle_cpu: Option<(Instant, f64)>,
     pages_ms: Vec<f32>,
@@ -294,8 +298,11 @@ struct Scroll {
     ended: bool,
     /// Heading for the bottom of the list, else back to the top.
     down: bool,
-    /// The list's offset on the last frame, to tell a frame that moved it.
+    /// The list's offset after the last frame, to tell a frame that moved it.
     last_offset: Option<f32>,
+    /// The interval of the frame just drawn, until [`Bench::after_frame`] knows whether it
+    /// moved the list.
+    pending: Option<Duration>,
 }
 
 impl Bench {
@@ -315,6 +322,7 @@ impl Bench {
             began: None,
             page: 0,
             switched: None,
+            awaiting: None,
             scroll: None,
             idle_cpu: None,
             pages_ms: Vec::new(),
@@ -322,46 +330,67 @@ impl Bench {
         }
     }
 
+    /// A benchmark already in its scroll phase, for tests that drive a real list.
+    #[cfg(test)]
+    pub(crate) fn scrolling_for_test() -> Bench {
+        let mut bench = Bench::new(PathBuf::new());
+        bench.began = Some(Instant::now() - SWITCHING);
+        bench.scroll = Some(Scroll {
+            began: Instant::now(),
+            ended: false,
+            down: true,
+            last_offset: None,
+            pending: None,
+        });
+        bench
+    }
+
+    #[cfg(test)]
+    pub(crate) fn scroll_samples(&self) -> &[f32] {
+        &self.scroll_ms
+    }
+
     /// Between [`Step::Scroll`] and the end of scrolling: a wheel step goes in on every frame.
     pub fn scrolling(&self) -> bool {
         self.scroll.as_ref().is_some_and(|s| !s.ended)
     }
 
-    /// A frame drawn at `now`, `gap` after the one before ([`Perf::frame`]), with the scroll
-    /// target at `offset` (its vertical offset, none while it isn't laid out).
-    pub fn frame(&mut self, now: Instant, gap: Option<Duration>, offset: Option<f32>) {
+    /// A frame drawn at `now`, `gap` after the one before ([`Perf::frame`]). Called while the
+    /// frame is built, so it reads nothing on screen: whether a scrolling frame moved the list
+    /// is told after it ([`Bench::after_frame`]).
+    pub fn frame(&mut self, now: Instant, gap: Option<Duration>) {
         let Some(gap) = gap else {
             return;
         };
         match &mut self.scroll {
             None if self.began.is_some() => {
-                let previous = now.checked_sub(gap);
-                let sample = match self.switched {
-                    // The first frame after a switch: how long the switch waited for it.
-                    Some(switched) if previous.is_none_or(|p| p < switched) => {
-                        now.saturating_duration_since(switched)
-                    }
-                    _ => gap,
+                // The first frame after a switch: how long the switch waited for it.
+                let sample = match self.awaiting.take() {
+                    Some(switched) => now.saturating_duration_since(switched),
+                    None => gap,
                 };
                 self.pages_ms.push(sample.as_secs_f32() * 1000.0);
             }
-            Some(scroll) if !scroll.ended => {
-                let moved = matches!((scroll.last_offset, offset), (Some(was), Some(is)) if (was - is).abs() >= 0.5);
-                if moved {
-                    self.scroll_ms.push(gap.as_secs_f32() * 1000.0);
-                }
-                scroll.last_offset = offset.or(scroll.last_offset);
-            }
+            Some(scroll) if !scroll.ended => scroll.pending = Some(gap),
             _ => {}
         }
     }
 
-    /// The wheel step for the next frame, in GPUI's sign (negative scrolls down), given the
-    /// list's offset and how far it can scroll: [`WHEEL_STEP`] towards the end it is heading
-    /// for, the last step only as far as that end, then back the other way. None when the list
+    /// After a frame, where it left the scroll target (its offset, and how far it can scroll),
+    /// read outside the frame so reading it changes nothing the frame caches. Counts the frame
+    /// as a scroll sample if it moved the list, and gives the wheel step for the next one, in
+    /// GPUI's sign (negative scrolls down): [`WHEEL_STEP`] towards the end it is heading for,
+    /// the last step only as far as that end, then back the other way. None when the list
     /// can't move, or while not scrolling.
-    pub fn wheel(&mut self, offset: f32, max: f32) -> Option<f32> {
+    pub fn after_frame(&mut self, offset: f32, max: f32) -> Option<f32> {
         let scroll = self.scroll.as_mut().filter(|s| !s.ended)?;
+        let moved = scroll
+            .last_offset
+            .is_some_and(|was| (was - offset).abs() >= 0.5);
+        if let Some(gap) = scroll.pending.take().filter(|_| moved) {
+            self.scroll_ms.push(gap.as_secs_f32() * 1000.0);
+        }
+        scroll.last_offset = Some(offset);
         wheel_step(offset, max, &mut scroll.down)
     }
 
@@ -377,7 +406,9 @@ impl Bench {
             {
                 return Step::Wait;
             }
-            self.switched = Some(Instant::now());
+            let now = Instant::now();
+            self.switched = Some(now);
+            self.awaiting.get_or_insert(now);
             self.page += 1;
             return Step::Go(self.page);
         }
@@ -388,6 +419,7 @@ impl Bench {
                     ended: false,
                     down: true,
                     last_offset: None,
+                    pending: None,
                 });
                 return Step::Scroll;
             }
@@ -661,21 +693,33 @@ mod tests {
         let perf = drawn();
         let mut bench = Bench::new(out("pages"));
         // Before the script starts, a frame is no sample.
-        bench.frame(Instant::now(), Some(ms(16)), None);
+        bench.frame(Instant::now(), Some(ms(16)));
         assert!(matches!(bench.tick(&perf), Step::Go(1)));
         let switched = bench.switched.unwrap();
-        // Drawn continuously while the switch animates.
-        bench.frame(switched + ms(16), Some(ms(16)), None);
         // The UI had rested for 2 s, then the switch waited 300 ms for its frame: a stall of
         // 300 ms, not a 2.3 s gap.
-        bench.frame(switched + ms(300), Some(ms(2300)), None);
-        assert_eq!(bench.pages_ms.len(), 2);
-        assert!((bench.pages_ms[0] - 16.).abs() < 0.01);
+        bench.frame(switched + ms(300), Some(ms(2300)));
+        // Drawn continuously while the switch animates.
+        bench.frame(switched + ms(316), Some(ms(16)));
+        assert_eq!(bench.pages_ms, [300., 16.]);
+    }
+
+    #[test]
+    fn a_stall_across_two_switches_is_timed_from_the_first() {
+        let perf = drawn();
+        let mut bench = Bench::new(out("two-switches"));
+        assert!(matches!(bench.tick(&perf), Step::Go(1)));
+        let first = bench.switched.unwrap();
+        // The next switch is due before the window has drawn the first.
+        bench.switched = Some(first - crate::wake::TICK);
+        assert!(matches!(bench.tick(&perf), Step::Go(2)));
         assert!(
-            (bench.pages_ms[1] - 300.).abs() < 0.01,
-            "{:?}",
-            bench.pages_ms
+            bench.switched.unwrap() > first,
+            "the pace follows the later switch"
         );
+        // The frame finally comes 500 ms after the first switch.
+        bench.frame(first + ms(500), Some(ms(900)));
+        assert_eq!(bench.pages_ms, [500.], "not hidden behind the later switch");
     }
 
     #[test]
@@ -685,20 +729,24 @@ mod tests {
         assert!(matches!(bench.tick(&perf), Step::Go(1)));
         to_scrolling(&mut bench, &perf);
         let now = Instant::now();
-        // Not laid out yet, then laid out at the top: nothing has moved.
-        bench.frame(now, Some(ms(16)), None);
-        bench.frame(now, Some(ms(16)), Some(0.));
-        assert_eq!(bench.wheel(0., 100.), Some(-24.));
-        bench.frame(now, Some(ms(17)), Some(-24.));
-        // A frame that didn't move the list (the step not taken yet) isn't a scroll sample.
-        bench.frame(now, Some(ms(16)), Some(-24.));
+        // The first frame laid it out at the top: nothing has moved; the first step goes in.
+        bench.frame(now, Some(ms(16)));
+        assert_eq!(bench.after_frame(0., 100.), Some(-24.));
+        // That step moved it: a sample.
+        bench.frame(now, Some(ms(17)));
+        assert_eq!(bench.after_frame(-24., 100.), Some(-24.));
+        // A frame that didn't move it isn't one.
+        bench.frame(now, Some(ms(16)));
+        bench.after_frame(-24., 100.);
         // A real stall while scrolling is kept.
-        bench.frame(now, Some(ms(400)), Some(-48.));
+        bench.frame(now, Some(ms(400)));
+        bench.after_frame(-48., 100.);
         assert_eq!(bench.scroll_ms, [17., 400.]);
         // Drawn while resting: no sample of either kind.
         perf.frame(now + ms(16));
         let result = finish(&mut bench, &perf);
-        bench.frame(now, Some(ms(16)), Some(-72.));
+        bench.frame(now, Some(ms(16)));
+        assert_eq!(bench.after_frame(-72., 100.), None, "the wheel has stopped");
         assert_eq!(bench.scroll_ms.len(), 2);
         assert_eq!(result["scroll_ms"], serde_json::json!([17., 400.]));
         assert_eq!(result["pages_ms"], serde_json::json!([]));
@@ -712,10 +760,10 @@ mod tests {
         let mut bench = Bench::new(out("still"));
         assert!(matches!(bench.tick(&perf), Step::Go(1)));
         to_scrolling(&mut bench, &perf);
-        assert_eq!(bench.wheel(0., 0.), None, "nothing to scroll");
         let now = Instant::now();
         for _ in 0..5 {
-            bench.frame(now, Some(ms(16)), Some(0.));
+            bench.frame(now, Some(ms(16)));
+            assert_eq!(bench.after_frame(0., 0.), None, "nothing to scroll");
         }
         let result = finish(&mut bench, &perf);
         assert!(

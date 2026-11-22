@@ -622,21 +622,36 @@ impl Launcher {
 }
 
 /// The build list's scroll, which `sunrise-launcher benchmark` scrolls.
-pub(crate) fn bench_scroll_target(sheets: &super::SheetsState) -> gpui::ScrollHandle {
+fn bench_scroll_target(sheets: &super::SheetsState) -> gpui::ScrollHandle {
     sheets.versions.scroll.0.borrow().base_handle.clone()
 }
 
-/// `sunrise-launcher benchmark`: after each frame, one wheel step over the build list through
-/// the window's ordinary input path, so the list scrolls, caches and redraws as it does under a
-/// player's wheel. While the sheet opens the list grows, so a list with nothing to scroll is
-/// given up on only once its place has held for a few frames; the wheel stops then, or when
-/// scrolling ends.
+/// `sunrise-launcher benchmark`: after each frame, reads where the build list was left and
+/// sends one wheel step over it through the window's ordinary input path, so the list scrolls,
+/// caches and redraws as it does under a player's wheel. Nothing is read inside a frame.
+///
+/// With no profile there is no list, and no frames are asked for. A list with nothing to scroll
+/// is given up on only once the releases have loaded and its place has held for a few frames,
+/// so one that grows when the releases arrive is still scrolled.
 pub(crate) fn bench_wheel(launcher: gpui::WeakEntity<Launcher>, window: &mut Window) {
     wheel_after_frame(launcher, window, None, 0);
 }
 
-/// Frames a list's place must hold before it counts as settled.
+/// Frames a loaded list's place must hold before it counts as settled.
 const SETTLED: u32 = 10;
+
+/// The wheel event a benchmark sends: `step` pixels down (negative) or up, at the middle of
+/// `bounds`.
+pub(crate) fn bench_wheel_event(
+    bounds: gpui::Bounds<gpui::Pixels>,
+    step: f32,
+) -> gpui::PlatformInput {
+    gpui::PlatformInput::Scroll(gpui::ScrollEvent {
+        position: bounds.center(),
+        delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(step))),
+        ..Default::default()
+    })
+}
 
 fn wheel_after_frame(
     launcher: gpui::WeakEntity<Launcher>,
@@ -648,34 +663,34 @@ fn wheel_after_frame(
         let Some(entity) = launcher.upgrade() else {
             return;
         };
-        if !entity
-            .read(cx)
+        let this = entity.read(cx);
+        if !this
             .bench
             .as_ref()
             .is_some_and(crate::perf::Bench::scrolling)
+            || this.selected_instance().is_none()
         {
             return;
         }
-        let handle = bench_scroll_target(&entity.read(cx).ui.sheets);
+        let loaded = !matches!(this.releases, Load::Loading);
+        let handle = bench_scroll_target(&this.ui.sheets);
         let bounds = handle.bounds();
-        let held = if Some(bounds) == last { held + 1 } else { 0 };
-        if bounds.size.height > px(0.) {
+        let laid_out = bounds.size.height > px(0.);
+        let held = if loaded && laid_out && Some(bounds) == last {
+            held + 1
+        } else {
+            0
+        };
+        if laid_out {
             let (offset, max) = (
                 f32::from(handle.offset().y),
                 f32::from(handle.max_offset().y),
             );
-            match entity.update(cx, |l, _| l.bench.as_mut()?.wheel(offset, max)) {
+            match entity.update(cx, |l, _| l.bench.as_mut()?.after_frame(offset, max)) {
                 Some(step) => {
-                    window.dispatch_event(
-                        gpui::PlatformInput::Scroll(gpui::ScrollEvent {
-                            position: bounds.center(),
-                            delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(step))),
-                            ..Default::default()
-                        }),
-                        cx,
-                    );
+                    window.dispatch_event(bench_wheel_event(bounds, step), cx);
                 }
-                // Laid out, settled and nothing to scroll: no more frames for it.
+                // Loaded, laid out, settled and nothing to scroll: no more frames for it.
                 None if held >= SETTLED => return,
                 None => {}
             }
@@ -687,6 +702,70 @@ fn wheel_after_frame(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A long list in a short window, scrolled by the benchmark's own wheel events through GPUI's
+    /// input path, as `bench_wheel` sends them between frames.
+    struct Rows {
+        scroll: gpui::UniformListScrollHandle,
+    }
+
+    impl Render for Rows {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().child(
+                gpui::uniform_list(
+                    "bench-rows",
+                    200,
+                    cx.processor(|_, range: std::ops::Range<usize>, _, _| {
+                        range
+                            .map(|n| div().id(("row", n)).h(px(40.)).w_full())
+                            .collect::<Vec<_>>()
+                    }),
+                )
+                .size_full()
+                .track_scroll(&self.scroll),
+            )
+        }
+    }
+
+    #[test]
+    fn the_benchmarks_wheel_moves_a_populated_list_and_counts_the_frame() {
+        let mut app = gpui::TestAppContext::single();
+        let (rows, cx) = app.add_window_view(|_, _| Rows {
+            scroll: gpui::UniformListScrollHandle::new(),
+        });
+        let handle = rows.read_with(cx, |rows, _| rows.scroll.0.borrow().base_handle.clone());
+        cx.run_until_parked();
+        let mut bench = crate::perf::Bench::scrolling_for_test();
+        let read = |handle: &gpui::ScrollHandle| {
+            (
+                f32::from(handle.offset().y),
+                f32::from(handle.max_offset().y),
+            )
+        };
+        let (top, max) = read(&handle);
+        assert!(max > 1000., "a populated list overflows: {max}");
+        assert_eq!(top, 0.);
+        // After the first frame: nothing moved yet, the first step goes in.
+        bench.frame(
+            std::time::Instant::now(),
+            Some(std::time::Duration::from_millis(16)),
+        );
+        let step = bench.after_frame(top, max).expect("a list that can move");
+        assert!(step < 0., "down first");
+        cx.update(|window, cx| {
+            window.dispatch_event(bench_wheel_event(handle.bounds(), step), cx);
+        });
+        cx.run_until_parked();
+        // The next frame drew the list moved: that frame is a scroll sample.
+        bench.frame(
+            std::time::Instant::now(),
+            Some(std::time::Duration::from_millis(17)),
+        );
+        let (moved, _) = read(&handle);
+        assert_eq!(moved, step, "the wheel moved the list by its step");
+        bench.after_frame(moved, max);
+        assert_eq!(bench.scroll_samples(), [17.]);
+    }
 
     #[test]
     fn the_current_unready_build_can_be_downloaded_or_prepared_but_never_kept() {
