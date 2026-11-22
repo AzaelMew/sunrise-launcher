@@ -658,6 +658,9 @@ fn registry_edit<'a>(
                         InstallError::Unproved(match error {
                             native_mods::SourceCheckError::Dependency(detail) => detail,
                             native_mods::SourceCheckError::Fit(failed) => failed.into(),
+                            native_mods::SourceCheckError::Busy => {
+                                native_mods::cache_error(crate::native_cache::Error::Busy)
+                            }
                         })
                     })?
                     .mods
@@ -682,7 +685,8 @@ fn registry_edit<'a>(
                         rejection = Some(line);
                     }
                     native_mods::Route::Unchecked { reason }
-                    | native_mods::Route::Invalid { reason } => {
+                    | native_mods::Route::Invalid { reason }
+                    | native_mods::Route::Unproven { line: reason } => {
                         return Err(InstallError::Unproved(reason));
                     }
                 }

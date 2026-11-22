@@ -348,6 +348,16 @@ pub(super) fn columns(width: f32) -> u16 {
     (((width + 12.) / 332.).floor() as u16).clamp(1, 3)
 }
 
+/// Prefer the catalogue picture, then the exact installed package's validated artwork.
+pub(super) fn mod_artwork(
+    catalogue: Option<PathBuf>,
+    package: Option<std::sync::Arc<gpui::Image>>,
+) -> Option<gpui::ImageSource> {
+    catalogue
+        .map(Into::into)
+        .or_else(|| package.map(Into::into))
+}
+
 /// One thing to add in a Discover list, for mods and packs alike: picture, name and author, one
 /// line of what it is, then its tags and numbers with the control beside them, and under them
 /// a sentence when there is something to say (why it can't be added, how well it runs). Every
@@ -355,7 +365,7 @@ pub(super) fn columns(width: f32) -> u16 {
 #[allow(clippy::too_many_arguments)]
 pub(super) fn browse_card(
     id: impl Into<ElementId>,
-    picture: Option<PathBuf>,
+    picture: Option<impl Into<gpui::ImageSource>>,
     project: &str,
     name: &str,
     author: &str,
@@ -537,4 +547,23 @@ pub(crate) fn reveal(
     )
     .absolute()
     .inset_0()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mod_artwork_prefers_catalogue_then_package_then_placeholder() {
+        let listed = PathBuf::from("source-icon.png");
+        let package = std::sync::Arc::new(gpui::Image::from_bytes(gpui::ImageFormat::Png, vec![]));
+        assert!(matches!(
+            mod_artwork(Some(listed), Some(package.clone())),
+            Some(gpui::ImageSource::Resource(_))
+        ));
+        assert!(
+            matches!(mod_artwork(None, Some(package.clone())), Some(gpui::ImageSource::Image(image)) if std::sync::Arc::ptr_eq(&image, &package))
+        );
+        assert!(mod_artwork(None, None).is_none());
+    }
 }

@@ -5,7 +5,7 @@ use super::{
 };
 use crate::{
     browser::sunrise::sources::{Failure, SourceCommit},
-    github_mods::{self, Origin, Packed},
+    github_mods::{self, AddedFrom, Origin, Packed},
 };
 
 #[cfg(test)]
@@ -69,6 +69,8 @@ pub enum SourceError {
         detail: String,
     },
     DoesNotFit(String),
+    /// Another native build or a cache cleanup holds the build folder: a later try may pass.
+    Busy,
     Unproved(String),
     Changed(String),
     Tools(String),
@@ -94,6 +96,9 @@ impl std::fmt::Display for SourceError {
             }
             Self::Github(Failure::NoManifest) => f.write_str(tr("No Sunrise mod at this commit.")),
             Self::Github(Failure::Offline(detail) | Failure::Other(detail)) => f.write_str(detail),
+            Self::Busy => f.write_str(tr(
+                "A native build or cache cleanup is running. Try again when it finishes.",
+            )),
             Self::Dependency { detail, .. }
             | Self::Build { detail, .. }
             | Self::DoesNotFit(detail)
@@ -141,7 +146,7 @@ pub fn prepare_source(
     };
     let result = (|| {
         cancellation.check()?;
-        let (package, origin) =
+        let (package, mut origin) =
             github_mods::pack_pin(&pin, cancellation).map_err(SourceError::Github)?;
         if let Some(previous) = &predecessor {
             if !github_mods::forward(previous, &origin).map_err(SourceError::Github)? {
@@ -149,6 +154,9 @@ pub fn prepare_source(
                     tr("There is no newer source on the same tracker.").into(),
                 ));
             }
+            origin.added_from.clone_from(&previous.added_from);
+        } else {
+            origin.added_from = Some(AddedFrom::Discover);
         }
         prepare_packages(
             instance,
@@ -169,13 +177,17 @@ pub fn prepare_source(
 /// One pinned listing's exact bytes, to check with others through [`prepare_pasted_sources`].
 pub fn pack_sources(
     pins: &[SourceCommit],
+    added_from: AddedFrom,
     cancellation: &native_mods::Cancellation,
 ) -> Vec<Result<PastedSource, SourceError>> {
     github_mods::pack_pins(pins, cancellation)
         .into_iter()
         .map(|result| {
             result
-                .map(|(package, origin)| PastedSource { package, origin })
+                .map(|(package, mut origin)| {
+                    origin.added_from = Some(added_from.clone());
+                    PastedSource { package, origin }
+                })
                 .map_err(SourceError::Github)
         })
         .collect()
@@ -376,9 +388,18 @@ fn source_is_published(
     origin: &Origin,
 ) -> bool {
     let home = &instance.home;
-    github_mods::origin(home, &origin.id).as_ref() == Some(origin)
+    let Some(recorded) = github_mods::origin(home, &origin.id) else {
+        return false;
+    };
+    // A queued add from another page may ask for exactly the same bytes. Leave the first
+    // successful add's display origin alone; it doesn't change the installed source pin.
+    let expected = Origin {
+        added_from: recorded.added_from.clone(),
+        ..origin.clone()
+    };
+    recorded == expected
         && active.is_none_or(|active| active.holds().all(|held| held.id() != origin.id))
-        && github::installed_origin(home, &origin.id, |installed| installed == origin).is_ok()
+        && github::installed_origin(home, &origin.id, |installed| *installed == recorded).is_ok()
 }
 
 pub struct SourceHooks<'a> {
@@ -488,11 +509,12 @@ pub(super) fn check_source_set(
                     SourceError::DoesNotFit(error)
                 }
                 native_mods::SourceCheckError::Fit(why) => SourceError::Unproved(why.to_string()),
+                native_mods::SourceCheckError::Busy => SourceError::Busy,
             })?;
         for (_, route) in routes.mods {
             match route {
                 native_mods::Route::Prebuilt | native_mods::Route::Fits { .. } => (),
-                native_mods::Route::Unfit { line, .. } => {
+                native_mods::Route::Unfit { line, .. } | native_mods::Route::Unproven { line } => {
                     return Err(SourceError::DoesNotFit(line))
                 }
                 native_mods::Route::Unchecked { reason }

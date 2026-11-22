@@ -42,6 +42,7 @@ mod pack_discover;
 mod pack_project;
 mod packs;
 mod project;
+pub(crate) mod refused;
 mod search;
 mod ui;
 pub(crate) use data_packs::names;
@@ -120,16 +121,17 @@ fn enabled_ids(home: &Path, entries: &[Entry], local: &[model::Local]) -> HashSe
     enabled
 }
 
-struct ArchiveName {
+struct ArchiveDisplay {
     name: String,
     authors: Vec<String>,
     version: String,
+    icon: Option<std::sync::Arc<gpui::Image>>,
 }
 
 #[derive(Default)]
 struct InstalledRows {
     entries: Vec<Entry>,
-    archive_names: HashMap<String, ArchiveName>,
+    archives: HashMap<String, ArchiveDisplay>,
     enabled: HashSet<String>,
     chosen: std::collections::BTreeMap<String, String>,
     local: Vec<model::Local>,
@@ -161,25 +163,28 @@ impl InstalledRows {
             .map_err(InstalledReadError::Other)?
             .entries;
         // Display metadata only; catalogue status and action authority still use their own proofs.
-        let mut archive_names: HashMap<_, _> = entries
+        let mut archives: HashMap<_, _> = entries
             .iter()
             .filter(|entry| entry.source == SourceId::Sunrise && entry.kind == Kind::Mod)
             .filter_map(|entry| {
                 let id = sunrise::mod_id(entry)?;
-                let manifest = sunrise_launcher_smod::manifest::Package::read(&entry.path(home)?)
-                    .ok()?
-                    .manifest;
-                (manifest.id == id).then_some((
-                    manifest.id,
-                    ArchiveName {
-                        name: manifest.name,
-                        authors: manifest.authors,
-                        version: manifest.version,
-                    },
-                ))
+                let package =
+                    sunrise_launcher_smod::manifest::Package::read(&entry.path(home)?).ok()?;
+                let manifest = package.manifest;
+                (manifest.id == id).then(|| {
+                    (
+                        entry.file.clone(),
+                        ArchiveDisplay {
+                            name: manifest.name,
+                            authors: manifest.authors,
+                            version: manifest.version,
+                            icon: package.icon.as_ref().map(package_image),
+                        },
+                    )
+                })
             })
             .collect();
-        let local = read_local(home, &mut archive_names);
+        let local = read_local(home, &mut archives);
         let enabled = enabled_ids(home, &entries, &local);
         let chosen = sunrise::chosen(home);
         let active = match try_display_active(home) {
@@ -198,7 +203,7 @@ impl InstalledRows {
         Ok(Some((
             Self {
                 entries,
-                archive_names,
+                archives,
                 enabled,
                 chosen,
                 local,
@@ -335,8 +340,8 @@ pub(crate) struct ModsState {
     /// The worlds' data packs and the world picker (`data_packs`).
     data: data_packs::DataState,
     selection: BTreeSet<String>,
-    /// The row last clicked, for Shift-click ranges (an index into the visible rows).
-    anchor: Option<usize>,
+    /// The last clicked archive path, resolved in the current list for Shift-click.
+    anchor: Option<String>,
     snapshot: Option<Snapshot>,
     open: Option<Open>,
     page_request: u64,
@@ -368,6 +373,8 @@ pub(crate) struct ModsState {
     revealed: Rc<std::cell::Cell<bool>>,
     /// A gallery picture enlarged over the window.
     viewer: Option<viewer::Viewer>,
+    /// What the refused-Add modal shows (`refused`).
+    refused: Option<refused::Refused>,
 }
 
 impl ModsState {
@@ -422,12 +429,17 @@ impl Default for ModsState {
             reveal: None,
             revealed: Default::default(),
             viewer: None,
+            refused: None,
         }
     }
 }
 
+fn package_image(icon: &sunrise_launcher_smod::icon::Icon) -> std::sync::Arc<gpui::Image> {
+    gpui::Image::from_bytes(gpui::ImageFormat::Png, icon.bytes().to_vec()).into()
+}
+
 /// The mods placed by hand in `home`: every package is opened and read.
-fn read_local(home: &Path, archive_names: &mut HashMap<String, ArchiveName>) -> Vec<model::Local> {
+fn read_local(home: &Path, archives: &mut HashMap<String, ArchiveDisplay>) -> Vec<model::Local> {
     native_status::untracked(home)
         .into_iter()
         .map(|file| (file, true))
@@ -438,12 +450,16 @@ fn read_local(home: &Path, archive_names: &mut HashMap<String, ArchiveName>) -> 
         )
         .map(|(file, native)| {
             let unreadable = file.icon.is_err();
-            if !unreadable {
-                archive_names.entry(file.id.clone()).or_insert(ArchiveName {
-                    name: file.name.clone(),
-                    authors: file.authors,
-                    version: file.version.clone(),
-                });
+            if let Ok(icon) = file.icon {
+                archives.insert(
+                    file.file.clone(),
+                    ArchiveDisplay {
+                        name: file.name.clone(),
+                        authors: file.authors,
+                        version: file.version.clone(),
+                        icon: icon.as_deref().map(package_image),
+                    },
+                );
             }
             model::Local {
                 id: file.id,
@@ -499,7 +515,9 @@ impl Launcher {
             Page::Project if self.ui.mods.nightly.collection.is_some() => {
                 self.source_collection(cx)
             }
-            Page::Project if self.ui.mods.nightly.open.is_some() => self.nightly_project(cx),
+            Page::Project if self.ui.mods.open.is_none() && self.ui.mods.nightly.open.is_some() => {
+                self.nightly_project(cx)
+            }
             Page::Project => {
                 let scope = self.mods_page_scope();
                 if self
@@ -522,7 +540,28 @@ impl Launcher {
                         now.parent = open.parent;
                     }
                 }
-                self.project(cx)
+                let listing = self.ui.mods.open.as_ref().and_then(|open| {
+                    let Some(InstalledProject::Local(file)) = &open.installed else {
+                        return None;
+                    };
+                    self.installed_source_project(&open.id, file).cloned()
+                });
+                if let Some(source) = listing {
+                    if self
+                        .ui
+                        .mods
+                        .nightly
+                        .open
+                        .as_ref()
+                        .is_none_or(|open| open.source != source)
+                    {
+                        self.inspect_nightly_from(source, false, Page::Installed);
+                    }
+                    self.nightly_project(cx)
+                } else {
+                    self.ui.mods.nightly.open = None;
+                    self.project(cx)
+                }
             }
             Page::Installed => self.installed(window, &have_focus, cx),
             Page::PackFind => self.pack_find(window, &find_focus, cx),
@@ -571,6 +610,7 @@ impl Launcher {
 
     fn mods_show_installed_project(&mut self, row: &Row) {
         self.ui.mods.nightly.open = None;
+        self.ui.mods.nightly.collection = None;
         let (id, installed) = match &row.local {
             Some(local) => (row.id.clone(), InstalledProject::Local(local.file.clone())),
             None => (
@@ -865,6 +905,19 @@ impl Launcher {
                 backup_notice,
             });
         }
+        let snapshot = self.ui.mods.snapshot.as_ref();
+        if matches!(self.ui.page, Page::Installed | Page::Project)
+            && snapshot.is_some_and(|s| {
+                s.rows.local.iter().any(|local| {
+                    local
+                        .github
+                        .as_ref()
+                        .is_some_and(|origin| origin.source.is_some())
+                })
+            })
+        {
+            self.read_nightly_catalogue(false);
+        }
         let wants_index = self
             .ui
             .mods
@@ -909,6 +962,7 @@ impl Launcher {
 
     fn mods_load_page(&mut self, id: String, from: Page, installed: Option<InstalledProject>) {
         self.ui.mods.facts_open = false;
+        crate::frame::scrolls("project").set_offset(gpui::point(px(0.), px(0.)));
         let collection = installed.is_none() && self.is_collection(&id);
         let load = !collection && !matches!(installed, Some(InstalledProject::Local(_)));
         let scope = self.mods_page_scope();

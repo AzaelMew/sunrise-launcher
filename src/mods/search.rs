@@ -164,7 +164,7 @@ mod tests {
     fn left_behind() -> ModsState {
         let mut m = ModsState {
             selection: ["lantern", "trail"].map(String::from).into(),
-            anchor: Some(1),
+            anchor: Some("sunrise-mods/trail.smod".into()),
             row_filter: RowFilter {
                 text: "lantern".into(),
                 show: Show::On,

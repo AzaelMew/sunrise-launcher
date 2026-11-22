@@ -849,7 +849,7 @@ pub fn latest(releases: &[Release]) -> Option<&Release> {
 /// How often a launcher left open looks for new releases: they come out several times a day.
 pub const CHECK_EVERY: std::time::Duration = std::time::Duration::from_secs(30 * 60);
 
-/// The community and website links, from `launcher/links.json` on main, so they can change
+/// The community and website links, from `links.json` on main, so they can change
 /// without a launcher release. An empty address hides its button.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Links {
@@ -1360,7 +1360,7 @@ pub fn install(release: &Release, progress: impl Fn(f32)) -> Result<InstallOutco
     Ok(outcome)
 }
 
-/// The build's facts a launcher reads first (docs/api/release-file.md), signed beside its archives.
+/// The build's facts a launcher reads first (sunrise-org/sunrise's docs/api/release-file.md), signed beside its archives.
 const RELEASE_FILE: &str = "sunrise-release.json";
 
 /// Keeps `bytes` as the installed build's [`RELEASE_FILE`] in `dir` when they are the signed `sha256`'s.

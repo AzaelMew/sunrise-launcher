@@ -14,6 +14,8 @@ pub fn routes(home: &Path, base: Option<&str>) -> Result<Routes, Failed> {
 pub(crate) enum SourceCheckError {
     Dependency(String),
     Fit(Failed),
+    /// Another native build or a cache cleanup holds the build folder.
+    Busy,
 }
 
 impl From<String> for SourceCheckError {
@@ -45,7 +47,13 @@ pub(crate) fn source_routes(
         .map_err(SourceCheckError::Dependency)?;
     cancellation.check()?;
 
-    let lease = crate::native_cache::Cache::acquire(&backend::build_dir()).map_err(cache_error)?;
+    let lease =
+        crate::native_cache::Cache::acquire(&backend::build_dir()).map_err(
+            |error| match error {
+                crate::native_cache::Error::Busy => SourceCheckError::Busy,
+                error => SourceCheckError::Fit(cache_error(error).into()),
+            },
+        )?;
     let result = classify_bundles(&folder, &found, Some(base), &lease, cancellation)
         .map_err(SourceCheckError::Fit)?;
     cancellation.check()?;
@@ -145,8 +153,15 @@ fn classify_bundles(
                     fit::Verdict::Fits { .. } => Route::Fits {
                         line: fit::line(&id, &verdict, &shown),
                     },
-                    fit::Verdict::NoList { .. } => Route::Unchecked {
+                    // A list in a newer schema is the game's to read: updating the game helps.
+                    fit::Verdict::NoList {
+                        why: Some(fit::NoListReason::NewerSchema),
+                        ..
+                    } => Route::Unchecked {
                         reason: fit::line(&id, &verdict, &shown),
+                    },
+                    fit::Verdict::NoList { .. } => Route::Unproven {
+                        line: fit::line(&id, &verdict, &shown),
                     },
                     _ => Route::Unfit {
                         headline: fit::headline(&id, &verdict),
