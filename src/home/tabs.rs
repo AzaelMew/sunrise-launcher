@@ -73,7 +73,6 @@ pub(super) struct Tabs {
     strip_scroll: ScrollHandle,
     strip_focus: Option<FocusHandle>,
     opener: Option<FocusHandle>,
-    server: Option<servers::Target>,
     /// Stable even as a virtual row is recycled. Cleared when leaving the selected profile.
     rows: HashMap<SharedString, FocusHandle>,
 }
@@ -98,6 +97,14 @@ impl Tabs {
             .or_insert_with(|| cx.focus_handle().tab_stop(true))
             .clone()
     }
+}
+
+pub(crate) struct RowDisplay {
+    pub(crate) id: SharedString,
+    pub(crate) picture: AnyElement,
+    pub(crate) title: String,
+    pub(crate) detail: Option<String>,
+    pub(crate) tail: Option<String>,
 }
 
 pub(crate) struct Content {
@@ -387,17 +394,19 @@ impl Launcher {
     }
 
     /// The shared read-only Home row. Destination pages own all mutations.
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn home_overview_row(
         &mut self,
-        id: SharedString,
-        picture: AnyElement,
-        title: String,
-        detail: Option<String>,
-        tail: Option<String>,
+        display: RowDisplay,
         cx: &mut Context<Self>,
-        open: impl Fn(&mut Self) + 'static,
+        open: impl Fn(&mut Self, &mut Context<Self>) + 'static,
     ) -> Stateful<Div> {
+        let RowDisplay {
+            id,
+            picture,
+            title,
+            detail,
+            tail,
+        } = display;
         let full = detail
             .iter()
             .chain(&tail)
@@ -430,7 +439,7 @@ impl Launcher {
             ))
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.ui.home.tabs.remember(Some(focus.clone()));
-                open(this);
+                open(this, cx);
                 cx.notify();
             }))
     }

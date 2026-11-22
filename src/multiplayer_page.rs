@@ -20,11 +20,29 @@ pub(super) struct Multiplayer {
     pub(super) error: Option<String>,
     /// The saved server whose Remove button is showing, and whether it was asked once.
     pub(super) menu: Option<(usize, bool)>,
+    /// The saved row Home opened Join at.
+    pub(super) target: Option<Target>,
     /// What each address answered to the status ping, asked once per list.
     pub(super) reach: HashMap<String, Reach>,
     /// The picture each address sent with that answer, for a server the game hasn't saved one
     /// for.
     pub(super) icons: HashMap<String, Arc<Image>>,
+}
+
+/// Saved servers have no ID and may share a name and address. Keep the list position,
+/// and check the name and address so a changed list doesn't reveal an unrelated row.
+pub(super) struct Target {
+    pub(super) index: usize,
+    pub(super) name: String,
+    pub(super) address: String,
+    pub(super) focus: FocusHandle,
+    pub(super) revealed: std::rc::Rc<std::cell::Cell<bool>>,
+}
+
+impl Target {
+    pub(super) fn matches(&self, index: usize, server: &Server) -> bool {
+        self.index == index && self.name == server.name && self.address == server.ip
+    }
 }
 
 /// A saved server as its status ping found it.
@@ -130,6 +148,7 @@ impl Launcher {
         let mut list = server_list::List::load(&home);
         self.multiplayer.error = edit(&mut list).and_then(|()| list.save(&home)).err();
         self.multiplayer.confirm_remove = None;
+        self.multiplayer.target = None;
         self.multiplayer.stale();
     }
 

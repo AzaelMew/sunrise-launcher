@@ -411,6 +411,7 @@ impl Launcher {
 
     pub(super) fn navigate(&mut self, page: Page) {
         let before = self.ui.page;
+        self.multiplayer.target = None;
         match page {
             Page::Discover => self.open_mods(),
             Page::Packs => self.open_packs(),

@@ -1,11 +1,5 @@
 use super::*;
 
-pub(super) struct Target {
-    profile: String,
-    address: String,
-    revealed: Rc<Cell<bool>>,
-}
-
 impl Launcher {
     pub(super) fn home_servers(
         &mut self,
@@ -17,6 +11,7 @@ impl Launcher {
         let count = self.multiplayer.list.len();
         let view = &self.ui.home.tabs.views[Tab::Servers.index()];
         let (built, place) = view.near.list(&view.scroll, count, 1, ROW, 0.);
+        let start = built.start;
         let rows = self.multiplayer.list[built].to_vec();
         let mut items = div().flex().flex_col();
         if count == 0 {
@@ -34,7 +29,8 @@ impl Launcher {
                 ),
             );
         } else {
-            for (server, saved) in rows {
+            for (offset, (server, saved)) in rows.into_iter().enumerate() {
+                let index = start + offset;
                 let status = match self.multiplayer.reach.get(&server.ip) {
                     Some(multiplayer_page::Reach::Online { players, max }) => Some(trf(
                         "{online} of {max}",
@@ -43,26 +39,27 @@ impl Launcher {
                     Some(multiplayer_page::Reach::Offline) => Some(tr("No answer").into()),
                     _ => None,
                 };
-                let id = SharedString::from(format!("home-server:{}:{}", server.ip, server.name));
                 let icon = saved.or_else(|| self.multiplayer.icons.get(&server.ip).cloned());
                 let picture =
                     crate::mod_icons::tile(icon, &server.ip, &server.name, 30.).into_any_element();
-                let address = server.ip;
-                let profile = instance.id.clone();
                 items = items.child(self.home_overview_row(
-                    id,
-                    picture,
-                    server.name,
-                    (!compact || status.is_none()).then(|| address.clone()),
-                    status,
+                    RowDisplay {
+                        id: format!("home-server:{index}:{}:{}", server.ip, server.name).into(),
+                        picture,
+                        title: server.name.clone(),
+                        detail: (!compact || status.is_none()).then(|| server.ip.clone()),
+                        tail: status,
+                    },
                     cx,
-                    move |this| {
-                        this.ui.home.tabs.server = Some(Target {
-                            profile: profile.clone(),
-                            address: address.clone(),
+                    move |this, cx| {
+                        this.navigate(Page::Join);
+                        this.multiplayer.target = Some(multiplayer_page::Target {
+                            index,
+                            name: server.name.clone(),
+                            address: server.ip.clone(),
+                            focus: cx.focus_handle(),
                             revealed: Default::default(),
                         });
-                        this.navigate(Page::Join);
                     },
                 ));
             }
@@ -80,26 +77,5 @@ impl Launcher {
             turned_off: 0,
             items,
         }
-    }
-
-    /// Attach inside the saved row in Join. An offline row can pass its own focus handle.
-    #[allow(dead_code)] // The Servers rollup wires the canonical Join row to this handoff.
-    pub(crate) fn home_server_target(
-        &self,
-        address: &str,
-        focus: &FocusHandle,
-    ) -> Option<impl IntoElement + use<>> {
-        let target = self.ui.home.tabs.server.as_ref()?;
-        if target.address != address
-            || self.selected_instance()?.id != target.profile
-            || target.revealed.get()
-        {
-            return None;
-        }
-        Some(crate::mods::reveal(
-            crate::frame::scrolls("join"),
-            target.revealed.clone(),
-            Some(focus.clone()),
-        ))
     }
 }

@@ -652,13 +652,15 @@ impl Launcher {
             };
             let open = item.open.clone();
             rows = rows.child(self.home_overview_row(
-                format!("home-item:{:?}:{}", item.kind, item.id).into(),
-                picture.into_any_element(),
-                item.name.clone(),
-                detail,
-                state,
+                tabs::RowDisplay {
+                    id: format!("home-item:{:?}:{}", item.kind, item.id).into(),
+                    picture: picture.into_any_element(),
+                    title: item.name.clone(),
+                    detail,
+                    tail: state,
+                },
                 cx,
-                move |this| this.open_home_item(open.clone()),
+                move |this, _| this.open_home_item(open.clone()),
             ));
         }
         Content {
