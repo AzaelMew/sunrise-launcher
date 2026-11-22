@@ -218,40 +218,48 @@ fn parser(markdown: &str) -> Parser<'_> {
 fn strip_html(markdown: String) -> String {
     let mut clean = String::with_capacity(markdown.len());
     let mut next = 0;
-    // The parser hands over block HTML a line at a time: read each block as one fragment.
-    let mut fragment = String::new();
+    // The parser hands over block HTML a line at a time, and inline HTML a tag at a time: read
+    // each HTML block, and each paragraph's inline HTML, as one fragment.
+    let (mut block, mut inline) = (String::new(), String::new());
     let mut in_block = false;
     for (event, span) in parser(&markdown).into_offset_iter() {
-        let (html, inline) = match &event {
+        let html = match &event {
             Event::Start(Tag::HtmlBlock) => {
+                push_images(&mut clean, &mut inline, false);
                 in_block = true;
                 continue;
             }
             Event::End(TagEnd::HtmlBlock) => {
                 in_block = false;
-                push_images(&mut clean, &mut fragment);
+                push_images(&mut clean, &mut block, true);
                 continue;
             }
-            Event::Html(html) => (html, false),
-            Event::InlineHtml(html) => (html, true),
+            Event::End(
+                TagEnd::Paragraph | TagEnd::Heading(_) | TagEnd::TableCell | TagEnd::Item,
+            ) => {
+                push_images(&mut clean, &mut inline, false);
+                continue;
+            }
+            Event::Html(html) | Event::InlineHtml(html) => html,
             _ => continue,
         };
         if next < span.start {
             clean.push_str(&markdown[next..span.start]);
         }
         next = next.max(span.end);
-        fragment.push_str(html);
-        if inline || !in_block {
-            push_images(&mut clean, &mut fragment);
+        match (&event, in_block) {
+            (Event::InlineHtml(_), _) | (_, false) => inline.push_str(html),
+            _ => block.push_str(html),
         }
     }
-    push_images(&mut clean, &mut fragment);
+    push_images(&mut clean, &mut inline, false);
+    push_images(&mut clean, &mut block, true);
     clean.push_str(&markdown[next..]);
     clean
 }
 
 /// Write the images of an HTML fragment as Markdown images, and empty the fragment.
-fn push_images(clean: &mut String, fragment: &mut String) {
+fn push_images(clean: &mut String, fragment: &mut String, block: bool) {
     for (alt, src) in html_images(fragment) {
         clean.push_str("![");
         for c in alt.chars().filter(|c| !c.is_control()) {
@@ -262,7 +270,10 @@ fn push_images(clean: &mut String, fragment: &mut String) {
         }
         clean.push_str("](<");
         clean.push_str(&src);
-        clean.push_str(">)\n\n");
+        clean.push_str(">)");
+        if block {
+            clean.push_str("\n\n");
+        }
     }
     fragment.clear();
 }

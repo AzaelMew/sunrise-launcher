@@ -153,6 +153,24 @@ fn crlf_lines_and_text_only_elements_keep_html_whole() {
 }
 
 #[test]
+fn an_inline_text_only_element_hides_its_contents_until_it_closes() {
+    let markdown = "Try <textarea><img src=\"media/inside.png\"></textarea> then \
+                    <img src=\"media/after.png\" alt=\"after\"> here.\n"
+        .to_owned();
+    let readme = Saved {
+        path: "README.md".into(),
+        markdown,
+    }
+    .parse(REPO, SHA, true);
+    let found: Vec<_> = readme
+        .images()
+        .iter()
+        .map(|i| (i.alt(), &i.location))
+        .collect();
+    assert_eq!(found, [("after", &repo("media/after.png"))]);
+}
+
+#[test]
 fn html_inside_a_quote_stays_whole() {
     let markdown = "> <p>\n> <img\n>   src=\"media/quoted.png\"\n>   alt=\"quoted\">\n> </p>\n\n\
                     > <!--\n> <img src=\"media/commented.png\">\n> -->\n"
