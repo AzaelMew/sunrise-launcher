@@ -46,9 +46,22 @@ impl Launcher {
         let (Some(open), Some(catalogue)) = (&state.collection, &state.catalogue) else {
             return;
         };
-        let picks = collection_picks(catalogue, &open.id, &open.ticked, &added);
+        let Some(collection) = catalogue.collections.iter().find(|c| c.id == open.id) else {
+            return;
+        };
+        let picks: Vec<_> = collection
+            .members
+            .iter()
+            .filter(|member| open.ticked.contains(&member.id) && !added.contains(&member.id))
+            .filter_map(|member| catalogue.sources.iter().find(|s| s.id() == member.id))
+            .cloned()
+            .collect();
         if !picks.is_empty() {
-            self.add_sources(SourcePicks::Collection(picks));
+            self.add_sources(SourcePicks::Collection {
+                id: collection.id.clone(),
+                name: collection.name.clone(),
+                sources: picks,
+            });
         }
     }
 
@@ -255,7 +268,7 @@ impl Launcher {
                         true => dim(tick),
                         false => tick,
                     })
-                    .child(self.nightly_icon_tile(source, None, allow_fetch, 36., cx))
+                    .child(self.source_tile(source, None, allow_fetch, None, 36., cx))
                     .child(
                         div()
                             .flex_1()
@@ -384,24 +397,4 @@ impl Launcher {
         )
         .into_any_element()
     }
-}
-
-/// The ticked listings of the current list's collection `id`, in its order, leaving out mods
-/// already built and anything no longer a member.
-fn collection_picks(
-    catalogue: &sources::Catalogue,
-    id: &str,
-    ticked: &BTreeSet<String>,
-    added: &BTreeSet<String>,
-) -> Vec<Source> {
-    catalogue
-        .collections
-        .iter()
-        .find(|collection| collection.id == id)
-        .into_iter()
-        .flat_map(|collection| &collection.members)
-        .filter(|member| ticked.contains(&member.id) && !added.contains(&member.id))
-        .filter_map(|member| catalogue.sources.iter().find(|s| s.id() == member.id))
-        .cloned()
-        .collect()
 }

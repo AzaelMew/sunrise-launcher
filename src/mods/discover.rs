@@ -163,7 +163,11 @@ impl Launcher {
                 .and_then(|url| self.mods_image(&url, images::ICON));
             let installed = self.discover_installed();
             let collection = index.as_ref().and_then(|index| index.collection(&id));
-            let version = installed.and_then(|rows| rows.registry_version(&id));
+            let entry = installed.and_then(|rows| rows.registry_entry(&id));
+            let version = entry.map(|entry| entry.number.as_str());
+            let package = installed
+                .zip(entry)
+                .and_then(|(rows, entry)| rows.archives.get(&entry.file)?.icon.clone());
             let is_added = collection.map_or(version.is_some(), |collection| {
                 model::collection::installed(collection, &cards, |id| {
                     installed.is_some_and(|rows| rows.registry_version(id).is_some())
@@ -251,7 +255,7 @@ impl Launcher {
             grid = grid.child(
                 browse_card(
                     ("alt-card", n),
-                    picture,
+                    mod_artwork(picture, package),
                     &id,
                     &card_data.name,
                     &card_data.authors,

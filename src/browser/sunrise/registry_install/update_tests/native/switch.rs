@@ -46,6 +46,7 @@ impl Pinned {
             commit: ORIGIN_COMMIT.into(),
             asset: None,
             sha256: index::sha256(&archive),
+            added_from: None,
             source: Some(SourceOrigin {
                 repo_id: 42,
                 manifest: "sunrise-mod.toml".into(),
