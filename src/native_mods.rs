@@ -28,6 +28,7 @@ mod planning;
 pub use planning::{routes, update_check, UpdateCheck};
 pub(crate) use planning::{source_routes, SourceCheckError};
 mod internals_sync;
+mod registry_failure;
 mod tool;
 pub use internals_sync::catalog;
 pub mod fit;
@@ -972,6 +973,21 @@ impl std::fmt::Display for ClientBuild {
     }
 }
 
+/// A requirement Cargo traced to a staged mod, incompatible with a pinned game library.
+#[derive(Debug, PartialEq, Eq)]
+pub struct RegistryConflict {
+    pub mod_id: String,
+    pub package: String,
+    pub requirement: ConflictRequirement,
+    pub game: String,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum ConflictRequirement {
+    Version(String),
+    Feature(String),
+}
+
 /// Why a native build or internals check stopped.
 #[derive(Debug)]
 pub enum Failed {
@@ -992,6 +1008,16 @@ pub enum Failed {
     Worlds(Box<AtStake>),
     /// Transfer or preparation of the pinned compiler failed before mod code ran.
     Tools(String),
+    /// The joint build cannot keep the game's dependency pins with these mods enabled.
+    RegistryConflict {
+        conflicts: Vec<RegistryConflict>,
+        error: String,
+    },
+    /// A terminal SDK failure with no attributed registry conflict.
+    Tool {
+        error: String,
+        retryable: bool,
+    },
     /// SDK evidence was unavailable or refused, not a local cache I/O error. A mod id
     /// means the failure belongs to that mod's inherited pin, not the target build.
     Sdk {
@@ -1025,7 +1051,11 @@ impl From<String> for Failed {
 impl std::fmt::Display for Failed {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Mods { error, .. } | Self::Tools(error) | Self::Other(error) => f.write_str(error),
+            Self::Mods { error, .. }
+            | Self::RegistryConflict { error, .. }
+            | Self::Tool { error, .. }
+            | Self::Tools(error)
+            | Self::Other(error) => f.write_str(error),
             Self::Sdk { refusal, .. } => std::fmt::Display::fmt(refusal, f),
             Self::Worlds(stake) => f.write_str(&stake.text),
             Self::Nothing => f.write_str(no_mods_to_build()),
@@ -1593,10 +1623,19 @@ fn pipeline(
             }
             _ => Vec::new(),
         };
-        let e = blamed_text(failure);
         let Some(failed) = going.first() else {
-            return Failed::Other(e);
+            if failure.blame.is_none() {
+                return registry_failure::classify(
+                    failure.error,
+                    mods.iter().map(|bundle| bundle.manifest.id.as_str()),
+                );
+            }
+            return Failed::Tool {
+                error: blamed_text(failure),
+                retryable: false,
+            };
         };
+        let e = blamed_text(failure);
         if let Some(home) = worlds {
             if let Err(stop) = guard_worlds(home, &going, &shown, leave_out) {
                 return stop;
@@ -1972,7 +2011,9 @@ fn isolated(
                 });
             }
             Err(Failed::NoConsent) => return Err(Failed::NoConsent),
-            Err(Failed::Tools(error)) => return Err(Failed::Tools(error)),
+            Err(
+                error @ (Failed::Tools(_) | Failed::Tool { .. } | Failed::RegistryConflict { .. }),
+            ) => return Err(error),
             Err(Failed::Sdk { refusal, .. }) => return Err(said(&skip, refusal.to_string())),
             Err(Failed::Worlds(stake)) => return Err(Failed::Worlds(stake)),
             Err(Failed::Other(error)) if error == CANCELLED => return Err(Failed::Other(error)),

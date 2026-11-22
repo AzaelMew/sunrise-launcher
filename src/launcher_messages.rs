@@ -179,34 +179,22 @@ impl Launcher {
                         if active_play_build {
                             match error {
                                 _ if cancelled => run.cancelled(),
-                                StartError::Native(native_mods::Failed::Mods {
-                                    left,
-                                    error,
-                                    compiling,
-                                    ..
-                                }) => {
-                                    let summary = if *compiling && !left.is_empty() {
-                                        tr("A mod couldn't be built. See the build log for details.")
-                                            .to_owned()
-                                    } else {
-                                        error.clone()
-                                    };
-                                    run.stopped(summary, &[]);
-                                    for mod_error in left {
-                                        run.mark_left_out(mod_error);
-                                    }
-                                }
-                                StartError::Native(error) => run.stopped(error.to_string(), &[]),
+                                StartError::Native(error) => run.native_failed(error, &[]),
                                 StartError::Other(error) => {
-                                    run.stopped(error.clone(), &[]);
+                                    run.stopped(
+                                        tr("The build could not finish. No game was started.")
+                                            .into(),
+                                        error.clone(),
+                                    );
                                     captured_build_error = true;
                                 }
                                 StartError::Journal(error) => {
-                                    run.stopped(error.summary().into(), &[])
+                                    run.stopped(error.summary().into(), error.details())
                                 }
-                                _ => {
-                                    run.stopped(tr("The build could not be published.").into(), &[])
-                                }
+                                _ => run.stopped(
+                                    tr("The build could not be published.").into(),
+                                    String::new(),
+                                ),
                             }
                         }
                     }
@@ -262,7 +250,9 @@ impl Launcher {
                         }
                         Err(StartError::Native(error)) => {
                             self.native_for = Some(instance.id);
-                            self.native_failed(error.to_string(), &[]);
+                            if !active_play_build {
+                                self.native_failed(error.to_string(), &[]);
+                            }
                         }
                         Err(StartError::Hook(error)) => self.client_error = Some(error.to_string()),
                         Err(StartError::Other(_)) if captured_build_error => (),
@@ -496,18 +486,10 @@ impl Launcher {
                     if no_consent {
                         self.ui.mods.build = None;
                     } else if let Some(run) = &mut self.ui.mods.build {
-                        match (result.is_ok(), cancelled, &self.native_error) {
-                            (true, ..) => run.done(),
-                            (false, true, _) => run.cancelled(),
-                            (false, false, error) => run.stopped(
-                                error.clone().unwrap_or_default(),
-                                &self.native_failed_mods,
-                            ),
-                        }
-                        if let Err(native_mods::Failed::Mods { left, .. }) = &result {
-                            for reason in left {
-                                run.mark_left_out(reason);
-                            }
+                        match &result {
+                            Ok(_) => run.done(),
+                            Err(_) if cancelled => run.cancelled(),
+                            Err(error) => run.native_failed(error, &self.native_failed_mods),
                         }
                         if !shown {
                             run.said_at = Some(Instant::now());

@@ -44,8 +44,24 @@ pub(crate) struct Line {
 pub(crate) enum End {
     Done,
     Cancelled,
-    /// The build stopped: what the player reads, in a sentence.
-    Stopped(String),
+    Stopped(Stop),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Stop {
+    pub summary: String,
+    /// The original diagnostic, kept out of the summary and copied without truncation.
+    pub error: String,
+    pub action: Option<Recovery>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum Recovery {
+    Retry,
+    TurnOff {
+        label: String,
+        mods: Vec<(String, String)>,
+    },
 }
 
 /// What the summary counts.
@@ -193,15 +209,116 @@ impl Run {
         }
     }
 
-    /// The build stopped with `said`; `failed` names the mods blamed by its diagnostic.
-    pub(crate) fn stopped(&mut self, said: String, failed: &[String]) {
+    /// A refusal outside the native tool (for example, a Play publication failure).
+    pub(crate) fn stopped(&mut self, summary: String, error: String) {
         self.unbuild();
-        for line in &mut self.lines {
-            if failed.contains(&line.id) && matches!(line.state, State::Waiting) {
-                line.state = State::Failed(said.clone());
+        self.end = Some(End::Stopped(Stop {
+            summary,
+            error,
+            action: None,
+        }));
+    }
+
+    pub(crate) fn native_failed(&mut self, failure: &native_mods::Failed, failed: &[String]) {
+        use native_mods::{sdk_cache::Refusal, ConflictRequirement, Failed};
+        self.unbuild();
+        let mut action = None;
+        let summary = match failure {
+            Failed::RegistryConflict { conflicts, .. } => {
+                let mut names = Vec::new();
+                let mut mods = Vec::new();
+                for line in &mut self.lines {
+                    let reasons = conflicts
+                        .iter()
+                        .filter(|conflict| conflict.mod_id == line.id)
+                        .map(|conflict| match &conflict.requirement {
+                            ConflictRequirement::Version(requirement) => trf(
+                                "{mod} needs {crate} {requirement}; this game build has {version}.",
+                                &[
+                                    ("mod", &line.title),
+                                    ("crate", &conflict.package),
+                                    (
+                                        "requirement",
+                                        requirement.strip_prefix('=').unwrap_or(requirement),
+                                    ),
+                                    ("version", &conflict.game),
+                                ],
+                            ),
+                            ConflictRequirement::Feature(feature) => trf(
+                                "{mod} needs {crate} with {feature}; this game build has {version} without it.",
+                                &[
+                                    ("mod", &line.title),
+                                    ("crate", &conflict.package),
+                                    ("feature", feature),
+                                    ("version", &conflict.game),
+                                ],
+                            ),
+                        })
+                        .collect::<Vec<_>>();
+                    if !reasons.is_empty() {
+                        line.state = State::Failed(reasons.join("\n"));
+                        names.push(line.title.as_str());
+                        mods.push((line.id.clone(), line.version.clone()));
+                    }
+                }
+                // Don't offer to continue if any of the reported mods isn't in this run's rows.
+                if self.for_play
+                    && conflicts
+                        .iter()
+                        .all(|c| mods.iter().any(|(id, _)| *id == c.mod_id))
+                {
+                    let label = match names.as_slice() {
+                        [] => None,
+                        [name] => Some(trf("Turn off {mod} and play", &[("mod", name)])),
+                        many => Some(trf(
+                            "Turn off {count} mods",
+                            &[("count", &many.len().to_string())],
+                        )),
+                    };
+                    action = label.map(|label| Recovery::TurnOff { label, mods });
+                }
+                tr("These mods need dependencies that this game build can't use.").into()
             }
-        }
-        self.end = Some(End::Stopped(said));
+            Failed::Tool {
+                retryable: true, ..
+            }
+            | Failed::Sdk {
+                refusal: Refusal::Offline { .. },
+                ..
+            } => {
+                if self.for_play {
+                    action = Some(Recovery::Retry);
+                }
+                tr("The build could not download what it needs. Check your connection and try again.").into()
+            }
+            Failed::Sdk {
+                refusal: Refusal::NoSdk { .. } | Refusal::Superseded { .. } | Refusal::Host,
+                ..
+            } => failure.to_string(),
+            Failed::Mods { left, .. } => {
+                for reason in left {
+                    self.mark_left_out(reason);
+                }
+                tr("The build couldn't use every enabled mod.").into()
+            }
+            Failed::Worlds(stake) => {
+                self.at_stake(&stake.mods, &stake.unbuilt);
+                stake.text.clone()
+            }
+            _ => {
+                for line in &mut self.lines {
+                    if failed.contains(&line.id) && matches!(line.state, State::Waiting) {
+                        line.state = State::Failed(did_not_build());
+                    }
+                }
+                tr("The build could not finish. No game was started.").into()
+            }
+        };
+        self.end = Some(End::Stopped(Stop {
+            summary,
+            error: failure.to_string(),
+            action,
+        }));
     }
 
     /// The build stopped before it left out `mods` (worlds use them): each line says what it
@@ -432,6 +549,78 @@ mod tests {
         )
     }
 
+    #[test]
+    fn conflict_rows_name_the_mod_once_in_the_count_and_offer_the_exact_turn_off() {
+        use native_mods::{ConflictRequirement, Failed, RegistryConflict};
+        let mut run = run(true);
+        let error = "raw SDK error\nincluding the final newline\n";
+        let conflicts = |id: &str, package: &str| RegistryConflict {
+            mod_id: id.into(),
+            package: package.into(),
+            game: "3.0.6".into(),
+            requirement: ConflictRequirement::Version("=3.0.10".into()),
+        };
+        run.native_failed(
+            &Failed::RegistryConflict {
+                conflicts: vec![conflicts("zoom", "syn"), conflicts("zoom", "log")],
+                error: error.into(),
+            },
+            &[],
+        );
+        assert_eq!(run.counts().failed, 1);
+        assert_eq!(run.state_of("zoom", "1.0.0"), Some(&State::Failed(
+            "ZOOM needs syn 3.0.10; this game build has 3.0.6.\nZOOM needs log 3.0.10; this game build has 3.0.6.".into(),
+        )));
+        assert_eq!(run.state_of("minimap", "1.0.0"), None);
+        let Some(End::Stopped(stop)) = &run.end else {
+            panic!("build still running")
+        };
+        assert_eq!(stop.error, error);
+        assert!(!stop.summary.contains("SDK"));
+        assert_eq!(
+            stop.action,
+            Some(Recovery::TurnOff {
+                label: "Turn off ZOOM and play".into(),
+                mods: vec![("zoom".into(), "1.0.0".into())],
+            })
+        );
+
+        run.native_failed(
+            &Failed::RegistryConflict {
+                conflicts: vec![conflicts("zoom", "syn"), conflicts("minimap", "log")],
+                error: error.into(),
+            },
+            &[],
+        );
+        assert_eq!(run.counts().failed, 2);
+        assert!(
+            matches!(&run.end, Some(End::Stopped(stop)) if stop.action == Some(Recovery::TurnOff {
+                label: "Turn off 2 mods".into(),
+                mods: vec![("minimap".into(), "1.0.0".into()), ("zoom".into(), "1.0.0".into())],
+            }))
+        );
+    }
+
+    #[test]
+    fn only_a_transient_play_failure_offers_retry() {
+        for (for_play, retryable, expected) in [
+            (true, true, Some(Recovery::Retry)),
+            (true, false, None),
+            (false, true, None),
+        ] {
+            let mut run = run(for_play);
+            run.native_failed(
+                &native_mods::Failed::Tool {
+                    error: "tool error".into(),
+                    retryable,
+                },
+                &[],
+            );
+            assert!(matches!(&run.end, Some(End::Stopped(stop)) if stop.action == expected));
+            assert_eq!(run.counts().failed, 0);
+        }
+    }
+
     fn unfit(id: &str) -> Step {
         Step::LeftOut(LeftOut {
             id: id.into(),
@@ -584,14 +773,17 @@ mod tests {
     fn a_build_that_stopped_names_the_mods_that_stopped_it() {
         let mut run = run(false);
         run.step(&compiling("minimap", 1));
-        run.stopped("Zoom couldn't be built.".into(), &["zoom".into()]);
+        run.native_failed(
+            &native_mods::Failed::Other("Zoom couldn't be built.".into()),
+            &["zoom".into()],
+        );
         assert_eq!(states(&run), ["waiting", "waiting", "waiting", "failed"]);
         assert_eq!(run.counts().failed, 1);
         assert_eq!(run.headline(), "The build stopped");
         // Its row on Mods says so after the window is closed, for the version that failed.
         assert_eq!(
             run.state_of("zoom", "1.0.0"),
-            Some(&State::Failed("Zoom couldn't be built.".into()))
+            Some(&State::Failed(did_not_build()))
         );
         assert_eq!(
             run.state_of("zoom", "1.0.1"),
@@ -623,7 +815,7 @@ mod tests {
         assert_eq!(run.said(now + SAID_FOR), None);
         // A build that stopped is the play bar's to say, with its way on.
         let mut stopped = self::run(false);
-        stopped.stopped("why".into(), &[]);
+        stopped.stopped("why".into(), "diagnostic".into());
         stopped.said_at = Some(now);
         assert_eq!(stopped.said(now), None);
     }
@@ -679,7 +871,7 @@ mod tests {
         let mut run = run(false);
         let ids: Vec<String> = run.lines.iter().map(|l| l.id.clone()).collect();
         run.at_stake(&ids[..1], &[]);
-        run.stopped("stop".into(), &[]);
+        run.stopped("stop".into(), String::new());
         assert!(matches!(run.lines[0].state, State::NeedsUpdate { .. }));
         assert_eq!(run.counts().needs_update, 1);
     }
@@ -698,8 +890,8 @@ mod tests {
             ..mismatch
         };
         run.mark_left_out(&compile_failure);
-        run.stopped(
-            "The build stopped.".into(),
+        run.native_failed(
+            &native_mods::Failed::Other("The build stopped.".into()),
             &["jei".into(), "minimap".into()],
         );
         assert!(matches!(

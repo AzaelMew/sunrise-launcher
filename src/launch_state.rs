@@ -474,8 +474,8 @@ impl Launcher {
             prepare_error: self.prepare_error.clone(),
             native_error: self.native_error.clone(),
             build_result: self.build_here().and_then(|run| match &run.end {
-                Some(crate::mods::build_run::End::Stopped(detail)) if run.for_play => {
-                    Some(detail.clone())
+                Some(crate::mods::build_run::End::Stopped(stop)) if run.for_play => {
+                    Some(stop.summary.clone())
                 }
                 _ => None,
             }),

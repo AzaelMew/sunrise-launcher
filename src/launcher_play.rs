@@ -51,19 +51,28 @@ impl PlayIntent {
 }
 
 impl Launcher {
-    pub(crate) fn retry_managed_play(&mut self) {
-        if self.client.is_some() || (self.launch_busy() && !self.registry_accepts_play()) {
+    pub(crate) fn retry_managed_play(&mut self, turn_off: Vec<(String, String)>) {
+        if self.client.is_some()
+            || (self.launch_busy() && (!turn_off.is_empty() || !self.registry_accepts_play()))
+        {
             return;
         }
-        let Some(request) = self.play_retry.clone().filter(|request| {
-            self.selected_instance()
-                .is_some_and(|current| request.matches_profile(current))
-        }) else {
+        let (Some(request), Some(current)) = (self.play_retry.clone(), self.selected_instance())
+        else {
             return;
         };
+        if !request.matches_profile(current) {
+            return;
+        }
+        let current = current.clone();
+        self.close_sheet();
         self.client_error = None;
         self.prepare_error = None;
-        self.resume_play(request);
+        if turn_off.is_empty() {
+            self.resume_play(request);
+        } else {
+            self.start_managed_client(current, request, turn_off);
+        }
     }
 }
 
@@ -260,6 +269,7 @@ impl Launcher {
         &mut self,
         instance: instances::Instance,
         intent: PlayIntent,
+        turn_off: Vec<(String, String)>,
     ) {
         use sunrise_launcher::managed_play::{Client, FirstBuild, Progress};
         let target = self.profile_target(&instance);
@@ -298,7 +308,8 @@ impl Launcher {
                 explicit_account: false,
                 piped: true,
             }
-            .start(
+            .start_with_mods_off(
+                &turn_off,
                 || {
                     if let Some(tag) = target
                         .as_deref()

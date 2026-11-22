@@ -43,7 +43,7 @@ pub enum Msg {
         instance: String,
         profile: String,
         base: String,
-        mods: Vec<crate::native_status::Mod>,
+        mods: Vec<crate::native_status::BuildMod>,
     },
     ManagedBuildLog(std::sync::Arc<str>),
     ManagedClient {

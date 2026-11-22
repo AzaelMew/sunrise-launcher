@@ -268,6 +268,25 @@ pub fn bundles_on(home: &Path) -> Vec<sunrise_launcher_smod::index::native::Bund
         .collect()
 }
 
+/// A build row's identity and name, taken from the actual enabled archive even when the
+/// Mods page hasn't loaded a snapshot or the registry isn't reachable.
+pub struct BuildMod {
+    pub id: String,
+    pub title: String,
+    pub version: String,
+}
+
+pub fn build_mods(home: &Path) -> Vec<BuildMod> {
+    bundles_on(home)
+        .into_iter()
+        .map(|bundle| BuildMod {
+            id: bundle.manifest.id,
+            title: bundle.manifest.name,
+            version: bundle.manifest.version,
+        })
+        .collect()
+}
+
 /// Paths declared by a code package, in manifest order.
 pub fn declared_internals(manifest: &sunrise_launcher_smod::Manifest) -> Vec<String> {
     manifest

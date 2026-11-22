@@ -4,6 +4,84 @@ use std::{fs, sync::Arc};
 use sunrise_launcher_smod::{index, manifest, mod_list};
 
 #[test]
+fn recovery_turns_off_only_the_reported_versions_before_play_stages_inputs() {
+    const FIXTURE: &str = "PLAY_TURN_OFF_FIXTURE";
+    if std::env::var_os(FIXTURE).is_none() {
+        let root = tempfile::tempdir().unwrap();
+        assert!(Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "managed_play::client::tests::recovery_turns_off_only_the_reported_versions_before_play_stages_inputs"])
+            .env(FIXTURE, "1")
+            .env("SUNRISE_HOME", root.path().join("game"))
+            .env("SUNRISE_LAUNCHER_HOME", root.path().join("launcher"))
+            .env("SUNRISE_LAUNCHER_LOCATION_FILE", root.path().join("location"))
+            .env("SUNRISE_NO_KEYCHAIN", "1")
+            .status().unwrap().success());
+        return;
+    }
+    let home = backend::game_home();
+    let packages = home.join(mod_list::NATIVE_DIR);
+    fs::create_dir_all(&packages).unwrap();
+    for (id, title) in [
+        ("blur", "Motion Blur"),
+        ("lights", "Lights"),
+        ("map", "Map"),
+    ] {
+        let body = format!("id='{id}'\nname='{title}'\nversion='1.0.1'\napi='{}'\n[native]\ngame='26.3'\nsunrise='{}'\n", manifest::API, "a".repeat(40));
+        let cargo = format!("[package]\nname='{id}'\nversion='1.0.1'\n");
+        fs::write(
+            packages.join(format!("{id}.smod")),
+            manifest::Package::write_files(
+                &body,
+                &[
+                    ("Cargo.toml", cargo.as_bytes()),
+                    ("src/lib.rs", b"fn fixture() {}"),
+                ],
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    }
+    let original = "mod.blur:true\nmod.lights:true\nmod.map:true\n";
+    fs::write(home.join(mod_list::FILE), original).unwrap();
+    assert!(crate::native_status::build_mods(&home)
+        .iter()
+        .any(|m| m.id == "blur" && m.title == "Motion Blur"));
+    let instance = instances::selection().unwrap();
+    let start = |v: &str, choose: fn() -> Result<FirstBuild, String>| {
+        let result = Client {
+            instance: &instance,
+            accepted_account: Some("fixture"),
+            explicit_account: false,
+            piped: false,
+        }
+        .start_with_mods_off(
+            &[("blur".into(), "1.0.1".into()), ("lights".into(), v.into())],
+            choose,
+            |_| unreachable!(),
+            |_| unreachable!(),
+            (&native_mods::Cancellation::default(), None),
+            |_| {},
+        );
+        match result {
+            Err(error) => String::from(error),
+            Ok(_) => panic!("fixture must stop before game setup"),
+        }
+    };
+    assert!(start("1.0.0", || unreachable!()).contains("No mods were turned off"));
+    assert_eq!(
+        fs::read_to_string(home.join(mod_list::FILE)).unwrap(),
+        original
+    );
+    assert!(
+        start("1.0.1", || Err("before build selection".into())).contains("before build selection")
+    );
+    assert_eq!(
+        fs::read_to_string(home.join(mod_list::FILE)).unwrap(),
+        "mod.map:true\n"
+    );
+}
+
+#[test]
 fn play_checks_hash_only_takedowns_after_proving_the_actual_package() {
     const TEST: &str = "managed_play::client::tests::play_checks_hash_only_takedowns_after_proving_the_actual_package";
     const BUILD: &str = "v0.1.7";

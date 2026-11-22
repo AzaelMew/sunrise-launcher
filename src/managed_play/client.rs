@@ -14,7 +14,7 @@ pub enum Progress {
     Prepare,
     NativeBuild {
         base: String,
-        mods: Vec<crate::native_status::Mod>,
+        mods: Vec<crate::native_status::BuildMod>,
     },
     Native(native_mods::Step),
     NativeLog(std::sync::Arc<str>),
@@ -80,6 +80,20 @@ impl Client<'_> {
         choose: impl FnOnce() -> Result<FirstBuild, String>,
         arguments: impl FnOnce(&mut Command) -> Result<(), String>,
         prepare_jars: impl FnOnce(&Command) -> Result<(), String>,
+        native: (&native_mods::Cancellation, NativeConsent<'_>),
+        progress: impl Fn(Progress),
+    ) -> Result<Started, StartError> {
+        self.start_with_mods_off(&[], choose, arguments, prepare_jars, native, progress)
+    }
+
+    /// The player accepted turning off these exact versions before resuming Play. Apply the
+    /// change under admission for that same profile and before staging any build inputs.
+    pub fn start_with_mods_off(
+        self,
+        turn_off: &[(String, String)],
+        choose: impl FnOnce() -> Result<FirstBuild, String>,
+        arguments: impl FnOnce(&mut Command) -> Result<(), String>,
+        prepare_jars: impl FnOnce(&Command) -> Result<(), String>,
         (cancellation, native_consent): (&native_mods::Cancellation, NativeConsent<'_>),
         progress: impl Fn(Progress),
     ) -> Result<Started, StartError> {
@@ -98,6 +112,27 @@ impl Client<'_> {
         let mut profile =
             Profile::open_instance(&backend::game_home(), &backend::data_dir(), self.instance)?;
         let instance = profile.admitted_instance(self.instance);
+        if !turn_off.is_empty() {
+            let _manifest = profile.lock_inputs()?;
+            cancellation.check()?;
+            let enabled = crate::native_status::enabled(profile.home());
+            if !turn_off.iter().all(|(id, version)| {
+                enabled
+                    .iter()
+                    .any(|(on, installed, _)| on == id && installed == version)
+            }) {
+                return Err(
+                    crate::i18n::tr("The enabled mods changed. No mods were turned off.")
+                        .to_owned()
+                        .into(),
+                );
+            }
+            let ids = turn_off
+                .iter()
+                .map(|(id, _)| id.as_str())
+                .collect::<Vec<_>>();
+            crate::browser::mod_list::set_all_enabled(profile.home(), &ids, false)?;
+        }
         let check_build = |tag: &str, variant: Option<&BoundVariant>| {
             if self.accepted_account.is_none() && !developer_offline::enabled(tag) {
                 return Err(StartError::Account(NoOwner::default()));
@@ -206,7 +241,7 @@ impl Client<'_> {
             if !started.replace(true) {
                 progress(Progress::NativeBuild {
                     base: base.into(),
-                    mods: crate::native_status::enabled(&home),
+                    mods: crate::native_status::build_mods(&home),
                 });
             }
             progress(Progress::Native(step));

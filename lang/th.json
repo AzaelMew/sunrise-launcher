@@ -1491,5 +1491,17 @@
   "Sign in": "Sign in",
   "Finishing the previous download…": "Finishing the previous download…",
   "The launcher update could not be verified.": "The launcher update could not be verified.",
-  "This account was signed out. Add it again to sign in.": "This account was signed out. Add it again to sign in."
+  "This account was signed out. Add it again to sign in.": "This account was signed out. Add it again to sign in.",
+  "Show details": "Show details",
+  "Hide details": "Hide details",
+  "Copy error": "Copy error",
+  "{mod} needs {crate} {requirement}; this game build has {version}.": "{mod} needs {crate} {requirement}; this game build has {version}.",
+  "{mod} needs {crate} with {feature}; this game build has {version} without it.": "{mod} needs {crate} with {feature}; this game build has {version} without it.",
+  "Turn off {mod} and play": "Turn off {mod} and play",
+  "Turn off {count} mods": "Turn off {count} mods",
+  "These mods need dependencies that this game build can't use.": "These mods need dependencies that this game build can't use.",
+  "The build could not download what it needs. Check your connection and try again.": "The build could not download what it needs. Check your connection and try again.",
+  "The build couldn't use every enabled mod.": "The build couldn't use every enabled mod.",
+  "The build could not finish. No game was started.": "The build could not finish. No game was started.",
+  "The enabled mods changed. No mods were turned off.": "The enabled mods changed. No mods were turned off."
 }

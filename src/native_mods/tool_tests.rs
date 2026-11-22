@@ -25,7 +25,7 @@ fn fake(dir: &Path, events: &[&str]) -> std::process::Command {
             "EXIT2" => script.push_str("exit 2\n"),
             "EXIT3" => script.push_str("exit 3\n"),
             "SIGNAL" => script.push_str("kill -TERM $$\n"),
-            event => script.push_str(&format!("echo '{event}'\n")),
+            event => script.push_str(&format!("printf '%s\\n' '{}'\n", event.replace('\'', "'\\''"))),
         }
     }
     let program = dir.join("tool");
@@ -134,6 +134,102 @@ fn a_tool_run_reports_its_mods_asks_consent_and_ends_built_or_blamed() {
 
 /// Crates with no build script and no proc macro run nothing while building, so the player is
 /// not asked about them and the tool is told yes (#104).
+#[cfg(unix)]
+#[test]
+fn resolver_failure_uses_cargos_requiring_chains_not_the_mods_lock_versions() {
+    use super::super::{registry_failure, ConflictRequirement, Failed, RegistryConflict};
+    let dir = tempfile::tempdir().unwrap();
+    let details = include_str!("../../tests/fixtures/native-registry-conflicts.txt");
+    let reply = serde_json::json!({ "event": "failed", "error": details }).to_string();
+    let mut reported = run(
+        fake(dir.path(), &[&reply, "EXIT1"]),
+        "{}",
+        None,
+        &|_, _, _| (),
+        &Cancellation::default(),
+        None,
+        None,
+    )
+    .unwrap_err();
+    assert!(reported.blame.is_none());
+    assert_eq!(reported.error, details);
+    // A path printed by the SDK must name a mod that was actually staged.
+    let foreign = "mod-not-staged";
+    reported
+        .error
+        .push_str(&details.replace("mod-motion-blur", foreign));
+    let Failed::RegistryConflict { conflicts, error } = registry_failure::classify(
+        reported.error,
+        ["mod-motion-blur", "mod-lights", "loose_mod"].into_iter(),
+    ) else {
+        panic!("expected attributed conflicts")
+    };
+    assert!(error.contains(foreign));
+    assert_eq!(
+        conflicts,
+        [
+            RegistryConflict {
+                mod_id: "mod-motion-blur".into(),
+                package: "syn".into(),
+                requirement: ConflictRequirement::Version("=3.0.10".into()),
+                game: "3.0.6".into(),
+            },
+            RegistryConflict {
+                mod_id: "mod-lights".into(),
+                package: "log".into(),
+                requirement: ConflictRequirement::Version("=0.4.35".into()),
+                game: "0.4.34".into(),
+            },
+        ]
+    );
+}
+
+#[test]
+fn feature_conflicts_use_the_requiring_mod_even_when_its_version_requirement_fits() {
+    use super::super::{registry_failure, ConflictRequirement, Failed};
+    let error = r#"Mods in Cargo's dependency report: mod-motion-blur.
+
+syn: the game locks 3.0.6, but resolution without the game's constraint selected 3.0.10.
+
+error: failed to select a version for `syn`.
+    ... required by package `mod_16 v0.1.1 (C:\temp\build\native-api\mod-motion-blur)`
+versions that meet the requirements `^3` are: 3.0.10, 3.0.6
+
+package `mod_16` depends on `syn` with feature `extra` but `syn` does not have that feature.
+
+all possible versions conflict with previously selected packages
+
+  previously selected package `syn v3.0.6`
+    ... which satisfies dependency `syn = "^3"` of package `mod_17 v0.1.1 (C:\temp\build\native-api\unrelated)`
+"#;
+    let Failed::RegistryConflict { conflicts, .. } =
+        registry_failure::classify(error.into(), ["mod-motion-blur", "unrelated"].into_iter())
+    else {
+        panic!("expected one feature conflict")
+    };
+    assert_eq!(conflicts.len(), 1);
+    assert_eq!(conflicts[0].mod_id, "mod-motion-blur");
+    assert_eq!(
+        conflicts[0].requirement,
+        ConflictRequirement::Feature("extra".into())
+    );
+}
+
+#[test]
+fn original_lock_comparison_and_network_failure_keep_distinct_actions() {
+    use super::super::{registry_failure, Failed};
+    for (error, expected) in [
+        ("syn: game locks [2.0.119, 3.0.6], mod locks 3.0.10; the game graph must not move", false),
+        ("Downloading the mods' pinned crates failed (exit status: 101).\nerror: failed to download any data for `syn v3.0.6` within 30s", true),
+        ("error: failed to verify the checksum of downloaded crate `syn v3.0.6`", false),
+        ("error: failed to get successful HTTP response from `https://example.invalid`, got 404", false),
+        ("error: failed to get successful HTTP response from `https://example.invalid`, got 503", true),
+    ] {
+        assert!(matches!(registry_failure::classify(error.into(), ["mod-motion-blur"].into_iter()),
+            Failed::Tool { retryable, error: original } if retryable == expected && original == error));
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn crates_that_run_nothing_while_building_are_not_asked_about() {
