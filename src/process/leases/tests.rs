@@ -157,7 +157,9 @@ fn one_game_child_keeps_profile_and_cache_claims_without_mixing_their_handles() 
             "SUNRISE_EXPECTED_CACHE_HANDLES",
             claims.files().len().to_string(),
         );
-    let mut child = claims.spawn_game(command, profile.handoff(), true).unwrap();
+    let mut child = claims
+        .spawn_game(command, profile.handoff(), super::Streams::Piped)
+        .unwrap();
     drop(profile);
     let mut output = io::BufReader::new(child.stdout.take().unwrap());
     let mut line = String::new();

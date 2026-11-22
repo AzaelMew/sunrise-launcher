@@ -60,7 +60,7 @@ fn play_checks_hash_only_takedowns_after_proving_the_actual_package() {
         instance: &instance,
         accepted_account: None,
         explicit_account: false,
-        piped: false,
+        streams: crate::process::leases::Streams::Attached,
     };
     let mut profile = Profile::open(&home, None).unwrap();
     let cancellation = native_mods::Cancellation::default();
@@ -288,7 +288,7 @@ fn a_failed_first_download_can_be_followed_by_a_mod_change_and_play() {
         instance: &instance,
         accepted_account: None,
         explicit_account: false,
-        piped: false,
+        streams: crate::process::leases::Streams::Attached,
     };
     let stop = native_mods::Cancellation::default();
     let Err(error) = client().start(
@@ -414,7 +414,7 @@ fn windows_bound_x64_fallback_survives_pending_retry_and_committed_replay() {
         instance: &instance,
         accepted_account: None,
         explicit_account: false,
-        piped: false,
+        streams: crate::process::leases::Streams::Attached,
     };
     let cancellation = native_mods::Cancellation::default();
     let retry = |profile: &mut Profile| {

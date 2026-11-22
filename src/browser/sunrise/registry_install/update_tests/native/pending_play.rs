@@ -60,7 +60,7 @@ fi
             instance: &fixture.instance,
             accepted_account: None,
             explicit_account: false,
-            piped: false,
+            streams: crate::process::leases::Streams::Attached,
         }
         .start(
             || FirstBuild::installed(BUILD),

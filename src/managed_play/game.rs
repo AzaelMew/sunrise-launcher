@@ -3,7 +3,10 @@ use super::{unsettled, Active, Profile, StartError};
 use crate::{
     backend::{self, RuntimeGuard},
     native_mods::Cancellation,
-    process::{child::Child, leases::ChildLeases},
+    process::{
+        child::Child,
+        leases::{ChildLeases, Streams},
+    },
     run_leases,
 };
 use cap_std::{ambient_authority, fs::Dir};
@@ -29,7 +32,7 @@ impl Profile {
             cancellation,
             (command, selection),
             &[],
-            piped,
+            Streams::from_piped(piped),
             || Ok(()),
         )
         .map_err(String::from)
@@ -49,7 +52,7 @@ impl Profile {
             active,
             cancellation,
             command,
-            (launch, piped, &|_| {}),
+            (launch, Streams::from_piped(piped), &|_| {}),
             |_| Ok(()),
             || Ok(()),
         )
@@ -60,21 +63,22 @@ impl Profile {
         active: &Active,
         cancellation: &Cancellation,
         mut command: Command,
-        (launch, piped, hook_log): (&crate::launch::Launch, bool, &dyn Fn(String)),
+        (launch, streams, hook_log): (&crate::launch::Launch, Streams<'_>, &dyn Fn(String)),
         prepare_jars: impl FnOnce(&Command) -> Result<(), String>,
         check_account: impl FnOnce() -> Result<(), String>,
     ) -> Result<(Child, RuntimeGuard), StartError> {
         let wrapper = crate::launch::managed_wrapper(&mut command, launch);
         let selection = validate_selection(self.home(), &active.resource_path(), &command)?;
         prepare_jars(&command)?;
-        crate::launch::managed_pre_launch(&command, launch, piped, hook_log)
+        // The hooks run while the launcher is open: a UI launch shows their lines either way.
+        crate::launch::managed_pre_launch(&command, launch, streams.detached(), hook_log)
             .map_err(StartError::Hook)?;
         self.spawn_selected(
             active,
             cancellation,
             (command, selection),
             &wrapper,
-            piped,
+            streams,
             check_account,
         )
     }
@@ -85,7 +89,7 @@ impl Profile {
         cancellation: &Cancellation,
         selected: (Command, LaunchArguments),
         wrapper: &[std::ffi::OsString],
-        piped: bool,
+        streams: Streams<'_>,
         check_account: impl FnOnce() -> Result<(), String>,
     ) -> Result<(Child, RuntimeGuard), StartError> {
         self.verified_handoff(active, cancellation, |profile| {
@@ -142,7 +146,7 @@ impl Profile {
                 leases
             };
             #[cfg(unix)]
-            if piped {
+            if streams.detached() {
                 use std::os::unix::process::CommandExt;
                 command.process_group(0);
             }
@@ -150,7 +154,7 @@ impl Profile {
             let child = if wrapper.is_empty() {
                 let program = command.get_program().to_string_lossy().into_owned();
                 leases
-                    .spawn_game(command, profile, piped)
+                    .spawn_game(command, profile, streams)
                     .map_err(|error| {
                         crate::i18n::trf(
                             "Could not run {program}: {error}",
@@ -158,7 +162,7 @@ impl Profile {
                         )
                     })?
             } else {
-                crate::process::relay::start(&command, wrapper, &leases, profile, piped)?
+                crate::process::relay::start(&command, wrapper, &leases, profile, streams)?
             };
             drop(record);
             Ok((child, runtime))

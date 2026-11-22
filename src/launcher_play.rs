@@ -261,7 +261,8 @@ impl Launcher {
         instance: instances::Instance,
         intent: PlayIntent,
     ) {
-        use sunrise_launcher::managed_play::{Client, FirstBuild, Progress};
+        use sunrise_launcher::managed_play::{Client, FirstBuild, Progress, StartError};
+        use sunrise_launcher::process::leases::Streams;
         let target = self.profile_target(&instance);
         let release = target
             .as_deref()
@@ -290,67 +291,76 @@ impl Launcher {
         self.play_step = Some(backend::PlayStep::Assets);
         let cancellation = native_mods::Cancellation::default();
         self.native_cancellation = Some(cancellation.clone());
+        // Unless the launcher stays open, it closes under this game once it runs
+        // (`while_playing.rs`): the game's output goes to a file, not to pipes that close with it.
+        let logged = !self.keep_open_while_playing();
+        self.aside.logged = logged;
         let tx = self.tx.clone();
         std::thread::spawn(move || {
-            let result = Client {
-                instance: &instance,
-                accepted_account: intent.account.as_deref(),
-                explicit_account: false,
-                piped: true,
-            }
-            .start(
-                || {
-                    if let Some(tag) = target
-                        .as_deref()
-                        .filter(|tag| backend::installed().iter().any(|found| found == tag))
-                    {
-                        FirstBuild::installed(tag)
-                    } else if let Some(release) = release {
-                        FirstBuild::download(&release)
-                    } else {
-                        Err(absent)
-                    }
-                },
-                |cmd| {
-                    intent.destination.apply(cmd)?;
-                    backend::append_game_args(cmd);
-                    Ok(())
-                },
-                |cmd| {
-                    jar_launch::with_consent(&tx, |permission| {
-                        sunrise_launcher::jars::prepare_for_command(cmd, permission)
-                    })
-                    .map_err(|error| error.to_string())
-                },
-                (
-                    &cancellation,
-                    Some(&|inventory: &native_mods::Consent| {
-                        let (reply, answer) = std::sync::mpsc::channel();
-                        tx.send(Msg::NativeRegistryConsent(inventory.clone(), reply))
-                            .is_ok()
-                            && answer.recv().unwrap_or(false)
-                    }),
-                ),
-                |progress| {
-                    let msg = match progress {
-                        Progress::Download(_) => Msg::PlayStep(backend::PlayStep::Download),
-                        Progress::Prepare => Msg::PlayStep(backend::PlayStep::Prepare),
-                        Progress::NativeBuild { base, mods } => Msg::ManagedBuild {
-                            instance: instance.id.clone(),
-                            profile: instance.name.clone(),
-                            base,
-                            mods,
-                        },
-                        Progress::Native(step) => Msg::NativeProgress(step),
-                        Progress::NativeLog(output) => Msg::ManagedBuildLog(output),
-                        Progress::SignIn => Msg::PlayStep(backend::PlayStep::SignIn),
-                        Progress::Line(line) | Progress::HookLine(line) => {
-                            Msg::Line(Job::Prepare, line)
+            let log = logged
+                .then(|| backend::create_game_output(&backend::game_output_log()))
+                .transpose();
+            let result = log.map_err(StartError::Other).and_then(|log| {
+                Client {
+                    instance: &instance,
+                    accepted_account: intent.account.as_deref(),
+                    explicit_account: false,
+                    streams: log.as_ref().map_or(Streams::Piped, Streams::Logged),
+                }
+                .start(
+                    || {
+                        if let Some(tag) = target
+                            .as_deref()
+                            .filter(|tag| backend::installed().iter().any(|found| found == tag))
+                        {
+                            FirstBuild::installed(tag)
+                        } else if let Some(release) = release {
+                            FirstBuild::download(&release)
+                        } else {
+                            Err(absent)
                         }
-                    };
-                    let _ = tx.send(msg);
-                },
-            );
+                    },
+                    |cmd| {
+                        intent.destination.apply(cmd)?;
+                        backend::append_game_args(cmd);
+                        Ok(())
+                    },
+                    |cmd| {
+                        jar_launch::with_consent(&tx, |permission| {
+                            sunrise_launcher::jars::prepare_for_command(cmd, permission)
+                        })
+                        .map_err(|error| error.to_string())
+                    },
+                    (
+                        &cancellation,
+                        Some(&|inventory: &native_mods::Consent| {
+                            let (reply, answer) = std::sync::mpsc::channel();
+                            tx.send(Msg::NativeRegistryConsent(inventory.clone(), reply))
+                                .is_ok()
+                                && answer.recv().unwrap_or(false)
+                        }),
+                    ),
+                    |progress| {
+                        let msg = match progress {
+                            Progress::Download(_) => Msg::PlayStep(backend::PlayStep::Download),
+                            Progress::Prepare => Msg::PlayStep(backend::PlayStep::Prepare),
+                            Progress::NativeBuild { base, mods } => Msg::ManagedBuild {
+                                instance: instance.id.clone(),
+                                profile: instance.name.clone(),
+                                base,
+                                mods,
+                            },
+                            Progress::Native(step) => Msg::NativeProgress(step),
+                            Progress::NativeLog(output) => Msg::ManagedBuildLog(output),
+                            Progress::SignIn => Msg::PlayStep(backend::PlayStep::SignIn),
+                            Progress::Line(line) | Progress::HookLine(line) => {
+                                Msg::Line(Job::Prepare, line)
+                            }
+                        };
+                        let _ = tx.send(msg);
+                    },
+                )
+            });
             if let Err(std::sync::mpsc::SendError(Msg::ManagedClient { result, .. })) =
                 tx.send(Msg::ManagedClient {
                     instance: Box::new(instance),

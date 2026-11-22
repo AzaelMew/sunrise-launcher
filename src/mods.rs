@@ -49,7 +49,9 @@ pub(crate) use data_packs::names;
 pub(crate) use search::Installed;
 mod viewer;
 use std::rc::Rc;
-pub(crate) use ui::{checkbox, choices, field_theme, reveal, segmented, switch, Choose};
+pub(crate) use ui::{
+    checkbox, choices, empty_state, field_theme, reveal, segmented, switch, Choose,
+};
 
 use crate::paint::palette;
 use model::{Card, Row};
@@ -493,6 +495,12 @@ impl crate::instances_page::Instances {
     }
 }
 
+/// The read-only Home view uses the same Installed classification as the full rows.
+pub(crate) struct HomeModFacts {
+    pub(crate) kind: &'static str,
+    pub(crate) status: Option<String>,
+}
+
 impl Launcher {
     /// The Mods screen for `self.ui.page`: Discover, Installed or a mod's page.
     pub(crate) fn mods(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
@@ -670,6 +678,36 @@ impl Launcher {
         if let Some(row) = self.rows().into_iter().find(|r| r.id == id) {
             self.update_one(&row);
         }
+    }
+
+    pub(crate) fn home_mod_facts(&mut self) -> std::collections::HashMap<String, HomeModFacts> {
+        self.mods_refresh();
+        self.rows()
+            .into_iter()
+            .filter(|row| row.on)
+            .map(|row| {
+                let error = self.ui.mods.errors.get(&row.id).map(String::as_str);
+                let cells = model::cells(
+                    &row,
+                    error,
+                    None,
+                    self.settings.native_mods_allowed_at.is_some(),
+                );
+                let kind = if cells.kind.is_empty() {
+                    tr("Content")
+                } else {
+                    cells.kind
+                };
+                let status = cells.status.map(|state| state.label);
+                (row.id, HomeModFacts { kind, status })
+            })
+            .collect()
+    }
+
+    pub(crate) fn show_resource_pack_discover(&mut self) {
+        self.leave_section(true);
+        self.pack_scope(pack_discover::Scope::Resource);
+        self.choose_view(Page::PackFind);
     }
 
     /// The play bar's quiet line about them: Mods › Installed, where each says why.
@@ -1223,19 +1261,19 @@ impl Launcher {
                 .instances
                 .discover_catalogue(self.settings.instance.as_deref())
             {
-                DiscoverCatalogue::Registry => tr("Search mods"),
-                DiscoverCatalogue::Sources => tr("Search source projects"),
+                DiscoverCatalogue::Registry => tr("Search mods…"),
+                DiscoverCatalogue::Sources => tr("Search source projects…"),
             },
-            (false, true) => tr("Search your mods"),
+            (false, true) => tr("Search your mods…"),
             (true, false) => match self.ui.mods.packs.scope {
-                pack_discover::Scope::Resource => tr("Search resource packs"),
-                pack_discover::Scope::Shader => tr("Search shader packs"),
-                pack_discover::Scope::Data => tr("Search data packs"),
+                pack_discover::Scope::Resource => tr("Search resource packs…"),
+                pack_discover::Scope::Shader => tr("Search shader packs…"),
+                pack_discover::Scope::Data => tr("Search data packs…"),
             },
             (true, true) => match self.ui.mods.shelf {
-                Shelf::Resource => tr("Search your resource packs"),
-                Shelf::Shader => tr("Search your shader packs"),
-                Shelf::Data => tr("Search your data packs"),
+                Shelf::Resource => tr("Search your resource packs…"),
+                Shelf::Shader => tr("Search your shader packs…"),
+                Shelf::Data => tr("Search your data packs…"),
             },
         }
         .into();

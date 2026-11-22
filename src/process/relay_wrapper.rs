@@ -17,7 +17,7 @@ pub(super) struct Wrapper {
 }
 
 impl Wrapper {
-    pub fn start(command: Command, piped: bool) -> io::Result<Self> {
+    pub fn start(command: Command, streams: super::leases::Streams<'_>) -> io::Result<Self> {
         #[cfg(target_os = "linux")]
         let (mut command, leader) = linux::worker_command(command)?;
         #[cfg(target_os = "macos")]
@@ -25,13 +25,10 @@ impl Wrapper {
         #[cfg(unix)]
         let mut wrapper = {
             use std::os::unix::process::CommandExt;
-            if piped {
-                command
-                    .process_group(0)
-                    .stdin(std::process::Stdio::piped())
-                    .stdout(std::process::Stdio::piped())
-                    .stderr(std::process::Stdio::piped());
+            if streams.detached() {
+                command.process_group(0);
             }
+            let mut command = super::leases::game_streams(command, streams)?;
             Self {
                 child: command.spawn()?.into(),
                 #[cfg(target_os = "linux")]
@@ -49,7 +46,7 @@ impl Wrapper {
                 .args(command.get_args());
             crate::launch::same_place(&command, &mut worker);
             Self {
-                child: super::leases::spawn_windows_wrapper(&worker, piped)?,
+                child: super::leases::spawn_windows_wrapper(&worker, streams)?,
             }
         };
         if let Err(error) = buffer_streams(&mut wrapper.child) {

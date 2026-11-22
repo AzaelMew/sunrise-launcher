@@ -123,7 +123,7 @@ impl Session {
                         instance: &instance,
                         accepted_account: accounts.selected().map(|a| a.uuid.as_str()),
                         explicit_account: false,
-                        piped: true,
+                        streams: sunrise_launcher::process::leases::Streams::Piped,
                     }
                     .start(
                         || managed_play::headless_first(&instance),

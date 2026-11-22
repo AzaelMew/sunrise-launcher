@@ -3402,7 +3402,7 @@ impl Logged {
 
     pub fn start_server(tag: &str, folder: &Path, cmd: Command) -> Result<Self, String> {
         let (cmd, runtime) = prepare_server_command(tag, folder, cmd)?;
-        Self::start_with(|tx| spawn_prepared(Job::Server, cmd, runtime, tx, None))
+        Self::start_with(|tx| spawn_prepared(Job::Server, cmd, runtime, tx, None, None))
     }
 
     fn start_with(
@@ -4338,6 +4338,11 @@ impl RuntimeGuard {
     pub fn game_exited(mut self) {
         crate::account::discard_launch_session(self.managed_session.take());
     }
+
+    /// The session file an admitted game reads its account from, until it has read it.
+    pub fn session_file(&self) -> Option<&Path> {
+        self.managed_session.as_deref()
+    }
 }
 
 #[cfg(windows)]
@@ -4439,6 +4444,43 @@ pub(crate) fn prepare_lock_at(
     Ok(crate::preparer::Preparation::new(file))
 }
 
+/// Where a game the launcher doesn't stay open for writes its stdout and stderr
+/// ([`spawn_logged`]), made new at each start.
+pub fn game_output_log() -> PathBuf {
+    data_dir().join("logs").join("game-output.log")
+}
+
+/// [`spawn`] for a game the launcher closes under (`Settings::keep_open_while_playing` off): its
+/// stdout and stderr go to `log` and its stdin is empty, instead of pipes the launcher reads, so
+/// nothing the game writes depends on the launcher still running. Its lines don't reach the
+/// launcher's console view.
+pub fn spawn_logged(
+    job: Job,
+    cmd: Command,
+    tx: Sender<Msg>,
+    log: &Path,
+) -> Result<Running, String> {
+    let file = create_game_output(log)?;
+    let (cmd, runtime) = prepare_command(cmd)?;
+    spawn_prepared(job, cmd, runtime, tx, None, Some(file))
+}
+
+/// `log` made new for a game's stdout and stderr ([`game_output_log`]).
+pub fn create_game_output(log: &Path) -> Result<fs::File, String> {
+    let open = || -> std::io::Result<fs::File> {
+        if let Some(dir) = log.parent() {
+            fs::create_dir_all(dir)?;
+        }
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create(true).truncate(true);
+        // Old games print their session; the file is the player's alone.
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+        options.open(log)
+    };
+    open().map_err(|e| format!("{}: {e}", log.display()))
+}
+
 /// [`spawn`], keeping `hold` (a lock) until the program ends; a preparation's whole process group is stopped if the launcher quits first.
 pub fn spawn_holding(
     job: Job,
@@ -4447,15 +4489,18 @@ pub fn spawn_holding(
     prepare: Option<(String, crate::preparer::Preparation)>,
 ) -> Result<Running, String> {
     let (cmd, runtime) = prepare_command(cmd)?;
-    spawn_prepared(job, cmd, runtime, tx, prepare)
+    spawn_prepared(job, cmd, runtime, tx, prepare, None)
 }
 
+/// [`spawn_holding`] after [`prepare_command`], with the output in pipes the launcher reads,
+/// or in `log`.
 fn spawn_prepared(
     job: Job,
     mut cmd: Command,
     runtime: RuntimeGuard,
     tx: Sender<Msg>,
     prepare: Option<(String, crate::preparer::Preparation)>,
+    log: Option<fs::File>,
 ) -> Result<Running, String> {
     if let Some((_, preparation)) = &prepare {
         let child = preparation
@@ -4470,10 +4515,21 @@ fn spawn_prepared(
         cmd.process_group(0);
     }
     crate::process::hide_console(&mut cmd);
-    cmd.stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    let child = play_log::spawn(&mut cmd)?.into();
+    match &log {
+        None => {
+            cmd.stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+        }
+        Some(file) => {
+            let (out, err) = file
+                .try_clone()
+                .and_then(|out| Ok((out, file.try_clone()?)))
+                .map_err(|e| e.to_string())?;
+            cmd.stdin(Stdio::null()).stdout(out).stderr(err);
+        }
+    }
+    let child = play_log::spawn(&mut cmd, log.as_ref())?.into();
     Ok(monitor(job, child, tx, runtime, None))
 }
 
@@ -4577,20 +4633,6 @@ pub enum Appearance {
     System,
 }
 
-/// What the launcher's window does while the game runs, as the player picks it in Settings.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum WhilePlaying {
-    /// The window stays where it is.
-    #[default]
-    Stay,
-    /// The window goes to the Dock or the taskbar, and comes back when the game closes.
-    Minimize,
-    /// The launcher hides (macOS only: elsewhere it minimises), and comes back when the game
-    /// closes.
-    Hide,
-}
-
 /// How Home lists the worlds under Continue playing, as the player picks it in Settings.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -4616,37 +4658,6 @@ impl WorldLayout {
     pub fn parse(name: &str) -> Option<Self> {
         let name = name.trim().to_ascii_lowercase();
         Self::ALL.into_iter().find(|l| l.name() == name)
-    }
-}
-
-impl WhilePlaying {
-    pub const ALL: [WhilePlaying; 3] = [Self::Stay, Self::Minimize, Self::Hide];
-
-    /// Its name in `settings.json` and on the command line.
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Stay => "stay",
-            Self::Minimize => "minimize",
-            Self::Hide => "hide",
-        }
-    }
-
-    pub fn parse(name: &str) -> Option<Self> {
-        let name = name.trim().to_ascii_lowercase();
-        let name = match name.as_str() {
-            "minimise" => "minimize",
-            "keep" | "open" | "off" => "stay",
-            n => n,
-        };
-        Self::ALL.into_iter().find(|w| w.name() == name)
-    }
-
-    /// What this computer does for it: only macOS can hide a whole app.
-    pub fn here(self) -> Self {
-        match self {
-            Self::Hide if !cfg!(target_os = "macos") => Self::Minimize,
-            w => w,
-        }
     }
 }
 
@@ -4727,9 +4738,11 @@ pub struct Settings {
     /// one now (the owner gate's screen).
     #[serde(default)]
     pub owner_notice_seen: bool,
-    /// What the window does while the game runs. Stays by default.
+    /// Whether the launcher stays open while the game runs. Off by default: once the game has
+    /// started, the launcher closes (`while_playing.rs`). A file from before the switch says
+    /// `while_playing`: "stay" reads as on, "minimize" and "hide" as off.
     #[serde(default)]
-    pub while_playing: WhilePlaying,
+    pub keep_open_while_playing: bool,
     /// How Home lists the worlds under Continue playing (`worlds`). Rows by default, and for
     /// every settings file written before the choice existed.
     #[serde(default)]
@@ -4876,11 +4889,14 @@ impl Settings {
             {
                 fields.remove("appearance");
             }
-            if fields
-                .get("while_playing")
-                .is_some_and(|w| serde_json::from_value::<WhilePlaying>(w.clone()).is_err())
-            {
-                fields.remove("while_playing");
+            // The old choice: Stay open keeps the launcher open; Minimise and Hide close it.
+            if let Some(old) = fields.remove("while_playing") {
+                if !fields.contains_key("keep_open_while_playing") {
+                    fields.insert(
+                        "keep_open_while_playing".into(),
+                        (old.as_str() == Some("stay")).into(),
+                    );
+                }
             }
             // A layout from a newer launcher is rows.
             if fields
@@ -6300,10 +6316,14 @@ pub fn {f}("
         assert_eq!(Settings::default().world_layout, WorldLayout::Rows);
         assert_eq!(Settings::parse("{}").world_layout, WorldLayout::Rows);
         // A file from before the choice existed keeps everything else it says.
-        let old = Settings::parse(r#"{"while_playing": "hide", "game_args": "--x"}"#);
+        let old = Settings::parse(r#"{"keep_open_while_playing": true, "game_args": "--x"}"#);
         assert_eq!(
-            (old.world_layout, old.while_playing, old.game_args.as_str()),
-            (WorldLayout::Rows, WhilePlaying::Hide, "--x")
+            (
+                old.world_layout,
+                old.keep_open_while_playing,
+                old.game_args.as_str()
+            ),
+            (WorldLayout::Rows, true, "--x")
         );
         let tiles = Settings::parse(r#"{"world_layout": "tiles", "game_args": "--x"}"#);
         assert_eq!(tiles.world_layout, WorldLayout::Tiles);
@@ -6327,27 +6347,35 @@ pub fn {f}("
     }
 
     #[test]
-    fn the_window_stays_while_playing_unless_picked() {
-        assert_eq!(Settings::parse("{}").while_playing, WhilePlaying::Stay);
-        let hide = Settings::parse(r#"{"while_playing": "hide", "game_args": "--x"}"#);
-        assert_eq!(hide.while_playing, WhilePlaying::Hide);
-        let future = Settings::parse(r#"{"while_playing": "fade", "game_args": "--x"}"#);
-        assert_eq!(
-            (future.while_playing, future.game_args.as_str()),
-            (WhilePlaying::Stay, "--x")
-        );
-        assert_eq!(
-            WhilePlaying::parse("Minimise"),
-            Some(WhilePlaying::Minimize)
-        );
-        assert_eq!(WhilePlaying::parse("off"), Some(WhilePlaying::Stay));
-        assert_eq!(WhilePlaying::parse("close"), None);
-        for w in WhilePlaying::ALL {
-            let text = serde_json::to_string(&w).unwrap();
-            assert_eq!(text, format!("\"{}\"", w.name()));
+    fn the_launcher_closes_while_playing_unless_kept_open() {
+        assert!(!Settings::default().keep_open_while_playing);
+        assert!(!Settings::parse("{}").keep_open_while_playing);
+        // The old three-way choice: only Stay open keeps it open, and nothing else is lost.
+        for (old, open) in [
+            ("stay", true),
+            ("minimize", false),
+            ("hide", false),
+            ("fade", false),
+        ] {
+            let s = Settings::parse(&format!(
+                r#"{{"while_playing": "{old}", "game_args": "--x"}}"#
+            ));
+            assert_eq!(
+                (s.keep_open_while_playing, s.game_args.as_str()),
+                (open, "--x"),
+                "{old}"
+            );
         }
-        let here = WhilePlaying::Hide.here();
-        assert_eq!(here == WhilePlaying::Hide, cfg!(target_os = "macos"));
+        // A file that has the switch keeps it, whatever an old choice beside it says.
+        let s = Settings::parse(r#"{"while_playing": "stay", "keep_open_while_playing": false}"#);
+        assert!(!s.keep_open_while_playing);
+        let saved =
+            serde_json::to_string(&Settings::parse(r#"{"while_playing": "stay"}"#)).unwrap();
+        assert!(
+            saved.contains(r#""keep_open_while_playing":true"#),
+            "{saved}"
+        );
+        assert!(!saved.contains(r#""while_playing""#), "{saved}");
     }
 
     #[test]
