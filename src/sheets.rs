@@ -1570,25 +1570,41 @@ impl Launcher {
                     .border_1()
                     .border_color(rgb(palette().line)),
             );
+        // Only the choices scroll when the window is short: the heading, the Extras note and an
+        // error stay in view (#184).
+        let choices = div()
+            .id("alt-build-choices")
+            .flex()
+            .flex_col()
+            .gap(px(10.))
+            .min_h_0()
+            .overflow_y_scroll()
+            .track_scroll(&crate::frame::scrolls("build-list"))
+            .children(status.map(muted))
+            .child(list);
         let body = div()
             .flex()
             .flex_col()
             .gap(px(10.))
             .child(
                 div()
+                    .flex_none()
                     .text_size(px(tokens::CAPTION))
                     .text_color(rgb(palette().muted))
                     .child(tr("GAME BUILD")),
             )
-            .children(status.map(muted))
-            .child(list)
-            .child(div().h(px(1.)).bg(rgb(palette().line)))
-            .child(extras)
-            .children(self.ui.sheets.error.clone().map(|e| {
-                div()
-                    .text_color(rgb(palette().danger))
-                    .text_size(px(tokens::SMALL))
-                    .child(e)
+            .child(choices)
+            .child(div().flex_none().h(px(1.)).bg(rgb(palette().line)))
+            .child(extras.flex_none())
+            .children(self.ui.sheets.error.clone().map(|error| {
+                build_menu_error(error, |whole| {
+                    button("alt-build-error-details", tr("Details")).on_click(cx.listener(
+                        move |this, _: &ClickEvent, _, cx| {
+                            this.open_notice(whole.clone(), None);
+                            cx.notify();
+                        },
+                    ))
+                })
             }));
         // A popover under Home's build picker: the scrim is clear.
         let (left, top) = self.ui.home.chooser_at();
@@ -1615,10 +1631,9 @@ impl Launcher {
             .child(
                 body.id("alt-build-body")
                     .absolute()
-                    // Never taller than the room under the picker: a long list scrolls.
+                    // Never taller than the room under the picker: the choices scroll.
                     .max_h(px((self.window_height - top - 12.).max(120.)))
-                    .overflow_y_scroll()
-                    .track_scroll(&crate::frame::scrolls("build-list"))
+                    .overflow_hidden()
                     // Inside the window, however narrow it is.
                     .left(px(left.min(self.window_width - width - 12.).max(12.)))
                     .top(px(top))
@@ -1681,9 +1696,49 @@ fn consent_footer(note: &str, cancel: Stateful<Div>, go: Stateful<Div>) -> Div {
         )
 }
 
+/// The pinned preview has room for two lines. Every error can open in the scrollable notice.
+fn build_menu_error(error: String, details: impl FnOnce(String) -> Stateful<Div>) -> Div {
+    div()
+        .flex_none()
+        .flex()
+        .items_start()
+        .gap(px(8.))
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .line_clamp(2)
+                .text_ellipsis()
+                .text_color(rgb(palette().danger))
+                .text_size(px(tokens::SMALL))
+                .child(error.clone()),
+        )
+        .child(details(error))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_build_menu_error_offers_details_with_the_full_message() {
+        let echoed = format!(
+            "instances.json: invalid type: string \"{}\", expected u64 at line 1 column 412",
+            "W".repeat(26)
+        );
+        assert_eq!(echoed.chars().count(), 100);
+        for error in [
+            echoed,
+            "Wait for the current operation to finish.".to_owned(),
+        ] {
+            let mut opened = None;
+            let _ = build_menu_error(error.clone(), |whole| {
+                opened = Some(whole);
+                button("alt-build-error-details", tr("Details"))
+            });
+            assert_eq!(opened.as_deref(), Some(error.as_str()));
+        }
+    }
 
     #[test]
     fn build_labels_name_the_channel_and_date_or_version() {
