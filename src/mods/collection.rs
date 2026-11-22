@@ -231,7 +231,7 @@ impl Launcher {
             true => tr("Each mod updates and is removed on its own, from Installed."),
             false => tr("The selected mods and their dependencies install together."),
         };
-        let downloads = collection.downloads;
+        let downloads = plan::downloads(&collection, &index);
         let updated = collection
             .members
             .iter()
