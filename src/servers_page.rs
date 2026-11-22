@@ -149,9 +149,16 @@ pub(super) struct Create {
     friends: Vec<String>,
 }
 
+#[derive(Clone)]
 struct SettingsBatch {
     dir: PathBuf,
     changes: Vec<(String, String)>,
+}
+
+#[derive(Default)]
+struct SettingsOutcome {
+    restart: BTreeSet<String>,
+    problem: Option<Problem>,
 }
 
 impl Servers {
@@ -200,7 +207,7 @@ impl Servers {
 
     /// Work still owned by this launcher, not the lifetime of a dedicated server.
     pub(super) fn writing(&self) -> bool {
-        self.busy.is_some() || self.creating || self.applying || !self.queued.is_empty()
+        self.busy.is_some() || self.creating || self.applying.is_some() || !self.queued.is_empty()
     }
 
     pub(super) fn location_busy(&self) -> bool {
@@ -261,9 +268,9 @@ pub(super) struct Servers {
     config: Option<Value>,
     /// Settings waiting for `config set`, and whether one runs.
     queued: VecDeque<SettingsBatch>,
-    applying: bool,
-    /// Settings saved while the server ran that wait for its next start.
-    restart_needed: BTreeSet<String>,
+    applying: Option<SettingsBatch>,
+    /// A result stays with the server even when its page closes.
+    settings_outcomes: HashMap<PathBuf, SettingsOutcome>,
     backups: Vec<Backup>,
     confirm_restore: Option<String>,
     confirm_delete: bool,
@@ -312,8 +319,8 @@ impl Servers {
             creating: false,
             config: None,
             queued: VecDeque::new(),
-            applying: false,
-            restart_needed: BTreeSet::new(),
+            applying: None,
+            settings_outcomes: HashMap::new(),
             backups: Vec::new(),
             confirm_restore: None,
             confirm_delete: false,
@@ -380,13 +387,14 @@ impl Servers {
     /// A setting as shown: what was just asked for, else what server.toml holds.
     fn shown(&self, section: &str, key: &str) -> String {
         let full = format!("{section}.{key}");
-        if let Some((_, v)) = self
+        if let Some((_, value)) = self
             .queued
             .iter()
-            .find(|batch| self.open.as_ref() == Some(&batch.dir))
-            .and_then(|batch| batch.changes.iter().find(|(k, _)| *k == full))
+            .chain(self.applying.iter())
+            .filter(|batch| self.open.as_ref() == Some(&batch.dir))
+            .find_map(|batch| batch.changes.iter().find(|(key, _)| *key == full))
         {
-            return v.clone();
+            return value.clone();
         }
         match self.setting(section, key) {
             Some(Value::String(s)) => s.clone(),
@@ -409,50 +417,61 @@ impl Servers {
 
     /// Starts the oldest batch, even if its server is no longer open on the page.
     fn next_settings_batch(&mut self) -> Option<SettingsBatch> {
-        if self.applying {
+        if self.applying.is_some() {
             return None;
         }
         let batch = self.queued.pop_front()?;
-        self.applying = true;
-        // Shown as asked until the file is read back, but only on this server.
-        if let Some(config) = self
-            .config
-            .as_mut()
-            .filter(|_| self.open.as_ref() == Some(&batch.dir))
-        {
-            for (key, value) in &batch.changes {
-                if let Some((section, field)) = key.split_once('.') {
-                    let new = match &config[section][field] {
-                        Value::Bool(_) => Value::Bool(value == "true"),
-                        Value::Number(_) => value.parse::<i64>().map_or(Value::Null, Value::from),
-                        _ => Value::String(value.clone()),
-                    };
-                    config[section][field] = new;
-                }
-            }
-        }
+        self.applying = Some(batch.clone());
         Some(batch)
     }
 
     /// Whether the displayed settings need re-reading now that this write has finished.
     fn finish_settings(&mut self, dir: &Path, result: Result<Applied, Problem>) -> bool {
-        self.applying = false;
-        let visible = self.open.as_deref() == Some(dir);
+        self.applying = None;
+        self.modes.remove(dir);
+        let outcome = self.settings_outcomes.entry(dir.to_path_buf()).or_default();
         match result {
-            Ok(applied) if visible && applied.running => {
-                self.restart_needed.extend(applied.restart)
+            Ok(applied) => {
+                outcome.problem = None;
+                if applied.running {
+                    outcome.restart.extend(applied.restart);
+                }
             }
-            Ok(_) => {}
-            // A suggested action for another server must never run against the open server.
-            Err(problem) => {
-                self.problem = Some(if visible {
-                    problem
-                } else {
-                    Problem::plain(problem.message)
-                })
+            Err(problem) => outcome.problem = Some(problem),
+        }
+        self.open.as_deref() == Some(dir) && !self.queued.iter().any(|batch| batch.dir == dir)
+    }
+
+    fn note_status(&mut self, dir: PathBuf, status: Status) -> bool {
+        if self.statuses.get(&dir) == Some(&status) {
+            return false;
+        }
+        if status.phase == "running"
+            && self
+                .statuses
+                .get(&dir)
+                .is_some_and(|old| old.phase != "running")
+        {
+            // A fresh start took that server's saved settings, not another server's.
+            if let Some(outcome) = self.settings_outcomes.get_mut(&dir) {
+                outcome.restart.clear();
+            }
+            if self.open.as_ref() == Some(&dir) {
+                self.pvp = None;
             }
         }
-        visible && !self.queued.iter().any(|batch| batch.dir == dir)
+        self.statuses.insert(dir, status);
+        true
+    }
+
+    fn dismiss_problem(&mut self, settings_for: Option<&Path>) {
+        if let Some(dir) = settings_for {
+            if let Some(outcome) = self.settings_outcomes.get_mut(dir) {
+                outcome.problem = None;
+            }
+        } else {
+            self.problem = None;
+        }
     }
 }
 
@@ -542,7 +561,6 @@ impl Launcher {
         s.confirm_restore = None;
         s.confirm_delete = false;
         s.texts.remove(&Field::DeleteServer);
-        s.restart_needed.clear();
         s.texts.remove(&Field::Motd);
         s.texts.remove(&Field::Port);
         s.invalid = None;
@@ -617,13 +635,6 @@ impl Launcher {
             Event::Polled { dir, status, logs } => {
                 s.polling = false;
                 let mut changed = false;
-                let was = s.statuses.get(&dir).map(|st| st.phase.clone());
-                if was.as_deref() != Some("running") && status.phase == "running" {
-                    // A fresh start took every saved setting.
-                    s.restart_needed.clear();
-                    s.pvp = None;
-                    changed = true;
-                }
                 if let Some((next, lines)) = logs {
                     if s.log_dir.as_ref() != Some(&dir) {
                         s.log.clear();
@@ -640,12 +651,9 @@ impl Launcher {
                     }
                     s.log_next = next;
                 }
-                let read_pvp = status.phase == "running" && s.pvp.is_none();
-                if s.statuses.get(&dir) != Some(&status) {
-                    s.statuses.insert(dir, *status);
-                    changed = true;
-                }
-                if read_pvp {
+                let running = status.phase == "running";
+                changed |= s.note_status(dir.clone(), *status);
+                if running && s.open.as_ref() == Some(&dir) && s.pvp.is_none() {
                     self.read_pvp();
                     changed = true;
                 }
@@ -655,10 +663,7 @@ impl Launcher {
                 s.polling = false;
                 let mut changed = false;
                 for (dir, status) in all {
-                    if s.statuses.get(&dir) != Some(&status) {
-                        s.statuses.insert(dir, status);
-                        changed = true;
-                    }
+                    changed |= s.note_status(dir, status);
                 }
                 changed
             }
@@ -717,6 +722,7 @@ impl Launcher {
                     .unwrap()
                     .retain(|started| started != &dir);
                 if !s.list.iter().any(|entry| entry.dir == dir) {
+                    s.settings_outcomes.remove(&dir);
                     s.open = None;
                     self.side_servers = s.list.clone();
                 }
@@ -825,7 +831,9 @@ impl Launcher {
             return;
         };
         STARTED_HERE.lock().unwrap().push(dir.clone());
-        self.servers.restart_needed.clear();
+        if let Some(outcome) = self.servers.settings_outcomes.get_mut(&dir) {
+            outcome.restart.clear();
+        }
         let tx = self.tx.clone();
         self.servers.start_job("Starting", move |log| {
             if let Some(api) = servers::Api::open(&dir) {
@@ -862,6 +870,9 @@ impl Launcher {
         let Some(dir) = self.servers.open.clone() else {
             return;
         };
+        if let Some(outcome) = self.servers.settings_outcomes.get_mut(&dir) {
+            outcome.restart.clear();
+        }
         let tx = self.tx.clone();
         self.servers.start_job("Restarting", move |log| {
             // The running server's API first; when it can't be reached or refuses, the CLI,
@@ -1400,9 +1411,11 @@ mod tests {
         servers.busy = Some("Restoring a backup".into());
         assert!(servers.writing());
         servers.busy = None;
-        servers.applying = true;
+        let server = PathBuf::from("server");
+        servers.queue_setting(server.clone(), "server.port", "25567".into());
+        assert!(servers.next_settings_batch().is_some());
         assert!(servers.writing());
-        servers.applying = false;
+        servers.finish_settings(&server, Err(Problem::plain("save failed")));
         assert!(!servers.writing());
     }
 
@@ -1484,9 +1497,72 @@ mod tests {
             assert!(servers.writing());
             assert!(!servers.finish_settings(&batch.dir, done()));
         }
-        assert!(servers.restart_needed.is_empty());
         assert!(servers.next_settings_batch().is_none());
         assert!(!servers.writing());
+    }
+
+    #[test]
+    fn running_settings_remain_visible_on_reopen_without_mutating_the_snapshot() {
+        let one = PathBuf::from("one");
+        let two = PathBuf::from("two");
+        let mut servers = Servers::new();
+        let snapshot = serde_json::json!({"world": "not an object"});
+        servers.config = Some(snapshot.clone());
+        servers.open = Some(one.clone());
+        servers.queue_setting(one.clone(), "world.view_distance", "9".into());
+        assert!(servers.next_settings_batch().is_some());
+        assert_eq!(servers.config.as_ref(), Some(&snapshot));
+        servers.open = Some(two);
+        assert_eq!(servers.shown("world", "view_distance"), "");
+        servers.open = None;
+        servers.open = Some(one.clone());
+        servers.config = Some(serde_json::json!({"world": {"view_distance": 8}}));
+        assert_eq!(servers.shown("world", "view_distance"), "9");
+        servers.queue_setting(one, "world.view_distance", "10".into());
+        assert_eq!(servers.shown("world", "view_distance"), "10");
+    }
+
+    #[test]
+    fn settings_completion_keeps_notices_and_mode_invalidation_on_the_written_server() {
+        let one = PathBuf::from("one");
+        let two = PathBuf::from("two");
+        let mut servers = Servers::new();
+        let apply = |servers: &mut Servers, result| {
+            servers.open = Some(one.clone());
+            servers.queue_setting(one.clone(), "server.port", "25577".into());
+            let batch = servers.next_settings_batch().unwrap();
+            servers.open = Some(two.clone());
+            assert!(!servers.finish_settings(&batch.dir, result));
+            assert!(!servers.settings_outcomes.contains_key(&two));
+            assert!(servers.problem.is_none());
+        };
+        servers.modes.insert(one.clone(), Some("survival".into()));
+        servers.modes.insert(two.clone(), Some("creative".into()));
+        apply(
+            &mut servers,
+            Ok(Applied {
+                applied: vec![],
+                restart: vec!["server.port".into()],
+                running: true,
+            }),
+        );
+        assert!(!servers.modes.contains_key(&one));
+        assert!(servers.modes.contains_key(&two));
+        apply(
+            &mut servers,
+            Err(Problem {
+                message: "port is unavailable".into(),
+                fix: Some(Fix::UsePort(25578)),
+            }),
+        );
+        servers.open = Some(one.clone());
+        let outcome = &servers.settings_outcomes[&one];
+        assert!(outcome.restart.contains("server.port"));
+        let problem = outcome.problem.as_ref().unwrap();
+        assert_eq!(problem.message, "port is unavailable");
+        assert!(matches!(problem.fix.as_ref(), Some(Fix::UsePort(25578))));
+        servers.dismiss_problem(Some(&one));
+        assert!(servers.settings_outcomes[&one].problem.is_none());
     }
 
     #[cfg(unix)]

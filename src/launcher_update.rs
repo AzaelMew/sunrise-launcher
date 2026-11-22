@@ -179,6 +179,66 @@ impl SelfUpdate {
         *self = next;
         true
     }
+
+    fn check_failed(
+        &mut self,
+        updates: &mut Updates,
+        armed: &mut bool,
+        error: backend::LauncherCheckError,
+    ) {
+        if let backend::LauncherCheckError::Rejected { tag, .. } = &error {
+            if updates
+                .launcher
+                .as_ref()
+                .is_some_and(|release| release.tag == *tag)
+            {
+                updates.launcher = None;
+            }
+            if self.withdraw(tag, update_handoff::forget) {
+                *armed = false;
+            }
+        }
+        settings::log_launcher_check_failure(error.message(), |line| eprintln!("{line}"));
+        updates.launcher_error = Some(error);
+    }
+
+    /// Settle the current worker before reconciling against the latest offer.
+    fn finish_download(
+        &mut self,
+        updates: &mut Updates,
+        armed: &mut bool,
+        result: Result<Option<backend::Staged>, backend::StageUpdateError>,
+    ) -> bool {
+        if matches!(self, Self::Discarding) {
+            if let Ok(Some(staged)) = result {
+                backend::remove_stage(&backend::update_work_dir(), &staged.payload);
+            }
+            *self = Self::Idle;
+            return true;
+        }
+        let Self::Downloading(release, _) = self else {
+            return false;
+        };
+        match result {
+            Ok(staged) => {
+                update_handoff::set_pending(staged);
+                *self = Self::Ready(release.clone());
+            }
+            Err(backend::StageUpdateError::Check(
+                error @ backend::LauncherCheckError::Rejected { .. },
+            )) => {
+                // This worker has already finished, unlike a rejected check during a download.
+                *armed = false;
+                *self = Self::Idle;
+                self.check_failed(updates, armed, error);
+            }
+            Err(error) => {
+                *armed = false;
+                *self = Self::Failed(release.clone(), error.into());
+            }
+        }
+        true
+    }
 }
 
 impl Launcher {
@@ -191,23 +251,11 @@ impl Launcher {
                 self.updates.launcher = release;
                 self.updates.launcher_error = None;
             }
-            Err(error) => {
-                if let backend::LauncherCheckError::Rejected { tag, .. } = &error {
-                    if self
-                        .updates
-                        .launcher
-                        .as_ref()
-                        .is_some_and(|release| release.tag == *tag)
-                    {
-                        self.updates.launcher = None;
-                    }
-                    if self.self_update.withdraw(tag, update_handoff::forget) {
-                        self.restart_for_launcher_update = false;
-                    }
-                }
-                settings::log_launcher_check_failure(error.message(), |line| eprintln!("{line}"));
-                self.updates.launcher_error = Some(error);
-            }
+            Err(error) => self.self_update.check_failed(
+                &mut self.updates,
+                &mut self.restart_for_launcher_update,
+                error,
+            ),
         }
         self.reconcile_launcher_offer();
     }
@@ -303,38 +351,13 @@ impl Launcher {
         &mut self,
         result: Result<Option<backend::Staged>, backend::StageUpdateError>,
     ) {
-        if matches!(self.self_update, SelfUpdate::Discarding) {
-            if let Ok(Some(staged)) = result {
-                backend::remove_stage(&backend::update_work_dir(), &staged.payload);
-            }
-            self.self_update = SelfUpdate::Idle;
+        if self.self_update.finish_download(
+            &mut self.updates,
+            &mut self.restart_for_launcher_update,
+            result,
+        ) {
             self.reconcile_launcher_offer();
-            return;
         }
-        let SelfUpdate::Downloading(release, _) = &self.self_update else {
-            return;
-        };
-        let release = release.clone();
-        self.self_update = match result {
-            Ok(staged) => {
-                update_handoff::set_pending(staged);
-                SelfUpdate::Ready(release)
-            }
-            Err(backend::StageUpdateError::Check(
-                error @ backend::LauncherCheckError::Rejected { .. },
-            )) => {
-                // This worker has already finished, unlike a rejected check during a download.
-                self.restart_for_launcher_update = false;
-                self.self_update = SelfUpdate::Idle;
-                self.note_launcher_check(Err(error));
-                return;
-            }
-            Err(error) => {
-                self.restart_for_launcher_update = false;
-                SelfUpdate::Failed(release, error.into())
-            }
-        };
-        self.reconcile_launcher_offer();
     }
 
     /// Only the player's update action arms a restart. Closing the window still drops the stage.
@@ -723,6 +746,57 @@ mod tests {
         let offer = Offer::new(&downloading, Some(&fresh), None, true, false).unwrap();
         assert_eq!(offer.version, "1.3.1");
         assert!(offer.action(None, false).is_none());
+    }
+
+    #[test]
+    fn a_stage_rejection_withdraws_only_its_tag_but_a_transport_failure_can_retry() {
+        use backend::{LauncherCheckError, StageUpdateError};
+        let release = release("v1.3.0");
+        for (offer, transport) in [("v1.3.0", false), ("v1.3.1", false), ("v1.3.0", true)] {
+            let mut updates = Updates {
+                launcher: Some(Release {
+                    tag: offer.into(),
+                    ..release.clone()
+                }),
+                ..Updates::default()
+            };
+            let mut armed = true;
+            let mut attempt = SelfUpdate::Downloading(release.clone(), 0.5);
+            let error = if transport {
+                LauncherCheckError::Unavailable("offline".into())
+            } else {
+                LauncherCheckError::Rejected {
+                    tag: release.tag.clone(),
+                    reason: "manifest disappeared".into(),
+                }
+            };
+            assert!(attempt.finish_download(
+                &mut updates,
+                &mut armed,
+                Err(StageUpdateError::Check(error.clone()))
+            ));
+            assert!(!armed);
+            if transport {
+                assert!(
+                    matches!(attempt, SelfUpdate::Failed(_, ref message) if message == "offline")
+                );
+                assert!(updates.launcher_error.is_none());
+                let offer =
+                    Offer::new(&attempt, updates.launcher.as_ref(), None, true, false).unwrap();
+                assert_eq!(
+                    offer.action(None, false).as_deref(),
+                    Some("Try update again")
+                );
+            } else {
+                assert!(matches!(attempt, SelfUpdate::Idle));
+                assert_eq!(updates.launcher_error, Some(error));
+                let visible = Offer::new(&attempt, updates.launcher.as_ref(), None, true, false);
+                assert_eq!(
+                    visible.map(|offer| offer.release.tag.as_str()),
+                    (offer != release.tag).then_some(offer)
+                );
+            }
+        }
     }
 
     #[test]
