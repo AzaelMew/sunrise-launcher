@@ -667,7 +667,9 @@ pub(in crate::mods) fn page(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sunrise_launcher_smod::index_v2::{Build, Category, File, Repository, Revoked, Screenshot};
+    use sunrise_launcher_smod::index_v2::{
+        Build, Category, Collection, File, Member, Repository, Revoked, Screenshot,
+    };
 
     fn hex64(ch: char) -> String {
         std::iter::repeat_n(ch, 64).collect()
@@ -784,6 +786,7 @@ mod tests {
             ],
             projects,
             revoked,
+            collections: Vec::new(),
         }
     }
 
@@ -1037,5 +1040,75 @@ mod tests {
             ..V2Filters::default()
         };
         assert_eq!(discover(&cards, &all).len(), 1);
+    }
+
+    #[test]
+    fn a_collection_picks_its_default_members_that_fit_and_installs_only_the_rest() {
+        let build = "26.3-0.1.0";
+        let project = |id: &str, slug: &str, fits: &[&str], ch| {
+            let not = if fits.is_empty() { vec![build] } else { vec![] };
+            make_project(
+                id,
+                slug,
+                slug,
+                "A block set.",
+                &["utility"],
+                vec![make_release("1.0.0", "2026-11-10", build, fits, &not, ch)],
+            )
+        };
+        let mut index = sample_index(
+            vec![
+                project("Ab3dE9xQ", "fences", &[build], '1'),
+                project("Bc4eF0yR", "doors", &[build], '2'),
+                project("Cd5fG1zS", "roofs", &[], '3'),
+            ],
+            vec![],
+        );
+        let member = |project: &str, default| Member {
+            project: project.to_owned(),
+            default,
+        };
+        index.collections = vec![Collection {
+            id: "Qm4tZ81c".to_owned(),
+            name: "Macaw's Builds".to_owned(),
+            summary: "Fences, doors and roofs.".to_owned(),
+            description: String::new(),
+            publisher: "author".to_owned(),
+            icon: format!("pages/Qm4tZ81c/{}.png", hex64('9')),
+            members: vec![
+                member("Ab3dE9xQ", true),
+                member("Bc4eF0yR", false),
+                member("Cd5fG1zS", true),
+            ],
+        }];
+        let cards = cards(&index, Some(build), &label_build);
+        let found = collections(&index, &cards);
+        let collection = &found[0];
+        assert_eq!(collection.fitting(&cards), 2);
+        // Doors is off by default, and Roofs has no release for this build.
+        let picks = collection.initial_picks(&cards);
+        assert_eq!(picks, BTreeSet::from(["Ab3dE9xQ".to_owned()]));
+        let all = ["Ab3dE9xQ", "Bc4eF0yR", "Cd5fG1zS"]
+            .map(str::to_owned)
+            .into();
+        assert_eq!(
+            collection.to_install(&cards, &all, &|id| id == "Ab3dE9xQ"),
+            ["Bc4eF0yR"]
+        );
+
+        let filters = |text: &str, category: Option<&str>| V2Filters {
+            text: text.to_owned(),
+            category: category.map(str::to_owned),
+            ..V2Filters::default()
+        };
+        let shown = |text, category| discover_collections(&found, &cards, &filters(text, category));
+        assert_eq!(shown("macaw", None), [0]);
+        assert_eq!(
+            shown("doors", None),
+            [0],
+            "a member's name finds its collection"
+        );
+        assert!(shown("lantern", None).is_empty());
+        assert!(shown("", Some("utility")).is_empty());
     }
 }

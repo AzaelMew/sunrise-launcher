@@ -468,5 +468,16 @@
   "{host} serves it and stays off": "{host} serves it and stays off",
   "Needs {host}": "Needs {host}",
   "{host} serves this mod's code. Turn {host} on for the game to load it.": "{host} serves this mod's code. Turn {host} on for the game to load it.",
-  "{host} can't serve {mod}: it doesn't run everywhere {mod} must.": "{host} can't serve {mod}: it doesn't run everywhere {mod} must."
+  "{host} can't serve {mod}: it doesn't run everywhere {mod} must.": "{host} can't serve {mod}: it doesn't run everywhere {mod} must.",
+  "Install 1 mod": "Install 1 mod",
+  "Install {count} mods": "Install {count} mods",
+  "The picked mods and what they need install together. Each one then updates and is removed on its own, from Installed.": "The picked mods and what they need install together. Each one then updates and is removed on its own, from Installed.",
+  "No mod in it fits this build": "No mod in it fits this build",
+  "{fitting} of {all} mods fit build": "{fitting} of {all} mods fit build",
+  "Collections": "Collections",
+  "This collection can't be shown.": "This collection can't be shown.",
+  "Collection": "Collection",
+  "{picked} of {all} selected": "{picked} of {all} selected",
+  "Mods": "Mods",
+  "by {authors}": "by {authors}"
 }

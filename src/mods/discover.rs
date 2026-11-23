@@ -21,16 +21,18 @@ impl Launcher {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let mut page = self.discover_shell(window, focus, cx);
-        let (cards, categories, build_listed, stale_warning, from_cache) =
+        let (cards, collections, categories, build_listed, stale_warning, from_cache) =
             match &self.ui.mods.v2_catalog {
                 V2Catalog::Ready {
                     cards,
+                    collections,
                     categories,
                     build_listed,
                     stale_warning,
                     from_cache,
                 } => (
                     cards.clone(),
+                    collections.clone(),
                     categories.clone(),
                     *build_listed,
                     stale_warning.clone(),
@@ -383,7 +385,9 @@ impl Launcher {
             cx,
         );
         let results = self.with_port_groups(grid, ungrouped_cards, &port_groups, cx);
-        let shown_total = total.max(port_groups.len());
+        let shown_collections = discover_v2::discover_collections(&collections, &cards, &f);
+        let results = self.with_collections(results, &collections, &shown_collections, &cards, cx);
+        let shown_total = total.max(port_groups.len()).max(shown_collections.len());
         page.child(self.discover_results(results, shown_total, "discover", empty, cx))
             .into_any_element()
     }
@@ -729,6 +733,67 @@ impl Launcher {
                     }
                 }),
             )
+    }
+
+    /// The collections matching Discover's filters, as cards above the mods.
+    fn with_collections(
+        &mut self,
+        results: Div,
+        collections: &[discover_v2::V2Collection],
+        shown: &[usize],
+        cards: &[discover_v2::V2Card],
+        cx: &mut Context<Self>,
+    ) -> Div {
+        if shown.is_empty() {
+            return results;
+        }
+        let mut grid = self.discover_grid();
+        for (n, &i) in shown.iter().enumerate() {
+            let collection = &collections[i];
+            let id = collection.id.clone();
+            let picture = collection
+                .icon
+                .as_deref()
+                .and_then(|rel| self.v2_mod_image(&id, rel, images::ICON));
+            let (fitting, all) = (collection.fitting(cards), collection.members.len());
+            let fit = match fitting {
+                0 => unfit_pill(tr("No mod in it fits this build").to_owned()),
+                _ => fit_pill(trf(
+                    "{fitting} of {all} mods fit build",
+                    &[("fitting", &fitting.to_string()), ("all", &all.to_string())],
+                )),
+            };
+            let card = browse_card(
+                ("alt-collection-card", n),
+                picture,
+                &id,
+                &collection.name,
+                &collection.publisher,
+                &collection.summary,
+                vec![fit, tag(tr("Collection"))],
+                None,
+                None,
+            )
+            .when(fitting == 0, |card| card.opacity(0.62))
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                this.mods_show_v2_collection(id.clone(), Page::Discover);
+                cx.notify();
+            }));
+            grid = grid.child(card);
+        }
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(14.))
+            .child(
+                div()
+                    .text_size(px(tokens::BODY))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(c(palette().text))
+                    .child(tr("Collections")),
+            )
+            .child(grid)
+            .child(results)
     }
 
     fn discover_grid(&self) -> Div {

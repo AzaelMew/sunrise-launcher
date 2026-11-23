@@ -269,9 +269,21 @@ impl Launcher {
             .as_ref()
             .map_or(Page::Discover, |o| o.from);
         let parent = self.ui.mods.open.as_ref().and_then(|o| o.parent.clone());
-        let parent_name = parent.as_ref().and_then(|id| match &self.ui.mods.catalog {
-            Catalog::Ready(cards) => cards.iter().find(|c| c.id == *id).map(|c| c.name.clone()),
-            _ => None,
+        let parent_v2 = parent
+            .as_ref()
+            .and_then(|id| match &self.ui.mods.v2_catalog {
+                V2Catalog::Ready { collections, .. } => collections
+                    .iter()
+                    .find(|c| c.id == *id)
+                    .map(|c| c.name.clone()),
+                _ => None,
+            });
+        let parent_is_v2 = parent_v2.is_some();
+        let parent_name = parent_v2.or_else(|| {
+            parent.as_ref().and_then(|id| match &self.ui.mods.catalog {
+                Catalog::Ready(cards) => cards.iter().find(|c| c.id == *id).map(|c| c.name.clone()),
+                _ => None,
+            })
         });
         let back_label = match (back_to, &parent_name) {
             (_, Some(name)) => name.clone(),
@@ -286,6 +298,9 @@ impl Launcher {
             .child(
                 back(back_label).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     match &parent {
+                        Some(collection) if parent_is_v2 => {
+                            this.mods_show_v2_collection(collection.clone(), back_to)
+                        }
                         Some(collection) => this.mods_load_page(collection.clone(), back_to, None),
                         None => this.ui.page = back_to,
                     }
@@ -300,6 +315,9 @@ impl Launcher {
                 .child(muted(tr("No mod is open.")))
                 .into_any_element();
         };
+        if open.collection && open.v2 {
+            return self.v2_collection_page(header, page, cx);
+        }
         if open.collection {
             return self.collection_page(header, page, cx);
         }

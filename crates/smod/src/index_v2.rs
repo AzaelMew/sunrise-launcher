@@ -461,7 +461,9 @@ impl Index {
                 return Err(format!("duplicate collection id {id:?}"));
             }
             if collection.name.trim().is_empty() || collection.summary.trim().is_empty() {
-                return Err(format!("collection {id}: name and summary must be non-empty"));
+                return Err(format!(
+                    "collection {id}: name and summary must be non-empty"
+                ));
             }
             check_page_path(id, &collection.icon)
                 .map_err(|e| format!("collection {id}: icon: {e}"))?;
@@ -485,7 +487,11 @@ impl Index {
                     ));
                 }
                 // The owner's rule: only the publisher of every member curates a collection.
-                let owner = project.repository.name.split_once('/').map(|(owner, _)| owner);
+                let owner = project
+                    .repository
+                    .name
+                    .split_once('/')
+                    .map(|(owner, _)| owner);
                 if owner != Some(collection.publisher.as_str()) {
                     return Err(format!(
                         "collection {id}: member {} is not published by {:?}",
