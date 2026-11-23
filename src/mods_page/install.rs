@@ -1506,9 +1506,11 @@ impl Launcher {
                         GithubSelection::Add(packages) => sunrise::install_github_manual(
                             &request.profile,
                             request.identity,
-                            &input.source,
-                            packages,
-                            request.target.as_deref(),
+                            sunrise::ManualRelease {
+                                found: &input.source,
+                                selected: packages,
+                                base: request.target.as_deref(),
+                            },
                             choose,
                             hooks,
                             &approve,

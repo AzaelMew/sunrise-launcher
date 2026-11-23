@@ -1048,8 +1048,16 @@ impl SeenPackage {
                 sunrise_launcher_smod::mod_list::DIR
             })
             .join(format!("{id}.smod"));
+        // A predecessor kept under a name that differs only by case is still this receipt's leaf.
+        let at_canonical = self.package.path.parent() == canonical.parent()
+            && self
+                .package
+                .path
+                .file_name()
+                .zip(canonical.file_name())
+                .is_some_and(|(leaf, expected)| leaf.eq_ignore_ascii_case(expected));
         let matches = if origin.local_folder_path().is_some() {
-            self.package.path == canonical
+            at_canonical
                 && self.digest.as_deref().is_some_and(|digest| {
                     origin.matches_archive(id, &self.package.manifest.version, digest)
                 })
@@ -1545,7 +1553,7 @@ mod mutations;
 mod tests;
 #[cfg(all(test, debug_assertions, unix))]
 mod update_tests;
-pub use github::{add_github, install_github_manual, update_github};
+pub use github::{add_github, install_github_manual, update_github, ManualRelease};
 pub use local::{install_local, install_local_at};
 pub(crate) use mutations::check_activation;
 pub use mutations::{remove_mods, ChangeImpact};

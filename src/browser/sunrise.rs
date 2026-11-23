@@ -1773,9 +1773,9 @@ pub use registry_install::{
     pack_sources, prepare_pasted_sources, prepare_source, read_pasted_sources, remove_mods,
     switch_build, switch_profile_build, update_github, update_registry,
     update_registry_and_sources, BuildChoice, BuildNotice, ChangeImpact, CombinedUpdate,
-    InstallError, InstallHooks, InstallProgress, InstalledBatch, NativeQuestion, PastedSource,
-    PreparedSource, ResolveQuestion, SourceDependency, SourceError, SourceHooks, SourceRequest,
-    SwitchDecision, SwitchHooks, SwitchQuestion, Switched, UpdateRequest,
+    InstallError, InstallHooks, InstallProgress, InstalledBatch, ManualRelease, NativeQuestion,
+    PastedSource, PreparedSource, ResolveQuestion, SourceDependency, SourceError, SourceHooks,
+    SourceRequest, SwitchDecision, SwitchHooks, SwitchQuestion, Switched, UpdateRequest,
 };
 #[cfg(test)]
 mod tests;

@@ -34,20 +34,30 @@ pub fn update_github(
     Ok(replacement.clone())
 }
 
+/// The GitHub release packages "Add from source" installs.
+pub struct ManualRelease<'a> {
+    pub found: &'a github_mods::Resolved,
+    pub selected: &'a [github_mods::Packed],
+    /// The game build the selection was checked against, when it was.
+    pub base: Option<&'a str>,
+}
+
 /// Install checked GitHub packages from "Add from source": a verified same-repository manual
 /// release predecessor goes through the checked update path (with world review), while
 /// other-source collisions stay refused.
-#[allow(clippy::too_many_arguments)]
 pub fn install_github_manual(
     instance: &Instance,
     identity: Identity,
-    found: &github_mods::Resolved,
-    selected: &[github_mods::Packed],
-    base: Option<&str>,
+    release: ManualRelease<'_>,
     choose: impl FnOnce() -> Result<FirstBuild, String>,
     hooks: InstallHooks<'_>,
     approve: &dyn Fn(&ChangeImpact) -> bool,
 ) -> Result<Vec<github_mods::Origin>, InstallError> {
+    let ManualRelease {
+        found,
+        selected,
+        base,
+    } = release;
     let packages = selected
         .iter()
         .map(|package| {
@@ -87,6 +97,11 @@ pub fn add_github(
     choose: impl FnOnce() -> Result<FirstBuild, String>,
     hooks: InstallHooks<'_>,
 ) -> Result<Vec<github_mods::Origin>, InstallError> {
+    let ManualRelease {
+        found,
+        selected,
+        base,
+    } = release;
     let packages = selected
         .iter()
         .map(|package| {

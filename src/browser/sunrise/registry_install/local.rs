@@ -218,6 +218,9 @@ fn stage_and_review(
 
     let claims = browser_state::Installed::read(live).map_err(|e| e.details(trf))?;
     let before = inventory(candidate, None)?;
+    // The saved-world comparison reads the live profile, which staging never changes: the
+    // candidate's copy of a replaced archive is overwritten or removed before the review.
+    let original = inventory(live, None)?;
     let enabled_before = mutations::enabled(candidate)?;
 
     let mut seen_ids = BTreeSet::new();
@@ -250,7 +253,7 @@ fn stage_and_review(
         } else {
             smod_mod_list::DIR
         };
-        let dest_rel = format!("{dest_dir}/{id}.smod");
+        let mut dest_rel = format!("{dest_dir}/{id}.smod");
         let sidecar_rel = format!("{dest_dir}/{id}.origin.json");
         for rel in [&dest_rel, &sidecar_rel] {
             if !planned_destinations.insert(rel.to_ascii_lowercase()) {
@@ -283,6 +286,11 @@ fn stage_and_review(
                 .check_other_claims(live, id, &prior_rel)
                 .map_err(|e| e.render(trf))?;
             claim_checks.push((id.clone(), prior_rel.clone()));
+            // A predecessor whose name differs only by case keeps its name: two leaves that fold
+            // to the same name would be two changes to one file on a case-insensitive disk.
+            if prior_rel.eq_ignore_ascii_case(&dest_rel) {
+                dest_rel = prior_rel.clone();
+            }
 
             let prior_sidecar = match prior.verified_origin_sidecar(candidate) {
                 Ok(Some((sidecar_path, origin))) => {
@@ -420,7 +428,7 @@ fn stage_and_review(
     } else {
         let replaced = replaced_ids
             .iter()
-            .filter_map(|id| before.get(id).map(|seen| &seen.package))
+            .filter_map(|id| original.get(id).map(|seen| &seen.package))
             .collect::<Vec<_>>();
         let (suspect, unchecked) = mutations::update_worlds(candidate, replaced)?;
         let impact =
@@ -785,5 +793,88 @@ mod tests {
         assert_eq!(staged.archives.len(), 1);
         assert!(!mods.join("camp_lanterns.smod").exists());
         assert!(!mods.join("camp_lanterns.origin.json").exists());
+    }
+
+    #[test]
+    fn replacing_a_content_mod_compares_saved_worlds_with_the_original_archive() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("profile");
+        fs::create_dir_all(&home).unwrap();
+        let block = "data/alpha/sunrise/block/amber.json";
+        let package = |file: &str, version: &str, files: &[(&str, &[u8])]| {
+            let path = dir.path().join(file);
+            let manifest = format!(
+                "id = 'alpha'\nname = 'Alpha'\nversion = '{version}'\napi = '0.2'\nside = 'both'\n"
+            );
+            fs::write(&path, Package::write_files(&manifest, files).unwrap()).unwrap();
+            read_local_smod(&path).unwrap()
+        };
+        let v1 = package(
+            "alpha-1.smod",
+            "1.0.0",
+            &[(block, br#"{"properties":{"lit":[true,false]}}"#)],
+        );
+        install_local_at(
+            &home,
+            &[v1],
+            &native_mods::Cancellation::default(),
+            &|_| {},
+            &|_| true,
+        )
+        .unwrap();
+        super::super::update_tests::world(
+            &home,
+            "Uses Alpha",
+            super::super::update_tests::roster("alpha"),
+        );
+
+        // Same file name: the candidate's alpha.smod is the new archive by review time.
+        let v2 = package("alpha.smod", "2.0.0", &[(block, b"{}")]);
+        let risked = AtomicBool::new(false);
+        let err = install_local_at(
+            &home,
+            &[v2],
+            &native_mods::Cancellation::default(),
+            &|_| {},
+            &|impact| {
+                risked.store(impact.risks_worlds(), Ordering::SeqCst);
+                false
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(err, InstallError::Cancelled), "{err:?}");
+        assert!(
+            risked.load(Ordering::SeqCst),
+            "the world using alpha's block is named"
+        );
+    }
+
+    #[test]
+    fn a_predecessor_named_with_other_case_is_replaced_under_its_own_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("profile");
+        let mods = home.join(smod_mod_list::DIR);
+        fs::create_dir_all(&mods).unwrap();
+        content_smod(&mods, "Alpha.smod", "alpha", "Alpha", "1.0.0");
+
+        let v2_path = content_smod(dir.path(), "alpha-2.smod", "alpha", "Alpha", "2.0.0");
+        let v2_bytes = fs::read(&v2_path).unwrap();
+        let v2 = read_local_smod(&v2_path).unwrap();
+        install_local_at(
+            &home,
+            &[v2],
+            &native_mods::Cancellation::default(),
+            &|_| {},
+            &|_| true,
+        )
+        .unwrap();
+
+        let archives: Vec<String> = fs::read_dir(&mods)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .filter(|name| name.ends_with(".smod"))
+            .collect();
+        assert_eq!(archives, ["Alpha.smod"]);
+        assert_eq!(fs::read(mods.join("Alpha.smod")).unwrap(), v2_bytes);
     }
 }
