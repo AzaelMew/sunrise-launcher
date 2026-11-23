@@ -158,7 +158,8 @@ impl HomeState {
         const BLUR: f32 = 24.;
         let hero = self.hero.clone();
         let shade = gpui::BoxShadow {
-            color: Hsla::from(rgb(palette().hero.shade)).opacity(0.63),
+            color: Hsla::from(rgb(palette().hero.shade))
+                .opacity((palette().hero.shade_alpha + 0.05).min(1.)),
             offset: gpui::point(px(0.), px(0.)),
             blur_radius: px(BLUR),
             spread_radius: px(0.),
