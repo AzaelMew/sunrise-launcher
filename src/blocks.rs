@@ -63,6 +63,8 @@ pub fn icon(name: &'static str, size: f32, color: Hsla) -> Svg {
         "message" => "chat",
         "folder" => "folder-01",
         "close" => "cancel-01",
+        "warning" => "alert-02",
+        "github" => "github",
         _ => {
             return svg()
                 .path(format!("icons/{name}.svg"))

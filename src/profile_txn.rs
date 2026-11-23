@@ -973,8 +973,7 @@ fn valid_destination(path: &Path) -> bool {
                 return false;
             };
             valid_smod_leaf(name)
-                || (first == NATIVE_DIR
-                    && portable_ascii_component(name)
+                || (portable_ascii_component(name)
                     && name.strip_suffix(".origin.json").is_some_and(valid_id))
         }
         _ => false,

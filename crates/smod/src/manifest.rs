@@ -1112,9 +1112,16 @@ impl Package {
     }
 
     /// Pack a flat project, selecting its source and resource files deterministically.
+    /// Carries a valid [`USES_FILE`] from `root` for native mods when present.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn pack_directory(root: &Path) -> Result<Vec<u8>, String> {
-        Self::pack_directory_with(root, None)
+        let package = Self::read(root)?;
+        let uses = if package.is_native() {
+            read_folder_uses(root)?
+        } else {
+            None
+        };
+        Self::pack_directory_with(root, uses.as_deref())
     }
 
     /// The bytes of entry `name` in the `.smod` at `path`, refused past `most` bytes; `None` when
@@ -1294,6 +1301,29 @@ pub(crate) fn check_file<R: Read>(
         return Err(ContentFileError::Executable(name.into()));
     }
     Ok(())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn read_folder_uses(root: &Path) -> Result<Option<Vec<u8>>, String> {
+    let path = root.join(USES_FILE);
+    match std::fs::symlink_metadata(&path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(format!("{USES_FILE}: {e}")),
+        Ok(_) => {}
+    }
+    check_folder_file(root, USES_FILE)?;
+    let mut bytes = Vec::new();
+    std::fs::File::open(&path)
+        .map_err(|e| format!("{USES_FILE}: {e}"))?
+        .take(MAX_USES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("{USES_FILE}: {e}"))?;
+    if bytes.len() as u64 > MAX_USES {
+        return Err(format!("{USES_FILE} exceeds {} MiB", MAX_USES >> 20));
+    }
+    serde_json::from_slice::<serde_json::Map<String, serde_json::Value>>(&bytes)
+        .map_err(|e| format!("{USES_FILE}: {e}"))?;
+    Ok(Some(bytes))
 }
 
 fn check_folder_file(root: &Path, name: &str) -> Result<(), String> {
@@ -2054,5 +2084,44 @@ issues = \"http://example.org/issues\"
         let error = Package::read(&link).err().unwrap();
         assert!(error.contains("unsupported file type"), "{error}");
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn pack_directory_carries_valid_uses_json_and_refuses_invalid() {
+        let dir = tempfile::tempdir().unwrap();
+        let native = format!(
+            "{EXAMPLE}[native]\ngame = '26.3'\nsunrise = '{}'\nmixins = '{}'\n",
+            "a".repeat(40),
+            "b".repeat(40)
+        );
+        std::fs::create_dir_all(dir.path().join("src")).unwrap();
+        std::fs::write(dir.path().join(MANIFEST), &native).unwrap();
+        std::fs::write(
+            dir.path().join("Cargo.toml"),
+            "[package]\nname = 'ruby'\nversion = '0.1.0'\nedition = '2024'\n",
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("src/lib.rs"), "pub fn f() {}\n").unwrap();
+        let table = br#"{"schema":1,"made_for":"x","entries":[]}"#;
+        std::fs::write(dir.path().join(USES_FILE), table).unwrap();
+
+        let bytes = Package::pack_directory(dir.path()).unwrap();
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        let mut read = Vec::new();
+        zip.by_name(USES_FILE)
+            .unwrap()
+            .read_to_end(&mut read)
+            .unwrap();
+        assert_eq!(read, table);
+
+        // Malformed JSON is refused instead of silently dropped.
+        std::fs::write(dir.path().join(USES_FILE), b"{bad json").unwrap();
+        let error = Package::pack_directory(dir.path()).unwrap_err();
+        assert!(error.contains(USES_FILE), "{error}");
+
+        // Non-object JSON is refused.
+        std::fs::write(dir.path().join(USES_FILE), b"[]").unwrap();
+        let error = Package::pack_directory(dir.path()).unwrap_err();
+        assert!(error.contains(USES_FILE), "{error}");
     }
 }
