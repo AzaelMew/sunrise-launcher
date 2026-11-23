@@ -3381,3 +3381,62 @@ fn new_arms_on_a_stale_page_replace_nothing_and_show_the_skin_worn_now() {
         );
     }
 }
+
+#[test]
+fn accounts_can_be_reordered_and_persist_to_disk() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("accounts.json");
+    let accounts = Accounts {
+        accounts: vec![
+            Account {
+                uuid: "a".into(),
+                name: "Alpha".into(),
+                skin: None,
+                cape: None,
+            },
+            Account {
+                uuid: "b".into(),
+                name: "Beta".into(),
+                skin: None,
+                cape: None,
+            },
+            Account {
+                uuid: "c".into(),
+                name: "Gamma".into(),
+                skin: None,
+                cape: None,
+            },
+        ],
+        selected: Some("b".into()),
+    };
+    accounts.save_to(&path).unwrap();
+
+    // Moving the first up or last down is a no-op.
+    let same = Accounts::reorder_in(&path, "a", -1).unwrap();
+    assert_eq!(
+        same.accounts
+            .iter()
+            .map(|a| a.uuid.as_str())
+            .collect::<Vec<_>>(),
+        ["a", "b", "c"]
+    );
+    let moved_up = Accounts::reorder_in(&path, "c", -1).unwrap();
+    assert_eq!(
+        moved_up
+            .accounts
+            .iter()
+            .map(|a| a.uuid.as_str())
+            .collect::<Vec<_>>(),
+        ["a", "c", "b"]
+    );
+    let moved_down = Accounts::reorder_in(&path, "a", 1).unwrap();
+    assert_eq!(
+        moved_down
+            .accounts
+            .iter()
+            .map(|a| a.uuid.as_str())
+            .collect::<Vec<_>>(),
+        ["c", "a", "b"]
+    );
+    assert_eq!(Accounts::load_from(&path).selected.as_deref(), Some("b"));
+}

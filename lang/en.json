@@ -454,5 +454,11 @@
   "Choose which mod provides {id}": "Choose which mod provides {id}",
   "Use this": "Use this",
   "Building {percent}%": "Building {percent}%",
-  "Signed out": "Signed out"
+  "Signed out": "Signed out",
+  "Account options": "Account options",
+  "Set default": "Set default",
+  "Move up": "Move up",
+  "Move down": "Move down",
+  "Manage skins": "Manage skins",
+  "Remove": "Remove"
 }
