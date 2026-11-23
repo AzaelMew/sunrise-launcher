@@ -1387,6 +1387,36 @@ mod tests {
     }
 
     #[test]
+    fn show_resource_pack_discover_re_searches_after_clearing_a_previous_resource_query() {
+        if scratch_child(
+            "show_resource_pack_discover_re_searches_after_clearing_a_previous_resource_query",
+        )
+        .is_none()
+        {
+            return;
+        }
+        let mut app = gpui::TestAppContext::single();
+        let (launcher, cx) = app.add_window_view(Launcher::new);
+        launcher.update(cx, |l, _| {
+            l.ui.page = Page::Home;
+            l.ui.mods.find.set("faithful".into());
+            l.ui.mods.packs.scope = pack_discover::Scope::Resource;
+            l.ui.mods.packs.status = pack_discover::Status::Done;
+            let seq_before = l.ui.mods.packs.seq;
+
+            l.show_resource_pack_discover();
+
+            assert_eq!(l.ui.page, Page::PackFind);
+            assert_eq!(l.ui.mods.shelf, Shelf::Resource);
+            assert!(l.ui.mods.find.text().is_empty());
+            assert!(
+                l.ui.mods.packs.seq > seq_before,
+                "entering through Find resource packs must trigger a fresh search for the cleared query"
+            );
+        });
+    }
+
+    #[test]
     fn installed_items_key_distinguishes_local_archives_sharing_a_mod_id() {
         let local = [
             model::Local {
