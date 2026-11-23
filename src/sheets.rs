@@ -14,6 +14,7 @@ use native_consent::PendingConsent;
 use std::sync::mpsc::Sender;
 use sunrise_launcher::native_mods::Consent;
 
+mod publisher_change;
 mod switching;
 mod versions;
 pub(crate) use versions::bench_wheel;
@@ -35,6 +36,7 @@ pub(crate) enum Sheet {
     /// One build to keep, picked from all of them (`versions`).
     Versions,
     Switching,
+    SwitchProvider,
     BuildChanges,
     /// Who plays, under the account chip (`account_chip`).
     AccountMenu,
@@ -84,6 +86,7 @@ pub(crate) struct SheetsState {
     way_out: Option<WayOut>,
     versions: versions::State,
     pub(super) switching: switching::State,
+    pub(super) publisher_change: Option<publisher_change::PendingPublisherChange>,
     pub(super) profile_action: Option<crate::profile_delete::Action>,
 }
 
@@ -314,6 +317,7 @@ impl Launcher {
     /// another dialog's answer merely because the search is still underneath it.
     pub(crate) fn blocking_dialog(&self) -> bool {
         self.ui.sheets.registry.is_some()
+            || self.ui.sheets.publisher_change.is_some()
             || self.pending_consent.is_some()
             || self.source_question().is_some()
             || self.mods.installs.question.is_some()
@@ -364,7 +368,12 @@ impl Launcher {
         if self.ui.sheet == Some(Sheet::Switching) {
             self.cancel_switch();
         }
-        if let Some((_, reply)) = self.ui.sheets.registry.take() {
+        if self.ui.sheet == Some(Sheet::SwitchProvider) {
+            self.cancel_provider_switch();
+        }
+        if self.dismiss_publisher_change() {
+            // Keep current version without modifying the remembered publisher pin.
+        } else if let Some((_, reply)) = self.ui.sheets.registry.take() {
             let _ = reply.send(false);
         } else if self.pending_consent.is_some() {
             self.cancel_native_consent();
@@ -388,6 +397,7 @@ impl Launcher {
     /// Escape: true when a sheet was open and is closed now.
     pub(crate) fn sheet_escape(&mut self) -> bool {
         let prompt_open = self.ui.sheets.registry.is_some()
+            || self.ui.sheets.publisher_change.is_some()
             || self.pending_consent.is_some()
             || self.source_question().is_some()
             || self.mods.installs.question.is_some()
@@ -493,6 +503,9 @@ impl Launcher {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> Option<Stateful<Div>> {
+        if self.ui.sheets.publisher_change.is_some() {
+            return Some(self.publisher_change_sheet(cx));
+        }
         if self.ui.sheets.registry.is_some() {
             return Some(self.libraries_sheet(cx));
         }
@@ -576,6 +589,7 @@ impl Launcher {
                 .map(|body| frame("nightly-source-log", 690., body, cx)),
             Some(Sheet::Versions) => Some(self.versions_sheet(cx)),
             Some(Sheet::Switching) => Some(self.switch_sheet(cx)),
+            Some(Sheet::SwitchProvider) => self.provider_switch_sheet(cx),
             Some(Sheet::BuildChanges) => self.switch_receipt_sheet(cx),
             Some(Sheet::AccountMenu) => self.account_menu(cx),
             Some(Sheet::LauncherUpdate) => self.launcher_update_sheet(cx),

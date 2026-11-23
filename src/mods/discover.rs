@@ -152,10 +152,18 @@ impl Launcher {
             let base = self.version_of(instance).map(String::as_str);
             sunrise::NativeInstallReadiness::for_profile(&instance.home, base, &game)
         });
+        // Competing ports sharing an in-game ID render as alternatives, never as one install.
+        let port_groups = self.discover_port_groups();
+        let grouped_ids = super::ports::grouped_project_ids(&port_groups);
         // The cards.
         let mut grid = self.discover_grid();
+        let mut ungrouped_cards = 0usize;
         for (n, &i) in shown.iter().take(limit).enumerate() {
             let card_data = &cards[i];
+            if grouped_ids.contains(&card_data.id) {
+                continue;
+            }
+            ungrouped_cards += 1;
             let id = card_data.id.clone();
             let picture = card_data
                 .icon
@@ -275,7 +283,18 @@ impl Launcher {
         } else {
             tr("No mods match. Try another search, or turn off “Fits my game”.")
         };
-        page.child(self.discover_results(grid, total, "discover", empty, cx))
+        let results = if port_groups.is_empty() {
+            grid
+        } else {
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(14.))
+                .child(self.render_port_groups(&port_groups, cx))
+                .when(ungrouped_cards > 0, |d| d.child(grid))
+        };
+        let shown_total = total.max(port_groups.len());
+        page.child(self.discover_results(results, shown_total, "discover", empty, cx))
             .into_any_element()
     }
 

@@ -1334,13 +1334,16 @@ pub mod sources;
 pub mod v2;
 pub(crate) use registry_install::check_activation;
 pub use registry_install::{
-    add_github, add_sources, apply_sources, checked_switch_fit, install_registry, install_target,
-    known_unfit_updates, pack_sources, prepare_pasted_sources, prepare_source, read_pasted_sources,
-    remove_mods, switch_build, switch_profile_build, update_github, update_registry,
-    update_registry_and_sources, BuildChoice, BuildNotice, ChangeImpact, CombinedUpdate,
-    InstallError, InstallHooks, InstallProgress, InstalledBatch, NativeQuestion, PastedSource,
-    PreparedSource, ResolveQuestion, SourceDependency, SourceError, SourceHooks, SourceRequest,
-    SwitchDecision, SwitchHooks, SwitchQuestion, Switched, UpdateRequest,
+    add_github, add_sources, affected_dependents, apply_sources, checked_switch_fit,
+    install_registry, install_target, known_unfit_updates, pack_sources, prepare_pasted_sources,
+    prepare_source, read_pasted_sources, remove_mods, switch_build, switch_profile_build,
+    switch_provider, update_github, update_registry, update_registry_and_sources,
+    AffectedDependent, BuildChoice, BuildNotice, ChangeImpact, CombinedUpdate, InstallError,
+    InstallHooks, InstallProgress, InstalledBatch, NativeQuestion, PastedSource, PreparedSource,
+    ProviderSwitchDecision, ProviderSwitchHooks, ProviderSwitchQuestion, ProviderSwitchRequest,
+    ProviderSwitched, PublisherChangeDecision, PublisherChangeQuestion, ResolveQuestion,
+    SourceDependency, SourceError, SourceHooks, SourceRequest, SwitchDecision, SwitchHooks,
+    SwitchQuestion, Switched, UpdateRequest,
 };
 #[cfg(test)]
 mod tests;

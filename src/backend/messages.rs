@@ -104,6 +104,19 @@ pub enum Msg {
         PathBuf,
         Box<Result<crate::browser::sunrise::Switched, String>>,
     ),
+    ProviderSwitchProgress(crate::browser::sunrise::InstallProgress),
+    ProviderSwitchQuestion(
+        Box<crate::browser::sunrise::ProviderSwitchQuestion>,
+        std::sync::mpsc::Sender<crate::browser::sunrise::ProviderSwitchDecision>,
+    ),
+    ProviderSwitched(
+        PathBuf,
+        Box<Result<crate::browser::sunrise::ProviderSwitched, String>>,
+    ),
+    PublisherChangeQuestion(
+        Box<crate::browser::sunrise::PublisherChangeQuestion>,
+        std::sync::mpsc::Sender<crate::browser::sunrise::PublisherChangeDecision>,
+    ),
     ReceiptAcknowledged(PathBuf, Result<bool, String>),
     JarConsent {
         jars: Vec<sunrise_launcher_smod::manifest::JarRef>,

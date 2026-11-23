@@ -41,6 +41,7 @@ mod nightly;
 mod pack_discover;
 mod pack_project;
 mod packs;
+mod ports;
 mod project;
 pub(crate) mod refused;
 mod search;
