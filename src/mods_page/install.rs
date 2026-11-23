@@ -1127,10 +1127,16 @@ impl Launcher {
                 &[("mod", name), ("from", from), ("to", to)],
             ));
         }
-        if lines.is_empty() && done.failure.is_none() {
+        // A failed install says why in a dialog as it ends (`install_failure`); only a hold,
+        // which lasts, stays on the page.
+        let failure = done
+            .failure
+            .clone()
+            .filter(|_| self.registry_install_hold(id).is_some());
+        if lines.is_empty() && failure.is_none() {
             return None;
         }
-        let failure = done.failure.clone().map(|(label, detail)| {
+        let failure = failure.map(|(label, detail)| {
             div()
                 .flex()
                 .items_center()

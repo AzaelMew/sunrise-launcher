@@ -161,14 +161,25 @@ impl Launcher {
         if let Some(feedback) = github_feedback {
             self.show_github_result(feedback);
         }
-        // The profile that asked hears why at once; another one finds it on the mod's page.
+        // A failed install says why in a dialog, naming its profile when another one is shown.
         if let Some((profile, why)) = failed_here {
-            if self.selected_instance().is_some_and(|i| {
+            let here = self.selected_instance().is_some_and(|i| {
                 i.home == profile.home && i.id == profile.id && i.incarnation == profile.incarnation
-            }) {
-                self.open_notice(why, None);
-            }
+            });
+            let why = if here {
+                why
+            } else {
+                format!(
+                    "{}\n\n{why}",
+                    trf(
+                        "Installing to {profile} failed.",
+                        &[("profile", &profile.name)]
+                    )
+                )
+            };
+            self.open_notice(why, None);
         }
+        // The profile that asked hears why at once; another one finds it on the mod's page.
         if let Some((profile, refused)) = refused_here {
             if self.selected_instance().is_some_and(|i| {
                 i.home == profile.home && i.id == profile.id && i.incarnation == profile.incarnation
