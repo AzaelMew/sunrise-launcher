@@ -191,7 +191,7 @@ pub struct V2Plan {
 
 /// An enabled dependent in the profile that would be affected by switching a slot's provider.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AffectedDependent {
+pub struct V2AffectedDependent {
     pub mod_id: String,
     pub name: String,
     pub reason: String,
@@ -206,7 +206,7 @@ pub struct ProviderSwitchPreview {
     pub to_project: String,
     pub to_name: String,
     pub to_version: String,
-    pub affected_dependents: Vec<AffectedDependent>,
+    pub affected_dependents: Vec<V2AffectedDependent>,
     pub worlds: Vec<crate::worlds::WorldRisk>,
 }
 
@@ -231,10 +231,11 @@ pub struct V2ProviderSwitchHooks<'a> {
     pub approve_switch: &'a dyn Fn(&ProviderSwitchPreview) -> bool,
 }
 
-struct PendingPin {
+#[derive(Debug)]
+pub(crate) struct PendingPin {
     project_id: String,
     pin: PublisherPin,
-    accepted_change: bool,
+    accepted_change: Option<PublisherChange>,
 }
 
 /// Read the player's pinned version for a project (keyed by permanent project ID, falling back to
@@ -352,6 +353,23 @@ pub fn revoked_for_package<'a>(
         .and_then(|project_id| index.revoked(project_id, Some(digest)))
 }
 
+/// True when `package` has a non-registry `.origin.json` sidecar (GitHub or local-folder install),
+/// or when reading sidecar metadata fails (fail closed so source mods are never adopted as v2).
+fn has_source_origin(home: &Path, package: &ScannedPackage) -> bool {
+    if package.directory {
+        return false;
+    }
+    let present = |path: &Path| {
+        !matches!(
+            fs::symlink_metadata(path),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound
+        )
+    };
+    let beside = package.path.with_extension("origin.json");
+    let native = crate::github_mods::origin_path(home, &package.manifest.id);
+    present(&beside) || present(&native)
+}
+
 /// Convenience helper for pre-Play checks: classifies `package` against `rows` and checks v2
 /// revocations for `digest`.
 pub(crate) fn revoked_for_installed_package<'a>(
@@ -366,10 +384,7 @@ pub(crate) fn revoked_for_installed_package<'a>(
         .entries
         .iter()
         .find(|row| row.in_game_mod_id() == Some(package.manifest.id.as_str()));
-    let has_github = crate::github_mods::origin_for(&package.path)
-        .ok()
-        .flatten()
-        .is_some();
+    let has_github = has_source_origin(home, package);
     let ownership = classify_v2_ownership(index, home, entry, package, digest, size, has_github);
     revoked_for_package(index, &ownership, digest)
 }
@@ -453,10 +468,7 @@ pub fn inventory_v2(
                     .len(),
             )
         };
-        let has_github = !package.directory
-            && crate::github_mods::origin_for(&package.path)
-                .map_err(|e| at(&package.path, e))?
-                .is_some();
+        let has_github = has_source_origin(home, &package);
         let ownership = classify_v2_ownership(
             index,
             home,
@@ -489,7 +501,7 @@ pub(crate) fn compare_versions(a: &str, b: &str) -> std::cmp::Ordering {
 }
 
 fn select_project_release<'a>(
-    index: &'a Index,
+    index: &Index,
     project: &'a Project,
     build: &str,
     pinned_version: Option<&str>,
@@ -606,7 +618,7 @@ fn planned_from(project: &Project, release: &Release, dependency: bool) -> Plann
         slug: project.slug.clone(),
         mod_id: project.mod_id.clone(),
         name: project.name.clone(),
-        kind: project.kind,
+        kind: project.kind.clone(),
         version: release.version.clone(),
         sha256: release.file.sha256.clone(),
         size: release.file.size,
@@ -666,13 +678,13 @@ pub fn plan_v2_install(
                 let other_name = index
                     .project(&other_id)
                     .map_or(other_id.as_str(), |p| p.name.as_str());
-                return Err(InstallError::ProviderConflict(ProviderConflict {
+                return Err(InstallError::ProviderConflict(Box::new(ProviderConflict {
                     mod_id: project.mod_id.clone(),
                     installed_project: Some(other_id.clone()),
                     installed_name: other_name.to_owned(),
                     requested_project: project.id.clone(),
                     requested_name: project.name.clone(),
-                }));
+                })));
             }
         }
         queue.push_back((project.id.clone(), false, project.name.clone()));
@@ -867,23 +879,23 @@ fn resolve_v2_queue(
                 }
                 continue;
             }
-            return Err(InstallError::ProviderConflict(ProviderConflict {
+            return Err(InstallError::ProviderConflict(Box::new(ProviderConflict {
                 mod_id: project.mod_id.clone(),
                 installed_project: Some(existing.project_id.clone()),
                 installed_name: existing.name.clone(),
                 requested_project: project.id.clone(),
                 requested_name: project.name.clone(),
-            }));
+            })));
         }
         if let Some(existing) = installed.get(&project.mod_id) {
             if existing.ownership.project_id() != Some(project.id.as_str()) {
-                return Err(InstallError::ProviderConflict(ProviderConflict {
+                return Err(InstallError::ProviderConflict(Box::new(ProviderConflict {
                     mod_id: project.mod_id.clone(),
                     installed_project: existing.ownership.project_id().map(str::to_owned),
                     installed_name: existing.package.manifest.name.clone(),
                     requested_project: project.id.clone(),
                     requested_name: project.name.clone(),
-                }));
+                })));
             }
         }
         let version_override = options
@@ -921,13 +933,13 @@ fn resolve_v2_queue(
                 }
                 if let Some(existing) = installed.get(&dep.mod_id) {
                     if existing.ownership.project_id() != Some(dep_project.id.as_str()) {
-                        return Err(InstallError::ProviderConflict(ProviderConflict {
+                        return Err(InstallError::ProviderConflict(Box::new(ProviderConflict {
                             mod_id: dep.mod_id.clone(),
                             installed_project: existing.ownership.project_id().map(str::to_owned),
                             installed_name: existing.package.manifest.name.clone(),
                             requested_project: dep_project.id.clone(),
                             requested_name: dep_project.name.clone(),
-                        }));
+                        })));
                     }
                     if existing.enabled
                         && dep_project.releases.iter().any(|r| {
@@ -1063,7 +1075,7 @@ fn resolve_v2_queue(
                             continue;
                         }
                     }
-                    return Err(InstallError::AmbiguousProvider(need));
+                    return Err(InstallError::AmbiguousProvider(Box::new(need)));
                 }
             }
         }
@@ -1187,7 +1199,7 @@ pub(crate) fn stage_and_verify_v2_release(
 
     // 3. Check per-computer publisher pin (without mutating disk until publication commits).
     let pin = verified.pin();
-    let mut accepted_change = false;
+    let mut accepted_change = None;
     match attestation::check_pin_in(pin_dir, &project.id, &pin) {
         Ok(attestation::PinStatus::FirstInstall | attestation::PinStatus::Matched) => {}
         Err(attestation::Error::PublisherChanged(change)) => {
@@ -1196,7 +1208,7 @@ pub(crate) fn stage_and_verify_v2_release(
             if !confirmed {
                 return Err(InstallError::PublisherChanged(change));
             }
-            accepted_change = true;
+            accepted_change = Some(*change);
         }
         Err(error) => return Err(InstallError::Unproved(error.to_string())),
     }
@@ -1256,8 +1268,8 @@ pub(crate) fn stage_and_verify_v2_release(
         )));
     }
     // Refuse packages that smuggle required dependencies not declared in the signed v2 release.
-    for (dep_id, details) in &facts.dependencies {
-        if !details.optional
+    for (dep_id, dep) in &facts.dependencies {
+        if !dep.details().optional
             && !release
                 .dependencies
                 .iter()
@@ -1305,9 +1317,8 @@ pub(crate) fn stage_and_verify_v2_release(
 
 pub(crate) fn commit_pending_pins(pin_dir: &Path, pins: &[PendingPin]) -> Result<(), String> {
     for pending in pins {
-        if pending.accepted_change {
-            attestation::accept_pin_in(pin_dir, &pending.project_id, &pending.pin)
-                .map_err(|e| e.to_string())?;
+        if let Some(change) = &pending.accepted_change {
+            attestation::accept_pin_in(pin_dir, change).map_err(|e| e.to_string())?;
         } else {
             attestation::pin_or_check_in(pin_dir, &pending.project_id, &pending.pin)
                 .map_err(|e| e.to_string())?;
@@ -1451,11 +1462,11 @@ enum V2Action<'a> {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn v2_edit_with<'a>(
+fn v2_edit_with(
     instance: &Instance,
     identity: Identity,
     index: Arc<Index>,
-    action: V2Action<'a>,
+    action: V2Action<'_>,
     options: V2InstallOptions,
     choose: impl FnOnce() -> Result<FirstBuild, String>,
     hooks: V2Hooks<'_>,
@@ -1571,18 +1582,23 @@ fn v2_edit_with<'a>(
     if !native_names.is_empty() {
         native_names.sort();
         native_names.dedup();
-        if let Some(error) = native_mods::host_unsupported() {
+        if let Some(error) = native_mods::known_host_block(Some(&base_build)) {
             return Err(InstallError::Host(error));
         }
-        let approved = (hooks.install.native)(&NativeQuestion {
-            names: native_names,
-            reviewed: true,
-            retry: false,
-        })
-        .map_err(InstallError::Unproved)?;
-        if !approved {
-            return Err(InstallError::Cancelled);
+        if backend::NativeGrant::read()?.is_none() {
+            let approved = (hooks.install.native)(&NativeQuestion {
+                names: native_names,
+                reviewed: true,
+                retry: false,
+            })
+            .map_err(InstallError::Unproved)?;
+            if !approved {
+                return Err(InstallError::Cancelled);
+            }
         }
+        cancelled
+            .admit_native_work()
+            .map_err(|e| InstallError::Unproved(e.into()))?;
     }
 
     (hooks.install.progress)(InstallProgress::Preparing);
@@ -1590,20 +1606,26 @@ fn v2_edit_with<'a>(
         .map_err(InstallError::Unproved)?;
     let proof = match prove_edit(&edit, next.path(), instance, &cancelled, &hooks.install) {
         Ok(proof) => proof,
-        Err(native_mods::Failed::Cancelled) => return Err(InstallError::Cancelled),
-        Err(error) => {
-            if matches!(
-                error,
-                native_mods::Failed::Build(_) | native_mods::Failed::Incompatible(_)
-            ) {
-                for step in &plan.steps {
-                    if step.kind == V2Kind::NativeMod {
+        Err(native_mods::Failed::Mods {
+            left,
+            error,
+            compiling: false,
+            ..
+        }) => {
+            for failed in &left {
+                if matches!(failed.why, native_mods::Why::Unfit(_)) {
+                    if let Some(step) = plan.steps.iter().find(|step| {
+                        step.kind == V2Kind::NativeMod
+                            && step.mod_id == failed.id
+                            && step.version == failed.version
+                    }) {
                         remember_unfit_sha256(&base_build, &step.sha256);
                     }
                 }
             }
-            return Err(InstallError::Unproved(error.to_string()));
+            return Err(InstallError::Unproved(error));
         }
+        Err(error) => return Err(InstallError::Unproved(error.to_string())),
     };
 
     // World impact review for updates (or guard against unexpected replacements on Install).
@@ -1815,7 +1837,7 @@ pub(crate) fn switch_provider_v2_with(
                                 continue;
                             }
                         }
-                        return Err(InstallError::AmbiguousProvider(need));
+                        return Err(InstallError::AmbiguousProvider(Box::new(need)));
                     }
                 }
             }
@@ -1900,34 +1922,35 @@ pub(crate) fn switch_provider_v2_with(
     if !native_names.is_empty() {
         native_names.sort();
         native_names.dedup();
-        if let Some(error) = native_mods::host_unsupported() {
+        if let Some(error) = native_mods::known_host_block(Some(&base_build)) {
             return Err(InstallError::Host(error));
         }
-        if !(hooks.install.install.native)(&NativeQuestion {
-            names: native_names,
-            reviewed: true,
-            retry: false,
-        })
-        .map_err(InstallError::Unproved)?
+        if backend::NativeGrant::read()?.is_none()
+            && !(hooks.install.install.native)(&NativeQuestion {
+                names: native_names,
+                reviewed: true,
+                retry: false,
+            })
+            .map_err(InstallError::Unproved)?
         {
             return Err(InstallError::Cancelled);
         }
+        cancelled
+            .admit_native_work()
+            .map_err(|e| InstallError::Unproved(e.into()))?;
     }
 
     (hooks.install.install.progress)(InstallProgress::Preparing);
     edit.prepare_first(&|_| {})
         .map_err(InstallError::Unproved)?;
-    let proof = match prove_edit(
+    let proof = prove_edit(
         &edit,
         next.path(),
         instance,
         &cancelled,
         &hooks.install.install,
-    ) {
-        Ok(proof) => proof,
-        Err(native_mods::Failed::Cancelled) => return Err(InstallError::Cancelled),
-        Err(error) => return Err(InstallError::Unproved(error.to_string())),
-    };
+    )
+    .map_err(|error| InstallError::Unproved(error.to_string()))?;
 
     let (suspect, _) = mutations::update_worlds(next.path(), std::iter::once(&current.package))?;
     let worlds = mutations::world_evidence(&instance.home, &suspect)?;
@@ -1969,7 +1992,7 @@ fn find_affected_dependents(
     slot_mod_id: &str,
     to_project_id: &str,
     to_version: &str,
-) -> Vec<AffectedDependent> {
+) -> Vec<V2AffectedDependent> {
     let parsed_new = parse_version(to_version).ok();
     let mut affected = Vec::new();
     for (id, item) in installed {
@@ -1985,23 +2008,17 @@ fn find_affected_dependents(
                     .find(|r| r.file.sha256.eq_ignore_ascii_case(&item.digest))
                 {
                     for dep in &rel.dependencies {
-                        if dep.required
-                            && dep.mod_id == slot_mod_id
-                            && dep
-                                .project
-                                .as_deref()
-                                .is_some_and(|required_pid| required_pid != to_project_id)
-                        {
-                            let req = dep.project.as_deref().unwrap_or_default();
-                            affected.push(AffectedDependent {
-                                mod_id: id.clone(),
-                                name: item.package.manifest.name.clone(),
-                                reason: trf(
-                                    "requires project {project} specifically",
-                                    &[("project", req)],
-                                ),
-                            });
-                            continue;
+                        if let Some(req) = dep.project.as_deref() {
+                            if dep.required && dep.mod_id == slot_mod_id && req != to_project_id {
+                                affected.push(V2AffectedDependent {
+                                    mod_id: id.clone(),
+                                    name: item.package.manifest.name.clone(),
+                                    reason: trf(
+                                        "requires project {project} specifically",
+                                        &[("project", req)],
+                                    ),
+                                });
+                            }
                         }
                     }
                 }
@@ -2009,22 +2026,19 @@ fn find_affected_dependents(
         }
         // Check manifest semver constraint against the new provider's version.
         if let Some(dep) = item.package.manifest.dependencies.get(slot_mod_id) {
-            if !dep.optional {
-                let fits = match (&parsed_new, semver::VersionReq::parse(&dep.version)) {
-                    (Some(ver), Ok(req)) => req.matches(ver),
-                    _ => true,
-                };
+            let details = dep.details();
+            if !details.optional {
+                let fits = parsed_new
+                    .as_ref()
+                    .is_none_or(|ver| details.version.matches(ver));
                 if !fits {
-                    affected.push(AffectedDependent {
+                    let req = details.version.to_string();
+                    affected.push(V2AffectedDependent {
                         mod_id: id.clone(),
                         name: item.package.manifest.name.clone(),
                         reason: trf(
                             "needs {mod} {req}, not {version}",
-                            &[
-                                ("mod", slot_mod_id),
-                                ("req", &dep.version),
-                                ("version", to_version),
-                            ],
+                            &[("mod", slot_mod_id), ("req", &req), ("version", to_version)],
                         ),
                     });
                 }

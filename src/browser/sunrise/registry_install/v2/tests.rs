@@ -567,14 +567,10 @@ fn v2_plan_never_silently_picks_among_providers_and_honors_explicit_choice_or_pi
     .unwrap_err();
     assert!(matches!(
         conflict,
-        InstallError::ProviderConflict(ProviderConflict {
-            ref mod_id,
-            ref installed_project,
-            ref requested_project,
-            ..
-        }) if mod_id == "wayfinder"
-            && installed_project.as_deref() == Some("Zz91kLmN")
-            && requested_project == "Ab3dE9xQ"
+        InstallError::ProviderConflict(conflict)
+            if conflict.mod_id == "wayfinder"
+                && conflict.installed_project.as_deref() == Some("Zz91kLmN")
+                && conflict.requested_project == "Ab3dE9xQ"
     ));
 }
 
@@ -957,6 +953,23 @@ fn v2_adoption_adopts_v1_only_on_unique_verified_digest_match() {
     let idx_ambig = make_index(vec![proj_a, proj_dup], Vec::new());
     let inv_ambig = inventory_v2(home1.path(), &idx_ambig).unwrap();
     assert_eq!(inv_ambig["wayfinder"].ownership, V2Ownership::Local);
+
+    // 5. Present `.origin.json` sidecar (GitHub / local source mod) is never adopted as v2.
+    let home_origin = tempfile::tempdir().unwrap();
+    write_installed_mod(
+        home_origin.path(),
+        "wayfinder",
+        &bytes_a,
+        Some(v1_entry("wayfinder", "Wayfinder", "1.0.0", &bytes_a)),
+        true,
+    );
+    let sidecar = home_origin
+        .path()
+        .join(mod_list::MODS_DIR)
+        .join("wayfinder.origin.json");
+    fs::write(&sidecar, "{}").unwrap();
+    let inv_origin = inventory_v2(home_origin.path(), &idx_unique).unwrap();
+    assert_eq!(inv_origin["wayfinder"].ownership, V2Ownership::Local);
 }
 
 #[test]

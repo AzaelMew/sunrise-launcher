@@ -488,12 +488,10 @@ impl Index {
     /// Finds every `(Project, Release)` pair providing `mod_id` whose archive SHA-256 equals
     /// `sha256`. Used to adopt a v1 receipt only when verified digest history uniquely identifies
     /// one v2 project.
-    pub fn releases_by_sha256<'a>(
-        &'a self,
-        mod_id: &'a str,
-        sha256: &'a str,
-    ) -> Vec<(&'a Project, &'a Release)> {
-        self.projects_for_mod(mod_id)
+    pub fn releases_by_sha256(&self, mod_id: &str, sha256: &str) -> Vec<(&Project, &Release)> {
+        self.projects
+            .iter()
+            .filter(|project| project.mod_id == mod_id)
             .flat_map(|project| {
                 project
                     .releases

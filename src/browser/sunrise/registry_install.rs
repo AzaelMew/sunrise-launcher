@@ -44,9 +44,9 @@ pub use switch::{
 pub use v2::{
     checked_switch_fit_v2, classify_v2_ownership, install_registry_v2, inventory_v2,
     plan_v2_install, plan_v2_update, revoked_for_package, switch_build_v2, switch_profile_build_v2,
-    switch_provider_v2, turn_off_revoked_v2, update_registry_v2, AffectedDependent, InstalledV2Mod,
-    PlannedV2Release, ProviderCandidate, ProviderChoiceNeeded, ProviderConflict,
-    ProviderSwitchPreview, V2Hooks, V2InstallOptions, V2Ownership, V2Plan, V2ProviderSwitchHooks,
+    switch_provider_v2, turn_off_revoked_v2, update_registry_v2, InstalledV2Mod, PlannedV2Release,
+    ProviderCandidate, ProviderChoiceNeeded, ProviderConflict, ProviderSwitchPreview,
+    V2AffectedDependent, V2Hooks, V2InstallOptions, V2Ownership, V2Plan, V2ProviderSwitchHooks,
     V2SwitchHooks,
 };
 
@@ -100,8 +100,8 @@ pub enum InstallError {
     Source(SourceError),
     Compile(BuildNotice),
     PublisherChanged(Box<crate::attestation::PublisherChange>),
-    AmbiguousProvider(v2::ProviderChoiceNeeded),
-    ProviderConflict(v2::ProviderConflict),
+    AmbiguousProvider(Box<v2::ProviderChoiceNeeded>),
+    ProviderConflict(Box<v2::ProviderConflict>),
     Cancelled,
 }
 

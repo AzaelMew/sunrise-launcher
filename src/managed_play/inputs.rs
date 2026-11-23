@@ -9,6 +9,7 @@ use sunrise_launcher_smod::{index, manifest, mod_list};
 
 /// One candidate the game discovers by extension or unpacked manifest. A directory is
 /// game content, not a managed archive destination implied by its name or manifest ID.
+#[derive(Clone, Debug)]
 pub struct ScannedPackage {
     pub manifest: manifest::Manifest,
     pub path: PathBuf,

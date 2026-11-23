@@ -279,7 +279,7 @@ pub(crate) fn switch_build_v2_with(
                     slug: project.slug.clone(),
                     mod_id: project.mod_id.clone(),
                     name: project.name.clone(),
-                    kind: project.kind,
+                    kind: project.kind.clone(),
                     version: release.version.clone(),
                     sha256: release.file.sha256.clone(),
                     size: release.file.size,
@@ -357,7 +357,7 @@ pub(crate) fn switch_build_v2_with(
                 .manifest
                 .dependencies
                 .iter()
-                .any(|(dep_id, dep)| !dep.optional && dropped_ids.contains(dep_id));
+                .any(|(dep_id, dep)| !dep.details().optional && dropped_ids.contains(dep_id));
             if missing_dep {
                 newly_held.push(slot.clone());
             }
