@@ -648,7 +648,6 @@ impl Launcher {
         self.modal_before(window, cx);
         self.servers.note_focus(window, cx);
         self.friend_focused = self.friend_focus.is_focused(window);
-        self.mods.note_focus(window);
         if window.focused(cx).is_none() {
             window.focus(&self.root_focus, cx);
         }

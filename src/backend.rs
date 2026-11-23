@@ -5021,10 +5021,6 @@ impl WhilePlaying {
     }
 }
 
-/// The roundest the look's corners go, in px (Settings > Appearance > Corners), and how round
-/// they are until the player picks.
-pub const MAX_CORNERS: u8 = 24;
-pub const DEFAULT_CORNERS: u8 = 4;
 /// A button's corner radius as the look draws it, and the roundest the player can set, in px.
 pub const DEFAULT_CORNER_RADIUS: u8 = 9;
 pub const MAX_CORNER_RADIUS: u8 = 30;
@@ -5091,9 +5087,6 @@ pub struct Settings {
     /// started with `SUNRISE_NO_HEARTBEAT`. On by default, as upstream sends it.
     #[serde(default)]
     pub ping_off: bool,
-    /// The player has been through the first-run welcome (theme, accent).
-    #[serde(default)]
-    pub welcomed: bool,
     /// The player without an account that owns the game has read, once, why the launcher needs
     /// one now (the owner gate's screen).
     #[serde(default)]
@@ -5159,10 +5152,6 @@ pub struct Settings {
     /// move even when the system asks for less.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reduce_motion: Option<bool>,
-    /// How round the look's corners are: their radius in px, 0 (square) to [`MAX_CORNERS`];
-    /// unset is [`DEFAULT_CORNERS`] (read it with [`Settings::corners`]).
-    #[serde(default, rename = "corners", skip_serializing_if = "Option::is_none")]
-    pub corners_px: Option<u8>,
     /// How round every corner in the launcher is, as a button's corner radius in px: 0 square,
     /// [`DEFAULT_CORNER_RADIUS`] the look as drawn, up to [`MAX_CORNER_RADIUS`]; cards and panels
     /// keep their proportion to it. Unset is the default (read it with [`Settings::corner_radius`]).
@@ -5182,11 +5171,6 @@ pub struct Settings {
 }
 
 impl Settings {
-    /// The look's corner radius in px: the player's, else [`DEFAULT_CORNERS`].
-    pub fn corners(&self) -> u8 {
-        self.corners_px.unwrap_or(DEFAULT_CORNERS).min(MAX_CORNERS)
-    }
-
     /// The saved panel opacity override. `None` keeps the theme's default paint.
     pub fn panel_opacity(&self) -> Option<u8> {
         self.panel_opacity
