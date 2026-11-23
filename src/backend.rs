@@ -1463,12 +1463,12 @@ fn unpack(
                 .map_err(|e| e.to_string()),
         }
     } else {
-        let mut archive = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
-        if let Some(stop) = stop {
-            extract_zip_cancellable(&mut archive, to, stop)
-        } else {
-            archive.extract(to).map_err(|e| e.to_string())
-        }
+        // The library's extractor keeps each entry's Unix mode and symlinks (a macOS bundle's
+        // second executable, `sunrise-prepare`, must stay runnable); Stop is checked on every
+        // read of the archive underneath it.
+        zip::ZipArchive::new(CancellableFile { file, stop })
+            .and_then(|mut archive| archive.extract(to))
+            .map_err(|e| e.to_string())
     };
     if let Err(error) = result {
         if let Some(stop) = stop {
@@ -1479,30 +1479,25 @@ fn unpack(
     Ok(())
 }
 
-fn extract_zip_cancellable<R: Read + std::io::Seek>(
-    archive: &mut zip::ZipArchive<R>,
-    to: &Path,
-    stop: &crate::native_mods::Cancellation,
-) -> Result<(), String> {
-    fs::create_dir_all(to).map_err(|e| e.to_string())?;
-    for i in 0..archive.len() {
-        stop.check()?;
-        let entry = archive.by_index(i).map_err(|e| e.to_string())?;
-        let Some(relative) = entry.enclosed_name() else {
-            continue;
-        };
-        let path = to.join(relative);
-        if entry.is_dir() {
-            fs::create_dir_all(&path).map_err(|e| e.to_string())?;
-        } else {
-            if let Some(parent) = path.parent() {
-                fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-            }
-            let mut out = fs::File::create(&path).map_err(|e| e.to_string())?;
-            std::io::copy(&mut stop.reader(entry), &mut out).map_err(|e| e.to_string())?;
+/// The downloaded archive, failing its next read once `stop` is set.
+struct CancellableFile<'a> {
+    file: fs::File,
+    stop: Option<&'a crate::native_mods::Cancellation>,
+}
+
+impl Read for CancellableFile<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if let Some(stop) = self.stop {
+            stop.check().map_err(std::io::Error::other)?;
         }
+        self.file.read(buf)
     }
-    Ok(())
+}
+
+impl std::io::Seek for CancellableFile<'_> {
+    fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
+        self.file.seek(pos)
+    }
 }
 
 pub use installation::{InstallOutcome, NightlyReceiptWarning};
@@ -5394,6 +5389,50 @@ mod tests {
     use super::*;
     use std::cmp::Ordering::*;
     use std::ffi::OsStr;
+
+    #[cfg(unix)]
+    #[test]
+    fn a_cancellable_zip_unpack_keeps_every_executable_runnable_and_stops_when_asked() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let zip_path = dir.path().join("game.zip");
+        let mut zip = zip::ZipWriter::new(fs::File::create(&zip_path).unwrap());
+        let exec = zip::write::SimpleFileOptions::default().unix_permissions(0o755);
+        for name in [
+            "Sunrise.app/Contents/MacOS/sunrise-client",
+            "Sunrise.app/Contents/MacOS/sunrise-prepare",
+        ] {
+            zip.start_file(name, exec).unwrap();
+            zip.write_all(b"#!/bin/sh\n").unwrap();
+        }
+        zip.start_file(
+            "Sunrise.app/Contents/Info.plist",
+            zip::write::SimpleFileOptions::default().unix_permissions(0o644),
+        )
+        .unwrap();
+        zip.write_all(b"<plist/>").unwrap();
+        zip.finish().unwrap();
+
+        let to = dir.path().join("unpacked");
+        let stop = crate::native_mods::Cancellation::default();
+        unpack(&zip_path, "game.zip", &to, Some(&stop)).unwrap();
+        for name in ["sunrise-client", "sunrise-prepare"] {
+            let mode = fs::metadata(to.join("Sunrise.app/Contents/MacOS").join(name))
+                .unwrap()
+                .permissions()
+                .mode();
+            assert_eq!(mode & 0o111, 0o111, "{name} stays executable");
+        }
+
+        stop.stop();
+        assert!(unpack(
+            &zip_path,
+            "game.zip",
+            &dir.path().join("stopped"),
+            Some(&stop)
+        )
+        .is_err());
+    }
 
     #[cfg(unix)]
     #[test]
