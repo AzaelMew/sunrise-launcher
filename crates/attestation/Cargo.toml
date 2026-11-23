@@ -1,0 +1,29 @@
+# Mirrored from sunrise-org/sunrise crates/sunrise-attestation at commit
+# f705c9b6b1b44233c57d804a67c6cf09a92c2150.
+[package]
+name = "sunrise-attestation"
+version = "0.1.0"
+edition = "2024"
+license = "PolyForm-Shield-1.0.0"
+rust-version = "1.95"
+description = "Offline verification of GitHub Actions artifact attestations"
+publish = false
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sigstore-trust-root = { version = "0.17", default-features = false }
+sigstore-types = "0.17"
+sigstore-verify = { version = "0.17", default-features = false, features = ["aws-lc-rs"] }
+thiserror = "2"
+
+[target.'cfg(all(windows, target_arch = "x86_64"))'.dependencies]
+# Use the upstream crate's NASM objects if the Windows builder has no NASM.
+aws-lc-rs = { version = "1.18", default-features = false, features = ["prebuilt-nasm"] }
+
+# The game workspace's lints, which the copied code was written to.
+[lints.clippy]
+too_many_arguments = "allow"
+type_complexity = "allow"
+needless_range_loop = "allow"
+large_enum_variant = "allow"

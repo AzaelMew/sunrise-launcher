@@ -264,5 +264,11 @@
   "Cancelling…": "Cancelling…",
   "The server's game files are still not prepared.": "The server's game files are still not prepared.",
   "Could not read the build's preparer source: {error}": "Could not read the build's preparer source: {error}",
-  "These files are for a dedicated server only.": "These files are for a dedicated server only."
+  "These files are for a dedicated server only.": "These files are for a dedicated server only.",
+  "This release's build attestation could not be verified: {detail}": "This release's build attestation could not be verified: {detail}",
+  "This release was built by {repo} (repository {actual}), not the expected repository ({expected}).": "This release was built by {repo} (repository {actual}), not the expected repository ({expected}).",
+  "This release was built by {actual}, not the listed workflow {expected}.": "This release was built by {actual}, not the listed workflow {expected}.",
+  "This release was not built by Sunrise's release workflow ({workflow}).": "This release was not built by Sunrise's release workflow ({workflow}).",
+  "The publisher for this mod changed from {old_repo} ({old_workflow}) to {new_repo} ({new_workflow}).": "The publisher for this mod changed from {old_repo} ({old_workflow}) to {new_repo} ({new_workflow}).",
+  "Could not read or save remembered mod publishers: {detail}": "Could not read or save remembered mod publishers: {detail}"
 }
