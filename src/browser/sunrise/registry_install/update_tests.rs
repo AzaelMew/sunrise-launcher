@@ -555,9 +555,10 @@ fn install_resolves_newest_matching_dependency_and_refuses_conflicting_ranges() 
             fixture.project("light_core", "Light Core", index::Kind::Mod);
             fixture.project("fireflies", "Fireflies", index::Kind::Mod);
             fixture.project("two", "Two", index::Kind::Mod);
-            fixture.release("light_core", "1.0.0", "", &[]);
-            let core_1_1 = fixture.release("light_core", "1.1.0", "", &[]);
+            // `release` prepends, so the index lists 1.0.0, 1.1.0, 2.0.0: the older match first.
             fixture.release("light_core", "2.0.0", "", &[]);
+            let core_1_1 = fixture.release("light_core", "1.1.0", "", &[]);
+            fixture.release("light_core", "1.0.0", "", &[]);
             fixture.release(
                 "fireflies",
                 "1.0.0",
@@ -567,9 +568,11 @@ fn install_resolves_newest_matching_dependency_and_refuses_conflicting_ranges() 
             fixture.release("two", "1.0.0", "[dependencies]\nlight_core='^2'\n", &[]);
 
             // Conflicting dependency ranges refuse the whole set without touching the profile.
-            assert!(fixture
+            let error = fixture
                 .apply(Action::Install(projects(&["fireflies", "two"])))
-                .is_err());
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains("light_core"), "{error}");
             assert!(!fixture.home().join("sunrise-mods/fireflies.smod").exists());
             assert!(!fixture.home().join("sunrise-mods/two.smod").exists());
             assert!(!fixture.home().join(CORE).exists());
