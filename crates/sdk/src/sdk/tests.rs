@@ -809,4 +809,25 @@ mod unpack {
             "{refused:?}"
         );
     }
+
+    #[test]
+    fn duplicate_sha256_or_size_in_a_known_kind_asset_is_refused() {
+        let built = index(&[(ENGINE, b"engine")]);
+        let base = built.to_json();
+        let sha_needle = format!("\"sha256\": \"{}\"", built.assets[ENGINE].sha256);
+        assert!(base.contains(&sha_needle));
+        let dup_sha = base.replacen(&sha_needle, &format!("{sha_needle}, {sha_needle}"), 1);
+        assert!(
+            matches!(Index::read(dup_sha.as_bytes(), COMMIT), Err(Refusal::Malformed(ref msg)) if msg.contains("duplicate field `sha256`")),
+            "duplicate sha256 must be refused"
+        );
+
+        let size_needle = format!("\"size\": {}", built.assets[ENGINE].size);
+        assert!(base.contains(&size_needle));
+        let dup_size = base.replacen(&size_needle, &format!("{size_needle}, {size_needle}"), 1);
+        assert!(
+            matches!(Index::read(dup_size.as_bytes(), COMMIT), Err(Refusal::Malformed(ref msg)) if msg.contains("duplicate field `size`")),
+            "duplicate size must be refused"
+        );
+    }
 }

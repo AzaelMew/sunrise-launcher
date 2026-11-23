@@ -474,9 +474,14 @@ struct Written {
     content_api: String,
     surface: Surface,
     mixins: Mixins,
-    /// Decoded one by one once each kind is known ([`Index::read`]).
-    assets: BTreeMap<String, serde_json::Value>,
+    /// Decoded one by one from their original JSON text once each kind is known ([`Index::read`]).
+    assets: BTreeMap<String, Box<serde_json::value::RawValue>>,
     inputs: Inputs,
+}
+
+#[derive(Deserialize)]
+struct AssetKind {
+    kind: String,
 }
 
 #[derive(Deserialize)]
@@ -564,16 +569,15 @@ impl Index {
             return Err(Refusal::MixinsRev(written.mixins.rev));
         }
         let mut assets = BTreeMap::new();
-        for (name, asset) in written.assets {
+        for (name, raw) in written.assets {
             // A kind added after this reader is a newer SDK's: left out before the rest of its
             // entry is decoded (its fields may be new too), and refused only by a route that asks
             // for it ([`Inputs::route`]), so older launchers keep reading the rest.
-            let named = asset.get("kind").and_then(serde_json::Value::as_str);
-            let named = named.ok_or_else(|| Refusal::Malformed(format!("{name} names no kind")))?;
-            let Some(kind) = Kind::named(named) else {
+            let AssetKind { kind: named } = serde_json::from_str(raw.get()).map_err(malformed)?;
+            let Some(kind) = Kind::named(&named) else {
                 continue;
             };
-            let asset: WrittenAsset = serde_json::from_value(asset).map_err(malformed)?;
+            let asset: WrittenAsset = serde_json::from_str(raw.get()).map_err(malformed)?;
             let codec = match asset.codec.as_str() {
                 "none" => Codec::None,
                 "xz" => Codec::Xz,
