@@ -283,3 +283,50 @@ fn player_archive_still_installs_when_the_index_is_listed() {
         },
     );
 }
+
+#[test]
+fn explicit_install_preserves_sdk_lookup_errors_instead_of_saying_no_build() {
+    const MISSING_SLICE: &str = "26.3-0.1.10";
+    const UNREACHABLE: &str = "26.3-0.1.11";
+    let settings = Settings::default();
+    let Some(triple) = sdk_target(selected_game_architecture(&settings)) else {
+        return;
+    };
+    let mirror = tempfile::tempdir().unwrap();
+    let base = Base::Folder(mirror.path().to_owned());
+    let (key, _) = SigningKey::generate().unwrap();
+    let keys = [key.public()];
+    let names = [Kind::Runtime, Kind::Programs].map(|kind| Asset::name(kind, triple, Side::Client));
+    let slices = [(names[0].as_str(), SLICES[0])];
+    // Verified index missing one slice: legitimately has no build for this platform.
+    publish(
+        mirror.path(),
+        MISSING_SLICE,
+        MISSING_SLICE,
+        &key,
+        index_of(&slices, "1.0.0").to_json().as_bytes(),
+        &[],
+    );
+    // UNREACHABLE has no index file at all, simulating a fetch/lookup failure.
+    let list = [row(MISSING_SLICE, &[INDEX]), row(UNREACHABLE, &[INDEX])];
+
+    let no_build =
+        install_explicit_tag_from(&list, MISSING_SLICE, false, &settings, &base, &keys, |_| {
+            panic!("should not install a build missing a slice")
+        })
+        .unwrap_err();
+    assert!(
+        no_build.contains("has no build for this platform"),
+        "verified missing slice should report no build, got: {no_build}"
+    );
+
+    let lookup_err =
+        install_explicit_tag_from(&list, UNREACHABLE, false, &settings, &base, &keys, |_| {
+            panic!("should not install when lookup failed")
+        })
+        .unwrap_err();
+    assert!(
+        !lookup_err.contains("has no build for this platform"),
+        "lookup error should be preserved rather than reported as no build, got: {lookup_err}"
+    );
+}

@@ -470,3 +470,66 @@ fn benchmark_shared_startup_response() {
         );
     }
 }
+
+#[test]
+fn static_offers_and_launcher_update_do_not_wait_on_sdk_lookups() {
+    let Some(static_asset) = ASSET else {
+        return;
+    };
+    if installation::sdk_target(selected_game_architecture(&Settings::default())).is_none() {
+        return;
+    }
+    let events = RefCell::new(Vec::new());
+    let list = vec![
+        serde_json::json!({
+            "tag_name": "26.3-0.1.9",
+            "assets": [{"name": sunrise_launcher_sdk::INDEX, "size": 1}]
+        }),
+        serde_json::json!({
+            "tag_name": "26.3-0.1.8",
+            "assets": [{"name": static_asset, "size": 1}]
+        }),
+    ];
+    let updates = releases_and_updates_with_sdk(
+        || Ok(list),
+        Vec::new,
+        Some(Stable),
+        || {
+            assert_eq!(*events.borrow(), ["releases:static"]);
+            events.borrow_mut().push("launcher");
+            Ok(newer_launcher())
+        },
+        |r| {
+            let releases = r.unwrap();
+            let sdk_offered = releases
+                .iter()
+                .find(|rel| rel.tag == "26.3-0.1.9")
+                .and_then(|rel| rel.asset.as_ref())
+                .is_some();
+            let static_offered = releases
+                .iter()
+                .find(|rel| rel.tag == "26.3-0.1.8")
+                .and_then(|rel| rel.asset.as_ref())
+                .is_some();
+            assert!(static_offered, "known static build is offered immediately");
+            if sdk_offered {
+                events.borrow_mut().push("releases:sdk");
+            } else {
+                events.borrow_mut().push("releases:static");
+            }
+        },
+        |candidates, _target| {
+            assert_eq!(*events.borrow(), ["releases:static", "launcher"]);
+            events.borrow_mut().push("sdk");
+            candidates
+                .iter()
+                .any(|rel| rel.tag == "26.3-0.1.9" && rel.asset.is_some())
+        },
+    );
+    assert_eq!(
+        *events.borrow(),
+        ["releases:static", "launcher", "sdk", "releases:sdk"]
+    );
+    assert_eq!(updates.sunrise.unwrap().tag, "26.3-0.1.9");
+    assert_eq!(updates.launcher.is_some(), LAUNCHER_ASSET.is_some());
+}

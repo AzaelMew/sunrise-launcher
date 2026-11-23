@@ -799,6 +799,17 @@ fn game_releases_from(
     base: &crate::native_mods::sdk_cache::Base,
     keys: &[sunrise_launcher_release_verify::PublicKey],
 ) -> Vec<Release> {
+    let (mut releases, target) = game_releases_candidates(list, settings);
+    if let Some(target) = target {
+        check_sdk_offers(&mut releases, target, base, keys);
+    }
+    releases
+}
+
+fn game_releases_candidates(
+    list: &[serde_json::Value],
+    settings: &Settings,
+) -> (Vec<Release>, Option<&'static str>) {
     let assets = game_assets_for(
         std::env::consts::OS,
         native_windows_architecture(),
@@ -809,16 +820,56 @@ fn game_releases_from(
         (Some(asset), fallback)
     });
     let target = installation::sdk_target(selected_game_architecture(settings));
-    let mut releases = game_releases_with(
+    let releases = game_releases_with(
         list,
         &[asset, fallback, target.map(|_| sunrise_launcher_sdk::INDEX)],
     );
-    if let Some(target) = target {
-        for release in &mut releases {
-            check_sdk_offer(release, target, base, keys);
-        }
+    (releases, target)
+}
+
+fn is_sdk_candidate(release: &Release) -> bool {
+    asset_installed(release, Some(sunrise_launcher_sdk::INDEX), None).is_some()
+}
+
+/// Strip unverified SDK-only candidates so known static builds can be published immediately.
+fn static_only_offers(candidates: &[Release]) -> Vec<Release> {
+    candidates
+        .iter()
+        .cloned()
+        .map(|mut release| {
+            if is_sdk_candidate(&release) {
+                release.asset = None;
+            }
+            release
+        })
+        .collect()
+}
+
+/// Verify all SDK-only candidates in `releases` (in parallel when there are multiple) and return
+/// whether at least one candidate remained offered.
+fn check_sdk_offers(
+    releases: &mut [Release],
+    target: &str,
+    base: &crate::native_mods::sdk_cache::Base,
+    keys: &[sunrise_launcher_release_verify::PublicKey],
+) -> bool {
+    let mut sdk_releases: Vec<&mut Release> = releases
+        .iter_mut()
+        .filter(|release| is_sdk_candidate(release))
+        .collect();
+    if sdk_releases.is_empty() {
+        return false;
     }
-    releases
+    if sdk_releases.len() == 1 {
+        check_sdk_offer(sdk_releases[0], target, base, keys);
+    } else {
+        std::thread::scope(|scope| {
+            for release in &mut sdk_releases {
+                scope.spawn(|| check_sdk_offer(release, target, base, keys));
+            }
+        });
+    }
+    sdk_releases.iter().any(|release| release.asset.is_some())
 }
 
 /// Only SDK candidates need an index lookup; static archives take precedence without one.
@@ -828,7 +879,7 @@ fn check_sdk_offer(
     base: &crate::native_mods::sdk_cache::Base,
     keys: &[sunrise_launcher_release_verify::PublicKey],
 ) {
-    if asset_installed(release, Some(sunrise_launcher_sdk::INDEX), None).is_some()
+    if is_sdk_candidate(release)
         && !crate::native_mods::sdk_cache::offers_game(
             &release.tag,
             release.nightly.as_deref().unwrap_or(&release.tag),
@@ -839,6 +890,30 @@ fn check_sdk_offer(
     {
         release.asset = None;
     }
+}
+
+/// Like [`check_sdk_offer`], but preserves lookup/verification errors for explicit installs instead
+/// of turning them into a missing-build message.
+fn check_sdk_offer_strict(
+    release: &mut Release,
+    target: &str,
+    base: &crate::native_mods::sdk_cache::Base,
+    keys: &[sunrise_launcher_release_verify::PublicKey],
+) -> Result<(), String> {
+    if is_sdk_candidate(release) {
+        match crate::native_mods::sdk_cache::check_game_offer(
+            &release.tag,
+            release.nightly.as_deref().unwrap_or(&release.tag),
+            target,
+            base,
+            keys,
+        ) {
+            Ok(true) => {}
+            Ok(false) => release.asset = None,
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+    Ok(())
 }
 
 /// Parse game releases with explicit asset preferences; SDK candidates are checked after parsing.
@@ -3870,8 +3945,9 @@ fn launcher_update_from(releases: &[Release], own: &str) -> Option<Release> {
         .cloned()
 }
 
-/// Both release lists and both update kinds: the game's releases published first, and neither feed's failure stopping the other's check.
-pub fn releases_and_updates(on_releases: impl FnOnce(Result<Vec<Release>, String>)) -> Updates {
+/// Both release lists and both update kinds: static game releases published before launcher
+/// updates and SDK lookups, and neither feed's failure stopping the other's check.
+pub fn releases_and_updates(on_releases: impl FnMut(Result<Vec<Release>, String>)) -> Updates {
     releases_and_updates_with(
         release_list,
         installed,
@@ -3888,17 +3964,52 @@ fn releases_and_updates_with(
     installed: impl FnOnce() -> Vec<String>,
     channel: Option<crate::instances::Channel>,
     launcher: impl FnOnce() -> Result<Option<Release>, LauncherCheckError>,
-    on_releases: impl FnOnce(Result<Vec<Release>, String>),
+    on_releases: impl FnMut(Result<Vec<Release>, String>),
+) -> Updates {
+    releases_and_updates_with_sdk(
+        load,
+        installed,
+        channel,
+        launcher,
+        on_releases,
+        |candidates, target| {
+            let base = crate::native_mods::sdk_cache::Base::from_env();
+            let keys = sunrise_launcher_release_verify::trusted_keys_for(GAME_REPO);
+            check_sdk_offers(candidates, target, &base, &keys)
+        },
+    )
+}
+
+fn releases_and_updates_with_sdk(
+    load: impl FnOnce() -> Result<Vec<serde_json::Value>, String>,
+    installed: impl FnOnce() -> Vec<String>,
+    channel: Option<crate::instances::Channel>,
+    launcher: impl FnOnce() -> Result<Option<Release>, LauncherCheckError>,
+    mut on_releases: impl FnMut(Result<Vec<Release>, String>),
+    resolve_sdk: impl FnOnce(&mut [Release], &str) -> bool,
 ) -> Updates {
     let mut updates = Updates::default();
+    let mut pending_sdk = None;
+    let mut installed_versions = None;
     match load() {
         Ok(list) => {
-            let releases = game_releases(&list);
-            let installed_versions = installed();
+            let settings = Settings::load();
+            let (candidates, target) = game_releases_candidates(&list, &settings);
+            let has_sdk = target.is_some() && candidates.iter().any(is_sdk_candidate);
+            let static_offers = if has_sdk {
+                static_only_offers(&candidates)
+            } else {
+                candidates.clone()
+            };
+            let versions = installed();
             updates.sunrise = channel
-                .and_then(|c| sunrise_update(&releases, &installed_versions, c))
+                .and_then(|c| sunrise_update(&static_offers, &versions, c))
                 .cloned();
-            on_releases(Ok(releases));
+            on_releases(Ok(static_offers));
+            if let Some(target) = target.filter(|_| has_sdk) {
+                pending_sdk = Some((candidates, target));
+                installed_versions = Some(versions);
+            }
         }
         Err(e) => {
             on_releases(Err(e.clone()));
@@ -3908,6 +4019,14 @@ fn releases_and_updates_with(
     match launcher() {
         Ok(release) => updates.launcher = release,
         Err(e) => updates.launcher_error = Some(e),
+    }
+    if let (Some((mut candidates, target)), Some(versions)) = (pending_sdk, installed_versions) {
+        if resolve_sdk(&mut candidates, target) {
+            updates.sunrise = channel
+                .and_then(|c| sunrise_update(&candidates, &versions, c))
+                .cloned();
+            on_releases(Ok(candidates));
+        }
     }
     updates
 }
@@ -3928,7 +4047,42 @@ pub fn install_tag(tag: &str, as_update: bool, progress: impl Fn(f32)) -> Result
         // The exact tag is sufficient to install, but not to decide which builds other profiles use.
         return install_selected_release(&dev, None, as_update, download);
     }
-    install_offered_tag(&releases()?, tag, as_update, download)
+    if tag == "latest" {
+        return install_offered_tag(&releases()?, tag, as_update, download);
+    }
+    let list = release_list()?;
+    install_explicit_tag_from(
+        &list,
+        tag,
+        as_update,
+        &Settings::load(),
+        &crate::native_mods::sdk_cache::Base::from_env(),
+        &sunrise_launcher_release_verify::trusted_keys_for(GAME_REPO),
+        download,
+    )
+}
+
+fn install_explicit_tag_from(
+    list: &[serde_json::Value],
+    tag: &str,
+    as_update: bool,
+    settings: &Settings,
+    base: &crate::native_mods::sdk_cache::Base,
+    keys: &[sunrise_launcher_release_verify::PublicKey],
+    install: impl FnOnce(&Release) -> Result<InstallOutcome, String>,
+) -> Result<String, String> {
+    let (candidates, target) = game_releases_candidates(list, settings);
+    let mut release = release_selection::by_tag(&candidates, tag)
+        .cloned()
+        .ok_or_else(|| format!("No Sunrise release is tagged {tag}."))?;
+    if let Some(target) = target {
+        check_sdk_offer_strict(&mut release, target, base, keys)?;
+    }
+    let mut catalog = static_only_offers(&candidates);
+    if let Some(slot) = catalog.iter_mut().find(|r| r.tag == release.tag) {
+        *slot = release.clone();
+    }
+    install_selected_release(&release, Some(&catalog), as_update, install)
 }
 
 fn install_offered_tag(
