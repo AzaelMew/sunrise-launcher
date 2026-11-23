@@ -1854,5 +1854,6 @@
   "The picked mods and what they need install together. Each one then updates and is removed on its own, from Installed.": "The picked mods and what they need install together. Each one then updates and is removed on its own, from Installed.",
   "No mod in it fits this build": "No mod in it fits this build",
   "{fitting} of {all} mods fit build": "{fitting} of {all} mods fit build",
-  "Collections": "Collections"
+  "Collections": "Collections",
+  "{added} of {total} added": "{added} of {total} added"
 }

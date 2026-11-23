@@ -479,5 +479,7 @@
   "Collection": "Collection",
   "{picked} of {all} selected": "{picked} of {all} selected",
   "Mods": "Mods",
-  "by {authors}": "by {authors}"
+  "by {authors}": "by {authors}",
+  "Part of {collection}": "Part of {collection}",
+  "{added} of {total} added": "{added} of {total} added"
 }

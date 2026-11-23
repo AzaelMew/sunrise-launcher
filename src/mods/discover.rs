@@ -73,7 +73,8 @@ impl Launcher {
             };
 
         let f = self.ui.mods.filters.clone();
-        let shown = discover_v2::discover(&cards, &f);
+        let mut shown = discover_v2::discover(&cards, &f);
+        discover_v2::fold_members(&mut shown, &collections, &f);
         let total = shown.len();
         let hidden_other_builds = discover_v2::hidden_other_build_count(&cards, &f);
         let fitting_shown = if f.show_all {
@@ -342,6 +343,15 @@ impl Launcher {
                     }
                     if let (Some(rows), Some(version)) = (installed, installed_version) {
                         facts.push(install_fact(version, rows.registry_pending(&id)));
+                    }
+                    if let Some(collection) = collections
+                        .iter()
+                        .find(|c| c.members.iter().any(|&(member, _)| member == i))
+                    {
+                        facts.push(muted(trf(
+                            "Part of {collection}",
+                            &[("collection", &collection.name)],
+                        )));
                     }
 
                     let mut card_el = browse_card(
@@ -763,6 +773,47 @@ impl Launcher {
                     &[("fitting", &fitting.to_string()), ("all", &all.to_string())],
                 )),
             };
+            let installed = self.discover_installed();
+            let is_installed = |project: &str| {
+                installed.is_some_and(|rows| rows.registry_entry(project).is_some())
+            };
+            let added = collection
+                .members
+                .iter()
+                .filter(|&&(i, _)| is_installed(&cards[i].id))
+                .count();
+            // Install takes the members on by default that fit, as the page opens picked.
+            let to_install =
+                collection.to_install(cards, &collection.initial_picks(cards), &is_installed);
+            let mut facts = vec![fit, tag(tr("Collection"))];
+            if added > 0 {
+                facts.push(muted(trf(
+                    "{added} of {total} added",
+                    &[("added", &added.to_string()), ("total", &all.to_string())],
+                )));
+            }
+            let control = match self.registry_card_control(&id, |label| {
+                dim(button(("alt-collection-add", n), label)).into_any_element()
+            }) {
+                Some(working) => working,
+                None if to_install.is_empty() && added > 0 => added_mark(),
+                None if to_install.is_empty() => {
+                    dim(button(("alt-collection-add", n), tr("Install")))
+                        .on_click(|_, _, cx| cx.stop_propagation())
+                        .into_any_element()
+                }
+                None => {
+                    let (card, ids) = (id.clone(), to_install);
+                    button(("alt-collection-add", n), tr("Install"))
+                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            cx.stop_propagation();
+                            this.add_v2_collection(&card, ids.clone());
+                            cx.notify();
+                        }))
+                        .into_any_element()
+                }
+            };
+            let note = self.registry_card_note(&id);
             let card = browse_card(
                 ("alt-collection-card", n),
                 picture,
@@ -770,9 +821,9 @@ impl Launcher {
                 &collection.name,
                 &collection.publisher,
                 &collection.summary,
-                vec![fit, tag(tr("Collection"))],
-                None,
-                None,
+                facts,
+                Some(control),
+                note,
             )
             .when(fitting == 0, |card| card.opacity(0.62))
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {

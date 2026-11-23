@@ -6,7 +6,7 @@
 //! content-addressed (`pages/<project id>/<sha256>.<png|jpg>`).
 use super::{Make, SourceLink};
 use std::cmp::Ordering;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use sunrise_launcher::i18n::{tr, trf};
 use sunrise_launcher_smod::index::Kind;
 use sunrise_launcher_smod::index_v2::{self, FitVerdict, Index, Project, Release};
@@ -568,6 +568,23 @@ pub(in crate::mods) fn collections(index: &Index, cards: &[V2Card]) -> Vec<V2Col
         .collect()
 }
 
+/// Browsing shows a collection's members only inside its card, Show all included; a search
+/// still finds a member by name.
+pub(in crate::mods) fn fold_members(
+    shown: &mut Vec<usize>,
+    collections: &[V2Collection],
+    filters: &V2Filters,
+) {
+    if !filters.text.trim().is_empty() {
+        return;
+    }
+    let folded: HashSet<usize> = collections
+        .iter()
+        .flat_map(|c| c.members.iter().map(|&(i, _)| i))
+        .collect();
+    shown.retain(|i| !folded.contains(i));
+}
+
 /// The collections Discover lists for `filters`: none under a category, and unless Show all is
 /// on only those with a member that fits. Search matches the collection's own text or any
 /// member's.
@@ -1110,5 +1127,21 @@ mod tests {
         );
         assert!(shown("lantern", None).is_empty());
         assert!(shown("", Some("utility")).is_empty());
+
+        // Browsing shows the collection's card in place of its members, Show all included; a
+        // search finds a member.
+        let mods = |text: &str, show_all| {
+            let filters = V2Filters {
+                text: text.to_owned(),
+                show_all,
+                ..V2Filters::default()
+            };
+            let mut shown = discover(&cards, &filters);
+            fold_members(&mut shown, &found, &filters);
+            shown.len()
+        };
+        assert_eq!(mods("", false), 0);
+        assert_eq!(mods("", true), 0);
+        assert_eq!(mods("doors", false), 1);
     }
 }
