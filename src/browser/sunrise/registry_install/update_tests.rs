@@ -186,6 +186,7 @@ impl Fixture {
                 registry_crates: None,
                 continue_after_failure: &|_| false,
                 resolve,
+                cancellation: None,
             },
             |source, local| {
                 let (catalogue, bytes, authority) = fetch_with_official(source, local)?;

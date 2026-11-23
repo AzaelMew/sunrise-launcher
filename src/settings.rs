@@ -93,6 +93,8 @@ impl Section {
 pub(super) struct SettingsView {
     pub(super) section: Section,
     languages: bool,
+    /// UUID of the account whose 3-dots menu is open in Settings › Account.
+    account_menu: Option<String>,
     setup: bool,
     note: Option<String>,
     pub(crate) appearance: appearance::State,
@@ -395,13 +397,13 @@ impl Launcher {
                     .font_weight(FontWeight::BOLD)
                     .child(tr("Settings")),
             )
-            .child(
+            .child(crate::scrollbar::wrap_page(
+                "settings",
                 div()
                     .id("alt-settings-scroll")
                     .flex_1()
                     .min_h_0()
                     .overflow_y_scroll()
-                    .track_scroll(&scroll)
                     .px(px(32.))
                     .pb(px(24.))
                     .child(
@@ -418,13 +420,16 @@ impl Launcher {
                             .child(nav)
                             .child(pane),
                     ),
-            )
-            // A press anywhere else closes the language menu; the menu and its button keep
+                &self.theme,
+            ))
+            // A press anywhere else closes open dropdown menus; the menus and their buttons keep
             // their own presses.
             .on_mouse_down(
                 gpui::MouseButton::Left,
                 cx.listener(|this, _, _, cx| {
-                    if std::mem::take(&mut this.ui.settings.languages) {
+                    let closed_lang = std::mem::take(&mut this.ui.settings.languages);
+                    let closed_account = this.ui.settings.account_menu.take().is_some();
+                    if closed_lang || closed_account {
                         cx.notify();
                     }
                 }),
@@ -444,6 +449,7 @@ impl Launcher {
         let view = &mut self.ui.settings;
         view.section = section;
         view.languages = false;
+        view.account_menu = None;
         view.setup = false;
         view.note = None;
         self.storage_revoke = None;
@@ -456,9 +462,42 @@ impl Launcher {
         }
     }
 
+    fn remove_account(&mut self, uuid: &str) {
+        if self.account_locked() {
+            self.say_account_locked();
+            return;
+        }
+        let Some(generation) = self.begin_auth_job(uuid) else {
+            return;
+        };
+        let (tx, uuid) = (self.tx.clone(), uuid.to_owned());
+        std::thread::spawn(move || {
+            let mut accounts = Accounts::load();
+            let _ = tx.send(Msg::AccountProgress(
+                uuid.clone(),
+                generation,
+                account::session::Phase::SigningOut,
+            ));
+            let result = accounts
+                .remove(account::store(), &uuid)
+                .and_then(|()| accounts.save())
+                .map(|()| accounts.has_owner(account::store()));
+            let _ = tx.send(Msg::AccountRemoved(uuid, generation, result));
+        });
+    }
+
+    fn move_account(&mut self, uuid: &str, delta: isize) {
+        match Accounts::reorder(uuid, delta) {
+            Ok(accounts) => self.accounts = accounts,
+            Err(error) => self.ui.settings.note = Some(error),
+        }
+    }
+
     fn settings_account(&mut self, cx: &mut Context<Self>) -> Div {
         let theme = self.theme;
         let selected = self.accounts.selected.clone();
+        let total = self.accounts.accounts.len();
+        let open_menu = self.ui.settings.account_menu.clone();
         let mut rows = Vec::new();
         for (i, a) in self.accounts.accounts.clone().into_iter().enumerate() {
             let plays = selected.as_ref() == Some(&a.uuid);
@@ -488,47 +527,166 @@ impl Launcher {
                         cx.notify();
                     }))
                 });
-            } else if !plays {
+            } else {
+                if !plays {
+                    let uuid = a.uuid.clone();
+                    actions = actions.child(
+                        button(ElementId::named_usize("alt-account-play", i), tr("Play as"))
+                            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                this.play_as(&uuid);
+                                cx.notify();
+                            })),
+                    );
+                }
                 let uuid = a.uuid.clone();
-                actions = actions.child(
-                    button(ElementId::named_usize("alt-account-play", i), tr("Play as")).on_click(
+                let out = button(ElementId::named_usize("alt-account-out", i), tr("Sign out"));
+                actions = actions.child(if busy {
+                    off(out)
+                } else {
+                    out.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        this.remove_account(&uuid);
+                        cx.notify();
+                    }))
+                });
+            }
+            let menu_open = open_menu.as_deref() == Some(a.uuid.as_str());
+            let toggle_uuid = a.uuid.clone();
+            let dots = div()
+                .id(ElementId::named_usize("alt-account-menu", i))
+                .reach_edge()
+                .size(px(tokens::ACTION))
+                .rounded(tokens::r(tokens::R_CONTROL))
+                .border_1()
+                .border_color(palette().input_edge())
+                .bg(palette().input_fill())
+                .when(menu_open, |d| d.bg(rgb(palette().hover)))
+                .hover(|s| s.bg(rgb(palette().hover)))
+                .cursor_pointer()
+                .flex()
+                .items_center()
+                .justify_center()
+                .tooltip(crate::glass_ui::tip(tr("Account options")))
+                .child(crate::glass_ui::icon(
+                    "more-vertical",
+                    16.,
+                    rgb(palette().text).into(),
+                ))
+                .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    if this.ui.settings.account_menu.as_deref() == Some(toggle_uuid.as_str()) {
+                        this.ui.settings.account_menu = None;
+                    } else {
+                        this.ui.settings.account_menu = Some(toggle_uuid.clone());
+                    }
+                    cx.notify();
+                }));
+            let menu = menu_open.then(|| {
+                let item = |id: (&'static str, usize), label: &'static str, danger: bool| {
+                    div()
+                        .id(id)
+                        .reach()
+                        .flex()
+                        .items_center()
+                        .px(px(10.))
+                        .py(px(7.))
+                        .rounded(tokens::r(tokens::R_SMALL))
+                        .text_size(px(tokens::LABEL))
+                        .text_color(rgb(if danger {
+                            palette().danger
+                        } else {
+                            palette().text
+                        }))
+                        .cursor_pointer()
+                        .hover(|s| s.bg(rgb(palette().hover)))
+                        .child(label)
+                };
+                let mut list = div()
+                    .id(ElementId::named_usize("alt-account-menu-list", i))
+                    .w(px(180.))
+                    .p(px(6.))
+                    .rounded(tokens::r(tokens::R_CONTROL))
+                    .border_1()
+                    .border_color(palette().input_edge())
+                    .bg(rgb(palette().raised))
+                    .shadow_lg()
+                    .occlude()
+                    .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .flex()
+                    .flex_col();
+                if !plays {
+                    let uuid = a.uuid.clone();
+                    list = list.child(
+                        item(("alt-account-default", i), tr("Set default"), false).on_click(
+                            cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                this.ui.settings.account_menu = None;
+                                this.play_as(&uuid);
+                                cx.notify();
+                            }),
+                        ),
+                    );
+                }
+                if i > 0 {
+                    let uuid = a.uuid.clone();
+                    list = list.child(item(("alt-account-up", i), tr("Move up"), false).on_click(
                         cx.listener(move |this, _: &ClickEvent, _, cx| {
-                            this.play_as(&uuid);
+                            this.ui.settings.account_menu = None;
+                            this.move_account(&uuid, -1);
                             cx.notify();
                         }),
-                    ),
-                );
-            }
-            let uuid = a.uuid.clone();
-            let out = button(ElementId::named_usize("alt-account-out", i), tr("Sign out"));
-            actions = actions.child(if busy {
-                off(out)
-            } else {
-                out.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    if this.account_locked() {
-                        this.say_account_locked();
-                        return;
-                    }
-                    let Some(generation) = this.begin_auth_job(&uuid) else {
-                        return;
-                    };
-                    let (tx, uuid) = (this.tx.clone(), uuid.clone());
-                    std::thread::spawn(move || {
-                        let mut accounts = Accounts::load();
-                        let _ = tx.send(Msg::AccountProgress(
-                            uuid.clone(),
-                            generation,
-                            account::session::Phase::SigningOut,
-                        ));
-                        let result = accounts
-                            .remove(account::store(), &uuid)
-                            .and_then(|()| accounts.save())
-                            .map(|()| accounts.has_owner(account::store()));
-                        let _ = tx.send(Msg::AccountRemoved(uuid, generation, result));
+                    ));
+                }
+                if i + 1 < total {
+                    let uuid = a.uuid.clone();
+                    list = list.child(
+                        item(("alt-account-down", i), tr("Move down"), false).on_click(
+                            cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                this.ui.settings.account_menu = None;
+                                this.move_account(&uuid, 1);
+                                cx.notify();
+                            }),
+                        ),
+                    );
+                }
+                {
+                    let uuid = a.uuid.clone();
+                    list = list.child(
+                        item(("alt-account-skins", i), tr("Manage skins"), false).on_click(
+                            cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                this.ui.settings.account_menu = None;
+                                if this.accounts.selected.as_deref() != Some(uuid.as_str())
+                                    && !this.account_locked()
+                                {
+                                    this.play_as(&uuid);
+                                }
+                                this.navigate(crate::frame::Page::Skins);
+                                cx.notify();
+                            }),
+                        ),
+                    );
+                }
+                {
+                    let uuid = a.uuid.clone();
+                    let remove = item(("alt-account-remove", i), tr("Remove"), true);
+                    list = list.child(if busy {
+                        off(remove)
+                    } else {
+                        remove.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            this.ui.settings.account_menu = None;
+                            this.remove_account(&uuid);
+                            cx.notify();
+                        }))
                     });
-                    cx.notify();
-                }))
+                }
+                gpui::deferred(
+                    div()
+                        .absolute()
+                        .top(px(tokens::ACTION + 6.))
+                        .right_0()
+                        .child(list),
+                )
+                .with_priority(1)
             });
+            actions = actions.child(div().relative().child(dots).children(menu));
             // As in `row`: when the head and name would get narrower than a short line, the
             // buttons go under them instead of squeezing the name to a letter a line.
             let who = div()

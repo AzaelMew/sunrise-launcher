@@ -175,7 +175,10 @@ pub(super) fn edit_github(
         return Err(InstallError::Cancelled);
     }
     let legacy_cancellation = native_mods::Cancellation::default();
-    let cancellation = source.map_or(&legacy_cancellation, |source| source.cancellation);
+    let cancellation = source
+        .map(|source| source.cancellation)
+        .or(hooks.cancellation)
+        .unwrap_or(&legacy_cancellation);
     cancellation.check()?;
     (hooks.progress)(InstallProgress::Checking);
     let mut profile =

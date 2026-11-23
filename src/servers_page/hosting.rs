@@ -232,21 +232,26 @@ impl Launcher {
                 self.host_list(cx)
             }
         };
-        div()
-            .id("alt-hosting-scroll")
-            .size_full()
-            .overflow_y_scroll()
-            .track_scroll(&crate::frame::scrolls("host"))
-            .px(px(24.))
-            .pt(px(18.))
-            .pb(px(24.))
-            .text_color(rgb(palette().text))
-            .child(
-                body.when(!listing, |b| b.max_w(px(1180.)))
-                    .flex()
-                    .flex_col()
-                    .gap(px(18.)),
+        crate::scrollbar::Scrollbar::page("host")
+            .wrap(
+                div()
+                    .id("alt-hosting-scroll")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .px(px(24.))
+                    .pt(px(18.))
+                    .pb(px(24.))
+                    .text_color(rgb(palette().text))
+                    .child(
+                        body.when(!listing, |b| b.max_w(px(1180.)))
+                            .flex()
+                            .flex_col()
+                            .gap(px(18.)),
+                    ),
+                &self.theme,
             )
+            .size_full()
             .into_any_element()
     }
 
@@ -1862,7 +1867,7 @@ impl Launcher {
             .min_h_0()
             .gap(px(18.))
             .p(px(28.))
-            .overflow_y_scroll().track_scroll(&crate::frame::scrolls("host-create"))
+            .overflow_y_scroll()
             .child(
                 div()
                     .flex()
@@ -1985,7 +1990,10 @@ impl Launcher {
                         .border_color(rgb(palette().line))
                         .bg(rgb(palette().raised))
                         .overflow_hidden()
-                        .child(body)
+                        .child(
+                            crate::scrollbar::Scrollbar::page("host-create")
+                                .wrap(body, &self.theme),
+                        )
                         .child(foot),
                 ),
         )

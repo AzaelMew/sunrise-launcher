@@ -138,12 +138,18 @@ impl Launcher {
         let id = match act {
             StripAct::Act(Act::StopBuild) => "alt-strip-stop-build",
             StripAct::StopGame => "alt-strip-stop",
+            StripAct::StopInstall => "alt-strip-stop-install",
             StripAct::Act(_) => "alt-strip-fix",
             StripAct::Home => "alt-strip-home",
         };
-        let line = match self.build_line(cx).filter(|_| view.main == Main::Building) {
-            Some(build) => build.into_any_element(),
-            None => div().truncate().child(says).into_any_element(),
+        let stopping_install = act == StripAct::StopInstall && self.registry_install_stopping();
+        let line = if stopping_install {
+            div().truncate().child(tr("Stopping…")).into_any_element()
+        } else {
+            match self.build_line(cx).filter(|_| view.main == Main::Building) {
+                Some(build) => build.into_any_element(),
+                None => div().truncate().child(says).into_any_element(),
+            }
         };
         let mark = if view.failed {
             palette().warning
@@ -177,12 +183,14 @@ impl Launcher {
                 .child(div().flex_none().size(px(8.)).rounded_full().bg(rgb(mark)))
                 .child(div().flex_1().min_w_0().child(line))
                 .children(bar)
-                .child(
-                    button(id, act.label()).on_click(cx.listener(move |this, _, _, cx| {
-                        this.strip_act(&act);
-                        cx.notify();
-                    })),
-                ),
+                .when(!stopping_install, |d| {
+                    d.child(
+                        button(id, act.label()).on_click(cx.listener(move |this, _, _, cx| {
+                            this.strip_act(&act);
+                            cx.notify();
+                        })),
+                    )
+                }),
         )
     }
 }

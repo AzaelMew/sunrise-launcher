@@ -341,6 +341,7 @@ fn conflicting_pair_worker() {
             registry_crates: None,
             continue_after_failure: &|_| panic!("content-only fixture"),
             resolve: None,
+            cancellation: None,
         },
     )
     .unwrap();
@@ -383,6 +384,7 @@ fn cutoff_worker() {
             registry_crates: None,
             continue_after_failure: &|_| panic!("content-only fixture"),
             resolve: None,
+            cancellation: None,
         },
     );
     assert!(
@@ -1351,6 +1353,7 @@ fn profile_decision_worker() {
                     );
                     decide()
                 }),
+                cancellation: None,
             },
         );
         match mode.as_str() {

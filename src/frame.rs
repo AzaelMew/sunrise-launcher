@@ -3,9 +3,9 @@
 use super::*;
 use crate::paint::palette;
 use crate::sheets::Sheet;
-use gpui::rgb;
+use gpui::{rgb, AnimationExt};
 
-#[derive(Clone, Copy, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(super) enum Page {
     #[default]
     Home,
@@ -69,6 +69,41 @@ pub(super) struct State {
     /// Tests: draw the sidebar this far open, as if part way through an ease.
     #[cfg(test)]
     pub rail_pin: Option<f32>,
+    /// When the status strip appeared, so each appearance eases in once without jumping the page.
+    pub status_strip_since: Option<Instant>,
+    /// The last drawn page and when we switched to it (None on first draw or once settled).
+    pub page_switched: Option<(Page, Option<Instant>)>,
+}
+
+impl State {
+    /// Returns the instant the current page entrance started while its transition is still active,
+    /// or `None` on initial render, under reduced motion, or after [`crate::motion::PAGE`] ends.
+    pub(super) fn page_transition(
+        &mut self,
+        page: Page,
+        now: Instant,
+        still: bool,
+    ) -> Option<Instant> {
+        match self.page_switched {
+            Some((last_page, switched_at)) => {
+                if last_page != page {
+                    let started = (!still).then_some(now);
+                    self.page_switched = Some((page, started));
+                    started
+                } else if still {
+                    None
+                } else {
+                    switched_at.filter(|&at| {
+                        now.saturating_duration_since(at) < crate::motion::PAGE.duration()
+                    })
+                }
+            }
+            None => {
+                self.page_switched = Some((page, None));
+                None
+            }
+        }
+    }
 }
 
 /// The keyboard's ring, in `color`, around a filled control that has no edge of its own to turn
@@ -145,6 +180,8 @@ struct Scrolls {
     /// The focused control that was last scrolled to. It is shown once, so the wheel can then
     /// move the page away from it.
     shown: Option<FocusHandle>,
+    /// Where the frame being drawn put the focused control, once it has been laid out.
+    focused: Option<Bounds<gpui::Pixels>>,
 }
 
 thread_local! {
@@ -155,6 +192,7 @@ thread_local! {
 fn scrolls_begin() {
     SCROLLS.with_borrow_mut(|s| {
         let live = std::mem::take(&mut s.live);
+        s.focused = None;
         s.kept = live
             .into_iter()
             .filter(|(key, _)| !key.is_empty())
@@ -186,6 +224,12 @@ pub(crate) fn drawn_scroll(key: &'static str) -> Option<gpui::ScrollHandle> {
     })
 }
 
+/// Where the frame being drawn has so far put the focused control, for a list that keeps the
+/// row it is in built (`cull`).
+pub(crate) fn focused_bounds() -> Option<Bounds<gpui::Pixels>> {
+    SCROLLS.with_borrow(|s| s.focused)
+}
+
 /// The same for a page that keeps its own handle.
 pub(crate) fn scrolls_with(handle: &gpui::ScrollHandle) {
     SCROLLS.with_borrow_mut(|s| s.live.push(("", handle.clone())));
@@ -195,9 +239,11 @@ pub(crate) fn scrolls_with(handle: &gpui::ScrollHandle) {
 /// the keyboard has just landed on it. `bounds` is where the control is.
 fn scroll_to_show(bounds: Bounds<gpui::Pixels>, window: &mut Window, cx: &mut App) {
     const ROOM: f32 = 24.;
-    if window.text_style().background_color != Some(focus_mark())
-        || !window.last_input_was_keyboard()
-    {
+    if window.text_style().background_color != Some(focus_mark()) {
+        return;
+    }
+    SCROLLS.with_borrow_mut(|s| s.focused = Some(bounds));
+    if !window.last_input_was_keyboard() {
         return;
     }
     let focused = window.focused(cx);
@@ -549,7 +595,6 @@ impl Launcher {
                     .text_color(rgb(colour))
                     .cursor_pointer()
                     .hover(|s| s.bg(rgb(p.chrome_raised)))
-                    .tooltip(crate::glass_ui::tip(label))
                     .when(!compact, |d| {
                         d.child(blocks::icon(icon, 16., rgb(colour).into()))
                     })
@@ -712,7 +757,55 @@ impl Launcher {
             }
             _ => self.mods(window, cx),
         };
+        let content = if let Some(at) = self.ui.page_transition(page, now, crate::motion::still()) {
+            static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+            let start = *START.get_or_init(Instant::now);
+            let id = at.saturating_duration_since(start).as_micros() as usize;
+            div()
+                .relative()
+                .flex_1()
+                .min_w_0()
+                .min_h_0()
+                .flex()
+                .flex_col()
+                .child(content)
+                .with_animation(
+                    ElementId::named_usize("page-turn", id),
+                    crate::motion::eased(crate::motion::PAGE),
+                    |d, p| d.opacity(p).top(px(tokens::RISE * (1. - p))),
+                )
+                .into_any_element()
+        } else {
+            content
+        };
         let status = self.status_strip(cx);
+        let status = if let Some(strip) = status {
+            let since = *self.ui.status_strip_since.get_or_insert_with(Instant::now);
+            static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+            let start = *START.get_or_init(Instant::now);
+            let id = since.saturating_duration_since(start).as_micros() as usize;
+            Some(
+                div()
+                    .id("status-strip-wrapper")
+                    .flex_none()
+                    .overflow_hidden()
+                    .with_animation(
+                        ElementId::named_usize("status-strip-enter", id),
+                        crate::motion::eased(sunrise_launcher_theme::QUICK),
+                        |d, p| {
+                            if p < 1. {
+                                d.max_h(px(64. * p)).opacity(p)
+                            } else {
+                                d.opacity(1.)
+                            }
+                        },
+                    )
+                    .child(strip),
+            )
+        } else {
+            self.ui.status_strip_since = None;
+            None
+        };
         let pane = div()
             .relative()
             .flex_1()
@@ -864,5 +957,33 @@ mod tests {
         for page in [Page::Discover, Page::Installed, Page::Project] {
             assert!(page.active_tab() == Page::Discover);
         }
+    }
+
+    #[test]
+    fn page_switch_transitions_only_when_destination_changes_and_rests_after_duration() {
+        let mut state = super::State::default();
+        let t0 = std::time::Instant::now();
+        assert!(state.page_transition(Page::Home, t0, false).is_none());
+        assert_eq!(state.page_switched.unwrap().0, Page::Home);
+        let t1 = t0 + std::time::Duration::from_millis(50);
+        assert_eq!(state.page_transition(Page::Settings, t1, false), Some(t1));
+        assert_eq!(
+            state.page_transition(
+                Page::Settings,
+                t1 + std::time::Duration::from_millis(100),
+                false
+            ),
+            Some(t1)
+        );
+        assert!(state
+            .page_transition(
+                Page::Settings,
+                t1 + std::time::Duration::from_millis(300),
+                false
+            )
+            .is_none());
+        // Reduced motion snaps without starting a transition.
+        let t2 = t1 + std::time::Duration::from_millis(400);
+        assert!(state.page_transition(Page::Home, t2, true).is_none());
     }
 }

@@ -2244,6 +2244,7 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
         registry_crates: None,
         continue_after_failure: &|_| false,
         resolve: None,
+        cancellation: None,
     };
     let on = matches!(action, ModsCmd::Enable { .. });
     match action {
@@ -2443,6 +2444,7 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                         }),
                         continue_after_failure: &|_| false,
                         resolve: None,
+                        cancellation: None,
                     },
                 )
                 .map_err(|error| error.to_string())?;

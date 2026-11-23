@@ -602,6 +602,7 @@ fn github_add_and_checked_update_share_the_candidate_proof() {
                         registry_crates: None,
                         continue_after_failure: &|_| false,
                         resolve: None,
+                        cancellation: None,
                     },
                 )
             };
@@ -653,6 +654,7 @@ fn github_add_and_checked_update_share_the_candidate_proof() {
                     registry_crates: None,
                     continue_after_failure: &|_| false,
                     resolve: None,
+                    cancellation: None,
                 },
                 &|impact| {
                     assert!(!impact.risks_worlds());
@@ -806,6 +808,7 @@ fn pinned_source_preflight_refusal_cancel_and_failed_update_keep_the_profile() {
                             registry_crates: None,
                             continue_after_failure: &|_| false,
                             resolve: None,
+                            cancellation: None,
                         },
                         cancellation,
                         authorize: &|sources, _| authorize(sources),
@@ -863,6 +866,7 @@ fn pinned_source_preflight_refusal_cancel_and_failed_update_keep_the_profile() {
                         registry_crates: None,
                         continue_after_failure: &|_| false,
                         resolve: None,
+                        cancellation: None,
                     },
                     cancellation: &cancellation,
                     authorize: &|_, _| panic!("nothing to install"),

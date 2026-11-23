@@ -190,16 +190,21 @@ impl Launcher {
         self.ping_servers(cx);
         self.ping_featured(cx);
         let servers = self.servers(cx);
-        div()
-            .id("alt-join")
+        crate::scrollbar::Scrollbar::page("join")
+            .wrap(
+                div()
+                    .id("alt-join")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .px(px(24.))
+                    .pt(px(18.))
+                    .pb(px(24.))
+                    // The list fills the page at every width, as Versions' does.
+                    .child(servers),
+                &self.theme,
+            )
             .size_full()
-            .overflow_y_scroll()
-            .track_scroll(&crate::frame::scrolls("join"))
-            .px(px(24.))
-            .pt(px(18.))
-            .pb(px(24.))
-            // The list fills the page at every width, as Versions' does.
-            .child(servers)
             .into_any_element()
     }
 

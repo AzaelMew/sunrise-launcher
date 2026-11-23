@@ -375,15 +375,16 @@ impl Launcher {
             .items_start()
             .child(main)
             .children(beside);
-        page = page.child(
+        page = page.child(crate::scrollbar::wrap_page(
+            "pack-project",
             div()
                 .id("alt-pack-page-scroll")
                 .flex_1()
                 .min_h_0()
                 .overflow_y_scroll()
-                .track_scroll(&crate::frame::scrolls("pack-project"))
                 .child(columns),
-        );
+            &self.theme,
+        ));
         page.into_any_element()
     }
 }
