@@ -463,5 +463,6 @@
   "Pinned version {version} of {mod} is outside {range}, which another mod needs.": "Pinned version {version} of {mod} is outside {range}, which another mod needs.",
   "{mod} needs {dep} {range}, but {version} is planned for another mod.": "{mod} needs {dep} {range}, but {version} is planned for another mod.",
   "No release of {mod} in {range} fits Sunrise {build}.": "No release of {mod} in {range} fits Sunrise {build}.",
-  "{mod} needs {dep} {range}, which has no release fitting Sunrise {build}.": "{mod} needs {dep} {range}, which has no release fitting Sunrise {build}."
+  "{mod} needs {dep} {range}, which has no release fitting Sunrise {build}.": "{mod} needs {dep} {range}, which has no release fitting Sunrise {build}.",
+  "No Stable build yet. Plays Nightly until there is one.": "No Stable build yet. Plays Nightly until there is one."
 }
