@@ -147,6 +147,7 @@ fn pasted_sources_prove_only_the_selected_packages_together() {
                         registry_crates: None,
                         continue_after_failure: &|_| false,
                         resolve: None,
+                        cancellation: None,
                     },
                     cancellation: &cancel,
                     authorize: &|_, dependencies| {
@@ -288,6 +289,7 @@ fn pasted_source_same_repo_refreshes_and_other_repo_stays_refused() {
                         registry_crates: None,
                         continue_after_failure: &|_| false,
                         resolve: None,
+                        cancellation: None,
                     },
                     cancellation: &cancel,
                     authorize: &|_, _| Ok(true),
@@ -338,6 +340,7 @@ fn pasted_source_same_repo_refreshes_and_other_repo_stays_refused() {
                         registry_crates: None,
                         continue_after_failure: &|_| false,
                         resolve: None,
+                        cancellation: None,
                     },
                     cancellation: &cancel,
                     authorize: &|_, _| Ok(true),

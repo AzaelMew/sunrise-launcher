@@ -452,5 +452,6 @@
   "github.com/{repo} · {version}": "github.com/{repo} · {version}",
   "{mod} needs {id}, and several reviewed mods provide it. Only one can be installed.": "{mod} needs {id}, and several reviewed mods provide it. Only one can be installed.",
   "Choose which mod provides {id}": "Choose which mod provides {id}",
-  "Use this": "Use this"
+  "Use this": "Use this",
+  "Building {percent}%": "Building {percent}%"
 }

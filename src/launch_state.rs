@@ -95,6 +95,8 @@ pub(crate) enum StripAct {
     /// One of Play's own actions, under its own name.
     Act(Act),
     StopGame,
+    /// Stop an active registry install or native build-tools download.
+    StopInstall,
     /// Nothing can be done from here: Home has Play and the whole story.
     Home,
 }
@@ -387,7 +389,7 @@ impl StripAct {
     pub(crate) fn label(&self) -> &'static str {
         match self {
             StripAct::Act(act) => act.label(),
-            StripAct::StopGame => tr("Stop"),
+            StripAct::StopGame | StripAct::StopInstall => tr("Stop"),
             StripAct::Home => tr("Go to Home"),
         }
     }
@@ -399,8 +401,16 @@ impl View {
     /// nothing to tell (a newer build and mods left out wait on Home).
     pub(crate) fn strip(&self) -> Option<(SharedString, StripAct)> {
         if self.main.under_way() {
-            let act = match &self.act {
-                Some(Act::StopBuild) => StripAct::Act(Act::StopBuild),
+            let act = match (&self.act, self.main) {
+                (Some(Act::StopBuild), _) => StripAct::Act(Act::StopBuild),
+                (_, Main::RegistryInstall(stage, _))
+                    if !matches!(
+                        stage,
+                        sunrise_launcher::browser::sunrise::InstallProgress::Publishing
+                    ) =>
+                {
+                    StripAct::StopInstall
+                }
                 _ => StripAct::Home,
             };
             return Some((self.main.label(), act));
@@ -523,6 +533,7 @@ impl Launcher {
                     client.kill();
                 }
             }
+            StripAct::StopInstall => self.stop_registry_install(),
             StripAct::Home => self.navigate(crate::frame::Page::Home),
         }
     }

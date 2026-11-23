@@ -102,6 +102,7 @@ fn exercise(test: &str, case: Case) {
             registry_crates: None,
             continue_after_failure: &|_| false,
             resolve: None,
+            cancellation: None,
         };
         let cancellation = Cancellation::default();
         let prepare = |request| {

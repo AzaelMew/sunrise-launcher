@@ -112,6 +112,7 @@ fn add_with(
                 registry_crates: None,
                 continue_after_failure: &|_| panic!("Add must not compile"),
                 resolve: None,
+                cancellation: None,
             },
             cancellation: cancel,
             authorize: &authorize,
