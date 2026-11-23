@@ -212,6 +212,40 @@ impl Source for Modrinth {
     }
 }
 
+/// The categories Modrinth's search offers for packs of `kind`: its "categories" and "features"
+/// groups, by name. A data pack takes the mod categories, as on Modrinth's own data pack search.
+pub fn categories(kind: Kind) -> Result<Vec<String>, String> {
+    let wanted = match kind {
+        Kind::DataPack => "mod",
+        other => project_type(other).ok_or(PACKS_ONLY)?,
+    };
+    Ok(pack_categories(
+        &get(&format!("{API}/tag/category"))?,
+        wanted,
+    ))
+}
+
+/// The names in Modrinth's category tags (`/tag/category`) for `project_type`, in its
+/// "categories" then "features" groups, each group by name.
+pub(super) fn pack_categories(tags: &Value, project_type: &str) -> Vec<String> {
+    let mut found: Vec<(usize, String)> = tags
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|tag| tag["project_type"] == project_type)
+        .filter_map(|tag| {
+            let group = ["categories", "features"]
+                .iter()
+                .position(|h| tag["header"] == *h)?;
+            Some((group, text(&tag["name"])))
+        })
+        .filter(|(_, name)| !name.is_empty())
+        .collect();
+    found.sort();
+    found.dedup();
+    found.into_iter().map(|(_, name)| name).collect()
+}
+
 fn get(url: &str) -> Result<Value, String> {
     let response = super::download::agent(url)?
         .get(url)

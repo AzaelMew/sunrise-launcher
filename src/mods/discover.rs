@@ -11,7 +11,7 @@ use sunrise_launcher::browser::images;
 /// How many cards are drawn before "Show more".
 const PAGE: usize = 36;
 
-type MenuOption = (SharedString, bool, Box<dyn Fn(&mut Launcher)>);
+pub(super) type MenuOption = (SharedString, bool, Box<dyn Fn(&mut Launcher)>);
 
 impl Launcher {
     pub(super) fn discover(
@@ -135,49 +135,20 @@ impl Launcher {
                 })
                 .collect()
         };
-        let show_all_toggle = div()
-            .id("alt-show-all")
-            .flex()
-            .items_center()
-            .gap(px(8.))
-            .cursor_pointer()
-            .child(switch("alt-show-all-switch", f.show_all).tab_stop(false))
-            .child(div().text_size(px(tokens::LABEL)).child(tr("Show all")))
-            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                this.ui.mods.filters.show_all = !this.ui.mods.filters.show_all;
-                this.ui.mods.limit = 0;
-                cx.notify();
-            }));
-
         let category_menu = self.discover_menu(&category_now, Menu::Category, category_options, cx);
         let sort_menu = self.discover_menu(f.sort.label(), Menu::Sort, sort_options, cx);
-
-        page = page.child(
-            div()
-                .flex()
-                .flex_none()
-                .flex_wrap()
-                .items_center()
-                .justify_between()
-                .gap(px(12.))
-                .child(
-                    div()
-                        .flex()
-                        .flex_wrap()
-                        .items_center()
-                        .gap(px(10.))
-                        .child(self.discover_profile_menu(cx))
-                        .child(category_menu),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(px(14.))
-                        .child(show_all_toggle)
-                        .child(sort_menu),
-                ),
-        );
+        let profile_menu = self.discover_profile_menu(cx);
+        page = page.child(self.filter_bar(
+            Some(profile_menu),
+            category_menu,
+            f.show_all,
+            |this| {
+                this.ui.mods.filters.show_all = !this.ui.mods.filters.show_all;
+                this.ui.mods.limit = 0;
+            },
+            sort_menu,
+            cx,
+        ));
 
         // Stale or offline cache advisory (non-blocking).
         if let Some(warning) = stale_warning {
@@ -742,7 +713,56 @@ impl Launcher {
         cx.notify();
     }
 
-    fn discover_shell(
+    /// Discover's filter row, the same for mods and packs: `lead` (whose list it is) and the
+    /// category menu on the left, the Show all switch and the sort menu on the right.
+    pub(super) fn filter_bar(
+        &self,
+        lead: Option<Div>,
+        category_menu: Div,
+        show_all: bool,
+        flip_show_all: fn(&mut Launcher),
+        sort_menu: Div,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let show_all_toggle = div()
+            .id("alt-show-all")
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .cursor_pointer()
+            .child(switch("alt-show-all-switch", show_all).tab_stop(false))
+            .child(div().text_size(px(tokens::LABEL)).child(tr("Show all")))
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                flip_show_all(this);
+                cx.notify();
+            }));
+        div()
+            .flex()
+            .flex_none()
+            .flex_wrap()
+            .items_center()
+            .justify_between()
+            .gap(px(12.))
+            .child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .items_center()
+                    .gap(px(10.))
+                    .children(lead)
+                    .child(category_menu),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(14.))
+                    .child(show_all_toggle)
+                    .child(sort_menu),
+            )
+    }
+
+    pub(super) fn discover_shell(
         &mut self,
         window: &mut Window,
         focus: &FocusHandle,
@@ -936,7 +956,7 @@ impl Launcher {
         crate::scrollbar::wrap_page_in_margin(scroll_key, results, &self.theme)
     }
 
-    fn discover_menu(
+    pub(super) fn discover_menu(
         &self,
         label: &str,
         which: Menu,
