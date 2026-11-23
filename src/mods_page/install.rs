@@ -321,6 +321,15 @@ impl Outcome {
 }
 
 impl Installs {
+    /// The build an install running on `profile` captured when it was queued, whatever its
+    /// source: the profile keeps showing it while the install holds the profile.
+    fn base(&self, profile: &instances::Instance) -> Option<&str> {
+        let run = self.running.as_ref()?;
+        (run.profile.id == profile.id && run.profile.home == profile.home)
+            .then_some(run.target.as_deref())
+            .flatten()
+    }
+
     pub(super) fn stage(&self) -> Option<InstallProgress> {
         self.running.as_ref().map(|run| run.stage)
     }
@@ -1222,11 +1231,8 @@ impl Launcher {
         self.start_registry_queue();
     }
 
-    pub(crate) fn source_install_base(&self, profile: &instances::Instance) -> Option<&str> {
-        let run = self.mods.installs.running.as_ref()?;
-        (run.source.is_some() && run.profile.id == profile.id && run.profile.home == profile.home)
-            .then_some(run.target.as_deref())
-            .flatten()
+    pub(crate) fn install_base(&self, profile: &instances::Instance) -> Option<&str> {
+        self.mods.installs.base(profile)
     }
 
     pub(crate) fn queue_github(&mut self, input: Arc<GithubInput>) -> Result<(), String> {
@@ -1933,6 +1939,17 @@ mod tests {
             }),
             ..Installs::default()
         }
+    }
+
+    #[test]
+    fn a_registry_install_keeps_its_profile_build_while_it_runs() {
+        let root = homes();
+        let installs = with_running(root.path());
+        let run = installs.running.as_ref().unwrap();
+        assert!(run.source.is_none(), "a registry install, not a source one");
+        assert_eq!(installs.base(&run.profile), Some("nightly"));
+        let other = request(&root.path().join("B"), "two", "dev").profile;
+        assert_eq!(installs.base(&other), None);
     }
 
     #[test]
