@@ -69,6 +69,9 @@ pub struct ProviderCandidate {
     pub version: String,
 }
 
+/// Asks the player which project provides a dependency several projects offer; `None` declines.
+pub type ChooseProvider<'a> = dyn Fn(&ProviderChoiceNeeded) -> Option<String> + 'a;
+
 /// Returned when a required dependency names only an in-game `mod_id` slot and several v2 projects
 /// provide fitting releases for the profile's build. The planner never chooses one silently.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -217,7 +220,7 @@ pub struct V2Hooks<'a> {
     /// Prompt when a required dependency slot has several fitting providers and no pre-selected
     /// entry in `V2InstallOptions::provider_choices`. Returning `None` aborts with
     /// [`InstallError::AmbiguousProvider`].
-    pub choose_provider: Option<&'a dyn Fn(&ProviderChoiceNeeded) -> Option<String>>,
+    pub choose_provider: Option<&'a ChooseProvider<'a>>,
     /// Prompt when a project's attested repository ID or workflow path changed from this
     /// computer's remembered pin. Returning `false` (or `None`) aborts with
     /// [`InstallError::PublisherChanged`].
@@ -647,7 +650,7 @@ pub fn plan_v2_install(
     installed: &BTreeMap<String, InstalledV2Mod>,
     chosen_pins: &BTreeMap<String, String>,
     options: &V2InstallOptions,
-    choose_provider: Option<&dyn Fn(&ProviderChoiceNeeded) -> Option<String>>,
+    choose_provider: Option<&ChooseProvider<'_>>,
 ) -> Result<V2Plan, InstallError> {
     if requested_projects.is_empty() {
         return Err(InstallError::Cancelled);
@@ -707,7 +710,7 @@ pub fn plan_v2_update(
     installed: &BTreeMap<String, InstalledV2Mod>,
     chosen_pins: &BTreeMap<String, String>,
     options: &V2InstallOptions,
-    choose_provider: Option<&dyn Fn(&ProviderChoiceNeeded) -> Option<String>>,
+    choose_provider: Option<&ChooseProvider<'_>>,
 ) -> Result<V2Plan, InstallError> {
     let (requested, strict) = match request {
         UpdateRequest::Strict(ids) => (ids.as_slice(), true),
@@ -854,7 +857,7 @@ fn resolve_v2_queue(
     chosen_pins: &BTreeMap<String, String>,
     options: &V2InstallOptions,
     unfit_hashes: &BTreeSet<String>,
-    choose_provider: Option<&dyn Fn(&ProviderChoiceNeeded) -> Option<String>>,
+    choose_provider: Option<&ChooseProvider<'_>>,
 ) -> Result<V2Plan, InstallError> {
     let mut planned: BTreeMap<String, PlannedV2Release> = BTreeMap::new();
     let mut order: Vec<String> = Vec::new();
