@@ -27,6 +27,7 @@ use crate::{
     native_mods,
     profile_txn::Identity,
 };
+use semver::VersionReq;
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
     fs,
@@ -516,11 +517,21 @@ pub(crate) fn compare_versions(a: &str, b: &str) -> std::cmp::Ordering {
     }
 }
 
+/// A project the planner still has to place: its ID, whether it is only a dependency, the mod
+/// that asked for it, and the version range that mod requires of it.
+type Queued = (String, bool, String, Option<VersionReq>);
+
+/// Whether `version` is inside `range`; a version that isn't semver is in no range.
+fn in_range(range: Option<&VersionReq>, version: &str) -> bool {
+    range.is_none_or(|range| parse_version(version).is_ok_and(|v| range.matches(&v)))
+}
+
 fn select_project_release<'a>(
     index: &Index,
     project: &'a Project,
     build: &str,
     pinned_version: Option<&str>,
+    range: Option<&VersionReq>,
     unfit_hashes: &BTreeSet<String>,
 ) -> Result<&'a Release, InstallError> {
     if let Some(revoked) = index.revoked(&project.id, None) {
@@ -536,6 +547,16 @@ fn select_project_release<'a>(
                 &[("version", pinned), ("mod", &project.name)],
             )));
         };
+        if let Some(range) = range.filter(|_| !in_range(range, pinned)) {
+            return Err(InstallError::NotForVersion(trf(
+                "Pinned version {version} of {mod} is outside {range}, which another mod needs.",
+                &[
+                    ("version", pinned),
+                    ("mod", &project.name),
+                    ("range", &range.to_string()),
+                ],
+            )));
+        }
         if let Some(revoked) = index.revoked(&project.id, Some(&release.file.sha256)) {
             return Err(InstallError::Refused(trf(
                 "{mod} {version} was taken down: {reason}",
@@ -581,12 +602,17 @@ fn select_project_release<'a>(
     let mut saw_unknown = false;
     let mut saw_does_not_fit = false;
     let mut saw_revoked = false;
+    let mut saw_out_of_range = false;
     for release in &project.releases {
         if index
             .revoked(&project.id, Some(&release.file.sha256))
             .is_some()
         {
             saw_revoked = true;
+            continue;
+        }
+        if !in_range(range, &release.version) {
+            saw_out_of_range = true;
             continue;
         }
         if unfit_hashes.contains(&release.file.sha256.to_ascii_lowercase()) {
@@ -604,6 +630,16 @@ fn select_project_release<'a>(
         .max_by(|a, b| compare_versions(&a.version, &b.version))
     {
         return Ok(best);
+    }
+    if let Some(range) = range.filter(|_| saw_out_of_range) {
+        return Err(InstallError::NotForVersion(trf(
+            "No release of {mod} in {range} fits Sunrise {build}.",
+            &[
+                ("mod", &project.name),
+                ("range", &range.to_string()),
+                ("build", build),
+            ],
+        )));
     }
     if saw_unknown {
         Err(InstallError::NotForVersion(trf(
@@ -670,7 +706,7 @@ pub fn plan_v2_install(
     }
     let unfit_hashes = known_unfit_updates(build);
     let mut seen_slots: BTreeMap<String, String> = BTreeMap::new();
-    let mut queue: VecDeque<(String, bool, String)> = VecDeque::new();
+    let mut queue: VecDeque<Queued> = VecDeque::new();
     for project_id in requested_projects {
         let project = index.project(project_id).ok_or_else(|| {
             InstallError::Refused(trf(
@@ -698,7 +734,7 @@ pub fn plan_v2_install(
                 })));
             }
         }
-        queue.push_back((project.id.clone(), false, project.name.clone()));
+        queue.push_back((project.id.clone(), false, project.name.clone(), None));
     }
     resolve_v2_queue(
         index,
@@ -730,7 +766,7 @@ pub fn plan_v2_update(
         UpdateRequest::Bulk(ids) => (ids.as_slice(), false),
     };
     let unfit_hashes = known_unfit_updates(build);
-    let mut queue: VecDeque<(String, bool, String)> = VecDeque::new();
+    let mut queue: VecDeque<Queued> = VecDeque::new();
     let mut effective_options = options.clone();
 
     for key in requested {
@@ -786,11 +822,11 @@ pub fn plan_v2_update(
             .map(String::as_str);
         if let Some(explicit) = target_version {
             let release =
-                select_project_release(index, project, build, Some(explicit), &unfit_hashes)?;
+                select_project_release(index, project, build, Some(explicit), None, &unfit_hashes)?;
             if release.version != current.package.manifest.version
                 || !release.file.sha256.eq_ignore_ascii_case(&current.digest)
             {
-                queue.push_back((project.id.clone(), false, project.name.clone()));
+                queue.push_back((project.id.clone(), false, project.name.clone(), None));
             }
             continue;
         }
@@ -813,7 +849,7 @@ pub fn plan_v2_update(
                 effective_options
                     .versions
                     .insert(project.id.clone(), release.version.clone());
-                queue.push_back((project.id.clone(), false, project.name.clone()));
+                queue.push_back((project.id.clone(), false, project.name.clone(), None));
             }
             None if strict => {
                 // Report why no update could be planned (unknown vs does-not-fit vs up-to-date).
@@ -865,7 +901,7 @@ pub fn plan_v2_update(
 fn resolve_v2_queue(
     index: &Index,
     build: &str,
-    mut queue: VecDeque<(String, bool, String)>,
+    mut queue: VecDeque<Queued>,
     installed: &BTreeMap<String, InstalledV2Mod>,
     chosen_pins: &BTreeMap<String, String>,
     options: &V2InstallOptions,
@@ -876,7 +912,7 @@ fn resolve_v2_queue(
     let mut order: Vec<String> = Vec::new();
     let mut optional_dependencies: Vec<index_v2::Dependency> = Vec::new();
 
-    while let Some((project_id, is_dependency, _required_by)) = queue.pop_front() {
+    while let Some((project_id, is_dependency, required_by, range)) = queue.pop_front() {
         let project = index.project(&project_id).ok_or_else(|| {
             InstallError::Refused(trf(
                 "Project {project} is not in the Sunrise registry.",
@@ -885,6 +921,20 @@ fn resolve_v2_queue(
         })?;
         if let Some(existing) = planned.get_mut(&project.mod_id) {
             if existing.project_id == project.id {
+                if let Some(range) = range
+                    .as_ref()
+                    .filter(|r| !in_range(Some(*r), &existing.version))
+                {
+                    return Err(InstallError::NotForVersion(trf(
+                        "{mod} needs {dep} {range}, but {version} is planned for another mod.",
+                        &[
+                            ("mod", &required_by),
+                            ("dep", &project.name),
+                            ("range", &range.to_string()),
+                            ("version", &existing.version),
+                        ],
+                    )));
+                }
                 if !is_dependency {
                     existing.dependency = false;
                 }
@@ -914,8 +964,14 @@ fn resolve_v2_queue(
             .get(&project.id)
             .map(String::as_str)
             .or_else(|| chosen_version_pin(chosen_pins, &project.id, &project.mod_id));
-        let release =
-            select_project_release(index, project, build, version_override, unfit_hashes)?;
+        let release = select_project_release(
+            index,
+            project,
+            build,
+            version_override,
+            range.as_ref(),
+            unfit_hashes,
+        )?;
         let step = planned_from(project, release, is_dependency);
         order.push(project.mod_id.clone());
         planned.insert(project.mod_id.clone(), step);
@@ -955,6 +1011,7 @@ fn resolve_v2_queue(
                     if existing.enabled
                         && dep_project.releases.iter().any(|r| {
                             r.file.sha256.eq_ignore_ascii_case(&existing.digest)
+                                && in_range(Some(&dep.version), &r.version)
                                 && r.fit_verdict(build) == FitVerdict::Fits
                                 && index
                                     .revoked(&dep_project.id, Some(&r.file.sha256))
@@ -964,7 +1021,12 @@ fn resolve_v2_queue(
                         continue;
                     }
                 }
-                queue.push_back((dep_project.id.clone(), true, project.name.clone()));
+                queue.push_back((
+                    dep_project.id.clone(),
+                    true,
+                    project.name.clone(),
+                    Some(dep.version.clone()),
+                ));
                 continue;
             }
 
@@ -979,6 +1041,7 @@ fn resolve_v2_queue(
                         if let Some(existing_project) = index.project(existing_pid) {
                             let current_fits = existing_project.releases.iter().any(|r| {
                                 r.file.sha256.eq_ignore_ascii_case(&existing.digest)
+                                    && in_range(Some(&dep.version), &r.version)
                                     && r.fit_verdict(build) == FitVerdict::Fits
                                     && index
                                         .revoked(&existing_project.id, Some(&r.file.sha256))
@@ -989,6 +1052,7 @@ fn resolve_v2_queue(
                                     existing_project.id.clone(),
                                     true,
                                     project.name.clone(),
+                                    Some(dep.version.clone()),
                                 ));
                             }
                         }
@@ -1009,7 +1073,12 @@ fn resolve_v2_queue(
                         &[("project", chosen_pid), ("dep", &dep.mod_id)],
                     )));
                 }
-                queue.push_back((chosen_project.id.clone(), true, project.name.clone()));
+                queue.push_back((
+                    chosen_project.id.clone(),
+                    true,
+                    project.name.clone(),
+                    Some(dep.version.clone()),
+                ));
                 continue;
             }
 
@@ -1028,6 +1097,7 @@ fn resolve_v2_queue(
                     .iter()
                     .filter(|r| {
                         r.fit_verdict(build) == FitVerdict::Fits
+                            && in_range(Some(&dep.version), &r.version)
                             && index.revoked(&candidate.id, Some(&r.file.sha256)).is_none()
                             && !unfit_hashes.contains(&r.file.sha256.to_ascii_lowercase())
                     })
@@ -1042,6 +1112,7 @@ fn resolve_v2_queue(
                     });
                 } else if candidate.releases.iter().any(|r| {
                     r.fit_verdict(build) == FitVerdict::Unknown
+                        && in_range(Some(&dep.version), &r.version)
                         && index.revoked(&candidate.id, Some(&r.file.sha256)).is_none()
                 }) {
                     saw_unknown = true;
@@ -1062,17 +1133,23 @@ fn resolve_v2_queue(
                         )
                     } else {
                         trf(
-                            "{mod} needs {dep}, which has no release fitting Sunrise {build}.",
+                            "{mod} needs {dep} {range}, which has no release fitting Sunrise {build}.",
                             &[
                                 ("mod", &project.name),
                                 ("dep", &dep.mod_id),
+                                ("range", &dep.version.to_string()),
                                 ("build", build),
                             ],
                         )
                     }));
                 }
                 [only] => {
-                    queue.push_back((only.project_id.clone(), true, project.name.clone()));
+                    queue.push_back((
+                        only.project_id.clone(),
+                        true,
+                        project.name.clone(),
+                        Some(dep.version.clone()),
+                    ));
                 }
                 _ => {
                     let need = ProviderChoiceNeeded {
@@ -1082,7 +1159,12 @@ fn resolve_v2_queue(
                     };
                     if let Some(picked) = choose_provider.and_then(|ask| ask(&need)) {
                         if need.candidates.iter().any(|c| c.project_id == picked) {
-                            queue.push_back((picked, true, project.name.clone()));
+                            queue.push_back((
+                                picked,
+                                true,
+                                project.name.clone(),
+                                Some(dep.version.clone()),
+                            ));
                             continue;
                         }
                     }
@@ -1787,6 +1869,7 @@ pub(crate) fn switch_provider_v2_with(
         to_project,
         &base_build,
         version_override,
+        None,
         &unfit_hashes,
     )?;
     let step = planned_from(to_project, release, false);
@@ -1808,21 +1891,29 @@ pub(crate) fn switch_provider_v2_with(
     }
 
     // Plan any new required dependencies of the incoming provider.
-    let mut dep_queue: VecDeque<(String, bool, String)> = VecDeque::new();
+    let mut dep_queue: VecDeque<Queued> = VecDeque::new();
     for dep in &release.dependencies {
         if !dep.required || dep.mod_id == mod_id {
             continue;
         }
+        let range = Some(dep.version.clone());
+        let installed = before.get(&dep.mod_id).filter(|m| m.enabled);
+        let in_range_now =
+            installed.is_some_and(|m| in_range(Some(&dep.version), &m.package.manifest.version));
         if let Some(dep_pid) = dep.project.as_deref() {
-            if before
-                .get(&dep.mod_id)
-                .is_none_or(|m| m.ownership.project_id() != Some(dep_pid) || !m.enabled)
+            if installed.is_none_or(|m| m.ownership.project_id() != Some(dep_pid)) || !in_range_now
             {
-                dep_queue.push_back((dep_pid.to_owned(), true, to_project.name.clone()));
+                dep_queue.push_back((dep_pid.to_owned(), true, to_project.name.clone(), range));
             }
-        } else if before.get(&dep.mod_id).is_none_or(|m| !m.enabled) {
+        } else if let Some(owner) = installed
+            .filter(|_| !in_range_now)
+            .and_then(|m| m.ownership.project_id())
+        {
+            // Keep the profile's provider, at a release in the range.
+            dep_queue.push_back((owner.to_owned(), true, to_project.name.clone(), range));
+        } else if installed.is_none() {
             if let Some(picked) = options.provider_choices.get(&dep.mod_id) {
-                dep_queue.push_back((picked.clone(), true, to_project.name.clone()));
+                dep_queue.push_back((picked.clone(), true, to_project.name.clone(), range));
             } else {
                 let mut candidates: Vec<ProviderCandidate> = index
                     .projects_for_mod(&dep.mod_id)
@@ -1836,6 +1927,7 @@ pub(crate) fn switch_provider_v2_with(
                             .iter()
                             .filter(|r| {
                                 r.fit_verdict(&base_build) == FitVerdict::Fits
+                                    && in_range(Some(&dep.version), &r.version)
                                     && index.revoked(&p.id, Some(&r.file.sha256)).is_none()
                             })
                             .max_by(|a, b| compare_versions(&a.version, &b.version))?;
@@ -1852,10 +1944,11 @@ pub(crate) fn switch_provider_v2_with(
                 match candidates.as_slice() {
                     [] => {
                         return Err(InstallError::NotForVersion(trf(
-                            "{mod} needs {dep}, which has no release fitting Sunrise {build}.",
+                            "{mod} needs {dep} {range}, which has no release fitting Sunrise {build}.",
                             &[
                                 ("mod", &to_project.name),
                                 ("dep", &dep.mod_id),
+                                ("range", &dep.version.to_string()),
                                 ("build", &base_build),
                             ],
                         )));
@@ -1864,6 +1957,7 @@ pub(crate) fn switch_provider_v2_with(
                         only.project_id.clone(),
                         true,
                         to_project.name.clone(),
+                        range,
                     )),
                     _ => {
                         let need = ProviderChoiceNeeded {
@@ -1875,7 +1969,7 @@ pub(crate) fn switch_provider_v2_with(
                             hooks.install.choose_provider.and_then(|ask| ask(&need))
                         {
                             if need.candidates.iter().any(|c| c.project_id == picked) {
-                                dep_queue.push_back((picked, true, to_project.name.clone()));
+                                dep_queue.push_back((picked, true, to_project.name.clone(), range));
                                 continue;
                             }
                         }

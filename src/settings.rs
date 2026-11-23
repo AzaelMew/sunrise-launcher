@@ -1516,8 +1516,9 @@ impl Launcher {
         // menus do. 87 languages don't fit on a page as buttons.
         let opener = button("alt-language", now)
             .gap(px(8.))
-            .child(crate::blocks::icon(
-                "chevron-down",
+            .child(crate::glass_ui::fold_chevron(
+                "settings-language",
+                picking,
                 13.,
                 rgb(palette().muted).into(),
             ))

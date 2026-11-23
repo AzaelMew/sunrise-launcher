@@ -640,8 +640,9 @@ impl Launcher {
                     .text_color(rgb(palette().text))
                     .child(build),
             )
-            .child(div().flex_none().child(blocks::icon(
-                "chevron-down",
+            .child(div().flex_none().child(crate::glass_ui::fold_chevron(
+                "home-build",
+                self.ui.sheet == Some(Sheet::Build),
                 13.,
                 rgb(palette().muted).into(),
             )))
