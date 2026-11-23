@@ -814,12 +814,15 @@ fn parse_web_url(text: &str, https_only: bool) -> Result<(), String> {
     if text.contains('\\') || text.chars().any(|c| c.is_control() || c.is_whitespace()) {
         return Err(format!("invalid characters in URL {text:?}"));
     }
-    // The web parser forgives an empty user (`https://@host`) and an empty port (`host:`);
-    // the written authority must not carry either.
+    // The web parser forgives an empty authority (`https:///path` reads `path` as the host),
+    // an empty user (`https://@host`) and an empty port (`host:`); the written URL has none.
     let authority = text
         .split_once("://")
         .map(|(_, rest)| rest.split(['/', '?', '#']).next().unwrap_or(""))
         .unwrap_or("");
+    if authority.is_empty() {
+        return Err(format!("URL {text:?} is missing a host"));
+    }
     if authority.contains('@') {
         return Err(format!("URL {text:?} must not contain credentials"));
     }
