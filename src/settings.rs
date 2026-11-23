@@ -110,9 +110,14 @@ pub(crate) fn group(rows: Vec<Div>) -> Div {
         .border_color(rgb(palette().divider))
         .bg(palette().card());
     for (i, row) in rows.into_iter().enumerate() {
-        card = card.child(row.px(px(16.)).py(px(14.)).when(i > 0, |d| {
-            d.border_t_1().border_color(rgb(palette().divider))
-        }));
+        card = card.child(
+            row.id(("settings-row", i))
+                .px(px(16.))
+                .py(px(14.))
+                .when(i > 0, |d| {
+                    d.border_t_1().border_color(rgb(palette().divider))
+                }),
+        );
     }
     card
 }
@@ -553,12 +558,9 @@ impl Launcher {
             let toggle_uuid = a.uuid.clone();
             let dots = div()
                 .id(ElementId::named_usize("alt-account-menu", i))
-                .reach_edge()
-                .size(px(tokens::ACTION))
+                .reach()
+                .size(px(tokens::CONTROL))
                 .rounded(tokens::r(tokens::R_CONTROL))
-                .border_1()
-                .border_color(palette().input_edge())
-                .bg(palette().input_fill())
                 .when(menu_open, |d| d.bg(rgb(palette().hover)))
                 .hover(|s| s.bg(rgb(palette().hover)))
                 .cursor_pointer()
@@ -569,7 +571,7 @@ impl Launcher {
                 .child(crate::glass_ui::icon(
                     "more-vertical",
                     16.,
-                    rgb(palette().text).into(),
+                    rgb(palette().muted).into(),
                 ))
                 .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
@@ -653,9 +655,12 @@ impl Launcher {
                         item(("alt-account-skins", i), tr("Manage skins"), false).on_click(
                             cx.listener(move |this, _: &ClickEvent, _, cx| {
                                 this.ui.settings.account_menu = None;
-                                if this.accounts.selected.as_deref() != Some(uuid.as_str())
-                                    && !this.account_locked()
-                                {
+                                if this.accounts.selected.as_deref() != Some(uuid.as_str()) {
+                                    if this.account_locked() {
+                                        this.say_account_locked();
+                                        cx.notify();
+                                        return;
+                                    }
                                     this.play_as(&uuid);
                                 }
                                 this.navigate(crate::frame::Page::Skins);
@@ -680,7 +685,7 @@ impl Launcher {
                 gpui::deferred(
                     div()
                         .absolute()
-                        .top(px(tokens::ACTION + 6.))
+                        .top(px(tokens::CONTROL + 6.))
                         .right_0()
                         .child(list),
                 )
