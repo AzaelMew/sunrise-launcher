@@ -245,6 +245,7 @@ impl Launcher {
             .id("alt-collection-list")
             .min_h_0()
             .overflow_y_scroll()
+            .pr(px(12.))
             .flex()
             .flex_col();
         let mut shown = 0;
