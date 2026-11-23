@@ -297,7 +297,7 @@ impl Launcher {
                     button(("alt-add", n), tr("Install"))
                         .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                             cx.stop_propagation();
-                            this.add(id_for_add.clone());
+                            this.add_v2(id_for_add.clone());
                             cx.notify();
                         }))
                         .into_any_element(),

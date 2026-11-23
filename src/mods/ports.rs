@@ -9,11 +9,7 @@ use super::ui::*;
 use super::*;
 use crate::paint::palette;
 use std::collections::BTreeMap;
-use sunrise_launcher::browser::{
-    details::category_label,
-    images,
-    sunrise::{v2, ProviderSwitchRequest},
-};
+use sunrise_launcher::browser::{details::category_label, images, sunrise::v2};
 use sunrise_launcher_smod::index_v2::{self, FitVerdict};
 
 /// Which project currently provides an in-game mod ID on the selected profile.
@@ -22,6 +18,19 @@ pub(crate) struct InstalledPort {
     pub(crate) project_id: String,
     pub(crate) version: String,
     pub(crate) repo: String,
+}
+
+/// A switch the player can start from another port's row: the in-game ID, and both publishers
+/// as the player reads them. The backend re-reads the release from the signed index.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct PortSwitch {
+    pub(crate) mod_id: String,
+    pub(crate) mod_name: String,
+    pub(crate) from_repo: String,
+    pub(crate) from_version: String,
+    pub(crate) to_project_id: String,
+    pub(crate) to_repo: String,
+    pub(crate) to_version: String,
 }
 
 /// Per-port action state inside a competing-ports alternatives group.
@@ -46,7 +55,7 @@ pub(crate) struct PortOption {
     pub(crate) latest_version: Option<String>,
     pub(crate) fit: FitVerdict,
     pub(crate) action: PortAction,
-    pub(crate) switch_request: Option<ProviderSwitchRequest>,
+    pub(crate) switch_request: Option<PortSwitch>,
 }
 
 /// Two or more competing projects sharing the same in-game mod ID.
@@ -62,7 +71,7 @@ pub(crate) struct PortGroup {
 pub(crate) struct OtherPortOption {
     pub(crate) publisher_repo: String,
     pub(crate) fit: FitVerdict,
-    pub(crate) switch_request: Option<ProviderSwitchRequest>,
+    pub(crate) switch_request: Option<PortSwitch>,
 }
 
 /// Alternative reviewed projects providing the same in-game mod ID as the open installed mod.
@@ -136,25 +145,15 @@ fn build_switch_request(
     from_version: &str,
     to: &index_v2::Project,
     to_release: &index_v2::Release,
-) -> Option<ProviderSwitchRequest> {
-    if from_project_id == to.id {
-        return None;
-    }
-    Some(ProviderSwitchRequest {
+) -> Option<PortSwitch> {
+    (from_project_id != to.id).then(|| PortSwitch {
         mod_id: to.mod_id.clone(),
         mod_name: to.name.clone(),
-        from_project_id: from_project_id.to_owned(),
         from_repo: from_repo.to_owned(),
         from_version: from_version.to_owned(),
         to_project_id: to.id.clone(),
-        to_slug: to.slug.clone(),
         to_repo: to.repository.name.clone(),
-        to_repo_path: to.repository.path.clone(),
         to_version: to_release.version.clone(),
-        to_workflow: to_release.workflow.clone(),
-        to_repo_id: to.repository.id,
-        to_file: to_release.file.clone(),
-        to_kind: to.kind.clone(),
     })
 }
 
@@ -559,7 +558,7 @@ impl Launcher {
                             let id = port.project_id.clone();
                             btn.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                                 cx.stop_propagation();
-                                this.add(id.clone());
+                                this.add_v2(id.clone());
                                 cx.notify();
                             }))
                             .into_any_element()
@@ -938,7 +937,7 @@ mod tests {
         assert_eq!(groups[0].ports[0].action, PortAction::Installed);
         assert_eq!(groups[0].ports[1].action, PortAction::SwitchToPort);
         let req = groups[0].ports[1].switch_request.as_ref().unwrap();
-        assert_eq!(req.from_project_id, "jade0001");
+        assert_eq!(req.from_repo, "joeypc6/sunrise-jade");
         assert_eq!(req.to_project_id, "jade0002");
         assert_eq!(req.to_repo, "zekrenlight/jade-sunrise");
     }

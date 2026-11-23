@@ -40,7 +40,7 @@ use sunrise_launcher_smod::index_v2::{FitVerdict, Index, Project, Release};
 /// Callbacks and pin directory override for v2 build switching.
 pub struct V2SwitchHooks<'a> {
     pub switch: SwitchHooks<'a>,
-    pub confirm_publisher_change: Option<&'a dyn Fn(&PublisherChange) -> bool>,
+    pub confirm_publisher_change: Option<super::ConfirmPublisherChange<'a>>,
     pub pin_dir: Option<PathBuf>,
 }
 

@@ -1,14 +1,14 @@
 use super::*;
+use crate::mods::PortSwitch;
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
 use sunrise_launcher::{
     browser::sunrise::{
-        install_target, switch_profile_build, switch_provider, BuildChoice, InstallProgress,
-        ProviderSwitchDecision, ProviderSwitchDependent, ProviderSwitchHooks,
-        ProviderSwitchQuestion, ProviderSwitchRequest, ProviderSwitched, SwitchDecision,
-        SwitchHooks, SwitchQuestion, Switched,
+        install_target, switch_profile_build, switch_provider_v2, BuildChoice, InstallError,
+        InstallHooks, InstallProgress, ProviderSwitchPreview, SwitchDecision, SwitchHooks,
+        SwitchQuestion, Switched, V2Hooks, V2InstallOptions, V2ProviderSwitchHooks,
     },
     managed_play::{self, Active, FirstBuild, Profile, ReceiptHint},
     profile_txn::Identity,
@@ -24,11 +24,12 @@ pub(crate) struct State {
 }
 
 struct ProviderRunning {
-    mod_name: String,
-    to_repo: String,
+    switch: PortSwitch,
+    profile_name: String,
+    build_label: String,
     progress: InstallProgress,
     stop: native_mods::Cancellation,
-    question: Option<(Box<ProviderSwitchQuestion>, Sender<ProviderSwitchDecision>)>,
+    question: Option<(Box<ProviderSwitchPreview>, Sender<bool>)>,
 }
 
 struct ReceiptRead {
@@ -755,7 +756,7 @@ impl Launcher {
         Some(frame("switch-receipt", 600., body, cx))
     }
 
-    pub(crate) fn begin_provider_switch(&mut self, request: ProviderSwitchRequest) {
+    pub(crate) fn begin_provider_switch(&mut self, switch: PortSwitch) {
         if self.launch_busy() || self.client.is_some() || self.switch_busy() {
             return;
         }
@@ -773,11 +774,11 @@ impl Launcher {
         let release = target
             .as_deref()
             .and_then(|tag| self.release_to_install(tag));
-        let build_label = target.as_deref().map(build_name).unwrap_or_default();
         let stop = native_mods::Cancellation::default();
         self.ui.sheets.switching.provider = Some(ProviderRunning {
-            mod_name: request.mod_name.clone(),
-            to_repo: request.to_repo.clone(),
+            switch: switch.clone(),
+            profile_name: instance.name.clone(),
+            build_label: target.as_deref().map(build_name).unwrap_or_default(),
             progress: InstallProgress::Checking,
             stop: stop.clone(),
             question: None,
@@ -797,41 +798,59 @@ impl Launcher {
                     Err(backend::no_version_installed())
                 }
             };
-            let outcome = switch_provider(
+            // Each question is a fresh round trip to the window; a stopped switch asks nothing.
+            let ask = |send: &dyn Fn(Sender<bool>) -> Msg| {
+                if stop.is_stopped() {
+                    return false;
+                }
+                let (answer, reply) = std::sync::mpsc::channel();
+                tx.send(send(answer)).is_ok() && reply.recv().unwrap_or(false)
+            };
+            let outcome = switch_provider_v2(
                 &instance,
                 identity,
-                &build_label,
+                &switch.mod_id,
+                &switch.to_project_id,
+                V2InstallOptions::default(),
                 choose,
-                &request,
-                ProviderSwitchHooks {
-                    cancellation: &stop,
-                    progress: &|stage| {
-                        let _ = tx.send(Msg::ProviderSwitchProgress(stage));
+                V2ProviderSwitchHooks {
+                    install: V2Hooks {
+                        install: InstallHooks {
+                            progress: &|stage| {
+                                let _ = tx.send(Msg::ProviderSwitchProgress(stage));
+                            },
+                            native: &|_| {
+                                Err(tr(
+                                    "Allow native mods in Settings before switching to this port.",
+                                )
+                                .into())
+                            },
+                            registry_crates: Some(&|consent| {
+                                ask(&|answer| Msg::NativeRegistryConsent(consent.clone(), answer))
+                            }),
+                            continue_after_failure: &|_| false,
+                            resolve: None,
+                        },
+                        choose_provider: None,
+                        confirm_publisher_change: Some(&|question| {
+                            ask(&|answer| {
+                                Msg::PublisherChangeQuestion(Box::new(question.clone()), answer)
+                            })
+                        }),
                     },
-                    registry_crates: Some(&|inventory| {
-                        if stop.is_stopped() {
-                            return false;
-                        }
-                        let (answer, reply) = std::sync::mpsc::channel();
-                        tx.send(Msg::NativeRegistryConsent(inventory.clone(), answer))
-                            .is_ok()
-                            && reply.recv().unwrap_or(false)
-                    }),
-                    approve: &|question| {
-                        if stop.is_stopped() {
-                            return Ok(ProviderSwitchDecision::Cancel);
-                        }
-                        let (answer, reply) = std::sync::mpsc::channel();
-                        tx.send(Msg::ProviderSwitchQuestion(
-                            Box::new(question.clone()),
-                            answer,
-                        ))
-                        .map_err(|_| tr("Switch cancelled.").to_owned())?;
-                        Ok(reply.recv().unwrap_or(ProviderSwitchDecision::Cancel))
+                    approve_switch: &|preview| {
+                        ask(&|answer| {
+                            Msg::ProviderSwitchQuestion(Box::new(preview.clone()), answer)
+                        })
                     },
                 },
             );
-            let _ = tx.send(Msg::ProviderSwitched(instance.home, Box::new(outcome)));
+            let outcome = match outcome {
+                Ok(_) => Ok(true),
+                Err(InstallError::Cancelled) => Ok(false),
+                Err(error) => Err(error.to_string()),
+            };
+            let _ = tx.send(Msg::ProviderSwitched(instance.home, outcome));
         });
     }
 
@@ -842,7 +861,7 @@ impl Launcher {
         if running.progress != InstallProgress::Publishing {
             running.stop.stop();
             if let Some((_, reply)) = running.question.take() {
-                let _ = reply.send(ProviderSwitchDecision::Cancel);
+                let _ = reply.send(false);
             }
         }
     }
@@ -855,29 +874,25 @@ impl Launcher {
 
     pub(crate) fn provider_switch_question(
         &mut self,
-        question: Box<ProviderSwitchQuestion>,
-        reply: Sender<ProviderSwitchDecision>,
+        preview: Box<ProviderSwitchPreview>,
+        reply: Sender<bool>,
     ) {
         if let Some(running) =
             self.ui.sheets.switching.provider.as_mut().filter(|run| {
                 self.ui.sheet == Some(Sheet::SwitchProvider) && !run.stop.is_stopped()
             })
         {
-            running.question = Some((question, reply));
+            running.question = Some((preview, reply));
         } else {
-            let _ = reply.send(ProviderSwitchDecision::Cancel);
+            let _ = reply.send(false);
         }
     }
 
-    pub(crate) fn provider_switch_finished(
-        &mut self,
-        home: &Path,
-        result: Result<ProviderSwitched, String>,
-    ) {
+    pub(crate) fn provider_switch_finished(&mut self, home: &Path, result: Result<bool, String>) {
         let running = self.ui.sheets.switching.provider.take();
         let stopped = running.as_ref().is_some_and(|run| run.stop.is_stopped());
         let result = if result.is_err() && stopped {
-            Ok(ProviderSwitched::Stayed)
+            Ok(false)
         } else {
             result
         };
@@ -886,31 +901,29 @@ impl Launcher {
             return;
         }
         let visible = self.ui.sheet == Some(Sheet::SwitchProvider);
-        match result {
-            Ok(ProviderSwitched::Switched {
-                repo,
-                version,
-                project_id,
-                ..
-            }) => {
+        match (result, running) {
+            (Ok(true), Some(run)) => {
                 let notice = trf(
                     "Switched to {repo} ({version}).",
-                    &[("repo", &repo), ("version", &version)],
+                    &[
+                        ("repo", &run.switch.to_repo),
+                        ("version", &run.switch.to_version),
+                    ],
                 );
-                self.refresh_mods_after_port_switch(Ok(notice), Some(project_id));
+                self.refresh_mods_after_port_switch(Ok(notice), Some(run.switch.to_project_id));
                 if visible {
                     self.close_sheet();
                 }
             }
-            Ok(ProviderSwitched::Stayed) => {
+            (Ok(_), _) => {
                 if visible {
                     self.close_sheet();
                 }
             }
-            Err(error) if visible => {
+            (Err(error), _) if visible => {
                 self.open_notice(error, Some(WayOut::ProfileFolder(home.into())))
             }
-            Err(error) => {
+            (Err(error), _) => {
                 self.refresh_mods_after_port_switch(Err(error), None);
             }
         }
@@ -919,8 +932,9 @@ impl Launcher {
     pub(super) fn provider_switch_sheet(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
         use crate::mods_page::install::{stage_fraction, stage_label};
         let running = self.ui.sheets.switching.provider.as_ref()?;
-        let body = if let Some((question, _)) = &running.question {
-            let answer = |decision: ProviderSwitchDecision| {
+        let switch = &running.switch;
+        let body = if let Some((preview, _)) = &running.question {
+            let answer = |switch: bool| {
                 cx.listener(move |this, _: &ClickEvent, _, cx| {
                     if let Some((_, reply)) = this
                         .ui
@@ -930,87 +944,48 @@ impl Launcher {
                         .as_mut()
                         .and_then(|run| run.question.take())
                     {
-                        let _ = reply.send(decision);
+                        let _ = reply.send(switch);
                     }
                     cx.notify();
                 })
             };
-            let profile_line = if question.build_label.is_empty() {
-                trf("Profile: {profile}", &[("profile", &question.profile_name)])
+            let profile_line = if running.build_label.is_empty() {
+                trf("Profile: {profile}", &[("profile", &running.profile_name)])
             } else {
                 trf(
                     "Profile: {profile} ({build})",
                     &[
-                        ("profile", &question.profile_name),
-                        ("build", &question.build_label),
+                        ("profile", &running.profile_name),
+                        ("build", &running.build_label),
                     ],
                 )
             };
             let summary = trf(
                 "This replaces {from_repo} ({from_version}) with {to_repo} ({to_version}). Both provide the {id} in-game ID; only one can be installed at a time.",
                 &[
-                    ("from_repo", &question.from_repo),
-                    ("from_version", &question.from_version),
-                    ("to_repo", &question.to_repo),
-                    ("to_version", &question.to_version),
-                    ("id", &question.mod_id),
+                    ("from_repo", &switch.from_repo),
+                    ("from_version", &switch.from_version),
+                    ("to_repo", &switch.to_repo),
+                    ("to_version", &preview.to_version),
+                    ("id", &preview.mod_id),
                 ],
             );
-            let dependents_box = (!question.dependents.is_empty()).then(|| {
-                let mut list = card().p(px(14.)).gap(px(10.)).child(
-                    div()
-                        .text_size(px(tokens::CAPTION))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(rgb(palette().muted))
-                        .child(trf(
-                            "DEPENDENTS AFFECTED ({count})",
-                            &[("count", &question.dependents.len().to_string())],
-                        )),
-                );
-                for (i, dep) in question.dependents.iter().enumerate() {
-                    list = list.child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(10.))
-                            .when(i > 0, |row| {
-                                row.pt(px(10.))
-                                    .border_t_1()
-                                    .border_color(rgb(palette().divider))
-                            })
-                            .child(crate::glass_ui::icon(
-                                "package-01",
-                                16.,
-                                rgb(palette().muted).into(),
-                            ))
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .flex()
-                                    .flex_col()
-                                    .gap(px(2.))
-                                    .child(
-                                        div()
-                                            .text_size(px(tokens::BODY))
-                                            .font_weight(FontWeight::SEMIBOLD)
-                                            .text_color(rgb(palette().text))
-                                            .child(crate::selectable::selectable(dep.name.clone())),
-                                    )
-                                    .child(muted(provider_switch_dependent_line(
-                                        dep,
-                                        &question.mod_id,
-                                    ))),
-                            ),
-                    );
-                }
-                list
-            });
-            let world_box = (!question.world_risks.is_empty()).then(|| {
+            let world_lines: Vec<String> = preview
+                .worlds
+                .iter()
+                .filter(|risk| !risk.mods.is_empty())
+                .map(|risk| {
+                    trf(
+                        "{world}: content from {mod} may be affected.",
+                        &[("world", &risk.name), ("mod", &switch.mod_name)],
+                    )
+                })
+                .collect();
+            let world_box = (!world_lines.is_empty()).then(|| {
                 card()
                     .p(px(14.))
                     .gap(px(6.))
-                    .children(question.world_risks.iter().map(|line| muted(line.clone())))
+                    .children(world_lines.into_iter().map(muted))
             });
             div()
                 .flex()
@@ -1023,7 +998,7 @@ impl Launcher {
                         .gap(px(4.))
                         .child(title(trf(
                             "Switch {mod} to {repo}?",
-                            &[("mod", &question.mod_name), ("repo", &question.to_repo)],
+                            &[("mod", &switch.mod_name), ("repo", &switch.to_repo)],
                         )))
                         .child(muted(profile_line)),
                 )
@@ -1033,11 +1008,10 @@ impl Launcher {
                         .text_color(rgb(palette().text))
                         .child(crate::selectable::selectable(summary)),
                 )
-                .children(dependents_box)
                 .children(world_box)
                 .child(muted(trf(
                     "Your current port stays intact if you cancel. Future updates on this profile will follow {repo}.",
-                    &[("repo", &question.to_repo)],
+                    &[("repo", &switch.to_repo)],
                 )))
                 .child(
                     div()
@@ -1046,11 +1020,11 @@ impl Launcher {
                         .gap(px(8.))
                         .child(
                             button("provider-switch-cancel", tr("Cancel"))
-                                .on_click(answer(ProviderSwitchDecision::Cancel)),
+                                .on_click(answer(false)),
                         )
                         .child(
                             crate::frame::primary("provider-switch-confirm", tr("Switch"))
-                                .on_click(answer(ProviderSwitchDecision::Switch)),
+                                .on_click(answer(true)),
                         ),
                 )
         } else {
@@ -1070,7 +1044,7 @@ impl Launcher {
                 .gap(px(14.))
                 .child(title(trf(
                     "Switching {mod} to {repo}",
-                    &[("mod", &running.mod_name), ("repo", &running.to_repo)],
+                    &[("mod", &switch.mod_name), ("repo", &switch.to_repo)],
                 )))
                 .child(muted(stage_label(running.progress)))
                 .children(
@@ -1105,17 +1079,6 @@ impl Launcher {
     }
 }
 
-fn provider_switch_dependent_line(dep: &ProviderSwitchDependent, mod_id: &str) -> String {
-    if dep.required {
-        trf("Uses {id} · checked after switch", &[("id", mod_id)])
-    } else {
-        trf(
-            "Optional {id} plugin · checked after switch",
-            &[("id", mod_id)],
-        )
-    }
-}
-
 /// A partial write or an interrupted writer must not reserve the final report name.
 fn publish_report(
     folder: &std::path::Path,
@@ -1133,31 +1096,8 @@ fn publish_report(
 
 #[cfg(test)]
 mod tests {
-    use super::{provider_switch_dependent_line, publish_report};
+    use super::publish_report;
     use std::io::{self, Write};
-    use sunrise_launcher::browser::sunrise::ProviderSwitchDependent;
-
-    #[test]
-    fn provider_switch_dependent_line_distinguishes_required_and_optional() {
-        let required = ProviderSwitchDependent {
-            id: "iron_furnaces".into(),
-            name: "Iron Furnaces".into(),
-            required: true,
-        };
-        let optional = ProviderSwitchDependent {
-            id: "jei".into(),
-            name: "JEI".into(),
-            required: false,
-        };
-        assert_eq!(
-            provider_switch_dependent_line(&required, "jade"),
-            "Uses jade · checked after switch"
-        );
-        assert_eq!(
-            provider_switch_dependent_line(&optional, "jade"),
-            "Optional jade plugin · checked after switch"
-        );
-    }
 
     #[test]
     fn report_save_can_retry_after_a_partial_write_and_never_clobbers() {

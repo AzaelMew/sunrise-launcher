@@ -1287,7 +1287,7 @@ impl Launcher {
             primary("alt-project-add", self.registry_install_label())
                 .w_full()
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    this.add(id.clone());
+                    this.add_v2(id.clone());
                     cx.notify();
                 }))
                 .into_any_element()

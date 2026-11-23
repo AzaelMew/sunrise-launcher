@@ -105,17 +105,17 @@ pub enum Msg {
         Box<Result<crate::browser::sunrise::Switched, String>>,
     ),
     ProviderSwitchProgress(crate::browser::sunrise::InstallProgress),
+    /// The staged switch is proved; `true` publishes it.
     ProviderSwitchQuestion(
-        Box<crate::browser::sunrise::ProviderSwitchQuestion>,
-        std::sync::mpsc::Sender<crate::browser::sunrise::ProviderSwitchDecision>,
+        Box<crate::browser::sunrise::ProviderSwitchPreview>,
+        std::sync::mpsc::Sender<bool>,
     ),
-    ProviderSwitched(
-        PathBuf,
-        Box<Result<crate::browser::sunrise::ProviderSwitched, String>>,
-    ),
+    /// `Ok(true)` when the profile now uses the new port, `Ok(false)` when it stayed.
+    ProviderSwitched(PathBuf, Result<bool, String>),
+    /// A release's verified publisher changed; `true` accepts the new one.
     PublisherChangeQuestion(
         Box<crate::browser::sunrise::PublisherChangeQuestion>,
-        std::sync::mpsc::Sender<crate::browser::sunrise::PublisherChangeDecision>,
+        std::sync::mpsc::Sender<bool>,
     ),
     ReceiptAcknowledged(PathBuf, Result<bool, String>),
     JarConsent {

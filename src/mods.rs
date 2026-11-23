@@ -41,6 +41,7 @@ mod pack_discover;
 mod pack_project;
 mod packs;
 mod ports;
+pub(crate) use ports::PortSwitch;
 mod project;
 pub(crate) mod refused;
 mod search;

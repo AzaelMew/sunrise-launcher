@@ -5,11 +5,12 @@
 //! version` is always the default action; closing, pressing Escape, or clicking outside keeps
 //! the current version without changing the computer's remembered pin.
 use super::*;
-use sunrise_launcher::browser::sunrise::{PublisherChangeDecision, PublisherChangeQuestion};
+use sunrise_launcher::browser::sunrise::PublisherChangeQuestion;
 
 pub(super) struct PendingPublisherChange {
     pub(super) question: Box<PublisherChangeQuestion>,
-    pub(super) reply: Sender<PublisherChangeDecision>,
+    /// `true` accepts the new publisher.
+    pub(super) reply: Sender<bool>,
 }
 
 /// Player-facing lines for a publisher-change prompt, derived once from [`PublisherChangeQuestion`].
@@ -169,28 +170,25 @@ pub(crate) fn publisher_change_copy(question: &PublisherChangeQuestion) -> Publi
     }
 }
 
-pub(super) fn resolve_pending(
-    slot: &mut Option<PendingPublisherChange>,
-    decision: PublisherChangeDecision,
-) -> bool {
+pub(super) fn resolve_pending(slot: &mut Option<PendingPublisherChange>, accept: bool) -> bool {
     let Some(pending) = slot.take() else {
         return false;
     };
-    let _ = pending.reply.send(decision);
+    let _ = pending.reply.send(accept);
     true
 }
 
 pub(super) fn dismiss_pending(slot: &mut Option<PendingPublisherChange>) -> bool {
-    resolve_pending(slot, PublisherChangeDecision::default())
+    resolve_pending(slot, false)
 }
 
 pub(super) fn replace_pending(
     slot: &mut Option<PendingPublisherChange>,
     question: Box<PublisherChangeQuestion>,
-    reply: Sender<PublisherChangeDecision>,
+    reply: Sender<bool>,
 ) {
     if let Some(old) = slot.replace(PendingPublisherChange { question, reply }) {
-        let _ = old.reply.send(PublisherChangeDecision::KeepCurrent);
+        let _ = old.reply.send(false);
     }
 }
 
@@ -198,7 +196,7 @@ impl Launcher {
     pub(crate) fn publisher_change_question(
         &mut self,
         question: Box<PublisherChangeQuestion>,
-        reply: Sender<PublisherChangeDecision>,
+        reply: Sender<bool>,
     ) {
         replace_pending(&mut self.ui.sheets.publisher_change, question, reply);
     }
@@ -207,14 +205,12 @@ impl Launcher {
         dismiss_pending(&mut self.ui.sheets.publisher_change)
     }
 
-    pub(super) fn publisher_change_sheet(&self, cx: &mut Context<Self>) -> Stateful<Div> {
-        let pending = self
-            .ui
-            .sheets
-            .publisher_change
-            .as_ref()
-            .expect("publisher-change sheet follows pending prompt");
-        let copy = publisher_change_copy(&pending.question);
+    pub(super) fn publisher_change_sheet(
+        &self,
+        question: &PublisherChangeQuestion,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let copy = publisher_change_copy(question);
         let warn = Hsla::from(rgb(palette().warning));
         let warn_tint = warn.opacity(0.11);
         let warn_edge = warn.opacity(0.45);
@@ -320,20 +316,14 @@ impl Launcher {
             .border_color(warn_edge)
             .text_color(warn)
             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                resolve_pending(
-                    &mut this.ui.sheets.publisher_change,
-                    PublisherChangeDecision::AcceptNewPublisher,
-                );
+                resolve_pending(&mut this.ui.sheets.publisher_change, true);
                 cx.notify();
             }));
 
         // Default safe action: keep current version.
         let keep = crate::frame::primary("publisher-change-keep", copy.keep_button).on_click(
             cx.listener(|this, _: &ClickEvent, _, cx| {
-                resolve_pending(
-                    &mut this.ui.sheets.publisher_change,
-                    PublisherChangeDecision::KeepCurrent,
-                );
+                resolve_pending(&mut this.ui.sheets.publisher_change, false);
                 cx.notify();
             }),
         );
@@ -406,11 +396,7 @@ mod tests {
     }
 
     #[test]
-    fn publisher_change_default_is_keep_current_and_dismiss_keeps_current() {
-        assert_eq!(
-            PublisherChangeDecision::default(),
-            PublisherChangeDecision::KeepCurrent
-        );
+    fn dismissing_a_publisher_change_keeps_the_current_version() {
         let question = sample_question(
             100,
             "Zekrenlight/frontier",
@@ -424,7 +410,7 @@ mod tests {
         replace_pending(&mut slot, Box::new(question), tx);
         assert!(dismiss_pending(&mut slot));
         assert!(slot.is_none());
-        assert_eq!(rx.recv().unwrap(), PublisherChangeDecision::KeepCurrent);
+        assert!(!rx.recv().unwrap());
         assert!(!dismiss_pending(&mut slot));
     }
 
@@ -441,15 +427,9 @@ mod tests {
         let (tx, rx) = channel();
         let mut slot = None;
         replace_pending(&mut slot, Box::new(question), tx);
-        assert!(resolve_pending(
-            &mut slot,
-            PublisherChangeDecision::AcceptNewPublisher
-        ));
+        assert!(resolve_pending(&mut slot, true));
         assert!(slot.is_none());
-        assert_eq!(
-            rx.recv().unwrap(),
-            PublisherChangeDecision::AcceptNewPublisher
-        );
+        assert!(rx.recv().unwrap());
     }
 
     #[test]
@@ -461,10 +441,10 @@ mod tests {
         let mut slot = None;
         replace_pending(&mut slot, Box::new(q1), tx1);
         replace_pending(&mut slot, Box::new(q2), tx2);
-        assert_eq!(rx1.recv().unwrap(), PublisherChangeDecision::KeepCurrent);
+        assert!(!rx1.recv().unwrap());
         assert!(slot.is_some());
         assert!(dismiss_pending(&mut slot));
-        assert_eq!(rx2.recv().unwrap(), PublisherChangeDecision::KeepCurrent);
+        assert!(!rx2.recv().unwrap());
     }
 
     #[test]

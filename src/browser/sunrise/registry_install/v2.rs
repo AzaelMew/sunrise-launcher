@@ -209,9 +209,22 @@ pub struct ProviderSwitchPreview {
     pub to_project: String,
     pub to_name: String,
     pub to_version: String,
-    pub affected_dependents: Vec<V2AffectedDependent>,
     pub worlds: Vec<crate::worlds::WorldRisk>,
 }
+
+/// What the player is asked when a release's verified publisher differs from this computer's
+/// remembered pin for its project.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PublisherChangeQuestion {
+    pub mod_name: String,
+    /// The version installed in the profile now; `None` when this would be its first install there.
+    pub current_version: Option<String>,
+    pub incoming_version: String,
+    pub change: PublisherChange,
+}
+
+/// Asked before a release from a changed publisher is staged; `true` accepts the new publisher.
+pub type ConfirmPublisherChange<'a> = &'a dyn Fn(&PublisherChangeQuestion) -> bool;
 
 /// Callbacks for v2 install and update operations.
 #[derive(Clone, Copy)]
@@ -224,7 +237,7 @@ pub struct V2Hooks<'a> {
     /// Prompt when a project's attested repository ID or workflow path changed from this
     /// computer's remembered pin. Returning `false` (or `None`) aborts with
     /// [`InstallError::PublisherChanged`].
-    pub confirm_publisher_change: Option<&'a dyn Fn(&PublisherChange) -> bool>,
+    pub confirm_publisher_change: Option<ConfirmPublisherChange<'a>>,
 }
 
 /// Callbacks for explicit v2 provider switching.
@@ -1122,7 +1135,7 @@ pub(crate) fn stage_and_verify_v2_release(
     step: &PlannedV2Release,
     pin_dir: &Path,
     accepted_publisher_changes: &BTreeSet<String>,
-    confirm_publisher_change: Option<&dyn Fn(&PublisherChange) -> bool>,
+    confirm_publisher_change: Option<ConfirmPublisherChange<'_>>,
     fetch_bytes: BytesFetcher<'_>,
     verify_release: ReleaseVerifier<'_>,
 ) -> Result<(installed::Entry, PendingPin), InstallError> {
@@ -1202,7 +1215,19 @@ pub(crate) fn stage_and_verify_v2_release(
         Ok(attestation::PinStatus::FirstInstall | attestation::PinStatus::Matched) => {}
         Err(attestation::Error::PublisherChanged(change)) => {
             let confirmed = accepted_publisher_changes.contains(&project.id)
-                || confirm_publisher_change.is_some_and(|ask| ask(&change));
+                || confirm_publisher_change.is_some_and(|ask| {
+                    ask(&PublisherChangeQuestion {
+                        mod_name: project.name.clone(),
+                        current_version: Document::read(home).ok().and_then(|doc| {
+                            doc.row(&step.mod_id)
+                                .ok()
+                                .flatten()
+                                .and_then(|row| row["version"].as_str().map(str::to_owned))
+                        }),
+                        incoming_version: release.version.clone(),
+                        change: (*change).clone(),
+                    })
+                });
             if !confirmed {
                 return Err(InstallError::PublisherChanged(change));
             }
@@ -1759,9 +1784,21 @@ pub(crate) fn switch_provider_v2_with(
     )?;
     let step = planned_from(to_project, release, false);
 
-    // Check dependents in this profile that depend on `mod_id` (pinned to old project or semver).
-    let affected_dependents =
-        find_affected_dependents(&index, &before, mod_id, &to_project.id, &release.version);
+    // An enabled dependent pinned to the old project, or whose requirement the new release can't
+    // meet, refuses the switch before anything downloads.
+    if let Some(incompatible) =
+        find_affected_dependents(&index, &before, mod_id, &to_project.id, &release.version).first()
+    {
+        return Err(InstallError::Refused(trf(
+            "Cannot switch {mod} to {project}: {dependent} ({reason}).",
+            &[
+                ("mod", mod_id),
+                ("project", &to_project.name),
+                ("dependent", &incompatible.name),
+                ("reason", &incompatible.reason),
+            ],
+        )));
+    }
 
     // Plan any new required dependencies of the incoming provider.
     let mut dep_queue: VecDeque<(String, bool, String)> = VecDeque::new();
@@ -1885,36 +1922,6 @@ pub(crate) fn switch_provider_v2_with(
     }
     doc.write(next.path())?;
 
-    // Check affected dependents before proving: if an enabled dependent is pinned to the old
-    // project or fails manifest checks with the new provider, refuse with the preview context.
-    if let Some(incompatible) = affected_dependents.first() {
-        // Still allow the preview hook to see what would break if caller wants, or refuse if
-        // manifest_conflict / pinned project cannot be satisfied.
-        let (suspect, _) =
-            mutations::update_worlds(next.path(), std::iter::once(&current.package))?;
-        let worlds = mutations::world_evidence(&instance.home, &suspect)?;
-        let preview = ProviderSwitchPreview {
-            mod_id: mod_id.to_owned(),
-            from_project: current.ownership.project_id().map(str::to_owned),
-            from_name: current.package.manifest.name.clone(),
-            to_project: to_project.id.clone(),
-            to_name: to_project.name.clone(),
-            to_version: release.version.clone(),
-            affected_dependents: affected_dependents.clone(),
-            worlds,
-        };
-        let _ = (hooks.approve_switch)(&preview);
-        return Err(InstallError::Refused(trf(
-            "Cannot switch {mod} to {project}: {dependent} ({reason}).",
-            &[
-                ("mod", mod_id),
-                ("project", &to_project.name),
-                ("dependent", &incompatible.name),
-                ("reason", &incompatible.reason),
-            ],
-        )));
-    }
-
     check_staged_v2_candidate(next.path(), &index, |id| entries.contains_key(id))?;
 
     if !native_names.is_empty() {
@@ -1959,7 +1966,6 @@ pub(crate) fn switch_provider_v2_with(
         to_project: to_project.id.clone(),
         to_name: to_project.name.clone(),
         to_version: release.version.clone(),
-        affected_dependents,
         worlds: worlds.clone(),
     };
     if !(hooks.approve_switch)(&preview) {
