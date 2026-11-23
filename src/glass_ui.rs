@@ -208,11 +208,48 @@ fn fold_turns(
 /// the two as the menu opens and closes. Never on a page's first frame, and under reduced
 /// motion it is at its end at once (`motion::eased`). `id` names it among the others.
 pub fn fold_chevron(id: impl Into<SharedString>, open: bool, size: f32, ink: Hsla) -> AnyElement {
+    turning(
+        id.into(),
+        open,
+        "arrow-down-01",
+        std::f32::consts::PI,
+        size,
+        ink,
+    )
+}
+
+/// A section's chevron: pointing right while it is folded and down while it is open, turning
+/// a quarter between the two, as [`fold_chevron`] turns.
+pub fn disclosure_chevron(
+    id: impl Into<SharedString>,
+    open: bool,
+    size: f32,
+    ink: Hsla,
+) -> AnyElement {
+    turning(
+        id.into(),
+        open,
+        "arrow-right-01",
+        std::f32::consts::FRAC_PI_2,
+        size,
+        ink,
+    )
+}
+
+/// `glyph` turned by `turn` (radians, clockwise) while open, easing between closed and open
+/// each time `open` changes after its first frame.
+fn turning(
+    id: SharedString,
+    open: bool,
+    glyph: &'static str,
+    turn: f32,
+    size: f32,
+    ink: Hsla,
+) -> AnyElement {
     use gpui::AnimationExt as _;
-    let id = id.into();
     let turns = FOLDS.with_borrow_mut(|folds| fold_turns(folds, id.clone(), open));
-    let at = |up: f32| gpui::Transformation::rotate(gpui::radians(std::f32::consts::PI * up));
-    let chevron = icon("arrow-down-01", size, ink);
+    let at = move |t: f32| gpui::Transformation::rotate(gpui::radians(turn * t));
+    let chevron = icon(glyph, size, ink);
     if turns == 0 {
         return chevron
             .with_transformation(at(if open { 1. } else { 0. }))

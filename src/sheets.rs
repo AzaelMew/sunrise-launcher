@@ -1072,12 +1072,9 @@ impl Launcher {
                     .text_size(px(tokens::SMALL))
                     .text_color(rgb(palette().muted))
                     .cursor_pointer()
-                    .child(blocks::icon(
-                        if open {
-                            "chevron-down"
-                        } else {
-                            "chevron-right"
-                        },
+                    .child(crate::glass_ui::disclosure_chevron(
+                        "resolve-details",
+                        open,
                         11.,
                         rgb(palette().muted).into(),
                     ))
