@@ -131,7 +131,7 @@ pub fn allowed_native_files() -> Result<BTreeSet<String>, String> {
     allowed_native_files_in(&data_dir())
 }
 
-pub(crate) fn allowed_native_files_in(data: &Path) -> Result<BTreeSet<String>, String> {
+pub fn allowed_native_files_in(data: &Path) -> Result<BTreeSet<String>, String> {
     let live: Map<String, Value> = SettingsFence::open(data)?.read()?;
     Ok(live
         .get(NATIVE_FILES)
