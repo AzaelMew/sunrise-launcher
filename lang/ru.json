@@ -1643,5 +1643,17 @@
   "Public IPv4 unavailable for this listener": "Подключение по внешнему IPv4 недоступно",
   "No game address is available through Tailscale.": "Адрес игрового сервера в Tailscale недоступен.",
   "Friends you share this computer with can reach all of it, not only Minecraft.": "Друзья, которым вы предоставите доступ к этому компьютеру, смогут подключаться к любым его портам, включая порты других приложений.",
-  "The game port is unavailable, so Sunrise can't check access to that port.": "Игровой порт недоступен, поэтому Sunrise не может проверить доступ к нему."
+  "The game port is unavailable, so Sunrise can't check access to that port.": "Игровой порт недоступен, поэтому Sunrise не может проверить доступ к нему.",
+  "Sunrise mod registry key not configured.": "Sunrise mod registry key not configured.",
+  "The mod registry answered {code}.": "The mod registry answered {code}.",
+  "The mod registry can't be reached: {error}": "The mod registry can't be reached: {error}",
+  "The mod registry didn't send the full index.": "The mod registry didn't send the full index.",
+  "The mod registry index is malformed: {reason}": "The mod registry index is malformed: {reason}",
+  "The mod registry index is too large.": "The mod registry index is too large.",
+  "The mod registry index signature could not be verified.": "The mod registry index signature could not be verified.",
+  "The mod registry index was last updated on {date} and may be out of date.": "The mod registry index was last updated on {date} and may be out of date.",
+  "The mod registry requires HTTPS.": "The mod registry requires HTTPS.",
+  "The mod registry returned an older index (serial {got}, expected at least {highest}).": "The mod registry returned an older index (serial {got}, expected at least {highest}).",
+  "The mod registry signature is too large.": "The mod registry signature is too large.",
+  "The mod registry state file could not be read: {reason}": "The mod registry state file could not be read: {reason}"
 }
