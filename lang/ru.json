@@ -1875,5 +1875,6 @@
   "No Stable build yet. Plays Nightly until there is one.": "No Stable build yet. Plays Nightly until there is one.",
   "The mod registry file has no signature.": "The mod registry file has no signature.",
   "Sunrise couldn't verify the profile's saved game build ({check}: {error}).": "Sunrise couldn't verify the profile's saved game build ({check}: {error}).",
-  "Sunrise couldn't verify the profile's saved game build ({check}).": "Sunrise couldn't verify the profile's saved game build ({check})."
+  "Sunrise couldn't verify the profile's saved game build ({check}).": "Sunrise couldn't verify the profile's saved game build ({check}).",
+  "The active server runtime uses Minecraft {active}, but Sunrise {tag} uses Minecraft {selected}. Choose a Sunrise build for Minecraft {active}.": "The active server runtime uses Minecraft {active}, but Sunrise {tag} uses Minecraft {selected}. Choose a Sunrise build for Minecraft {active}."
 }
