@@ -1346,32 +1346,6 @@ impl Launcher {
             }
         };
 
-        let pin_note = div()
-            .p(px(10.))
-            .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
-            .border_1()
-            .border_color(c(p.divider))
-            .bg(c(p.field))
-            .flex()
-            .items_start()
-            .gap(px(8.))
-            .child(
-                div()
-                    .pt(px(2.))
-                    .child(crate::glass_ui::icon("shield", 14., c(p.muted))),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .text_size(px(tokens::SMALL))
-                    .text_color(c(p.muted))
-                    .child(trf(
-                        "First install remembers github.com/{repo} as this mod's publisher. Future updates stop and ask if it ever changes.",
-                        &[("repo", &vp.repository_name)],
-                    )),
-            );
-
         let action_card = card()
             .p(px(16.))
             .flex()
@@ -1432,8 +1406,7 @@ impl Launcher {
                     .child(crate::glass_ui::icon("tick-02", 14., c(p.muted)))
                     .child(tr("Reviewed by Sunrise")),
             )
-            .child(published_row)
-            .child(pin_note);
+            .child(published_row);
 
         let link_url = |link: &Option<SourceLink>| -> Option<String> {
             link.as_ref().map(|l| match l {
