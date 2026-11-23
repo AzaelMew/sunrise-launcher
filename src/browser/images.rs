@@ -175,66 +175,6 @@ fn prune(folder: &Path, max: u64) {
     }
 }
 
-/// The most a jar's icon may weigh: a mod's own logo, never a texture atlas.
-const MAX_JAR_ICON: u64 = 2 << 20;
-
-/// The icon a mod's jar names for itself: Fabric's `fabric.mod.json` and Quilt's `quilt.mod.json`
-/// (`"icon"`: a path, or paths by size, the largest taken), Forge's and NeoForge's `mods.toml`
-/// (`logoFile`). The path inside the jar.
-pub fn jar_icon_name(
-    fabric: Option<&str>,
-    quilt: Option<&str>,
-    toml: Option<&str>,
-) -> Option<String> {
-    let pick = |icon: &serde_json::Value| -> Option<String> {
-        match icon {
-            serde_json::Value::String(s) => Some(s.clone()),
-            serde_json::Value::Object(sizes) => sizes
-                .iter()
-                .filter_map(|(size, path)| Some((size.parse::<u32>().ok()?, path.as_str()?)))
-                .max_by_key(|(size, _)| *size)
-                .map(|(_, path)| path.to_owned()),
-            _ => None,
-        }
-    };
-    let json =
-        |text: Option<&str>| -> Option<serde_json::Value> { serde_json::from_str(text?).ok() };
-    let named = json(fabric)
-        .and_then(|v| pick(&v["icon"]))
-        .or_else(|| json(quilt).and_then(|v| pick(&v["quilt_loader"]["metadata"]["icon"])))
-        .or_else(|| {
-            toml?.lines().find_map(|line| {
-                let value = line
-                    .trim()
-                    .strip_prefix("logoFile")?
-                    .trim()
-                    .strip_prefix('=')?;
-                Some(value.trim().trim_matches('"').trim_matches('\'').to_owned())
-            })
-        })?;
-    let named = named.trim_start_matches('/').to_owned();
-    (!named.is_empty() && !named.contains("..")).then_some(named)
-}
-
-/// A mod jar's own icon, scaled to fit `side` pixels, as PNG bytes: read from the jar, never
-/// fetched. None when the jar names none or it isn't an image.
-pub fn jar_icon(jar: &Path, side: u32) -> Option<Vec<u8>> {
-    let mut zip = zip::ZipArchive::new(fs::File::open(jar).ok()?).ok()?;
-    let mut read = |name: &str, max: u64| -> Option<Vec<u8>> {
-        let file = zip.by_name(name).ok()?;
-        let mut bytes = Vec::new();
-        file.take(max + 1).read_to_end(&mut bytes).ok()?;
-        (bytes.len() as u64 <= max).then_some(bytes)
-    };
-    let text = |b: Option<Vec<u8>>| b.and_then(|b| String::from_utf8(b).ok());
-    let fabric = text(read("fabric.mod.json", 1 << 20));
-    let quilt = text(read("quilt.mod.json", 1 << 20));
-    let toml = text(read("META-INF/neoforge.mods.toml", 1 << 20))
-        .or_else(|| text(read("META-INF/mods.toml", 1 << 20)));
-    let name = jar_icon_name(fabric.as_deref(), quilt.as_deref(), toml.as_deref())?;
-    fit_png(read(&name, MAX_JAR_ICON)?, side, 4096, 64 << 20)
-}
-
 /// `bytes` decoded (at most `max_side` pixels a side and `max_alloc` bytes), scaled down to fit
 /// `side` pixels, as PNG bytes. None when they aren't an image within those limits.
 pub fn fit_png(bytes: Vec<u8>, side: u32, max_side: u32, max_alloc: u64) -> Option<Vec<u8>> {
@@ -262,57 +202,6 @@ pub fn fit_png(bytes: Vec<u8>, side: u32, max_side: u32, max_alloc: u64) -> Opti
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_jar_names_its_icon() {
-        let fabric = r#"{"id": "lumen", "icon": "assets/lumen/icon.png"}"#;
-        assert_eq!(
-            jar_icon_name(Some(fabric), None, None).as_deref(),
-            Some("assets/lumen/icon.png")
-        );
-        let sizes = r#"{"icon": {"16": "small.png", "128": "big.png", "64": "mid.png"}}"#;
-        assert_eq!(
-            jar_icon_name(Some(sizes), None, None).as_deref(),
-            Some("big.png")
-        );
-        let quilt = r#"{"quilt_loader": {"metadata": {"icon": "/q.png"}}}"#;
-        assert_eq!(
-            jar_icon_name(None, Some(quilt), None).as_deref(),
-            Some("q.png")
-        );
-        let toml = "modLoader=\"javafml\"\n[[mods]]\nmodId=\"x\"\nlogoFile = \"logo.png\"\n";
-        assert_eq!(
-            jar_icon_name(None, None, Some(toml)).as_deref(),
-            Some("logo.png")
-        );
-        assert_eq!(
-            jar_icon_name(Some(r#"{"icon": "../x.png"}"#), None, None),
-            None
-        );
-        assert_eq!(jar_icon_name(Some("{}"), None, None), None);
-    }
-
-    #[test]
-    fn a_jar_icon_is_scaled_to_the_row() {
-        let dir = std::env::temp_dir().join(format!("jar-icon-{}", std::process::id()));
-        fs::create_dir_all(&dir).unwrap();
-        let jar = dir.join("lumen.jar");
-        let mut png = Vec::new();
-        image::RgbaImage::from_pixel(256, 256, image::Rgba([200, 80, 40, 255]))
-            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
-            .unwrap();
-        let mut zip = zip::ZipWriter::new(fs::File::create(&jar).unwrap());
-        let options = zip::write::SimpleFileOptions::default();
-        zip.start_file("fabric.mod.json", options).unwrap();
-        std::io::Write::write_all(&mut zip, br#"{"icon": "icon.png"}"#).unwrap();
-        zip.start_file("icon.png", options).unwrap();
-        std::io::Write::write_all(&mut zip, &png).unwrap();
-        zip.finish().unwrap();
-        let icon = jar_icon(&jar, ROW).expect("the jar's icon");
-        let decoded = image::load_from_memory(&icon).unwrap();
-        assert_eq!((decoded.width(), decoded.height()), (ROW, ROW));
-        let _ = fs::remove_dir_all(&dir);
-    }
 
     #[test]
     fn an_image_goes_stale_after_a_while() {

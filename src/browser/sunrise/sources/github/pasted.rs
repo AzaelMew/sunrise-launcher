@@ -26,10 +26,8 @@ pub(super) fn prove_pasted(
     let identity = github.repository(state, &requested_repo)?;
     let repo = &identity.full_name;
     let release: Option<GithubRelease> = match &link.target {
-        Target::Latest => github.api(state, repo, &["releases", "latest"], None)?,
-        Target::Tag(tag) if safe_ref(tag) => {
-            github.api(state, repo, &["releases", "tags", tag], None)?
-        }
+        Target::Latest => github.api(state, repo, &["releases", "latest"])?,
+        Target::Tag(tag) if safe_ref(tag) => github.api(state, repo, &["releases", "tags", tag])?,
         Target::Tag(_) => return Err(Failure::RefUnavailable),
         _ => None,
     };
@@ -144,7 +142,7 @@ fn prove_commit(
     if !(7..=40).contains(&input.len()) || !expected.starts_with(&input.to_ascii_lowercase()) {
         return Err(Failure::RefUnavailable);
     }
-    let receipt: Option<Commit> = github.api(state, repo, &["git", "commits", expected], None)?;
+    let receipt: Option<Commit> = github.api(state, repo, &["git", "commits", expected])?;
     Ok(receipt.map(|commit| commit.sha))
 }
 
@@ -176,7 +174,7 @@ pub(super) fn compare(
         merge_base_commit: Commit,
     }
     let receipt: Comparison = github
-        .api(state, repo, &["compare", &format!("{old}...{new}")], None)?
+        .api(state, repo, &["compare", &format!("{old}...{new}")])?
         .ok_or(Failure::RefUnavailable)?;
     Ok(receipt.status == "ahead" && receipt.merge_base_commit.sha == old)
 }
