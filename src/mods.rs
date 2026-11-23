@@ -32,6 +32,7 @@ mod actions;
 mod build_modal;
 pub(crate) mod build_run;
 mod collection;
+mod collection_v2;
 mod data_packs;
 mod discover;
 mod installed_view;
@@ -75,6 +76,7 @@ enum Catalog {
 
 struct V2CatalogPayload {
     cards: Vec<model::discover_v2::V2Card>,
+    collections: Vec<model::discover_v2::V2Collection>,
     categories: Vec<String>,
     /// The index lists the selected profile's build among its offered builds.
     build_listed: bool,
@@ -87,6 +89,7 @@ enum V2Catalog {
     Loading,
     Ready {
         cards: Rc<[model::discover_v2::V2Card]>,
+        collections: Rc<[model::discover_v2::V2Collection]>,
         categories: Rc<[String]>,
         build_listed: bool,
         stale_warning: Option<String>,
@@ -436,6 +439,7 @@ pub(crate) struct ModsState {
     nightly: nightly::State,
     /// The collection whose page is open and the members ticked on it.
     picks: Option<collection::Picks>,
+    v2_picks: Option<collection_v2::V2Picks>,
     /// My own batch (update or remove): its line and fraction.
     busy: Option<(String, f32)>,
     notice: Option<Result<String, String>>,
@@ -507,6 +511,7 @@ impl Default for ModsState {
             page_request: 0,
             nightly: Default::default(),
             picks: None,
+            v2_picks: None,
             busy: None,
             notice: None,
             errors: HashMap::new(),
@@ -1003,6 +1008,7 @@ impl Launcher {
                         m.v2_catalog = match result {
                             Ok(payload) => V2Catalog::Ready {
                                 cards: payload.cards.into(),
+                                collections: payload.collections.into(),
                                 categories: payload.categories.into(),
                                 build_listed: payload.build_listed,
                                 stale_warning: payload.stale_warning,
@@ -1170,10 +1176,12 @@ impl Launcher {
                 &crate::sheets::build_name,
             );
             let categories = model::discover_v2::categories(&cards);
+            let collections = model::discover_v2::collections(&catalog.index, &cards);
             let build_listed = model::discover_v2::build_listed(&catalog.index, build.as_deref());
             self.ui.mods.v2_catalog_build = Some(build);
             self.ui.mods.v2_catalog = V2Catalog::Ready {
                 cards: cards.into(),
+                collections: collections.into(),
                 categories: categories.into(),
                 build_listed,
                 stale_warning: catalog.stale_warning,
@@ -1197,7 +1205,9 @@ impl Launcher {
                     &crate::sheets::build_name,
                 );
                 let categories = model::discover_v2::categories(&cards);
+                let collections = model::discover_v2::collections(&catalog.index, &cards);
                 V2CatalogPayload {
+                    collections,
                     build_listed: model::discover_v2::build_listed(
                         &catalog.index,
                         build.as_deref(),
