@@ -985,15 +985,19 @@ impl Launcher {
             tr("Counting…")
         };
         let clear_all = button("alt-storage-clear-all", tr("Clear all…"));
+        let size = total.map_or_else(|| uncounted.to_string(), storage::format_bytes);
+        let detail = trf(
+            "{size}. Files Sunrise can fetch or make again; your worlds, mods and settings are never part of it.",
+            &[("size", &size)],
+        );
+        let detail = if size.ends_with('…') {
+            detail.replacen("….", "…", 1)
+        } else {
+            detail
+        };
         let mut cache = vec![row(
             tr("Downloads kept for reuse"),
-            trf(
-                "{size}. Files Sunrise can fetch or make again; your worlds, mods and settings are never part of it.",
-                &[(
-                    "size",
-                    &total.map_or_else(|| uncounted.to_string(), storage::format_bytes),
-                )],
-            ),
+            detail,
             div()
                 .child(
                     button("alt-storage-recount", tr("Recount")).on_click(cx.listener(
