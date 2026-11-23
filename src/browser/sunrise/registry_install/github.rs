@@ -97,11 +97,6 @@ pub fn add_github(
     choose: impl FnOnce() -> Result<FirstBuild, String>,
     hooks: InstallHooks<'_>,
 ) -> Result<Vec<github_mods::Origin>, InstallError> {
-    let ManualRelease {
-        found,
-        selected,
-        base,
-    } = release;
     let packages = selected
         .iter()
         .map(|package| {
