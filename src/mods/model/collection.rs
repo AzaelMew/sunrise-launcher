@@ -106,6 +106,8 @@ pub(in crate::mods) fn cards(index: &Index, mods: &[Card]) -> Vec<Card> {
                 members: Some(members.len()),
                 part_of: None,
                 library: false,
+                // Filled in by `model::cards`, with the mods' own.
+                haystack: String::new(),
             })
         })
         .collect()

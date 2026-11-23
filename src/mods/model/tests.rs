@@ -297,6 +297,29 @@ fn discover_lists_mods_not_packs_and_says_which_fit() {
 }
 
 #[test]
+fn search_matches_any_case_in_every_field_a_card_shows() {
+    let mut p = project("ender", "mod", &[("1.0.0", GAME, A)], serde_json::json!({}));
+    p["name"] = "Über Höhlen".into();
+    p["summary"] = "Lights the DEEP caves".into();
+    p["authors"] = serde_json::json!(["Ärne Smith"]);
+    let cards = cards(&index(vec![p], vec![]), GAME);
+    let mut f = Filters::default();
+    for text in [
+        "ENDER",
+        "über höhlen",
+        "ÜBER",
+        "deep caves",
+        "ärne",
+        "smith ender",
+    ] {
+        f.text = text.into();
+        assert_eq!(discover(&cards, &f), [0], "{text}");
+    }
+    f.text = "über nothing".into();
+    assert!(discover(&cards, &f).is_empty(), "every word has to match");
+}
+
+#[test]
 fn a_taken_down_version_is_refused_with_the_registrys_reason() {
     let idx = index(
         vec![project(
@@ -1479,4 +1502,39 @@ fn an_unreadable_file_is_never_on_and_cannot_switch_a_working_mod_of_its_name() 
     assert!(good.on);
     assert_eq!(good.need, Some(Need::Permission));
     assert!(cells(good, None, None, true).switch);
+}
+
+#[test]
+#[ignore = "local benchmark; run with --release --ignored --nocapture"]
+fn benchmark_discover_search() {
+    let projects = (0..600)
+        .map(|n| {
+            let mut p = project(
+                &format!("mod-{n}"),
+                "mod",
+                &[("1.0.0", GAME, A)],
+                serde_json::json!({"downloads": n}),
+            );
+            p["summary"] = "Adds a handful of new blocks, a crafting bench and some ambient sounds to caves and the deep dark, with options for each.".into();
+            p
+        })
+        .collect();
+    let cards = cards(&index(projects, vec![]), GAME);
+    let f = Filters {
+        text: "deep bench".into(),
+        ..Filters::default()
+    };
+    for _ in 0..50 {
+        std::hint::black_box(discover(&cards, &f));
+    }
+    let runs = 2000;
+    let t = std::time::Instant::now();
+    for _ in 0..runs {
+        std::hint::black_box(discover(&cards, std::hint::black_box(&f)));
+    }
+    println!(
+        "discover over {} cards: {:.1} µs a call",
+        cards.len(),
+        t.elapsed().as_secs_f64() * 1e6 / runs as f64
+    );
 }

@@ -67,7 +67,8 @@ enum Menu {
 enum Catalog {
     Idle,
     Loading,
-    Ready(Vec<Card>, Vec<String>),
+    /// Shared, not owned: Discover draws from it every frame and clones only the handles.
+    Ready(Rc<[Card]>, Rc<[String]>),
     Failed(String),
 }
 
@@ -866,7 +867,9 @@ impl Launcher {
                 Event::Catalog(game, result) => {
                     if m.catalog_game.as_ref() == Some(&game) {
                         m.catalog = match result {
-                            Ok((cards, categories)) => Catalog::Ready(cards, categories),
+                            Ok((cards, categories)) => {
+                                Catalog::Ready(cards.into(), categories.into())
+                            }
                             Err(error) => Catalog::Failed(error),
                         };
                     }
