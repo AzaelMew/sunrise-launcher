@@ -104,6 +104,7 @@ pub(crate) struct RowDisplay {
     pub(crate) picture: AnyElement,
     pub(crate) title: String,
     pub(crate) detail: Option<String>,
+    pub(crate) badge: Option<crate::mods::ManualBadge>,
     pub(crate) tail: Option<String>,
 }
 
@@ -405,10 +406,13 @@ impl Launcher {
             picture,
             title,
             detail,
+            badge,
             tail,
         } = display;
+        let badge_label = badge.map(|b| b.label().to_owned());
         let full = detail
             .iter()
+            .chain(&badge_label)
             .chain(&tail)
             .fold(title.clone(), |label, next| format!("{label} · {next}"));
         let focus = self.ui.home.tabs.focus_for(id.clone(), cx);
@@ -431,6 +435,7 @@ impl Launcher {
                         detail.map(|text| muted(text).flex_none().truncate().max_w(px(130.))),
                     ),
             )
+            .children(badge.map(crate::mods::manual_badge_pill))
             .children(tail.map(|text| muted(text).max_w(px(170.)).truncate()))
             .child(blocks::icon(
                 "chevron-right",

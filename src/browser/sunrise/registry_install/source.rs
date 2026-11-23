@@ -185,6 +185,7 @@ pub fn prepare_source(
             base,
             vec![(PastedSource { package, origin }, predecessor)],
             false,
+            false,
             cancellation,
         )
         .map(|mut prepared| prepared.pop().expect("one source was checked"))
@@ -270,6 +271,7 @@ pub fn prepare_pasted_sources(
             .map(|package| (package, None))
             .collect(),
         true,
+        true,
         cancellation,
     );
     if cancellation.is_stopped() {
@@ -285,6 +287,7 @@ fn prepare_packages(
     base: &str,
     packages: Vec<(PastedSource, Option<Origin>)>,
     follow_catalogue: bool,
+    refresh_manual: bool,
     cancellation: &native_mods::Cancellation,
 ) -> Result<Vec<PreparedSource>, SourceError> {
     let stage = tempfile::tempdir().map_err(|e| e.to_string())?;
@@ -294,6 +297,7 @@ fn prepare_packages(
         base,
         packages,
         Some(stage.path()),
+        refresh_manual,
         cancellation,
     )?;
     let entries = result.iter().map(PreparedSource::entry).collect::<Vec<_>>();
@@ -304,7 +308,7 @@ fn prepare_packages(
         result[0].active.as_ref(),
         base,
     )?;
-    if follow_catalogue {
+    if follow_catalogue && origins.is_empty() {
         complete_source_add(
             instance,
             stage.path(),
@@ -334,6 +338,7 @@ pub fn add_sources(
         base,
         selected.into_iter().map(|entry| (entry, None)).collect(),
         None,
+        false,
         hooks.cancellation,
     )?;
     if prepared.is_empty() {
@@ -348,12 +353,25 @@ pub fn add_sources(
     )
 }
 
+fn same_manual_source(installed: &Origin, next: &Origin) -> bool {
+    installed.is_manual()
+        && installed.local_folder_path().is_none()
+        && installed.id == next.id
+        && installed.owner.eq_ignore_ascii_case(&next.owner)
+        && installed.repo.eq_ignore_ascii_case(&next.repo)
+        && match (&installed.source, &next.source) {
+            (Some(old), Some(new)) => old.repo_id == new.repo_id && old.manifest == new.manifest,
+            _ => false,
+        }
+}
+
 fn bind_packages(
     instance: &Instance,
     identity: Identity,
     base: &str,
     packages: Vec<(PastedSource, Option<Origin>)>,
     copy_to: Option<&Path>,
+    refresh_manual: bool,
     cancellation: &native_mods::Cancellation,
 ) -> Result<(Vec<PreparedSource>, BTreeMap<String, Origin>), SourceError> {
     if packages.is_empty() {
@@ -380,14 +398,32 @@ fn bind_packages(
             return Err(changed_source_target());
         }
         let before = managed_play::inputs(&instance.home, None)?;
-        let selected = packages
-            .into_iter()
+        let mut selected = Vec::with_capacity(packages.len());
+        for (pasted, mut predecessor) in packages {
             // An earlier Add only satisfies a pick after publishing these exact bytes.
             // A checked preview/update has predecessor rules of its own and never skips here.
-            .filter(|(pasted, _)| {
-                copy_to.is_some() || !source_is_published(instance, active.as_ref(), &pasted.origin)
-            })
-            .map(|(pasted, predecessor)| PreparedSource {
+            if copy_to.is_none() && source_is_published(instance, active.as_ref(), &pasted.origin) {
+                continue;
+            }
+            if refresh_manual
+                && predecessor.is_none()
+                && pasted.origin.added_from == Some(AddedFrom::Github)
+            {
+                if let Ok(existing) =
+                    github::installed_origin(&instance.home, &pasted.origin.id, |_| true)
+                {
+                    if same_manual_source(&existing, &pasted.origin) {
+                        if existing.sha256.eq_ignore_ascii_case(&pasted.origin.sha256) {
+                            return Err(SourceError::from(InstallError::Refused(
+                                tr("That GitHub archive is already installed. Nothing was changed.")
+                                    .into(),
+                            )));
+                        }
+                        predecessor = Some(existing);
+                    }
+                }
+            }
+            selected.push(PreparedSource {
                 identity,
                 base: base.into(),
                 active: active.clone(),
@@ -396,8 +432,8 @@ fn bind_packages(
                 package: pasted.package,
                 origin: pasted.origin,
                 predecessor,
-            })
-            .collect::<Vec<_>>();
+            });
+        }
         let origins = if let Some(stage) = copy_to {
             let entries = selected
                 .iter()

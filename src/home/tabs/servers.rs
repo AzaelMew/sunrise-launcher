@@ -48,6 +48,7 @@ impl Launcher {
                         picture,
                         title: server.name.clone(),
                         detail: (!compact || status.is_none()).then(|| server.ip.clone()),
+                        badge: None,
                         tail: status,
                     },
                     cx,

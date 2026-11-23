@@ -34,6 +34,58 @@ pub fn update_github(
     Ok(replacement.clone())
 }
 
+/// The GitHub release packages "Add from source" installs.
+pub struct ManualRelease<'a> {
+    pub found: &'a github_mods::Resolved,
+    pub selected: &'a [github_mods::Packed],
+    /// The game build the selection was checked against, when it was.
+    pub base: Option<&'a str>,
+}
+
+/// Install checked GitHub packages from "Add from source": a verified same-repository manual
+/// release predecessor goes through the checked update path (with world review), while
+/// other-source collisions stay refused.
+pub fn install_github_manual(
+    instance: &Instance,
+    identity: Identity,
+    release: ManualRelease<'_>,
+    choose: impl FnOnce() -> Result<FirstBuild, String>,
+    hooks: InstallHooks<'_>,
+    approve: &dyn Fn(&ChangeImpact) -> bool,
+) -> Result<Vec<github_mods::Origin>, InstallError> {
+    let ManualRelease {
+        found,
+        selected,
+        base,
+    } = release;
+    let packages = selected
+        .iter()
+        .map(|package| {
+            let origin = package.checked_origin(found).ok_or_else(|| {
+                InstallError::Refused(tr("Couldn't verify the selected GitHub package.").into())
+            })?;
+            Ok(Entry {
+                package,
+                origin,
+                prior: Prior::ManualRelease,
+            })
+        })
+        .collect::<Result<Vec<_>, InstallError>>()?;
+    edit_github(
+        instance,
+        identity,
+        &packages,
+        choose,
+        hooks,
+        Some(approve),
+        base.map_or(Check::Current, Check::Base),
+    )?;
+    Ok(packages
+        .into_iter()
+        .map(|entry| entry.origin.clone())
+        .collect())
+}
+
 /// Install all selected packages together. Fresh Add never silently upgrades or claims an
 /// existing file, even when it came from the same repository; use checked Update for that.
 pub fn add_github(
@@ -45,6 +97,11 @@ pub fn add_github(
     choose: impl FnOnce() -> Result<FirstBuild, String>,
     hooks: InstallHooks<'_>,
 ) -> Result<Vec<github_mods::Origin>, InstallError> {
+    let ManualRelease {
+        found,
+        selected,
+        base,
+    } = release;
     let packages = selected
         .iter()
         .map(|package| {
@@ -83,6 +140,7 @@ pub(super) struct Entry<'a> {
 pub(super) enum Prior<'a> {
     Fresh,
     Release,
+    ManualRelease,
     Source(&'a github_mods::Origin),
 }
 
@@ -206,7 +264,7 @@ pub(super) fn edit_github(
         let approve = approve.ok_or_else(|| {
             InstallError::Refused(tr("Review the update before building.").into())
         })?;
-        let (impact, suspect) = if source.is_some() {
+        let (impact, suspect) = if source.is_some() || packages.len() != 1 || previous.len() != 1 {
             source_review(&instance.home, old.path(), home, &previous, packages)?
         } else {
             let before = inventory(old.path(), None)?;
@@ -454,6 +512,29 @@ pub(super) fn predecessors(
                 }
                 previous.insert(id.clone(), old);
             }
+            Prior::ManualRelease => {
+                if entry.origin.is_release_asset() {
+                    if let Ok(old) = installed_origin(home, id, |origin| {
+                        origin.is_release_asset() && origin.is_manual()
+                    }) {
+                        if !old.owner.eq_ignore_ascii_case(&entry.origin.owner)
+                            || !old.repo.eq_ignore_ascii_case(&entry.origin.repo)
+                        {
+                            return Err(InstallError::Refused(tr("Choose a release from the same GitHub repository as the installed mod.").into()));
+                        }
+                        if old.sha256.eq_ignore_ascii_case(&entry.origin.sha256) {
+                            return Err(InstallError::Refused(
+                                tr("That GitHub archive is already installed. Nothing was changed.").into(),
+                            ));
+                        }
+                        previous.insert(id.clone(), old);
+                    } else {
+                        check_fresh(home, id)?;
+                    }
+                } else {
+                    check_fresh(home, id)?;
+                }
+            }
             Prior::Source(expected) => {
                 let old = installed_origin(home, id, |origin| {
                     origin == expected && origin.source.is_some()
@@ -528,9 +609,9 @@ fn check_fresh(home: &Path, id: &str) -> Result<(), InstallError> {
     let present = inventory(home, None)?;
     let collision = || {
         InstallError::Refused(trf(
-        "{mod} is already installed. Use Update for a GitHub release or remove the existing mod first.",
-        &[("mod", id)],
-    ))
+            "{mod} is already installed from another source or location. Remove the existing mod first.",
+            &[("mod", id)],
+        ))
     };
     if present.contains_key(id) || claims.single(id).map_err(|e| e.render(trf))?.is_some() {
         return Err(collision());
@@ -667,5 +748,155 @@ mod tests {
             .push(serde_json::json!({"project": "other", "file": file}));
         doc.write(home).unwrap();
         assert!(installed_origin(home, "zoom", github_mods::Origin::is_release_asset).is_err());
+    }
+
+    #[test]
+    fn manual_release_predecessors_refresh_same_repo_and_refuse_other_sources() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        let commit_v1 = "a".repeat(40);
+        let commit_v2 = "b".repeat(40);
+        let smod = |version: &str, pin: &str| {
+            sunrise_launcher_smod::Package::write_files(
+                &format!(
+                    "id = 'zoom'\nname = 'Zoom'\nversion = '{version}'\napi = '0.2'\ncapabilities = ['registries']\n[native]\ngame = '26.3'\nsunrise = '{pin}'\nmixins = '{pin}'\n"
+                ),
+                &[
+                    ("Cargo.toml", format!("[package]\nname = 'zoom'\nversion = '{version}'\n").as_bytes()),
+                    ("src/lib.rs", b"pub fn mod_hooks() {}"),
+                ],
+            )
+            .unwrap()
+        };
+        let release =
+            |owner: &str, repo: &str, tag: &str, commit: &str, asset: &str, bytes: &[u8]| {
+                let found = github_mods::Resolved {
+                    owner: owner.into(),
+                    repo: repo.into(),
+                    tag: Some(tag.into()),
+                    commit: commit.into(),
+                    assets: vec![github_mods::Asset {
+                        name: asset.into(),
+                        url: format!(
+                            "https://github.com/{owner}/{repo}/releases/download/{tag}/{asset}"
+                        ),
+                        sha256: Some(index::sha256(bytes)),
+                    }],
+                };
+                let packed = github_mods::fetch_with(&found, |_| Ok(bytes.to_vec())).unwrap();
+                (found, packed.into_iter().next().unwrap())
+            };
+
+        let bytes_v1 = smod("1.0.0", &commit_v1);
+        let (found_v1, packed_v1) = release(
+            "alice",
+            "zoom",
+            "v1.0.0",
+            &commit_v1,
+            "zoom-1.0.0.smod",
+            &bytes_v1,
+        );
+        let origin_v1 = packed_v1.checked_origin(&found_v1).unwrap().clone();
+
+        // Fresh profile: ManualRelease succeeds with no predecessor.
+        let prev = predecessors(
+            home,
+            &[Entry {
+                package: &packed_v1,
+                origin: &origin_v1,
+                prior: Prior::ManualRelease,
+            }],
+        )
+        .unwrap();
+        assert!(prev.is_empty());
+
+        // Stage v1 into home as an installed manual release.
+        let native_dir = home.join(native_mods::INSTALLED);
+        fs::create_dir_all(&native_dir).unwrap();
+        fs::write(native_dir.join("zoom.smod"), &bytes_v1).unwrap();
+        fs::write(
+            github_mods::origin_path(home, "zoom"),
+            serde_json::to_vec(&origin_v1).unwrap(),
+        )
+        .unwrap();
+
+        // Identical release bytes are refused cleanly.
+        let same_err = predecessors(
+            home,
+            &[Entry {
+                package: &packed_v1,
+                origin: &origin_v1,
+                prior: Prior::ManualRelease,
+            }],
+        )
+        .unwrap_err();
+        assert!(
+            matches!(same_err, InstallError::Refused(ref msg) if msg.contains("already installed"))
+        );
+
+        // Newer release from the same repository resolves v1 as its verified predecessor.
+        let bytes_v2 = smod("2.0.0", &commit_v2);
+        let (found_v2, packed_v2) = release(
+            "alice",
+            "zoom",
+            "v2.0.0",
+            &commit_v2,
+            "zoom-2.0.0.smod",
+            &bytes_v2,
+        );
+        let origin_v2 = packed_v2.checked_origin(&found_v2).unwrap().clone();
+        let prev = predecessors(
+            home,
+            &[Entry {
+                package: &packed_v2,
+                origin: &origin_v2,
+                prior: Prior::ManualRelease,
+            }],
+        )
+        .unwrap();
+        assert_eq!(prev.get("zoom"), Some(&origin_v1));
+
+        // Release from a different repository is refused.
+        let (found_other, packed_other) = release(
+            "bob",
+            "zoom",
+            "v2.0.0",
+            &commit_v2,
+            "zoom-2.0.0.smod",
+            &bytes_v2,
+        );
+        let origin_other = packed_other.checked_origin(&found_other).unwrap().clone();
+        let other_err = predecessors(
+            home,
+            &[Entry {
+                package: &packed_other,
+                origin: &origin_other,
+                prior: Prior::ManualRelease,
+            }],
+        )
+        .unwrap_err();
+        assert!(matches!(other_err, InstallError::Refused(ref msg) if !msg.contains("Use Update")));
+
+        // An existing Discover-tracked mod stays refused and does not point to the removed Update action.
+        let mut discover_origin = origin_v1.clone();
+        discover_origin.added_from = Some(github_mods::AddedFrom::Discover);
+        fs::write(
+            github_mods::origin_path(home, "zoom"),
+            serde_json::to_vec(&discover_origin).unwrap(),
+        )
+        .unwrap();
+        let collision = predecessors(
+            home,
+            &[Entry {
+                package: &packed_v2,
+                origin: &origin_v2,
+                prior: Prior::ManualRelease,
+            }],
+        )
+        .unwrap_err();
+        assert!(
+            matches!(collision, InstallError::Refused(ref msg) if !msg.contains("Use Update")),
+            "{collision:?}"
+        );
     }
 }
