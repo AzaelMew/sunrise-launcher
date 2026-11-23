@@ -105,7 +105,17 @@ impl PendingConfirm {
     }
 
     fn unsigned_local_file(&self) -> bool {
-        matches!(self, Self::Local { folder: None, .. })
+        matches!(
+            self,
+            Self::Local {
+                folder: None,
+                packages,
+                ..
+            } if !matches!(
+                packages.first().map(|p| &p.attestation),
+                Some(github_mods::LocalAttestation::Verified { .. })
+            )
+        )
     }
 
     fn provenance(&self) -> WarningProvenance {
@@ -117,13 +127,34 @@ impl PendingConfirm {
             } => {
                 let pkg = &packages[0];
                 let path = pkg.source_path.display().to_string();
-                WarningProvenance {
-                    icon: "warning",
-                    headline: tr("Unsigned local file, not reviewed").into(),
-                    detail: trf(
-                        "File: {file} · Sunrise cannot verify who built this file or where it came from.",
-                        &[("file", &path)],
-                    ),
+                match &pkg.attestation {
+                    github_mods::LocalAttestation::Verified {
+                        repository,
+                        workflow,
+                    } => WarningProvenance {
+                        icon: "github",
+                        headline: tr("Signed local file, not reviewed").into(),
+                        detail: trf(
+                            "File: {file} · Built by {repo} ({workflow}) · Sunrise has not checked this code.",
+                            &[("file", &path), ("repo", repository), ("workflow", workflow)],
+                        ),
+                    },
+                    github_mods::LocalAttestation::Failed(reason) => WarningProvenance {
+                        icon: "warning",
+                        headline: tr("Attestation check failed, not reviewed").into(),
+                        detail: trf(
+                            "File: {file} · The bundled attestation could not be verified ({reason}).",
+                            &[("file", &path), ("reason", reason)],
+                        ),
+                    },
+                    github_mods::LocalAttestation::Unsigned => WarningProvenance {
+                        icon: "warning",
+                        headline: tr("Unsigned local file, not reviewed").into(),
+                        detail: trf(
+                            "File: {file} · Sunrise cannot verify who built this file or where it came from.",
+                            &[("file", &path)],
+                        ),
+                    },
                 }
             }
             Self::Local {
@@ -1904,6 +1935,45 @@ pub(crate) mod tests {
         let prov = unsigned.provenance();
         assert_eq!(prov.headline, tr("Unsigned local file, not reviewed"));
         assert!(prov.detail.contains(&smod.display().to_string()));
+
+        // Verified sidecar attestation shows repository and workflow without calling the mod reviewed.
+        let mut verified_pkg = github_mods::read_local_smod(&smod).unwrap();
+        verified_pkg.attestation = github_mods::LocalAttestation::Verified {
+            repository: "example/custom-tweaks".into(),
+            workflow: "example/custom-tweaks/.github/workflows/release.yml@refs/tags/v0.1.0".into(),
+        };
+        let verified = PendingConfirm::Local {
+            target: target.clone(),
+            packages: vec![verified_pkg],
+            folder: None,
+        };
+        assert!(!verified.unsigned_local_file());
+        let verified_prov = verified.provenance();
+        assert_eq!(
+            verified_prov.headline,
+            tr("Signed local file, not reviewed")
+        );
+        assert!(verified_prov.detail.contains("example/custom-tweaks"));
+        assert!(verified_prov
+            .detail
+            .contains(".github/workflows/release.yml@refs/tags/v0.1.0"));
+        assert!(verified_prov.detail.contains("has not checked"));
+
+        // Failed attestation verification is distinguished from a missing bundle.
+        let mut failed_pkg = github_mods::read_local_smod(&smod).unwrap();
+        failed_pkg.attestation = github_mods::LocalAttestation::Failed("digest mismatch".into());
+        let failed = PendingConfirm::Local {
+            target: target.clone(),
+            packages: vec![failed_pkg],
+            folder: None,
+        };
+        assert!(failed.unsigned_local_file());
+        let failed_prov = failed.provenance();
+        assert_eq!(
+            failed_prov.headline,
+            tr("Attestation check failed, not reviewed")
+        );
+        assert!(failed_prov.detail.contains("digest mismatch"));
 
         // GitHub release assets describe the release tag and asset filename rather than a commit SHA.
         let release_input = checked_subset(target.clone());
