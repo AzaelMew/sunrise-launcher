@@ -247,90 +247,116 @@ impl Launcher {
             );
         }
 
-        // The cards grid.
+        // The cards grid, culled by grid row so expanding "Show more" only builds cards near view.
         let limit = self.ui.mods.limit.max(PAGE).min(total);
-        let mut grid = self.discover_grid();
-        for (n, &i) in shown.iter().take(limit).enumerate() {
-            let card_data = &cards[i];
-            let id = card_data.id.clone();
-            // Icons are loaded strictly from verified content-addressed pages/<id>/<sha256>.<png|jpg>.
-            // Screenshots are never fetched on Discover.
-            let picture = card_data
-                .icon
-                .as_deref()
-                .and_then(|rel| self.v2_mod_image(&id, rel, images::ICON));
-            let installed = self.discover_installed();
-            let entry = installed.and_then(|rows| rows.registry_entry(&id));
-            let installed_version = entry.map(|entry| entry.number.as_str());
-            let package = installed
-                .zip(entry)
-                .and_then(|(rows, entry)| rows.archives.get(&entry.file)?.icon.clone());
-            let is_added = installed_version.is_some();
-            let fits = card_data.fit.fits();
-            let working = self.registry_card_control(&id, |label| {
-                dim(button(("alt-add", n), label)).into_any_element()
-            });
-            let issue = self.registry_card_note(&id);
+        let cols = columns(self.content_width()).max(1) as usize;
+        let visible = &shown[..limit];
+        let row_count = visible.len().div_ceil(cols);
+        let cull = self.mods.discover_list.clone();
+        cull.items({
+            use std::hash::{Hash, Hasher};
+            let mut hash = std::collections::hash_map::DefaultHasher::new();
+            cols.hash(&mut hash);
+            for &i in visible {
+                cards[i].id.hash(&mut hash);
+            }
+            hash.finish()
+        });
+        let scroll = crate::frame::scrolls("discover");
+        let grid = cull.column(
+            &scroll,
+            row_count,
+            10.,
+            |_| false,
+            |row_idx| {
+                let start = row_idx * cols;
+                let end = (start + cols).min(visible.len());
+                let mut row = self.discover_grid();
+                for (offset, &i) in visible[start..end].iter().enumerate() {
+                    let n = start + offset;
+                    let card_data = &cards[i];
+                    let id = card_data.id.clone();
+                    // Icons are loaded strictly from verified content-addressed pages/<id>/<sha256>.<png|jpg>.
+                    // Screenshots are never fetched on Discover.
+                    let picture = card_data
+                        .icon
+                        .as_deref()
+                        .and_then(|rel| self.v2_mod_image(&id, rel, images::ICON));
+                    let installed = self.discover_installed();
+                    let entry = installed.and_then(|rows| rows.registry_entry(&id));
+                    let installed_version = entry.map(|entry| entry.number.as_str());
+                    let package = installed
+                        .zip(entry)
+                        .and_then(|(rows, entry)| rows.archives.get(&entry.file)?.icon.clone());
+                    let is_added = installed_version.is_some();
+                    let fits = card_data.fit.fits();
+                    let working = self.registry_card_control(&id, |label| {
+                        dim(button(("alt-add", n), label)).into_any_element()
+                    });
+                    let issue = self.registry_card_note(&id);
 
-            let control = if working.is_some() {
-                working
-            } else if is_added {
-                Some(added_mark())
-            } else if !fits {
-                // Non-fitting cards in Show all display Install disabled.
-                Some(
-                    dim(button(("alt-add", n), tr("Install")))
-                        .on_click(|_, _, cx| cx.stop_propagation())
-                        .into_any_element(),
-                )
-            } else {
-                let id_for_add = id.clone();
-                Some(
-                    button(("alt-add", n), tr("Install"))
-                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                            cx.stop_propagation();
-                            this.add(id_for_add.clone());
+                    let control = if working.is_some() {
+                        working
+                    } else if is_added {
+                        Some(added_mark())
+                    } else if !fits {
+                        // Non-fitting cards in Show all display Install disabled.
+                        Some(
+                            dim(button(("alt-add", n), tr("Install")))
+                                .on_click(|_, _, cx| cx.stop_propagation())
+                                .into_any_element(),
+                        )
+                    } else {
+                        let id_for_add = id.clone();
+                        Some(
+                            button(("alt-add", n), tr("Install"))
+                                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                    cx.stop_propagation();
+                                    this.add(id_for_add.clone());
+                                    cx.notify();
+                                }))
+                                .into_any_element(),
+                        )
+                    };
+
+                    let mut facts: Vec<Div> = Vec::new();
+                    if let Some(version) = card_data.fit.fitting_version() {
+                        facts.push(fit_pill(trf(
+                            "{version} · Fits build",
+                            &[("version", version)],
+                        )));
+                        facts.push(tag(card_data.make.label()));
+                    } else if let Some(reason) = card_data.fit.reason() {
+                        facts.push(unfit_pill(reason));
+                    }
+                    if let (Some(rows), Some(version)) = (installed, installed_version) {
+                        facts.push(install_fact(version, rows.registry_pending(&id)));
+                    }
+
+                    let mut card_el = browse_card(
+                        ("alt-card", n),
+                        mod_artwork(picture, package),
+                        &id,
+                        &card_data.name,
+                        &card_data.authors,
+                        &card_data.summary,
+                        facts,
+                        control,
+                        issue,
+                    );
+                    if !fits {
+                        card_el = card_el.opacity(0.62);
+                    }
+                    row = row.child(card_el.on_click(cx.listener(
+                        move |this, _: &ClickEvent, _, cx| {
+                            this.mods_show_v2_project(id.clone());
                             cx.notify();
-                        }))
-                        .into_any_element(),
-                )
-            };
-
-            let mut facts: Vec<Div> = Vec::new();
-            if let Some(version) = card_data.fit.fitting_version() {
-                facts.push(fit_pill(trf(
-                    "{version} · Fits build",
-                    &[("version", version)],
-                )));
-                facts.push(tag(card_data.make.label()));
-            } else if let Some(reason) = card_data.fit.reason() {
-                facts.push(unfit_pill(reason));
-            }
-            if let (Some(rows), Some(version)) = (installed, installed_version) {
-                facts.push(install_fact(version, rows.registry_pending(&id)));
-            }
-
-            let mut card_el = browse_card(
-                ("alt-card", n),
-                mod_artwork(picture, package),
-                &id,
-                &card_data.name,
-                &card_data.authors,
-                &card_data.summary,
-                facts,
-                control,
-                issue,
-            );
-            if !fits {
-                card_el = card_el.opacity(0.62);
-            }
-            grid = grid.child(
-                card_el.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    this.mods_show_v2_project(id.clone());
-                    cx.notify();
-                })),
-            );
-        }
+                        },
+                    )));
+                }
+                row
+            },
+        );
 
         let profile_target = match build_label.as_deref() {
             Some(b) => trf(

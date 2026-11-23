@@ -445,80 +445,103 @@ impl Launcher {
             }
             Status::Done => {
                 let game = self.mods_game();
-                let mut grid = div()
-                    .grid()
-                    .grid_cols(columns(self.content_width()))
-                    .gap(px(12.));
-                for (n, p) in results.iter().enumerate() {
-                    let picture = p
-                        .icon
-                        .clone()
-                        .and_then(|url| self.mods_image(&url, images::ICON));
-                    let support = p.support(&game);
-                    let data = p.kind == Kind::DataPack;
-                    let is_added = added.contains(&(p.source, p.id.clone())) && !data;
-                    let control = if is_added {
-                        Some(added_mark())
-                    } else if !support.installable() {
-                        None
-                    } else {
-                        // A data pack asks which worlds first.
-                        let label = if data { tr("Add…") } else { tr("Add") };
-                        let b = button(ElementId::named_usize("alt-pack-add", n), label);
-                        Some(if working {
-                            dim(b).into_any_element()
-                        } else {
-                            let id = p.id.clone();
-                            let source = p.source;
-                            b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                this.pack_install(source, &id);
-                                cx.stop_propagation();
-                                cx.notify();
-                            }))
-                            .into_any_element()
-                        })
-                    };
-                    // How well it runs here, in the source's words. What Sunrise runs of any
-                    // data pack is said once, above the cards.
-                    let common = data && support.reason() == Some(browser::datapack_support());
-                    let note = support.reason().filter(|_| !common).map(str::to_owned);
-                    let mut facts = vec![tag(source_label(p.source))];
-                    if !matches!(support, browser::Support::Works) && !common {
-                        facts.push(tag(support.label()));
+                let cols = columns(self.content_width()).max(1) as usize;
+                let row_count = results.len().div_ceil(cols);
+                let cull = self.mods.pack_discover_list.clone();
+                cull.items({
+                    use std::hash::{Hash, Hasher};
+                    let mut hash = std::collections::hash_map::DefaultHasher::new();
+                    cols.hash(&mut hash);
+                    for p in &results {
+                        (p.source as u8, p.id.as_str()).hash(&mut hash);
                     }
-                    facts.push(muted(model::downloads(p.downloads)));
-                    if data {
-                        match self.ui.mods.data.worlds_with(p.source, &p.id) {
-                            0 => {}
-                            1 => facts.push(muted(tr("In 1 world"))),
-                            n => facts.push(muted(trf(
-                                "In {count} worlds",
-                                &[("count", &n.to_string())],
-                            ))),
+                    hash.finish()
+                });
+                let scroll = self.ui.mods.packs.scroll.clone();
+                cull.column(
+                    &scroll,
+                    row_count,
+                    12.,
+                    |_| false,
+                    |row_idx| {
+                        let start = row_idx * cols;
+                        let end = (start + cols).min(results.len());
+                        let mut row = div().grid().grid_cols(cols as u16).gap(px(12.));
+                        for (offset, p) in results[start..end].iter().enumerate() {
+                            let n = start + offset;
+                            let picture = p
+                                .icon
+                                .clone()
+                                .and_then(|url| self.mods_image(&url, images::ICON));
+                            let support = p.support(&game);
+                            let data = p.kind == Kind::DataPack;
+                            let is_added = added.contains(&(p.source, p.id.clone())) && !data;
+                            let control = if is_added {
+                                Some(added_mark())
+                            } else if !support.installable() {
+                                None
+                            } else {
+                                // A data pack asks which worlds first.
+                                let label = if data { tr("Add…") } else { tr("Add") };
+                                let b = button(ElementId::named_usize("alt-pack-add", n), label);
+                                Some(if working {
+                                    dim(b).into_any_element()
+                                } else {
+                                    let id = p.id.clone();
+                                    let source = p.source;
+                                    b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                        this.pack_install(source, &id);
+                                        cx.stop_propagation();
+                                        cx.notify();
+                                    }))
+                                    .into_any_element()
+                                })
+                            };
+                            // How well it runs here, in the source's words. What Sunrise runs of any
+                            // data pack is said once, above the cards.
+                            let common =
+                                data && support.reason() == Some(browser::datapack_support());
+                            let note = support.reason().filter(|_| !common).map(str::to_owned);
+                            let mut facts = vec![tag(source_label(p.source))];
+                            if !matches!(support, browser::Support::Works) && !common {
+                                facts.push(tag(support.label()));
+                            }
+                            facts.push(muted(model::downloads(p.downloads)));
+                            if data {
+                                match self.ui.mods.data.worlds_with(p.source, &p.id) {
+                                    0 => {}
+                                    1 => facts.push(muted(tr("In 1 world"))),
+                                    n => facts.push(muted(trf(
+                                        "In {count} worlds",
+                                        &[("count", &n.to_string())],
+                                    ))),
+                                }
+                            }
+                            let (source, id) = (p.source, p.id.clone());
+                            row = row.child(
+                                browse_card(
+                                    ElementId::named_usize("alt-pack-card", n),
+                                    picture,
+                                    &id,
+                                    &p.title,
+                                    &p.author,
+                                    &p.summary,
+                                    facts,
+                                    control,
+                                    note,
+                                )
+                                .on_click(cx.listener(
+                                    move |this, _: &ClickEvent, _, cx| {
+                                        this.pack_show(source, &id);
+                                        cx.notify();
+                                    },
+                                )),
+                            );
                         }
-                    }
-                    let (source, id) = (p.source, p.id.clone());
-                    grid = grid.child(
-                        browse_card(
-                            ElementId::named_usize("alt-pack-card", n),
-                            picture,
-                            &id,
-                            &p.title,
-                            &p.author,
-                            &p.summary,
-                            facts,
-                            control,
-                            note,
-                        )
-                        .on_click(cx.listener(
-                            move |this, _: &ClickEvent, _, cx| {
-                                this.pack_show(source, &id);
-                                cx.notify();
-                            },
-                        )),
-                    );
-                }
-                grid.into_any_element()
+                        row
+                    },
+                )
+                .into_any_element()
             }
         };
         crate::frame::scrolls_with(&self.ui.mods.packs.scroll);
