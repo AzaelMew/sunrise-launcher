@@ -229,11 +229,10 @@ impl Launcher {
                 },
             };
             // A profile holding a mod from the signed v2 index switches through it, which keeps
-            // each mod's chosen project; v1 and local mods keep their exact bytes there.
-            let from_v2 = sunrise_launcher::browser::installed::Installed::read(&instance.home)
-                .is_ok_and(|rows| rows.entries.iter().any(|e| e.mod_id.is_some()));
-            let outcome = if from_v2 {
-                switch_profile_build_v2(
+            // each mod's chosen project; v1 and local mods keep their exact bytes there. A read
+            // failure must not silently drop back to the v1 switch.
+            let outcome = match uses_v2_switch(&instance.home) {
+                Ok(true) => switch_profile_build_v2(
                     &instance,
                     identity,
                     &tag,
@@ -251,9 +250,9 @@ impl Launcher {
                         }),
                         pin_dir: None,
                     },
-                )
-            } else {
-                switch_profile_build(&instance, identity, &tag, choice, hooks)
+                ),
+                Ok(false) => switch_profile_build(&instance, identity, &tag, choice, hooks),
+                Err(error) => Err(error),
             };
             let _ = tx.send(Msg::Switched(instance.home, Box::new(outcome)));
         });
@@ -1107,6 +1106,17 @@ impl Launcher {
     }
 }
 
+/// Whether a profile holds any mod installed from the signed v2 index.
+///
+/// Propagates `installed.json` read errors so a corrupt or unreadable manifest never falls back
+/// to the v1 build switch.
+fn uses_v2_switch(home: &std::path::Path) -> Result<bool, String> {
+    Ok(sunrise_launcher::browser::installed::Installed::read(home)?
+        .entries
+        .iter()
+        .any(|e| e.mod_id.is_some()))
+}
+
 /// A partial write or an interrupted writer must not reserve the final report name.
 fn publish_report(
     folder: &std::path::Path,
@@ -1124,8 +1134,55 @@ fn publish_report(
 
 #[cfg(test)]
 mod tests {
-    use super::publish_report;
+    use super::{publish_report, uses_v2_switch};
     use std::io::{self, Write};
+    use sunrise_launcher::browser::{
+        installed::{Entry, Installed},
+        Kind, SourceId,
+    };
+
+    #[test]
+    fn uses_v2_switch_refuses_unreadable_installed_manifest_instead_of_falling_back() {
+        let home = tempfile::tempdir().unwrap();
+        assert_eq!(uses_v2_switch(home.path()), Ok(false));
+
+        let mut list = Installed::default();
+        list.entries.push(Entry {
+            source: SourceId::Sunrise,
+            project: "demo".into(),
+            mod_id: None,
+            slug: "demo".into(),
+            title: "Demo".into(),
+            kind: Kind::Mod,
+            version: "1.0.0".into(),
+            number: "1.0.0".into(),
+            file: "mods/demo.smod".into(),
+            checksum: format!("SHA-256:{}", "00".repeat(32)),
+            page: "https://example.test/demo".into(),
+            dependency: false,
+            verdict: None,
+            install_hold: None,
+            repository: None,
+        });
+        list.save(home.path()).unwrap();
+        assert_eq!(uses_v2_switch(home.path()), Ok(false));
+
+        list.entries[0].mod_id = Some("demo".into());
+        list.save(home.path()).unwrap();
+        assert_eq!(uses_v2_switch(home.path()), Ok(true));
+
+        std::fs::write(
+            home.path()
+                .join(sunrise_launcher_smod::index::browser_state::MANIFEST),
+            "{not valid json",
+        )
+        .unwrap();
+        let error = uses_v2_switch(home.path()).unwrap_err();
+        assert!(
+            error.contains(sunrise_launcher_smod::index::browser_state::MANIFEST),
+            "unexpected error: {error}"
+        );
+    }
 
     #[test]
     fn report_save_can_retry_after_a_partial_write_and_never_clobbers() {
