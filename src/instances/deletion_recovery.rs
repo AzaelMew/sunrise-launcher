@@ -122,6 +122,24 @@ fn real_directory(path: &Path) -> bool {
         .is_ok_and(|meta| meta.is_dir() && !crate::native_cache::linked(&meta))
 }
 
+/// Scans until `settled` holds, for at most two seconds. Another test spawning a child process
+/// leaves that child an inherited copy of the owner file, and of its lock, until the child execs,
+/// so a scan right after a release can still find the record owned for a moment.
+#[cfg(test)]
+pub(super) fn settled_scan(
+    game_home: &Path,
+    settled: impl Fn(&[InterruptedDeletion]) -> bool,
+) -> Vec<InterruptedDeletion> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    loop {
+        let notices = interrupted_in(game_home);
+        if settled(&notices) || std::time::Instant::now() >= deadline {
+            return notices;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -142,7 +160,7 @@ mod tests {
             "worker still owns the move"
         );
         drop(owner); // As when a native Quit ends the process without waiting for the worker.
-        let mut notices = interrupted_in(home.path());
+        let mut notices = settled_scan(home.path(), |found| found.len() == 1);
         assert_eq!(notices.len(), 1);
         let notice = notices.pop().unwrap();
         assert_eq!(notice.folder(), folder);
@@ -158,7 +176,7 @@ mod tests {
         let private = retired.join("profile-move");
         fs::create_dir_all(&private).unwrap();
         drop(InterruptedDeletion::record(&retired, private.join("cabin"), "cabin".into()).unwrap());
-        assert!(interrupted_in(home.path()).is_empty());
+        assert!(settled_scan(home.path(), |_| !private.exists()).is_empty());
         assert!(!private.exists());
     }
 
@@ -176,7 +194,9 @@ mod tests {
         assert!(private.join(OWNER).is_file());
         fs::remove_file(&folder).unwrap();
         fs::create_dir(&folder).unwrap();
-        let notice = interrupted_in(home.path()).pop().unwrap();
+        let notice = settled_scan(home.path(), |found| found.len() == 1)
+            .pop()
+            .unwrap();
         let record = private.join(RECORD);
         #[cfg(windows)]
         {
