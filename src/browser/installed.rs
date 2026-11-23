@@ -614,66 +614,6 @@ fn put_packs(
     Ok(done)
 }
 
-/// Whether `file` is a folder directly in `sunrise-mods/`, which is itself a real folder of
-/// `home` (a link in the way is not followed): where an earlier launcher put a ported mod.
-fn legacy_mod_folder(home: &Path, file: &str) -> bool {
-    let mut parts = Path::new(file).components();
-    let (Some(Component::Normal(top)), Some(Component::Normal(_)), None) =
-        (parts.next(), parts.next(), parts.next())
-    else {
-        return false;
-    };
-    top == "sunrise-mods" && fs::symlink_metadata(home.join(top)).is_ok_and(|m| m.is_dir())
-}
-
-/// Removes what the browser installed for `name` (a project id or slug): its file and its entry.
-pub fn remove(home: &Path, name: &str) -> Result<Entry, String> {
-    let _lock = super::lock_home(home).map_err(|e| e.to_string())?;
-    recover_game_install(home)?;
-    let mut installed = Installed::read(home)?;
-    let entry = installed
-        .lookup(name)
-        .cloned()
-        .ok_or_else(|| format!("{name} wasn't installed by the browser."))?;
-    // A mod an earlier launcher ported from Modrinth is a folder in `sunrise-mods/`, and only
-    // that is removed recursively; a pack is a file, and a folder where a pack's file was is the
-    // player's own and stays.
-    let removed = match entry.path(home) {
-        None => Ok(()),
-        Some(p) => match fs::symlink_metadata(&p) {
-            Ok(m) if m.is_dir() => {
-                if legacy_mod_folder(home, &entry.file) {
-                    fs::remove_dir_all(&p)
-                } else {
-                    return Err(crate::i18n::trf(
-                        "{file} is a folder, not a file the browser installed. Nothing was removed: move it away yourself.",
-                        &[("file", &entry.file)],
-                    ));
-                }
-            }
-            Ok(_) => fs::remove_file(&p),
-            Err(e) => Err(e),
-        },
-    };
-    match removed {
-        Ok(()) => {}
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-        Err(e) => return Err(format!("{}: {e}", entry.file)),
-    }
-    let mod_id = match entry.source {
-        SourceId::Sunrise => super::sunrise::mod_id(&entry),
-        SourceId::Modrinth => entry.file.strip_prefix("sunrise-mods/"),
-    };
-    if let Some(id) = mod_id {
-        super::mod_list::set_enabled(home, id, false)?;
-    }
-    installed
-        .entries
-        .retain(|e| !(e.source == entry.source && e.project == entry.project));
-    installed.save(home)?;
-    Ok(entry)
-}
-
 /// Removes a CLI-selected pack, never a mod. The unlocked CLI selection is only a lookup key.
 pub fn remove_pack(home: &Path, selected: &Entry) -> Result<Entry, String> {
     let _lock = super::lock_home(home).map_err(|e| e.to_string())?;

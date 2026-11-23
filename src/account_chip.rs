@@ -415,14 +415,14 @@ mod tests {
     }
 
     fn three(selected: Option<&str>) -> Accounts {
-        let mut accounts = Accounts::default();
-        accounts.accounts = vec![
-            account("a1", "Juniper"),
-            account("b2", "Mossbyte"),
-            account("c3", "Cinder"),
-        ];
-        accounts.selected = selected.map(Into::into);
-        accounts
+        Accounts {
+            accounts: vec![
+                account("a1", "Juniper"),
+                account("b2", "Mossbyte"),
+                account("c3", "Cinder"),
+            ],
+            selected: selected.map(Into::into),
+        }
     }
 
     #[test]

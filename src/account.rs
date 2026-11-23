@@ -1793,11 +1793,6 @@ pub struct Accounts {
     pub accounts: Vec<Account>,
     /// The UUID of the account the game starts with; none: the first one.
     pub selected: Option<String>,
-    /// Offline names an older launcher kept (`offline`), read only so that the next save also
-    /// deletes their skins and capes (`skins/<name>.png`, `skins/<name>.cape.png`). Its
-    /// `offline_selected` and `looks` are dropped on read.
-    #[serde(default, rename = "offline", skip_serializing)]
-    old_offline: Vec<String>,
 }
 
 /// The secrets an account keeps in `store`, if it still has them there.
@@ -1837,16 +1832,6 @@ impl Accounts {
         {
             let _ = std::fs::remove_file(&tmp);
             return Err(e.to_string());
-        }
-        // An older launcher's offline names: their skins and capes go too, missing files are fine.
-        if let Some(skins) = path.parent().map(|dir| dir.join("skins")) {
-            for name in &self.old_offline {
-                let key = name.to_ascii_lowercase();
-                for file in [format!("{key}.png"), format!("{key}.cape.png")] {
-                    let _ = std::fs::remove_file(skins.join(file));
-                }
-            }
-            let _ = std::fs::remove_dir(&skins);
         }
         Ok(())
     }

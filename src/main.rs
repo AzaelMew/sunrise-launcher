@@ -125,8 +125,6 @@ use theme::Theme;
 /// The window draws `frame::Page` (`ui.page`) instead: navigate with `Launcher::navigate`.
 enum Page {
     Play,
-    /// Mods, resource packs and modpacks (imported ones and the browser's).
-    Mods,
     Settings,
 }
 
@@ -511,7 +509,10 @@ mod tests {
             Page::Settings
         ));
         assert!(matches!(page_after_startup(Page::Play, false), Page::Play));
-        assert!(matches!(page_after_startup(Page::Mods, true), Page::Mods));
+        assert!(matches!(
+            page_after_startup(Page::Settings, false),
+            Page::Settings
+        ));
     }
 
     #[cfg(target_os = "macos")]

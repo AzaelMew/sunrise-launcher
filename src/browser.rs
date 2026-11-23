@@ -84,16 +84,6 @@ impl SourceId {
             SourceId::Sunrise => "Sunrise",
         }
     }
-
-    /// The source a list names after the author ("from {source}") for project `id`: Modrinth and
-    /// CurseForge always, Sunrise's registry only for Sunrise's own projects
-    /// ([`sunrise::official`]), so a contributor's project reads "by <author>" alone.
-    pub fn shown_for(self, id: &str) -> Option<&'static str> {
-        match self {
-            SourceId::Sunrise if !sunrise::is_official(id) => None,
-            _ => Some(self.label()),
-        }
-    }
 }
 
 /// How well a project runs in Sunrise.
@@ -266,10 +256,6 @@ pub trait Source: Send + Sync {
             body: project.summary.clone(),
             ..details::Details::default()
         })
-    }
-    /// The values the search's filters can take for `kind`.
-    fn tags(&self, _kind: Kind) -> Result<details::Tags, String> {
-        Ok(details::Tags::default())
     }
     /// Downloads one of its files into `folder`, checked ([`download::fetch`]).
     fn fetch(
