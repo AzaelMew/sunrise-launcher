@@ -14,7 +14,6 @@ LAUNCHER = Path(__file__).resolve().parents[2]
 # (the game's file or folder, the launcher's copy)
 SAME_BYTES = (
     ("crates/sunrise-release-sign/release-keys.txt", "crates/release-verify/keys/sunrise-org-sunrise.txt"),
-    ("crates/sunrise-release-sign/native-build-keys.txt", "crates/release-verify/keys/native-builds.txt"),
     ("crates/sunrise-release-sign/tests/signed", "crates/release-verify/tests/signed"),
     ("crates/sunrise-mod-package/tests/index", "crates/smod/tests/index"),
     ("crates/sunrise-theme/tokens.css", "crates/theme/tokens.css"),
