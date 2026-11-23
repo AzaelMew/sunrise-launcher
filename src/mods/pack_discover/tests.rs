@@ -33,13 +33,40 @@ fn home(names: &[&str]) -> tempfile::TempDir {
 
 #[test]
 fn the_query_is_restricted_to_one_pack_kind_that_runs() {
-    let q = query(Scope::Data, &"a".repeat(500), "1.21.4");
+    let q = query(
+        Scope::Data,
+        &"a".repeat(500),
+        "1.21.4",
+        &PackFilters::default(),
+    );
     assert_eq!(q.kind, Kind::DataPack);
     assert_eq!(q.text.chars().count(), TEXT_MAX);
     assert!(!q.everything);
     assert_eq!(q.game, "1.21.4");
     assert_eq!((q.offset, q.limit), (0, LIMIT));
-    assert_eq!(query(Scope::Resource, "", "g").kind, Kind::ResourcePack);
+    assert_eq!(
+        query(Scope::Resource, "", "g", &PackFilters::default()).kind,
+        Kind::ResourcePack
+    );
+}
+
+#[test]
+fn the_filter_row_reaches_the_query() {
+    let filters = PackFilters {
+        category: Some("vanilla-like".into()),
+        show_all: true,
+        sort: Some(Sort::Newest),
+    };
+    let q = query(Scope::Shader, "", "1.21.4", &filters);
+    assert!(q.everything);
+    assert_eq!(q.filters.categories, ["vanilla-like"]);
+    assert_eq!(q.filters.sort(&q.text), Sort::Newest);
+    assert_eq!(
+        query(Scope::Shader, "", "1.21.4", &PackFilters::default())
+            .filters
+            .categories,
+        Vec::<String>::new()
+    );
 }
 
 #[test]
@@ -172,5 +199,8 @@ fn shader_packs_come_from_modrinth_and_sunrises_registry_only() {
     // The registry's shader pack never shows under resource packs, nor Sunrise's under data.
     assert!(keep(Scope::Resource, hits.clone()).is_empty());
     assert!(keep(Scope::Data, hits).is_empty());
-    assert_eq!(query(Scope::Shader, "", "g").kind, Kind::Shader);
+    assert_eq!(
+        query(Scope::Shader, "", "g", &PackFilters::default()).kind,
+        Kind::Shader
+    );
 }

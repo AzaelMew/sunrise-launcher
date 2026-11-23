@@ -372,6 +372,8 @@ enum Event {
     Progress(String, f32),
     /// A pack search's answer, by the number of the search that asked.
     Packs(u64, Result<Vec<sunrise_launcher::browser::Project>, String>),
+    /// The categories Modrinth offers for a pack scope; empty when they could not be read.
+    PackCategories(pack_discover::Scope, Vec<String>),
     /// A pack's page, by its source and id.
     PackPage((SourceId, String), pack_project::PackPage),
     /// A resource or data pack install ended: what it said.
@@ -1041,6 +1043,7 @@ impl Launcher {
                 Event::Nightly(event) => self.nightly_event(event),
                 Event::Progress(line, f) => m.busy = Some((line, f)),
                 Event::Packs(seq, result) => self.pack_answer(seq, result),
+                Event::PackCategories(scope, found) => self.pack_categories(scope, found),
                 Event::PackPage(key, page) => self.pack_page_answer(key, page),
                 Event::PackDone(result) => self.pack_installed(result),
                 Event::Checked(title, found) => self.checked(title, found),
