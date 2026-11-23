@@ -123,6 +123,9 @@ struct Open {
     v2_page: Option<Result<Box<model::discover_v2::V2Page>, String>>,
     /// The collection's page this mod's was opened from: Back returns to it.
     parent: Option<String>,
+    /// The installed mods this page's Remove asked to remove, recorded while their rows are
+    /// still read: the page leaves once that Remove finishes.
+    removing: Vec<String>,
 }
 
 impl Open {
@@ -785,13 +788,8 @@ impl Launcher {
         if self.ui.page != Page::Project || self.mods_home() != home {
             return;
         }
-        let rows = self.rows();
         let gone = self.ui.mods.open.as_ref().is_some_and(|open| {
-            ids.contains(&open.id)
-                || rows.iter().any(|row| {
-                    ids.contains(&row.id)
-                        && row.entry.as_ref().is_some_and(|e| e.project == open.id)
-                })
+            ids.contains(&open.id) || open.removing.iter().any(|id| ids.contains(id))
         });
         if let Some(open) = self.ui.mods.open.take_if(|_| gone) {
             self.ui.page = open.from;
@@ -1306,6 +1304,7 @@ impl Launcher {
             page: None,
             v2_page: None,
             parent: None,
+            removing: Vec::new(),
         });
         // Collections and local archives render from state already held by the launcher.
         if !load {
@@ -1356,6 +1355,7 @@ impl Launcher {
             page: None,
             v2_page: immediate,
             parent: None,
+            removing: Vec::new(),
         });
         self.ratings_for_page(&id);
         if !needs_fetch {
@@ -1760,6 +1760,7 @@ mod enabled_tests {
             page: None,
             v2_page: None,
             parent: None,
+            removing: Vec::new(),
         };
         open.finish(1, &current, Err("earlier request".into()));
         open.finish(

@@ -36,6 +36,7 @@ impl Launcher {
             page: None,
             v2_page: None,
             parent: None,
+            removing: Vec::new(),
         });
         self.ui.page = Page::Project;
     }
