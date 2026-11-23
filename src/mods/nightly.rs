@@ -614,10 +614,13 @@ pub(super) fn installed_source(row: &Row) -> Option<&sunrise_launcher::github_mo
         .as_ref()?
         .github
         .as_ref()
-        .filter(|origin| origin.source.is_some())
+        .filter(|origin| origin.source.is_some() && !origin.is_manual())
 }
 
 pub(super) fn source_provenance(origin: &sunrise_launcher::github_mods::Origin) -> String {
+    if let Some(path) = origin.local_folder_path() {
+        return trf("Source · {path}", &[("path", path)]);
+    }
     let repo = format!("{}/{}", origin.owner, origin.repo);
     trf(
         "Source · {repo} @ {sha}",

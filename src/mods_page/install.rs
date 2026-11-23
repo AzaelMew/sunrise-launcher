@@ -118,6 +118,14 @@ impl GithubTarget {
             }
     }
 
+    pub(crate) fn profile_name(&self) -> &str {
+        &self.profile.name
+    }
+
+    pub(crate) fn home(&self) -> &Path {
+        &self.profile.home
+    }
+
     pub(crate) fn source(&self) -> Result<SourceTarget, String> {
         Ok(SourceTarget {
             profile: self.profile.clone(),
@@ -127,6 +135,19 @@ impl GithubTarget {
                 .clone()
                 .ok_or_else(backend::no_version_installed)?,
         })
+    }
+}
+
+#[cfg(test)]
+impl GithubTarget {
+    pub(crate) fn fixture(home: &Path) -> Self {
+        let request = tests::request(home, "fixture", "test-base");
+        Self {
+            profile: request.profile,
+            identity: request.identity,
+            target: request.target,
+            release: None,
+        }
     }
 }
 
@@ -345,22 +366,16 @@ impl Installs {
         let Worker::Done(result) = event else {
             return None;
         };
-        let update = matches!(input.selection, GithubSelection::Update(_));
         let retry = match result {
             Err(
                 InstallError::Download(_)
                 | InstallError::GithubBuild(_)
                 | InstallError::Source(SourceError::Tools(_) | SourceError::Build { .. }),
-            ) if !update => Some(input.clone()),
+            ) => Some(input.clone()),
             _ => None,
         };
         let result = match result {
-            Ok(_) => Ok(if update {
-                tr("Updated the GitHub mod.")
-            } else {
-                tr("Installed the selected GitHub mods.")
-            }
-            .into()),
+            Ok(_) => Ok(tr("Installed the selected GitHub mods.").into()),
             Err(InstallError::Cancelled | InstallError::Source(SourceError::Cancelled)) => {
                 return None
             }
@@ -372,7 +387,6 @@ impl Installs {
                     GithubSelection::Add(packages) => {
                         packages.iter().map(|p| p.name.as_str()).collect()
                     }
-                    GithubSelection::Update(package) => vec![package.name.as_str()],
                 };
                 let name = match names.as_slice() {
                     [one] => (*one).to_owned(),
@@ -1130,12 +1144,11 @@ impl Launcher {
             )
             .into());
         }
-        let (kind, ids) = match &input.selection {
+        let (kind, ids): (Kind, Vec<String>) = match &input.selection {
             GithubSelection::Add(packages) => (
                 Kind::Github,
                 packages.iter().map(|p| p.id.clone()).collect(),
             ),
-            GithubSelection::Update(package) => (Kind::Github, vec![package.id.clone()]),
             GithubSelection::Source(packages) => (
                 Kind::Source,
                 packages.iter().map(|p| p.origin().id.clone()).collect(),
@@ -1417,16 +1430,6 @@ impl Launcher {
                 Kind::Github => {
                     let input = request.github.as_ref().expect("a checked GitHub request");
                     match &input.selection {
-                        GithubSelection::Update(package) => sunrise::update_github(
-                            &request.profile,
-                            request.identity,
-                            &input.source,
-                            package,
-                            choose,
-                            hooks,
-                            &approve,
-                        )
-                        .map(|_| InstalledBatch::default()),
                         GithubSelection::Add(packages) => sunrise::add_github(
                             &request.profile,
                             request.identity,
