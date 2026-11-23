@@ -86,7 +86,7 @@ pub(crate) struct SheetsState {
     way_out: Option<WayOut>,
     versions: versions::State,
     pub(super) switching: switching::State,
-    pub(super) publisher_change: Option<publisher_change::PendingPublisherChange>,
+    publisher_change: Option<publisher_change::PendingPublisherChange>,
     pub(super) profile_action: Option<crate::profile_delete::Action>,
 }
 
