@@ -349,8 +349,6 @@ fn remove_cutoff_worker() {
     };
     let hooks = InstallHooks {
         progress: &|_| {},
-        native: &|_| panic!("content-only"),
-        registry_crates: None,
         continue_after_failure: &|_| panic!("content-only"),
         resolve: None,
         cancellation: None,

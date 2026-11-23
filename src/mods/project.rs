@@ -195,17 +195,6 @@ impl Launcher {
         } else {
             cells.status.as_ref().map(|status| note(status.tip.clone()))
         };
-        let allow = (cells.action == Some(model::RowAction::Allow)).then(|| {
-            let b = button("alt-project-allow", tr("Allow…"));
-            if busy {
-                dim(b)
-            } else {
-                b.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                    this.allow();
-                    cx.notify();
-                }))
-            }
-        });
         let toggle = ui::switch("alt-project-switch", row.on);
         let toggle = if busy || hold.is_some() || !cells.switch {
             dim(toggle)
@@ -270,7 +259,6 @@ impl Launcher {
                     } else {
                         tr("Turned off")
                     }))
-                    .children(allow)
                     .children(manual_refresh)
                     .children(remove),
             )
@@ -556,7 +544,6 @@ impl Launcher {
                 self.build_here()
                     .filter(|_| row.on)
                     .and_then(|run| run.state_of(&row.id, &row.version)),
-                self.settings.native_mods_allowed_at.is_some(),
             )
         });
         let update = installed_row
@@ -678,22 +665,6 @@ impl Launcher {
                 palette().muted,
             ));
         }
-        facts = facts.children(p.make.map(|make| match make {
-            Make::Native => fact(
-                "alt-fact-code",
-                "shield",
-                tr("Native code").into(),
-                tr("Native code: it is built into the game on this computer and runs with full access to your computer.").into(),
-                palette().accent_ink,
-            ),
-            Make::Content => fact(
-                "alt-fact-code",
-                "package-01",
-                tr("Content only").into(),
-                tr("Content only: it adds no native code.").into(),
-                palette().muted,
-            ),
-        }));
         if p.about.as_ref().is_some_and(|about| !about.signed) {
             facts = facts.child(fact(
                 "alt-fact-signed",
@@ -803,20 +774,9 @@ impl Launcher {
             }));
         let details = open.then(|| {
             let facts_line = p.will_install.as_ref().map(|w| {
-                let code = match p.make {
-                    Some(Make::Native) if can_install => {
-                        tr("native code, built on this computer after you allow it")
-                    }
-                    Some(Make::Native) => tr("native code"),
-                    _ => tr("content only, no native code"),
-                };
                 trf(
-                    "Version {version} · {size} to download · {code}",
-                    &[
-                        ("version", &w.number),
-                        ("size", &model::size(w.size)),
-                        ("code", code),
-                    ],
+                    "Version {version} · {size} to download",
+                    &[("version", &w.number), ("size", &model::size(w.size))],
                 )
             });
             div()
@@ -1069,7 +1029,6 @@ impl Launcher {
                 self.build_here()
                     .filter(|_| row.on)
                     .and_then(|run| run.state_of(&row.id, &row.version)),
-                self.settings.native_mods_allowed_at.is_some(),
             )
         });
         let controls = installed_row
@@ -1442,32 +1401,6 @@ impl Launcher {
             }
         };
 
-        let pin_note = div()
-            .p(px(10.))
-            .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
-            .border_1()
-            .border_color(c(p.divider))
-            .bg(c(p.field))
-            .flex()
-            .items_start()
-            .gap(px(8.))
-            .child(
-                div()
-                    .pt(px(2.))
-                    .child(crate::glass_ui::icon("shield", 14., c(p.muted))),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .text_size(px(tokens::SMALL))
-                    .text_color(c(p.muted))
-                    .child(trf(
-                        "First install remembers github.com/{repo} as this mod's publisher. Future updates stop and ask if it ever changes.",
-                        &[("repo", &vp.repository_name)],
-                    )),
-            );
-
         let action_card = card()
             .p(px(16.))
             .flex()
@@ -1519,8 +1452,17 @@ impl Launcher {
             .child(div().h(px(1.)).bg(c(p.divider)))
             .child(self.rating_block(&vp.id, cx))
             .child(div().h(px(1.)).bg(c(p.divider)))
-            .child(published_row)
-            .child(pin_note);
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .text_size(px(tokens::SMALL))
+                    .text_color(c(p.muted))
+                    .child(crate::glass_ui::icon("tick-02", 14., c(p.muted)))
+                    .child(tr("Reviewed by Sunrise")),
+            )
+            .child(published_row);
 
         let link_url = |link: &Option<SourceLink>| -> Option<String> {
             link.as_ref().map(|l| match l {

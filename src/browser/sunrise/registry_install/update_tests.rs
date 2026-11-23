@@ -179,11 +179,6 @@ impl Fixture {
             || FirstBuild::installed(base),
             InstallHooks {
                 progress: &|_| {},
-                native: &|question| {
-                    assert!(resolve.is_some(), "unexpected native consent: {question:?}");
-                    Ok(true)
-                },
-                registry_crates: None,
                 continue_after_failure: &|_| false,
                 resolve,
                 cancellation: None,
@@ -220,7 +215,7 @@ impl Fixture {
         if profile
             .refresh(
                 self.instance.native_profile,
-                (&cancel, None),
+                &cancel,
                 |_| {},
                 None,
                 None,
@@ -236,7 +231,7 @@ impl Fixture {
             .unwrap();
         first.prepare(&|_| {}).unwrap();
         let image = first
-            .exact_image(self.instance.native_profile, &cancel, |_| {}, None, None)
+            .exact_image(self.instance.native_profile, &cancel, |_| {}, None)
             .unwrap();
         first.commit(&image, &cancel).unwrap();
     }

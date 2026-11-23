@@ -158,7 +158,6 @@ mod tests {
                 unfit_updates: &Default::default(),
                 enabled: &on,
                 unbuilt: &HashSet::new(),
-                native_allowed: true,
                 chosen: &Default::default(),
                 local: &local,
             },

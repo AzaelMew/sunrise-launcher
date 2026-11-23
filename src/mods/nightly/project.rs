@@ -159,7 +159,6 @@ impl Launcher {
                     self.build_here()
                         .filter(|_| row.on)
                         .and_then(|run| run.state_of(&row.id, &row.version)),
-                    self.settings.native_mods_allowed_at.is_some(),
                 );
                 self.installed_project_controls(row, &cells, locked, cx)
             });
@@ -412,11 +411,10 @@ impl Launcher {
     }
 
     pub(crate) fn source_already_allowed(&self, question: &SourceQuestion) -> bool {
-        self.settings.native_mods_allowed_at.is_some()
-            && question.sources().all(|(_, origin)| {
-                source_grant(origin)
-                    .is_some_and(|grant| self.settings.source_mod_grants.contains(&grant))
-            })
+        question.sources().all(|(_, origin)| {
+            source_grant(origin)
+                .is_some_and(|grant| self.settings.source_mod_grants.contains(&grant))
+        })
     }
 
     pub(crate) fn source_consent_body(&self, cx: &mut Context<Self>) -> Option<Div> {

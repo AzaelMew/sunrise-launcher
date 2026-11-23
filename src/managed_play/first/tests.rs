@@ -111,13 +111,7 @@ fn interrupted_prepare_retains_the_same_build_and_profile_exclusion() {
                 .unwrap();
             let cancellation = native_mods::Cancellation::default();
             let image = attempt
-                .exact_image(
-                    native_mods::Profile::Optimized,
-                    &cancellation,
-                    |_| {},
-                    None,
-                    None,
-                )
+                .exact_image(native_mods::Profile::Optimized, &cancellation, |_| {}, None)
                 .unwrap();
             let active = attempt.commit(&image, &cancellation).unwrap();
             assert_eq!(profile.active().unwrap(), Some(active.clone()));
@@ -201,7 +195,7 @@ fn game_replacements_repair_only_owned_row_fields_and_advance_the_same_base() {
         let local = profile
             .refresh(
                 native_mods::Profile::Optimized,
-                (&cancellation, None),
+                &cancellation,
                 |_| {},
                 None,
                 None,
@@ -226,7 +220,7 @@ fn game_replacements_repair_only_owned_row_fields_and_advance_the_same_base() {
         let current = profile
             .refresh(
                 native_mods::Profile::Optimized,
-                (&cancellation, None),
+                &cancellation,
                 |_| {},
                 Some(&registry),
                 None,
@@ -261,7 +255,7 @@ fn game_replacements_repair_only_owned_row_fields_and_advance_the_same_base() {
     assert!(profile
         .refresh(
             native_mods::Profile::Optimized,
-            (&cancellation, None),
+            &cancellation,
             |_| {},
             None,
             None,
@@ -649,7 +643,6 @@ fn home_read_recovers_the_first_switch_receipt_after_a_killed_commit() {
                 native_mods::Profile::Optimized,
                 &cancellation,
                 |_| {},
-                None,
                 None,
             )
             .unwrap();

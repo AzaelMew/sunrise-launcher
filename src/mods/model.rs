@@ -438,8 +438,6 @@ pub(super) enum Need {
     TakenDown(String),
     /// A native mod, on, whose build for this computer isn't made yet.
     Build,
-    /// A native mod that can't run until the player allows native code.
-    Permission,
     /// On, but served by this native mod (its name, or its id when not installed), which is off:
     /// the game leaves it out.
     Host(String),
@@ -567,7 +565,6 @@ pub(super) struct Status {
 /// The one button a row may hold.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum RowAction {
-    Allow,
     Update,
 }
 
@@ -600,12 +597,7 @@ pub(super) mod column {
 
 /// `row`'s cells. `error` is why its last update failed. The status is the first thing that
 /// applies, most pressing first; whatever else applies is in its tooltip.
-pub(super) fn cells(
-    row: &Row,
-    error: Option<&str>,
-    building: Option<&BuildState>,
-    native_allowed: bool,
-) -> Cells {
+pub(super) fn cells(row: &Row, error: Option<&str>, building: Option<&BuildState>) -> Cells {
     let mut said: Vec<Status> = Vec::new();
     let mut say = |icon, label: String, tone, tip: String| {
         said.push(Status {
@@ -629,12 +621,6 @@ pub(super) fn cells(
             tr("Taken down").into(),
             Tone::Warning,
             trf("Taken down: {reason}", &[("reason", why)]),
-        ),
-        Some(Need::Permission) => say(
-            "shield",
-            tr("Needs permission").into(),
-            Tone::Warning,
-            tr("Needs your permission to run native code").into(),
         ),
         Some(Need::Host(host)) => say(
             "information-circle",
@@ -727,11 +713,6 @@ pub(super) fn cells(
                     "Version {version} is out. You chose its version: update it on its own.",
                     &[("version", to)],
                 )
-            } else if row.native() && !native_allowed {
-                trf(
-                    "Version {version} is out. Updating may ask you to allow native code.",
-                    &[("version", to)],
-                )
             } else {
                 trf("Version {version} is out", &[("version", to)])
             },
@@ -751,11 +732,7 @@ pub(super) fn cells(
         version: row.version.clone(),
         status: said.into_iter().next().map(|first| Status { tip, ..first }),
         popover,
-        action: match (&row.need, &row.update) {
-            (Some(Need::Permission), _) => Some(RowAction::Allow),
-            (_, Some(_)) => Some(RowAction::Update),
-            _ => None,
-        },
+        action: row.update.as_ref().map(|_| RowAction::Update),
         switch: row.held_for.is_none()
             && !matches!(row.need, Some(Need::TakenDown(_)))
             && !row.local.as_ref().is_some_and(|l| l.unreadable),
@@ -847,10 +824,6 @@ impl Row {
         }
     }
 
-    pub(super) fn native(&self) -> bool {
-        self.make == Some(Make::Native)
-    }
-
     /// The native mod that serves this content package's code, when it names one.
     pub(super) fn served_by(&self) -> Option<&str> {
         self.local.as_ref().and_then(|l| l.served_by.as_deref())
@@ -893,7 +866,6 @@ pub(super) struct World<'a> {
     pub(super) enabled: &'a HashSet<String>,
     /// Native mods whose build isn't made.
     pub(super) unbuilt: &'a HashSet<String>,
-    pub(super) native_allowed: bool,
     /// The versions the player picked, by project id.
     pub(super) chosen: &'a std::collections::BTreeMap<String, String>,
     /// Native files the browser didn't install.
@@ -910,7 +882,7 @@ pub(super) struct Local {
     pub(super) name: String,
     pub(super) version: String,
     pub(super) github: Option<sunrise_launcher::github_mods::Origin>,
-    /// Native code, which needs permission and a build, rather than content only.
+    /// Native code, which needs a build, rather than content only.
     pub(super) native: bool,
     /// The native mod whose code serves this content package (`served_by`).
     pub(super) served_by: Option<String>,
@@ -944,8 +916,6 @@ pub(super) fn rows(entries: &[Entry], w: &World) -> Vec<Row> {
             });
             let need = if let Some(reason) = taken_down {
                 Some(Need::TakenDown(reason))
-            } else if native && on && !w.native_allowed {
-                Some(Need::Permission)
             } else if native && on && w.unbuilt.contains(&id) {
                 Some(Need::Build)
             } else {
@@ -981,7 +951,6 @@ pub(super) fn rows(entries: &[Entry], w: &World) -> Vec<Row> {
     out.extend(w.local.iter().map(|l| {
         let on = !l.unreadable && w.enabled.contains(&l.id);
         let need = match on && l.native {
-            true if !w.native_allowed => Some(Need::Permission),
             true if w.unbuilt.contains(&l.id) => Some(Need::Build),
             _ => l
                 .served_by
@@ -1036,8 +1005,6 @@ fn v2_row(e: &Entry, id: String, w: &World) -> Row {
             .map(|r| r.reason.clone());
     let need = if let Some(reason) = taken_down {
         Some(Need::TakenDown(reason))
-    } else if native && on && !w.native_allowed {
-        Some(Need::Permission)
     } else if native && on && w.unbuilt.contains(&id) {
         Some(Need::Build)
     } else {
@@ -1262,20 +1229,13 @@ pub(super) fn bulk_updatable(r: &Row) -> bool {
 }
 
 /// Which of the chosen mods can be turned on now, and which can't (and why).
-pub(super) fn turn_on_plan<'a>(
-    chosen: &[&'a Row],
-    native_allowed: bool,
-) -> (Vec<&'a Row>, Vec<(&'a Row, String)>) {
+pub(super) fn turn_on_plan<'a>(chosen: &[&'a Row]) -> (Vec<&'a Row>, Vec<(&'a Row, String)>) {
     let (mut ok, mut no) = (Vec::new(), Vec::new());
     for r in chosen {
         match &r.need {
             Some(Need::TakenDown(why)) => {
                 no.push((*r, trf("taken down: {reason}", &[("reason", why)])))
             }
-            _ if r.native() && !native_allowed => no.push((
-                *r,
-                tr("native code needs your permission first").to_string(),
-            )),
             _ => ok.push(*r),
         }
     }

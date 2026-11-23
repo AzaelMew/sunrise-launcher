@@ -88,28 +88,6 @@ fn storage_counts_unproved_compiler_work_but_never_offers_to_clear_it() {
 }
 
 #[test]
-fn trust_native_code_flag_persists_install_consent() {
-    let home = Home::new();
-    let output = home.run(&[
-        "native-build",
-        "--trust-native-code",
-        "--sync-internals",
-        "missing-project",
-    ]);
-    assert!(!output.status.success(), "{output:?}");
-    assert!(
-        String::from_utf8_lossy(&output.stderr).contains("not a native mod project"),
-        "{output:?}"
-    );
-    let settings: serde_json::Value =
-        serde_json::from_slice(&fs::read(home.0.path().join("launcher/settings.json")).unwrap())
-            .unwrap();
-    assert!(settings["native_mods_allowed_at"]
-        .as_u64()
-        .is_some_and(|at| at > 0));
-}
-
-#[test]
 fn build_files_refuse_without_touching_targets_sources_or_player_data() {
     let home = Home::new();
     let world = home.file("launcher/worlds/precious/level.dat", b"world");

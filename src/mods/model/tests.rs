@@ -114,7 +114,7 @@ fn installed_source_label_distinguishes_catalogue_receipts_and_direct_github() {
         &[],
         &World {
             local: &locals,
-            ..world(&idx, &none, &none, true)
+            ..world(&idx, &none, &none)
         },
     )
     .remove(0);
@@ -155,7 +155,7 @@ fn installed_source_label_distinguishes_catalogue_receipts_and_direct_github() {
     assert_eq!(row.source_label(), tr("Local file"));
     let registry = rows(
         &[entry("registry", "1.0.0", true, A)],
-        &world(&idx, &none, &none, true),
+        &world(&idx, &none, &none),
     );
     assert_eq!(registry[0].source_label(), tr("Sunrise mods"));
 }
@@ -170,7 +170,7 @@ fn installed_sections_keep_collection_members_together_and_leave_loose_rows_unti
         entry("cat", "1.0.0", true, A),
         entry("dog", "1.0.0", true, A),
     ];
-    let mut rows = rows(&entries, &world(&idx, &none, &none, true));
+    let mut rows = rows(&entries, &world(&idx, &none, &none));
     let collection = |id: &str| {
         Some(CollectionGroup {
             id: id.into(),
@@ -207,7 +207,7 @@ fn installed_filters_hide_zero_counts_and_drop_a_hidden_selection() {
     let on = HashSet::from(["lantern".into()]);
     let rows = rows(
         &[entry("lantern", "1.0.0", true, A)],
-        &world(&idx, &on, &HashSet::new(), true),
+        &world(&idx, &on, &HashSet::new()),
     );
     let mut filter = RowFilter {
         show: Show::Off,
@@ -232,7 +232,6 @@ fn world<'a>(
     index: &'a Index,
     enabled: &'a HashSet<String>,
     unbuilt: &'a HashSet<String>,
-    allowed: bool,
 ) -> World<'a> {
     World {
         index: Some(index),
@@ -242,7 +241,6 @@ fn world<'a>(
         unfit_updates: &NO_UNFIT_UPDATES,
         enabled,
         unbuilt,
-        native_allowed: allowed,
         chosen: &NO_PINS,
         local: &[],
     }
@@ -413,7 +411,7 @@ fn known_unfit_archives_are_not_offered_as_updates() {
     let known = BTreeSet::from([B.to_owned()]);
     let w = World {
         unfit_updates: &known,
-        ..world(&idx, &on, &unbuilt, true)
+        ..world(&idx, &on, &unbuilt)
     };
     let latest = rows(&[entry("zoom", "2.0.0", true, A)], &w).remove(0);
     assert!(latest.on);
@@ -468,7 +466,7 @@ fn a_held_source_is_grouped_with_rows_that_need_attention() {
     let (idx, entries) = pack();
     let enabled = HashSet::new();
     let unbuilt = HashSet::new();
-    let mut assembled = rows(&entries, &world(&idx, &enabled, &unbuilt, true));
+    let mut assembled = rows(&entries, &world(&idx, &enabled, &unbuilt));
     let quiet = assembled.iter_mut().find(|row| row.id == "quiet").unwrap();
     assert_eq!(quiet.group(), Group::Rest);
     quiet.held_for = Some("nightly-test".into());
@@ -480,7 +478,7 @@ fn rows_put_what_needs_the_player_first_then_updates_then_the_rest() {
     let (idx, entries) = pack();
     let enabled: HashSet<String> = ["quiet", "zoom", "deep", "bad"].map(String::from).into();
     let unbuilt: HashSet<String> = ["deep".to_string()].into();
-    let r = rows(&entries, &world(&idx, &enabled, &unbuilt, true));
+    let r = rows(&entries, &world(&idx, &enabled, &unbuilt));
     let order: Vec<(&str, Group)> = r.iter().map(|r| (r.id.as_str(), r.group())).collect();
     assert_eq!(
         order,
@@ -508,7 +506,7 @@ fn registry_installed_rows_use_live_names_and_statuses_or_ids_and_not_checked() 
     let bad = entries.iter_mut().find(|e| e.project == "bad").unwrap();
     bad.title = "Unverified saved name".into();
     let none = HashSet::new();
-    let live = world(&idx, &none, &none, true);
+    let live = world(&idx, &none, &none);
     let row = rows(std::slice::from_ref(bad), &live).pop().unwrap();
     assert_eq!(row.title, "BAD");
     assert_eq!(row.authors, "Someone");
@@ -530,13 +528,13 @@ fn registry_installed_rows_use_live_names_and_statuses_or_ids_and_not_checked() 
 }
 
 #[test]
-fn native_code_that_is_on_without_permission_says_so_instead_of_asking_to_build() {
+fn native_code_that_is_on_and_unbuilt_asks_to_build() {
     let (idx, entries) = pack();
     let enabled: HashSet<String> = ["deep".to_string()].into();
     let unbuilt: HashSet<String> = ["deep".to_string()].into();
-    let r = rows(&entries, &world(&idx, &enabled, &unbuilt, false));
+    let r = rows(&entries, &world(&idx, &enabled, &unbuilt));
     let deep = r.iter().find(|r| r.id == "deep").unwrap();
-    assert_eq!(deep.need, Some(Need::Permission));
+    assert_eq!(deep.need, Some(Need::Build));
 }
 
 #[test]
@@ -546,7 +544,7 @@ fn only_registry_mods_are_rows_packs_are_left_alone() {
     other.kind = sunrise_launcher::browser::Kind::Shader;
     entries.push(other);
     let none = HashSet::new();
-    let r = rows(&entries, &world(&idx, &none, &none, true));
+    let r = rows(&entries, &world(&idx, &none, &none));
     assert_eq!(r.len(), 4);
     assert!(r.iter().all(|r| r.id != "shaderish"));
 }
@@ -556,7 +554,7 @@ fn filters_narrow_the_shown_rows_and_never_reorder_them() {
     let (idx, entries) = pack();
     let on: HashSet<String> = ["quiet", "zoom"].map(String::from).into();
     let none = HashSet::new();
-    let r = rows(&entries, &world(&idx, &on, &none, true));
+    let r = rows(&entries, &world(&idx, &on, &none));
     let ids = |f: &RowFilter| {
         visible(&r, f)
             .into_iter()
@@ -599,7 +597,7 @@ fn update_all_includes_off_and_native_rows_but_not_a_player_pin() {
     let (idx, entries) = pack();
     let none = HashSet::new();
     let on: HashSet<String> = ["zoom".to_string()].into();
-    let unpinned = world(&idx, &on, &none, false);
+    let unpinned = world(&idx, &on, &none);
     let offered = rows(&entries, &unpinned);
     let updates = offered
         .iter()
@@ -625,19 +623,6 @@ fn update_all_includes_off_and_native_rows_but_not_a_player_pin() {
 }
 
 #[test]
-fn a_native_update_can_request_consent() {
-    let (idx, entries) = pack();
-    let on: HashSet<String> = ["deep"].map(String::from).into();
-    let none = HashSet::new();
-    let r = rows(&entries, &world(&idx, &on, &none, false));
-    let deep = r.iter().find(|r| r.id == "deep").unwrap();
-    let tip = cells(deep, None, None, false).status.unwrap().tip;
-    assert!(tip.contains("may ask you to allow native code"), "{tip}");
-    let tip = cells(deep, None, None, true).status.unwrap().tip;
-    assert!(!tip.contains("may ask you to allow native code"), "{tip}");
-}
-
-#[test]
 fn a_row_the_plan_cannot_update_says_why() {
     let (idx, entries) = pack();
     let on: HashSet<String> = ["zoom"].map(String::from).into();
@@ -645,15 +630,12 @@ fn a_row_the_plan_cannot_update_says_why() {
     let pins = std::collections::BTreeMap::from([("zoom".to_string(), "1.0.0".to_string())]);
     let w = World {
         chosen: &pins,
-        ..world(&idx, &on, &none, true)
+        ..world(&idx, &on, &none)
     };
     let r = rows(&entries, &w);
     let zoom = r.iter().find(|r| r.id == "zoom").unwrap();
     assert!(!bulk_updatable(zoom));
-    let tip = cells(zoom, None, None, true)
-        .status
-        .expect("says something")
-        .tip;
+    let tip = cells(zoom, None, None).status.expect("says something").tip;
     assert!(tip.contains("You chose its version"), "{tip}");
 }
 
@@ -686,16 +668,12 @@ fn native_files_the_browser_didnt_install_are_listed_and_never_planned() {
     ];
     let w = World {
         local: &local,
-        ..world(&idx, &on, &none, false)
+        ..world(&idx, &on, &none)
     };
     let r = rows(&entries, &w);
     let mine = r.iter().find(|r| r.id == "mine").expect("listed");
     assert!(mine.local.is_some() && mine.entry.is_none() && mine.update.is_none());
-    assert_eq!(
-        mine.need,
-        Some(Need::Permission),
-        "it can't run without permission, like any native mod"
-    );
+    assert_eq!(mine.need, None, "it is built and needs no permission");
     // A package of `sunrise-mods/` put there by hand is listed by its name and needs neither
     // permission nor a build.
     let content = r.iter().find(|r| r.id == "by_hand").expect("listed");
@@ -718,7 +696,7 @@ fn native_files_the_browser_didnt_install_are_listed_and_never_planned() {
 }
 
 #[test]
-fn turning_on_a_local_native_file_exposes_permission_then_build() {
+fn turning_on_a_local_native_file_exposes_its_build() {
     let home = tempfile::tempdir().unwrap();
     let on_list = home.path();
     let id = "example";
@@ -733,7 +711,7 @@ fn turning_on_a_local_native_file_exposes_permission_then_build() {
         unreadable: false,
     }];
     let unbuilt = HashSet::from([id.into()]);
-    let row = |allowed| {
+    let row = || {
         let enabled = if mod_list::is_enabled(on_list, id) {
             HashSet::from([id.into()])
         } else {
@@ -749,38 +727,30 @@ fn turning_on_a_local_native_file_exposes_permission_then_build() {
                 unfit_updates: &NO_UNFIT_UPDATES,
                 enabled: &enabled,
                 unbuilt: &unbuilt,
-                native_allowed: allowed,
                 chosen: &NO_PINS,
                 local: &local,
             },
         )
         .remove(0)
     };
-    let off = row(false);
+    let off = row();
     assert!(!off.on);
-    assert!(cells(&off, None, None, true).switch);
+    assert!(cells(&off, None, None).switch);
     mod_list::set_enabled(on_list, id, true).unwrap();
-    let needs_permission = row(false);
-    assert!(needs_permission.on);
-    assert_eq!(needs_permission.need, Some(Need::Permission));
-    assert_eq!(row(true).need, Some(Need::Build));
+    let on = row();
+    assert!(on.on);
+    assert_eq!(on.need, Some(Need::Build));
 }
 
 #[test]
-fn turning_on_skips_what_is_taken_down_or_needs_permission() {
+fn turning_on_skips_what_is_taken_down() {
     let (idx, entries) = pack();
     let none = HashSet::new();
-    let r = rows(&entries, &world(&idx, &none, &none, false));
+    let r = rows(&entries, &world(&idx, &none, &none));
     let all: Vec<&Row> = r.iter().collect();
-    let (ok, held) = turn_on_plan(&all, false);
-    assert_eq!(
-        ok.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
-        ["zoom", "quiet"]
-    );
-    assert_eq!(held.len(), 2);
-    let (ok, held) = turn_on_plan(&all, true);
+    let (ok, held) = turn_on_plan(&all);
     assert_eq!(ok.len(), 3);
-    assert_eq!(held.len(), 1, "taken down stays held even with permission");
+    assert_eq!(held.len(), 1, "taken down stays held");
 }
 
 #[test]
@@ -809,8 +779,7 @@ fn every_reason_a_build_left_a_mod_out_is_shown_and_counted() {
     });
     let w = World {
         local: &local,
-        native_allowed: true,
-        ..world(&idx, &on, &none, false)
+        ..world(&idx, &on, &none)
     };
     let mut r = rows(&entries, &w);
     let left = |id: &str, why| LeftOut {
@@ -832,7 +801,7 @@ fn every_reason_a_build_left_a_mod_out_is_shown_and_counted() {
     ];
     mark_left_out(&mut r, &list, "Nov 17", |tag| format!("name of {tag}"));
     let row = |id: &str| r.iter().find(|r| r.id == id).unwrap();
-    let failed = cells(row("lib"), None, None, true);
+    let failed = cells(row("lib"), None, None);
     let status = failed.status.unwrap();
     assert_eq!(status.label, "Failed");
     assert!(status.tip.contains("lib"));
@@ -882,8 +851,7 @@ fn every_row_fills_the_same_columns_whatever_it_has_to_say() {
     });
     let w = World {
         local: &local,
-        native_allowed: true,
-        ..world(&idx, &on, &unbuilt, false)
+        ..world(&idx, &on, &unbuilt)
     };
     let mut r = rows(&entries, &w);
     mark_left_out(
@@ -914,13 +882,13 @@ fn every_row_fills_the_same_columns_whatever_it_has_to_say() {
 
     // Every row has a kind and a version for the same two columns.
     for row in &r {
-        let cells = cells(row, None, None, true);
+        let cells = cells(row, None, None);
         assert_eq!(cells.version, row.version);
         assert_eq!(cells.kind, row.make.map_or("", Make::label));
     }
     // A mod that needs an update keeps the switch's place, and its status opens the popover:
     // no file or type name in the label or the tooltip.
-    let old = cells(row("old"), None, None, true);
+    let old = cells(row("old"), None, None);
     let status = old.status.unwrap();
     assert_eq!(status.label, "Needs an update");
     assert_eq!(status.tone, Tone::Warning);
@@ -931,7 +899,7 @@ fn every_row_fills_the_same_columns_whatever_it_has_to_say() {
     let addon = row("addon");
     assert_eq!(addon.need, Some(Need::Build));
     assert_eq!(
-        cells(addon, None, None, true).status.unwrap().label,
+        cells(addon, None, None).status.unwrap().label,
         "Added · builds when you play"
     );
     for (at, label, tone) in [
@@ -952,7 +920,7 @@ fn every_row_fills_the_same_columns_whatever_it_has_to_say() {
             Tone::Warning,
         ),
     ] {
-        let cells = cells(addon, None, Some(&at), true);
+        let cells = cells(addon, None, Some(&at));
         let status = cells.status.unwrap();
         assert_eq!((status.label.as_str(), status.tone), (label, tone));
         match at {
@@ -967,7 +935,7 @@ fn every_row_fills_the_same_columns_whatever_it_has_to_say() {
         }
     }
     // The source is in the byline; it doesn't take up the status column.
-    let fine = cells(row("fine"), None, None, true);
+    let fine = cells(row("fine"), None, None);
     assert!(fine.status.is_none());
     assert_eq!(fine.action, None);
     assert!(fine.switch, "local files can be switched on and off");
@@ -976,7 +944,7 @@ fn every_row_fills_the_same_columns_whatever_it_has_to_say() {
         .iter()
         .find(|r| r.local.is_none() && r.need.is_none() && r.update.is_none());
     if let Some(plain) = plain {
-        let cells = cells(plain, None, None, true);
+        let cells = cells(plain, None, None);
         assert_eq!(
             (cells.status, cells.action, cells.switch),
             (None, None, true)
@@ -986,19 +954,13 @@ fn every_row_fills_the_same_columns_whatever_it_has_to_say() {
     // Update whenever a newer version is out.
     let mut both = row("addon").clone();
     both.update = Some("1.1".into());
-    let cells_both = cells(&both, Some("the download stopped"), None, true);
+    let cells_both = cells(&both, Some("the download stopped"), None);
     let status = cells_both.status.unwrap();
     assert_eq!(status.label, "Update failed");
     assert!(status.tip.contains("the download stopped"));
     assert!(status.tip.contains("Not built for this computer yet"));
     assert!(status.tip.contains("Version 1.1 is out"));
     assert_eq!(cells_both.action, Some(RowAction::Update));
-    // Permission comes before a newer version: its button is Allow.
-    both.need = Some(Need::Permission);
-    assert_eq!(
-        cells(&both, None, None, true).action,
-        Some(RowAction::Allow)
-    );
 }
 
 // ---------------------------------------------------------------- collections
@@ -1496,7 +1458,7 @@ fn an_unreadable_file_is_never_on_and_cannot_switch_a_working_mod_of_its_name() 
     let local = [file(true), file(false)];
     let w = World {
         local: &local,
-        ..world(&idx, &on, &none, false)
+        ..world(&idx, &on, &none)
     };
     let r = rows(&[], &w);
     let broken = r
@@ -1505,14 +1467,14 @@ fn an_unreadable_file_is_never_on_and_cannot_switch_a_working_mod_of_its_name() 
         .expect("listed");
     assert!(!broken.on);
     assert_eq!(broken.need, None);
-    assert!(!cells(broken, None, None, true).switch);
+    assert!(!cells(broken, None, None).switch);
     let good = r
         .iter()
         .find(|r| r.local.as_ref().is_some_and(|l| !l.unreadable))
         .expect("listed");
     assert!(good.on);
-    assert_eq!(good.need, Some(Need::Permission));
-    assert!(cells(good, None, None, true).switch);
+    assert_eq!(good.need, None);
+    assert!(cells(good, None, None).switch);
 }
 
 #[test]
@@ -1599,7 +1561,7 @@ fn manual_mods_get_badges_and_never_enter_bulk_updates() {
     ];
     let w = World {
         local: &locals,
-        ..world(&idx, &on, &none, true)
+        ..world(&idx, &on, &none)
     };
     let mut all = rows(&[entry("zoom", "1.0.0", false, A)], &w);
     // Even if an update string were attached, manual mods must never be bulk-updatable.
@@ -1758,7 +1720,6 @@ fn a_v2_installed_row_offers_the_newest_release_listed_for_its_build_and_shows_a
                 unfit_updates: &NO_UNFIT_UPDATES,
                 enabled: &on,
                 unbuilt: &none,
-                native_allowed: true,
                 chosen: &NO_PINS,
                 local: &[],
             },
@@ -1784,7 +1745,7 @@ fn a_v2_installed_row_offers_the_newest_release_listed_for_its_build_and_shows_a
 }
 
 #[test]
-fn a_served_mod_needs_its_host_on_and_stays_off_with_a_host_held_for_permission() {
+fn a_served_mod_needs_its_host_on() {
     let local = |id: &str, native: bool, served_by: Option<&str>| Local {
         id: id.into(),
         file: format!("x/{id}.smod"),
@@ -1803,7 +1764,7 @@ fn a_served_mod_needs_its_host_on_and_stays_off_with_a_host_held_for_permission(
         local("runes", false, Some("java_host")),
     ];
     let none = HashSet::new();
-    let shown = |enabled: &HashSet<String>, allowed: bool| {
+    let shown = |enabled: &HashSet<String>| {
         rows(
             &[],
             &World {
@@ -1814,7 +1775,6 @@ fn a_served_mod_needs_its_host_on_and_stays_off_with_a_host_held_for_permission(
                 unfit_updates: &NO_UNFIT_UPDATES,
                 enabled,
                 unbuilt: &none,
-                native_allowed: allowed,
                 chosen: &NO_PINS,
                 local: &locals,
             },
@@ -1824,22 +1784,9 @@ fn a_served_mod_needs_its_host_on_and_stays_off_with_a_host_held_for_permission(
 
     // On without its host: the game leaves it out, and the row says what it needs.
     let alone: HashSet<String> = ["runes".to_owned()].into();
-    let row = runes(&shown(&alone, true));
+    let row = runes(&shown(&alone));
     assert_eq!(row.need, Some(Need::Host("Java Host".into())));
     assert_eq!(row.group(), Group::NeedsYou);
     let both: HashSet<String> = ["runes".to_owned(), "java_host".to_owned()].into();
-    assert_eq!(runes(&shown(&both, true)).need, None);
-
-    // Turning both on before native code is allowed holds the host, and the mod it serves.
-    let off = shown(&none, false);
-    let all: Vec<&Row> = off.iter().collect();
-    let (ok, held) = turn_on_plan(&all, false);
-    assert!(
-        ok.is_empty(),
-        "{:?}",
-        ok.iter().map(|r| &r.id).collect::<Vec<_>>()
-    );
-    assert_eq!(held.len(), 2);
-    let (ok, _) = turn_on_plan(&all, true);
-    assert_eq!(ok.len(), 2);
+    assert_eq!(runes(&shown(&both)).need, None);
 }

@@ -56,13 +56,15 @@ pub struct Release {
 }
 
 mod look_settings;
-mod native_permission;
-pub(crate) use native_permission::{NativeGrant, PermissionFence};
 mod play_log;
 mod release_assets;
 mod release_notes;
+mod settings_file;
 pub use release_assets::PLATFORMS;
 pub use release_notes::{markdown_to_text, notes_summary};
+pub use settings_file::{
+    allow_native_files, allow_native_files_in, allowed_native_files, allowed_native_files_in,
+};
 
 /// `a == b`, in a const context.
 const fn same(a: &str, b: &str) -> bool {
@@ -5371,9 +5373,6 @@ pub struct Settings {
     /// The window's language. Unset follows the system's (`i18n::Language::system`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<crate::i18n::Language>,
-    /// First-use native code permission for this launcher install, Unix seconds.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub native_mods_allowed_at: Option<u64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub source_mod_grants: Vec<SourceModGrant>,
     /// Managed cache limit in GiB (unset: 25; zero: no automatic cleanup). Player data isn't cache.
@@ -5437,15 +5436,6 @@ impl Settings {
 }
 
 impl Settings {
-    /// Remember an explicit approval; merely finding an installed toolchain never grants it.
-    pub fn allow_native_mods(&mut self) -> Result<(), String> {
-        let time = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|error| error.to_string())?
-            .as_secs();
-        self.set_native_permission(&data_dir(), Some(time))
-    }
-
     pub fn load() -> Self {
         Self::load_from(&data_dir())
     }

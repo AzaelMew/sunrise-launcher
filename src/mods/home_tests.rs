@@ -43,7 +43,6 @@ fn home_labels_follow_installed_replies_with_the_same_inventory_and_registry() {
             });
             launcher.ui.mods.catalog_game = Some(launcher.mods_game());
             launcher.ui.mods.catalog = Catalog::Loading;
-            launcher.settings.native_mods_allowed_at = None;
             let id = "lantern";
             let installed = || InstalledRows {
                 local: vec![model::Local {
@@ -72,7 +71,7 @@ fn home_labels_follow_installed_replies_with_the_same_inventory_and_registry() {
             launcher.mods_drain();
             let facts = launcher.home_mod_facts(inventory, index.clone());
             assert_eq!(facts[id].kind, tr("Native"));
-            assert_eq!(facts[id].status.as_deref(), Some(tr("Needs permission")));
+            assert!(facts[id].status.is_none(), "native code needs no permission");
 
             let mut updated = installed();
             updated.local[0].native = false;

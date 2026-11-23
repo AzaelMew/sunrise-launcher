@@ -332,10 +332,8 @@ mod tests {
     }
 
     #[test]
-    fn a_download_save_and_install_prompt_survive_a_profile_delete() {
-        let Some(root) =
-            scratch_child("a_download_save_and_install_prompt_survive_a_profile_delete")
-        else {
+    fn a_download_save_survives_a_profile_delete() {
+        let Some(root) = scratch_child("a_download_save_survives_a_profile_delete") else {
             return;
         };
         let profile = instances::create("To Delete", None).unwrap();
@@ -348,26 +346,11 @@ mod tests {
         let (shell, cx) = app.add_window_view(crate::window_root::Shell::new);
         let launcher = shell.read_with(cx, |shell, _| shell.launcher());
         let window = cx.update(|window, _| window.window_handle());
-        let ask = |launcher: &mut Launcher| {
-            let (send, recv) = std::sync::mpsc::channel();
-            launcher.registry_consent(
-                native_mods::Consent {
-                    added_crates: 1,
-                    build_scripts: vec!["fixture".into()],
-                    proc_macros: Vec::new(),
-                },
-                send,
-            );
-            recv
-        };
         launcher.update(cx, |launcher, cx| {
             // Feed the real message handler synchronously rather than race the wake relay.
             (launcher.tx, launcher.rx) = std::sync::mpsc::channel();
             // Freeze the worker's completion until the download handler has saved.
             launcher.ui.sheets.profile_action = Some(Action::Deleting(profile.name.clone()));
-            let canceled = ask(launcher);
-            assert!(launcher.sheet_escape());
-            assert_eq!(canceled.try_recv(), Ok(false));
             assert!(matches!(
                 launcher.ui.sheets.profile_action,
                 Some(Action::Deleting(_))
@@ -385,17 +368,10 @@ mod tests {
             assert_eq!(live.selected.as_deref(), Some("26.3-0.1.1"));
             assert_eq!(live.instance.as_ref(), Some(&profile.id));
 
-            let pending = ask(launcher);
             let trashed = instances::trash_confirmed(profile.clone());
             assert!(trashed.is_ok(), "{trashed:?}");
             launcher.finish_profile_delete(&profile.id, &profile.name, trashed);
             assert!(launcher.ui.sheets.profile_action.is_none());
-            assert_eq!(
-                pending.try_recv(),
-                Err(std::sync::mpsc::TryRecvError::Empty)
-            );
-            assert!(launcher.sheet_escape());
-            assert_eq!(pending.try_recv(), Ok(false));
         });
         let saved = Settings::load();
         assert!(saved.instance.is_none());

@@ -99,6 +99,9 @@ impl PreparedSource {
     pub fn name(&self) -> &str {
         &self.package.name
     }
+    pub fn sha256(&self) -> &str {
+        &self.package.sha256
+    }
     pub fn base(&self) -> &str {
         &self.proof.base
     }
