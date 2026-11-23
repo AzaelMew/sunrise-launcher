@@ -37,6 +37,7 @@ pub fn update_github(
 /// Install checked GitHub packages from "Add from source": a verified same-repository manual
 /// release predecessor goes through the checked update path (with world review), while
 /// other-source collisions stay refused.
+#[allow(clippy::too_many_arguments)]
 pub fn install_github_manual(
     instance: &Instance,
     identity: Identity,

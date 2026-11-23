@@ -222,7 +222,7 @@ pub fn install_local_packages(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::browser::{installed, mod_list as browser_mod_list, Kind, SourceId};
+    use crate::browser::{installed, mod_list as browser_mod_list};
     use crate::github_mods::AddedFrom;
     use sunrise_launcher_smod::{mod_list, Package};
 
@@ -268,21 +268,19 @@ mod tests {
 
         // Refuses to overwrite a registry-tracked mod.
         let tracked = installed::Installed {
-            entries: vec![installed::Entry {
-                source: SourceId::Sunrise,
-                kind: Kind::Mod,
-                project: "lantern-project".into(),
-                slug: "lantern-tweaks".into(),
-                title: "Lantern Tweaks".into(),
-                version: "0.1.0".into(),
-                number: "0.1.0".into(),
-                file: format!("{}/lantern_tweaks.smod", mod_list::DIR),
-                checksum: String::new(),
-                page: String::new(),
-                dependency: false,
-                verdict: None,
-                install_hold: None,
-            }],
+            entries: vec![serde_json::from_value(serde_json::json!({
+                "source": "sunrise",
+                "kind": "mod",
+                "project": "lantern-project",
+                "slug": "lantern-tweaks",
+                "title": "Lantern Tweaks",
+                "version": "0.1.0",
+                "number": "0.1.0",
+                "file": format!("{}/lantern_tweaks.smod", mod_list::DIR),
+                "checksum": "",
+                "page": "",
+            }))
+            .unwrap()],
         };
         tracked.save(&home).unwrap();
         assert!(install_local_packages(&home, &[pkg]).is_err());

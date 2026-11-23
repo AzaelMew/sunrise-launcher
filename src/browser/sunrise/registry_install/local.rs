@@ -516,7 +516,7 @@ fn revalidate_claims(live: &Path, checks: &[(String, String)]) -> Result<(), Str
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::browser::{installed, mod_list as browser_mod_list, Kind, SourceId};
+    use crate::browser::{installed, mod_list as browser_mod_list};
     use crate::github_mods::{read_local_folder, read_local_smod, Origin};
     use std::sync::atomic::{AtomicBool, Ordering};
     use sunrise_launcher_smod::Package;
@@ -552,21 +552,19 @@ mod tests {
         // Registry claims `beta`, so a batch replacing `alpha` + adding `beta` must fail cleanly
         // without touching `alpha`'s live archive or enabled state.
         let tracked = installed::Installed {
-            entries: vec![installed::Entry {
-                source: SourceId::Sunrise,
-                kind: Kind::Mod,
-                project: "beta".into(),
-                slug: "beta".into(),
-                title: "Beta".into(),
-                version: "1.0.0".into(),
-                number: "1.0.0".into(),
-                file: format!("{}/beta.smod", smod_mod_list::DIR),
-                checksum: String::new(),
-                page: String::new(),
-                dependency: false,
-                verdict: None,
-                install_hold: None,
-            }],
+            entries: vec![serde_json::from_value(serde_json::json!({
+                "source": "sunrise",
+                "kind": "mod",
+                "project": "beta",
+                "slug": "beta",
+                "title": "Beta",
+                "version": "1.0.0",
+                "number": "1.0.0",
+                "file": format!("{}/beta.smod", smod_mod_list::DIR),
+                "checksum": "",
+                "page": "",
+            }))
+            .unwrap()],
         };
         tracked.save(&home).unwrap();
 

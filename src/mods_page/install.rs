@@ -125,10 +125,6 @@ impl GithubTarget {
         &self.profile.name
     }
 
-    pub(crate) fn home(&self) -> &Path {
-        &self.profile.home
-    }
-
     pub(crate) fn source(&self) -> Result<SourceTarget, String> {
         Ok(SourceTarget {
             profile: self.profile.clone(),
