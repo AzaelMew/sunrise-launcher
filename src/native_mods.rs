@@ -3010,6 +3010,60 @@ mod tests {
     }
 
     #[test]
+    fn guard_worlds_refuses_when_mod_is_recorded_only_in_level_dat_old() {
+        let _guard = scratch_state();
+        let home = dir("native-switch-level-dat-old");
+        let world = home.join("saves/Home");
+        fs::create_dir_all(&world).unwrap();
+        let write_level = |file: &str, with_mod: bool| {
+            let mut root = vec![(
+                "Data",
+                sunrise_launcher_nbt::Tag::compound([(
+                    "LevelName",
+                    sunrise_launcher_nbt::Tag::String("Home".into()),
+                )]),
+            )];
+            if with_mod {
+                root.push((
+                    "fml",
+                    sunrise_launcher_nbt::Tag::compound([(
+                        "LoadingModList",
+                        sunrise_launcher_nbt::Tag::List(vec![sunrise_launcher_nbt::Tag::compound(
+                            [("ModId", sunrise_launcher_nbt::Tag::String("greeter".into()))],
+                        )]),
+                    )]),
+                ));
+            }
+            let bytes = sunrise_launcher_nbt::write_named(
+                &sunrise_launcher_nbt::NamedTag {
+                    name: "".into(),
+                    tag: sunrise_launcher_nbt::Tag::compound(root),
+                },
+                sunrise_launcher_nbt::Limits::saved(),
+            )
+            .unwrap();
+            let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+            std::io::Write::write_all(&mut gz, &bytes).unwrap();
+            fs::write(world.join(file), gz.finish().unwrap()).unwrap();
+        };
+        write_level("level.dat", false);
+        write_level("level.dat_old", true);
+
+        let left = [LeftOut {
+            id: "greeter".into(),
+            version: "1.0.0".into(),
+            why: isolate::Why::DidNotBuild,
+            detail: None,
+        }];
+        let Err(Failed::Worlds(stake)) = guard_worlds(&home, &left, "nightly", false) else {
+            panic!("a mod recorded only in level.dat_old must stop the switch");
+        };
+        assert_eq!(stake.worlds, ["Home"]);
+        assert_eq!(stake.mods, ["greeter"]);
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
     fn a_plain_fallback_is_cancelled_after_the_stable_lookup() {
         use instances::Channel::Stable;
         let installed = ["26.3-0.1.0".to_owned()];
