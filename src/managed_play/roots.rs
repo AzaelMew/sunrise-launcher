@@ -12,11 +12,22 @@ use std::{
 
 const FILE: &str = "profile-artifact-roots.json";
 
-#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// The directory a registered path named when it was registered. Only `entry` tells two
+/// directories at one path apart: a root is always reached through its recorded path, and the
+/// device number of a btrfs subvolume (`volume`) is assigned at mount time, so it can change
+/// across a reboot while the directory stays the same. `volume` is still written, for the
+/// launchers that read this file before.
+#[derive(Clone, Copy, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Identity {
     volume: u64,
     entry: u64,
+}
+
+impl PartialEq for Identity {
+    fn eq(&self, other: &Self) -> bool {
+        self.entry == other.entry
+    }
 }
 
 impl Identity {
@@ -77,7 +88,9 @@ fn register_root(cache: &Path, root: PathBuf) -> Result<(), String> {
     let mut roots = read(cache)?;
     let id = Identity::of(&root)?;
     match roots.get(&root) {
-        Some(previous) if *previous == id => return Ok(()),
+        Some(previous) if *previous == id && previous.volume == id.volume => return Ok(()),
+        // The same directory under a device number the system gave it again.
+        Some(previous) if *previous == id => (),
         Some(_) => return Err(at(&root, unsettled!())),
         None => (),
     }
@@ -252,6 +265,28 @@ mod tests {
         fs::create_dir(&first).unwrap();
         assert!(referenced(&cache, &second, "unrelated").is_err());
         assert!(register_root(&cache, first.canonicalize().unwrap()).is_err());
+    }
+
+    #[test]
+    fn a_root_whose_device_number_changed_across_a_remount_is_still_the_same_root() {
+        let temp = tempfile::tempdir().unwrap();
+        let cache = temp.path().join("launcher");
+        let game = temp.path().join("game");
+        for dir in [&cache, &game] {
+            fs::create_dir(dir).unwrap();
+        }
+        let root = game.canonicalize().unwrap();
+        register_root(&cache, root.clone()).unwrap();
+        // As btrfs does after a reboot: the same inode, under another device number.
+        let mut roots = read(&cache).unwrap();
+        let recorded = roots.get_mut(&root).unwrap();
+        recorded.volume = recorded.volume.wrapping_add(2);
+        save(&cache, roots).unwrap();
+        assert!(!referenced(&cache, &game, "unrelated").unwrap());
+
+        register_root(&cache, root.clone()).unwrap();
+        let now = Identity::of(&root).unwrap();
+        assert_eq!(read(&cache).unwrap()[&root].volume, now.volume);
     }
 
     #[test]
