@@ -296,10 +296,12 @@ impl Launcher {
         let p = palette();
         let scenery = self.settings.scenery();
         let text = rgb(if scenery { p.hero.text } else { p.text });
+        // Centred over the page, so the profile fills the scene rather than its left half.
         let labels = div()
             .flex()
             .flex_col()
-            .self_start()
+            .items_center()
+            .self_center()
             .max_w_full()
             .child(
                 div()
@@ -329,6 +331,7 @@ impl Launcher {
             .child(
                 div()
                     .mt(px(if compact { 5. } else { 10. }))
+                    .max_w_full()
                     .text_size(px(tokens::BODY))
                     .text_color(text)
                     .truncate()
@@ -346,7 +349,7 @@ impl Launcher {
             )
             .children(receipt.then(|| {
                 crate::frame::button("home-build-changes", tr("Build changes"))
-                    .self_start()
+                    .self_center()
                     .mt(px(10.))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.open_build_changes(cx);
@@ -538,7 +541,8 @@ impl Launcher {
         let says = self.ui.home.shade_behind(says, self.settings.scenery());
         // The cat walks the empty stretch and stands on the panel's edge. It stays in while a
         // button stands in its way.
-        let (lane, _) = self.cat(act.is_none(), false, window, cx);
+        let cat_beside = act.is_none();
+        let (lane, _) = self.cat(cat_beside, false, window, cx);
         let has_status = view.said.is_some()
             || view.mods_off.is_some()
             || self.build_said().is_some()
@@ -568,14 +572,25 @@ impl Launcher {
         div()
             .flex()
             .flex_col()
+            .items_center()
             .child(
                 div()
+                    .w_full()
                     .flex()
                     .items_end()
+                    // Matches the cat's lane and its margins, so the buttons sit in the middle.
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .mr(px(12.))
+                            .when(cat_beside, |d| d.ml(px(-(14. + crate::cat::UNDER)))),
+                    )
                     .child(
                         div()
                             .flex()
                             .flex_wrap()
+                            .justify_center()
                             .items_center()
                             .gap(px(if compact { 8. } else { 12. }))
                             .min_w_0()
