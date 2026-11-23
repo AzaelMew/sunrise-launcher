@@ -975,14 +975,13 @@ impl Launcher {
             .children(gallery)
             .children(body);
         project_frame()
-            .child(crate::scrollbar::wrap_page(
+            .child(crate::scrollbar::wrap_page_in_margin(
                 "project",
                 div()
                     .id("alt-project-scroll")
                     .flex_1()
                     .min_h_0()
                     .overflow_y_scroll()
-                    .pr(px(14.))
                     .flex()
                     .flex_col()
                     .gap(px(14.))

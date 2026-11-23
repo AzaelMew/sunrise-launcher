@@ -563,14 +563,13 @@ impl Launcher {
             .flex_col()
             .overflow_hidden()
             .child(toolbar)
-            .child(crate::scrollbar::wrap_page(
+            .child(crate::scrollbar::wrap_page_in_margin(
                 "installed",
                 div()
                     .id("alt-installed-scroll")
                     .flex_1()
                     .min_h_0()
                     .overflow_y_scroll()
-                    .pr(px(14.))
                     .child(list),
                 &self.theme,
             ))

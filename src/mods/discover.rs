@@ -786,7 +786,6 @@ impl Launcher {
             .flex_1()
             .min_h_0()
             .overflow_y_scroll()
-            .pr(px(14.))
             .child(
                 div()
                     .flex()
@@ -815,7 +814,7 @@ impl Launcher {
                         )
                     }),
             );
-        crate::scrollbar::wrap_page(scroll_key, results, &self.theme)
+        crate::scrollbar::wrap_page_in_margin(scroll_key, results, &self.theme)
     }
 
     fn discover_menu(

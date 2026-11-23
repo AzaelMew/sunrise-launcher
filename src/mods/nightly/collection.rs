@@ -360,14 +360,13 @@ impl Launcher {
                     .child(tr("Mods")),
             )
             .child(rows);
-        page.child(crate::scrollbar::wrap_page(
+        page.child(crate::scrollbar::wrap_page_in_margin(
             "nightly-collection",
             div()
                 .id("nightly-collection-scroll")
                 .flex_1()
                 .min_h_0()
                 .overflow_y_scroll()
-                .pr(px(14.))
                 .child(
                     div().flex().flex_col().gap(px(14.)).child(back).child(
                         div()
