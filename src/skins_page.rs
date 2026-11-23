@@ -2625,26 +2625,44 @@ impl Launcher {
                 Vec::new(),
                 Some(crate::settings::hint(tr("Looking up your capes…"))),
             ),
-            Some(Err(why)) => (
-                Vec::new(),
-                Some(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(px(12.))
-                        .child(crate::settings::warning(why.clone()))
-                        .child(
-                            crate::frame::button("capes-retry", tr("Try again")).on_click(
-                                cx.listener(|this, _: &ClickEvent, _, cx| {
-                                    if let Some(account) = this.look_account() {
-                                        this.profile_read(&account);
-                                    }
-                                    cx.notify();
-                                }),
-                            ),
-                        ),
-                ),
-            ),
+            Some(Err(why)) => {
+                let needs_sign_in = self.look_account().is_some_and(|a| {
+                    self.auth_status
+                        .get(&a.uuid)
+                        .is_some_and(|s| s.state == crate::account::session::State::SignInRequired)
+                });
+                let action = if needs_sign_in {
+                    crate::frame::button("capes-sign-in", tr("Sign in again")).on_click(
+                        cx.listener(|this, _: &ClickEvent, _, cx| {
+                            if let Some(account) = this.look_account() {
+                                this.re_sign_in(&account.uuid);
+                            }
+                            cx.notify();
+                        }),
+                    )
+                } else {
+                    crate::frame::button("capes-retry", tr("Try again")).on_click(cx.listener(
+                        |this, _: &ClickEvent, _, cx| {
+                            if let Some(account) = this.look_account() {
+                                this.profile_read(&account);
+                            }
+                            cx.notify();
+                        },
+                    ))
+                };
+                (
+                    Vec::new(),
+                    Some(
+                        div()
+                            .flex()
+                            .flex_wrap()
+                            .items_center()
+                            .gap(px(12.))
+                            .child(crate::settings::warning(why.clone()))
+                            .child(action),
+                    ),
+                )
+            }
             Some(Ok(profile)) => (profile.capes.clone(), None),
         };
         let mut choices: Vec<(CapePick, String)> = vec![(CapePick::None, tr("No cape").into())];
