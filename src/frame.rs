@@ -3,9 +3,9 @@
 use super::*;
 use crate::paint::palette;
 use crate::sheets::Sheet;
-use gpui::rgb;
+use gpui::{rgb, AnimationExt};
 
-#[derive(Clone, Copy, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(super) enum Page {
     #[default]
     Home,
@@ -71,6 +71,39 @@ pub(super) struct State {
     pub rail_pin: Option<f32>,
     /// When the status strip appeared, so each appearance eases in once without jumping the page.
     pub status_strip_since: Option<Instant>,
+    /// The last drawn page and when we switched to it (None on first draw or once settled).
+    pub page_switched: Option<(Page, Option<Instant>)>,
+}
+
+impl State {
+    /// Returns the instant the current page entrance started while its transition is still active,
+    /// or `None` on initial render, under reduced motion, or after [`crate::motion::PAGE`] ends.
+    pub(super) fn page_transition(
+        &mut self,
+        page: Page,
+        now: Instant,
+        still: bool,
+    ) -> Option<Instant> {
+        match self.page_switched {
+            Some((last_page, switched_at)) => {
+                if last_page != page {
+                    let started = (!still).then_some(now);
+                    self.page_switched = Some((page, started));
+                    started
+                } else if still {
+                    None
+                } else {
+                    switched_at.filter(|&at| {
+                        now.saturating_duration_since(at) < crate::motion::PAGE.duration()
+                    })
+                }
+            }
+            None => {
+                self.page_switched = Some((page, None));
+                None
+            }
+        }
+    }
 }
 
 /// The keyboard's ring, in `color`, around a filled control that has no edge of its own to turn
@@ -725,6 +758,27 @@ impl Launcher {
             }
             _ => self.mods(window, cx),
         };
+        let content = if let Some(at) = self.ui.page_transition(page, now, crate::motion::still()) {
+            static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+            let start = *START.get_or_init(Instant::now);
+            let id = at.saturating_duration_since(start).as_micros() as usize;
+            div()
+                .relative()
+                .flex_1()
+                .min_w_0()
+                .min_h_0()
+                .flex()
+                .flex_col()
+                .child(content)
+                .with_animation(
+                    ElementId::named_usize("page-turn", id),
+                    crate::motion::eased(crate::motion::PAGE),
+                    |d, p| d.opacity(p).top(px(tokens::RISE * (1. - p))),
+                )
+                .into_any_element()
+        } else {
+            content
+        };
         let status = self.status_strip(cx);
         let status = if let Some(strip) = status {
             let since = *self.ui.status_strip_since.get_or_insert_with(Instant::now);
@@ -904,5 +958,33 @@ mod tests {
         for page in [Page::Discover, Page::Installed, Page::Project] {
             assert!(page.active_tab() == Page::Discover);
         }
+    }
+
+    #[test]
+    fn page_switch_transitions_only_when_destination_changes_and_rests_after_duration() {
+        let mut state = super::State::default();
+        let t0 = std::time::Instant::now();
+        assert!(state.page_transition(Page::Home, t0, false).is_none());
+        assert_eq!(state.page_switched.unwrap().0, Page::Home);
+        let t1 = t0 + std::time::Duration::from_millis(50);
+        assert_eq!(state.page_transition(Page::Settings, t1, false), Some(t1));
+        assert_eq!(
+            state.page_transition(
+                Page::Settings,
+                t1 + std::time::Duration::from_millis(100),
+                false
+            ),
+            Some(t1)
+        );
+        assert!(state
+            .page_transition(
+                Page::Settings,
+                t1 + std::time::Duration::from_millis(300),
+                false
+            )
+            .is_none());
+        // Reduced motion snaps without starting a transition.
+        let t2 = t1 + std::time::Duration::from_millis(400);
+        assert!(state.page_transition(Page::Home, t2, true).is_none());
     }
 }
