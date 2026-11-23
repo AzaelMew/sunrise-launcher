@@ -1902,5 +1902,8 @@
   "Your rating": "Your rating",
   "Rate this mod": "Rate this mod",
   "Too many ratings in a short time. Try again later.": "Too many ratings in a short time. Try again later.",
-  "Another account plays now. Rate again.": "Another account plays now. Rate again."
+  "Another account plays now. Rate again.": "Another account plays now. Rate again.",
+  "Keeping the mods' libraries for the next build": "Keeping the mods' libraries for the next build",
+  "The mods' libraries couldn't be kept for the next build: {error}": "The mods' libraries couldn't be kept for the next build: {error}",
+  "Reusing the libraries kept from an earlier build: {mods}": "Reusing the libraries kept from an earlier build: {mods}"
 }

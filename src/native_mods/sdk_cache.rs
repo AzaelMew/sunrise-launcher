@@ -402,6 +402,11 @@ impl Sdk {
         &self.index.build.commit
     }
 
+    /// The SHA-256 of `sdk.json` as signed, which names every slice's digest.
+    pub(super) fn signed(&self) -> &str {
+        &self.sha256
+    }
+
     /// The build as people read it.
     pub(super) fn shown(&self) -> String {
         shown(self.commit(), self.index.build.nightly.as_deref())

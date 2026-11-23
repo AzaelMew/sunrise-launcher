@@ -15,9 +15,9 @@ pub(super) struct Workspace(tempfile::TempDir);
 /// bytes. A registry symlink alias is copied as a regular file under its original name.
 #[derive(Debug)]
 pub(super) struct Library {
-    name: String,
-    source: std::path::PathBuf,
-    sha256: String,
+    pub(super) name: String,
+    pub(super) source: std::path::PathBuf,
+    pub(super) sha256: String,
 }
 
 impl Library {
