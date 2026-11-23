@@ -30,12 +30,13 @@ const CACHE_INDEX: &str = "index.json";
 const CACHE_SIG: &str = "index.json.minisig";
 const STATE_FILE: &str = "state.json";
 
+/// The registry's index signing key, published as `registry/index-key.pub` in
+/// sunrise-org/sunrise-mods.
+pub const PRODUCTION_KEY: &str = "RWTNJaFJ4AekHG/RgVrgmJpvy9B2EaeqbdSNuseKUx2XPxaOZkChLV0q";
+
 /// Built-in minisign public keys trusted to sign the v2 mod registry catalogue.
-///
-/// No production key is configured yet: non-test builds keep this empty so the reader reports
-/// `"registry key not configured"` and trusts nothing.
 #[cfg(not(test))]
-pub const REGISTRY_KEYS: &[&str] = &[];
+pub const REGISTRY_KEYS: &[&str] = &[PRODUCTION_KEY];
 
 /// Disposable test-only minisign public key; never compiled into non-test builds.
 #[cfg(test)]
