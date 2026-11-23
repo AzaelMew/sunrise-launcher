@@ -241,27 +241,34 @@ fn native_server_setup_uses_base_resources_and_native_programs() {
 }
 
 #[cfg(unix)]
+fn host_runtime_child(test: &str) -> bool {
+    const CHILD: &str = "SUNRISE_TEST_HOST_RUNTIME";
+    if std::env::var_os(CHILD).is_some() {
+        return true;
+    }
+    let root = tempfile::tempdir().unwrap();
+    assert!(Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", &format!("servers::tests::{test}")])
+        .env(CHILD, "1")
+        .env("SUNRISE_LAUNCHER_HOME", root.path().join("data"))
+        .env("SUNRISE_HOME", root.path().join("game"))
+        .status()
+        .unwrap()
+        .success());
+    false
+}
+
+#[cfg(unix)]
 #[test]
-fn start_and_restart_publish_the_configured_resources_from_the_engine_command() {
+fn start_and_restart_publish_the_configured_resources_without_a_pending_field() {
     use std::os::unix::fs::PermissionsExt;
     use sunrise_launcher_smod::{
         locks::LockMode,
         runtime_leases::{open_directory, Registry},
     };
-    const CHILD: &str = "SUNRISE_TEST_HOST_RUNTIME";
-    if std::env::var_os(CHILD).is_none() {
-        let root = tempfile::tempdir().unwrap();
-        assert!(Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "servers::tests::start_and_restart_publish_the_configured_resources_from_the_engine_command"
-            ])
-            .env(CHILD, "1")
-            .env("SUNRISE_LAUNCHER_HOME", root.path().join("data"))
-            .env("SUNRISE_HOME", root.path().join("game"))
-            .status()
-            .unwrap()
-            .success());
+    if !host_runtime_child(
+        "start_and_restart_publish_the_configured_resources_without_a_pending_field",
+    ) {
         return;
     }
     let root = runtime_root();
@@ -304,6 +311,120 @@ fn start_and_restart_publish_the_configured_resources_from_the_engine_command() 
     point(&root.join("current"), &custom).unwrap();
     command(&server, &["start"]).unwrap();
     assert!(!custom.join(".installed").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn managed_start_prepares_pending_resources_before_publishing_and_starting() {
+    use std::os::unix::fs::PermissionsExt;
+    use sunrise_launcher_smod::{
+        locks::LockMode,
+        runtime_leases::{open_directory, Registry},
+    };
+    if !host_runtime_child(
+        "managed_start_prepares_pending_resources_before_publishing_and_starting",
+    ) {
+        return;
+    }
+    let root = runtime_root();
+    let release = root.join("releases/nightly");
+    let data = backend::data_dir();
+    let resources = game_files(&root, "26.3-server");
+    let server = data.join("servers/friends");
+    for path in [&release, &server] {
+        fs::create_dir_all(path).unwrap();
+    }
+    point(&root.join("current"), &release).unwrap();
+    let engine = release.join("engine");
+    fs::write(&engine, []).unwrap();
+    let reply = |pending| {
+        json!({
+            "format": 1, "program": engine, "args": ["--resources", resources, "--dedicated"],
+            "cwd": server, "resources": resources, "resources_pending": pending,
+        })
+    };
+    let program = release.join(PROGRAM);
+    fs::write(
+        &program,
+        format!(
+            r#"#!/bin/sh
+set -eu
+release=$(cd "$(dirname "$0")" && pwd -P)
+resources="$release/../../game-files/sunrise-client/26.3-server"
+printf '%s\n' "$3" >> "$2/trace"
+case "$3" in
+    engine-command)
+        if [ -d "$resources" ]; then
+            cat <<'EOF'
+{ready}
+EOF
+        else
+            cat <<'EOF'
+{pending}
+EOF
+        fi ;;
+    init)
+        [ "$4" = --yes ]
+        [ "$#" -eq 4 ]
+        [ ! -e "$release/.installed" ]
+        [ ! -e "$resources" ]
+        if [ -f "$2/init-fails" ]; then
+            echo 'sunrise-server: preparation failed' >&2
+            exit 1
+        fi
+        if [ ! -f "$2/still-pending" ]; then
+            mkdir -p "$resources"
+        fi ;;
+    start) [ -d "$resources" ] && [ -f "$release/.installed" ] ;;
+    *) exit 1 ;;
+esac
+"#,
+            ready = reply(false),
+            pending = reply(true)
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(program, fs::Permissions::from_mode(0o755)).unwrap();
+
+    let start = || {
+        run_managed(
+            &server,
+            &["start"],
+            &|_| {},
+            crate::jars::Permission::Refuse,
+        )
+    };
+    let trace = server.join("trace");
+    for (mode, error, verbs) in [
+        ("init-fails", "Preparation failed", "engine-command\ninit\n"),
+        (
+            "still-pending",
+            "The server's game files are still not prepared.",
+            "engine-command\ninit\nengine-command\n",
+        ),
+    ] {
+        let flag = server.join(mode);
+        fs::write(&flag, []).unwrap();
+        let problem = start().unwrap_err();
+        assert_eq!(problem.message, error);
+        assert!(problem.fix.is_none());
+        assert_eq!(fs::read_to_string(&trace).unwrap(), verbs);
+        assert!(!resources.exists());
+        assert!(!release.join(".installed").exists());
+        fs::remove_file(&trace).unwrap();
+        fs::remove_file(flag).unwrap();
+    }
+    start().unwrap();
+    assert_eq!(
+        fs::read_to_string(trace).unwrap(),
+        "engine-command\ninit\nengine-command\nstart\n"
+    );
+    let registry = Registry::existing(&data).unwrap();
+    for path in [&release, &resources, &server] {
+        registry
+            .lock(&open_directory(path).unwrap(), LockMode::Shared)
+            .unwrap();
+    }
 }
 
 #[test]
@@ -595,7 +716,8 @@ fn the_engine_command_reply_becomes_the_command_and_its_problems() {
     let reply = br#"{"format": 1, "program": "/opt/sunrise/sunrise-engine", "args": ["--dedicated", "--nogui"],
         "cwd": "/srv/mc", "env": {"SUNRISE_NO_AUDIO": "1", "GONE": null}, "resources": "/srv/mc/resources"}"#;
     let (engine, resources) = engine_from_reply(reply).unwrap().unwrap();
-    assert_eq!(resources, Path::new("/srv/mc/resources"));
+    assert_eq!(resources.path, Path::new("/srv/mc/resources"));
+    assert!(!resources.pending);
     assert_eq!(engine.get_program(), "/opt/sunrise/sunrise-engine");
     assert_eq!(
         engine.get_args().collect::<Vec<_>>(),
