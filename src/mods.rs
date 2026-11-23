@@ -63,6 +63,7 @@ enum Menu {
     Sort,
 }
 
+#[allow(dead_code)]
 enum Catalog {
     Idle,
     Loading,

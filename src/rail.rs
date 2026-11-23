@@ -151,24 +151,6 @@ impl Launcher {
         cx.notify();
     }
 
-    /// Switches the selected profile inline from Mods › Discover without leaving Discover.
-    pub(super) fn select_discover_profile(&mut self, instance: &Instance, cx: &mut Context<Self>) {
-        if self.profile_lock().is_some() {
-            return;
-        }
-        if !self
-            .selected_instance()
-            .is_some_and(|i| i.id == instance.id)
-        {
-            self.select_instance(instance);
-            self.clear_profile_notices();
-            self.ui.mods.limit = 0;
-            self.mods_refresh();
-        }
-        self.ui.mods.menu = None;
-        cx.notify();
-    }
-
     pub(super) fn clear_profile_notices(&mut self) {
         self.client_error = None;
         self.prepare_error = None;

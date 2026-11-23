@@ -11,6 +11,8 @@ use sunrise_launcher::browser::images;
 /// How many cards are drawn before "Show more".
 const PAGE: usize = 36;
 
+type MenuOption = (SharedString, bool, Box<dyn Fn(&mut Launcher)>);
+
 impl Launcher {
     pub(super) fn discover(
         &mut self,
@@ -87,14 +89,15 @@ impl Launcher {
             .unwrap_or_else(|| tr("Default").to_owned());
         let build_label = self
             .selected_exact_build()
-            .map(|b| crate::sheets::build_name(&b));
+            .as_deref()
+            .map(crate::sheets::build_name);
 
         // Filter row: profile switcher, category dropdown on the left; Show all switch and sort on the right.
-        let category_now = f.category.as_deref().map_or_else(
-            || tr("All categories").to_string(),
-            |k| category_label(k).to_string(),
-        );
-        let category_options = || {
+        let category_now = f
+            .category
+            .as_deref()
+            .map_or_else(|| tr("All categories").to_owned(), category_label);
+        let category_options = || -> Vec<MenuOption> {
             std::iter::once((
                 tr("All categories").into(),
                 f.category.is_none(),
@@ -116,7 +119,7 @@ impl Launcher {
             }))
             .collect()
         };
-        let sort_options = || {
+        let sort_options = || -> Vec<MenuOption> {
             V2Sort::ALL
                 .into_iter()
                 .map(|s| {
@@ -449,9 +452,10 @@ impl Launcher {
         let build_text = selected
             .as_ref()
             .and_then(|i| self.profile_exact_build(i))
+            .as_deref()
             .map_or_else(
                 || tr("No game build selected").to_owned(),
-                |b| crate::sheets::build_name(&b),
+                crate::sheets::build_name,
             );
 
         let trigger_inner = div()
@@ -517,9 +521,9 @@ impl Launcher {
         let mut rows = div().flex().flex_col().gap(px(2.));
         for (idx, inst) in instances.into_iter().enumerate() {
             let is_selected = selected_id.as_deref() == Some(inst.id.as_str());
-            let build_text = self.profile_exact_build(&inst).map_or_else(
+            let build_text = self.profile_exact_build(&inst).as_deref().map_or_else(
                 || tr("No game build selected").to_owned(),
-                |b| crate::sheets::build_name(&b),
+                crate::sheets::build_name,
             );
             let mark = self.profile_mark(&inst, 28.);
             let radio = div()
@@ -614,6 +618,24 @@ impl Launcher {
             )
     }
 
+    /// Switches the selected profile inline from Mods › Discover without leaving Discover.
+    fn select_discover_profile(&mut self, instance: &instances::Instance, cx: &mut Context<Self>) {
+        if self.profile_lock().is_some() {
+            return;
+        }
+        if !self
+            .selected_instance()
+            .is_some_and(|i| i.id == instance.id)
+        {
+            self.select_instance(instance);
+            self.clear_profile_notices();
+            self.ui.mods.limit = 0;
+            self.mods_refresh();
+        }
+        self.ui.mods.menu = None;
+        cx.notify();
+    }
+
     fn discover_shell(
         &mut self,
         window: &mut Window,
@@ -696,15 +718,13 @@ impl Launcher {
         &self,
         label: &str,
         which: Menu,
-        options: impl FnOnce() -> Vec<(SharedString, bool, Box<dyn Fn(&mut Launcher)>)>,
+        options: impl FnOnce() -> Vec<MenuOption>,
         cx: &mut Context<Self>,
     ) -> Div {
         let p = palette();
         let open = self.ui.mods.menu == Some(which);
         let popover =
-            |items: Vec<(SharedString, bool, Box<dyn Fn(&mut Launcher)>)>,
-             left: bool,
-             cx: &mut Context<Self>| {
+            |items: Vec<MenuOption>, left: bool, cx: &mut Context<Self>| {
                 deferred(
                     div()
                         .absolute()
@@ -796,6 +816,20 @@ impl Launcher {
             .as_ref()
             .filter(|snap| snap.home == home && snap.ready())
             .map(|snap| &snap.rows)
+    }
+}
+
+impl InstalledRows {
+    pub(super) fn registry_entry(&self, id: &str) -> Option<&Entry> {
+        self.entries.iter().find(|entry| {
+            entry.source == SourceId::Sunrise && entry.kind == Kind::Mod && entry.project == id
+        })
+    }
+
+    pub(super) fn registry_pending(&self, id: &str) -> bool {
+        self.registry_entry(id)
+            .and_then(sunrise::mod_id)
+            .is_some_and(|id| self.unbuilt.contains(id))
     }
 }
 

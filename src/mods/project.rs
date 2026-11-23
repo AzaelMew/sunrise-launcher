@@ -1031,7 +1031,8 @@ impl Launcher {
             .unwrap_or_else(|| tr("Default").to_owned());
         let build_label = self
             .selected_exact_build()
-            .map(|b| crate::sheets::build_name(&b));
+            .as_deref()
+            .map(crate::sheets::build_name);
         let target_label = match &build_label {
             Some(b) => trf(
                 "{profile} ({build})",

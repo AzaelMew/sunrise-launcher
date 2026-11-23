@@ -169,7 +169,7 @@ pub(in crate::mods) struct V2VersionLine {
 }
 
 /// Full mod page rendered from a v2 index project.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(in crate::mods) struct V2Page {
     pub(in crate::mods) id: String,
     pub(in crate::mods) mod_id: String,
@@ -201,7 +201,7 @@ pub(in crate::mods) struct V2Page {
     pub(in crate::mods) other_versions: Vec<V2VersionLine>,
 }
 
-fn make_of(kind: Kind) -> Option<Make> {
+fn make_of(kind: &Kind) -> Option<Make> {
     match kind {
         Kind::Mod => Some(Make::Content),
         Kind::NativeMod => Some(Make::Native),
@@ -327,7 +327,7 @@ pub(in crate::mods) fn cards(
         .projects
         .iter()
         .filter_map(|p| {
-            let make = make_of(p.kind)?;
+            let make = make_of(&p.kind)?;
             let mut sorted: Vec<&Release> = p.releases.iter().collect();
             sorted.sort_by(|a, b| compare_releases_newest_first(a, b));
             let (fit, updated) = project_fit(index, p, &sorted, exact_build, build_label);
@@ -494,7 +494,7 @@ pub(in crate::mods) fn page(
     build_label: &dyn Fn(&str) -> String,
 ) -> Option<V2Page> {
     let p = index.project(id)?;
-    let make = make_of(p.kind)?;
+    let make = make_of(&p.kind)?;
     let mut sorted: Vec<&Release> = p.releases.iter().collect();
     sorted.sort_by(|a, b| compare_releases_newest_first(a, b));
 
@@ -648,6 +648,7 @@ mod tests {
     fn sample_index(projects: Vec<Project>, revoked: Vec<Revoked>) -> Index {
         Index {
             schema: index_v2::SCHEMA,
+            serial: 1,
             generated: "2026-11-22T12:00:00Z".to_owned(),
             builds: vec![
                 Build {
