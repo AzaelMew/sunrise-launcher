@@ -884,9 +884,35 @@ impl Active {
 }
 
 fn capture_mod_locks(home: &Path) -> Result<Vec<ModLock>, String> {
-    let installed = crate::browser::installed::Installed::read(home)?;
+    let path = home.join(crate::browser::installed::MANIFEST);
+    let Some(bytes) = optional_bytes(&path)? else {
+        return Ok(Vec::new());
+    };
+    let Ok(document) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+        return Ok(Vec::new());
+    };
+    let Some(entries) = document
+        .get("entries")
+        .and_then(serde_json::Value::as_array)
+    else {
+        return Ok(Vec::new());
+    };
     let mut locks = Vec::new();
-    for entry in installed.entries {
+    let mut locked_mods = std::collections::HashSet::new();
+    let mut locked_projects = std::collections::HashSet::new();
+    for raw in entries {
+        if raw.get("source").and_then(serde_json::Value::as_str) != Some("sunrise")
+            || raw
+                .get("mod_id")
+                .and_then(serde_json::Value::as_str)
+                .is_none()
+        {
+            continue;
+        }
+        let Ok(entry) = serde_json::from_value::<crate::browser::installed::Entry>(raw.clone())
+        else {
+            continue;
+        };
         if !entry.is_v2_registry() {
             continue;
         }
@@ -907,6 +933,10 @@ fn capture_mod_locks(home: &Path) -> Result<Vec<ModLock>, String> {
             repository,
         };
         lock.validate()?;
+        if !locked_mods.insert(lock.mod_id.clone()) || !locked_projects.insert(lock.project.clone())
+        {
+            return Err(unsettled());
+        }
         locks.push(lock);
     }
     locks.sort_by(|a, b| a.mod_id.cmp(&b.mod_id));

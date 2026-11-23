@@ -594,12 +594,7 @@ fn select_project_release<'a>(
             "Fit for {mod} on Sunrise {build} is not known yet.",
             &[("mod", &project.name), ("build", build)],
         )))
-    } else if saw_does_not_fit {
-        Err(InstallError::NotForVersion(trf(
-            "{mod} does not fit Sunrise {build}.",
-            &[("mod", &project.name), ("build", build)],
-        )))
-    } else if saw_revoked {
+    } else if !saw_does_not_fit && saw_revoked {
         Err(InstallError::Refused(trf(
             "All releases of {mod} were taken down.",
             &[("mod", &project.name)],

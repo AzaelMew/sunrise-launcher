@@ -4,7 +4,9 @@ use crate::attestation::{Attested, RELEASE_WORKFLOW_PATH};
 use crate::managed_play::{HeldReason, HeldSource, ModLock};
 use sunrise_launcher_smod::{
     index::browser_state,
-    index_v2::{Build, Category, Dependency, File as V2File, Repository, Revoked, SCHEMA},
+    index_v2::{
+        Build, Category, Dependency, File as V2File, Repository, Revoked, Screenshot, SCHEMA,
+    },
     Package,
 };
 
@@ -82,7 +84,10 @@ fn make_project(
         issues: None,
         source: None,
         icon: format!("pages/{id}/{}.png", "0".repeat(64)),
-        screenshots: Vec::new(),
+        screenshots: vec![Screenshot {
+            path: format!("pages/{id}/{}.png", "1".repeat(64)),
+            caption: "Preview".into(),
+        }],
         categories: vec!["utility".into()],
         repository: Repository {
             id: repo_id,
@@ -387,7 +392,7 @@ fn v2_plan_auto_installs_required_dependencies_and_skips_optional() {
     )
     .unwrap();
     let planned_ids: Vec<&str> = plan.steps.iter().map(|s| s.project_id.as_str()).collect();
-    assert_eq!(planned_ids, vec!["App90123", "Core1234"]);
+    assert_eq!(planned_ids, ["App90123", "Core1234"]);
     assert!(!plan.steps[0].dependency);
     assert!(plan.steps[1].dependency);
     assert_eq!(plan.optional_dependencies.len(), 1);
@@ -513,7 +518,7 @@ fn v2_plan_never_silently_picks_among_providers_and_honors_explicit_choice_or_pi
                 .iter()
                 .map(|c| c.project_id.as_str())
                 .collect();
-            assert_eq!(ids, vec!["Ab3dE9xQ", "Zz91kLmN"]);
+            assert_eq!(ids, ["Ab3dE9xQ", "Zz91kLmN"]);
         }
         other => panic!("expected AmbiguousProvider, got {other:?}"),
     }
@@ -1076,7 +1081,7 @@ fn v2_switch_slot_planning_keeps_chosen_project_maps_verdicts_and_honors_pins() 
                 "26.3-0.1.0",
                 WORKFLOW_V1,
                 &["26.3-0.1.0"],
-                &["26.3-0.1.1"],
+                &["26.3-0.1.1", "26.3-0.1.2"],
                 &a_v1,
                 Vec::new(),
             ),

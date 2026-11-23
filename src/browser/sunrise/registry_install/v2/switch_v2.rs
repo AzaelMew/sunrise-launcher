@@ -167,11 +167,10 @@ pub(super) fn plan_slot_for_build<'a>(
         .releases
         .iter()
         .find(|r| r.file.sha256.eq_ignore_ascii_case(&item.digest));
-    if let Some(current) = current_release {
-        if pin.is_none_or(|p| p == current.version) && current.fit_verdict(tag) == FitVerdict::Fits
-        {
-            return SlotPlan::Keep;
-        }
+    if current_release.is_some_and(|current| {
+        pin.is_none_or(|p| p == current.version) && current.fit_verdict(tag) == FitVerdict::Fits
+    }) {
+        return SlotPlan::Keep;
     }
 
     // If pinned to an explicit version in chosen-versions.json, check ONLY that pinned version.
@@ -225,11 +224,7 @@ pub(super) fn plan_slot_for_build<'a>(
     {
         return SlotPlan::Replace(project, best);
     }
-    if saw_unknown {
-        SlotPlan::Hold(HeldReason::Unproved {
-            build: tag.to_owned(),
-        })
-    } else if saw_does_not_fit {
+    if !saw_unknown && saw_does_not_fit {
         SlotPlan::Hold(HeldReason::NoFit {
             build: tag.to_owned(),
             detail: None,
@@ -429,7 +424,7 @@ pub(crate) fn switch_build_v2_with(
         |id| {
             before
                 .get(id)
-                .map_or(id, |item| item.package.manifest.name.as_str())
+                .map_or("", |item| item.package.manifest.name.as_str())
         },
         Some(TargetAge {
             data_version: backend::prepared_world_version(&resources),
