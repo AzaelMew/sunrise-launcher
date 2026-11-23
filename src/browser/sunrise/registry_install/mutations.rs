@@ -477,7 +477,7 @@ pub(super) fn stage_removal<'a>(
             }
             retired.insert(id.to_owned());
         }
-        if item.registry_claim {
+        if item.registry_claim || raw_row_matches_archive(home, &rows, id, &item.package.path)? {
             rows.remove(id)?;
             changed_rows = true;
         }
@@ -514,6 +514,27 @@ pub(super) fn stage_removal<'a>(
         retired,
         reviewed_leaves,
     })
+}
+
+/// Match a Sunrise browser row by source, kind and portable archive path directly on the raw JSON
+/// row so removal cleans up rows missing display fields (such as `page`) without loosening
+/// `registry_claim` for replacements.
+fn raw_row_matches_archive(
+    home: &Path,
+    rows: &Document,
+    id: &str,
+    archive_path: &Path,
+) -> Result<bool, String> {
+    let Some(row) = rows.row(id)? else {
+        return Ok(false);
+    };
+    let source = serde_json::from_value::<SourceId>(row["source"].clone()).ok();
+    let kind = serde_json::from_value::<Kind>(row["kind"].clone()).ok();
+    let path_matches = row["file"]
+        .as_str()
+        .and_then(|file| portable_row_path(home, file))
+        .is_some_and(|(_, path)| path == archive_path);
+    Ok(source == Some(SourceId::Sunrise) && kind == Some(Kind::Mod) && path_matches)
 }
 
 /// Explicit Remove approves the displayed path and digest, independent of archive origin.

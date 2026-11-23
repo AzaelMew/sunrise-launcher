@@ -202,3 +202,23 @@ fn real_game_row_keeps_its_fields_and_refuses_duplicate_or_aliased_claims() {
     assert_eq!(published, json!({"entries": [new]}));
     assert!(!journal.exists());
 }
+
+#[test]
+fn check_other_claims_catches_windows_style_competing_claim() {
+    let home = tempfile::tempdir().unwrap();
+    let mods = home.path().join("sunrise-mods");
+    fs::create_dir_all(&mods).unwrap();
+    fs::write(mods.join("lantern.origin.json"), b"{}").unwrap();
+    let rows = Installed {
+        entries: vec![json!({
+            "source": "future-source",
+            "project": "other",
+            "file": r"sunrise-mods\lantern.origin.json",
+        })],
+    };
+    assert!(
+        rows.check_other_claims(home.path(), "lantern", "sunrise-mods/lantern.origin.json")
+            .is_err(),
+        "Windows-style competing claim must be detected on every OS"
+    );
+}
