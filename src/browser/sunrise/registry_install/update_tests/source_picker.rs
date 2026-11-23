@@ -168,6 +168,7 @@ fn pasted_sources_prove_only_the_selected_packages_together() {
 }
 
 #[test]
+#[ignore = "daily; build the launcher binary first"]
 fn pasted_source_same_repo_refreshes_and_other_repo_stays_refused() {
     Fixture::run(
         concat!(
