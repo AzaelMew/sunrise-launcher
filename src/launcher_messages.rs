@@ -743,6 +743,8 @@ impl Launcher {
             changed = true;
         }
         self.restart_launcher_if_ready(cx);
+        // A mod rewritten where it lies, seen while the page sits still.
+        changed |= self.mods_check_due(std::time::Instant::now());
         if changed {
             cx.notify();
         }
