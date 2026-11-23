@@ -560,6 +560,7 @@ fn read_local(home: &Path, archives: &mut HashMap<String, ArchiveDisplay>) -> Ve
                 version: file.version,
                 github: file.origin,
                 native,
+                served_by: file.served_by,
                 unreadable,
             }
         })
@@ -1761,6 +1762,7 @@ mod enabled_tests {
             version: String::new(),
             github: None,
             native: false,
+            served_by: None,
             unreadable: false,
         };
         // "gone" was a package of the list known before and is no longer there.

@@ -111,6 +111,10 @@ pub struct Manifest {
     /// that are on may share one (`content::clash`).
     #[serde(default)]
     pub namespaces: Vec<String>,
+    /// Native runtime mod that serves code-side parts and registrations for
+    /// this content package's namespaces; refused on `[native]` packages.
+    #[serde(default)]
+    pub served_by: Option<String>,
     /// Other native mods whose hooks must be available before this one.
     #[serde(default)]
     pub dependencies: std::collections::BTreeMap<String, Dependency>,
@@ -257,6 +261,9 @@ pub struct Native {
     /// When omitted, the mod uses the horizon-mixins revision in its pinned SDK's `sdk.json`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mixins: Option<String>,
+    /// Whether this native mod opts in to serving content packages that name it in `served_by`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub serves_content: bool,
     /// Source-level edits of game functions, native only: the one form that compiles game code.
     #[serde(default)]
     pub mixin: Vec<mixin::Mixin>,
@@ -441,6 +448,38 @@ impl Manifest {
                 "{MANIFEST}: id {:?} is not [a-z0-9_]{{1,64}}",
                 m.id
             ));
+        }
+        if let Some(host) = &m.served_by {
+            if m.native.is_some() {
+                return Err(format!(
+                    "{MANIFEST}: a [native] mod cannot declare served_by"
+                ));
+            }
+            if RESERVED_NAMESPACES.contains(&host.as_str()) {
+                return Err(format!(
+                    "{MANIFEST}: served_by {host:?} is a reserved namespace, not a mod id"
+                ));
+            }
+            if RESERVED_IDS.contains(&host.as_str()) {
+                return Err(format!(
+                    "{MANIFEST}: served_by {host:?} is a page of the mod site, not a mod id"
+                ));
+            }
+            if reserved_mod_id(host) {
+                return Err(format!(
+                    "{MANIFEST}: served_by {host:?} is a reserved Windows device name"
+                ));
+            }
+            if !valid_mod_id(host) {
+                return Err(format!(
+                    "{MANIFEST}: served_by {host:?} is not [a-z0-9_]{{1,64}}"
+                ));
+            }
+            if host == &m.id {
+                return Err(format!(
+                    "{MANIFEST}: served_by cannot name this package's own id {host:?}"
+                ));
+            }
         }
         let rules = m.incompatible.iter().chain(&m.discouraged);
         for id in m
@@ -1366,6 +1405,21 @@ mod runtime_files_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A content package names the native mod that serves its code; the host opts in.
+    #[test]
+    fn served_by_and_serves_content_read_and_served_by_is_refused_on_native_mods() {
+        let head = "id='runes'\nname='Runes'\nversion='1.0.0'\napi='0.2'\n";
+        let native = "[native]\ngame='26.3'\nsunrise='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\n";
+        let served = Manifest::parse(&format!("{head}served_by='java_host'\n")).unwrap();
+        assert_eq!(served.served_by.as_deref(), Some("java_host"));
+        let host = Manifest::parse(&format!("{head}{native}serves_content=true\n")).unwrap();
+        assert!(host.native.unwrap().serves_content);
+        let both = Manifest::parse(&format!("{head}served_by='java_host'\n{native}")).unwrap_err();
+        assert!(both.contains("cannot declare served_by"), "{both}");
+        let own = Manifest::parse(&format!("{head}served_by='runes'\n")).unwrap_err();
+        assert!(own.contains("own id"), "{own}");
+    }
 
     /// The game's `mod_vocab` forms of a side and an ordering, which manifests and the index carry.
     #[test]
