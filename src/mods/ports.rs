@@ -149,6 +149,7 @@ fn build_switch_request(
         to_project_id: to.id.clone(),
         to_slug: to.slug.clone(),
         to_repo: to.repository.name.clone(),
+        to_repo_path: to.repository.path.clone(),
         to_version: to_release.version.clone(),
         to_workflow: to_release.workflow.clone(),
         to_repo_id: to.repository.id,
@@ -404,11 +405,26 @@ impl Launcher {
         )
     }
 
-    pub(super) fn render_port_groups(
+    pub(super) fn with_port_groups(
         &mut self,
+        grid: Div,
+        ungrouped_cards: usize,
         groups: &[PortGroup],
         cx: &mut Context<Self>,
     ) -> Div {
+        if groups.is_empty() {
+            grid
+        } else {
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(14.))
+                .child(self.render_port_groups(groups, cx))
+                .when(ungrouped_cards > 0, |d| d.child(grid))
+        }
+    }
+
+    fn render_port_groups(&mut self, groups: &[PortGroup], cx: &mut Context<Self>) -> Div {
         let busy = self.mods_busy() || self.mods_locked().is_some();
         let index_location = v2::location();
         let mut container = div().flex().flex_col().gap(px(12.));
@@ -610,7 +626,7 @@ impl Launcher {
                                     port.categories
                                         .iter()
                                         .take(3)
-                                        .map(|cat| tag(category_label(cat))),
+                                        .map(|cat| category_chip(category_label(cat))),
                                 ),
                             )
                             .child(
@@ -734,6 +750,19 @@ impl Launcher {
         }
         Some(box_el)
     }
+}
+
+fn category_chip(label: String) -> Div {
+    div()
+        .flex_none()
+        .px(px(6.))
+        .py(px(1.))
+        .rounded(crate::tokens::r(crate::tokens::R_SMALL))
+        .border_1()
+        .border_color(c(palette().line))
+        .text_size(px(tokens::CAPTION))
+        .text_color(c(palette().muted))
+        .child(label)
 }
 
 #[cfg(test)]

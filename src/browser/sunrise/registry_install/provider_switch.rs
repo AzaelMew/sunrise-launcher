@@ -10,7 +10,7 @@ use sunrise_launcher_smod::{index_v2, manifest::Package};
 
 /// An installed mod in the profile that declares a dependency on the switched in-game mod ID.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AffectedDependent {
+pub struct ProviderSwitchDependent {
     pub id: String,
     pub name: String,
     pub required: bool,
@@ -28,6 +28,7 @@ pub struct ProviderSwitchRequest {
     pub to_project_id: String,
     pub to_slug: String,
     pub to_repo: String,
+    pub to_repo_path: String,
     pub to_version: String,
     pub to_workflow: String,
     pub to_repo_id: u64,
@@ -64,6 +65,7 @@ impl ProviderSwitchRequest {
             to_project_id: to.id.clone(),
             to_slug: to.slug.clone(),
             to_repo: to.repository.name.clone(),
+            to_repo_path: to.repository.path.clone(),
             to_version: to_release.version.clone(),
             to_workflow: to_release.workflow.clone(),
             to_repo_id: to.repository.id,
@@ -84,7 +86,7 @@ pub struct ProviderSwitchQuestion {
     pub from_version: String,
     pub to_repo: String,
     pub to_version: String,
-    pub dependents: Vec<AffectedDependent>,
+    pub dependents: Vec<ProviderSwitchDependent>,
     pub world_risks: Vec<String>,
 }
 
@@ -137,12 +139,18 @@ pub enum PublisherChangeDecision {
 }
 
 /// Lists installed mods in `home` that depend on `mod_id`, required dependents first.
-pub fn affected_dependents(home: &Path, mod_id: &str) -> Result<Vec<AffectedDependent>, String> {
+pub fn provider_switch_dependents(
+    home: &Path,
+    mod_id: &str,
+) -> Result<Vec<ProviderSwitchDependent>, String> {
     let packages = managed_play::scan_packages(home)?;
-    Ok(affected_dependents_from(&packages, mod_id))
+    Ok(provider_switch_dependents_from(&packages, mod_id))
 }
 
-fn affected_dependents_from(packages: &[ScannedPackage], mod_id: &str) -> Vec<AffectedDependent> {
+fn provider_switch_dependents_from(
+    packages: &[ScannedPackage],
+    mod_id: &str,
+) -> Vec<ProviderSwitchDependent> {
     let mut out = Vec::new();
     for package in packages {
         if package.manifest.id == mod_id {
@@ -150,7 +158,7 @@ fn affected_dependents_from(packages: &[ScannedPackage], mod_id: &str) -> Vec<Af
         }
         if let Some(dep) = package.manifest.dependencies.get(mod_id) {
             let details = dep.details();
-            out.push(AffectedDependent {
+            out.push(ProviderSwitchDependent {
                 id: package.manifest.id.clone(),
                 name: package.manifest.name.clone(),
                 required: !details.optional,
@@ -167,11 +175,44 @@ fn affected_dependents_from(packages: &[ScannedPackage], mod_id: &str) -> Vec<Af
 }
 
 struct StagedProvider {
-    dependents: Vec<AffectedDependent>,
+    dependents: Vec<ProviderSwitchDependent>,
     suspect: worlds::SuspectMods,
     world_evidence: Vec<worlds::WorldRisk>,
     world_risks: Vec<String>,
     needs_native_proof: bool,
+}
+
+fn v2_installed_entry(
+    request: &ProviderSwitchRequest,
+    relative: &str,
+) -> Result<installed::Entry, String> {
+    let repo_path = if request.to_repo_path.trim().is_empty() {
+        "."
+    } else {
+        request.to_repo_path.as_str()
+    };
+    serde_json::from_value(serde_json::json!({
+        "source": SourceId::Sunrise,
+        "project": request.to_project_id,
+        "mod_id": request.mod_id,
+        "slug": request.to_slug,
+        "title": request.mod_name,
+        "kind": Kind::Mod,
+        "version": request.to_version,
+        "number": request.to_version,
+        "file": relative,
+        "checksum": format!("SHA-256:{}", request.to_file.sha256),
+        "page": format!("{}/{}", super::super::SITE, request.to_slug),
+        "dependency": false,
+        "verdict": "Verified",
+        "repository": {
+            "id": request.to_repo_id,
+            "name": request.to_repo,
+            "path": repo_path,
+            "workflow": request.to_workflow,
+        },
+    }))
+    .map_err(|error| error.to_string())
 }
 
 fn file_name_for_release(url: &str, mod_id: &str) -> String {
@@ -206,7 +247,7 @@ fn stage_provider_candidate(
             &[("mod", &request.mod_name)],
         ));
     }
-    let dependents = affected_dependents_from(&before, &request.mod_id);
+    let dependents = provider_switch_dependents_from(&before, &request.mod_id);
     let staging = tempfile::Builder::new()
         .prefix("provider-switch-")
         .tempdir_in(candidate)
@@ -258,21 +299,9 @@ fn stage_provider_candidate(
                 || entry.project == request.to_project_id
                 || super::super::mod_id(entry) == Some(request.mod_id.as_str())))
     });
-    installed.entries.push(installed::Entry {
-        source: SourceId::Sunrise,
-        project: request.to_project_id.clone(),
-        slug: request.to_slug.clone(),
-        title: request.mod_name.clone(),
-        kind: Kind::Mod,
-        version: request.to_version.clone(),
-        number: request.to_version.clone(),
-        file: relative,
-        checksum: format!("SHA-256:{}", request.to_file.sha256),
-        page: format!("{}/{}", super::super::SITE, request.to_slug),
-        dependency: false,
-        verdict: Some("Verified".into()),
-        install_hold: None,
-    });
+    installed
+        .entries
+        .push(v2_installed_entry(request, &relative)?);
     let manifest_text =
         serde_json::to_string_pretty(&installed).map_err(|error| error.to_string())?;
     let manifest_path = candidate.join(installed::MANIFEST);
@@ -553,8 +582,32 @@ mod tests {
         ))
     }
 
+    fn test_installed_entry(
+        project: &str,
+        slug: &str,
+        version: &str,
+        sha: &str,
+    ) -> installed::Entry {
+        serde_json::from_value(serde_json::json!({
+            "source": SourceId::Sunrise,
+            "project": project,
+            "mod_id": "jade",
+            "slug": slug,
+            "title": "Jade",
+            "kind": Kind::Mod,
+            "version": version,
+            "number": version,
+            "file": "sunrise-mods/jade.smod",
+            "checksum": format!("SHA-256:{sha}"),
+            "page": format!("https://playsunrise.net/mods/{slug}"),
+            "dependency": false,
+            "verdict": "Verified",
+        }))
+        .unwrap()
+    }
+
     #[test]
-    fn affected_dependents_lists_required_before_optional_and_skips_unrelated() {
+    fn provider_switch_dependents_lists_required_before_optional_and_skips_unrelated() {
         let home = tempfile::tempdir().unwrap();
         let mods_dir = home.path().join(mod_list::MODS_DIR);
         write_smod(
@@ -578,16 +631,16 @@ mod tests {
             "id='unrelated'\nname='Unrelated'\nversion='1.0.0'\napi='0.2'\n",
         );
 
-        let deps = affected_dependents(home.path(), "jade").unwrap();
+        let deps = provider_switch_dependents(home.path(), "jade").unwrap();
         assert_eq!(
             deps,
             vec![
-                AffectedDependent {
+                ProviderSwitchDependent {
                     id: "iron_furnaces".into(),
                     name: "Iron Furnaces".into(),
                     required: true,
                 },
-                AffectedDependent {
+                ProviderSwitchDependent {
                     id: "jei".into(),
                     name: "JEI".into(),
                     required: false,
@@ -648,21 +701,12 @@ mod tests {
         );
         mod_list::set_enabled(home.path(), "jade", true).unwrap();
         let initial_installed = installed::Installed {
-            entries: vec![installed::Entry {
-                source: SourceId::Sunrise,
-                project: "aaaa1111".into(),
-                slug: "sunrise-jade".into(),
-                title: "Jade".into(),
-                kind: Kind::Mod,
-                version: "26.3.8".into(),
-                number: "26.3.8".into(),
-                file: "sunrise-mods/jade.smod".into(),
-                checksum: format!("SHA-256:{old_sha}"),
-                page: "https://playsunrise.net/mods/sunrise-jade".into(),
-                dependency: false,
-                verdict: Some("Verified".into()),
-                install_hold: None,
-            }],
+            entries: vec![test_installed_entry(
+                "aaaa1111",
+                "sunrise-jade",
+                "26.3.8",
+                &old_sha,
+            )],
         };
         initial_installed.save(home.path()).unwrap();
 
@@ -721,21 +765,12 @@ mod tests {
         );
         mod_list::set_enabled(home.path(), "jade", true).unwrap();
         let initial_installed = installed::Installed {
-            entries: vec![installed::Entry {
-                source: SourceId::Sunrise,
-                project: "aaaa1111".into(),
-                slug: "sunrise-jade".into(),
-                title: "Jade".into(),
-                kind: Kind::Mod,
-                version: "26.3.8".into(),
-                number: "26.3.8".into(),
-                file: "sunrise-mods/jade.smod".into(),
-                checksum: format!("SHA-256:{old_sha}"),
-                page: "https://playsunrise.net/mods/sunrise-jade".into(),
-                dependency: false,
-                verdict: Some("Verified".into()),
-                install_hold: None,
-            }],
+            entries: vec![test_installed_entry(
+                "aaaa1111",
+                "sunrise-jade",
+                "26.3.8",
+                &old_sha,
+            )],
         };
         initial_installed.save(home.path()).unwrap();
 

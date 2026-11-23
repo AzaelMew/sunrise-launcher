@@ -5,10 +5,10 @@ use std::{
 };
 use sunrise_launcher::{
     browser::sunrise::{
-        install_target, switch_profile_build, switch_provider, AffectedDependent, BuildChoice,
-        InstallProgress, ProviderSwitchDecision, ProviderSwitchHooks, ProviderSwitchQuestion,
-        ProviderSwitchRequest, ProviderSwitched, SwitchDecision, SwitchHooks, SwitchQuestion,
-        Switched,
+        install_target, switch_profile_build, switch_provider, BuildChoice, InstallProgress,
+        ProviderSwitchDecision, ProviderSwitchDependent, ProviderSwitchHooks,
+        ProviderSwitchQuestion, ProviderSwitchRequest, ProviderSwitched, SwitchDecision,
+        SwitchHooks, SwitchQuestion, Switched,
     },
     managed_play::{self, Active, FirstBuild, Profile, ReceiptHint},
     profile_txn::Identity,
@@ -1105,7 +1105,7 @@ impl Launcher {
     }
 }
 
-fn provider_switch_dependent_line(dep: &AffectedDependent, mod_id: &str) -> String {
+fn provider_switch_dependent_line(dep: &ProviderSwitchDependent, mod_id: &str) -> String {
     if dep.required {
         trf("Uses {id} · checked after switch", &[("id", mod_id)])
     } else {
@@ -1135,16 +1135,16 @@ fn publish_report(
 mod tests {
     use super::{provider_switch_dependent_line, publish_report};
     use std::io::{self, Write};
-    use sunrise_launcher::browser::sunrise::AffectedDependent;
+    use sunrise_launcher::browser::sunrise::ProviderSwitchDependent;
 
     #[test]
     fn provider_switch_dependent_line_distinguishes_required_and_optional() {
-        let required = AffectedDependent {
+        let required = ProviderSwitchDependent {
             id: "iron_furnaces".into(),
             name: "Iron Furnaces".into(),
             required: true,
         };
-        let optional = AffectedDependent {
+        let optional = ProviderSwitchDependent {
             id: "jei".into(),
             name: "JEI".into(),
             required: false,

@@ -503,11 +503,11 @@ impl Launcher {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> Option<Stateful<Div>> {
-        if self.ui.sheets.publisher_change.is_some() {
-            return Some(self.publisher_change_sheet(cx));
-        }
         if self.ui.sheets.registry.is_some() {
             return Some(self.libraries_sheet(cx));
+        }
+        if self.ui.sheets.publisher_change.is_some() {
+            return Some(self.publisher_change_sheet(cx));
         }
         if self.pending_consent.is_some() {
             return Some(self.consent_sheet(cx));

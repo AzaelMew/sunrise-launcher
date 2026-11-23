@@ -283,16 +283,7 @@ impl Launcher {
         } else {
             tr("No mods match. Try another search, or turn off “Fits my game”.")
         };
-        let results = if port_groups.is_empty() {
-            grid
-        } else {
-            div()
-                .flex()
-                .flex_col()
-                .gap(px(14.))
-                .child(self.render_port_groups(&port_groups, cx))
-                .when(ungrouped_cards > 0, |d| d.child(grid))
-        };
+        let results = self.with_port_groups(grid, ungrouped_cards, &port_groups, cx);
         let shown_total = total.max(port_groups.len());
         page.child(self.discover_results(results, shown_total, "discover", empty, cx))
             .into_any_element()

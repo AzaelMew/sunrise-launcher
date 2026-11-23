@@ -1,4 +1,6 @@
 //! Registry and collection requests produce one admitted, fully proved same-base generation.
+pub(crate) mod provider_switch;
+
 use super::{
     fetch, fetch_cancellable, fetch_with_official, fits_game, index, installed, location,
     project_of, trust_label, version_of, OfficialRegistry,
@@ -27,15 +29,9 @@ use sunrise_launcher_smod::{
 
 const MAX_TRIALS: usize = 64;
 mod conflicts;
-mod provider_switch;
 mod source;
 mod switch;
 pub use conflicts::ResolveQuestion;
-pub use provider_switch::{
-    affected_dependents, switch_provider, AffectedDependent, ProviderSwitchDecision,
-    ProviderSwitchHooks, ProviderSwitchQuestion, ProviderSwitchRequest, ProviderSwitched,
-    PublisherChangeDecision, PublisherChangeQuestion,
-};
 use source::MixedSources;
 pub use source::{
     add_sources, apply_sources, pack_sources, prepare_pasted_sources, prepare_source,
