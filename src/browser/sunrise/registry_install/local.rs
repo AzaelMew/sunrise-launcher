@@ -795,6 +795,8 @@ mod tests {
         assert!(!mods.join("camp_lanterns.origin.json").exists());
     }
 
+    // Reuses the saved-world helpers of `update_tests`, which build only there.
+    #[cfg(all(debug_assertions, unix))]
     #[test]
     fn replacing_a_content_mod_compares_saved_worlds_with_the_original_archive() {
         let dir = tempfile::tempdir().unwrap();
