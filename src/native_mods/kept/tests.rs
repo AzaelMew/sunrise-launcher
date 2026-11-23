@@ -117,7 +117,10 @@ fn an_unchanged_mod_gets_back_its_verified_library() {
     let list = mods(&[]);
     let keys = keys(&build(), &list);
     let (work, built, libraries) = work_with(&dir.path().join("first"), ALL);
-    assert_eq!(kept.save(&work, &built, &libraries, &keys).unwrap(), 3);
+    assert_eq!(
+        kept.save(&work, &built, &libraries, &list, &keys).unwrap(),
+        3
+    );
     let next = dir.path().join("second/work");
     assert_eq!(kept.seed(&next, &list, &keys), ["ae2", "ftb", "hnn"]);
     for id in ["ae2", "ftb", "hnn"] {
@@ -194,7 +197,7 @@ fn a_changed_mod_misses_and_so_does_every_mod_linking_to_it() {
     let list = mods(&[]);
     let old = keys(&build(), &list);
     let (work, built, libraries) = work_with(dir.path(), ALL);
-    kept.save(&work, &built, &libraries, &old).unwrap();
+    kept.save(&work, &built, &libraries, &list, &old).unwrap();
     let changed = mods(&[("ae2", "ae2-files-v2")]);
     let new = keys(&build(), &changed);
     assert_ne!(old["ae2"], new["ae2"]);
@@ -211,13 +214,42 @@ fn a_changed_mod_misses_and_so_does_every_mod_linking_to_it() {
 }
 
 #[test]
+fn a_mod_is_rebuilt_once_a_library_it_links_to_was_rebuilt() {
+    let list = mods(&[]);
+    let keys = keys(&build(), &list);
+    // ae2 rebuilt with other bytes, or the same bytes under another build identity, and kept
+    // under the same key by a build that didn't build ftb.
+    let rebuilds: [(&[u8], &str); 2] = [(b"ae2 rebuilt", ""), (b"ae2", "another identity")];
+    for (n, (bytes, identity)) in rebuilds.into_iter().enumerate() {
+        let dir = tempfile::tempdir().unwrap();
+        let kept = Kept::new(&dir.path().join("native"));
+        let (work, built, libraries) = work_with(&dir.path().join("first"), ALL);
+        kept.save(&work, &built, &libraries, &list, &keys).unwrap();
+        let (work, mut built, libraries) = work_with(&dir.path().join("second"), &[("ae2", bytes)]);
+        built.records[0].identity = identity.to_owned();
+        assert_eq!(
+            kept.save(&work, &built, &libraries, &list, &keys).unwrap(),
+            1
+        );
+        let next = dir.path().join("next");
+        assert_eq!(
+            kept.seed(&next, &list, &keys),
+            ["ae2", "hnn"],
+            "rebuild {n}"
+        );
+        assert_eq!(fs::read(folder(&next).join("mod_ae2.dll")).unwrap(), bytes);
+        assert!(!folder(&next).join("mod_ftb.dll").exists());
+    }
+}
+
+#[test]
 fn a_mod_whose_link_isnt_reused_is_not_reused_either() {
     let dir = tempfile::tempdir().unwrap();
     let kept = Kept::new(&dir.path().join("native"));
     let list = mods(&[]);
     let keys = keys(&build(), &list);
     let (work, built, libraries) = work_with(dir.path(), ALL);
-    kept.save(&work, &built, &libraries, &keys).unwrap();
+    kept.save(&work, &built, &libraries, &list, &keys).unwrap();
     fs::remove_file(kept.index_path(&keys["ae2"])).unwrap();
     assert_eq!(kept.seed(&dir.path().join("next"), &list, &keys), ["hnn"]);
 }
@@ -229,7 +261,7 @@ fn a_corrupted_library_is_a_miss_and_leaves_nothing_behind() {
     let list = mods(&[]);
     let keys = keys(&build(), &list);
     let (work, built, libraries) = work_with(dir.path(), ALL);
-    kept.save(&work, &built, &libraries, &keys).unwrap();
+    kept.save(&work, &built, &libraries, &list, &keys).unwrap();
     let hnn = libraries.iter().find(|l| l.name == "mod_hnn.dll").unwrap();
     fs::write(kept.blobs().join(&hnn.sha256), b"not hnn").unwrap();
     let next = dir.path().join("next");
@@ -246,7 +278,7 @@ fn a_missing_or_linked_blob_is_a_miss() {
     let list = mods(&[]);
     let keys = keys(&build(), &list);
     let (work, built, libraries) = work_with(dir.path(), ALL);
-    kept.save(&work, &built, &libraries, &keys).unwrap();
+    kept.save(&work, &built, &libraries, &list, &keys).unwrap();
     let ae2 = libraries.iter().find(|l| l.name == "mod_ae2.dll").unwrap();
     fs::remove_file(kept.blobs().join(&ae2.sha256)).unwrap();
     let next = dir.path().join("next");
@@ -262,7 +294,7 @@ fn an_entry_naming_paths_outside_its_folder_is_a_miss() {
     let list = mods(&[]);
     let keys = keys(&build(), &list);
     let (work, built, libraries) = work_with(dir.path(), ALL);
-    kept.save(&work, &built, &libraries, &keys).unwrap();
+    kept.save(&work, &built, &libraries, &list, &keys).unwrap();
     let good: Index =
         serde_json::from_slice(&fs::read(kept.index_path(&keys["ae2"])).unwrap()).unwrap();
     let sha = good.files.values().next().unwrap().clone();
@@ -279,7 +311,10 @@ fn an_entry_naming_paths_outside_its_folder_is_a_miss() {
         let bad = Index {
             format: FORMAT.into(),
             folder: folder.into(),
+            library: name.to_owned(),
+            identity: String::new(),
             files: [(name.to_owned(), sha.clone())].into(),
+            links: BTreeMap::new(),
         };
         fs::write(
             kept.index_path(&keys["ae2"]),
@@ -310,7 +345,10 @@ fn registry_route_libraries_are_never_kept() {
         library.source = moved;
     }
     built.route = CheckRoute::Prebuilt;
-    assert_eq!(kept.save(&work, &built, &libraries, &keys).unwrap(), 0);
+    assert_eq!(
+        kept.save(&work, &built, &libraries, &list, &keys).unwrap(),
+        0
+    );
     assert!(kept.seed(&dir.path().join("next"), &list, &keys).is_empty());
 }
 
@@ -322,7 +360,7 @@ fn a_library_whose_bytes_changed_after_verification_is_refused() {
     let keys = keys(&build(), &list);
     let (work, built, libraries) = work_with(dir.path(), ALL);
     fs::write(folder(&work).join("mod_ae2.dll"), b"swapped").unwrap();
-    assert!(kept.save(&work, &built, &libraries, &keys).is_err());
+    assert!(kept.save(&work, &built, &libraries, &list, &keys).is_err());
     assert!(!kept.index_path(&keys["ae2"]).exists());
 }
 
@@ -334,9 +372,9 @@ fn a_new_build_replaces_the_entry_and_unused_blobs_go() {
     let list = mods(&[]);
     let keys = keys(&build(), &list);
     let (work, built, libraries) = work_with(&dir.path().join("a"), &[("ae2", b"ae2 old")]);
-    kept.save(&work, &built, &libraries, &keys).unwrap();
+    kept.save(&work, &built, &libraries, &list, &keys).unwrap();
     let (work, built, libraries) = work_with(&dir.path().join("b"), &[("ae2", b"ae2 new")]);
-    kept.save(&work, &built, &libraries, &keys).unwrap();
+    kept.save(&work, &built, &libraries, &list, &keys).unwrap();
     let next = dir.path().join("next");
     assert_eq!(kept.seed(&next, &list[..1], &keys), ["ae2"]);
     assert_eq!(
@@ -359,10 +397,11 @@ fn only_the_most_recently_used_entries_are_kept() {
     let dir = tempfile::tempdir().unwrap();
     let kept = Kept::new(&dir.path().join("native"));
     let (work, built, libraries) = work_with(dir.path(), &[("ae2", b"ae2")]);
+    let list = &mods(&[])[..1];
     let key =
         |n: usize| -> BTreeMap<String, String> { [("ae2".to_owned(), format!("{n:064x}"))].into() };
     for n in 0..ENTRIES + 2 {
-        kept.save(&work, &built, &libraries, &key(n)).unwrap();
+        kept.save(&work, &built, &libraries, list, &key(n)).unwrap();
         // Distinct modified times, oldest first.
         let old =
             std::time::SystemTime::now() - std::time::Duration::from_secs(10_000 - n as u64 * 60);
@@ -373,7 +412,7 @@ fn only_the_most_recently_used_entries_are_kept() {
             .set_modified(old)
             .unwrap();
     }
-    kept.save(&work, &built, &libraries, &key(ENTRIES + 2))
+    kept.save(&work, &built, &libraries, list, &key(ENTRIES + 2))
         .unwrap();
     let present: Vec<bool> = (0..ENTRIES + 3)
         .map(|n| kept.index_path(&key(n)["ae2"]).exists())
@@ -391,7 +430,7 @@ fn concurrent_attempts_only_ever_seed_whole_verified_libraries() {
     let versions: Vec<Vec<u8>> = (0..4).map(|n| vec![n as u8; 64 << 10]).collect();
     std::thread::scope(|scope| {
         for (n, bytes) in versions.iter().enumerate() {
-            let (root, keys) = (&root, &keys);
+            let (root, keys, list) = (&root, &keys, &list);
             let base = dir.path().join(format!("writer-{n}"));
             scope.spawn(move || {
                 for round in 0..8 {
@@ -400,7 +439,7 @@ fn concurrent_attempts_only_ever_seed_whole_verified_libraries() {
                         &[("ae2", bytes), ("ftb", b"ftb"), ("hnn", b"hnn")],
                     );
                     Kept::new(root)
-                        .save(&work, &built, &libraries, keys)
+                        .save(&work, &built, &libraries, list, keys)
                         .unwrap();
                 }
             });
@@ -426,7 +465,11 @@ fn concurrent_attempts_only_ever_seed_whole_verified_libraries() {
             });
         }
     });
-    // Once the writers are done, every entry is whole.
+    // Once the writers are done, every entry is whole. ftb's may be from another writer than
+    // ae2's, built against another ae2: then it is a miss.
     let after = Kept::new(&root).seed(&dir.path().join("after"), &list, &keys);
-    assert_eq!(after, ["ae2", "ftb", "hnn"]);
+    assert!(
+        after == ["ae2", "ftb", "hnn"] || after == ["ae2", "hnn"],
+        "{after:?}"
+    );
 }

@@ -18,6 +18,9 @@
 //!   every slice's digest, and the tool program), the route, the toolchain, what `version_for`
 //!   hashes for the build except the other mods, the mod's own files, and the keys of the mods it
 //!   links to. The tool checks its fingerprint again on top.
+//! - A key can't tell two builds of the same inputs apart, so an entry also records the library
+//!   and build identity of each mod it linked against. It is reused only beside exactly those:
+//!   once a library it links to was rebuilt, the mod is rebuilt too.
 use super::workspace::Library;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -30,7 +33,7 @@ use sunrise_launcher_smod::index::sha256_file;
 pub(super) const FOLDER: &str = "kept-mods";
 
 /// Bumped when what an entry holds, or how it is used, changes.
-const FORMAT: &str = "kept-mods-v2";
+const FORMAT: &str = "kept-mods-v3";
 
 /// How many mod libraries are kept; the least recently used go first.
 const ENTRIES: usize = 64;
@@ -125,14 +128,30 @@ pub(super) fn keys(build: &Build<'_>, mods: &[Mod<'_>]) -> BTreeMap<String, Stri
     keys
 }
 
+/// A mod library as a mod linking to it was built against.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Linked {
+    /// The library's SHA-256, as the launcher verified it.
+    sha256: String,
+    /// The build identity the tool recorded for it.
+    identity: String,
+}
+
 /// An entry: the tool's build folder, the library and the tool's files beside it.
 #[derive(Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Index {
     format: String,
     folder: String,
+    /// The library's file name, one of `files`.
+    library: String,
+    /// Its build identity, for the mods linking to it.
+    identity: String,
     /// File name to SHA-256: the library first checked by the launcher, then the tool's files.
     files: BTreeMap<String, String>,
+    /// Each mod it links to, as this library was built against it.
+    links: BTreeMap<String, Linked>,
 }
 
 pub(super) struct Kept {
@@ -157,34 +176,47 @@ impl Kept {
     }
 
     /// Copies the kept library of each mod in `keys` into the attempt's `work` folder, where the
-    /// tool looks for it. Returns the mods put there. A mod whose entry is missing or doesn't
-    /// verify is left out whole, and so is every mod linking to it.
+    /// tool looks for it. Returns the mods put there, in `mods`' order. A mod whose entry is
+    /// missing or doesn't verify is left out whole, and so is every mod linking to it, or whose
+    /// entry was built against another library of a mod it links to.
     pub(super) fn seed(
         &self,
         work: &Path,
         mods: &[Mod<'_>],
         keys: &BTreeMap<String, String>,
     ) -> Vec<String> {
-        let mut seeded: Vec<String> = Vec::new();
+        let mut seeded: BTreeMap<&str, Linked> = BTreeMap::new();
+        let mut order = Vec::new();
         for m in mods {
-            if m.links.iter().any(|id| !seeded.iter().any(|s| s == id)) {
+            let Some(links) = m
+                .links
+                .iter()
+                .map(|id| Some((id.to_string(), seeded.get(id)?.clone())))
+                .collect::<Option<BTreeMap<_, _>>>()
+            else {
                 continue;
-            }
+            };
             let Some(key) = keys.get(m.id) else {
                 continue;
             };
-            if self.seed_one(work, key) {
-                seeded.push(m.id.to_owned());
+            if let Some(linked) = self.seed_one(work, key, &links) {
+                seeded.insert(m.id, linked);
+                order.push(m.id.to_owned());
             }
         }
-        seeded
+        order
     }
 
-    fn seed_one(&self, work: &Path, key: &str) -> bool {
+    /// Seeds one entry if it was built against exactly `links`; returns its library as the mods
+    /// linking to it see it.
+    fn seed_one(&self, work: &Path, key: &str, links: &BTreeMap<String, Linked>) -> Option<Linked> {
         let path = self.index_path(key);
         let Ok(Some(index)) = read_index(&path) else {
-            return false;
+            return None;
         };
+        if index.links != *links {
+            return None;
+        }
         let folder = work.join("prebuilt-build").join(&index.folder);
         let mut copied = Vec::new();
         let whole = (|| -> io::Result<()> {
@@ -214,36 +246,60 @@ impl Kept {
             for file in copied {
                 let _ = fs::remove_file(file);
             }
-            return false;
+            return None;
         }
         // Used now: the least recently used entries are the ones pruned.
         let _ = fs::File::options()
             .write(true)
             .open(&path)
             .and_then(|file| file.set_modified(std::time::SystemTime::now()));
-        true
+        Some(Linked {
+            sha256: index.files[&index.library].clone(),
+            identity: index.identity,
+        })
     }
 
     /// Keeps each mod library of this build that the launcher verified (`libraries`), under its
-    /// mod's key. Returns how many were kept. A library outside the tool's own API or engine
-    /// build folder (the registry route) is never kept, nor is the patch library.
+    /// mod's key, with the libraries of this build it links to (`mods`). Returns how many were
+    /// kept. A library outside the tool's own API or engine build folder (the registry route) is
+    /// never kept, nor is the patch library, nor a mod linking to a library not verified here.
     pub(super) fn save(
         &self,
         work: &Path,
         built: &super::tool::Built,
         libraries: &[Library],
+        mods: &[Mod<'_>],
         keys: &BTreeMap<String, String>,
     ) -> io::Result<usize> {
         let builds = work.join("prebuilt-build");
+        // Each mod's library in this build as the launcher verified it.
+        let verified: BTreeMap<&str, (&Library, Linked)> = built
+            .records
+            .iter()
+            .filter(|record| matches!(record.kind, super::tool::LibraryKind::Mod))
+            .filter_map(|record| {
+                let library = libraries.iter().find(|l| l.name == record.file)?;
+                let linked = Linked {
+                    sha256: library.sha256.clone(),
+                    identity: record.identity.clone(),
+                };
+                Some((record.mod_id.as_str(), (library, linked)))
+            })
+            .collect();
         let mut kept = 0;
-        for record in &built.records {
-            if !matches!(record.kind, super::tool::LibraryKind::Mod) {
-                continue;
-            }
-            let Some(key) = keys.get(&record.mod_id) else {
+        for m in mods {
+            let Some(key) = keys.get(m.id) else {
                 continue;
             };
-            let Some(library) = libraries.iter().find(|library| library.name == record.file) else {
+            let Some((library, own)) = verified.get(m.id) else {
+                continue;
+            };
+            let Some(links) = m
+                .links
+                .iter()
+                .map(|id| Some((id.to_string(), verified.get(id)?.1.clone())))
+                .collect::<Option<BTreeMap<_, _>>>()
+            else {
                 continue;
             };
             let source = crate::backend::plain(library.source.clone());
@@ -281,7 +337,10 @@ impl Kept {
             let index = Index {
                 format: FORMAT.into(),
                 folder: folder_name.to_owned(),
+                library: library.name.clone(),
+                identity: own.identity.clone(),
                 files,
+                links,
             };
             // Another attempt replacing the same entry at the same moment can win the rename
             // (Windows refuses a rename over a file being renamed): theirs is as good.
@@ -422,7 +481,11 @@ fn parse_index(bytes: &[u8]) -> io::Result<Index> {
                     .bytes()
                     .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
         });
-    if index.format != FORMAT || !names_ok || !ours(&index.folder) {
+    if index.format != FORMAT
+        || !names_ok
+        || !index.files.contains_key(&index.library)
+        || !ours(&index.folder)
+    {
         return Err(invalid());
     }
     Ok(index)

@@ -1936,9 +1936,9 @@ fn pipeline(
             })?;
         // Kept only now that the launcher has verified them; a failure here costs only the
         // next build's time.
-        if let Some((_, keys)) = &kept_keys {
+        if let Some((kept_mods, keys)) = &kept_keys {
             let keeping = std::time::Instant::now();
-            match kept_store.save(&work, &built, &libraries, keys) {
+            match kept_store.save(&work, &built, &libraries, kept_mods, keys) {
                 Ok(0) => {}
                 Ok(_) => timed("Keeping the mods' libraries for the next build", keeping)?,
                 Err(error) => log_warning(&trf(
