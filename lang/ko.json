@@ -24,7 +24,6 @@
   "Add from GitHub": "GitHub에서 추가",
   "Address on this network": "이 네트워크상의 주소",
   "Adventure": "어드벤처",
-  "After each session: frame-time percentiles and a 14-bucket histogram, tick times, peak memory and startup times, with your machine (OS, CPU and its cores and clocks, memory size, GPU, its memory and driver, drive type, screen size and refresh rate, laptop or desktop, on battery or not) and the settings that change performance.": "세션 종료 후: 프레임 타임 백분위수 및 14버킷 히스토그램, 틱 시간, 최고 메모리 및 시작 시간, 사용 중인 기기 정보(OS, CPU 코어 및 클럭, 메모리 용량, GPU 및 드라이버, 드라이브 유형, 화면 크기 및 주사율, 노트북/데스크톱 여부, 배터리 사용 여부)와 성능에 영향을 주는 설정 데이터가 수집됩니다.",
   "All": "전체",
   "All notes": "모든 노트",
   "Allow": "허용",
@@ -499,7 +498,6 @@
   "Waiting for the server's log…": "서버 로그 대기 중...",
   "Website": "웹사이트",
   "What players see under the server's name (the MOTD).": "서버 이름 아래에 표시되는 메시지(MOTD)입니다.",
-  "When the game crashes: the error, where in Sunrise's code it happened, your graphics adapter and settings. No log, no world or server, no user name in paths.": "게임 충돌 시: 오류 내용, Sunrise 코드 내 발생 위치, 그래픽 카드 및 설정 정보가 포함됩니다. 로그, 월드/서버 파일, 경로 내 사용자 이름은 포함되지 않습니다.",
   "While you play, the game sends an anonymous \"I'm playing\" ping once a minute, so the launcher can show how many people play Sunrise right now. It holds: a random number made when the game starts and forgotten when it closes, the Sunrise version, your OS (Linux, macOS or Windows), and whether you have a world open to LAN or friends. It doesn't hold: your account, your install ID, world or server names, or anything you do in the game, and the server doesn't keep your IP address. It is sent whatever the switches say.": "플레이하는 동안 게임은 1분에 한 번 익명의 \"플레이 중\" 핑을 전송하여 런처가 현재 Sunrise을 플레이하는 인원을 표시할 수 있도록 합니다. 전송되는 정보: 게임 시작 시 생성되고 종료 시 삭제되는 임의의 숫자, Sunrise 버전, 운영체제(Linux, macOS 또는 Windows), 월드가 LAN 또는 친구에게 공개되어 있는지 여부. 전송되지 않는 정보: 계정, 설치 ID, 월드 또는 서버 이름, 게임 내 활동 내용, 서버는 IP 주소를 보관하지 않습니다. 설정 스위치 상태와 관계없이 전송됩니다.",
   "Who can join": "참가할 수 있는 사람",
   "Who may join": "참가 허용 대상",
@@ -1892,5 +1890,7 @@
   "Amber": "Amber",
   "Red": "Red",
   "Pink": "Pink",
-  "Pick a colour, or type a colour name, a hue in degrees or #rrggbb. Play darkens a pale accent just enough for its white label.": "Pick a colour, or type a colour name, a hue in degrees or #rrggbb. Play darkens a pale accent just enough for its white label."
+  "Pick a colour, or type a colour name, a hue in degrees or #rrggbb. Play darkens a pale accent just enough for its white label.": "Pick a colour, or type a colour name, a hue in degrees or #rrggbb. Play darkens a pale accent just enough for its white label.",
+  "After each session: frame-time percentiles and a 14-bucket histogram, tick times, peak memory and startup times, which of Sunrise's own steps held up frames of a quarter second or longer (their names in the code, how often and for how long), with your machine (OS, CPU and its cores and clocks, memory size, GPU, its memory and driver, drive type, screen size and refresh rate, laptop or desktop, on battery or not) and the settings that change performance.": "After each session: frame-time percentiles and a 14-bucket histogram, tick times, peak memory and startup times, which of Sunrise's own steps held up frames of a quarter second or longer (their names in the code, how often and for how long), with your machine (OS, CPU and its cores and clocks, memory size, GPU, its memory and driver, drive type, screen size and refresh rate, laptop or desktop, on battery or not) and the settings that change performance.",
+  "When the game crashes: the error, where in Sunrise's code it happened and on which of its threads, the native mod whose code crashed if one did, the Sunrise version, your graphics adapter and settings, and your machine (OS, CPU and its cores and clocks, memory size, GPU, its memory and driver, drive type, screen size and refresh rate, laptop or desktop, on battery or not). No log, no world or server, no user name in paths.": "When the game crashes: the error, where in Sunrise's code it happened and on which of its threads, the native mod whose code crashed if one did, the Sunrise version, your graphics adapter and settings, and your machine (OS, CPU and its cores and clocks, memory size, GPU, its memory and driver, drive type, screen size and refresh rate, laptop or desktop, on battery or not). No log, no world or server, no user name in paths."
 }
