@@ -21,51 +21,54 @@ impl Launcher {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let mut page = self.discover_shell(window, focus, cx);
-        let (cards, categories, stale_warning, from_cache) = match &self.ui.mods.v2_catalog {
-            V2Catalog::Ready {
-                cards,
-                categories,
-                stale_warning,
-                from_cache,
-            } => (
-                cards.clone(),
-                categories.clone(),
-                stale_warning.clone(),
-                *from_cache,
-            ),
-            V2Catalog::Idle | V2Catalog::Loading => {
-                return page
-                    .child(self.discover_profile_bar(cx))
-                    .child(muted(tr("Loading the registry…")))
-                    .into_any_element();
-            }
-            V2Catalog::Failed(error) => {
-                let error = error.clone();
-                return page
-                    .child(self.discover_profile_bar(cx))
-                    .child(
-                        card()
-                            .p(px(20.))
-                            .flex()
-                            .flex_col()
-                            .items_start()
-                            .gap(px(10.))
-                            .child(
-                                div()
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .child(tr("The Sunrise registry can't be reached")),
-                            )
-                            .child(muted(error))
-                            .child(button("alt-retry", tr("Try again")).on_click(cx.listener(
-                                |this, _: &ClickEvent, _, cx| {
-                                    this.ensure_v2_catalog(true);
-                                    cx.notify();
-                                },
-                            ))),
-                    )
-                    .into_any_element();
-            }
-        };
+        let (cards, categories, build_listed, stale_warning, from_cache) =
+            match &self.ui.mods.v2_catalog {
+                V2Catalog::Ready {
+                    cards,
+                    categories,
+                    build_listed,
+                    stale_warning,
+                    from_cache,
+                } => (
+                    cards.clone(),
+                    categories.clone(),
+                    *build_listed,
+                    stale_warning.clone(),
+                    *from_cache,
+                ),
+                V2Catalog::Idle | V2Catalog::Loading => {
+                    return page
+                        .child(self.discover_profile_bar(cx))
+                        .child(muted(tr("Loading the registry…")))
+                        .into_any_element();
+                }
+                V2Catalog::Failed(error) => {
+                    let error = error.clone();
+                    return page
+                        .child(self.discover_profile_bar(cx))
+                        .child(
+                            card()
+                                .p(px(20.))
+                                .flex()
+                                .flex_col()
+                                .items_start()
+                                .gap(px(10.))
+                                .child(
+                                    div()
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .child(tr("The Sunrise registry can't be reached")),
+                                )
+                                .child(muted(error))
+                                .child(button("alt-retry", tr("Try again")).on_click(cx.listener(
+                                    |this, _: &ClickEvent, _, cx| {
+                                        this.ensure_v2_catalog(true);
+                                        cx.notify();
+                                    },
+                                ))),
+                        )
+                        .into_any_element();
+                }
+            };
 
         let f = self.ui.mods.filters.clone();
         let shown = discover_v2::discover(&cards, &f);
@@ -331,6 +334,7 @@ impl Launcher {
 
         let empty = self.discover_empty_state(
             &f,
+            build_listed,
             hidden_other_builds,
             !cards.is_empty(),
             &profile_name,
@@ -344,6 +348,7 @@ impl Launcher {
     fn discover_empty_state(
         &self,
         f: &discover_v2::V2Filters,
+        build_listed: bool,
         hidden_other_builds: usize,
         has_any_cards: bool,
         profile_name: &str,
@@ -357,6 +362,27 @@ impl Launcher {
             ),
             None => profile_name.to_owned(),
         };
+        let show_all = |cx: &mut Context<Self>| {
+            primary("alt-discover-show-all", tr("Show all")).on_click(cx.listener(
+                |this, _: &ClickEvent, _, cx| {
+                    this.ui.mods.filters.show_all = true;
+                    this.ui.mods.limit = 0;
+                    cx.notify();
+                },
+            ))
+        };
+        if !f.show_all && !build_listed {
+            return empty_state(
+                "search-01",
+                trf(
+                    "No mods are listed for {target} yet",
+                    &[("target", &profile_target)],
+                ),
+                tr("The registry lists mods for recent Sunrise builds. Turn on Show all to see mods for other builds."),
+                Some(show_all(cx)),
+            )
+            .into_any_element();
+        }
         if !f.show_all && (hidden_other_builds > 0 || has_any_cards) {
             let title = if f.text.is_empty() && f.category.is_none() {
                 trf("No mods fit {target} yet", &[("target", &profile_target)])
@@ -395,14 +421,7 @@ impl Launcher {
                 tr("Try a different search, or turn on Show all to see mods for other Sunrise builds.")
                     .to_owned()
             };
-            let action = primary("alt-discover-show-all", tr("Show all")).on_click(cx.listener(
-                |this, _: &ClickEvent, _, cx| {
-                    this.ui.mods.filters.show_all = true;
-                    this.ui.mods.limit = 0;
-                    cx.notify();
-                },
-            ));
-            return empty_state("search-01", title, line, Some(action)).into_any_element();
+            return empty_state("search-01", title, line, Some(show_all(cx))).into_any_element();
         }
         let has_filters = !f.text.trim().is_empty() || f.category.is_some();
         let action = has_filters.then(|| {

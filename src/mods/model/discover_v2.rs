@@ -427,6 +427,13 @@ fn relevance_score(card: &V2Card, full_query: &str, words: &[String]) -> u32 {
 }
 
 /// Indices into `cards` matching `filters`, ordered by `filters.sort`.
+/// Whether the index lists `exact_build` among its offered builds. Discover uses only the index's
+/// precomputed fits, so a profile on an unlisted build has no fitting mods to show; a profile
+/// without a build is handled by its own empty state.
+pub(in crate::mods) fn build_listed(index: &Index, exact_build: Option<&str>) -> bool {
+    exact_build.is_none_or(|build| index.build(build).is_some())
+}
+
 pub(in crate::mods) fn discover(cards: &[V2Card], filters: &V2Filters) -> Vec<usize> {
     let words = query_words(&filters.text);
     let full_query = filters.text.trim().to_lowercase();
@@ -895,5 +902,37 @@ mod tests {
             p.other_versions[0].verdict.reason().as_deref(),
             Some("Doesn't fit Stable · 0.1.0")
         );
+    }
+
+    #[test]
+    fn a_build_outside_the_index_builds_is_unlisted_and_nothing_fits_it() {
+        let listed = "26.3-0.1.0";
+        let unlisted = "nightly-2026-10-01-0000000";
+        let project = make_project(
+            "Ab3dE9xQ",
+            "wayfinder",
+            "Wayfinder",
+            "Minimap with waypoints",
+            &["utility"],
+            vec![make_release(
+                "1.0.0",
+                "2026-11-10",
+                listed,
+                &[listed],
+                &[],
+                '1',
+            )],
+        );
+        let index = sample_index(vec![project], Vec::new());
+        assert!(build_listed(&index, Some(listed)));
+        assert!(build_listed(&index, None));
+        assert!(!build_listed(&index, Some(unlisted)));
+        let cards = cards(&index, Some(unlisted), &label_build);
+        assert!(discover(&cards, &V2Filters::default()).is_empty());
+        let all = V2Filters {
+            show_all: true,
+            ..V2Filters::default()
+        };
+        assert_eq!(discover(&cards, &all).len(), 1);
     }
 }

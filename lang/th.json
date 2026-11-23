@@ -1669,5 +1669,7 @@
   "The mod registry requires HTTPS.": "The mod registry requires HTTPS.",
   "The mod registry returned an older index (serial {got}, expected at least {highest}).": "The mod registry returned an older index (serial {got}, expected at least {highest}).",
   "The mod registry signature is too large.": "The mod registry signature is too large.",
-  "The mod registry state file could not be read: {reason}": "The mod registry state file could not be read: {reason}"
+  "The mod registry state file could not be read: {reason}": "The mod registry state file could not be read: {reason}",
+  "No mods are listed for {target} yet": "No mods are listed for {target} yet",
+  "The registry lists mods for recent Sunrise builds. Turn on Show all to see mods for other builds.": "The registry lists mods for recent Sunrise builds. Turn on Show all to see mods for other builds."
 }

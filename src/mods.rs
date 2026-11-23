@@ -75,6 +75,8 @@ enum Catalog {
 struct V2CatalogPayload {
     cards: Vec<model::discover_v2::V2Card>,
     categories: Vec<String>,
+    /// The index lists the selected profile's build among its offered builds.
+    build_listed: bool,
     stale_warning: Option<String>,
     from_cache: bool,
 }
@@ -85,6 +87,7 @@ enum V2Catalog {
     Ready {
         cards: Rc<[model::discover_v2::V2Card]>,
         categories: Rc<[String]>,
+        build_listed: bool,
         stale_warning: Option<String>,
         from_cache: bool,
     },
@@ -1000,6 +1003,7 @@ impl Launcher {
                             Ok(payload) => V2Catalog::Ready {
                                 cards: payload.cards.into(),
                                 categories: payload.categories.into(),
+                                build_listed: payload.build_listed,
                                 stale_warning: payload.stale_warning,
                                 from_cache: payload.from_cache,
                             },
@@ -1165,10 +1169,12 @@ impl Launcher {
                 &crate::sheets::build_name,
             );
             let categories = model::discover_v2::categories(&cards);
+            let build_listed = model::discover_v2::build_listed(&catalog.index, build.as_deref());
             self.ui.mods.v2_catalog_build = Some(build);
             self.ui.mods.v2_catalog = V2Catalog::Ready {
                 cards: cards.into(),
                 categories: categories.into(),
+                build_listed,
                 stale_warning: catalog.stale_warning,
                 from_cache: catalog.from_cache,
             };
@@ -1191,6 +1197,10 @@ impl Launcher {
                 );
                 let categories = model::discover_v2::categories(&cards);
                 V2CatalogPayload {
+                    build_listed: model::discover_v2::build_listed(
+                        &catalog.index,
+                        build.as_deref(),
+                    ),
                     cards,
                     categories,
                     stale_warning: catalog.stale_warning,
