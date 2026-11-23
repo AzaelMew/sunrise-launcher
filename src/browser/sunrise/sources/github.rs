@@ -1,5 +1,5 @@
 //! Anonymous GitHub inspection and pinned source transfer. No code here runs mod code.
-use super::{bounded, digest, readme, safe_path, safe_ref, Source, Tracker, FRESH};
+use super::{bounded, digest, safe_path, safe_ref, Source, Tracker, FRESH};
 use crate::i18n::tr;
 
 mod icon;
@@ -117,10 +117,9 @@ impl SourceCommit {
 #[derive(Clone)]
 pub struct Details {
     pub commit: Option<SourceCommit>,
-    pub readme: Option<readme::Readme>,
     /// The `[native]` Sunrise build pinned by this exact source commit.
     pub build_pin: Option<String>,
-    /// A saved commit and README can still be shown, but cannot authorize a new build.
+    /// A saved commit can still be shown, but cannot authorize a new build.
     pub error: Option<Failure>,
 }
 
@@ -147,7 +146,6 @@ pub(super) struct State {
     backoff: HashMap<PathBuf, (SystemTime, Option<SystemTime>)>,
     resolves: HashMap<PathBuf, Lookup>,
     manifests: HashMap<(PathBuf, String, String), Option<String>>,
-    missing_readmes: HashSet<(PathBuf, String)>,
 }
 
 pub(super) static STATE: LazyLock<Mutex<State>> = LazyLock::new(|| Mutex::new(State::default()));
@@ -346,7 +344,6 @@ impl Github {
         state: &mut State,
         repo: &str,
         tail: &[&str],
-        readme_at: Option<&str>,
     ) -> Result<Option<T>, Failure> {
         let mut url = Url::parse("https://api.github.com/").expect("constant URL");
         let mut path = PathBuf::from("api/repos");
@@ -360,10 +357,6 @@ impl Github {
                 parts.push(part);
                 path.push(part);
             }
-        }
-        if let Some(sha) = readme_at {
-            url.query_pairs_mut().append_pair("ref", sha);
-            path.push(sha);
         }
         // Append the extension; a legal repo/ref can itself contain dots.
         path.as_mut_os_string().push(".json");
@@ -399,59 +392,9 @@ impl Github {
         )
     }
 
-    /// A README attachment, `https://github.com/user-attachments/assets/<uuid>`. GitHub answers
-    /// with one redirect to a short-lived signed address on its asset host; that one redirect is
-    /// followed when it stays on GitHub's asset hosts, and nothing else is.
-    pub(super) fn attachment(
-        &self,
-        state: &mut State,
-        uuid: &str,
-        max: u64,
-    ) -> Result<Option<Vec<u8>>, Failure> {
-        let url = format!("https://github.com/user-attachments/assets/{uuid}");
-        if self.fixture.is_some() {
-            let fixture = Path::new("user-attachments").join(uuid);
-            return self.fetch(state, &url, &fixture, max);
-        }
-        self.ready(state, SystemTime::now())?;
-        let get = |url: &str| -> Result<ureq::Response, Failure> {
-            match crate::net::anonymous_get_no_redirect(url)
-                .map_err(Failure::Other)?
-                .timeout(REQUEST_TIMEOUT)
-                .call()
-            {
-                Ok(response) | Err(ureq::Error::Status(_, response)) => Ok(response),
-                Err(error) => Err(Failure::Offline(error.to_string())),
-            }
-        };
-        let first = get(&url)?;
-        if !matches!(first.status(), 301 | 302 | 303 | 307 | 308) {
-            // A rate limit starts the same cooldown as any other GitHub request.
-            return self
-                .status(
-                    state,
-                    first.status(),
-                    |name| first.header(name),
-                    unexpected_status,
-                )
-                .map(|()| None);
-        }
-        let Some(location) = first
-            .header("location")
-            .filter(|location| readme::asset_redirect(location))
-        else {
-            return Ok(None);
-        };
-        let asset = get(location)?;
-        if asset.status() != 200 {
-            return Ok(None);
-        }
-        bounded(asset.into_reader(), max).map(Some).map_err(other)
-    }
-
     fn repository(&self, state: &mut State, repo: &str) -> Result<Repository, Failure> {
         let shown: Repository = self
-            .api(state, repo, &[], None)?
+            .api(state, repo, &[])?
             .ok_or(Failure::RepositoryUnavailable)?;
         if shown.private || shown.id == 0 || !shown.full_name.eq_ignore_ascii_case(repo) {
             return Err(Failure::RepositoryUnavailable);
@@ -469,7 +412,7 @@ impl Github {
             Tracker::Branch(name) => (self.ref_commit(state, repo, RefKind::Head, name)?, None),
             Tracker::Release => {
                 let latest: GithubRelease = self
-                    .api(state, repo, &["releases", "latest"], None)?
+                    .api(state, repo, &["releases", "latest"])?
                     .ok_or(Failure::RefUnavailable)?;
                 if latest.prerelease {
                     return Err(Failure::RefUnavailable);
@@ -509,7 +452,7 @@ impl Github {
             name: String,
             object: Object,
         }
-        let Some(found): Option<Ref> = self.api(state, repo, &["git", "ref", under, name], None)?
+        let Some(found): Option<Ref> = self.api(state, repo, &["git", "ref", under, name])?
         else {
             return Ok(None);
         };
@@ -533,7 +476,7 @@ impl Github {
                 object: Object,
             }
             let tag: Tag = self
-                .api(state, repo, &["git", "tags", &object.sha], None)?
+                .api(state, repo, &["git", "tags", &object.sha])?
                 .ok_or(Failure::RefUnavailable)?;
             object = tag.object;
         }
@@ -626,48 +569,6 @@ impl Github {
         state.manifests.insert(key, found.clone());
         found.ok_or(Failure::NoManifest)
     }
-
-    fn readme(
-        &self,
-        state: &mut State,
-        source: &Source,
-        sha: &str,
-        refresh: bool,
-    ) -> Result<Option<(String, Vec<u8>)>, Failure> {
-        #[derive(Deserialize)]
-        struct Document {
-            path: String,
-            size: u64,
-            #[serde(rename = "type")]
-            kind: String,
-            encoding: String,
-            content: String,
-        }
-        use base64::{engine::general_purpose::STANDARD, Engine as _};
-        let key = (self.cache.clone(), format!("{}/{sha}", source.repo()));
-        if !refresh && state.missing_readmes.contains(&key) {
-            return Ok(None);
-        }
-        // GitHub's pinned README response already contains the document. Its API body is
-        // bounded, and a 128 KiB README fits inside that bound even with base64 line breaks.
-        let found: Option<Document> = self.api(state, source.repo(), &["readme"], Some(sha))?;
-        if let Some(mut found) = found.filter(|found| {
-            found.kind == "file"
-                && found.encoding == "base64"
-                && safe_path(&found.path)
-                && readme::markdown_file(&found.path)
-                && found.size <= readme::MAX_README
-        }) {
-            found.content.retain(|c| !c.is_ascii_whitespace());
-            if let Ok(bytes) = STANDARD.decode(&found.content) {
-                if bytes.len() as u64 == found.size {
-                    return Ok(Some((found.path, bytes)));
-                }
-            }
-        }
-        state.missing_readmes.insert(key);
-        Ok(None)
-    }
 }
 
 fn source_manifest(source: &Source, bytes: &[u8]) -> Option<Manifest> {
@@ -719,12 +620,7 @@ fn parse_http_date(value: &str) -> Option<u64> {
     .ok()
 }
 
-fn inspect(
-    github: &Github,
-    source: &Source,
-    refresh: Option<Instant>,
-    include_readme: bool,
-) -> Details {
+fn inspect(github: &Github, source: &Source, refresh: Option<Instant>) -> Details {
     let mut state = STATE.lock().unwrap_or_else(|e| e.into_inner());
     let Lookup {
         pin, mut failure, ..
@@ -732,7 +628,6 @@ fn inspect(
     let Some(pin) = pin else {
         return Details {
             commit: None,
-            readme: None,
             build_pin: None,
             error: failure,
         };
@@ -751,25 +646,6 @@ fn inspect(
     } else {
         github.manifest(&mut state, source, &pin.sha, false).ok()
     };
-    let readme = if include_readme {
-        // Never make extra requests from a saved ref. A missing/invalid manifest is different:
-        // the commit is current and its README can still be read.
-        let offline = failure
-            .as_ref()
-            .is_some_and(|failure| *failure != Failure::NoManifest);
-        match readme::load(github, source.repo(), &pin.sha, offline, || {
-            github.readme(&mut state, source, &pin.sha, refresh.is_some())
-        }) {
-            Ok(readme) => readme,
-            Err(problem @ Failure::RateLimited { .. }) if failure.is_none() => {
-                failure = Some(problem);
-                None
-            }
-            Err(_) => None,
-        }
-    } else {
-        None
-    };
     let github_url = format!("https://github.com/{}/tree/{}", source.repo(), pin.sha);
     Details {
         commit: Some(SourceCommit {
@@ -777,7 +653,6 @@ fn inspect(
             pin,
             github_url,
         }),
-        readme,
         build_pin,
         error: failure,
     }
@@ -812,10 +687,10 @@ pub(crate) fn fixture_link_api(path: &str) -> Option<Result<Option<serde_json::V
 }
 
 pub fn details(source: &Source, refresh: bool) -> Details {
-    inspect(&Github::current(), source, refresh.then(Instant::now), true)
+    inspect(&Github::current(), source, refresh.then(Instant::now))
 }
 
-/// Check a tracker and its manifest without loading its README or any images.
+/// Check a tracker and its manifest.
 pub fn resolve(source: &Source, refresh: bool) -> Result<SourceCommit, Failure> {
     resolve_checked(&Github::current(), source, refresh.then(Instant::now))
 }
@@ -842,7 +717,7 @@ fn resolve_checked(
     source: &Source,
     requested: Option<Instant>,
 ) -> Result<SourceCommit, Failure> {
-    let details = inspect(github, source, requested, false);
+    let details = inspect(github, source, requested);
     if let Some(pin) = details.checked_commit() {
         Ok(pin.clone())
     } else {

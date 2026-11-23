@@ -41,17 +41,6 @@ impl Sandbox {
         fs::write(path, bytes).unwrap();
     }
 
-    fn readme(&self, path: &str, text: &str) {
-        use base64::{engine::general_purpose::STANDARD, Engine as _};
-        // The real API inserts line breaks between base64 blocks.
-        let content = STANDARD.encode(text);
-        let content = format!("{}\n{}", &content[..8], &content[8..]);
-        self.put(
-            &format!("api/repos/{REPO}/readme/{SHA}.json"),
-            serde_json::json!({"path":path,"size":text.len(),"type":"file","encoding":"base64","content":content}).to_string(),
-        );
-    }
-
     fn source(repo_id: u64) -> Source {
         Source::for_origin(
             "trail_atlas",
@@ -105,30 +94,28 @@ fn a_release_resolves_its_tag_object_to_source_not_to_its_assets() {
 }
 
 #[test]
-fn a_missing_or_mismatched_manifest_disables_build_without_hiding_the_pinned_readme() {
+fn a_missing_or_mismatched_manifest_disables_build_while_keeping_the_commit() {
     let s = Sandbox::new();
     let path = format!("raw/{REPO}/{SHA}/{MANIFEST}");
     s.put(&path, b"id='mismatch'\n");
-    s.readme("docs/README.md", "# Pinned\n\n![Atlas](media/atlas.png)");
     let start = test_requests();
-    let details = inspect(&s.github, &Sandbox::source(42), None, true);
+    let details = inspect(&s.github, &Sandbox::source(42), None);
     assert_eq!(details.error, Some(Failure::NoManifest));
+    assert!(details.checked_commit().is_none());
     assert_eq!(details.commit.unwrap().sha(), SHA);
-    assert_eq!(details.readme.unwrap().images().len(), 1);
     assert_eq!(
         test_requests() - start,
-        4,
-        "one pinned README request, with no raw README or image request"
+        3,
+        "only repo, ref, and manifest requests"
     );
 }
 
 #[test]
-fn repository_and_ref_collapse_across_mods_and_cached_readme_works_offline() {
+fn repository_and_ref_collapse_across_mods_and_saved_pin_works_offline() {
     let s = Sandbox::new();
-    s.readme("README.md", "# Trail Atlas\n\nOld notes.");
     let start = test_requests();
     let epoch = Some(Instant::now());
-    let details = inspect(&s.github, &Sandbox::source(42), epoch, true);
+    let details = inspect(&s.github, &Sandbox::source(42), epoch);
     assert!(details.error.is_none(), "{:?}", details.error);
     assert_eq!(details.build_pin.as_deref(), Some(SHA));
     let other = Source::for_origin(
@@ -143,21 +130,17 @@ fn repository_and_ref_collapse_across_mods_and_cached_readme_works_offline() {
     assert_eq!(bad, Failure::NoManifest);
     assert_eq!(
         test_requests() - start,
-        5,
+        4,
         "the second mod only checks its manifest"
     );
     s.put(&format!("api/repos/{REPO}.status"), "offline\n");
-    let stale = inspect(&s.github, &Sandbox::source(42), Some(Instant::now()), true);
+    let stale = inspect(&s.github, &Sandbox::source(42), Some(Instant::now()));
     assert!(matches!(stale.error, Some(Failure::Offline(_))));
     assert_eq!(stale.build_pin.as_deref(), Some(SHA));
     assert_eq!(
-        stale.readme.unwrap().markdown(),
-        "# Trail Atlas\n\nOld notes."
-    );
-    assert_eq!(
         test_requests() - start,
-        6,
-        "only one attempt while recovering the saved README"
+        5,
+        "only one attempt while recovering the saved pin"
     );
 }
 
@@ -237,10 +220,9 @@ fn an_archive_rate_limit_pauses_archive_and_metadata_requests_until_reset() {
 #[test]
 fn active_cooldown_preserves_cached_details_but_does_not_authorize_builds() {
     let s = Sandbox::new();
-    s.readme("README.md", "# Trail Atlas");
     let source = Sandbox::source(42);
     assert_eq!(
-        inspect(&s.github, &source, None, true)
+        inspect(&s.github, &source, None)
             .checked_commit()
             .unwrap()
             .sha(),
@@ -252,11 +234,10 @@ fn active_cooldown_preserves_cached_details_but_does_not_authorize_builds() {
     );
     let limited = resolve_checked(&s.github, &Sandbox::source(43), None).unwrap_err();
     let start = test_requests();
-    let details = inspect(&s.github, &source, None, true);
+    let details = inspect(&s.github, &source, None);
     assert_eq!(details.error, Some(limited.clone()));
     assert!(details.checked_commit().is_none());
     assert_eq!(details.commit.unwrap().sha(), SHA);
-    assert_eq!(details.readme.unwrap().markdown(), "# Trail Atlas");
     assert_eq!(
         resolve_checked(&s.github, &source, None).unwrap_err(),
         limited

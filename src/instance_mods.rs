@@ -3,9 +3,8 @@
 //! it comes from, an update when the browser found one, and a switch. An instance's mods are
 //! the registry's, switched as the game's Options > Mods does. Adding mods is the Mods page's.
 //!
-//! Each row shows the mod's own icon: Modrinth's for what the browser installed from it (the URLs
-//! asked for in one request and kept beside the image cache, the images through the Mods page's
-//! cache at the row's size), else the package's icon or the one its jar names, else a generic glyph.
+//! Each row shows the mod's own icon: the registry's or Modrinth's cached icon, else the
+//! package's embedded icon, else a generic glyph.
 use super::*;
 
 #[derive(Default)]
