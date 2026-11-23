@@ -1331,6 +1331,7 @@ fn check_baked_revocations(
 
 pub mod auto;
 pub mod pack;
+pub mod ratings;
 mod registry_install;
 pub mod sources;
 pub mod v2;

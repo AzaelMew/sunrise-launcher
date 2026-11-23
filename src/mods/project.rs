@@ -1437,6 +1437,8 @@ impl Launcher {
                 d.children(vp.fit.reason().map(note))
             })
             .child(div().h(px(1.)).bg(c(p.divider)))
+            .child(self.rating_block(&vp.id, cx))
+            .child(div().h(px(1.)).bg(c(p.divider)))
             .child(published_row)
             .child(pin_note);
 
