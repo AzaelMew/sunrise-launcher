@@ -1,12 +1,10 @@
 //! The game's `sunrise-release-sign` fixture test, run on a copy of its fixtures: both verifiers accept the same bytes.
 use crate as release;
-use crate::native_build;
 use crate::{Channel, PublicKey, SIGNATURE, SIGNATURE_V2, SUMS};
 use std::path::{Path, PathBuf};
 
 const LINUX: &str = "sunrise-linux-x86_64.tar.gz";
 const SDK_BUILD: &str = "0123456789abcdef0123456789abcdef01234567";
-const TARGET: &str = "x86_64-unknown-linux-gnu";
 
 fn fixtures() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/signed")
@@ -157,59 +155,5 @@ fn an_sdk_installs_only_as_the_sdk_of_its_build() {
     let tag = format!("{}{SDK_BUILD}", release::SDK_PREFIX);
     assert!(
         release::signed_digest(&tag, "sdk.json", Some(&sums), Some(&signature), &keys()).is_err()
-    );
-}
-
-#[test]
-fn a_native_build_signed_by_the_script_verifies_for_its_own_request_only() {
-    let mods = vec![
-        native_build::Mod {
-            id: "zoom".into(),
-            version: "2.0.0".into(),
-            sha256: "b".repeat(64),
-        },
-        native_build::Mod {
-            id: "minimap".into(),
-            version: "1.4.0".into(),
-            sha256: "a".repeat(64),
-        },
-    ];
-    let request =
-        native_build::Request::new(TARGET, "656064105c0e1fbd0a8f1d6e5f5d3a8b3c2e1f00", mods)
-            .unwrap();
-    let key = request.key();
-    let asset = native_build::archive(&key, TARGET);
-    let dir = "native-build";
-    let signature = text(&format!("{dir}/{}", native_build::signature(&key, TARGET)));
-    let sha = digest_of(dir, &asset);
-    assert_eq!(
-        native_build::verify(&key, TARGET, &sha, &asset, &signature, &keys()),
-        Ok(())
-    );
-    assert!(
-        native_build::verify(
-            &key,
-            "aarch64-apple-darwin",
-            &sha,
-            &asset,
-            &signature,
-            &keys()
-        )
-        .is_err()
-    );
-    assert!(
-        native_build::verify(&key, TARGET, &"0".repeat(64), &asset, &signature, &keys()).is_err()
-    );
-    assert!(
-        native_build::verify(&"e".repeat(64), TARGET, &sha, &asset, &signature, &keys()).is_err()
-    );
-    assert!(
-        release::verify(
-            &key,
-            format!("{sha}  {asset}\n").as_bytes(),
-            &signature,
-            &keys()
-        )
-        .is_err()
     );
 }

@@ -4698,41 +4698,6 @@ printf ']}}\n'
     }
 }
 
-#[cfg(test)]
-mod registry_binary_tests {
-    #[test]
-    fn source_preparation_lookup_requires_exact_build_and_target() {
-        let index = sunrise_launcher_smod::index::Index::parse(include_str!(
-            "../crates/smod/tests/index/index-v1.json"
-        ))
-        .unwrap();
-        let mut version = index.project("coords_hud").unwrap().versions[0].clone();
-        version.native_binaries = vec![sunrise_launcher_smod::index::NativeBinary {
-            build: "exact-build".into(),
-            target: "aarch64-apple-darwin".into(),
-            file: version.file.clone(),
-        }];
-        assert_eq!(
-            version
-                .native_binary("exact-build", "aarch64-apple-darwin")
-                .unwrap()
-                .file
-                .name,
-            "coords_hud-0.1.0.smod"
-        );
-        assert!(version
-            .native_binary("other-build", "aarch64-apple-darwin")
-            .is_err());
-        assert!(version
-            .native_binary("exact-build", "x86_64-apple-darwin")
-            .is_err());
-        version.native_binaries.clear();
-        assert!(version
-            .native_binary("exact-build", "aarch64-apple-darwin")
-            .is_err());
-    }
-}
-
 #[cfg(all(test, unix))]
 #[path = "native_mods/tests/runtime_leases.rs"]
 mod runtime_leases_tests;

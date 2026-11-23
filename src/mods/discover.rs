@@ -236,7 +236,7 @@ impl Launcher {
             if let Some(name) = &card_data.part_of {
                 facts.push(muted(trf("Part of {collection}", &[("collection", name)])));
             }
-            if card_data.builds_locally && card_data.fit.fits() && unavailable.is_none() {
+            if card_data.builds_locally() && unavailable.is_none() {
                 facts.push(muted(tr("Builds on this computer")));
             }
             if let Some(rows) = installed {

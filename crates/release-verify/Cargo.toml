@@ -3,7 +3,7 @@ name = "sunrise-launcher-release-verify"
 version = "0.1.0"
 edition = "2024"
 license = "PolyForm-Shield-1.0.0"
-description = "Checks the signed checksums of game builds, mod SDKs and prebuilt native builds before an install: the verifying half of the game's sunrise-release-sign, copied so the launcher can leave the game repository."
+description = "Checks the signed checksums of game builds and mod SDKs before an install: the verifying half of the game's sunrise-release-sign, copied so the launcher can leave the game repository."
 publish = false
 
 [dependencies]

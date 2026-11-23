@@ -1480,3 +1480,49 @@ fn an_unreadable_file_is_never_on_and_cannot_switch_a_working_mod_of_its_name() 
     assert_eq!(good.need, Some(Need::Permission));
     assert!(cells(good, None, None, true).switch);
 }
+
+#[test]
+fn every_fitting_native_mod_builds_locally_even_with_legacy_native_binaries() {
+    let mut native = project(
+        "zoom",
+        "native-mod",
+        &[("1.0.0", GAME, A)],
+        serde_json::json!({}),
+    );
+    native["versions"][0]["native_binaries"] = serde_json::json!([{
+        "build": "b".repeat(40),
+        "target": "x86_64-unknown-linux-gnu",
+        "file": {"name": "zoom.tar.xz", "url": "https://example.test/zoom.tar.xz", "size": 128, "sha256": A}
+    }]);
+    let mut idx = index(
+        vec![
+            native,
+            project(
+                "old",
+                "native-mod",
+                &[("1.0.0", "25.1", A)],
+                serde_json::json!({}),
+            ),
+            project("paint", "mod", &[("1.0.0", GAME, A)], serde_json::json!({})),
+            project(
+                "other",
+                "native-mod",
+                &[("1.0.0", GAME, B)],
+                serde_json::json!({}),
+            ),
+        ],
+        vec![],
+    );
+    idx.collections = vec![serde_json::from_value(serde_json::json!({
+        "id": "pack", "name": "Pack", "summary": "Native bundle.", "owners": ["Someone"],
+        "icon": "https://example.test/pack.png",
+        "members": [{"id": "zoom"}, {"id": "other"}],
+    }))
+    .unwrap()];
+    let all = cards(&idx, GAME);
+    let card = |id: &str| all.iter().find(|c| c.id == id).unwrap();
+    assert!(card("zoom").builds_locally());
+    assert!(!card("old").builds_locally());
+    assert!(!card("paint").builds_locally());
+    assert!(!card("pack").builds_locally());
+}

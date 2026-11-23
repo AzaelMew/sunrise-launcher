@@ -102,7 +102,6 @@ pub(in crate::mods) fn cards(index: &Index, mods: &[Card]) -> Vec<Card> {
                     .iter()
                     .find(|m| m.fit.fits())
                     .map_or_else(|| first.fit.clone(), |_| Fit::Fits),
-                builds_locally: false,
                 members: Some(members.len()),
                 part_of: None,
                 library: false,
