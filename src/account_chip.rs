@@ -38,10 +38,15 @@ pub(crate) struct Row {
     pub name: String,
     /// The game starts as this one: its row carries the tick.
     pub plays: bool,
+    /// The saved session expired or needs browser sign-in again.
+    pub signed_out: bool,
 }
 
 /// Every account signed in here, in the order they were added.
-pub(crate) fn rows(accounts: &Accounts) -> Vec<Row> {
+pub(crate) fn rows(
+    accounts: &Accounts,
+    auth_status: &std::collections::HashMap<String, account::session::Status>,
+) -> Vec<Row> {
     accounts
         .accounts
         .iter()
@@ -49,6 +54,9 @@ pub(crate) fn rows(accounts: &Accounts) -> Vec<Row> {
             uuid: a.uuid.clone(),
             name: a.name.clone(),
             plays: accounts.selected.as_deref() == Some(a.uuid.as_str()),
+            signed_out: auth_status
+                .get(&a.uuid)
+                .is_some_and(|s| s.state == account::session::State::SignInRequired),
         })
         .collect()
 }
@@ -243,7 +251,7 @@ impl Launcher {
         if !shows(self.ui.sheet, self.owner_screen_open) {
             return None;
         }
-        let rows = rows(&self.accounts);
+        let rows = rows(&self.accounts, &self.auth_status);
         let mut list = div()
             .id("account-menu-list")
             .flex()
@@ -261,7 +269,8 @@ impl Launcher {
                     .flex()
                     .items_center()
                     .gap(px(10.))
-                    .h(px(tokens::ACTION))
+                    .min_h(px(tokens::ACTION))
+                    .py(px(4.))
                     .px(px(8.))
                     .cursor_pointer()
                     .hover(|s| s.bg(rgb(palette().hover)))
@@ -270,9 +279,23 @@ impl Launcher {
                         div()
                             .flex_1()
                             .min_w_0()
-                            .truncate()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child(row.name),
+                            .flex()
+                            .flex_col()
+                            .child(
+                                div()
+                                    .truncate()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child(row.name),
+                            )
+                            .when(row.signed_out, |d| {
+                                d.child(
+                                    div()
+                                        .truncate()
+                                        .text_size(px(tokens::SMALL))
+                                        .text_color(rgb(palette().warning))
+                                        .child(tr("Signed out")),
+                                )
+                            }),
                     )
                     .children(row.plays.then(|| {
                         crate::glass_ui::icon("tick-02", 16., rgb(palette().accent_ink).into())
@@ -418,25 +441,52 @@ mod tests {
 
     #[test]
     fn every_account_is_listed_and_only_the_one_that_plays_is_ticked() {
-        let listed = rows(&three(Some("b2")));
+        let none = std::collections::HashMap::new();
+        let listed = rows(&three(Some("b2")), &none);
         let names: Vec<_> = listed.iter().map(|r| r.name.as_str()).collect();
         assert_eq!(names, ["Juniper", "Mossbyte", "Cinder"]);
         let ticked: Vec<_> = listed.iter().map(|r| r.plays).collect();
         assert_eq!(ticked, [false, true, false]);
+        assert!(listed.iter().all(|r| !r.signed_out));
     }
 
     #[test]
     fn the_tick_follows_a_switch_and_nobody_is_ticked_when_nobody_is_picked() {
+        let none = std::collections::HashMap::new();
         let mut accounts = three(Some("a1"));
         accounts.play_as("c3").unwrap();
-        let listed = rows(&accounts);
+        let listed = rows(&accounts, &none);
         assert_eq!(
             listed.iter().position(|r| r.plays),
             Some(2),
             "the row switched to"
         );
         assert_eq!(listed.iter().filter(|r| r.plays).count(), 1);
-        assert!(rows(&three(None)).iter().all(|r| !r.plays));
+        assert!(rows(&three(None), &none).iter().all(|r| !r.plays));
+    }
+
+    #[test]
+    fn signed_out_accounts_are_flagged_in_the_menu() {
+        let mut status = std::collections::HashMap::new();
+        status.insert(
+            "a1".into(),
+            account::session::Status {
+                state: account::session::State::SignInRequired,
+                expires_at: None,
+                message: "Sign in again in your browser.".into(),
+            },
+        );
+        status.insert(
+            "b2".into(),
+            account::session::Status {
+                state: account::session::State::Ready,
+                expires_at: None,
+                message: "Ready".into(),
+            },
+        );
+        let listed = rows(&three(Some("b2")), &status);
+        let flags: Vec<_> = listed.iter().map(|r| r.signed_out).collect();
+        assert_eq!(flags, [true, false, false]);
     }
 
     #[test]
