@@ -44,6 +44,7 @@ mod packs;
 mod ports;
 pub(crate) use ports::PortSwitch;
 mod project;
+mod rating;
 pub(crate) mod refused;
 mod search;
 mod ui;
@@ -385,6 +386,8 @@ enum Event {
     Done(String, Vec<(String, String)>),
     /// "Check for update" asked the registry again: the mod's name, and the newer version found.
     Checked(String, Result<Option<String>, String>),
+    /// The registry answered about ratings.
+    Rating(rating::Answer),
 }
 
 /// The kinds of pack Packs › Installed lists, one at a time.
@@ -467,6 +470,8 @@ pub(crate) struct ModsState {
     viewer: Option<viewer::Viewer>,
     /// What the refused-Add modal shows (`refused`).
     refused: Option<refused::Refused>,
+    /// Registry mods' ratings (`rating`).
+    ratings: rating::Ratings,
 }
 
 impl ModsState {
@@ -527,6 +532,7 @@ impl Default for ModsState {
             revealed: Default::default(),
             viewer: None,
             refused: None,
+            ratings: Default::default(),
         }
     }
 }
@@ -1050,6 +1056,7 @@ impl Launcher {
                 Event::PackPage(key, page) => self.pack_page_answer(key, page),
                 Event::PackDone(result) => self.pack_installed(result),
                 Event::Checked(title, found) => self.checked(title, found),
+                Event::Rating(answer) => self.rating_answer(answer),
                 Event::Refused(why) => {
                     m.busy = None;
                     m.notice = Some(Err(why));
@@ -1321,6 +1328,7 @@ impl Launcher {
             v2_page: immediate,
             parent: None,
         });
+        self.ratings_for_page(&id);
         if !needs_fetch {
             return;
         }
