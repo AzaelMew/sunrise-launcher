@@ -53,6 +53,7 @@ fn home_labels_follow_installed_replies_with_the_same_inventory_and_registry() {
                     version: "1.0.0".into(),
                     github: None,
                     native: true,
+                    served_by: None,
                     unreadable: false,
                 }],
                 enabled: HashSet::from([id.into()]),

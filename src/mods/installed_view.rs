@@ -1318,6 +1318,7 @@ mod tests {
             version: "1.0.0".into(),
             github: None,
             native: true,
+            served_by: None,
             unreadable: false,
         });
         let mut rows = model::rows(

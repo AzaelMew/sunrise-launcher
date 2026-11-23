@@ -294,6 +294,7 @@ mod tests {
             file: "sunrise-native-mods/lantern.smod".into(),
             github: Some(origin),
             native: true,
+            served_by: None,
             unreadable: false,
         };
         (source, local)

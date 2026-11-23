@@ -307,6 +307,8 @@ pub struct Installed {
     pub version: String,
     pub internals: Vec<String>,
     pub origin: Option<crate::github_mods::Origin>,
+    /// The native mod that serves this content package (`served_by`), when it names one.
+    pub served_by: Option<String>,
     /// The validated package icon, or the package error (the file remains removable).
     pub icon: Result<Option<Arc<sunrise_launcher_smod::icon::Icon>>, String>,
 }
@@ -388,6 +390,10 @@ fn untracked_in(
                 version,
                 internals,
                 origin,
+                served_by: package
+                    .as_ref()
+                    .ok()
+                    .and_then(|p| p.manifest.served_by.clone()),
                 icon: package.map(|p| p.icon.map(Arc::new)),
             })
         })
@@ -700,6 +706,23 @@ mod tests {
         )
         .unwrap();
         assert_eq!(declared_internals(&manifest), ["Game", "Game::world"]);
+    }
+
+    #[test]
+    fn a_content_package_served_by_a_native_mod_is_listed_with_its_host() {
+        let home = tempfile::tempdir().unwrap();
+        let folder = home.path().join(sunrise_launcher_smod::mod_list::DIR);
+        fs::create_dir_all(&folder).unwrap();
+        let bytes = sunrise_launcher_smod::manifest::Package::write_files(
+            "id='runes'\nname='Runes'\nversion='1.0.0'\napi='0.2'\nserved_by='java_host'\n",
+            &[],
+        )
+        .unwrap();
+        fs::write(folder.join("runes.smod"), bytes).unwrap();
+        let listed = untracked_content(home.path());
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].id, "runes");
+        assert_eq!(listed[0].served_by.as_deref(), Some("java_host"));
     }
 
     #[test]

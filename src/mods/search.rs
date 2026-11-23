@@ -144,6 +144,7 @@ mod tests {
             version: "1.0".into(),
             github: None,
             native: id != "rain",
+            served_by: None,
             unreadable: false,
         });
         let on: HashSet<String> = ["lantern", "rain"].map(String::from).into();

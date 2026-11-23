@@ -107,6 +107,7 @@ fn installed_source_label_distinguishes_catalogue_receipts_and_direct_github() {
         version: github.version.clone(),
         github: Some(github),
         native: true,
+        served_by: None,
         unreadable: false,
     }];
     let mut row = rows(
@@ -669,6 +670,7 @@ fn native_files_the_browser_didnt_install_are_listed_and_never_planned() {
             version: "0.3".into(),
             github: None,
             native: true,
+            served_by: None,
             unreadable: false,
         },
         Local {
@@ -678,6 +680,7 @@ fn native_files_the_browser_didnt_install_are_listed_and_never_planned() {
             version: "1.0".into(),
             github: None,
             native: false,
+            served_by: None,
             unreadable: false,
         },
     ];
@@ -726,6 +729,7 @@ fn turning_on_a_local_native_file_exposes_permission_then_build() {
         version: "1.0".into(),
         github: None,
         native: true,
+        served_by: None,
         unreadable: false,
     }];
     let unbuilt = HashSet::from([id.into()]);
@@ -800,6 +804,7 @@ fn every_reason_a_build_left_a_mod_out_is_shown_and_counted() {
         version: "1.0".into(),
         github: None,
         native: true,
+        served_by: None,
         unreadable: false,
     });
     let w = World {
@@ -872,6 +877,7 @@ fn every_row_fills_the_same_columns_whatever_it_has_to_say() {
             sha256: "b".repeat(64),
         }),
         native: true,
+        served_by: None,
         unreadable: false,
     });
     let w = World {
@@ -1484,6 +1490,7 @@ fn an_unreadable_file_is_never_on_and_cannot_switch_a_working_mod_of_its_name() 
         version: String::new(),
         github: None,
         native: true,
+        served_by: None,
         unreadable,
     };
     let local = [file(true), file(false)];
@@ -1556,6 +1563,7 @@ fn manual_mods_get_badges_and_never_enter_bulk_updates() {
             version: "0.4.0".into(),
             github: Some(github_origin),
             native: true,
+            served_by: None,
             unreadable: false,
         },
         Local {
@@ -1565,6 +1573,7 @@ fn manual_mods_get_badges_and_never_enter_bulk_updates() {
             version: "0.2.0".into(),
             github: Some(folder_origin),
             native: false,
+            served_by: None,
             unreadable: false,
         },
         Local {
@@ -1574,6 +1583,7 @@ fn manual_mods_get_badges_and_never_enter_bulk_updates() {
             version: "0.1.0".into(),
             github: None,
             native: true,
+            served_by: None,
             unreadable: false,
         },
         Local {
@@ -1583,6 +1593,7 @@ fn manual_mods_get_badges_and_never_enter_bulk_updates() {
             version: "0.4.0".into(),
             github: Some(discover_origin),
             native: true,
+            served_by: None,
             unreadable: false,
         },
     ];
@@ -1770,4 +1781,65 @@ fn a_v2_installed_row_offers_the_newest_release_listed_for_its_build_and_shows_a
         world(&taken_down).need,
         Some(Need::TakenDown("malware".into()))
     );
+}
+
+#[test]
+fn a_served_mod_needs_its_host_on_and_stays_off_with_a_host_held_for_permission() {
+    let local = |id: &str, native: bool, served_by: Option<&str>| Local {
+        id: id.into(),
+        file: format!("x/{id}.smod"),
+        name: id.into(),
+        version: "1.0.0".into(),
+        github: None,
+        native,
+        served_by: served_by.map(str::to_owned),
+        unreadable: false,
+    };
+    let locals = [
+        Local {
+            name: "Java Host".into(),
+            ..local("java_host", true, None)
+        },
+        local("runes", false, Some("java_host")),
+    ];
+    let none = HashSet::new();
+    let shown = |enabled: &HashSet<String>, allowed: bool| {
+        rows(
+            &[],
+            &World {
+                index: None,
+                game: GAME,
+                v2: None,
+                build: None,
+                unfit_updates: &NO_UNFIT_UPDATES,
+                enabled,
+                unbuilt: &none,
+                native_allowed: allowed,
+                chosen: &NO_PINS,
+                local: &locals,
+            },
+        )
+    };
+    let runes = |rows: &[Row]| rows.iter().find(|r| r.id == "runes").unwrap().clone();
+
+    // On without its host: the game leaves it out, and the row says what it needs.
+    let alone: HashSet<String> = ["runes".to_owned()].into();
+    let row = runes(&shown(&alone, true));
+    assert_eq!(row.need, Some(Need::Host("Java Host".into())));
+    assert_eq!(row.group(), Group::NeedsYou);
+    let both: HashSet<String> = ["runes".to_owned(), "java_host".to_owned()].into();
+    assert_eq!(runes(&shown(&both, true)).need, None);
+
+    // Turning both on before native code is allowed holds the host, and the mod it serves.
+    let off = shown(&none, false);
+    let all: Vec<&Row> = off.iter().collect();
+    let (ok, held) = turn_on_plan(&all, false);
+    assert!(
+        ok.is_empty(),
+        "{:?}",
+        ok.iter().map(|r| &r.id).collect::<Vec<_>>()
+    );
+    assert_eq!(held.len(), 2);
+    let (ok, _) = turn_on_plan(&all, true);
+    assert_eq!(ok.len(), 2);
 }
