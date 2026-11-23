@@ -641,7 +641,17 @@ impl Launcher {
                 instances::Channel::Dev => tr("Dev · no build yet").into(),
                 _ => tr("Sunrise").into(),
             },
-            |tag| self.version_label(base.as_deref().unwrap_or(tag)),
+            |tag| {
+                let shown = base.as_deref().unwrap_or(tag);
+                // A Nightly or Dev build says how long ago it came out, as the menu does.
+                match (crate::sheets::dated_channel(shown), self.build_when(shown)) {
+                    (Some(channel), Some(when)) => trf(
+                        "{channel} · {version}",
+                        &[("channel", channel), ("version", &when)],
+                    ),
+                    _ => self.version_label(shown),
+                }
+            },
         );
         let at = self.ui.home.picker.clone();
         div()
