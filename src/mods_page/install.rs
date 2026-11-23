@@ -9,9 +9,8 @@ use std::{
 use sunrise_launcher::{
     browser::sunrise::{
         BuildNotice, ChangeImpact, CombinedUpdate, InstallError, InstallHooks, InstallProgress,
-        InstalledBatch, NativeQuestion, PreparedSource, ProviderChoiceNeeded,
-        PublisherChangeQuestion, ResolveQuestion, SourceDependency, SourceError, SourceHooks,
-        V2Hooks, V2InstallOptions,
+        InstalledBatch, PreparedSource, ProviderChoiceNeeded, PublisherChangeQuestion,
+        ResolveQuestion, SourceDependency, SourceError, SourceHooks, V2Hooks, V2InstallOptions,
     },
     github_mods::{AddedFrom, Origin},
     managed_play::FirstBuild,
@@ -275,7 +274,6 @@ pub(crate) enum Worker {
     SourceRejected(String, SourceError),
     Mixed(Box<CombinedUpdate>),
     Progress(InstallProgress),
-    Native(NativeQuestion, Sender<Result<bool, String>>),
     Source(SourceQuestion, Sender<Result<bool, String>>),
     Decide(Decision, Sender<bool>),
     World(WorldQuestion, Sender<bool>),
@@ -690,7 +688,7 @@ impl Installs {
                     let _ = old.send(false);
                 }
             }
-            Worker::Native(..) | Worker::Source(..) => {
+            Worker::Source(..) => {
                 unreachable!("handled at the launcher consent boundary")
             }
             Worker::Done(result) => {
@@ -1361,7 +1359,6 @@ impl Launcher {
     pub(super) fn start_registry_queue(&mut self) -> bool {
         if self.mods_locked().is_some()
             || self.mutating()
-            || self.pending_consent.is_some()
             || self.mods.installs.question.is_some()
             || self.mods.installs.world.is_some()
         {
@@ -1487,20 +1484,6 @@ impl Launcher {
                 progress: &|step| {
                     let _ = post(Worker::Progress(step));
                 },
-                native: &|question| {
-                    let (reply, answer) = std::sync::mpsc::channel();
-                    if !post(Worker::Native(question.clone(), reply)) {
-                        return Ok(false);
-                    }
-                    answer.recv().unwrap_or(Ok(false))
-                },
-                registry_crates: Some(&|consent| {
-                    let (reply, answer) = std::sync::mpsc::channel();
-                    launcher
-                        .send(Msg::NativeRegistryConsent(consent.clone(), reply))
-                        .is_ok()
-                        && answer.recv().unwrap_or(false)
-                }),
                 continue_after_failure: &|notice| {
                     let (reply, answer) = std::sync::mpsc::channel();
                     post(Worker::Decide(Decision::Build(notice.clone()), reply))

@@ -2,7 +2,6 @@
 use super::workspace::Workspace;
 use crate::rust_toolchain::Toolchain;
 use crate::{
-    backend::{NativeGrant, PermissionFence},
     i18n::{tr, trf},
     process::{
         leases::{ProfileHandoff, StagedChild},
@@ -60,7 +59,6 @@ struct Attempt {
     tool: Option<u32>,
     #[cfg(windows)]
     job: Option<Arc<crate::process::leases::CompilerJob>>,
-    grant: Option<NativeGrant>,
 }
 
 impl Attempt {
@@ -100,34 +98,16 @@ impl Cancellation {
         })
     }
 
-    pub(crate) fn admit_native_work(&self) -> Result<(), super::Failed> {
-        let mut state = self.state();
-        state.check()?;
-        if let Some(grant) = state.grant {
-            drop(grant.hold()?);
-        } else {
-            state.grant = Some(NativeGrant::read()?.ok_or(super::Failed::NoConsent)?);
-        }
-        Ok(())
-    }
-
     pub(crate) fn check(&self) -> Result<(), String> {
         self.state().check()
     }
 
-    pub(crate) fn publication_guard(&self) -> Result<Option<PermissionFence>, String> {
-        let state = self.state();
-        state.check()?;
-        state.grant.map(NativeGrant::hold).transpose()
-    }
-
     /// Serialize the staged journal's cutoff with Stop. No worker cancellation follows it.
-    pub(crate) fn begin_publication(&self) -> Result<Option<PermissionFence>, String> {
+    pub(crate) fn begin_publication(&self) -> Result<(), String> {
         let mut state = self.state();
         state.check()?;
-        let permission = state.grant.map(NativeGrant::hold).transpose()?;
         state.publishing = true;
-        Ok(permission)
+        Ok(())
     }
 
     /// Check the attempt before each bounded download or extraction read.
@@ -197,41 +177,6 @@ pub(super) struct Plan<'a> {
     pub mixins_from_source: bool,
 }
 
-/// The registry crates a build would add, which the player says yes or no to.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Consent {
-    pub added_crates: usize,
-    pub build_scripts: Vec<String>,
-    pub proc_macros: Vec<String>,
-}
-
-impl Consent {
-    /// No added crate has a build script or a proc macro, so nothing of theirs runs while
-    /// building: their code only goes into the mod, which native permission already covers.
-    /// There is nothing to ask.
-    pub fn runs_nothing_at_build(&self) -> bool {
-        self.build_scripts.is_empty() && self.proc_macros.is_empty()
-    }
-
-    pub fn label(&self) -> String {
-        trf(
-            "Native mod adds {count} registry crates",
-            &[("count", &self.added_crates.to_string())],
-        )
-    }
-
-    pub fn detail(&self) -> String {
-        let none = tr("None");
-        let scripts = self.build_scripts.join(", ");
-        let macros = self.proc_macros.join(", ");
-        [
-            tr("Registry dependencies are native code. Their build scripts and proc macros run during compilation, before the game starts.").to_owned(),
-            trf("Build scripts: {crates}", &[("crates", if self.build_scripts.is_empty() { none } else { &scripts })]),
-            trf("Proc macros: {crates}", &[("crates", if self.proc_macros.is_empty() { none } else { &macros })]),
-        ].join("\n\n")
-    }
-}
-
 /// The mod a failed build stops at, and how.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 pub struct Blame {
@@ -284,11 +229,9 @@ enum Event {
         done: usize,
         total: usize,
     },
-    Consent {
-        added_crates: usize,
-        build_scripts: Vec<String>,
-        proc_macros: Vec<String>,
-    },
+    /// The registry crates a build adds. A registry mod's whole release was reviewed, and a
+    /// mod from source or a file was confirmed with its warning, so the answer is always yes.
+    Consent {},
     Built {
         #[serde(flatten)]
         built: Built,
@@ -339,12 +282,11 @@ fn plan_line(rust: &Toolchain, plan: &Plan<'_>) -> String {
     .to_string()
 }
 
-/// Compiles `plan` with the tool at `program`: each mod's start to `on_mod`, a registry question to `consent` (none refuses).
+/// Compiles `plan` with the tool at `program`: each mod's start to `on_mod`.
 pub(super) fn build(
     rust: &Toolchain,
     program: &Path,
     plan: Plan<'_>,
-    consent: Option<&dyn Fn(&Consent) -> bool>,
     on_mod: &dyn Fn(&str, usize, usize),
     cancellation: &Cancellation,
     profile: Option<ProfileHandoff<'_>>,
@@ -369,7 +311,6 @@ pub(super) fn build(
     run(
         command,
         &line,
-        consent,
         on_mod,
         cancellation,
         Some(plan.workspace),
@@ -393,7 +334,6 @@ fn compiler_handoff(terminal: Result<Built, Failure>, quiescent: bool) -> Result
 fn run(
     mut command: std::process::Command,
     plan: &str,
-    consent: Option<&dyn Fn(&Consent) -> bool>,
     on_mod: &dyn Fn(&str, usize, usize),
     cancellation: &Cancellation,
     mut workspace: Option<&mut Workspace>,
@@ -407,7 +347,7 @@ fn run(
     if let Some(workspace) = workspace.as_deref_mut() {
         workspace.allow_worker();
     }
-    let result = talk(&mut child, plan, consent, on_mod, cancellation);
+    let result = talk(&mut child, plan, on_mod, cancellation);
     if result.is_err() && cancellation.state().tool.take().is_some() {
         // Don't wait on a tool which is still writing after a refused protocol message.
         let _ = child.child().kill();
@@ -579,11 +519,10 @@ impl Output {
     }
 }
 
-/// Sends the plan, answers consent questions and reads events until the last.
+/// Sends the plan, answers the crates question and reads events until the last.
 fn talk(
     child: &mut crate::process::owned::Owned,
     plan: &str,
-    consent: Option<&dyn Fn(&Consent) -> bool>,
     on_mod: &dyn Fn(&str, usize, usize),
     cancellation: &Cancellation,
 ) -> std::io::Result<Option<Result<Built, Failure>>> {
@@ -600,29 +539,9 @@ fn talk(
         };
         match event {
             Event::Mod { id, done, total } => on_mod(&id, done, total),
-            Event::Consent {
-                added_crates,
-                build_scripts,
-                proc_macros,
-            } => {
-                let question = Consent {
-                    added_crates,
-                    build_scripts,
-                    proc_macros,
-                };
-                let yes =
-                    question.runs_nothing_at_build() || consent.is_some_and(|ask| ask(&question));
-                // The answer can arrive after revoke and regrant. Bind the affirmative
-                // write, not the dialog, to this attempt's original revision; an answer
-                // given without asking is bound the same way.
-                let _permission = if yes {
-                    cancellation
-                        .publication_guard()
-                        .map_err(std::io::Error::other)?
-                } else {
-                    None
-                };
-                writeln!(input, "{yes}")?;
+            Event::Consent {} => {
+                cancellation.check().map_err(std::io::Error::other)?;
+                writeln!(input, "true")?;
             }
             Event::Built { built } => terminal = Some(Ok(built)),
             Event::Failed { error, blame } => terminal = Some(Err(Failure { error, blame })),
@@ -644,8 +563,6 @@ fn start(
     // Stop either prevents the spawn or sees the PID. It cannot fall between them.
     let mut state = cancellation.state();
     state.check()?;
-    // A grant check and the worker handoff form one short admission, never held during I/O.
-    let permission = state.grant.map(NativeGrant::hold).transpose()?;
     let mut child = if let Some(profile) = profile {
         let role = if compiler {
             StagedChild::Compiler
@@ -669,7 +586,6 @@ fn start(
     {
         state.job = child.child().compiler_job();
     }
-    drop(permission);
     drop(state);
     let stderr = child.child().stderr.take().expect("piped");
     let (send, errors) = mpsc::sync_channel(1);

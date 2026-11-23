@@ -1,5 +1,5 @@
 //! Ordinary client Play keeps one admission on its worker through the actual spawn.
-use super::{catalogue, first::game_lock, unsettled, Active, FirstBuild, NativeWork, Profile};
+use super::{catalogue, first::game_lock, unsettled, Active, FirstBuild, Profile};
 use crate::{
     account::{self, Accounts, NoOwner},
     backend::{self, installation::BoundVariant, RuntimeGuard},
@@ -135,10 +135,17 @@ impl Client<'_> {
         choose: impl FnOnce() -> Result<FirstBuild, String>,
         arguments: impl FnOnce(&mut Command) -> Result<(), String>,
         prepare_jars: impl FnOnce(&Command) -> Result<(), String>,
-        native: NativeWork<'_>,
+        cancellation: &native_mods::Cancellation,
         progress: impl Fn(Progress),
     ) -> Result<Started, StartError> {
-        self.start_with_recovery(None, choose, arguments, prepare_jars, native, progress)
+        self.start_with_recovery(
+            None,
+            choose,
+            arguments,
+            prepare_jars,
+            cancellation,
+            progress,
+        )
     }
 
     /// The player accepted turning off these exact versions before resuming Play. Apply the
@@ -149,7 +156,7 @@ impl Client<'_> {
         choose: impl FnOnce() -> Result<FirstBuild, String>,
         arguments: impl FnOnce(&mut Command) -> Result<(), String>,
         prepare_jars: impl FnOnce(&Command) -> Result<(), String>,
-        (cancellation, native_consent): NativeWork<'_>,
+        cancellation: &native_mods::Cancellation,
         progress: impl Fn(Progress),
     ) -> Result<Started, StartError> {
         // A fresh default profile may not have a game directory yet. Do not recreate
@@ -196,7 +203,7 @@ impl Client<'_> {
             &mut profile,
             || selected.map_or_else(|| choose.expect("a first Play needs a selection")(), Ok),
             check_build,
-            (cancellation, native_consent),
+            cancellation,
             &progress,
             (
                 || {
@@ -289,7 +296,7 @@ impl Client<'_> {
         profile: &mut Profile,
         choose: impl FnOnce() -> Result<FirstBuild, String>,
         check_build: impl FnOnce(&str, Option<&BoundVariant>) -> Result<(), StartError>,
-        (cancellation, native_consent): NativeWork<'_>,
+        cancellation: &native_mods::Cancellation,
         progress: impl Fn(Progress),
         (load_catalogue, load_v2): (
             impl FnOnce() -> Option<std::sync::Arc<sunrise_launcher_smod::index::Index>>,
@@ -336,7 +343,7 @@ impl Client<'_> {
             let active = profile
                 .refresh(
                     mode,
-                    (cancellation, native_consent),
+                    cancellation,
                     |step| native(old.base(), step),
                     registry.as_deref(),
                     Some(&log),
@@ -365,7 +372,6 @@ impl Client<'_> {
                         mode,
                         cancellation,
                         |step| native(first.base(), step),
-                        native_consent,
                         Some(&log),
                     )
                     .map_err(|error| {

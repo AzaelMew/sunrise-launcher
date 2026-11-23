@@ -1,11 +1,29 @@
 use super::*;
 use sunrise_launcher::browser::sunrise;
 
+/// Code the registry didn't review runs only when this run says so: nothing is remembered.
 pub(super) fn native_permission(trust: bool) -> Result<(), String> {
     if trust {
-        backend::Settings::load().allow_native_mods()?;
+        Ok(())
+    } else {
+        Err(tr("This native code isn't reviewed by the Sunrise registry. Read its source, then pass --trust-native-code to run it.").into())
     }
-    native_mods::require_consent().map_err(String::from)
+}
+
+/// Lets this run's builds take a profile's native mods that neither came verified from the
+/// registry nor were confirmed, such as files copied into it by hand. Nothing is remembered.
+pub(super) fn trust_unreviewed_builds() {
+    native_mods::ask_unreviewed_with(|found| {
+        let names: Vec<&str> = found.iter().map(|p| p.name.as_str()).collect();
+        eprintln!(
+            "{}",
+            trf(
+                "Building native code nobody reviewed: {mods}",
+                &[("mods", &names.join(", "))]
+            )
+        );
+        true
+    });
 }
 
 pub(super) struct GithubInstall<'a> {
@@ -66,12 +84,6 @@ fn github_native_from(
     let choose = || sunrise_launcher::managed_play::headless_first(instance);
     let hooks = sunrise::InstallHooks {
         progress: &|_| {},
-        native: &|_| {
-            native_mods::require_consent()
-                .map(|_| true)
-                .map_err(String::from)
-        },
-        registry_crates: Some(&registry_consent),
         continue_after_failure: &|_| false,
         resolve: None,
         cancellation: None,
@@ -114,9 +126,3 @@ fn github_native_from(
 #[cfg(all(unix, test))]
 #[path = "cli_native_permission/tests.rs"]
 mod tests;
-
-pub(super) fn registry_consent(inventory: &native_mods::Consent) -> bool {
-    eprintln!("{}\n{}", inventory.label(), inventory.detail());
-    // The headless native route has already required explicit native-code permission.
-    true
-}

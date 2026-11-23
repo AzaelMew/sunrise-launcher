@@ -644,7 +644,6 @@ mod tests {
         home: &Path,
         base: &str,
     ) -> (SourceTarget, Origin, PreparedSource, PathBuf, PathBuf) {
-        backend::Settings::default().allow_native_mods().unwrap();
         let base_dir = backend::version_dir(base);
         fs::create_dir_all(&base_dir).unwrap();
         fs::write(base_dir.join(".installed"), b"").unwrap();
@@ -768,8 +767,6 @@ mod tests {
             sunrise::SourceHooks {
                 install: sunrise::InstallHooks {
                     progress: &|_| {},
-                    native: &|_| Ok(true),
-                    registry_crates: None,
                     continue_after_failure: &|_| false,
                     resolve: None,
                     cancellation: Some(&cancel),

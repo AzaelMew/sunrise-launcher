@@ -1848,7 +1848,6 @@
   "Switch": "Switch",
   "Switching {mod} to {repo}": "Switching {mod} to {repo}",
   "Your current port stays intact if you cancel.": "Your current port stays intact if you cancel.",
-  "Allow native mods in Settings before switching to this port.": "Allow native mods in Settings before switching to this port.",
   "github.com/{repo} · {version}": "github.com/{repo} · {version}",
   "{mod} needs {id}, and several reviewed mods provide it. Only one can be installed.": "{mod} needs {id}, and several reviewed mods provide it. Only one can be installed.",
   "Choose which mod provides {id}": "Choose which mod provides {id}",
@@ -1938,5 +1937,16 @@
   "Finding Java…": "Finding Java…",
   "Downloading Java ({done} of {total} files)": "Downloading Java ({done} of {total} files)",
   "Adding the sounds…": "Adding the sounds…",
-  "Preparing Minecraft's files…": "Preparing Minecraft's files…"
+  "Preparing Minecraft's files…": "Preparing Minecraft's files…",
+  "Reviewed by Sunrise": "Reviewed by Sunrise",
+  "This native code isn't reviewed by the Sunrise registry. Read its source, then pass --trust-native-code to run it.": "This native code isn't reviewed by the Sunrise registry. Read its source, then pass --trust-native-code to run it.",
+  "Build unreviewed mod": "Build unreviewed mod",
+  "Build unreviewed mods": "Build unreviewed mods",
+  "Local file, not reviewed": "Local file, not reviewed",
+  "Local files, not reviewed": "Local files, not reviewed",
+  "Only continue if you wrote this code yourself or trust the person who gave it to you. You are asked once for each file.": "Only continue if you wrote this code yourself or trust the person who gave it to you. You are asked once for each file.",
+  "{mod} ({file})": "{mod} ({file})",
+  "Nothing was built: {mods} didn't come from the Sunrise registry, and nobody has checked their code. Confirm the warning to build them, or pass --trust-native-code on the command line.": "Nothing was built: {mods} didn't come from the Sunrise registry, and nobody has checked their code. Confirm the warning to build them, or pass --trust-native-code on the command line.",
+  "Building native code nobody reviewed: {mods}": "Building native code nobody reviewed: {mods}",
+  "{files} · These files are in this profile's mods folder, but did not come from the Sunrise registry. Sunrise cannot verify who built them or where they came from.": "{files} · These files are in this profile's mods folder, but did not come from the Sunrise registry. Sunrise cannot verify who built them or where they came from."
 }

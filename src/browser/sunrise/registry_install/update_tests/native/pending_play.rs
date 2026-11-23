@@ -66,7 +66,7 @@ fi
             || FirstBuild::installed(BUILD),
             |_| Ok(()),
             |_| Ok(()),
-            (cancellation, None),
+            cancellation,
             |progress| {
                 if stop && matches!(progress, Progress::NativeBuild { .. }) {
                     cancellation.stop();

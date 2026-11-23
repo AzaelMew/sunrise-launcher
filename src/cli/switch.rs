@@ -72,7 +72,6 @@ pub(super) fn run(instance: &instances::Instance, tag: &str, as_json: bool) -> R
         SwitchHooks {
             cancellation: &native_mods::Cancellation::default(),
             progress: &|_| {},
-            registry_crates: Some(&registry_consent),
             approve: &|question| {
                 let ask = || -> io::Result<SwitchDecision> {
                     let mut out = io::stderr().lock();

@@ -10,7 +10,6 @@ use sunrise_launcher_smod::dependencies::parse_version;
 pub struct SwitchHooks<'a> {
     pub cancellation: &'a native_mods::Cancellation,
     pub progress: &'a dyn Fn(InstallProgress),
-    pub registry_crates: Option<&'a dyn Fn(&native_mods::Consent) -> bool>,
     pub approve: &'a dyn Fn(&SwitchQuestion) -> Result<SwitchDecision, String>,
     pub at_cutoff: &'a dyn Fn() -> Result<(), String>,
 }
@@ -310,7 +309,6 @@ fn switch_in(
             instance.native_profile,
             hooks.cancellation,
             |step| super::build_progress(step, hooks.progress),
-            hooks.registry_crates,
             None,
         )
     };
@@ -656,7 +654,6 @@ struct Package {
     manifest: Manifest,
     digest: Option<String>,
     replacement: Option<(PathBuf, installed::Entry)>,
-    unlisted: bool,
     built_from_source: bool,
 }
 
@@ -691,7 +688,6 @@ fn choices(
             let manifest = &old.seen.package.manifest;
             // A complete index can prove fit for unchanged listed content. Absence of these
             // exact bytes from a present project instead means they're a pinned local input.
-            let mut pinned = true;
             if old.seen.registry_claim {
                 let project = catalogue.project(&id).ok_or_else(unproved_switch)?;
                 let mut exact = project
@@ -699,8 +695,7 @@ fn choices(
                     .iter()
                     .filter(|version| old.seen.digest.as_deref() == Some(&version.file.sha256))
                     .peekable();
-                pinned = exact.peek().is_none();
-                if !pinned {
+                if exact.peek().is_some() {
                     let release = exact.find(|version| {
                         version.side != Some(Side::Server)
                             && (manifest.native.is_some() || version.game == game)
@@ -723,7 +718,6 @@ fn choices(
                     manifest: manifest.clone(),
                     digest: old.seen.digest.clone(),
                     replacement: None,
-                    unlisted: pinned,
                     built_from_source: old.built_from_source,
                 });
             }
@@ -820,7 +814,6 @@ fn choices(
                     manifest,
                     digest: Some(version.file.sha256.clone()),
                     replacement,
-                    unlisted: false,
                     built_from_source: false,
                 });
             }
@@ -1337,21 +1330,15 @@ fn exact_image(
                 .extend(unknown.into_iter().map(str::to_owned));
             Ok(None)
         }
-        Err(error @ (Failed::NoConsent | Failed::Sdk { mod_id: None, .. })) => {
+        Err(error @ Failed::Sdk { mod_id: None, .. }) => {
             cancellation.check()?;
-            // A global refusal proves no native input. As with lost native consent,
-            // do not omit a listed mod without trying its exact build. Only source
-            // receipts get the SDK fallback; other native paths keep their old rules.
-            let no_consent = matches!(error, Failed::NoConsent);
+            // A global refusal proves no native input: do not omit a listed mod without
+            // trying its exact build. Only source receipts get the SDK fallback; other
+            // native paths keep their old rules.
             let mut unknown = BTreeSet::new();
             for (&id, p) in set {
                 if enabled.contains(id) && p.manifest.native.is_some() {
-                    let may_hold = if no_consent {
-                        p.unlisted
-                    } else {
-                        p.built_from_source
-                    };
-                    if !may_hold {
+                    if !p.built_from_source {
                         return Err(error.into());
                     }
                     unknown.insert(id);
@@ -1856,7 +1843,6 @@ mod tests {
                 manifest: sunrise_launcher_smod::Manifest::parse(&text).unwrap(),
                 digest: None,
                 replacement: None,
-                unlisted: false,
                 built_from_source: false,
             }
         };

@@ -130,9 +130,7 @@ impl Launcher {
         profile_lock_reason(
             &self.launch_activity(),
             !self.location_unavailable,
-            self.pending_consent.is_some()
-                || self.ui.after_sign_in.is_some()
-                || self.ui.after_install.is_some(),
+            self.ui.after_sign_in.is_some() || self.ui.after_install.is_some(),
         )
     }
 

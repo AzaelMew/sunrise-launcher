@@ -71,10 +71,6 @@ impl ReferencePublication {
 
 use crate::{backend::installation::BoundVariant, native_mods, native_status};
 
-type NativeWork<'a> = (
-    &'a native_mods::Cancellation,
-    Option<&'a dyn Fn(&native_mods::Consent) -> bool>,
-);
 pub(crate) use artifact::Artifact;
 pub(crate) use resources::Resources;
 use serde::{Deserialize, Serialize};
