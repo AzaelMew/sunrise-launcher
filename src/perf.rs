@@ -339,15 +339,12 @@ struct Scroll {
     /// Why nothing was scrolled, once that is known.
     skipped: Option<Skip>,
     ended: bool,
-    /// A wheel event was sent and is waiting for its frame.
-    wheel_in_flight: bool,
+    /// When the current wheel step was dispatched, until [`Bench::after_frame`] confirms movement.
+    wheel_sent: Option<Instant>,
     /// Heading for the bottom of the list, else back to the top.
     down: bool,
     /// The list's offset after the last frame, to tell a frame that moved it.
     last_offset: Option<f32>,
-    /// The interval of the frame just drawn, until [`Bench::after_frame`] knows whether it
-    /// moved the list.
-    pending: Option<Duration>,
 }
 
 impl Scroll {
@@ -358,10 +355,9 @@ impl Scroll {
             waiting: Target::Loading,
             skipped: None,
             ended: false,
-            wheel_in_flight: false,
+            wheel_sent: None,
             down: true,
             last_offset: None,
-            pending: None,
         }
     }
 
@@ -369,7 +365,7 @@ impl Scroll {
     fn skip(&mut self, why: Skip) {
         self.skipped.get_or_insert(why);
         self.ended = true;
-        self.wheel_in_flight = false;
+        self.wheel_sent = None;
     }
 }
 
@@ -478,27 +474,27 @@ impl Bench {
             .is_some_and(|s| !s.ended && s.began.is_some())
     }
 
+    /// True right after scrolling ends and before the idle CPU baseline is taken, so one-time
+    /// warm-up work (such as shaping language names) can finish before the idle sample begins.
+    pub fn ready_for_idle(&self) -> bool {
+        self.scroll.as_ref().is_some_and(|s| s.ended) && self.idle_cpu.is_none()
+    }
+
     /// A frame drawn at `now`, `gap` after the one before ([`Perf::frame`]). Called while the
-    /// frame is built, so it reads nothing on screen: whether a scrolling frame moved the list
-    /// is told after it ([`Bench::after_frame`]). The frames that open the picker and wait for
-    /// its rows are no samples.
+    /// frame is built, so it reads nothing on screen: wheel steps are timed from dispatch to
+    /// [`Bench::after_frame`] once movement is confirmed. The frames that open the picker and
+    /// wait for its rows are no samples.
     pub fn frame(&mut self, now: Instant, gap: Option<Duration>) {
         let Some(gap) = gap else {
             return;
         };
-        match &mut self.scroll {
-            None if self.began.is_some() => {
-                // The first frame after a switch: how long the switch waited for it.
-                let sample = match self.awaiting.take() {
-                    Some(switched) => now.saturating_duration_since(switched),
-                    None => gap,
-                };
-                self.pages_ms.push(sample.as_secs_f32() * 1000.0);
-            }
-            Some(scroll) if !scroll.ended && scroll.wheel_in_flight => {
-                scroll.pending = Some(gap);
-            }
-            _ => {}
+        if self.scroll.is_none() && self.began.is_some() {
+            // The first frame after a switch: how long the switch waited for it.
+            let sample = match self.awaiting.take() {
+                Some(switched) => now.saturating_duration_since(switched),
+                None => gap,
+            };
+            self.pages_ms.push(sample.as_secs_f32() * 1000.0);
         }
     }
 
@@ -507,21 +503,19 @@ impl Bench {
     ///
     /// The timed phase begins at the first frame that drew the list with its loaded rows; with
     /// no list, an empty one or one that fits, it ends at once with nothing measured. While
-    /// timed, counts the frame as a scroll sample if it moved the list, and gives the wheel step
-    /// for the next one, in GPUI's sign (negative scrolls down): [`WHEEL_STEP`] towards the end
-    /// it is heading for, the last step only as far as that end, then back the other way. None
-    /// while waiting for the rows, or when not scrolling.
+    /// timed, times each wheel step from dispatch to this callback once it confirms movement,
+    /// and gives the wheel step for the next one, in GPUI's sign (negative scrolls down):
+    /// [`WHEEL_STEP`] towards the end it is heading for, the last step only as far as that end,
+    /// then back the other way. None while waiting for the rows, or when not scrolling.
     pub fn after_frame(&mut self, now: Instant, target: Target) -> Option<f32> {
         let scroll = self.scroll.as_mut().filter(|s| !s.ended)?;
-        let wheel_in_flight = std::mem::take(&mut scroll.wheel_in_flight);
+        let sent = scroll.wheel_sent.take();
         let (offset, max) = match target {
             Target::Laid { offset, max } => (offset, max),
             Target::Loading | Target::LayingOut => {
                 if scroll.began.is_none() {
                     scroll.waiting = target;
                 }
-                // A frame that drew the list without its loaded rows is no sample.
-                scroll.pending = None;
                 return None;
             }
             Target::NoProfile | Target::Closed | Target::Empty | Target::Failed => {
@@ -540,13 +534,13 @@ impl Bench {
                 return None;
             }
             scroll.began = Some(now);
-            scroll.pending = None;
         }
         let moved = scroll
             .last_offset
             .is_some_and(|was| (was - offset).abs() >= 0.5);
-        if let Some(gap) = scroll.pending.take().filter(|_| wheel_in_flight && moved) {
-            self.scroll_ms.push(gap.as_secs_f32() * 1000.0);
+        if let Some(sent) = sent.filter(|_| moved) {
+            self.scroll_ms
+                .push(now.saturating_duration_since(sent).as_secs_f32() * 1000.0);
         }
         if scroll
             .began
@@ -557,7 +551,9 @@ impl Bench {
         }
         scroll.last_offset = Some(offset);
         let step = wheel_step(offset, max, &mut scroll.down);
-        scroll.wheel_in_flight = step.is_some();
+        if step.is_some() {
+            scroll.wheel_sent = Some(now);
+        }
         step
     }
 
@@ -597,7 +593,7 @@ impl Bench {
                 // Stop sending input at the deadline, but finish measuring the event we
                 // sent before it. Bound the wait if the window stops drawing altogether.
                 Some(began)
-                    if scroll.wheel_in_flight && began.elapsed() < SCROLLING + LIST_WAIT =>
+                    if scroll.wheel_sent.is_some() && began.elapsed() < SCROLLING + LIST_WAIT =>
                 {
                     return Step::Wait;
                 }
@@ -716,28 +712,25 @@ pub fn benchmark(repeats: usize) -> Result<PathBuf, String> {
                 .collect()
         };
         let (pages, scroll) = (times("pages_ms"), times("scroll_ms"));
-        report
-            .frames
-            .extend(Frames::of("pages", repeat as u32, &pages, &[], &[]));
-        report
-            .frames
-            .extend(Frames::of("scroll", repeat as u32, &scroll, &[], &[]));
+        let pages_frames = Frames::of("pages", repeat as u32, &pages, &[], &[]);
+        let scroll_frames = Frames::of("scroll", repeat as u32, &scroll, &[], &[]);
         eprintln!(
             "start {}: {:.0} ms to the first frame; pages {}; scrolling {}",
             repeat + 1,
             starts.last().unwrap_or(&0.0),
-            summary(&pages),
-            if scroll.is_empty() {
-                format!(
+            summary(pages_frames.as_ref()),
+            scroll_frames.as_ref().map_or_else(
+                || format!(
                     "nothing: {}",
                     result["scroll_skipped"]
                         .as_str()
                         .unwrap_or(Skip::NeverMoved.says())
-                )
-            } else {
-                summary(&scroll)
-            },
+                ),
+                |f| summary(Some(f)),
+            ),
         );
+        report.frames.extend(pages_frames);
+        report.frames.extend(scroll_frames);
         if let Some(frames) = draws["frames"].as_u64() {
             eprintln!(
                 "  frame work: {frames} frames, median {:.2} ms, p95 {:.2} ms, p99 {:.2} ms, max {:.1} ms; {} late",
@@ -794,22 +787,15 @@ fn wheel_step(offset: f32, max: f32, down: &mut bool) -> Option<f32> {
     })
 }
 
-/// Frame times as the CLI prints them: how many, their median and p95.
-fn summary(frames: &[f32]) -> String {
-    let mut sorted = frames.to_vec();
-    sorted.sort_by(f32::total_cmp);
-    let at = |q: f32| {
-        sorted
-            .get(((sorted.len() as f32 - 1.) * q) as usize)
-            .copied()
-            .unwrap_or(0.)
-    };
-    format!(
-        "{} frames, median {:.1} ms, p95 {:.1} ms",
-        sorted.len(),
-        at(0.5),
-        at(0.95)
-    )
+/// Frame times as the CLI prints them: from the same [`Frames`] value that goes into the report.
+fn summary(frames: Option<&Frames>) -> String {
+    match frames {
+        Some(f) => format!(
+            "{} frames, median {:.1} ms, p95 {:.1} ms",
+            f.frames, f.p50_ms, f.p95_ms
+        ),
+        None => "0 frames".into(),
+    }
 }
 
 fn app() -> App {
@@ -969,25 +955,28 @@ mod tests {
         assert!(bench.timing_scroll());
         assert!(matches!(bench.tick(&perf), Step::Wait), "timed from here");
         // That step moved it: a sample.
-        bench.frame(now, Some(ms(17)));
-        assert_eq!(bench.after_frame(now, laid(-24., 100.)), Some(-24.));
+        let t1 = now + ms(17);
+        bench.frame(t1, Some(ms(17)));
+        assert_eq!(bench.after_frame(t1, laid(-24., 100.)), Some(-24.));
         // A frame that didn't move it isn't one.
-        bench.frame(now, Some(ms(16)));
-        bench.after_frame(now, laid(-24., 100.));
+        let t2 = t1 + ms(16);
+        bench.frame(t2, Some(ms(16)));
+        bench.after_frame(t2, laid(-24., 100.));
         // A real stall while scrolling is kept.
-        bench.frame(now, Some(ms(400)));
-        bench.after_frame(now, laid(-48., 100.));
+        let t3 = t2 + ms(400);
+        bench.frame(t3, Some(ms(400)));
+        bench.after_frame(t3, laid(-48., 100.));
         assert_eq!(
             bench.scroll_ms,
             [17., 400.],
             "the wait for the rows is none"
         );
         // Drawn while resting: no sample of either kind.
-        perf.frame(now + ms(16));
+        perf.frame(t3 + ms(16));
         let result = finish(&mut bench, &perf);
-        bench.frame(now, Some(ms(16)));
+        bench.frame(t3 + ms(16), Some(ms(16)));
         assert_eq!(
-            bench.after_frame(now, laid(-72., 100.)),
+            bench.after_frame(t3 + ms(16), laid(-72., 100.)),
             None,
             "the wheel has stopped"
         );
@@ -1012,13 +1001,14 @@ mod tests {
             "the dispatched wheel step still owes a frame"
         );
 
-        bench.frame(now, Some(ms(400)));
-        assert_eq!(bench.after_frame(now, laid(-24., 100.)), None);
+        let after = now + ms(400);
+        bench.frame(after, Some(ms(400)));
+        assert_eq!(bench.after_frame(after, laid(-24., 100.)), None);
         assert_eq!(bench.scroll_samples(), [400.]);
         assert!(!bench.scrolling());
 
-        bench.frame(now + ms(16), Some(ms(16)));
-        assert_eq!(bench.after_frame(now + ms(16), laid(-48., 100.)), None);
+        bench.frame(after + ms(16), Some(ms(16)));
+        assert_eq!(bench.after_frame(after + ms(16), laid(-48., 100.)), None);
         assert_eq!(bench.scroll_samples(), [400.]);
     }
 
@@ -1123,5 +1113,58 @@ mod tests {
         assert_eq!(report.conditions.power.as_deref(), Some("ac"));
         assert_eq!(report.metrics["launcher.start_ms"].mean, 125.);
         assert!(perf.hardware.is_none());
+    }
+
+    #[test]
+    fn a_stall_after_the_final_scroll_draw_begins_is_still_recorded() {
+        let mut bench = Bench::new(PathBuf::from("/dev/null"), List::Builds);
+        let t0 = Instant::now();
+        bench.scroll = Some(Scroll::opened(t0));
+        // First laid-out frame starts the timed scroll phase and dispatches a wheel step.
+        let step = bench.after_frame(
+            t0,
+            Target::Laid {
+                offset: 0.,
+                max: 200.,
+            },
+        );
+        assert!(step.is_some());
+        // The final draw begins right before the deadline (small gap), then stalls for 250 ms
+        // during the draw before `after_frame` confirms movement past SCROLLING.
+        let draw_start = t0 + SCROLLING - ms(5);
+        bench.frame(draw_start, Some(ms(16)));
+        let draw_done = draw_start + ms(250);
+        let next = bench.after_frame(
+            draw_done,
+            Target::Laid {
+                offset: -24.,
+                max: 200.,
+            },
+        );
+        assert!(next.is_none(), "scroll phase ends after the deadline");
+        assert!(bench.ready_for_idle());
+        assert_eq!(bench.scroll_samples().len(), 1);
+        assert!(
+            bench.scroll_samples()[0] >= 250.,
+            "draw stall after final draw began must be recorded, got {:?}",
+            bench.scroll_samples()
+        );
+    }
+
+    #[test]
+    fn terminal_summary_matches_report_frames_percentiles() {
+        let frames = Frames::of("pages", 0, &[10.0, 100.0], &[], &[]).unwrap();
+        let line = summary(Some(&frames));
+        assert_eq!(
+            line,
+            format!(
+                "{} frames, median {:.1} ms, p95 {:.1} ms",
+                frames.frames, frames.p50_ms, frames.p95_ms
+            )
+        );
+        assert!(
+            line.contains("p95 100.0 ms"),
+            "p95 must match report Frames: {line}"
+        );
     }
 }
