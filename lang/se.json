@@ -1851,6 +1851,8 @@
   "{host} can't serve {mod}: it doesn't run everywhere {mod} must.": "{host} can't serve {mod}: it doesn't run everywhere {mod} must.",
   "No Stable build yet. Plays Nightly until there is one.": "No Stable build yet. Plays Nightly until there is one.",
   "The mod registry file has no signature.": "The mod registry file has no signature.",
+  "Sunrise couldn't verify the profile's saved game build ({check}: {error}).": "Sunrise couldn't verify the profile's saved game build ({check}: {error}).",
+  "Sunrise couldn't verify the profile's saved game build ({check}).": "Sunrise couldn't verify the profile's saved game build ({check}).",
   "Off · {version}": "Off · {version}",
   "Switch and remove it": "Switch and remove it",
   "Switch and turn it off": "Switch and turn it off"

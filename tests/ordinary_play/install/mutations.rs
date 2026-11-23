@@ -365,7 +365,7 @@ fn remove_cutoff_worker() {
     )
     .unwrap_err();
     let expected = if mode == "replace-archive" {
-        "Sunrise couldn't verify the profile's saved game build."
+        "Sunrise couldn't verify the profile's saved game build (managed_play/first/edits.rs:"
     } else {
         "The affected worlds changed after review. Nothing was changed; try again."
     };

@@ -129,7 +129,7 @@ impl Client<'_> {
         // A fresh default profile may not have a game directory yet. Do not recreate
         // a named profile that disappeared while its Play awaited this worker.
         if self.instance.kind == instances::Kind::Pack {
-            return Err(unsettled().into());
+            return Err(unsettled!().into());
         }
         if self.accepted_account.is_none() && !developer_offline::requested() {
             return Err(StartError::Account(NoOwner::default()));
@@ -294,7 +294,7 @@ impl Client<'_> {
                         &|line| progress(Progress::Line(line)),
                     )?)
                 }
-                Err(issue) => return Err(issue.message(unsettled).into()),
+                Err(issue) => return Err(issue.message(|| unsettled!()).into()),
             };
             // Legacy writers still use the game lock, not profile admission. Keep
             // them out until refresh has staged the exact set we checked.
@@ -312,7 +312,7 @@ impl Client<'_> {
                     replacement,
                 )
                 .map_err(|error| native_failure(error, || Some(Build::Active(old))))?
-                .ok_or_else(unsettled)?;
+                .ok_or_else(|| unsettled!())?;
             return Ok((active, notices));
         }
 
