@@ -576,6 +576,140 @@ impl<R: Read> Read for PinnedArchive<R> {
     }
 }
 
+enum TransferChunk {
+    Ready,
+    Data(Vec<u8>),
+    Eof,
+    Err(String),
+}
+
+struct CancellableHttpReader<'a> {
+    rx: std::sync::mpsc::Receiver<TransferChunk>,
+    buf: Vec<u8>,
+    pos: usize,
+    cancellation: &'a crate::native_mods::Cancellation,
+}
+
+impl<'a> CancellableHttpReader<'a> {
+    const POLL: std::time::Duration = std::time::Duration::from_millis(50);
+    const CHUNK_SIZE: usize = 64 * 1024;
+
+    fn start(
+        url: &str,
+        cancellation: &'a crate::native_mods::Cancellation,
+    ) -> Result<Self, String> {
+        use std::sync::mpsc::{self, RecvTimeoutError};
+
+        cancellation.check()?;
+        let (tx, rx) = mpsc::sync_channel::<TransferChunk>(8);
+        let url = url.to_owned();
+        let stop = cancellation.clone();
+        std::thread::Builder::new()
+            .name("toolchain-download".into())
+            .spawn(move || {
+                let response = match backend::get(&url) {
+                    Ok(response) => response,
+                    Err(error) => {
+                        let _ = tx.send(TransferChunk::Err(error));
+                        return;
+                    }
+                };
+                if tx.send(TransferChunk::Ready).is_err() {
+                    return;
+                }
+                let mut reader = response.into_reader();
+                loop {
+                    if stop.is_stopped() {
+                        return;
+                    }
+                    let mut buf = vec![0u8; Self::CHUNK_SIZE];
+                    match reader.read(&mut buf) {
+                        Ok(0) => {
+                            let _ = tx.send(TransferChunk::Eof);
+                            return;
+                        }
+                        Ok(n) => {
+                            buf.truncate(n);
+                            if tx.send(TransferChunk::Data(buf)).is_err() {
+                                return;
+                            }
+                        }
+                        Err(error) => {
+                            let _ = tx.send(TransferChunk::Err(error.to_string()));
+                            return;
+                        }
+                    }
+                }
+            })
+            .map_err(|error| error.to_string())?;
+
+        loop {
+            cancellation.check()?;
+            match rx.recv_timeout(Self::POLL) {
+                Ok(TransferChunk::Ready) => {
+                    return Ok(Self {
+                        rx,
+                        buf: Vec::new(),
+                        pos: 0,
+                        cancellation,
+                    });
+                }
+                Ok(TransferChunk::Err(error)) => return Err(error),
+                Ok(TransferChunk::Data(_) | TransferChunk::Eof) => {
+                    return Err("Unexpected download state.".into());
+                }
+                Err(RecvTimeoutError::Timeout) => continue,
+                Err(RecvTimeoutError::Disconnected) => {
+                    cancellation.check()?;
+                    return Err("Download worker ended unexpectedly.".into());
+                }
+            }
+        }
+    }
+}
+
+impl Read for CancellableHttpReader<'_> {
+    fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+        use std::sync::mpsc::RecvTimeoutError;
+
+        self.cancellation.check().map_err(std::io::Error::other)?;
+        if out.is_empty() {
+            return Ok(0);
+        }
+        if self.pos < self.buf.len() {
+            let n = (self.buf.len() - self.pos).min(out.len());
+            out[..n].copy_from_slice(&self.buf[self.pos..self.pos + n]);
+            self.pos += n;
+            return Ok(n);
+        }
+        loop {
+            self.cancellation.check().map_err(std::io::Error::other)?;
+            match self.rx.recv_timeout(Self::POLL) {
+                Ok(TransferChunk::Data(data)) => {
+                    let n = data.len().min(out.len());
+                    out[..n].copy_from_slice(&data[..n]);
+                    self.buf = data;
+                    self.pos = n;
+                    return Ok(n);
+                }
+                Ok(TransferChunk::Eof) => return Ok(0),
+                Ok(TransferChunk::Err(error)) => return Err(std::io::Error::other(error)),
+                Ok(TransferChunk::Ready) => {
+                    return Err(std::io::Error::other("Unexpected download state."));
+                }
+                Err(RecvTimeoutError::Timeout) => continue,
+                Err(RecvTimeoutError::Disconnected) => {
+                    self.cancellation.check().map_err(std::io::Error::other)?;
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::UnexpectedEof,
+                        "Download worker ended unexpectedly.",
+                    ));
+                }
+            }
+        }
+    }
+}
+
 fn download_archive(
     url: &str,
     bytes: u64,
@@ -585,14 +719,8 @@ fn download_archive(
     cancellation: &crate::native_mods::Cancellation,
 ) -> Result<(), String> {
     cancellation.check()?;
-    save_archive(
-        cancellation.reader(backend::get(url)?.into_reader()),
-        url,
-        bytes,
-        sha256,
-        to,
-        progress,
-    )
+    let reader = CancellableHttpReader::start(url, cancellation)?;
+    save_archive(reader, url, bytes, sha256, to, progress)
 }
 
 fn save_archive(
@@ -1142,6 +1270,114 @@ mod tests {
         );
         assert!(result.is_err());
         assert!(cancellation.is_stopped());
+        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn stop_interrupts_toolchain_download_stalled_before_headers() {
+        use std::net::TcpListener;
+        use std::sync::mpsc;
+        use std::time::{Duration, Instant};
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (accepted_tx, accepted_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let server = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let _ = accepted_tx.send(());
+            let _ = release_rx.recv();
+            drop(stream);
+        });
+
+        let directory = tempfile::tempdir().unwrap();
+        let archive = directory.path().join("archive");
+        let cancellation = crate::native_mods::Cancellation::default();
+        let stop = cancellation.clone();
+        let stopper = std::thread::spawn(move || {
+            accepted_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            stop.stop();
+        });
+
+        let started = Instant::now();
+        let result = download_archive(
+            &format!("http://{addr}/toolchain.tar.xz"),
+            16,
+            &"00".repeat(32),
+            &archive,
+            &|_| {},
+            &cancellation,
+        );
+        let elapsed = started.elapsed();
+
+        let _ = release_tx.send(());
+        stopper.join().unwrap();
+        server.join().unwrap();
+
+        assert!(result.is_err());
+        assert!(cancellation.is_stopped());
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "Stop took too long while stalled before headers: {elapsed:?}"
+        );
+        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn stop_interrupts_toolchain_download_stalled_mid_body() {
+        use std::io::Write;
+        use std::net::TcpListener;
+        use std::sync::mpsc;
+        use std::time::{Duration, Instant};
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (sent_tx, sent_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut req = [0u8; 1024];
+            let _ = stream.read(&mut req);
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 65536\r\n\r\npart")
+                .unwrap();
+            stream.flush().unwrap();
+            let _ = sent_tx.send(());
+            let _ = release_rx.recv();
+            drop(stream);
+        });
+
+        let directory = tempfile::tempdir().unwrap();
+        let archive = directory.path().join("archive");
+        let cancellation = crate::native_mods::Cancellation::default();
+        let stop = cancellation.clone();
+        let stopper = std::thread::spawn(move || {
+            sent_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            std::thread::sleep(Duration::from_millis(50));
+            stop.stop();
+        });
+
+        let started = Instant::now();
+        let result = download_archive(
+            &format!("http://{addr}/toolchain.tar.xz"),
+            65536,
+            &"00".repeat(32),
+            &archive,
+            &|_| {},
+            &cancellation,
+        );
+        let elapsed = started.elapsed();
+
+        let _ = release_tx.send(());
+        stopper.join().unwrap();
+        server.join().unwrap();
+
+        assert!(result.is_err());
+        assert!(cancellation.is_stopped());
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "Stop took too long while stalled mid-body: {elapsed:?}"
+        );
         assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 0);
     }
 
