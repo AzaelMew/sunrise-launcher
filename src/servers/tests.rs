@@ -823,3 +823,37 @@ fn the_copy_list_leaves_out_folders_without_a_readable_level_dat() {
     assert_eq!(listed[0].1, home.join("saves/good"));
     fs::remove_dir_all(home).unwrap();
 }
+
+#[test]
+fn poll_hosting_reports_unknown_when_orphaned_game_holds_session_lock() {
+    let dir = scratch("poll-hosting-orphaned-session-lock");
+    fs::create_dir_all(dir.join(".sunrise")).unwrap();
+    fs::write(dir.join("server.toml"), "[world]\nname = \"main-world\"\n").unwrap();
+    let world = dir.join("main-world");
+    fs::create_dir_all(&world).unwrap();
+    let session_lock = world.join(crate::worlds::LOCK);
+    let held = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(&session_lock)
+        .unwrap();
+    held.try_lock().unwrap();
+
+    // Supervisor lock is absent/free, yet the world's session.lock is held by an orphaned game.
+    let (status, _) = poll_hosting(&dir, None, 0);
+    assert_eq!(
+        status.phase, "unknown",
+        "orphaned game holding session.lock must not show as stopped"
+    );
+
+    held.unlock().unwrap();
+    drop(held);
+    let (status, _) = poll_hosting(&dir, None, 0);
+    assert_eq!(
+        status.phase, "stopped",
+        "once both supervisor lock and session.lock are free, server is stopped"
+    );
+    fs::remove_dir_all(dir).unwrap();
+}

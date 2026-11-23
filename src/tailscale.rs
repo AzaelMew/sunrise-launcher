@@ -410,22 +410,36 @@ fn allow_all(rule: &Value, grant: bool) -> bool {
     }
 }
 
-/// A rule that lets shared friends reach every port: its sources take in everyone (`*`) or shared
-/// friends (`autogroup:shared`), and its destination is every port of every node. This exposes the
-/// computer even when the Minecraft port is unknown.
-pub fn shares_entire_computer(policy: &Value) -> bool {
+/// A rule that lets shared friends reach every port of this computer: its sources take in everyone
+/// (`*`) or shared friends (`autogroup:shared`), and its destination is every port of every node
+/// (`*`) or of this node's own address (`ip`, when known). This exposes the computer even when the
+/// Minecraft port is unknown.
+pub fn shares_entire_computer(policy: &Value, ip: Option<&str>) -> bool {
     let reaches_shared = |src: &Value| {
         src.as_array()
             .is_some_and(|a| a.iter().any(|s| s == "*" || s == SHARED))
     };
+    let targets_this_node = |dst: &str| dst == "*" || ip.is_some_and(|own| dst == own);
     let every_port = |rule: &Value, grant: bool| {
         if grant {
-            is_star(&rule["dst"]) && is_star(&rule["ip"])
+            let dst_matches = rule["dst"]
+                .as_array()
+                .is_some_and(|a| a.iter().filter_map(Value::as_str).any(targets_this_node));
+            let ip_all = rule["ip"]
+                .as_array()
+                .is_some_and(|a| a.iter().any(|p| p == "*"));
+            dst_matches && ip_all
         } else {
             rule["action"] == "accept"
-                && [&rule["dst"], &rule["ports"]]
-                    .iter()
-                    .any(|d| d.as_array().is_some_and(|a| a.iter().any(|d| d == "*:*")))
+                && [&rule["dst"], &rule["ports"]].iter().any(|d| {
+                    d.as_array().is_some_and(|a| {
+                        a.iter().filter_map(Value::as_str).any(|entry| {
+                            entry
+                                .rsplit_once(':')
+                                .is_some_and(|(host, port)| targets_this_node(host) && port == "*")
+                        })
+                    })
+                })
         }
     };
     [("acls", false), ("grants", true)]

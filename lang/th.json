@@ -1860,5 +1860,8 @@
   "No Stable build yet. Plays Nightly until there is one.": "No Stable build yet. Plays Nightly until there is one.",
   "The mod registry file has no signature.": "The mod registry file has no signature.",
   "Sunrise couldn't verify the profile's saved game build ({check}: {error}).": "Sunrise couldn't verify the profile's saved game build ({check}: {error}).",
-  "Sunrise couldn't verify the profile's saved game build ({check}).": "Sunrise couldn't verify the profile's saved game build ({check})."
+  "Sunrise couldn't verify the profile's saved game build ({check}).": "Sunrise couldn't verify the profile's saved game build ({check}).",
+  "Your access controls already allow every port on this computer, and Tailscale rules add together. Remove or narrow that broader rule in the admin console, and allow only Minecraft:": "Your access controls already allow every port on this computer, and Tailscale rules add together. Remove or narrow that broader rule in the admin console, and allow only Minecraft:",
+  "Tailscale only": "Tailscale only",
+  "This server listens only on Tailscale. Share its address from the Tailscale panel below.": "This server listens only on Tailscale. Share its address from the Tailscale panel below."
 }

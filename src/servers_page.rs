@@ -262,12 +262,21 @@ impl Servers {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EngineRun {
+    Stopped,
+    Running(Option<(u64, u64)>),
+}
+
 pub(super) struct Servers {
     list: Vec<Entry>,
     loaded: bool,
     pub(super) open: Option<PathBuf>,
     tab: Tab,
     statuses: HashMap<PathBuf, Status>,
+    /// Last confirmed running engine identity (or confirmed stopped), preserved across `unknown`
+    /// polls so a missed poll doesn't clear "restart to apply" notices.
+    engine_seen: HashMap<PathBuf, EngineRun>,
     /// Each listed server's game mode from its `server.toml`, read once while it is listed.
     modes: HashMap<PathBuf, Option<String>>,
     polling: bool,
@@ -328,6 +337,7 @@ impl Servers {
             open: None,
             tab: Tab::Overview,
             statuses: HashMap::new(),
+            engine_seen: HashMap::new(),
             modes: HashMap::new(),
             polling: false,
             polled: None,
@@ -545,19 +555,33 @@ impl Servers {
         if self.statuses.get(&dir) == Some(&status) {
             return false;
         }
-        if status.phase == "running"
-            && self
-                .statuses
-                .get(&dir)
-                .is_some_and(|old| old.phase != "running")
-        {
-            // A fresh start took that server's saved settings, not another server's.
-            if let Some(outcome) = self.settings_outcomes.get_mut(&dir) {
-                outcome.restart.clear();
+        match status.phase.as_str() {
+            "stopped" => {
+                self.engine_seen.insert(dir.clone(), EngineRun::Stopped);
             }
-            if self.open.as_ref() == Some(&dir) {
-                self.pvp = None;
+            "running" => {
+                let confirmed_new = match self.engine_seen.get(&dir).copied() {
+                    Some(EngineRun::Stopped) => true,
+                    Some(EngineRun::Running(Some(old))) => {
+                        status.processes.is_some_and(|new| new != old)
+                    }
+                    _ => false,
+                };
+                if confirmed_new {
+                    // A fresh engine took that server's saved settings, not another server's.
+                    if let Some(outcome) = self.settings_outcomes.get_mut(&dir) {
+                        outcome.restart.clear();
+                    }
+                    if self.open.as_ref() == Some(&dir) {
+                        self.pvp = None;
+                    }
+                }
+                self.engine_seen
+                    .insert(dir.clone(), EngineRun::Running(status.processes));
             }
+            // `unknown` (a missed poll) and transitional phases keep the last confirmed engine
+            // so `running -> unknown -> running` for the same process does not clear notices.
+            _ => {}
         }
         self.statuses.insert(dir, status);
         true
@@ -572,6 +596,24 @@ impl Servers {
             self.problem = None;
         }
     }
+}
+
+fn record_started_here(dir: &Path) {
+    let mut started = STARTED_HERE.lock().unwrap();
+    if !started.iter().any(|existing| existing == dir) {
+        started.push(dir.to_path_buf());
+    }
+}
+
+fn run_start_with_ownership(
+    dir: &Path,
+    start: impl FnOnce() -> Result<String, Problem>,
+) -> Result<String, Problem> {
+    let result = start();
+    if result.is_ok() {
+        record_started_here(dir);
+    }
+    result
 }
 
 /// Stops the servers this launcher started, unless they run in the background as a service.
@@ -970,23 +1012,24 @@ impl Launcher {
         let Some(dir) = self.servers.open.clone() else {
             return;
         };
-        STARTED_HERE.lock().unwrap().push(dir.clone());
         if let Some(outcome) = self.servers.settings_outcomes.get_mut(&dir) {
             outcome.restart.clear();
         }
         let tx = self.tx.clone();
         self.servers.start_job("Starting", move |log| {
-            if let Some(api) = servers::Api::open(&dir) {
-                if let Ok(status) = api.call("GET", "/api/v1/status", None) {
-                    if status["phase"] == "stopped"
-                        && api.call("POST", "/api/v1/start", None).is_ok()
-                    {
-                        return Ok(String::new());
+            run_start_with_ownership(&dir, || {
+                if let Some(api) = servers::Api::open(&dir) {
+                    if let Ok(status) = api.call("GET", "/api/v1/status", None) {
+                        if status["phase"] == "stopped"
+                            && api.call("POST", "/api/v1/start", None).is_ok()
+                        {
+                            return Ok(String::new());
+                        }
                     }
                 }
-            }
-            log("A new world takes a minute the first time".into());
-            run_managed_server(&tx, &dir, &["start"], log).map(|_| String::new())
+                log("A new world takes a minute the first time".into());
+                run_managed_server(&tx, &dir, &["start"], log).map(|_| String::new())
+            })
         });
     }
 
@@ -1890,5 +1933,106 @@ mod tests {
         assert_eq!(backup_label(&b("odd.zip")), ("odd".into(), String::new()));
         assert_eq!(bytes(5_292_542), "5.3 MB");
         assert_eq!(uptime(3725), "1 h 02 min");
+    }
+
+    #[test]
+    fn restart_notice_survives_a_missed_poll_for_the_same_engine() {
+        let mut servers = Servers::new();
+        let dir = PathBuf::from("/tmp/sunrise-restart-notice-test");
+        let running = |engine_pid: u64| Status {
+            phase: "running".into(),
+            processes: Some((100, engine_pid)),
+            ..Status::default()
+        };
+
+        assert!(servers.note_status(dir.clone(), running(200)));
+        servers
+            .settings_outcomes
+            .entry(dir.clone())
+            .or_default()
+            .restart
+            .insert("port".into());
+
+        // Missed poll: running -> unknown -> running for the same process must keep the notice.
+        assert!(servers.note_status(dir.clone(), Status::unknown()));
+        assert!(servers.note_status(dir.clone(), running(200)));
+        assert!(
+            servers.settings_outcomes[&dir].restart.contains("port"),
+            "missed poll for the same engine must not clear restart notice"
+        );
+
+        // A confirmed new engine (different engine PID) clears the notice.
+        assert!(servers.note_status(dir.clone(), running(201)));
+        assert!(servers.settings_outcomes[&dir].restart.is_empty());
+
+        // A confirmed stop followed by a fresh start also clears the notice.
+        servers
+            .settings_outcomes
+            .entry(dir.clone())
+            .or_default()
+            .restart
+            .insert("view_distance".into());
+        assert!(servers.note_status(dir.clone(), Status::stopped()));
+        assert!(servers.note_status(dir.clone(), running(201)));
+        assert!(servers.settings_outcomes[&dir].restart.is_empty());
+    }
+
+    #[test]
+    fn failed_start_does_not_record_ownership_for_stop_on_quit() {
+        let dir = tempfile::tempdir().unwrap();
+        let server_dir = dir.path().join("elsewhere");
+        std::fs::create_dir_all(&server_dir).unwrap();
+
+        let err = run_start_with_ownership(&server_dir, || {
+            Err(Problem::plain("already running elsewhere"))
+        });
+        assert!(err.is_err());
+        assert!(
+            !STARTED_HERE
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|d| d == &server_dir),
+            "failed start must not record launcher ownership"
+        );
+
+        // A successful start records ownership; stop_on_quit drains it cleanly.
+        run_start_with_ownership(&server_dir, || Ok(String::new())).unwrap();
+        assert!(STARTED_HERE
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|d| d == &server_dir));
+        stop_on_quit();
+        assert!(!STARTED_HERE
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|d| d == &server_dir));
+    }
+
+    #[test]
+    fn tailscale_only_listener_is_detected() {
+        let ts_ip: std::net::Ipv4Addr = "100.101.102.103".parse().unwrap();
+        assert!(hosting::is_tailscale_only_listener(
+            "100.101.102.103:25565".parse().unwrap(),
+            Some(ts_ip),
+        ));
+        assert!(hosting::is_tailscale_only_listener(
+            "100.64.0.1:25565".parse().unwrap(),
+            None,
+        ));
+        assert!(!hosting::is_tailscale_only_listener(
+            "0.0.0.0:25565".parse().unwrap(),
+            Some(ts_ip),
+        ));
+        assert!(!hosting::is_tailscale_only_listener(
+            "192.168.1.50:25565".parse().unwrap(),
+            Some(ts_ip),
+        ));
+        assert!(!hosting::is_tailscale_only_listener(
+            "127.0.0.1:25565".parse().unwrap(),
+            Some(ts_ip),
+        ));
     }
 }

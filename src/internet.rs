@@ -71,7 +71,7 @@ impl Internet {
         }
     }
 
-    fn node(&self) -> Option<&tailscale::Node> {
+    pub(crate) fn node(&self) -> Option<&tailscale::Node> {
         match &self.state {
             Some(State::Running(n)) => Some(n),
             _ => None,

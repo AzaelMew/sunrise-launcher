@@ -1346,6 +1346,32 @@ pub fn status(dir: &Path) -> Status {
         .unwrap_or_else(Status::stopped)
 }
 
+/// The configured world's folder from `server.toml` (`[world] name`, defaulting to `world`).
+fn configured_world(dir: &Path) -> PathBuf {
+    let name = fs::read_to_string(dir.join("server.toml"))
+        .ok()
+        .and_then(|text| toml::from_str::<toml::Value>(&text).ok())
+        .and_then(|config| {
+            config
+                .get("world")?
+                .get("name")?
+                .as_str()
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| "world".to_string());
+    dir.join(name)
+}
+
+/// Whether an orphaned game process still holds the configured world's `session.lock`.
+fn world_session_locked(dir: &Path) -> bool {
+    let path = configured_world(dir).join(crate::worlds::LOCK);
+    match fs::File::open(&path) {
+        Ok(lock) => lock.try_lock_shared().is_err(),
+        Err(error) => error.kind() != std::io::ErrorKind::NotFound,
+    }
+}
+
 /// Polls the server selected in Hosting. An unavailable supervisor is distinct from one
 /// that has stopped; the latter can show its saved settings for a future start.
 pub fn poll_hosting(
@@ -1353,14 +1379,14 @@ pub fn poll_hosting(
     previous: Option<&Status>,
     since: u64,
 ) -> (Status, Option<(u64, Vec<String>)>) {
-    // A live supervisor holds its lock: with the lock free, nobody is running the server,
-    // whatever endpoint a supervisor that died left behind in `.sunrise/api.json`.
+    // A live supervisor holds its lock, and an orphaned game holds the world's `session.lock`.
+    // Only when both are free is the server truly stopped, whatever `.sunrise/api.json` says.
     let unanswered = || {
         let lock_free = match fs::File::open(dir.join(".sunrise/lock")) {
             Ok(lock) => lock.try_lock_shared().is_ok(),
             Err(error) => error.kind() == std::io::ErrorKind::NotFound,
         };
-        if lock_free {
+        if lock_free && !world_session_locked(dir) {
             Status::stopped()
         } else {
             Status::unknown()

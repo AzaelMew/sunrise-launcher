@@ -287,8 +287,9 @@ impl Launcher {
         }
 
         let idle = !self.internet.busy;
+        let own_ip = (!ip.is_empty()).then_some(ip);
         match &self.internet.policy {
-            Some(Ok((policy, _))) if tailscale::shares_entire_computer(policy) => {
+            Some(Ok((policy, _))) if tailscale::shares_entire_computer(policy, own_ip) => {
                 d = d.child(warning(tr(
                     "Friends you share this computer with can reach all of it, not only Minecraft.",
                 )));
@@ -500,10 +501,13 @@ impl Launcher {
                 }
                 Reach::Custom => {
                     let snippet = tailscale::snippet(ip, port);
+                    let guidance = if tailscale::shares_entire_computer(&policy, own_ip) {
+                        tr("Your access controls already allow every port on this computer, and Tailscale rules add together. Remove or narrow that broader rule in the admin console, and allow only Minecraft:")
+                    } else {
+                        tr("Your access controls are your own, so Sunrise leaves them alone. To keep shared friends to Minecraft, add this rule in the admin console:")
+                    };
                     div()
-                        .child(crate::selectable::selectable(tr(
-                            "Your access controls are your own, so Sunrise leaves them alone. To keep shared friends to Minecraft, add this rule in the admin console:",
-                        )))
+                        .child(crate::selectable::selectable(guidance))
                         .child(crate::code_box::code_box(
                             "share-acl-snippet",
                             vec![snippet.clone().into()],

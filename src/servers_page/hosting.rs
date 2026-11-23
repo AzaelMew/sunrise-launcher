@@ -710,13 +710,20 @@ impl Launcher {
         let internet = s.internet_address;
         let lookup = s.public_lookup;
         let last = s.last_public_address;
+        let tailscale_ip = self
+            .internet
+            .node()
+            .and_then(|node| node.ipv4())
+            .and_then(|ip| ip.parse::<std::net::Ipv4Addr>().ok());
         let port = listener.map(|address| address.port());
         let local_only = listener.is_some_and(|address| address.ip().is_loopback());
+        let tailscale_only =
+            listener.is_some_and(|address| is_tailscale_only_listener(address, tailscale_ip));
         let public_port = listener
-            .filter(|address| address.is_ipv4() && !address.ip().is_loopback())
+            .filter(|address| address.is_ipv4() && !address.ip().is_loopback() && !tailscale_only)
             .map(|address| address.port());
         let lan = listener
-            .filter(|_| !internet && !local_only)
+            .filter(|_| !internet && !local_only && !tailscale_only)
             .and_then(|address| {
                 if address.ip().is_unspecified() {
                     servers::lan_address().filter(|ip| ip.is_ipv4() == address.is_ipv4())
@@ -729,12 +736,14 @@ impl Launcher {
                 .zip(public_port)
                 .map(|(ip, port)| servers::network::address(ip.into(), port))
         } else {
-            listener.filter(|_| !local_only).map(|listener| {
-                lan.map_or_else(
-                    || format!("localhost:{}", listener.port()),
-                    |ip| servers::network::address(ip, listener.port()),
-                )
-            })
+            listener
+                .filter(|_| !local_only && !tailscale_only)
+                .map(|listener| {
+                    lan.map_or_else(
+                        || format!("localhost:{}", listener.port()),
+                        |ip| servers::network::address(ip, listener.port()),
+                    )
+                })
         };
 
         let modes = chip_group(
@@ -756,6 +765,7 @@ impl Launcher {
         let shown = address.clone().unwrap_or_else(|| {
             tr(match (internet, lookup) {
                 _ if local_only => "Local connections only",
+                _ if tailscale_only => "Tailscale only",
                 (true, _) if listener.is_some() && public_port.is_none() => {
                     "Public IPv4 unavailable for this listener"
                 }
@@ -808,6 +818,10 @@ impl Launcher {
 
         if local_only {
             panel = panel.child(hint(tr("This server listens only on this computer.")));
+        } else if tailscale_only {
+            panel = panel.child(hint(tr(
+                "This server listens only on Tailscale. Share its address from the Tailscale panel below.",
+            )));
         } else if internet && (listener.is_none() || public_port.is_some()) {
             if listener.is_none() {
                 panel = panel.child(hint(tr("Server port unavailable")));
@@ -876,7 +890,25 @@ impl Launcher {
         }
         panel
     }
+}
 
+/// Whether `listener` is bound specifically to a Tailscale IPv4 address (either the detected
+/// Tailscale node address or any CGNAT `100.64.0.0/10` address used by Tailscale).
+pub(super) fn is_tailscale_only_listener(
+    listener: std::net::SocketAddr,
+    tailscale_ip: Option<std::net::Ipv4Addr>,
+) -> bool {
+    let std::net::IpAddr::V4(ip) = listener.ip() else {
+        return false;
+    };
+    if tailscale_ip == Some(ip) {
+        return true;
+    }
+    let [a, b, ..] = ip.octets();
+    a == 100 && (64..=127).contains(&b)
+}
+
+impl Launcher {
     fn host_console(&mut self, running: bool, cx: &mut Context<Self>) -> Div {
         let lines: Vec<Div> = self
             .servers
