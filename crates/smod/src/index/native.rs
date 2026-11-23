@@ -2,10 +2,6 @@
 use super::Facts;
 use std::{collections::BTreeMap, io::Read, path::Path};
 
-/// Where the prebuilt game (#589) is released: one `prebuilt-<commit>` prerelease per daily build
-/// of this fork's main (Diverges from upstream: horizon-rust/horizon has none).
-pub const PREBUILT_REPO: &str = "sunrise-org/sunrise";
-
 /// The prebuilt package's layout number: the game repository's `sdk/package-format` file.
 pub const PACKAGE_FORMAT: u32 = 6;
 
