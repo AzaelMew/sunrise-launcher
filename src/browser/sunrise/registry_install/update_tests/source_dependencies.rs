@@ -805,3 +805,84 @@ fn nightly_names_failing_listed_dependency_on_github_resolve_and_pack_errors() {
         },
     );
 }
+
+#[test]
+fn stable_applies_dependency_overrides_when_solving_dependencies() {
+    Fixture::run(
+        concat!(
+            module_path!(),
+            "::stable_applies_dependency_overrides_when_solving_dependencies"
+        ),
+        |mut fixture| {
+            fixture.instance.channel = Channel::Stable;
+            fixture.project(LIB, "Shared Library", index::Kind::NativeMod);
+            let mut release_lib = |version: &str| {
+                let native = format!(
+                    "[native]\nsunrise='{}'\nmixins='{}'\ngame='{}'\n",
+                    "a".repeat(40),
+                    "b".repeat(40),
+                    backend::PINNED_GAME
+                );
+                let cargo = format!("[package]\nname='{LIB}'\nversion='{version}'\n");
+                fixture.release(
+                    LIB,
+                    version,
+                    &native,
+                    &[
+                        ("Cargo.toml", cargo.as_bytes()),
+                        ("src/lib.rs", b"pub fn inert() {}"),
+                    ],
+                );
+            };
+            release_lib("1.0.0");
+            release_lib("2.0.0");
+
+            // An enabled content mod declares an optional `^1` dependency on `LIB`.
+            let mods_dir = fixture.instance.home.join(mod_list::MODS_DIR);
+            fs::create_dir_all(&mods_dir).unwrap();
+            let existing = Package::write_files(
+                &format!(
+                    "id = 'existing_mod'\nname = 'Existing Mod'\nversion = '1.0.0'\napi = '0.2'\nside = 'both'\n[dependencies]\n{LIB} = {{ version = '^1', optional = true }}\n"
+                ),
+                &[],
+            )
+            .unwrap();
+            fs::write(mods_dir.join("existing_mod.smod"), &existing).unwrap();
+            mod_list::set_enabled(&fixture.instance.home, "existing_mod", true).unwrap();
+
+            // A source mod requires `LIB` at `^2`.
+            let root = source(
+                &fixture,
+                ROOT,
+                1,
+                "1.0.0",
+                &format!("[dependencies]\n{LIB} = '^2'"),
+            );
+
+            // Without the override, the optional `^1` conflicts with `^2` and the add is refused.
+            let refused = add(&fixture, root.clone(), |_, _| {
+                panic!("conflicting optional range without override must not reach consent")
+            });
+            assert!(
+                matches!(refused, Err(SourceError::Catalogue(_))),
+                "expected catalogue conflict without override, got: {refused:?}"
+            );
+
+            // Dropping `existing_mod`'s optional `^1` rule lets the Stable solver pick `LIB` 2.0.0.
+            fs::write(
+                mods_dir.join(sunrise_launcher_smod::dependencies::OVERRIDES),
+                format!("[existing_mod]\n{LIB} = 'drop'\n"),
+            )
+            .unwrap();
+            let picked = Cell::new(None::<String>);
+            add(&fixture, root, |_, dependencies| {
+                assert_eq!(dependencies.len(), 1);
+                picked.set(Some(dependencies[0].version.clone()));
+                backend::Settings::default().allow_native_mods()?;
+                Ok(true)
+            })
+            .unwrap();
+            assert_eq!(picked.into_inner().as_deref(), Some("2.0.0"));
+        },
+    );
+}
