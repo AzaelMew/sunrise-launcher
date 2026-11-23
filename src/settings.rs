@@ -836,7 +836,12 @@ impl Launcher {
             ),
         );
         if asking {
-            let input = self.field(servers_page::Field::InstanceName, "Profile name", 250., cx);
+            let input = self.field(
+                servers_page::Field::InstanceName,
+                tr("Profile name"),
+                250.,
+                cx,
+            );
             setup = div().flex().flex_col().gap(px(12.)).child(setup).child(
                 div().flex().items_center().gap(px(8.)).child(input).child(
                     button("alt-create-empty", tr("Create profile")).on_click(cx.listener(

@@ -1204,8 +1204,18 @@ impl Launcher {
         // Home's Add server line is in the glass look already; the other fields follow with
         // their pages.
         // The dark appearance draws every field in the glass look.
+        let profile_field = matches!(f, Field::InstanceName | Field::InstanceGroup);
         let glass = t.glass;
-        let base = if glass {
+        let base = if profile_field {
+            crate::frame::input(focused)
+                .when(invalid, |d| {
+                    d.border_color(gpui::rgb(crate::paint::palette().danger))
+                })
+                .h(px(crate::tokens::FIELD))
+                .px(px(12.))
+                .text_size(px(crate::tokens::BODY))
+                .text_color(gpui::rgb(crate::paint::palette().text))
+        } else if glass {
             // The mods filter and the log search sit by buttons: the mockup's small `FIELD`, as
             // tall as they are.
             crate::glass_ui::field(focused, invalid)
@@ -1224,20 +1234,13 @@ impl Launcher {
                             .rounded(px(crate::glass_ui::rad(radius::CONTROL)))
                     },
                 )
-                // The instance dialog's are the large `FIELD_LG`: 48 px, 15 px text, white at 6 %,
-                // 10 % while typed in.
-                .when(
-                    !invalid
-                        && matches!(
-                            f,
-                            Field::InstanceName | Field::InstanceGroup | Field::Name | Field::Seed
-                        ),
-                    |d| {
-                        d.h(px(48.))
-                            .text_size(px(15.))
-                            .bg(crate::glass_ui::white(if focused { 0.1 } else { 0.06 }))
-                    },
-                )
+                // The server creation dialog's are the large `FIELD_LG`: 48 px, 15 px text, white
+                // at 6 %, 10 % while typed in.
+                .when(!invalid && matches!(f, Field::Name | Field::Seed), |d| {
+                    d.h(px(48.))
+                        .text_size(px(15.))
+                        .bg(crate::glass_ui::white(if focused { 0.1 } else { 0.06 }))
+                })
                 // The accent's hex: `h-9 w-[96px] rounded-[10px] px-3 text-[13px] font-medium`.
                 .when(f == Field::AccentHex, |d| {
                     d.h(px(36.))
@@ -1278,6 +1281,11 @@ impl Launcher {
                 .bg(t.surface)
                 .text_size(px(theme::UI.px))
         };
+        let line_theme = if profile_field {
+            crate::mods::field_theme(t)
+        } else {
+            t
+        };
         let field = base
             .id(SharedString::from(format!("field-{f:?}")))
             .track_focus(&handle)
@@ -1286,7 +1294,7 @@ impl Launcher {
             .cursor_text()
             .child(line_edit::content(
                 self.servers.text(f),
-                &t,
+                &line_theme,
                 focused,
                 selected,
                 f == Field::Token,
