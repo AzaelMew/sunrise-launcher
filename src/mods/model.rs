@@ -440,6 +440,9 @@ pub(super) enum Need {
     Build,
     /// A native mod that can't run until the player allows native code.
     Permission,
+    /// On, but served by this native mod (its name, or its id when not installed), which is off:
+    /// the game leaves it out.
+    Host(String),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -632,6 +635,15 @@ pub(super) fn cells(
             tr("Needs permission").into(),
             Tone::Warning,
             tr("Needs your permission to run native code").into(),
+        ),
+        Some(Need::Host(host)) => say(
+            "information-circle",
+            trf("Needs {host}", &[("host", host)]),
+            Tone::Warning,
+            trf(
+                "{host} serves this mod's code. Turn {host} on for the game to load it.",
+                &[("host", host)],
+            ),
         ),
         Some(Need::Build) | None => {}
     }
@@ -839,6 +851,11 @@ impl Row {
         self.make == Some(Make::Native)
     }
 
+    /// The native mod that serves this content package's code, when it names one.
+    pub(super) fn served_by(&self) -> Option<&str> {
+        self.local.as_ref().and_then(|l| l.served_by.as_deref())
+    }
+
     pub(super) fn selectable_archive(&self) -> bool {
         self.local.as_ref().is_none_or(|local| !local.unreadable)
     }
@@ -895,6 +912,8 @@ pub(super) struct Local {
     pub(super) github: Option<sunrise_launcher::github_mods::Origin>,
     /// Native code, which needs permission and a build, rather than content only.
     pub(super) native: bool,
+    /// The native mod whose code serves this content package (`served_by`).
+    pub(super) served_by: Option<String>,
     /// The file can't be read: it has no id of its own (the id is only its file name), so it is
     /// never on, needs nothing and has no switch that could act on a working mod's id.
     pub(super) unreadable: bool,
@@ -964,7 +983,14 @@ pub(super) fn rows(entries: &[Entry], w: &World) -> Vec<Row> {
         let need = match on && l.native {
             true if !w.native_allowed => Some(Need::Permission),
             true if w.unbuilt.contains(&l.id) => Some(Need::Build),
-            _ => None,
+            _ => l
+                .served_by
+                .as_ref()
+                .filter(|host| on && !w.enabled.contains(*host))
+                .map(|host| {
+                    let local = w.local.iter().find(|h| &h.id == host);
+                    Need::Host(local.map_or(host, |h| &h.name).clone())
+                }),
         };
         Row {
             id: l.id.clone(),
@@ -1253,7 +1279,18 @@ pub(super) fn turn_on_plan<'a>(
             _ => ok.push(*r),
         }
     }
-    (ok, no)
+    // A served mod can't come on in a batch that leaves its host off.
+    let mut kept = Vec::new();
+    for r in ok {
+        let host = r
+            .served_by()
+            .and_then(|host| no.iter().find(|(held, _)| held.id == host));
+        match host.map(|(held, _)| held.title.clone()) {
+            Some(host) => no.push((r, trf("{host} serves it and stays off", &[("host", &host)]))),
+            None => kept.push(r),
+        }
+    }
+    (kept, no)
 }
 
 #[cfg(test)]

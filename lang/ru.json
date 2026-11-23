@@ -1863,5 +1863,9 @@
   "Signed out": "Signed out",
   "Account options": "Account options",
   "Set default": "Set default",
-  "Manage skins": "Manage skins"
+  "Manage skins": "Manage skins",
+  "{mod} is served by {host}. Install and turn on {host} before trying again.": "{mod} is served by {host}. Install and turn on {host} before trying again.",
+  "{host} serves it and stays off": "{host} serves it and stays off",
+  "Needs {host}": "Needs {host}",
+  "{host} serves this mod's code. Turn {host} on for the game to load it.": "{host} serves this mod's code. Turn {host} on for the game to load it."
 }

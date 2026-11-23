@@ -339,6 +339,17 @@ pub(crate) fn check_activation(
             ));
         }
         let target = manifests.get(id).ok_or_else(unproved_mods)?;
+        if let Some(host) = target.served_by.as_deref() {
+            let serving = manifests.get(host);
+            if !serving.is_some_and(|host| host.native.as_ref().is_some_and(|n| n.serves_content)) {
+                let name = serving.map_or(host, |h| h.name.as_str());
+                return Err(trf(
+                    "{mod} is served by {host}. Install and turn on {host} before trying again.",
+                    &[("mod", &target.name), ("host", name)],
+                ));
+            }
+            remaining.push(host);
+        }
         for (name, dep) in &target.dependencies {
             let requirement = dep.details();
             if requirement.optional {
@@ -356,6 +367,39 @@ pub(crate) fn check_activation(
         }
     }
     Ok(())
+}
+
+/// `removed` and every enabled package that needs one of them: through a required dependency, or
+/// as the content a removed native host serves. Only actual, enabled edges propagate; the
+/// effective enabled graph is validated separately after its list changes.
+pub(super) fn unavailable_with(
+    present: &Inventory,
+    enabled: &BTreeSet<String>,
+    removed: &BTreeSet<String>,
+) -> BTreeSet<String> {
+    let mut unavailable = removed.clone();
+    loop {
+        let before = unavailable.len();
+        for (id, item) in present {
+            let manifest = &item.package.manifest;
+            if !unavailable.contains(id)
+                && enabled.contains(id)
+                && (manifest
+                    .dependencies
+                    .iter()
+                    .any(|(dep, rule)| !rule.details().optional && unavailable.contains(dep))
+                    || manifest
+                        .served_by
+                        .as_ref()
+                        .is_some_and(|host| unavailable.contains(host)))
+            {
+                unavailable.insert(id.clone());
+            }
+        }
+        if before == unavailable.len() {
+            return unavailable;
+        }
+    }
 }
 
 /// Exact archive leaves selected for removal in a private profile edit.
@@ -498,30 +542,8 @@ pub fn remove_mods(
         &present,
     )?;
 
-    // Only propagate along actual, enabled, required edges. Keep every dependent path and
-    // provenance byte; validate the effective enabled graph separately after changing its list.
-    let mut disabled = BTreeSet::new();
-    let mut unavailable = ids.clone();
-    loop {
-        let before = unavailable.len();
-        for (id, item) in &present {
-            if !unavailable.contains(id)
-                && enabled.contains(id)
-                && item
-                    .package
-                    .manifest
-                    .dependencies
-                    .iter()
-                    .any(|(dep, rule)| !rule.details().optional && unavailable.contains(dep))
-            {
-                disabled.insert(id.clone());
-                unavailable.insert(id.clone());
-            }
-        }
-        if before == unavailable.len() {
-            break;
-        }
-    }
+    let unavailable = unavailable_with(&present, &enabled, &ids);
+    let disabled: BTreeSet<String> = unavailable.difference(&ids).cloned().collect();
     let disabled_ids = unavailable.iter().map(String::as_str).collect::<Vec<_>>();
     mod_list::set_all_enabled(home, &disabled_ids, false)?;
     if let Some(conflict) = manifest_conflict(home, None, None, Side::Both, |_| false)? {

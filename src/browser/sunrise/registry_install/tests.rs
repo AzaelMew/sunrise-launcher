@@ -167,3 +167,66 @@ fn continue_proposal_discloses_off_dependents_and_preserves_the_working_predeces
         assert_eq!(entry.install_hold, Some(reason));
     }
 }
+
+/// A content package served by a native mod needs that host on, and leaves with it.
+#[test]
+fn a_served_package_comes_on_with_its_host_and_goes_off_when_the_host_is_removed() {
+    let home = tempfile::tempdir().unwrap();
+    let home = home.path();
+    let write = |dir: &str, id: &str, extra: &str, files: &[(&str, &[u8])]| {
+        let body =
+            format!("id='{id}'\nname='{id}'\nversion='1.0.0'\napi='0.2'\nside='both'\n{extra}");
+        fs::create_dir_all(home.join(dir)).unwrap();
+        fs::write(
+            home.join(dir).join(format!("{id}.smod")),
+            Package::write_files(&body, files).unwrap(),
+        )
+        .unwrap();
+    };
+    let native = |serves: bool| {
+        format!(
+            "[native]\ngame='26.3'\nsunrise='{}'\nserves_content={serves}\n",
+            "a".repeat(40)
+        )
+    };
+    let crate_files: &[(&str, &[u8])] = &[
+        (
+            "Cargo.toml",
+            b"[package]\nname='java_host'\nversion='1.0.0'\n",
+        ),
+        ("src/lib.rs", b"fn host() {}"),
+    ];
+    write(mod_list::MODS_DIR, "runes", "served_by='java_host'\n", &[]);
+    write(
+        crate::native_mods::INSTALLED,
+        "java_host",
+        &native(true),
+        crate_files,
+    );
+
+    // Off host: the served package can't come on alone, but can in one batch with it.
+    let alone = check_activation(home, None, &["runes"]).unwrap_err();
+    assert!(alone.contains("java_host"), "{alone}");
+    check_activation(home, None, &["runes", "java_host"]).unwrap();
+
+    // A native mod that doesn't opt in to serving content is no host.
+    write(
+        crate::native_mods::INSTALLED,
+        "java_host",
+        &native(false),
+        crate_files,
+    );
+    assert!(check_activation(home, None, &["runes", "java_host"]).is_err());
+
+    // Removing the host takes its enabled served package with it.
+    write(
+        crate::native_mods::INSTALLED,
+        "java_host",
+        &native(true),
+        crate_files,
+    );
+    let present = inventory(home, None).unwrap();
+    let enabled: BTreeSet<String> = ["runes".into(), "java_host".into()].into();
+    let gone = mutations::unavailable_with(&present, &enabled, &["java_host".into()].into());
+    assert!(gone.contains("runes"), "{gone:?}");
+}

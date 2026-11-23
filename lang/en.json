@@ -460,5 +460,9 @@
   "Move up": "Move up",
   "Move down": "Move down",
   "Manage skins": "Manage skins",
-  "Remove": "Remove"
+  "Remove": "Remove",
+  "{mod} is served by {host}. Install and turn on {host} before trying again.": "{mod} is served by {host}. Install and turn on {host} before trying again.",
+  "{host} serves it and stays off": "{host} serves it and stays off",
+  "Needs {host}": "Needs {host}",
+  "{host} serves this mod's code. Turn {host} on for the game to load it.": "{host} serves this mod's code. Turn {host} on for the game to load it."
 }
