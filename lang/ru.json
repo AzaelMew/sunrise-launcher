@@ -1215,7 +1215,6 @@
   "Tick time": "Tick time",
   "Memory": "Memory",
   "{title} is a Java mod. Sunrise doesn't install Java mods; it installs resource packs, data packs and shader packs from Modrinth.": "{title} is a Java mod. Sunrise doesn't install Java mods; it installs resource packs, data packs and shader packs from Modrinth.",
-  "A colour name, a hue in degrees or #rrggbb, then Enter. Play darkens a pale accent just enough for its white label.": "A colour name, a hue in degrees or #rrggbb, then Enter. Play darkens a pale accent just enough for its white label.",
   "A theme is a folder with a theme.toml: up to six colours and one picture. Reload reads the folder again.": "A theme is a folder with a theme.toml: up to six colours and one picture. Reload reads the folder again.",
   "Accent": "Accent",
   "Appearance": "Appearance",
@@ -1266,7 +1265,6 @@
   "The {what} is a link. A theme's files must be in its own folder.": "The {what} is a link. A theme's files must be in its own folder.",
   "Theme": "Theme",
   "There is no theme.toml in this folder.": "There is no theme.toml in this folder.",
-  "Use theme accent": "Use theme accent",
   "Use theme background": "Use theme background",
   "Your picture, on Home.": "Your picture, on Home.",
   "Your theme · {folder}": "Your theme · {folder}",
@@ -1908,5 +1906,14 @@
   "Not on the registry": "Not on the registry",
   "any version": "any version",
   "Required": "Required",
-  "Optional": "Optional"
+  "Optional": "Optional",
+  "Theme accent": "Theme accent",
+  "Violet": "Violet",
+  "Blue": "Blue",
+  "Teal": "Teal",
+  "Green": "Green",
+  "Amber": "Amber",
+  "Red": "Red",
+  "Pink": "Pink",
+  "Pick a colour, or type a colour name, a hue in degrees or #rrggbb. Play darkens a pale accent just enough for its white label.": "Pick a colour, or type a colour name, a hue in degrees or #rrggbb. Play darkens a pale accent just enough for its white label."
 }
