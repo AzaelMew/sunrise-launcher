@@ -595,7 +595,6 @@ impl Launcher {
                     .text_color(rgb(colour))
                     .cursor_pointer()
                     .hover(|s| s.bg(rgb(p.chrome_raised)))
-                    .tooltip(crate::glass_ui::tip(label))
                     .when(!compact, |d| {
                         d.child(blocks::icon(icon, 16., rgb(colour).into()))
                     })

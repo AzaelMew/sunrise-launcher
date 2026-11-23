@@ -249,7 +249,9 @@ impl Launcher {
                     d.cursor_pointer().hover(|d| d.bg(rgb(p.chrome_raised)))
                 })
                 .when(lock.is_some(), |d| d.opacity(0.45).tab_stop(false))
-                .tooltip(crate::glass_ui::tip(lock.map_or(label, str::to_owned)))
+                .when(!labelled || lock.is_some(), |d| {
+                    d.tooltip(crate::glass_ui::tip(lock.map_or(label, str::to_owned)))
+                })
         };
         let txt = |s: String| {
             div()
