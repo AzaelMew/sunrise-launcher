@@ -795,6 +795,73 @@ mod tests {
         assert!(!mods.join("camp_lanterns.origin.json").exists());
     }
 
+    #[test]
+    fn stage_removal_cleans_row_missing_display_field_and_catches_windows_competing_claim() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("profile");
+        let mods = home.join(smod_mod_list::DIR);
+        fs::create_dir_all(&mods).unwrap();
+        let bytes = Package::write_files(
+            "id = 'alpha'\nname = 'Alpha'\nversion = '1.0.0'\napi = '0.2'\nside = 'both'\n",
+            &[],
+        )
+        .unwrap();
+        fs::write(mods.join("alpha.smod"), &bytes).unwrap();
+        // Sunrise row missing display field `page`: cannot deserialize as installed::Entry, so
+        // `registry_claim` stays false, yet removal must still clean it up.
+        let file = format!("{}/alpha.smod", smod_mod_list::DIR);
+        let manifest_path = home.join(installed::MANIFEST);
+        fs::write(
+            &manifest_path,
+            serde_json::to_vec(&serde_json::json!({
+                "entries": [{
+                    "source": "sunrise",
+                    "kind": "mod",
+                    "project": "alpha",
+                    "file": file,
+                }]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let present = inventory(&home, None).unwrap();
+        assert!(
+            !present["alpha"].registry_claim,
+            "missing display field must not grant replacement permission"
+        );
+        mutations::stage_removal(&home, &home, None, ["alpha"], &present).unwrap();
+        assert!(!mods.join("alpha.smod").exists());
+        let after: serde_json::Value =
+            serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+        assert_eq!(after["entries"].as_array().unwrap().len(), 0);
+
+        // Now add a competing row with Windows-style `\` separators claiming alpha's receipt.
+        fs::write(mods.join("alpha.smod"), &bytes).unwrap();
+        let win_file = format!("{}\\alpha.smod", smod_mod_list::DIR);
+        fs::write(
+            &manifest_path,
+            serde_json::to_vec(&serde_json::json!({
+                "entries": [{
+                    "source": "other-source",
+                    "kind": "mod",
+                    "project": "other_owner",
+                    "file": win_file,
+                }]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let present = inventory(&home, None).unwrap();
+        let err = mutations::stage_removal(&home, &home, None, ["alpha"], &present)
+            .err()
+            .expect("competing Windows-style claim must block removal");
+        assert!(
+            err.to_string().contains("other_owner"),
+            "unexpected error: {err}"
+        );
+    }
+
     // Reuses the saved-world helpers of `update_tests`, which build only there.
     #[cfg(all(debug_assertions, unix))]
     #[test]

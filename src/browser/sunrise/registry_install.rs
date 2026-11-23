@@ -457,11 +457,13 @@ fn registry_edit<'a>(
                 &before,
                 project,
                 version,
-                Some(cancelled),
-                |f| {
-                    (hooks.progress)(InstallProgress::Downloading(
-                        (n as f32 + f) / versions.len() as f32,
-                    ));
+                DownloadControls {
+                    cancellation: Some(cancelled),
+                    progress: |f| {
+                        (hooks.progress)(InstallProgress::Downloading(
+                            (n as f32 + f) / versions.len() as f32,
+                        ));
+                    },
                 },
             )?;
             entries.insert(entry.project.clone(), entry);
@@ -1202,7 +1204,11 @@ fn planned_version<'a>(
     Ok((project, release))
 }
 
-#[allow(clippy::too_many_arguments)]
+struct DownloadControls<'a, F> {
+    cancellation: Option<&'a native_mods::Cancellation>,
+    progress: F,
+}
+
 fn stage_package(
     catalogue: &index::Index,
     local: bool,
@@ -1210,8 +1216,7 @@ fn stage_package(
     before: &Inventory,
     p: &index::Project,
     v: &index::Version,
-    cancellation: Option<&native_mods::Cancellation>,
-    progress: impl Fn(f32),
+    controls: DownloadControls<'_, impl Fn(f32)>,
 ) -> Result<installed::Entry, InstallError> {
     let shown = project_of(catalogue, p, &v.game).ok_or_else(unproved_mods)?;
     let native = p.kind == index::Kind::NativeMod;
@@ -1244,15 +1249,23 @@ fn stage_package(
         .tempdir_in(home)
         .map_err(|e| at(home, e))?;
     let file = &version_of(catalogue, p, v).files[0];
-    let fetched = fetch_cancellable(file, staging.path(), local, cancellation, &progress).map_err(
-        |error| {
-            if cancellation.is_some_and(native_mods::Cancellation::is_stopped) {
-                InstallError::Cancelled
-            } else {
-                InstallError::Download(error)
-            }
-        },
-    )?;
+    let fetched = fetch_cancellable(
+        file,
+        staging.path(),
+        local,
+        controls.cancellation,
+        &controls.progress,
+    )
+    .map_err(|error| {
+        if controls
+            .cancellation
+            .is_some_and(native_mods::Cancellation::is_stopped)
+        {
+            InstallError::Cancelled
+        } else {
+            InstallError::Download(error)
+        }
+    })?;
     let (checked, facts) =
         index::check_file_with_facts(catalogue, p, v, &fetched).map_err(InstallError::Download)?;
     if v.dependencies.is_none()

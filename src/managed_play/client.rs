@@ -60,9 +60,12 @@ impl From<StartError> for String {
     }
 }
 
-/// The exact base of the Play attempt that reported a registry conflict.
+/// The exact base and native-archive digests of the Play attempt that reported a registry conflict.
 #[derive(Debug, PartialEq, Eq)]
-pub struct FailedBuild(Build);
+pub struct FailedBuild {
+    build: Build,
+    digests: std::collections::BTreeMap<String, String>,
+}
 
 #[derive(Debug, PartialEq, Eq)]
 enum Build {
@@ -76,9 +79,32 @@ pub struct ModRecovery {
     pub mods: Vec<(String, String)>,
 }
 
-fn native_failure(error: native_mods::Failed, build: impl FnOnce() -> Option<Build>) -> StartError {
+fn capture_native_digests(home: &Path) -> std::collections::BTreeMap<String, String> {
+    let Ok(packages) = super::scan_packages(home) else {
+        return std::collections::BTreeMap::new();
+    };
+    packages
+        .into_iter()
+        .filter(|pkg| pkg.manifest.native.is_some() && !pkg.directory)
+        .filter_map(|pkg| {
+            let digest = sunrise_launcher_smod::index::sha256_file(&pkg.path).ok()?;
+            Some((pkg.manifest.id, digest))
+        })
+        .collect()
+}
+
+fn native_failure(
+    home: &Path,
+    error: native_mods::Failed,
+    build: impl FnOnce() -> Option<Build>,
+) -> StartError {
     let proof = if matches!(error, native_mods::Failed::RegistryConflict { .. }) {
-        build().map(|build| Arc::new(FailedBuild(build)))
+        build().map(|build| {
+            Arc::new(FailedBuild {
+                build,
+                digests: capture_native_digests(home),
+            })
+        })
     } else {
         None
     };
@@ -146,10 +172,15 @@ impl Client<'_> {
             let _manifest = profile.lock_inputs()?;
             cancellation.check()?;
             let selected = recovery.verify(&profile, &mut choose)?;
-            turn_off_mods(profile.home(), &recovery.mods, |mut file, bytes| {
-                file.write_all(bytes)?;
-                file.sync_all()
-            })?;
+            turn_off_mods(
+                profile.home(),
+                &recovery.mods,
+                &recovery.build.digests,
+                |mut file, bytes| {
+                    file.write_all(bytes)?;
+                    file.sync_all()
+                },
+            )?;
             selected
         } else {
             None
@@ -311,7 +342,7 @@ impl Client<'_> {
                     Some(&log),
                     replacement,
                 )
-                .map_err(|error| native_failure(error, || Some(Build::Active(old))))?
+                .map_err(|error| native_failure(&home, error, || Some(Build::Active(old))))?
                 .ok_or_else(|| unsettled!())?;
             return Ok((active, notices));
         }
@@ -338,7 +369,9 @@ impl Client<'_> {
                         Some(&log),
                     )
                     .map_err(|error| {
-                        native_failure(error, || first.recovery_selection().ok().map(Build::First))
+                        native_failure(&home, error, || {
+                            first.recovery_selection().ok().map(Build::First)
+                        })
                     })?;
                 (image, notices)
             };
@@ -362,7 +395,7 @@ impl ModRecovery {
         let changed = || {
             crate::i18n::tr("The profile's game build changed. No mods were turned off.").to_owned()
         };
-        match (&self.build.0, profile.active()?) {
+        match (&self.build.build, profile.active()?) {
             (Build::Active(failed), Some(now))
                 if now.profile == failed.profile
                     && now.generation() == failed.generation()
@@ -389,6 +422,7 @@ impl ModRecovery {
 fn turn_off_mods(
     home: &Path,
     mods: &[(String, String)],
+    digests: &std::collections::BTreeMap<String, String>,
     stage: impl FnOnce(&File, &[u8]) -> io::Result<()>,
 ) -> Result<(), String> {
     use sunrise_launcher_smod::mod_list::{ModList, FILE};
@@ -400,11 +434,17 @@ fn turn_off_mods(
     let turns_off = |id: &str| mods.iter().any(|(off, _)| off == id);
     if mods.is_empty()
         || !mods.iter().all(|(id, version)| {
+            let Some(expected_digest) = digests.get(id) else {
+                return false;
+            };
             enabled.contains(id)
                 && packages.iter().any(|pkg| {
                     pkg.manifest.native.is_some()
+                        && !pkg.directory
                         && pkg.manifest.id == *id
                         && pkg.manifest.version == *version
+                        && sunrise_launcher_smod::index::sha256_file(&pkg.path)
+                            .is_ok_and(|actual| actual == *expected_digest)
                 })
         })
     {
