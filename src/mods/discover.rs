@@ -1,5 +1,5 @@
 //! Mods › Discover: browses the signed v2 registry index for the selected profile's exact build.
-use super::model::discover_v2::{self, V2Card, V2Sort};
+use super::model::discover_v2::{self, V2Sort};
 use super::ui::*;
 use super::*;
 use crate::frame::button;
@@ -21,12 +21,7 @@ impl Launcher {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let mut page = self.discover_shell(window, focus, cx);
-        let (cards, categories, stale_warning, from_cache): (
-            Rc<[V2Card]>,
-            Rc<[String]>,
-            Option<String>,
-            bool,
-        ) = match &self.ui.mods.v2_catalog {
+        let (cards, categories, stale_warning, from_cache) = match &self.ui.mods.v2_catalog {
             V2Catalog::Ready {
                 cards,
                 categories,
