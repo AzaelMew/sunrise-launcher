@@ -141,7 +141,6 @@ impl Fixture {
                         })
                         .collect(),
                 ),
-                native_binaries: Vec::new(),
                 file: index::File {
                     name,
                     url: format!("file://{}", archive.display()),
