@@ -379,26 +379,27 @@ impl Launcher {
         if !self.guard() {
             return;
         }
-        let ids = self
+        let (v2, v1): (Vec<Row>, Vec<Row>) = self
             .rows()
             .into_iter()
             .filter(|row| {
                 model::bulk_updatable(row)
                     && (!only_selected || self.ui.mods.selection.contains(&row.id))
             })
-            .map(|row| row.id)
-            .collect();
-        self.submit_registry_change(Kind::UpdateAll, "update-all", ids, BTreeMap::new());
+            .partition(Row::v2_installed);
+        let ids = |rows: Vec<Row>| rows.into_iter().map(|row| row.id).collect::<Vec<_>>();
+        self.submit_registry_change(Kind::UpdateAll, "update-all", ids(v1), BTreeMap::new());
+        self.submit_registry_change(Kind::UpdateAllV2, "update-all", ids(v2), BTreeMap::new());
     }
 
     pub(super) fn update_one(&mut self, row: &Row) {
         if row.local.is_none() && row.update.is_some() && self.guard() {
-            self.submit_registry_change(
-                Kind::Update,
-                &row.id,
-                vec![row.id.clone()],
-                BTreeMap::new(),
-            );
+            let kind = if row.v2_installed() {
+                Kind::UpdateV2
+            } else {
+                Kind::Update
+            };
+            self.submit_registry_change(kind, &row.id, vec![row.id.clone()], BTreeMap::new());
         }
     }
 

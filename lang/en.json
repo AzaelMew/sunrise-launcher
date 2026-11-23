@@ -448,5 +448,9 @@
   "Switch": "Switch",
   "Switching {mod} to {repo}": "Switching {mod} to {repo}",
   "Your current port stays intact if you cancel.": "Your current port stays intact if you cancel.",
-  "Allow native mods in Settings before switching to this port.": "Allow native mods in Settings before switching to this port."
+  "Allow native mods in Settings before switching to this port.": "Allow native mods in Settings before switching to this port.",
+  "github.com/{repo} · {version}": "github.com/{repo} · {version}",
+  "{mod} needs {id}, and several reviewed mods provide it. Only one can be installed.": "{mod} needs {id}, and several reviewed mods provide it. Only one can be installed.",
+  "Choose which mod provides {id}": "Choose which mod provides {id}",
+  "Use this": "Use this"
 }

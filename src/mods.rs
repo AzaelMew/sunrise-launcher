@@ -1381,11 +1381,20 @@ impl Launcher {
         } else {
             None
         };
+        let v2 = sunrise::v2::known_index();
+        let build = snap
+            .rows
+            .managed
+            .as_ref()
+            .map(|managed| managed.base().to_owned())
+            .or_else(|| self.selected_exact_build());
         let mut rows = model::rows(
             &snap.rows.entries,
             &model::World {
                 index,
                 game: &game,
+                v2: v2.as_ref().map(|catalog| &*catalog.index),
+                build: build.as_deref(),
                 unfit_updates: &unfit_updates,
                 enabled: &snap.rows.enabled,
                 unbuilt: &snap.rows.unbuilt,

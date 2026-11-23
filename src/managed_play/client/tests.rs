@@ -462,12 +462,15 @@ fn play_checks_hash_only_takedowns_after_proving_the_actual_package() {
             |_, _| Ok(()),
             (&cancellation, None),
             |_| {},
-            || {
-                let binding = crate::profile_txn::references(&home).unwrap();
-                assert!(binding.targets.contains(BUILD));
-                assert!(binding.pointer.is_none());
-                revoked("lantern", old)
-            },
+            (
+                || {
+                    let binding = crate::profile_txn::references(&home).unwrap();
+                    assert!(binding.targets.contains(BUILD));
+                    assert!(binding.pointer.is_none());
+                    revoked("lantern", old)
+                },
+                || None,
+            ),
         )
         .unwrap();
     // The old hash-only takedown does not deny the current input. Neither it nor
@@ -482,7 +485,7 @@ fn play_checks_hash_only_takedowns_after_proving_the_actual_package() {
             |_, _| Ok(()),
             (&cancellation, None),
             |_| {},
-            || revoked("lantern", replaced),
+            (|| revoked("lantern", replaced), || None),
         )
         .expect_err("actual archive was taken down");
     assert!(String::from(error).contains("hash-only takedown fixture"));
@@ -535,16 +538,19 @@ fn play_checks_hash_only_takedowns_after_proving_the_actual_package() {
             |_, _| Ok(()),
             (&cancellation, None),
             |step| assert!(!matches!(step, Progress::Native(_)), "started native work"),
-            || {
-                let hash = index::sha256_file(&native).unwrap().to_ascii_uppercase();
-                listed.revoked.push(index::Revoked {
-                    id: "native_lantern".into(),
-                    sha256: Some(hash),
-                    reason: "exact native digest was taken down".into(),
-                    date: String::new(),
-                });
-                Some(Arc::new(listed))
-            },
+            (
+                || {
+                    let hash = index::sha256_file(&native).unwrap().to_ascii_uppercase();
+                    listed.revoked.push(index::Revoked {
+                        id: "native_lantern".into(),
+                        sha256: Some(hash),
+                        reason: "exact native digest was taken down".into(),
+                        date: String::new(),
+                    });
+                    Some(Arc::new(listed))
+                },
+                || None,
+            ),
         )
         .expect_err("native input was taken down");
     let error = String::from(error);
@@ -813,7 +819,7 @@ fn windows_bound_x64_fallback_survives_pending_retry_and_committed_replay() {
             },
             (&cancellation, None),
             |_| {},
-            || None,
+            (|| None, || None),
         )
     };
     let mut profile = Profile::open(&home, None).unwrap();

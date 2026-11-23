@@ -6,6 +6,7 @@ use sunrise_launcher::browser::installed::Entry;
 use sunrise_launcher::i18n::{tr, trf};
 use sunrise_launcher::native_mods;
 use sunrise_launcher_smod::index::{self, Index};
+use sunrise_launcher_smod::index_v2;
 use sunrise_launcher_smod::manifest::Side;
 
 pub(super) mod collection;
@@ -757,6 +758,11 @@ pub(super) fn cells(
 }
 
 impl Row {
+    /// Installed from the signed v2 index, so its updates go through the v2 installer.
+    pub(super) fn v2_installed(&self) -> bool {
+        self.entry.as_ref().is_some_and(|e| e.mod_id.is_some())
+    }
+
     pub(super) fn archive_file(&self) -> Option<&str> {
         self.local
             .as_ref()
@@ -861,6 +867,10 @@ impl Row {
 pub(super) struct World<'a> {
     pub(super) index: Option<&'a Index>,
     pub(super) game: &'a str,
+    /// The signed v2 index, which owns entries keyed by a v2 project ID.
+    pub(super) v2: Option<&'a index_v2::Index>,
+    /// The exact build the profile plays, which v2 `fits` lists name.
+    pub(super) build: Option<&'a str>,
     /// Verified archive hashes already rejected by the SDK for this base build.
     pub(super) unfit_updates: &'a BTreeSet<String>,
     pub(super) enabled: &'a HashSet<String>,
@@ -899,6 +909,9 @@ pub(super) fn rows(entries: &[Entry], w: &World) -> Vec<Row> {
         .filter(|e| e.source == SourceId::Sunrise && e.kind == Kind::Mod)
         .filter_map(|e| {
             let id = mod_id(e)?.to_owned();
+            if e.mod_id.is_some() {
+                return Some(v2_row(e, id, w));
+            }
             let p = w.index.and_then(|i| i.project(&e.project));
             let native = sunrise_launcher::native_status::is_native_file(&e.file);
             let make = match (p.and_then(make_of), native) {
@@ -981,6 +994,70 @@ pub(super) fn rows(entries: &[Entry], w: &World) -> Vec<Row> {
     }));
     sort(&mut out);
     out
+}
+
+/// A row for an entry the signed v2 index installed: its project names it, a takedown of the
+/// installed archive needs action, and an update is the newest release listed as fitting the
+/// profile's exact build.
+fn v2_row(e: &Entry, id: String, w: &World) -> Row {
+    use sunrise_launcher_smod::dependencies::parse_version;
+    let p = w.v2.and_then(|i| i.project(&e.project));
+    let native = sunrise_launcher::native_status::is_native_file(&e.file);
+    let on = w.enabled.contains(&id);
+    let hash = e.checksum.strip_prefix("SHA-256:").unwrap_or_default();
+    let taken_down =
+        w.v2.and_then(|i| i.revoked(&e.project, Some(hash)))
+            .map(|r| r.reason.clone());
+    let need = if let Some(reason) = taken_down {
+        Some(Need::TakenDown(reason))
+    } else if native && on && !w.native_allowed {
+        Some(Need::Permission)
+    } else if native && on && w.unbuilt.contains(&id) {
+        Some(Need::Build)
+    } else {
+        None
+    };
+    let update = w.v2.zip(p).zip(w.build).and_then(|((i, p), build)| {
+        let installed = parse_version(&e.version).ok()?;
+        p.releases
+            .iter()
+            .filter(|r| {
+                r.fits_build(build)
+                    && i.revoked(&p.id, Some(&r.file.sha256)).is_none()
+                    && !w
+                        .unfit_updates
+                        .contains(&r.file.sha256.to_ascii_lowercase())
+            })
+            .filter_map(|r| Some((parse_version(&r.version).ok()?, r)))
+            .filter(|(v, _)| *v > installed)
+            .max_by(|a, b| a.0.cmp(&b.0))
+            .map(|(_, r)| r.version.clone())
+    });
+    Row {
+        title: p.map_or_else(|| e.title.clone(), |p| p.name.clone()),
+        id,
+        authors: p.map(|p| p.authors.join(", ")).unwrap_or_default(),
+        make: match (native, p.map(|p| &p.kind)) {
+            (true, _) | (_, Some(index_v2::Kind::NativeMod)) => Some(Make::Native),
+            (false, Some(_)) => Some(Make::Content),
+            (false, None) => None,
+        },
+        version: e.number.clone(),
+        on,
+        need,
+        registry_unchecked: w.v2.is_none(),
+        update,
+        dependency: e.dependency,
+        pinned: w.chosen.contains_key(&e.project),
+        local: None,
+        icon: None,
+        source_listing: None,
+        collection: None,
+        entry: Some(e.clone()),
+        unfit: None,
+        held_for: None,
+        left_out: None,
+    }
 }
 
 /// Rows in the order the list shows them: by group, then by name.

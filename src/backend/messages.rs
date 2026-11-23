@@ -112,6 +112,11 @@ pub enum Msg {
     ),
     /// `Ok(true)` when the profile now uses the new port, `Ok(false)` when it stayed.
     ProviderSwitched(PathBuf, Result<bool, String>),
+    /// Several reviewed projects provide a required dependency; the reply names the chosen one.
+    ProviderChoice(
+        Box<crate::browser::sunrise::ProviderChoiceNeeded>,
+        std::sync::mpsc::Sender<Option<String>>,
+    ),
     /// A release's verified publisher changed; `true` accepts the new one.
     PublisherChangeQuestion(
         Box<crate::browser::sunrise::PublisherChangeQuestion>,
