@@ -165,7 +165,7 @@ Native mods (docs/modding/src/how-to/native-mods.md): compile flat Rust mod proj
 - `--allow-jar-downloads`: Allow exact-hash jar downloads into the local cache for the server export; jar bytes are never included in the exported folder
 - `--instance`: The profile whose installed native mods to build, and which then plays the build (default: the selected one)
 - `--version`: For a profile, assert its current base. In server-export mode, select the installed game build to use (defaults to the newest installed release or Nightly)
-- `--trust-native-code`: Build native code from a folder the registry did not review (asked again on every run)
+- `--trust-native-code`: Build native code the registry did not review: a folder, or a profile's mods that were copied in by hand (asked again on every run)
 - `--profile` (optimized): Native mods use the pinned SDK's optimized compilation settings. The game is never rebuilt by a mod build
 
 MCP: none: the player's switch.
