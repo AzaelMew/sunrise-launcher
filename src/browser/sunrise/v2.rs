@@ -105,11 +105,20 @@ impl fmt::Display for LoadError {
 
 impl std::error::Error for LoadError {}
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize)]
 struct PersistedState {
     highest_serial: u64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     active: Option<ActiveCache>,
+}
+
+/// `state.json` as written. The serial floor is the part that guards against rollback, so it
+/// must parse; the snapshot pointer is only a cache, read separately.
+#[derive(Deserialize)]
+struct StoredState {
+    highest_serial: u64,
+    #[serde(default)]
+    active: Option<serde_json::Value>,
 }
 
 /// The committed snapshot, by its ID (`snapshot-<serial>-<16 hex digits>`); both file names are
@@ -505,16 +514,19 @@ impl Store {
         let state_path = self.cache_dir.join(STATE_FILE);
         match fs::read_to_string(&state_path) {
             Ok(text) => {
-                let parsed: PersistedState = serde_json::from_str(&text)
+                let stored: StoredState = serde_json::from_str(&text)
                     .map_err(|e| LoadError::CorruptState(e.to_string()))?;
-                if parsed
+                // A pointer this build can't read, or one naming a file outside the snapshot
+                // pattern, leaves no cached copy: the next fetch replaces it, nothing it names is
+                // deleted, and the serial floor stays.
+                let active = stored
                     .active
-                    .as_ref()
-                    .is_some_and(|active| !valid_snapshot_id(&active.snapshot))
-                {
-                    return Err(LoadError::CorruptState("invalid cached snapshot id".into()));
-                }
-                Ok(Some(parsed))
+                    .and_then(|value| serde_json::from_value::<ActiveCache>(value).ok())
+                    .filter(|active| valid_snapshot_id(&active.snapshot));
+                Ok(Some(PersistedState {
+                    highest_serial: stored.highest_serial,
+                    active,
+                }))
             }
             Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
             Err(error) => Err(LoadError::CorruptState(error.to_string())),
