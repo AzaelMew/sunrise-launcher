@@ -552,13 +552,15 @@ impl<'a> Originals<'a> {
         let mut removed = BTreeMap::new();
         for (id, seen) in inventory(home, official)? {
             let manifest = &seen.package.manifest;
-            let github = seen
-                .verified_github_origin(home)
-                .map_err(|()| unproved_switch())?;
+            let sidecar = seen
+                .verified_origin_sidecar(home)
+                .map_err(|()| unproved_switch())?
+                .map(|(_, origin)| origin);
             let has_row = doc.row(&id)?.is_some();
-            if has_row != seen.registry_claim || (has_row && github.is_some()) {
+            if has_row != seen.registry_claim || (has_row && sidecar.is_some()) {
                 return Err(unproved_switch());
             }
+            let github = sidecar.filter(|origin| origin.local_folder_path().is_none());
             // The registry row selects a checked destination, not its publisher. Only the
             // actual digest in the official catalogue can authorize destroying old bytes.
             let built_from_source = github
@@ -1733,5 +1735,53 @@ mod tests {
                 "Unknown Build: last game build is unknown.",
             ]
         );
+    }
+
+    #[test]
+    fn native_folder_receipt_becomes_a_valid_local_hold_on_switch() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path().join("camp-native");
+        let home = dir.path().join("profile");
+        fs::create_dir_all(repo.join("src")).unwrap();
+        let manifest = format!(
+            "id = 'camp_native'\nname = 'Camp Native'\nversion = '0.2.0'\napi = '0.2'\nside = 'both'\n[native]\ngame = '26.3'\nsunrise = '{}'\nmixins = '{}'\n",
+            "a".repeat(40),
+            "b".repeat(40),
+        );
+        fs::write(repo.join("sunrise-mod.toml"), &manifest).unwrap();
+        fs::write(
+            repo.join("Cargo.toml"),
+            "[package]\nname = 'camp_native'\nversion = '0.2.0'\nedition = '2024'\n",
+        )
+        .unwrap();
+        fs::write(repo.join("src/lib.rs"), "pub fn f() {}\n").unwrap();
+
+        let packages = crate::github_mods::read_local_folder(&repo).unwrap();
+        crate::github_mods::install_local_packages(&home, &packages).unwrap();
+
+        let originals = Originals::read(&home, None, &index::Index::default(), None).unwrap();
+        let original = &originals.mods["camp_native"];
+        assert_eq!(
+            original.source,
+            HeldSource::Local {
+                version: "0.2.0".into(),
+            }
+        );
+        assert!(!original.built_from_source);
+        let digest = original.seen.digest.as_deref().unwrap();
+        let held = Held::new(
+            "camp_native".into(),
+            "Camp Native".into(),
+            sha256_bytes(digest).unwrap(),
+            (HeldRoot::Native, "camp_native.smod".into()),
+            original.source.clone(),
+            original.on,
+            HeldReason::NoFit {
+                build: "dev-2026-11-23-bbbbbbb".into(),
+                detail: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(held.id(), "camp_native");
     }
 }

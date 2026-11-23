@@ -1,6 +1,6 @@
 //! One visible registry install batch, and requests that arrived after it was sealed.
 use super::*;
-use crate::github_mods_page::{Feedback, GithubInput, GithubSelection};
+use crate::github_mods_page::{Feedback, GithubInput, GithubSelection, LocalInput};
 use std::{
     collections::{BTreeMap, VecDeque},
     path::Path,
@@ -68,7 +68,9 @@ struct Running {
     batch: Arc<Mutex<Option<Vec<String>>>>,
     requests: Vec<RequestView>,
     stage: InstallProgress,
+    cancellation: Cancellation,
     github: Option<Arc<GithubInput>>,
+    local: Option<Arc<LocalInput>>,
     source: Option<RunningSource>,
     mixed: bool,
 }
@@ -81,6 +83,7 @@ struct Request {
     displayed_names: BTreeMap<String, String>,
     view: RequestView,
     github: Option<Arc<GithubInput>>,
+    local: Option<Arc<LocalInput>>,
     sources: Vec<PreparedSource>,
     mixed_registry: Vec<String>,
     picks: Option<SourcePicks>,
@@ -118,6 +121,10 @@ impl GithubTarget {
             }
     }
 
+    pub(crate) fn profile_name(&self) -> &str {
+        &self.profile.name
+    }
+
     pub(crate) fn source(&self) -> Result<SourceTarget, String> {
         Ok(SourceTarget {
             profile: self.profile.clone(),
@@ -127,6 +134,19 @@ impl GithubTarget {
                 .clone()
                 .ok_or_else(backend::no_version_installed)?,
         })
+    }
+}
+
+#[cfg(test)]
+impl GithubTarget {
+    pub(crate) fn fixture(home: &Path) -> Self {
+        let request = tests::request(home, "fixture", "test-base");
+        Self {
+            profile: request.profile,
+            identity: request.identity,
+            target: request.target,
+            release: None,
+        }
     }
 }
 
@@ -205,6 +225,7 @@ struct RunningSource {
 pub(crate) enum Kind {
     Install,
     Github,
+    Local,
     Source,
     Mixed,
     Update,
@@ -334,6 +355,11 @@ impl Installs {
                     (Some(a), Some(b)) => Arc::ptr_eq(a, b),
                     _ => false,
                 }
+                && match (&q.local, &request.local) {
+                    (None, None) => true,
+                    (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+                    _ => false,
+                }
         }) {
             self.waiting.push_back(request);
         }
@@ -341,26 +367,43 @@ impl Installs {
 
     pub(super) fn github_feedback(&self, event: &Worker) -> Option<Feedback> {
         let run = self.running.as_ref()?;
-        let input = run.github.as_ref()?;
         let Worker::Done(result) = event else {
             return None;
         };
-        let update = matches!(input.selection, GithubSelection::Update(_));
+        if let Some(local) = run.local.as_ref() {
+            let result = match result {
+                Ok(_) => Ok(if local.packages.len() == 1 {
+                    trf("Installed {mod}.", &[("mod", &local.packages[0].name)])
+                } else {
+                    trf(
+                        "Installed {count} mods.",
+                        &[("count", &local.packages.len().to_string())],
+                    )
+                }),
+                Err(InstallError::Cancelled | InstallError::Source(SourceError::Cancelled)) => {
+                    return None;
+                }
+                Err(error) => Err((failure_line(error).into(), error.to_string())),
+            };
+            return Some(Feedback {
+                profile: run.profile.clone(),
+                link: local.label.clone(),
+                result,
+                retry: None,
+                local: true,
+            });
+        }
+        let input = run.github.as_ref()?;
         let retry = match result {
             Err(
                 InstallError::Download(_)
                 | InstallError::GithubBuild(_)
                 | InstallError::Source(SourceError::Tools(_) | SourceError::Build { .. }),
-            ) if !update => Some(input.clone()),
+            ) => Some(input.clone()),
             _ => None,
         };
         let result = match result {
-            Ok(_) => Ok(if update {
-                tr("Updated the GitHub mod.")
-            } else {
-                tr("Installed the selected GitHub mods.")
-            }
-            .into()),
+            Ok(_) => Ok(tr("Installed the selected GitHub mods.").into()),
             Err(InstallError::Cancelled | InstallError::Source(SourceError::Cancelled)) => {
                 return None
             }
@@ -372,7 +415,6 @@ impl Installs {
                     GithubSelection::Add(packages) => {
                         packages.iter().map(|p| p.name.as_str()).collect()
                     }
-                    GithubSelection::Update(package) => vec![package.name.as_str()],
                 };
                 let name = match names.as_slice() {
                     [one] => (*one).to_owned(),
@@ -388,6 +430,7 @@ impl Installs {
             link: input.link.clone(),
             result,
             retry,
+            local: false,
         })
     }
 
@@ -497,7 +540,7 @@ impl Installs {
         }
         if matches!(
             run.requests[0].kind,
-            Kind::Install | Kind::Github | Kind::Source | Kind::Mixed
+            Kind::Install | Kind::Github | Kind::Local | Kind::Source | Kind::Mixed
         ) {
             return None;
         }
@@ -572,8 +615,7 @@ impl Installs {
                 if self
                     .running
                     .as_ref()
-                    .and_then(|run| run.source.as_ref())
-                    .is_some_and(|source| source.cancellation.is_stopped())
+                    .is_some_and(|run| run.cancellation.is_stopped())
                 {
                     let _ = reply.send(false);
                     return false;
@@ -814,6 +856,7 @@ impl Launcher {
                 ids,
             },
             github: None,
+            local: None,
             sources: inputs,
             mixed_registry: registry,
             picks: None,
@@ -832,27 +875,36 @@ impl Launcher {
 
     pub(crate) fn source_activity(&self) -> Option<SourceActivity<'_>> {
         let run = self.mods.installs.running.as_ref()?;
-        let source = run.source.as_ref().filter(|source| source.visible)?;
+        if let Some(source) = run.source.as_ref().filter(|source| source.visible) {
+            return Some(SourceActivity {
+                ids: &source.ids,
+                names: &source.names,
+                progress: run.stage,
+                stopping: source.cancellation.is_stopped(),
+            });
+        }
+        let local = run.local.as_ref()?;
         Some(SourceActivity {
-            ids: &source.ids,
-            names: &source.names,
+            ids: &run.requests[0].ids,
+            names: &local.names,
             progress: run.stage,
-            stopping: source.cancellation.is_stopped(),
+            stopping: run.cancellation.is_stopped(),
         })
     }
 
     pub(crate) fn stop_source(&mut self) {
-        let Some(source) = self
+        let Some(cancellation) = self
             .mods
             .installs
             .running
             .as_ref()
-            .and_then(|run| run.source.as_ref())
+            .filter(|run| run.source.is_some() || run.local.is_some())
+            .map(|run| run.cancellation.clone())
         else {
             return;
         };
-        source.cancellation.stop();
-        if source.cancellation.is_stopped() {
+        cancellation.stop();
+        if cancellation.is_stopped() {
             self.answer_source_question(Ok(false));
             if let Some((_, reply)) = self.mods.installs.world.take() {
                 let _ = reply.send(false);
@@ -1108,6 +1160,7 @@ impl Launcher {
                 ids,
             },
             github: None,
+            local: None,
             sources: Vec::new(),
             mixed_registry: Vec::new(),
             picks: Some(picks),
@@ -1130,12 +1183,11 @@ impl Launcher {
             )
             .into());
         }
-        let (kind, ids) = match &input.selection {
+        let (kind, ids): (Kind, Vec<String>) = match &input.selection {
             GithubSelection::Add(packages) => (
                 Kind::Github,
                 packages.iter().map(|p| p.id.clone()).collect(),
             ),
-            GithubSelection::Update(package) => (Kind::Github, vec![package.id.clone()]),
             GithubSelection::Source(packages) => (
                 Kind::Source,
                 packages.iter().map(|p| p.origin().id.clone()).collect(),
@@ -1161,6 +1213,37 @@ impl Launcher {
                 ids,
             },
             github: Some(input),
+            local: None,
+            sources: Vec::new(),
+            mixed_registry: Vec::new(),
+            picks: None,
+        });
+        self.start_registry_queue();
+        Ok(())
+    }
+
+    pub(crate) fn queue_local(&mut self, input: Arc<LocalInput>) -> Result<(), String> {
+        let target = &input.target;
+        if !target.same_destination(&self.github_target()?) {
+            return Err(tr(
+                "The profile or game build changed. Check the source again; nothing was changed.",
+            )
+            .into());
+        }
+        let ids: Vec<String> = input.packages.iter().map(|p| p.id.clone()).collect();
+        self.mods.installs.submit(Request {
+            identity: target.identity,
+            profile: target.profile.clone(),
+            target: target.target.clone(),
+            release: target.release.clone(),
+            displayed_names: BTreeMap::new(),
+            view: RequestView {
+                kind: Kind::Local,
+                card: input.label.clone(),
+                ids,
+            },
+            github: None,
+            local: Some(input),
             sources: Vec::new(),
             mixed_registry: Vec::new(),
             picks: None,
@@ -1207,6 +1290,7 @@ impl Launcher {
             displayed_names,
             view: RequestView { kind, card, ids },
             github: None,
+            local: None,
             sources: Vec::new(),
             mixed_registry: Vec::new(),
             picks: None,
@@ -1311,8 +1395,10 @@ impl Launcher {
             requests: views,
             mixed,
             stage: InstallProgress::Checking,
+            cancellation: cancellation.clone(),
             source,
             github: request.github.clone(),
+            local: request.local.clone(),
         });
         let tx = self.mods.tx.clone();
         let launcher = self.tx.clone();
@@ -1417,30 +1503,37 @@ impl Launcher {
                 Kind::Github => {
                     let input = request.github.as_ref().expect("a checked GitHub request");
                     match &input.selection {
-                        GithubSelection::Update(package) => sunrise::update_github(
+                        GithubSelection::Add(packages) => sunrise::install_github_manual(
                             &request.profile,
                             request.identity,
-                            &input.source,
-                            package,
+                            sunrise::ManualRelease {
+                                found: &input.source,
+                                selected: packages,
+                                base: request.target.as_deref(),
+                            },
                             choose,
                             hooks,
                             &approve,
-                        )
-                        .map(|_| InstalledBatch::default()),
-                        GithubSelection::Add(packages) => sunrise::add_github(
-                            &request.profile,
-                            request.identity,
-                            &input.source,
-                            packages,
-                            request.target.as_deref(),
-                            choose,
-                            hooks,
                         )
                         .map(|_| InstalledBatch::default()),
                         GithubSelection::Source(_) => {
                             unreachable!("source installs use the source worker")
                         }
                     }
+                }
+                Kind::Local => {
+                    let input = request.local.as_ref().expect("a checked local request");
+                    sunrise::install_local(
+                        &request.profile,
+                        request.identity,
+                        &input.packages,
+                        &cancellation,
+                        &|step| {
+                            let _ = post(Worker::Progress(step));
+                        },
+                        &approve,
+                    )
+                    .map(|_| InstalledBatch::default())
                 }
                 Kind::Source => {
                     let hooks = SourceHooks {
@@ -1685,6 +1778,7 @@ mod tests {
             release: None,
             displayed_names: BTreeMap::new(),
             github: None,
+            local: None,
             sources: Vec::new(),
             mixed_registry: Vec::new(),
             picks: None,
@@ -1706,7 +1800,9 @@ mod tests {
                 batch: Arc::new(Mutex::new(Some(first.view.ids.clone()))),
                 requests: vec![first.view],
                 stage: InstallProgress::Checking,
+                cancellation: Cancellation::default(),
                 github: None,
+                local: None,
                 source: None,
                 mixed: false,
             }),
@@ -1956,5 +2052,62 @@ mod tests {
                 kept.then(|| "accepted".into())
             );
         }
+    }
+
+    #[test]
+    fn local_install_stays_tracked_and_honours_cancellation() {
+        let root = homes();
+        let smod = root.path().join("local-tweaks.smod");
+        let bytes = sunrise_launcher_smod::Package::write_files(
+            "id = 'local_tweaks'\nname = 'Local Tweaks'\nversion = '0.1.0'\napi = '0.2'\nside = 'both'\n",
+            &[],
+        )
+        .unwrap();
+        std::fs::write(&smod, &bytes).unwrap();
+        let pkg = sunrise_launcher::github_mods::read_local_smod(&smod).unwrap();
+
+        let mut installs = with_running(root.path());
+        let run = installs.running.as_mut().unwrap();
+        let target = GithubTarget {
+            profile: run.profile.clone(),
+            identity: run.identity,
+            target: run.target.clone(),
+            release: None,
+        };
+        run.requests = vec![RequestView {
+            kind: Kind::Local,
+            card: smod.display().to_string(),
+            ids: vec![pkg.id.clone()],
+        }];
+        run.local = Some(Arc::new(LocalInput {
+            target,
+            label: smod.display().to_string(),
+            names: vec![pkg.name.clone()],
+            packages: vec![pkg],
+        }));
+
+        // Stopping before publication rejects any subsequent world review prompt and suppresses error banners.
+        run.cancellation.stop();
+        let (reply, answer) = std::sync::mpsc::channel();
+        let question = WorldQuestion {
+            removal: false,
+            cancel_default: true,
+            heading: "Review".into(),
+            detail: "Detail".into(),
+        };
+        assert!(!installs.handle(Worker::World(question, reply)));
+        assert!(!answer.recv().unwrap());
+        assert!(installs
+            .github_feedback(&Worker::Done(Err(InstallError::Cancelled)))
+            .is_none());
+
+        // Successful completion reports the installed mod name and clears running state.
+        let ok = installs
+            .github_feedback(&Worker::Done(Ok(InstalledBatch::default())))
+            .unwrap();
+        assert!(ok.local);
+        assert_eq!(ok.result.unwrap(), "Installed Local Tweaks.");
+        assert!(installs.handle(Worker::Done(Ok(InstalledBatch::default()))));
+        assert!(installs.running.is_none());
     }
 }
