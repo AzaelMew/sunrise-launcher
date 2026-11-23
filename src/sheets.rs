@@ -417,7 +417,7 @@ impl Launcher {
             || self.source_question().is_some()
             || self.mods.installs.question.is_some()
             || self.mods.installs.world.is_some()
-            || self.owner_screen_open
+            || self.sign_in_screen.open
             || self.instances.dialog.is_some()
             || self.ui.sheets.profile_action.is_some()
             || (self.ui.page == crate::frame::Page::Hosting && self.servers.create.is_some())

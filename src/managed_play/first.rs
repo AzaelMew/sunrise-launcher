@@ -727,7 +727,9 @@ pub(super) fn game_lock(home: &Path) -> Result<HomeLockGuard, String> {
 }
 
 mod edits;
-pub(crate) use edits::{changed_files, copy_install_inputs, CandidateImage, Edit};
+pub(crate) use edits::{
+    changed_files, copy_install_inputs, CandidateImage, Edit, SwitchPublication,
+};
 
 #[cfg(test)]
 mod tests;

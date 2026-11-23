@@ -570,7 +570,7 @@ impl Launcher {
             Some(account) => SignIn::start_for(account.clone()),
             None => SignIn::start(),
         });
-        self.sign_in_target = target;
+        self.sign_in_screen.target = target;
         self.sign_in_state = Some(SignInState::Starting);
     }
 
@@ -580,7 +580,7 @@ impl Launcher {
             old.cancel();
         }
         self.sign_in_state = None;
-        self.sign_in_target = None;
+        self.sign_in_screen.target = None;
         self.sign_in_copies.clear();
     }
 
@@ -606,6 +606,22 @@ impl Launcher {
     }
 }
 
+/// Sign-in screen state owned by [`Launcher`] and shared directly with tests so only starting
+/// the background worker is faked.
+#[derive(Default)]
+pub(crate) struct SignInScreen {
+    /// The account being re-signed-in, or `None` when adding a new account.
+    pub(crate) target: Option<account::Account>,
+    /// Whether the sign-in screen is open.
+    pub(crate) open: bool,
+}
+
+impl SignInScreen {
+    fn retry_target(&self) -> Option<String> {
+        self.target.as_ref().map(|account| account.uuid.clone())
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 enum SignInRefusal {
     Busy,
@@ -617,12 +633,9 @@ trait SignInHost {
     /// A game is starting or the account can't change now.
     fn locked(&self) -> bool;
     fn account(&self, uuid: &str) -> Option<account::Account>;
-    /// The account the sign-in screen on show was for, if any.
-    fn retry_target(&self) -> Option<String>;
+    fn screen(&mut self) -> &mut SignInScreen;
     /// Starts the sign-in worker for `target`.
     fn start_worker(&mut self, target: Option<account::Account>);
-    /// Shows the sign-in screen, where the worker's code appears.
-    fn open_screen(&mut self);
     fn refuse(&mut self, refusal: SignInRefusal);
 }
 
@@ -635,18 +648,12 @@ impl SignInHost for Launcher {
         self.accounts.find(uuid).cloned()
     }
 
-    fn retry_target(&self) -> Option<String> {
-        self.sign_in_target
-            .as_ref()
-            .map(|account| account.uuid.clone())
+    fn screen(&mut self) -> &mut SignInScreen {
+        &mut self.sign_in_screen
     }
 
     fn start_worker(&mut self, target: Option<account::Account>) {
         self.begin_sign_in(target);
-    }
-
-    fn open_screen(&mut self) {
-        self.owner_screen_open = true;
     }
 
     fn refuse(&mut self, refusal: SignInRefusal) {
@@ -672,13 +679,14 @@ fn sign_in_click(host: &mut impl SignInHost, uuid: Option<String>) {
             None => return host.refuse(SignInRefusal::AccountRemoved),
         },
     };
+    host.screen().target = target.clone();
     host.start_worker(target);
-    host.open_screen();
+    host.screen().open = true;
 }
 
 /// Retry on the sign-in screen: the account that screen was for, or a new one.
 fn retry_click(host: &mut impl SignInHost) {
-    let target = host.retry_target();
+    let target = host.screen().retry_target();
     sign_in_click(host, target);
 }
 
@@ -690,9 +698,8 @@ mod tests {
     struct FakeSignIn {
         locked: bool,
         accounts: Vec<account::Account>,
-        target: Option<String>,
+        screen: SignInScreen,
         started: Vec<Option<String>>,
-        screen_open: bool,
         refused: Vec<SignInRefusal>,
     }
 
@@ -703,15 +710,12 @@ mod tests {
         fn account(&self, uuid: &str) -> Option<account::Account> {
             self.accounts.iter().find(|a| a.uuid == uuid).cloned()
         }
-        fn retry_target(&self) -> Option<String> {
-            self.target.clone()
+        fn screen(&mut self) -> &mut SignInScreen {
+            &mut self.screen
         }
         fn start_worker(&mut self, target: Option<account::Account>) {
-            self.target = target.as_ref().map(|account| account.uuid.clone());
-            self.started.push(self.target.clone());
-        }
-        fn open_screen(&mut self) {
-            self.screen_open = true;
+            self.started
+                .push(target.as_ref().map(|account| account.uuid.clone()));
         }
         fn refuse(&mut self, refusal: SignInRefusal) {
             self.refused.push(refusal);
@@ -746,34 +750,43 @@ mod tests {
         };
         // Sign in again opens the screen for that account; a retry after an error reuses it.
         sign_in_click(&mut host, Some("a1".into()));
-        assert!(host.screen_open);
+        assert!(host.screen.open);
+        assert_eq!(host.screen.retry_target().as_deref(), Some("a1"));
         retry_click(&mut host);
         assert_eq!(host.started, [Some("a1".into()), Some("a1".into())]);
 
         // The account was removed meanwhile: retry starts nothing.
         host.accounts.clear();
-        host.screen_open = false;
+        host.screen.open = false;
         retry_click(&mut host);
         assert_eq!(host.started.len(), 2);
-        assert!(!host.screen_open);
+        assert!(!host.screen.open);
         assert_eq!(host.refused, [SignInRefusal::AccountRemoved]);
 
         // While a game starts, neither button opens the screen or starts a worker.
         let mut starting = FakeSignIn {
             locked: true,
-            target: Some("a1".into()),
+            screen: SignInScreen {
+                target: Some(account::Account {
+                    uuid: "a1".into(),
+                    name: "Original account".into(),
+                    skin: None,
+                    cape: None,
+                }),
+                open: false,
+            },
             ..FakeSignIn::default()
         };
         sign_in_click(&mut starting, Some("a1".into()));
         retry_click(&mut starting);
-        assert!(starting.started.is_empty() && !starting.screen_open);
+        assert!(starting.started.is_empty() && !starting.screen.open);
         assert_eq!(starting.refused, [SignInRefusal::Busy, SignInRefusal::Busy]);
 
         // A screen with no account behind it signs a new account in.
         let mut fresh = FakeSignIn::default();
         retry_click(&mut fresh);
         assert_eq!(fresh.started, [None]);
-        assert!(fresh.screen_open);
+        assert!(fresh.screen.open);
     }
 
     #[test]

@@ -304,7 +304,7 @@ struct Launcher {
     search: command_search::Search,
     /// When page switches last checked every account's sign-in.
     auth_checked: Option<Instant>,
-    sign_in_target: Option<account::Account>,
+    sign_in_screen: launcher_play::SignInScreen,
     sign_in_copies: owner_page::SignInCopies,
     auth_busy: HashMap<String, u64>,
     auth_next: u64,
@@ -316,7 +316,6 @@ struct Launcher {
     /// none until the keychain has been read.
     owner: Option<bool>,
     /// Play was refused (or Home's Sign in pressed): the owner gate's screen is open.
-    owner_screen_open: bool,
     /// The game is waiting for its session (a token renewal), before it starts.
     starting_client: Option<String>,
     /// Which step the accepted Play is at, for the label while the game is starting.

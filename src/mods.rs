@@ -592,7 +592,19 @@ pub(crate) struct HomeModFacts {
 struct HomeModLabels {
     inventory: u64,
     index: Option<Arc<Index>>,
+    unfit_revision: u64,
     rows: Arc<HashMap<String, HomeModFacts>>,
+}
+
+impl HomeModLabels {
+    fn matches(&self, inventory: u64, index: &Option<Arc<Index>>, unfit_revision: u64) -> bool {
+        let same_index = match (&self.index, index) {
+            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+            (None, None) => true,
+            _ => false,
+        };
+        self.inventory == inventory && self.unfit_revision == unfit_revision && same_index
+    }
 }
 
 impl Launcher {
@@ -819,13 +831,9 @@ impl Launcher {
         inventory: u64,
         index: Option<Arc<Index>>,
     ) -> Arc<HashMap<String, HomeModFacts>> {
+        let unfit_revision = sunrise::unfit_updates_revision();
         if let Some(labels) = &self.ui.mods.home_mod_labels {
-            let same_index = match (&labels.index, &index) {
-                (Some(a), Some(b)) => Arc::ptr_eq(a, b),
-                (None, None) => true,
-                _ => false,
-            };
-            if labels.inventory == inventory && same_index {
+            if labels.matches(inventory, &index, unfit_revision) {
                 return labels.rows.clone();
             }
         }
@@ -854,6 +862,7 @@ impl Launcher {
         self.ui.mods.home_mod_labels = Some(HomeModLabels {
             inventory,
             index,
+            unfit_revision,
             rows: rows.clone(),
         });
         rows
@@ -863,6 +872,8 @@ impl Launcher {
         self.leave_section(true);
         // Enter Discover with the requested kind, not the shelf we last left open.
         self.ui.mods.shelf = Shelf::Resource;
+        // Force one fresh search for the cleared query even when Resource was already selected.
+        self.ui.mods.packs.status = pack_discover::Status::Idle;
         self.choose_view(Page::PackFind);
     }
 
@@ -1927,5 +1938,21 @@ mod installed_refresh_tests {
         assert_eq!(mods.visible_notice(Some(&install)), Some(batch));
         mods.notice = None;
         assert_eq!(mods.visible_notice(None), Some(Ok(backup)));
+    }
+
+    #[test]
+    fn home_mod_labels_invalidate_when_unfit_updates_revision_changes() {
+        let index = Some(Arc::new(Index::default()));
+        let cached = HomeModLabels {
+            inventory: 7,
+            index: index.clone(),
+            unfit_revision: 3,
+            rows: Arc::new(HashMap::new()),
+        };
+        assert!(cached.matches(7, &index, 3));
+        assert!(
+            !cached.matches(7, &index, 4),
+            "a newly recorded unfit update must refresh Home's mod status even with unchanged inventory and index"
+        );
     }
 }

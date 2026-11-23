@@ -169,7 +169,7 @@ impl Launcher {
             account_menu: account_chip::Menu::default(),
             search: command_search::Search::default(),
             auth_checked: None,
-            sign_in_target: None,
+            sign_in_screen: launcher_play::SignInScreen::default(),
             sign_in_copies: owner_page::SignInCopies::default(),
             auth_busy: HashMap::new(),
             auth_next: 0,
@@ -177,7 +177,6 @@ impl Launcher {
             sign_in_state: None,
             keychain: None,
             owner: None,
-            owner_screen_open: false,
             starting_client: None,
             play_step: None,
             starting_play: None,
@@ -357,16 +356,18 @@ impl Launcher {
         std::thread::spawn(move || {
             let message = match check {
                 UpdateCheck::Startup => {
+                    let mut final_releases = None;
                     let updates = backend::releases_and_updates(|releases| {
                         if let Ok(list) = &releases {
-                            if let Err(error) = backend::note_play_catalogue(list) {
-                                eprintln!(
-                                    "Could not remember the current installed Nightly: {error}"
-                                );
-                            }
+                            final_releases = Some(list.clone());
                         }
                         let _ = tx.send(Msg::Releases(releases));
                     });
+                    if let Some(list) = &final_releases {
+                        if let Err(error) = backend::note_play_catalogue(list) {
+                            eprintln!("Could not remember the current installed Nightly: {error}");
+                        }
+                    }
                     Msg::Updates(Box::new(updates))
                 }
                 UpdateCheck::Scheduled => Msg::Updates(Box::new(backend::check_updates())),

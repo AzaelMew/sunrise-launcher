@@ -3,7 +3,7 @@ use super::*;
 use sunrise_launcher::managed_play::StartError;
 
 /// A canceled Play is not a build failure. Otherwise keep the window open for the native
-/// build diagnostic (or consent prompt) instead of restarting as soon as Play stops.
+/// build diagnostic instead of restarting as soon as Play stops.
 fn settle_managed_play_error(
     error: &StartError,
     active_play_build: bool,
@@ -28,7 +28,12 @@ impl Launcher {
     pub(crate) fn drain(&mut self, window: gpui::AnyWindowHandle, cx: &mut Context<Self>) {
         let mut changed = false;
         self.perf.tick();
-        if self.perf.resting(Duration::from_millis(250)) {
+        if self.bench.as_ref().is_some_and(perf::Bench::ready_for_idle) {
+            // Finish one-time fallback font loading before the benchmark starts its idle sample.
+            let _ = cx.update_window(window, |_, window, _| {
+                language_page::warm_all_language_names(window)
+            });
+        } else if self.bench.is_none() && self.perf.resting(Duration::from_millis(250)) {
             let _ = cx.update_window(window, |_, window, _| {
                 language_page::warm_language_name(window)
             });
@@ -261,7 +266,7 @@ impl Launcher {
                         Err(StartError::Account(refused)) => {
                             if refused.keyring.is_none() {
                                 self.owner = Some(false);
-                                self.owner_screen_open = true;
+                                self.sign_in_screen.open = true;
                             }
                             self.client_error = Some(refused.in_window());
                         }
@@ -699,13 +704,13 @@ impl Launcher {
             if let Some(state) = sign_in_change(&mut self.sign_in_state, sign_in.state()) {
                 if let SignInState::Done(Ok(ref account)) = state {
                     self.auth_busy.remove(&account.uuid);
-                    self.sign_in_target = None;
+                    self.sign_in_screen.target = None;
                     self.accounts = Accounts::load();
                     self.load_profile_heads();
                     self.load_auth_statuses(false);
                     // Sign-in refuses accounts that don't own the game.
                     self.owner = Some(true);
-                    self.owner_screen_open = false;
+                    self.sign_in_screen.open = false;
                     self.client_error = None;
                     if !self.settings.owner_notice_seen {
                         self.settings.owner_notice_seen = true;
