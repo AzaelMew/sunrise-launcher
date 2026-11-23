@@ -371,15 +371,25 @@ impl Launcher {
         let p = palette();
         let on = rgb(p.accent_on);
         // Xmilon's accent halo sits outside the button. Hover strengthens it without putting
-        // a veil over the gradient or its text.
+        // a veil over the gradient or its text. Inside, the glass controls' top highlight: a
+        // 1 px line of light along the upper edge, clear of the label.
         let glow = move |hover| {
-            vec![gpui::BoxShadow {
-                color: Hsla::from(rgb(p.play_glow)).opacity(if hover { 0.78 } else { 0.58 }),
-                offset: gpui::point(px(0.), px(if hover { 9. } else { 6. })),
-                blur_radius: px(if hover { 32. } else { 22. }),
-                spread_radius: px(-8.),
-                inset: false,
-            }]
+            vec![
+                gpui::BoxShadow {
+                    color: Hsla::from(rgb(p.play_glow)).opacity(if hover { 0.78 } else { 0.58 }),
+                    offset: gpui::point(px(0.), px(if hover { 9. } else { 6. })),
+                    blur_radius: px(if hover { 32. } else { 22. }),
+                    spread_radius: px(-8.),
+                    inset: false,
+                },
+                gpui::BoxShadow {
+                    color: gpui::white().opacity(0.28),
+                    offset: gpui::point(px(0.), px(1.)),
+                    blur_radius: px(0.),
+                    spread_radius: px(0.),
+                    inset: true,
+                },
+            ]
         };
         let signed_out = view.main == Main::SignIn;
         let play = crate::frame::input(false)
@@ -395,7 +405,12 @@ impl Launcher {
             .text_size(px(tokens::LEAD))
             .text_color(on)
             // Signed out: plainly disabled, a muted fill with no glow.
-            .when(!signed_out, |d| d.bg(p.play_gradient()).shadow(glow(false)))
+            // The glass edge every control has, lighter on the accent so it shows.
+            .when(!signed_out, |d| {
+                d.bg(p.play_gradient())
+                    .border_color(gpui::white().opacity(0.18))
+                    .shadow(glow(false))
+            })
             .when(signed_out, |d| {
                 d.bg(rgb(p.hover))
                     .text_color(rgb(p.muted))

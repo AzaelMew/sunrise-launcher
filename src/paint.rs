@@ -30,7 +30,7 @@ const BRIGHT: [u32; 2] = [sunrise_launcher_theme::BRIGHT_BACKDROP, 0xffffff];
 const PLATE_BASE: f32 = 0.81;
 /// How far Play's colour is pulled toward the theme's own chrome (OKLab), so it sits in the theme
 /// instead of shouting over it. The white label's fit comes after, unchanged.
-pub(crate) const PLAY_TONE: f32 = 0.3;
+pub(crate) const PLAY_TONE: f32 = 0.15;
 /// Text reads at this contrast on its surface; edges, marks and the focus ring at the other.
 const TEXT: f32 = 4.5;
 const MARK: f32 = 3.;
