@@ -187,7 +187,7 @@ fn prepare(
         expected
     };
     if program != expected {
-        return Err(unsettled());
+        return Err(unsettled!());
     }
     // The source program was hashed by verified_handoff; a Mac bundle must hard-link it.
     // None of these fields may be selected by inherited environment or by instance Settings.

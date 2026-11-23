@@ -47,11 +47,11 @@ fn read(cache: &Path) -> Result<BTreeMap<PathBuf, Identity>, String> {
     let roster: Roster = serde_json::from_slice(&bytes).map_err(|e| at(&path, e))?;
     let mut roots = BTreeMap::new();
     if roster.version != 1 {
-        return Err(at(&path, unsettled()));
+        return Err(at(&path, unsettled!()));
     }
     for (root, id) in roster.roots {
         if !root.is_absolute() || roots.insert(root, id).is_some() {
-            return Err(at(&path, unsettled()));
+            return Err(at(&path, unsettled!()));
         }
     }
     Ok(roots)
@@ -68,7 +68,7 @@ pub(super) fn register(cache: &Path, game_home: &Path, profile: &Path) -> Result
         [] => (),
         [collection, _] if *collection == "instances" => (),
         [collection, _, home] if *collection == "sunrise-packs" && *home == "home" => (),
-        _ => return Err(at(&profile, unsettled())),
+        _ => return Err(at(&profile, unsettled!())),
     }
     register_root(cache, root)
 }
@@ -78,7 +78,7 @@ fn register_root(cache: &Path, root: PathBuf) -> Result<(), String> {
     let id = Identity::of(&root)?;
     match roots.get(&root) {
         Some(previous) if *previous == id => return Ok(()),
-        Some(_) => return Err(at(&root, unsettled())),
+        Some(_) => return Err(at(&root, unsettled!())),
         None => (),
     }
     roots.insert(root, id);
@@ -110,7 +110,7 @@ pub(crate) fn remap_relocated_root(
             .expect("relocated game directory name"),
     );
     if Identity::of(&old)? != id || roots.contains_key(&new) {
-        return Err(at(&old, unsettled()));
+        return Err(at(&old, unsettled!()));
     }
     roots.insert(new, Identity::of(staged_game)?);
     save(staged_cache, roots)
@@ -132,7 +132,7 @@ pub(super) fn referenced(cache: &Path, game: &Path, tag: &str) -> Result<bool, S
     let roots = read(cache)?;
     for (root, id) in &roots {
         if root.canonicalize().map_err(|e| at(root, e))? != *root || Identity::of(root)? != *id {
-            return Err(at(root, unsettled()));
+            return Err(at(root, unsettled!()));
         }
         if scan_game(root, tag)? {
             return Ok(true);
@@ -158,13 +158,13 @@ fn scan_game(root: &Path, tag: &str) -> Result<bool, String> {
             }
             Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
             Err(e) => return Err(at(&collection, e)),
-            Ok(_) => return Err(at(&collection, unsettled())),
+            Ok(_) => return Err(at(&collection, unsettled!())),
         };
         for entry in entries {
             let path = entry.map_err(|e| at(&collection, e))?.path();
             let meta = fs::symlink_metadata(&path).map_err(|e| at(&path, e))?;
             if !plain_file(&meta) {
-                return Err(at(&path, unsettled()));
+                return Err(at(&path, unsettled!()));
             }
             if meta.is_dir() {
                 let home = child.map_or(path.clone(), |child| path.join(child));
@@ -182,7 +182,7 @@ fn refers(home: &Path, tag: &str) -> Result<bool, String> {
         Ok(meta) if meta.is_dir() && plain_file(&meta) => (),
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
         Err(e) => return Err(at(home, e)),
-        Ok(_) => return Err(at(home, unsettled())),
+        Ok(_) => return Err(at(home, unsettled!())),
     }
     let snapshot = crate::profile_txn::references(home)?;
     // ASCII tags can refer to the same entry on case-insensitive volumes. Keep both
