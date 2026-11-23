@@ -42,6 +42,8 @@ struct ReceiptRead {
 
 struct Running {
     tag: String,
+    /// The profile and the build it played when the switch began, shown until the switch ends.
+    from: (PathBuf, Option<String>),
     back: Option<Sheet>,
     pending: Option<Pending>,
     progress: InstallProgress,
@@ -107,6 +109,14 @@ impl Launcher {
         }
     }
 
+    /// The build `home` played when a switch running on it began.
+    pub(crate) fn switch_base(&self, home: &Path) -> Option<&str> {
+        let running = self.ui.sheets.switching.running.as_ref()?;
+        (running.from.0 == home)
+            .then_some(running.from.1.as_deref())
+            .flatten()
+    }
+
     pub(crate) fn switch_busy(&self) -> bool {
         self.ui.sheets.switching.running.is_some()
             || self.ui.sheets.switching.provider.is_some()
@@ -129,8 +139,10 @@ impl Launcher {
         };
         let release = self.release_to_install(&tag);
         let stop = native_mods::Cancellation::default();
+        let from = (instance.home.clone(), self.profile_target(&instance));
         self.ui.sheets.switching.running = Some(Running {
             tag: tag.clone(),
+            from,
             back: self.ui.sheet,
             pending: Some(Pending {
                 instance,
@@ -369,6 +381,7 @@ impl Launcher {
         let body = if let Some((question, _)) = &running.question {
             let show = self.ui.sheets.details;
             let omissions = question.has_omissions();
+            let one = question.held.len() + question.unproved.len() == 1;
             let answer = |decision| {
                 cx.listener(move |this, _: &ClickEvent, _, cx| {
                     if let Some((_, reply)) = this
@@ -488,14 +501,23 @@ impl Launcher {
                                 .on_click(answer(SwitchDecision::Cancel)),
                         )
                         .children(omissions.then(|| {
-                            button("switch-remove", tr("Switch and remove them"))
-                                .text_color(rgb(palette().danger))
-                                .on_click(answer(SwitchDecision::Remove))
+                            button(
+                                "switch-remove",
+                                if one {
+                                    tr("Switch and remove it")
+                                } else {
+                                    tr("Switch and remove them")
+                                },
+                            )
+                            .text_color(rgb(palette().danger))
+                            .on_click(answer(SwitchDecision::Remove))
                         }))
                         .child(
                             crate::frame::primary(
                                 "switch-anyway",
-                                if omissions {
+                                if omissions && one {
+                                    tr("Switch and turn it off")
+                                } else if omissions {
                                     tr("Switch and turn them off")
                                 } else {
                                     tr("Switch anyway")
