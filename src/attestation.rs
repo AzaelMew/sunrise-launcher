@@ -19,7 +19,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fmt;
 use std::fs;
-use std::io::Write as _;
 use std::path::Path;
 
 pub use sunrise_attestation::{Attested, PUBLIC_GOOD_TRUSTED_ROOT};
@@ -176,11 +175,13 @@ impl fmt::Display for Error {
                 &[("workflow", workflow)],
             )),
             Self::PublisherChanged(change) => f.write_str(&trf(
-                "The publisher for this mod changed from {old_repo} ({old_workflow}) to {new_repo} ({new_workflow}).",
+                "The publisher for this mod changed from {old_repo} (repository {old_id}, {old_workflow}) to {new_repo} (repository {new_id}, {new_workflow}).",
                 &[
                     ("old_repo", &change.pinned.repository_name),
+                    ("old_id", &change.pinned.repository_id.to_string()),
                     ("old_workflow", &change.pinned.workflow_path),
                     ("new_repo", &change.incoming.repository_name),
+                    ("new_id", &change.incoming.repository_id.to_string()),
                     ("new_workflow", &change.incoming.workflow_path),
                 ],
             )),
@@ -403,24 +404,42 @@ pub fn pin_or_check_in(
     })
 }
 
-/// Replace the remembered pin for `project_id` on this computer after the player explicitly accepts
-/// a publisher change.
-pub fn accept_pin(project_id: &str, incoming: &PublisherPin) -> Result<(), Error> {
-    accept_pin_in(&backend::data_dir(), project_id, incoming)
+/// Replace the remembered pin on this computer after the player explicitly accepts `change`.
+/// Compares the current pin's identity against `change.pinned` under the pin lock so a stale
+/// confirmation cannot overwrite a publisher accepted in the meantime.
+pub fn accept_pin(change: &PublisherChange) -> Result<(), Error> {
+    accept_pin_in(&backend::data_dir(), change)
 }
 
-/// Replace the remembered pin for `project_id` in `data_dir` after the player explicitly accepts a
-/// publisher change.
-pub fn accept_pin_in(
-    data_dir: &Path,
-    project_id: &str,
-    incoming: &PublisherPin,
-) -> Result<(), Error> {
+/// Replace the remembered pin in `data_dir` after the player explicitly accepts `change`.
+/// Compares the current pin's identity against `change.pinned` under the pin lock so a stale
+/// confirmation cannot overwrite a publisher accepted in the meantime.
+pub fn accept_pin_in(data_dir: &Path, change: &PublisherChange) -> Result<(), Error> {
     under_lock(data_dir, || {
         let mut file = load_file(data_dir)?;
-        file.projects
-            .insert(project_id.to_owned(), incoming.clone());
-        save_file(data_dir, &file)
+        match file.projects.get_mut(&change.project_id) {
+            None => {
+                file.projects
+                    .insert(change.project_id.clone(), change.incoming.clone());
+                save_file(data_dir, &file)
+            }
+            Some(current) if current.matches(&change.pinned) => {
+                *current = change.incoming.clone();
+                save_file(data_dir, &file)
+            }
+            Some(current) if current.matches(&change.incoming) => {
+                if current.repository_name != change.incoming.repository_name {
+                    current.repository_name = change.incoming.repository_name.clone();
+                    save_file(data_dir, &file)?;
+                }
+                Ok(())
+            }
+            Some(current) => Err(Error::PublisherChanged(Box::new(PublisherChange {
+                project_id: change.project_id.clone(),
+                pinned: current.clone(),
+                incoming: change.incoming.clone(),
+            }))),
+        }
     })
 }
 
@@ -473,17 +492,11 @@ fn load_file(data_dir: &Path) -> Result<PinFile, Error> {
 }
 
 fn save_file(data_dir: &Path, file: &PinFile) -> Result<(), Error> {
-    let err = |e: std::io::Error| Error::PinStore(format!("{PINS_FILE}: {e}"));
-    fs::create_dir_all(data_dir).map_err(err)?;
     let mut bytes = serde_json::to_vec_pretty(file)
         .map_err(|e| Error::PinStore(format!("{PINS_FILE}: {e}")))?;
     bytes.push(b'\n');
-    let mut part = tempfile::NamedTempFile::new_in(data_dir).map_err(err)?;
-    part.write_all(&bytes).map_err(err)?;
-    part.as_file().sync_all().map_err(err)?;
-    part.persist(data_dir.join(PINS_FILE))
-        .map(|_| ())
-        .map_err(|e| err(e.error))
+    crate::profile_txn::durable::replace(data_dir, &data_dir.join(PINS_FILE), &bytes)
+        .map_err(|e| Error::PinStore(format!("{PINS_FILE}: {e}")))
 }
 
 #[cfg(test)]
@@ -782,16 +795,19 @@ mod tests {
             workflow_path: RELEASE_WORKFLOW_PATH.to_owned(),
         };
         let err = pin_or_check_in(dir.path(), "Ab3dE9xQ", &moved_repo).unwrap_err();
-        let change = err
+        let moved_repo_change = err
             .publisher_change()
-            .expect("must return PublisherChanged");
-        assert_eq!(change.project_id, "Ab3dE9xQ");
-        assert!(change.repository_changed());
-        assert!(!change.workflow_changed());
-        assert_eq!(change.pinned, initial);
-        assert_eq!(change.incoming, moved_repo);
+            .expect("must return PublisherChanged")
+            .clone();
+        assert_eq!(moved_repo_change.project_id, "Ab3dE9xQ");
+        assert!(moved_repo_change.repository_changed());
+        assert!(!moved_repo_change.workflow_changed());
+        assert_eq!(moved_repo_change.pinned, initial);
+        assert_eq!(moved_repo_change.incoming, moved_repo);
         assert!(err.to_string().contains("alice/mod-a"));
+        assert!(err.to_string().contains("1001"));
         assert!(err.to_string().contains("bob/mod-a-fork"));
+        assert!(err.to_string().contains("2002"));
         assert_eq!(load_pins_in(dir.path()).unwrap()["Ab3dE9xQ"], initial);
 
         // Different workflow path triggers PublisherChanged without overwriting disk.
@@ -809,12 +825,97 @@ mod tests {
         assert_eq!(load_pins_in(dir.path()).unwrap()["Ab3dE9xQ"], initial);
 
         // Explicit acceptance updates the pin; subsequent installs match it.
-        accept_pin_in(dir.path(), "Ab3dE9xQ", &moved_repo).unwrap();
+        accept_pin_in(dir.path(), &moved_repo_change).unwrap();
         assert_eq!(
             pin_or_check_in(dir.path(), "Ab3dE9xQ", &moved_repo).unwrap(),
             PinStatus::Matched
         );
         assert_eq!(load_pins_in(dir.path()).unwrap()["Ab3dE9xQ"], moved_repo);
+    }
+
+    #[test]
+    fn stale_accept_does_not_overwrite_a_newer_pin() {
+        let dir = tempfile::tempdir().unwrap();
+        let pin_a = PublisherPin {
+            repository_id: 1001,
+            repository_name: "alice/mod-a".to_owned(),
+            workflow_path: RELEASE_WORKFLOW_PATH.to_owned(),
+        };
+        let pin_b = PublisherPin {
+            repository_id: 2002,
+            repository_name: "bob/mod-a".to_owned(),
+            workflow_path: RELEASE_WORKFLOW_PATH.to_owned(),
+        };
+        let pin_c = PublisherPin {
+            repository_id: 3003,
+            repository_name: "carol/mod-a".to_owned(),
+            workflow_path: RELEASE_WORKFLOW_PATH.to_owned(),
+        };
+        assert_eq!(
+            pin_or_check_in(dir.path(), "Ab3dE9xQ", &pin_a).unwrap(),
+            PinStatus::FirstInstall
+        );
+
+        // Prompt observes A -> B while another install observes and accepts A -> C.
+        let change_ab = pin_or_check_in(dir.path(), "Ab3dE9xQ", &pin_b)
+            .unwrap_err()
+            .publisher_change()
+            .expect("must return A -> B")
+            .clone();
+        let change_ac = pin_or_check_in(dir.path(), "Ab3dE9xQ", &pin_c)
+            .unwrap_err()
+            .publisher_change()
+            .expect("must return A -> C")
+            .clone();
+        accept_pin_in(dir.path(), &change_ac).unwrap();
+        assert_eq!(load_pins_in(dir.path()).unwrap()["Ab3dE9xQ"], pin_c);
+
+        // Accepting the stale A -> B prompt must not replace C; it returns the current C -> B conflict.
+        let err = accept_pin_in(dir.path(), &change_ab).unwrap_err();
+        let current_conflict = err
+            .publisher_change()
+            .expect("must return current C -> B conflict")
+            .clone();
+        assert_eq!(current_conflict.project_id, "Ab3dE9xQ");
+        assert_eq!(current_conflict.pinned, pin_c);
+        assert_eq!(current_conflict.incoming, pin_b);
+        assert_eq!(load_pins_in(dir.path()).unwrap()["Ab3dE9xQ"], pin_c);
+
+        // Confirming the current C -> B conflict replaces C with B, and re-accepting is idempotent.
+        accept_pin_in(dir.path(), &current_conflict).unwrap();
+        assert_eq!(load_pins_in(dir.path()).unwrap()["Ab3dE9xQ"], pin_b);
+        accept_pin_in(dir.path(), &change_ab).unwrap();
+        assert_eq!(load_pins_in(dir.path()).unwrap()["Ab3dE9xQ"], pin_b);
+
+        // Durable replacement leaves no staging files behind.
+        let names: Vec<_> = fs::read_dir(dir.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert!(!names.iter().any(|name| name.starts_with(".txn-")));
+    }
+
+    #[test]
+    fn publisher_change_text_includes_both_repository_ids_when_names_match() {
+        let old = PublisherPin {
+            repository_id: 1001,
+            repository_name: "alice/mod-a".to_owned(),
+            workflow_path: RELEASE_WORKFLOW_PATH.to_owned(),
+        };
+        let recreated = PublisherPin {
+            repository_id: 2002,
+            repository_name: "alice/mod-a".to_owned(),
+            workflow_path: RELEASE_WORKFLOW_PATH.to_owned(),
+        };
+        let message = Error::PublisherChanged(Box::new(PublisherChange {
+            project_id: "Ab3dE9xQ".to_owned(),
+            pinned: old,
+            incoming: recreated,
+        }))
+        .to_string();
+        assert!(message.contains("alice/mod-a"), "{message}");
+        assert!(message.contains("1001"), "{message}");
+        assert!(message.contains("2002"), "{message}");
     }
 
     #[test]

@@ -43,6 +43,11 @@ SAME_BYTES = (
     ("crates/sunrise-prepare/tests/support/java_probe.rs", "tests/support/java_probe.rs"),
     ("crates/sunrise-port-pack/src/zip_intake/source.rs", "src/zip_intake/source.rs"),
     ("crates/sunrise-port-pack/src/zip_intake/tests.rs", "src/zip_intake/tests.rs"),
+    ("crates/sunrise-attestation/src/lib.rs", "crates/attestation/src/lib.rs"),
+    ("crates/sunrise-attestation/src/trusted_root.json", "crates/attestation/src/trusted_root.json"),
+    ("crates/sunrise-attestation/LICENSE-APACHE-SIGSTORE", "crates/attestation/LICENSE-APACHE-SIGSTORE"),
+    ("crates/sunrise-attestation/tests/verify.rs", "crates/attestation/tests/verify.rs"),
+    ("crates/sunrise-attestation/tests/fixtures", "crates/attestation/tests/fixtures"),
 )
 
 # (the game's source, the launcher's copy, the edits that turn one into the other): compared as code, ignoring
@@ -107,6 +112,9 @@ SAME_CODE = (
     )),
     ("crates/sunrise-mod-package/src/modpack.rs", "crates/smod/src/modpack.rs", (
         ('#[cfg(feature = "index")] impl PackMod', "impl PackMod"),
+    )),
+    ("crates/sunrise-attestation/Cargo.toml", "crates/attestation/Cargo.toml", (
+        ("[dependencies]", "publish = false\n[dependencies]"),
     )),
 )
 
