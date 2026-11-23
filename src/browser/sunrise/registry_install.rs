@@ -35,7 +35,7 @@ use source::MixedSources;
 pub use source::{
     add_sources, apply_sources, pack_sources, prepare_pasted_sources, prepare_source,
     read_pasted_sources, update_registry_and_sources, CombinedUpdate, PastedSource, PreparedSource,
-    SourceDependency, SourceError, SourceHooks, SourceRequest,
+    SourceDependency, SourceError, SourceHooks, SourceProof, SourceRequest,
 };
 pub use switch::{
     checked_switch_fit, switch_build, switch_profile_build, BuildChoice, SwitchDecision,

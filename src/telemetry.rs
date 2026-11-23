@@ -12,22 +12,19 @@ use sunrise_launcher_telemetry::{outbox, Choices, Consent, Item, Kind, Payload, 
 
 use crate::{account::Accounts, backend};
 
-/// How the data question and Settings open: the switches are off, the ping is on.
-pub const OPENING: &str = "These reports are off until you turn them on. The \"I'm playing\" ping is on until you turn it off.";
-
 /// Each switch: its name, what it is for in one plain sentence, and exactly what it sends.
 pub const SWITCHES: [(Kind, &str, &str, &str); 4] = [
     (
         Kind::Perf,
         "Performance statistics",
         "How smoothly Sunrise runs on your computer, so slowdowns can be found and fixed.",
-        "After each session: frame-time percentiles and a 14-bucket histogram, tick times, peak memory and startup times, with your machine (OS, CPU and its cores and clocks, memory size, GPU, its memory and driver, drive type, screen size and refresh rate, laptop or desktop, on battery or not) and the settings that change performance.",
+        "After each session: frame-time percentiles and a 14-bucket histogram, tick times, peak memory and startup times, which of Sunrise's own steps held up frames of a quarter second or longer (their names in the code, how often and for how long), with your machine (OS, CPU and its cores and clocks, memory size, GPU, its memory and driver, drive type, screen size and refresh rate, laptop or desktop, on battery or not) and the settings that change performance.",
     ),
     (
         Kind::Crash,
         "Crash reports",
         "A short report when the game crashes, so the crash can be fixed.",
-        "When the game crashes: the error, where in Sunrise's code it happened, your graphics adapter and settings. No log, no world or server, no user name in paths.",
+        "When the game crashes: the error, where in Sunrise's code it happened and on which of its threads, the native mod whose code crashed if one did, the Sunrise version, your graphics adapter and settings, and your machine (OS, CPU and its cores and clocks, memory size, GPU, its memory and driver, drive type, screen size and refresh rate, laptop or desktop, on battery or not). No log, no world or server, no user name in paths.",
     ),
     (
         Kind::Bug,
@@ -48,9 +45,8 @@ pub const NEVER: &str = "Never sent: your account name or UUID, world names, ser
 
 /// The anonymous "I'm playing" ping the game sends (Ludovic's decision, 2026-10-22: count
 /// everyone, and tell them). On by default as upstream; this launcher also lets the player turn
-/// it off (`Settings::ping_off`), then starts the game with `SUNRISE_NO_HEARTBEAT`. Shown on the
-/// first-run welcome and question, in Settings, and once on the Play page to players who
-/// answered before it existed.
+/// it off (`Settings::ping_off`), then starts the game with `SUNRISE_NO_HEARTBEAT`. Shown in
+/// Settings, beside the four switches.
 pub const PING_NAME: &str = "\"I'm playing\" ping";
 pub const PING_SUMMARY: &str = "Tells Sunrise, anonymously, that you're playing, so the launcher can show how many people play right now.";
 pub const PING: &str = "While you play, the game sends an anonymous \"I'm playing\" ping once a minute, so the launcher can show how many people play Sunrise right now. It holds: a random number made when the game starts and forgotten when it closes, the Sunrise version, your OS (Linux, macOS or Windows), and whether you have a world open to LAN or friends. It doesn't hold: your account, your install ID, world or server names, or anything you do in the game, and the server doesn't keep your IP address. It is on unless you turn it off.";

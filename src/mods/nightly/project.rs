@@ -117,7 +117,7 @@ impl Launcher {
                         tr("Check for update").into()
                     };
                     let b = primary("nightly-update-source", label).w_full();
-                    if locked || checking {
+                    if locked || checking || (offline && candidate.is_some()) {
                         dim(b)
                     } else if candidate.is_some() {
                         let id = origin.id.clone();
@@ -132,6 +132,25 @@ impl Launcher {
                             cx.notify();
                         }))
                     }
+                });
+            let recheck = origin
+                .source
+                .as_ref()
+                .filter(|source| !matches!(source.track, SourceTrack::Pinned))
+                .filter(|_| {
+                    offline
+                        && self.source_update_version(origin).is_some()
+                        && !locked
+                        && !self.source_updates_checking()
+                })
+                .map(|_| {
+                    let origin = origin.clone();
+                    button("nightly-recheck-source", tr("Check for update"))
+                        .w_full()
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.check_source_updates(Some(&origin));
+                            cx.notify();
+                        }))
                 });
             let controls = installed_row.as_ref().map(|row| {
                 let cells = model::cells(
@@ -150,6 +169,7 @@ impl Launcher {
                 .gap(px(8.))
                 .child(install_fact(short_sha(&origin.commit), pending))
                 .children(update)
+                .children(recheck)
                 .children(controls)
                 .children(
                     self.source_update_notice(Some(&origin.id))
