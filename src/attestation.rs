@@ -389,10 +389,10 @@ pub fn pin_or_check_in(
                 Ok(PinStatus::FirstInstall)
             }
             Some(pinned) if pinned.matches(incoming) => {
-                if pinned.repository_name != incoming.repository_name {
-                    pinned.repository_name = incoming.repository_name.clone();
-                    save_file(data_dir, &file)?;
-                }
+                // Written again even when unchanged: an earlier save may have made the pin
+                // visible and then failed its flush, and success must mean it is durable.
+                pinned.repository_name = incoming.repository_name.clone();
+                save_file(data_dir, &file)?;
                 Ok(PinStatus::Matched)
             }
             Some(pinned) => Err(Error::PublisherChanged(Box::new(PublisherChange {
@@ -428,11 +428,10 @@ pub fn accept_pin_in(data_dir: &Path, change: &PublisherChange) -> Result<(), Er
                 save_file(data_dir, &file)
             }
             Some(current) if current.matches(&change.incoming) => {
-                if current.repository_name != change.incoming.repository_name {
-                    current.repository_name = change.incoming.repository_name.clone();
-                    save_file(data_dir, &file)?;
-                }
-                Ok(())
+                // Written again even when unchanged: an earlier confirmation may have made the
+                // pin visible and then failed its flush.
+                current.repository_name = change.incoming.repository_name.clone();
+                save_file(data_dir, &file)
             }
             Some(current) => Err(Error::PublisherChanged(Box::new(PublisherChange {
                 project_id: change.project_id.clone(),
@@ -495,7 +494,9 @@ fn save_file(data_dir: &Path, file: &PinFile) -> Result<(), Error> {
     let mut bytes = serde_json::to_vec_pretty(file)
         .map_err(|e| Error::PinStore(format!("{PINS_FILE}: {e}")))?;
     bytes.push(b'\n');
-    crate::profile_txn::durable::replace(data_dir, &data_dir.join(PINS_FILE), &bytes)
+    // Flushing the parent too keeps the data folder's own entry when the store created it.
+    let parent = data_dir.parent().unwrap_or(data_dir);
+    crate::profile_txn::durable::replace(parent, &data_dir.join(PINS_FILE), &bytes)
         .map_err(|e| Error::PinStore(format!("{PINS_FILE}: {e}")))
 }
 
