@@ -98,6 +98,10 @@ fn a_missing_or_mismatched_manifest_disables_build_while_keeping_the_commit() {
     let s = Sandbox::new();
     let path = format!("raw/{REPO}/{SHA}/{MANIFEST}");
     s.put(&path, b"id='mismatch'\n");
+    s.put(
+        &format!("api/repos/{REPO}/readme/{SHA}.json"),
+        br#"{"path":"README.md","size":8,"type":"file","encoding":"base64","content":"IyBSRUFETUUK"}"#,
+    );
     let start = test_requests();
     let details = inspect(&s.github, &Sandbox::source(42), None);
     assert_eq!(details.error, Some(Failure::NoManifest));
@@ -106,7 +110,7 @@ fn a_missing_or_mismatched_manifest_disables_build_while_keeping_the_commit() {
     assert_eq!(
         test_requests() - start,
         3,
-        "only repo, ref, and manifest requests"
+        "only repo, ref, and manifest requests; never fetch a README"
     );
 }
 

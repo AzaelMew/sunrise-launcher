@@ -1,5 +1,5 @@
 //! Anonymous GitHub inspection and pinned source transfer. No code here runs mod code.
-use super::{bounded, digest, safe_path, safe_ref, Source, Tracker, FRESH};
+use super::{bounded, digest, safe_ref, Source, Tracker, FRESH};
 use crate::i18n::tr;
 
 mod icon;
@@ -8,7 +8,7 @@ pub use icon::{IconMisses, SourceIcon};
 pub(crate) use pasted::{branch_ahead, pasted_source};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     fs, io,
     path::{Path, PathBuf},
     sync::{LazyLock, Mutex},
@@ -367,7 +367,7 @@ impl Github {
             .map_err(other)
     }
 
-    pub(super) fn raw(
+    fn raw(
         &self,
         state: &mut State,
         repo: &str,
@@ -452,8 +452,7 @@ impl Github {
             name: String,
             object: Object,
         }
-        let Some(found): Option<Ref> = self.api(state, repo, &["git", "ref", under, name])?
-        else {
+        let Some(found): Option<Ref> = self.api(state, repo, &["git", "ref", under, name])? else {
             return Ok(None);
         };
         if found.name != format!("refs/{under}/{name}") {
@@ -669,7 +668,7 @@ pub(crate) fn github_archive(repo: &str, sha: &str) -> Result<impl io::Read, Fai
 pub(crate) fn fixture_link_api(path: &str) -> Option<Result<Option<serde_json::Value>, String>> {
     let github = Github::current();
     github.fixture.as_ref()?;
-    if !path.starts_with("repos/") || !safe_path(path) {
+    if !path.starts_with("repos/") || !super::safe_path(path) {
         return Some(Err(tr("This GitHub link could not be found.").into()));
     }
     let fixture = PathBuf::from(format!("api/{path}.json"));

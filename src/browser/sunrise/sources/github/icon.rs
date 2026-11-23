@@ -1,5 +1,6 @@
 //! Optional package icons, fetched independently of source inspection and builds.
 use super::*;
+use std::collections::HashSet;
 use std::sync::Arc;
 use sunrise_launcher_smod::icon::{Icon, MAX_ICON};
 
@@ -40,7 +41,7 @@ impl SourceIcon {
             .expect("constant URL")
             .join(&self.path)
             .ok()?;
-        self.cached(github, misses, &format!("pages\0{}", self.path), true, || {
+        self.cached(github, misses, &format!("pages\0{}", self.path), || {
             github.fetch(
                 &mut state,
                 url.as_str(),
@@ -55,14 +56,13 @@ impl SourceIcon {
         github: &Github,
         misses: &IconMisses,
         key: &str,
-        mutable: bool,
         fetch: impl FnOnce() -> Result<Option<Vec<u8>>, Failure>,
     ) -> Option<PathBuf> {
         let target = github
             .cache
             .join(format!("icon-{}.png", digest(key.as_bytes())));
         let cached = cached_bytes(&target, MAX_ICON as u64)
-            .and_then(|(bytes, fresh)| Icon::parse(bytes).ok().map(|_| !mutable || fresh));
+            .and_then(|(bytes, fresh)| Icon::parse(bytes).ok().map(|_| fresh));
         if !self.allow_fetch || cached == Some(true) {
             return cached.map(|_| target);
         }

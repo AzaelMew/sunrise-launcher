@@ -21,7 +21,7 @@ enum Block {
     Table(Vec<Row>),
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 enum Span {
     Strong,
     Emphasis,

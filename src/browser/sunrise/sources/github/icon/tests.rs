@@ -4,6 +4,7 @@ use serde_json::json;
 
 const REPO: &str = "Driftwood/trail-atlas";
 const MANIFEST: &str = "mods/atlas/sunrise-mod.toml";
+const SHA: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
 fn source(track: serde_json::Value, icon: Option<&str>) -> Source {
     serde_json::from_value(json!({
@@ -45,7 +46,18 @@ fn discover_icons_fetch_only_explicit_pages_icons_and_never_guess_from_github() 
     let github = fixture(root.path());
     let misses = IconMisses::default();
     let pages = png(2, 2, 100);
+    let raw = png(2, 2, 200);
     put(&github, "pages/icons/atlas.png", &pages);
+    put(
+        &github,
+        &format!("raw/{REPO}/refs/heads/topic/camps/mods/atlas/icon.png"),
+        &raw,
+    );
+    put(
+        &github,
+        &format!("raw/{REPO}/{SHA}/mods/atlas/icon.png"),
+        &raw,
+    );
     let start = test_requests();
     let listed = source(json!({"branch": "topic/camps"}), Some("icons/atlas.png"));
     let icon = SourceIcon::new(&listed, None, true).unwrap();
@@ -58,9 +70,21 @@ fn discover_icons_fetch_only_explicit_pages_icons_and_never_guess_from_github() 
     );
 
     let uniconed = source(json!({"branch": "topic/camps"}), None);
+    let inspected = SourceCommit {
+        source: uniconed.clone(),
+        pin: Pin {
+            sha: SHA.into(),
+            release: None,
+        },
+        github_url: String::new(),
+    };
     assert!(
         SourceIcon::new(&uniconed, None, true).is_none(),
         "a listing without an explicit icon leaves the placeholder; do not guess from GitHub"
+    );
+    assert!(
+        SourceIcon::new(&uniconed, Some(&inspected), true).is_none(),
+        "an inspected commit without an explicit icon also never guesses from GitHub"
     );
     assert_eq!(test_requests() - start, 1);
 

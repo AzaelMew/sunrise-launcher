@@ -291,19 +291,22 @@ impl Launcher {
                         .on_click(cx.listener(move |_, _, _, cx| cx.open_url(&repo_url))),
                 ),
             );
-        let body = if let Some((description, _)) = &registry_page {
-            Some(prose(self.theme, description))
-        } else if !source.summary().trim().is_empty() {
-            Some(
+        let body = match source_page_body(
+            registry_page
+                .as_ref()
+                .map(|(description, _)| description.as_str()),
+            source.summary(),
+        ) {
+            SourcePageBody::Registry(description) => Some(prose(self.theme, description)),
+            SourcePageBody::Summary(summary) => Some(
                 div()
-                    .text_size(px(tokens::UI))
+                    .text_size(px(tokens::BODY))
                     .line_height(px(22.))
                     .text_color(c(palette().text))
-                    .child(crate::selectable::selectable(source.summary().to_owned()))
+                    .child(crate::selectable::selectable(summary.to_owned()))
                     .into_any_element(),
-            )
-        } else {
-            None
+            ),
+            SourcePageBody::Empty => None,
         };
         let header = div()
             .flex()
@@ -465,6 +468,26 @@ impl Launcher {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum SourcePageBody<'a> {
+    Registry(&'a str),
+    Summary(&'a str),
+    Empty,
+}
+
+fn source_page_body<'a>(
+    registry_description: Option<&'a str>,
+    summary: &'a str,
+) -> SourcePageBody<'a> {
+    if let Some(description) = registry_description.filter(|text| !text.trim().is_empty()) {
+        SourcePageBody::Registry(description)
+    } else if !summary.trim().is_empty() {
+        SourcePageBody::Summary(summary)
+    } else {
+        SourcePageBody::Empty
+    }
+}
+
 fn project_made_for_build(
     profile: Option<&str>,
     inspected: Option<&str>,
@@ -549,6 +572,23 @@ pub(in crate::mods) fn source_error(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn source_page_shows_registry_description_or_listing_summary() {
+        assert_eq!(
+            source_page_body(Some("# Registry notes"), "Listing summary"),
+            SourcePageBody::Registry("# Registry notes")
+        );
+        assert_eq!(
+            source_page_body(Some("   "), "Listing summary"),
+            SourcePageBody::Summary("Listing summary")
+        );
+        assert_eq!(
+            source_page_body(None, "Listing summary"),
+            SourcePageBody::Summary("Listing summary")
+        );
+        assert_eq!(source_page_body(None, "  "), SourcePageBody::Empty);
+    }
 
     #[test]
     fn build_badge_describes_the_installed_commit_not_a_newer_inspection() {
