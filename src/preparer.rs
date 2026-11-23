@@ -138,6 +138,7 @@ impl Drop for Preparation {
 pub(crate) struct Handoff<'a> {
     preparation: &'a Preparation,
     profile: Option<crate::process::leases::ProfileHandoff<'a>>,
+    stop: Option<&'a crate::native_mods::Cancellation>,
 }
 
 impl Preparation {
@@ -156,6 +157,19 @@ impl Preparation {
         Handoff {
             preparation: self,
             profile,
+            stop: None,
+        }
+    }
+
+    pub(crate) fn handoff_cancellable<'a>(
+        &'a self,
+        profile: Option<crate::process::leases::ProfileHandoff<'a>>,
+        stop: &'a crate::native_mods::Cancellation,
+    ) -> Handoff<'a> {
+        Handoff {
+            preparation: self,
+            profile,
+            stop: Some(stop),
         }
     }
 
@@ -165,6 +179,10 @@ impl Preparation {
 }
 
 impl Handoff<'_> {
+    pub(crate) fn stop(&self) -> Option<&crate::native_mods::Cancellation> {
+        self.stop
+    }
+
     pub(crate) fn spawn(
         &self,
         command: Command,
@@ -191,6 +209,10 @@ fn run(
     handoff: Option<&Handoff<'_>>,
 ) -> Result<(ExitStatus, Vec<String>), String> {
     use crate::process::owned::Owned;
+    let stop = handoff.and_then(Handoff::stop);
+    if let Some(stop) = stop {
+        stop.check()?;
+    }
     let mut child = if let Some(handoff) = handoff {
         handoff.spawn(command, true).map(Owned::start_preparer)
     } else {
@@ -201,6 +223,16 @@ fn run(
         Owned::spawn(&mut command)
     }
     .map_err(unrun)?;
+    let _tracked = match stop {
+        Some(stop) => match stop.track_process(child.child().id()) {
+            Ok(guard) => Some(guard),
+            Err(cancelled) => {
+                let _ = child.wait();
+                return Err(cancelled);
+            }
+        },
+        None => None,
+    };
     drop(child.child().stdin.take());
     let stderr = child.child().stderr.take().expect("piped");
     let errors = std::thread::spawn(move || tail(stderr));
@@ -214,7 +246,11 @@ fn run(
         }
     }
     let status = child.wait().map_err(unrun)?;
-    Ok((status, errors.join().unwrap_or_default()))
+    let errors = errors.join().unwrap_or_default();
+    if let Some(stop) = stop {
+        stop.check()?;
+    }
+    Ok((status, errors))
 }
 
 pub(crate) fn run_staged(
@@ -647,5 +683,74 @@ esac"#,
             Some(&*format!("line 1999 {}", "y".repeat(40)))
         );
         assert!(kept.iter().map(String::len).sum::<usize>() <= MAX_ERRORS);
+    }
+
+    #[test]
+    fn cancelling_a_running_preparer_stops_its_process_group() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::time::{Duration, Instant};
+        let dir = tempfile::tempdir().unwrap();
+        let pid_file = dir.path().join("child.pid");
+        let binary = dir.path().join("sunrise-prepare");
+        fs::write(
+            &binary,
+            format!(
+                "#!/bin/sh\nsleep 30 &\necho $! > \"{}\"\necho '{{\"message\":\"started\"}}'\nwait\n",
+                pid_file.display()
+            ),
+        )
+        .unwrap();
+        fs::set_permissions(&binary, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let lock_file = fs::OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(false)
+            .open(dir.path().join(".prepare.lock"))
+            .unwrap();
+        lock_file.lock().unwrap();
+        let preparation = Preparation::new(lock_file);
+        let stop = crate::native_mods::Cancellation::default();
+        let stop_bg = stop.clone();
+        let started_tx = std::sync::mpsc::channel();
+        let (tx, rx) = started_tx;
+        let stopper = std::thread::spawn(move || {
+            rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            stop_bg.stop();
+        });
+        let started = Instant::now();
+        let handoff = preparation.handoff_cancellable(None, &stop);
+        let result = needs(
+            &binary,
+            dir.path(),
+            &|line| {
+                if line == "started" {
+                    let _ = tx.send(());
+                }
+            },
+            Some(&handoff),
+        );
+        stopper.join().unwrap();
+        assert_eq!(result.unwrap_err(), crate::native_mods::CANCELLED);
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "cancellation waited for sleep instead of terminating the preparer"
+        );
+        let child_pid: libc::pid_t = fs::read_to_string(&pid_file)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            // SAFETY: signal 0 checks liveness without delivering a signal.
+            let alive = unsafe { libc::kill(child_pid, 0) } == 0;
+            if !alive {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        panic!("preparer child {child_pid} survived process-group cancellation");
     }
 }

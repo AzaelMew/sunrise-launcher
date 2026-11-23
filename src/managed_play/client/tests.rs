@@ -372,6 +372,7 @@ fn recovery_binds_first_play_and_refuses_a_result_from_before_switch() {
                 &cancelled,
                 vec![],
                 Default::default(),
+                None,
                 || Ok(()),
                 || Ok(()),
             )
@@ -625,6 +626,7 @@ fn a_failed_first_download_can_be_followed_by_a_mod_change_and_play() {
         body: String::new(),
         date: String::new(),
         time: String::new(),
+        published_at: String::new(),
         asset: Some((crate::signed::asset_url(UNAVAILABLE, asset), 42)),
         prerelease: false,
         nightly: None,

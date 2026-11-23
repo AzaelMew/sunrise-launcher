@@ -598,30 +598,18 @@ impl Launcher {
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let version = self.profile_target(instance);
-        // A game built with mods reads as the build it was made from; the tooltip names
-        // the actual tag, including when a pin isn't installed yet.
-        let made_from = version
-            .as_ref()
+        // A built mod image reads as its base; keep the actual tag in the tooltip.
+        let base = version
+            .as_deref()
             .filter(|t| native_mods::is_native(t))
-            .and_then(|t| crate::glass_instance::native_base(t));
+            .and_then(crate::glass_instance::native_base);
         let build = version.as_ref().map_or_else(
             // Dev never falls back to another channel, so say it has nothing to play yet.
             || match instance.channel {
                 instances::Channel::Dev => tr("Dev · no build yet").into(),
                 _ => tr("Sunrise").into(),
             },
-            |tag| {
-                let base = made_from.as_ref().unwrap_or(tag);
-                if let Some(date) = backend::dev_date(base) {
-                    let (_, commit) = base.rsplit_once('-').expect("validated Dev tag");
-                    trf(
-                        "Dev {date} · {short}",
-                        &[("date", date), ("short", &commit[..7])],
-                    )
-                } else {
-                    self.version_label(base)
-                }
-            },
+            |tag| self.version_label(base.as_deref().unwrap_or(tag)),
         );
         let at = self.ui.home.picker.clone();
         div()

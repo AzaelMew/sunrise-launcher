@@ -5,8 +5,8 @@ use std::{
 };
 use sunrise_launcher::{
     browser::sunrise::{
-        install_target, switch_build, InstallProgress, SwitchDecision, SwitchHooks, SwitchQuestion,
-        Switched,
+        install_target, switch_profile_build, BuildChoice, InstallProgress, SwitchDecision,
+        SwitchHooks, SwitchQuestion, Switched,
     },
     managed_play::{self, Active, Profile, ReceiptHint},
     profile_txn::Identity,
@@ -29,9 +29,18 @@ struct ReceiptRead {
 
 struct Running {
     tag: String,
+    back: Option<Sheet>,
+    pending: Option<Pending>,
     progress: InstallProgress,
     stop: native_mods::Cancellation,
     question: Option<(Box<SwitchQuestion>, Sender<SwitchDecision>)>,
+}
+
+/// The selected profile and build survive download and preparation, not a new read of Home.
+struct Pending {
+    instance: instances::Instance,
+    identity: Identity,
+    choice: Option<BuildChoice>,
 }
 
 impl Launcher {
@@ -62,16 +71,35 @@ impl Launcher {
         {
             return false;
         }
-        self.ui.sheets.error = result.as_ref().err().cloned();
+        if let Some(running) = &self.ui.sheets.switching.running {
+            let pending = running.pending.as_ref().expect("switch download is queued");
+            if running.stop.is_stopped() {
+                let home = pending.instance.home.clone();
+                self.switch_finished(&home, Ok(Switched::Stayed));
+            } else if let Err(error) = result {
+                let home = pending.instance.home.clone();
+                self.switch_finished(&home, Err(error.clone()));
+            } else {
+                self.prepare_switch();
+            }
+        } else {
+            self.ui.sheets.error = result.as_ref().err().cloned();
+        }
         true
+    }
+
+    pub(crate) fn switch_download_progress(&mut self, tag: &str, fraction: f32) {
+        if self.ui.sheets.switching.cache_download.as_deref() == Some(tag) {
+            self.switch_progress(InstallProgress::Downloading(fraction));
+        }
     }
 
     pub(crate) fn switch_busy(&self) -> bool {
         self.ui.sheets.switching.running.is_some() || self.ui.sheets.switching.ack
     }
 
-    pub(super) fn begin_switch(&mut self, tag: String) {
-        if self.launch_busy() || self.client.is_some() {
+    pub(super) fn begin_switch(&mut self, tag: String, choice: Option<BuildChoice>) {
+        if self.launch_busy() || self.client.is_some() || self.removing.contains(&tag) {
             return;
         }
         let Some(instance) = self.selected_instance().cloned() else {
@@ -84,26 +112,96 @@ impl Launcher {
                 return;
             }
         };
+        let release = self.release_to_install(&tag);
         let stop = native_mods::Cancellation::default();
         self.ui.sheets.switching.running = Some(Running {
             tag: tag.clone(),
+            back: self.ui.sheet,
+            pending: Some(Pending {
+                instance,
+                identity,
+                choice,
+            }),
             progress: InstallProgress::PreparingBuild,
             stop: stop.clone(),
             question: None,
         });
         self.open_sheet(Sheet::Switching);
+        if let Some(release) = release {
+            self.ui.sheets.switching.cache_download = Some(tag);
+            self.switch_progress(InstallProgress::Downloading(0.));
+            self.install_cancellable(&release, Some(stop));
+        } else {
+            self.prepare_switch();
+        }
+    }
+
+    fn prepare_switch(&mut self) {
+        let running = self
+            .ui
+            .sheets
+            .switching
+            .running
+            .as_ref()
+            .expect("switch queued");
+        if backend::check_prepared(&running.tag) {
+            self.start_switch_worker();
+        } else {
+            let (tag, stop) = (running.tag.clone(), running.stop.clone());
+            self.switch_progress(InstallProgress::PreparingBuild);
+            self.prepare_version_cancellable(tag, backend::MinecraftFrom::Install, Some(stop));
+        }
+    }
+
+    pub(crate) fn finish_switch_preparation(&mut self) {
+        let Some(running) = self.ui.sheets.switching.running.as_ref() else {
+            return;
+        };
+        let Some(pending) = running.pending.as_ref() else {
+            return;
+        };
+        let error = self.prepare_error.take();
+        if running.stop.is_stopped() {
+            let home = pending.instance.home.clone();
+            self.switch_finished(&home, Ok(Switched::Stayed));
+        } else if let Some(error) = error {
+            let home = pending.instance.home.clone();
+            self.switch_finished(&home, Err(error));
+        } else {
+            self.start_switch_worker();
+        }
+    }
+
+    fn start_switch_worker(&mut self) {
+        let running = self
+            .ui
+            .sheets
+            .switching
+            .running
+            .as_mut()
+            .expect("switch queued");
+        let Pending {
+            instance,
+            identity,
+            choice,
+        } = running.pending.take().expect("switch queued");
+        let (tag, stop) = (running.tag.clone(), running.stop.clone());
         let tx = self.tx.clone();
         std::thread::spawn(move || {
-            let outcome = switch_build(
+            let outcome = switch_profile_build(
                 &instance,
                 identity,
                 &tag,
+                choice,
                 SwitchHooks {
                     cancellation: &stop,
                     progress: &|stage| {
                         let _ = tx.send(Msg::SwitchProgress(stage));
                     },
                     registry_crates: Some(&|inventory| {
+                        if stop.is_stopped() {
+                            return false;
+                        }
                         let (answer, reply) = std::sync::mpsc::channel();
                         tx.send(Msg::NativeRegistryConsent(inventory.clone(), answer))
                             .is_ok()
@@ -111,6 +209,9 @@ impl Launcher {
                     }),
                     at_cutoff: &|| Ok(()),
                     approve: &|question| {
+                        if stop.is_stopped() {
+                            return Ok(SwitchDecision::Cancel);
+                        }
                         let (answer, reply) = std::sync::mpsc::channel();
                         tx.send(Msg::SwitchQuestion(Box::new(question.clone()), answer))
                             .map_err(|_| tr("Switch cancelled.").to_owned())?;
@@ -151,7 +252,7 @@ impl Launcher {
             .switching
             .running
             .as_mut()
-            .filter(|_| self.ui.sheet == Some(Sheet::Switching))
+            .filter(|run| self.ui.sheet == Some(Sheet::Switching) && !run.stop.is_stopped())
         {
             running.question = Some((question, reply));
             self.ui.sheets.details = false;
@@ -165,8 +266,18 @@ impl Launcher {
         home: &std::path::Path,
         result: Result<Switched, String>,
     ) {
-        self.ui.sheets.switching.running = None;
-        self.installed = backend::installed();
+        let running = self.ui.sheets.switching.running.take();
+        let stopped = running.as_ref().is_some_and(|run| run.stop.is_stopped());
+        let back = running.and_then(|run| run.back);
+        let result = if result.is_err() && stopped {
+            Ok(Switched::Stayed)
+        } else {
+            result
+        };
+        self.refresh_installed();
+        if matches!(result, Ok(Switched::Changed(_) | Switched::AlreadySelected)) {
+            self.refresh_instances_list();
+        }
         if self.selected_instance().is_none_or(|i| i.home != home) {
             return;
         }
@@ -188,9 +299,18 @@ impl Launcher {
                     self.close_sheet();
                 }
             }
-            Ok(Switched::Stayed | Switched::AlreadySelected) => {
+            Ok(Switched::Stayed) => {
                 if visible {
-                    self.open_sheet(Sheet::Versions);
+                    if let Some(back) = back {
+                        self.open_sheet(back);
+                    } else {
+                        self.close_sheet();
+                    }
+                }
+            }
+            Ok(Switched::AlreadySelected) => {
+                if visible {
+                    self.close_sheet();
                 }
             }
             Err(error) if visible => {
@@ -349,29 +469,36 @@ impl Launcher {
                         ),
                 )
         } else {
+            let stopping = running.stop.is_stopped();
             div()
                 .flex()
                 .flex_col()
                 .child(title(trf("Switch to {build}", &[("build", &build)])))
-                .child(muted(if running.progress == InstallProgress::Publishing {
+                .child(muted(if stopping {
+                    tr("Cancelling…").into()
+                } else if running.progress == InstallProgress::Publishing {
                     tr("Applying the switch.").into()
                 } else {
                     stage_label(running.progress)
                 }))
                 .children(
-                    stage_fraction(running.progress)
+                    (!stopping)
+                        .then(|| stage_fraction(running.progress))
+                        .flatten()
                         .map(|f| crate::widgets::progress_bar(Some((f, f)), &self.theme)),
                 )
-                .children((running.progress != InstallProgress::Publishing).then(|| {
-                    div().flex().justify_end().child(
-                        button("cancel-switch", tr("Cancel")).on_click(cx.listener(
-                            |this, _, _, cx| {
-                                this.close_sheet();
-                                cx.notify();
-                            },
-                        )),
-                    )
-                }))
+                .children(
+                    (!stopping && running.progress != InstallProgress::Publishing).then(|| {
+                        div().flex().justify_end().child(
+                            button("cancel-switch", tr("Cancel")).on_click(cx.listener(
+                                |this, _, _, cx| {
+                                    this.cancel_switch();
+                                    cx.notify();
+                                },
+                            )),
+                        )
+                    }),
+                )
         };
         frame("switch-game", 610., body, cx)
     }

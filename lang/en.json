@@ -253,6 +253,7 @@
   "{world}: {age}; {mods}.": "{world}: {age}; {mods}.",
   "{world}: {age}.": "{world}: {age}.",
   "{world}: {mods}.": "{world}: {mods}.",
+  "Cancelling…": "Cancelling…",
   "The server's game files are still not prepared.": "The server's game files are still not prepared.",
   "Could not read the build's preparer source: {error}": "Could not read the build's preparer source: {error}",
   "These files are for a dedicated server only.": "These files are for a dedicated server only."

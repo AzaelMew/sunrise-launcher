@@ -200,12 +200,81 @@ pub fn switch_build(
     tag: &str,
     hooks: SwitchHooks<'_>,
 ) -> Result<Switched, String> {
+    switch_profile_build(instance, identity, tag, None, hooks)
+}
+
+/// What the picker is asking the profile to follow after the switch.
+#[derive(Clone, Copy)]
+pub enum BuildChoice {
+    Follow(crate::instances::Channel),
+    Keep,
+}
+
+/// Commit the picker choice inside the same recoverable switch as the active build and mod
+/// changes. An update without a picker choice keeps existing preferences.
+pub fn switch_profile_build(
+    instance: &Instance,
+    identity: Identity,
+    tag: &str,
+    choice: Option<BuildChoice>,
+    hooks: SwitchHooks<'_>,
+) -> Result<Switched, String> {
     if instance.kind == InstanceKind::Pack {
         return Err(tr("Choose an ordinary profile to switch builds.").into());
     }
     (hooks.progress)(InstallProgress::PreparingBuild);
     let mut profile =
         Profile::open_for(&instance.home, None, Some(identity)).map_err(String::from)?;
+    let cancellation = hooks.cancellation;
+    cancellation.check()?;
+    let result = switch_in(instance, &mut profile, tag, choice, hooks)?;
+    if let Some(choice) = choice {
+        match &result {
+            Switched::Stayed => return Ok(result),
+            Switched::AlreadySelected => {
+                cancellation.begin_publication()?;
+                crate::instances::edit(&instance.id, |meta| match choice {
+                    BuildChoice::Follow(channel) => {
+                        meta.version = None;
+                        meta.channel = Some(channel);
+                    }
+                    BuildChoice::Keep => {
+                        meta.version = Some(tag.into());
+                        if let Some(channel) = crate::instances::Channel::of_build(tag) {
+                            meta.channel = Some(channel);
+                        }
+                    }
+                })
+                .map_err(|error| {
+                    trf(
+                        "The build is ready, but the profile choice could not be saved: {error}",
+                        &[("error", &error)],
+                    )
+                })?;
+            }
+            Switched::Changed(active) => {
+                if let Some(committed) = active.build_choice() {
+                    if let Err(error) =
+                        crate::instances::sync_build_choice(&instance.id, &instance.home, committed)
+                    {
+                        // The choice is already durable in active-build.json; listing or
+                        // editing the profile recovers instances.json on the next write.
+                        eprintln!("Sunrise: instances.json is not saved: {error}");
+                    }
+                }
+            }
+        }
+    }
+    Ok(result)
+}
+
+fn switch_in(
+    instance: &Instance,
+    profile: &mut Profile,
+    tag: &str,
+    choice: Option<BuildChoice>,
+    hooks: SwitchHooks<'_>,
+) -> Result<Switched, String> {
     let Some(edit) = profile.begin_switch(tag)? else {
         return Ok(Switched::AlreadySelected);
     };
@@ -424,7 +493,16 @@ pub fn switch_build(
             SwitchDecision::Remove => (),
         }
     }
-    let active = edit.publish_switch(proof, hooks.cancellation, holds, removed, || {
+    let build_choice = choice
+        .map(|choice| {
+            let (channel, version) = match choice {
+                BuildChoice::Follow(channel) => (Some(channel), None),
+                BuildChoice::Keep => (crate::instances::Channel::of_build(tag), Some(tag.into())),
+            };
+            crate::managed_play::CommittedBuildChoice::new(channel, version)
+        })
+        .transpose()?;
+    let active = edit.publish_switch(proof, hooks.cancellation, holds, removed, build_choice, || {
         let (_, current, proof) = super::super::complete_index(&source, local)?;
         if current != evidence || proof.is_some() != official.is_some() {
             return Err(tr("The mod registry changed while the switch was being prepared. Nothing was switched.").into());

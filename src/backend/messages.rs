@@ -95,11 +95,6 @@ pub enum Msg {
         PathBuf,
         Result<(), crate::browser::installed::GameInstallProblem>,
     ),
-    /// Saving a channel preference is separate from changing the committed build.
-    PinnedBuild {
-        home: PathBuf,
-        result: Result<(), String>,
-    },
     SwitchProgress(crate::browser::sunrise::InstallProgress),
     SwitchQuestion(
         Box<crate::browser::sunrise::SwitchQuestion>,

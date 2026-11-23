@@ -160,7 +160,6 @@ impl Launcher {
             play_admission: None,
             play_retry: None,
             play_install_recovery: None,
-            pinning_build: false,
             play_registry_notices: Vec::new(),
             client_started: None,
             client_home: None,

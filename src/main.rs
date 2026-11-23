@@ -296,7 +296,6 @@ struct Launcher {
     play_admission: Option<launcher_play::PlayIntent>,
     play_retry: Option<launcher_play::PlayIntent>,
     play_install_recovery: Option<(std::path::PathBuf, String)>,
-    pinning_build: bool,
     /// The latest Play's registry warnings, shown until dismissed or a new Play is accepted.
     play_registry_notices: Vec<String>,
     /// When the running client started, to tell its crash report from older ones.
