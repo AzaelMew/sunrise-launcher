@@ -31,11 +31,19 @@ impl Launcher {
             view.near
                 .list(&view.scroll, self.worlds.list.len(), across, height, gap);
         let items = if count == Some(0) {
+            // A world copied into the folder shows up here.
+            let saves = instance.home.join("saves");
+            let open = button("home-worlds-folder", tr("Open folder")).on_click(move |_, _, cx| {
+                match std::fs::create_dir_all(&saves) {
+                    Ok(()) => crate::glass_toast::open(cx, &saves),
+                    Err(e) => crate::glass_toast::say(format!("{}: {e}", saves.display())),
+                }
+            });
             empty(
                 "earth",
                 tr("No worlds here yet"),
-                tr("Press Play and make a world in the game. It shows up here, ready to continue."),
-                None,
+                tr("Worlds you make or copy in show up here."),
+                Some(open),
             )
         } else if self.worlds.list.is_empty() {
             div()
