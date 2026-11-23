@@ -20,6 +20,7 @@ pub(crate) struct Edit<'a> {
 enum Basis<'a> {
     Active(Active, Staging<'a>),
     First(FirstAttempt<'a>),
+    Pending(Staging<'a>),
     Switch {
         old: Option<Active>,
         target: Box<FirstAttempt<'a>>,
@@ -116,6 +117,36 @@ impl Profile {
         })
     }
 
+    /// Stage a files-only edit (archives, sidecars, enabled list) without needing a game build
+    /// to be selected or downloaded. Refuses if a first Play bootstrap is unsettled.
+    pub(crate) fn begin_pending_edit(&mut self) -> Result<Edit<'_>, String> {
+        let home = self.home().to_owned();
+        let _manifest = game_lock(&home)?;
+        let before = inputs(&home, None)?;
+        let basis = match self.active()? {
+            Some(active) => {
+                active.verify_artifacts()?;
+                let _references = ReferencePublication::begin(&home)?;
+                let targets = [active.base().to_owned(), active.executable().to_owned()]
+                    .into_iter()
+                    .collect();
+                Basis::Active(active, self.0.reserve(Intent::Install, targets)?)
+            }
+            None => {
+                if self.0.has_bootstrap()? {
+                    return Err(unsettled());
+                }
+                let _references = ReferencePublication::begin(&home)?;
+                Basis::Pending(self.0.reserve(Intent::Install, BTreeSet::new())?)
+            }
+        };
+        Ok(Edit {
+            basis,
+            home,
+            before,
+        })
+    }
+
     /// Reserve one exact, already-prepared target. Download and Prepare never change a profile.
     pub(crate) fn begin_switch(&mut self, tag: &str) -> Result<Option<Edit<'_>>, String> {
         let home = self.home().to_owned();
@@ -195,6 +226,7 @@ impl Edit<'_> {
         match &self.basis {
             Basis::Active(active, _) => active.base(),
             Basis::First(first) => first.base(),
+            Basis::Pending(_) => "",
             Basis::Switch { target, .. } => target.base(),
         }
     }
@@ -207,7 +239,7 @@ impl Edit<'_> {
     pub(crate) fn current(&self) -> Option<&Active> {
         match &self.basis {
             Basis::Active(active, _) => Some(active),
-            Basis::First(_) => None,
+            Basis::First(_) | Basis::Pending(_) => None,
             Basis::Switch { old, .. } => old.as_ref(),
         }
     }
@@ -223,7 +255,7 @@ impl Edit<'_> {
 
     fn stage(&self) -> &Staging<'_> {
         match &self.basis {
-            Basis::Active(_, stage) => stage,
+            Basis::Active(_, stage) | Basis::Pending(stage) => stage,
             Basis::First(first) => &first.stage,
             Basis::Switch { target, .. } => &target.stage,
         }
@@ -264,7 +296,7 @@ impl Edit<'_> {
         crate::browser::installed::recover_game_install(&self.home)?;
         let _references = ReferencePublication::begin(&self.home)?;
         let stage = match self.basis {
-            Basis::Active(_, stage) => stage,
+            Basis::Active(_, stage) | Basis::Pending(stage) => stage,
             Basis::First(first) => {
                 if first.stage.resumes_bootstrap() {
                     return Err(unsettled());
@@ -307,6 +339,7 @@ impl Edit<'_> {
         let preferred = match &self.basis {
             Basis::Active(old, _) => old.executable(),
             Basis::First(first) => first.preferred_image(),
+            Basis::Pending(_) => return Err(unsettled().into()),
             Basis::Switch { target, .. } => target.preferred_image(),
         };
         let tag = image_for_stage(
@@ -414,7 +447,7 @@ impl Edit<'_> {
     ) -> Result<Active, String> {
         let resources = match &self.basis {
             Basis::First(first) => Some(Resources::capture(first.base(), &first.stage)?),
-            Basis::Active(..) | Basis::Switch { .. } => None,
+            Basis::Active(..) | Basis::Pending(_) | Basis::Switch { .. } => None,
         };
         let _manifest = game_lock(&self.home)?;
         crate::browser::installed::recover_game_install(&self.home)?;
@@ -423,6 +456,7 @@ impl Edit<'_> {
             return Err(unsettled());
         }
         let (mut active, stage) = match self.basis {
+            Basis::Pending(_) => return Err(unsettled()),
             Basis::Active(old, stage) => {
                 old.verify_artifacts()?;
                 let active = Active::capture(
@@ -538,7 +572,10 @@ impl Edit<'_> {
 
 /// Changes only to journal-approved leaves can be published. A directory and its opaque local
 /// contents may be used by a proof, never adopted as writable package destinations.
-fn changed_files(home: &Path, candidate: &Path) -> Result<Vec<(PathBuf, Option<PathBuf>)>, String> {
+pub(crate) fn changed_files(
+    home: &Path,
+    candidate: &Path,
+) -> Result<Vec<(PathBuf, Option<PathBuf>)>, String> {
     let mut names = BTreeSet::from([PathBuf::from(MANIFEST), PathBuf::from(mod_list::FILE)]);
     for root in [mod_list::DIR, mod_list::NATIVE_DIR] {
         for profile in [home, candidate] {

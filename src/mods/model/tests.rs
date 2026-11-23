@@ -1505,6 +1505,120 @@ fn an_unreadable_file_is_never_on_and_cannot_switch_a_working_mod_of_its_name() 
 }
 
 #[test]
+fn manual_mods_get_badges_and_never_enter_bulk_updates() {
+    use sunrise_launcher::github_mods::{AddedFrom, Origin, SourceOrigin, SourceTrack};
+
+    let (idx, _) = pack();
+    let on = HashSet::from([
+        "github_mod".to_owned(),
+        "folder_mod".to_owned(),
+        "local_smod".to_owned(),
+        "discover_src".to_owned(),
+    ]);
+    let none = HashSet::new();
+    let github_origin = Origin {
+        id: "github_mod".into(),
+        version: "0.4.0".into(),
+        owner: "emberlane".into(),
+        repo: "camp-lanterns".into(),
+        commit: "1".repeat(40),
+        sha256: A.into(),
+        tag: None,
+        asset: None,
+        source: Some(SourceOrigin {
+            repo_id: 99,
+            manifest: "sunrise-mod.toml".into(),
+            track: SourceTrack::Branch("main".into()),
+            published_at: None,
+        }),
+        added_from: Some(AddedFrom::Github),
+    };
+    let folder_origin = Origin::local_folder(
+        "folder_mod".into(),
+        "0.2.0".into(),
+        "/tmp/local-repo".into(),
+        A.into(),
+    );
+    let discover_origin = Origin {
+        id: "discover_src".into(),
+        added_from: Some(AddedFrom::Discover),
+        ..github_origin.clone()
+    };
+    let locals = [
+        Local {
+            id: "github_mod".into(),
+            file: "sunrise-native-mods/github_mod.smod".into(),
+            name: "Camp Lanterns".into(),
+            version: "0.4.0".into(),
+            github: Some(github_origin),
+            native: true,
+            unreadable: false,
+        },
+        Local {
+            id: "folder_mod".into(),
+            file: "sunrise-mods/folder_mod.smod".into(),
+            name: "Folder Mod".into(),
+            version: "0.2.0".into(),
+            github: Some(folder_origin),
+            native: false,
+            unreadable: false,
+        },
+        Local {
+            id: "local_smod".into(),
+            file: "sunrise-native-mods/local_smod.smod".into(),
+            name: "Lantern Tweaks".into(),
+            version: "0.1.0".into(),
+            github: None,
+            native: true,
+            unreadable: false,
+        },
+        Local {
+            id: "discover_src".into(),
+            file: "sunrise-native-mods/discover_src.smod".into(),
+            name: "Discover Source".into(),
+            version: "0.4.0".into(),
+            github: Some(discover_origin),
+            native: true,
+            unreadable: false,
+        },
+    ];
+    let w = World {
+        local: &locals,
+        ..world(&idx, &on, &none, true)
+    };
+    let mut all = rows(&[entry("zoom", "1.0.0", false, A)], &w);
+    // Even if an update string were attached, manual mods must never be bulk-updatable.
+    for row in &mut all {
+        row.update = Some("9.9.9".into());
+    }
+    let find = |id: &str| all.iter().find(|r| r.id == id).unwrap();
+    assert_eq!(
+        find("github_mod").manual_badge(),
+        Some(ManualBadge::FromSource)
+    );
+    assert!(find("github_mod").is_manual());
+    assert!(!bulk_updatable(find("github_mod")));
+
+    assert_eq!(
+        find("folder_mod").manual_badge(),
+        Some(ManualBadge::FromSource)
+    );
+    assert!(find("folder_mod").is_manual());
+    assert!(!bulk_updatable(find("folder_mod")));
+
+    assert_eq!(find("local_smod").manual_badge(), Some(ManualBadge::Local));
+    assert!(find("local_smod").is_manual());
+    assert!(!bulk_updatable(find("local_smod")));
+
+    assert_eq!(find("discover_src").manual_badge(), None);
+    assert!(!find("discover_src").is_manual());
+
+    assert_eq!(find("zoom").manual_badge(), None);
+    assert!(!find("zoom").is_manual());
+    assert!(bulk_updatable(find("zoom")));
+}
+
+#[test]
 fn every_fitting_native_mod_builds_locally_even_with_legacy_native_binaries() {
     let mut native = project(
         "zoom",

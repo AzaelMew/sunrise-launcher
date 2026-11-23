@@ -248,7 +248,8 @@ impl Launcher {
         let registry_selected = selected.iter().filter(|row| row.local.is_none()).count();
         let busy = !refresh_ready || self.mods_busy();
         let with_update = selected.iter().filter(|r| model::bulk_updatable(r)).count();
-        let any_update = rows.iter().any(model::bulk_updatable);
+        let registry_updates = rows.iter().filter(|r| model::bulk_updatable(r)).count();
+        let has_manual_mods = rows.iter().any(|r| r.manual_badge().is_some());
         let source_update = rows
             .iter()
             .any(|row| nightly::installed_source(row).is_some() && row.update.is_some());
@@ -301,7 +302,7 @@ impl Launcher {
                 .gap(px(10.))
                 .px(px(14.))
                 .min_h(px(48.))
-                .when(n_sel > 0 || has_tracked_sources, |bar| {
+                .when(n_sel > 0 || has_tracked_sources || has_manual_mods, |bar| {
                     bar.flex_wrap().py(px(7.)).gap_y(px(6.))
                 })
                 .border_b_1()
@@ -311,6 +312,11 @@ impl Launcher {
                 bar = bar
                     .child(muted(model::visible_count(&rows, &visible)))
                     .child(div().flex_1());
+                if has_manual_mods {
+                    bar = bar.child(muted(tr(
+                        "From source and Local mods refresh only via Add from source",
+                    )));
+                }
                 if has_tracked_sources {
                     let checking = self.source_updates_checking();
                     let check = bulk(
@@ -333,8 +339,16 @@ impl Launcher {
                         }))
                     });
                 }
-                if any_update || source_update {
-                    let update_all = bulk("alt-update-all", tr("Update all").into(), true, false);
+                if registry_updates > 0 || source_update {
+                    let label = if registry_updates > 0 && !source_update {
+                        trf(
+                            "Update all ({count})",
+                            &[("count", &registry_updates.to_string())],
+                        )
+                    } else {
+                        tr("Update all").into()
+                    };
+                    let update_all = bulk("alt-update-all", label, true, false);
                     bar = bar.child(if busy {
                         update_all
                     } else {
@@ -545,7 +559,7 @@ impl Launcher {
                 row.update = update;
             }
             if let Some(origin) = row.local.as_ref().and_then(|local| local.github.as_ref()) {
-                if row.authors.is_empty() {
+                if row.authors.is_empty() && !origin.owner.is_empty() {
                     row.authors.clone_from(&origin.owner);
                 }
             }
@@ -743,6 +757,8 @@ impl Launcher {
                     .on_click(|_, _, cx| cx.stop_propagation())
             }
         };
+        let manual_badge = r.manual_badge();
+        let no_auto_updates = r.is_manual() && action.is_none();
         let source = r.source_label();
         let byline = if label.is_some() || r.authors.is_empty() {
             source.to_owned()
@@ -758,9 +774,17 @@ impl Launcher {
             .min_w_0()
             .child(
                 div()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .truncate()
-                    .child(label.unwrap_or_else(|| r.title.clone())),
+                    .flex()
+                    .items_center()
+                    .gap(px(6.))
+                    .min_w_0()
+                    .child(
+                        div()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .truncate()
+                            .child(label.unwrap_or_else(|| r.title.clone())),
+                    )
+                    .children(manual_badge.map(ui::manual_badge_pill)),
             )
             .child(
                 div()
@@ -873,7 +897,8 @@ impl Launcher {
                         .flex_none()
                         .flex()
                         .justify_end()
-                        .children(action),
+                        .children(action)
+                        .when(no_auto_updates, |d| d.child(muted(tr("No auto-updates")))),
                 )
         } else {
             row.child(
@@ -895,6 +920,7 @@ impl Launcher {
                     ),
             )
             .children(action)
+            .when(no_auto_updates, |d| d.child(muted(tr("No auto-updates"))))
         };
         row.reach()
             .cursor_pointer()

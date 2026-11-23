@@ -285,7 +285,7 @@ fn assert_world_warning(detail: &str, count: usize) {
     );
 }
 
-fn roster(id: &str) -> Tag {
+pub(super) fn roster(id: &str) -> Tag {
     Tag::compound([(
         "ContentModList",
         Tag::List(vec![Tag::compound([
@@ -295,7 +295,7 @@ fn roster(id: &str) -> Tag {
     )])
 }
 
-fn world(home: &Path, folder: &str, sunrise: Tag) {
+pub(super) fn world(home: &Path, folder: &str, sunrise: Tag) {
     let save = home.join("saves").join(folder);
     fs::create_dir_all(&save).unwrap();
     let root = Tag::compound([
