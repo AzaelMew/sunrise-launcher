@@ -23,6 +23,8 @@ getrandom = "0.4"
 subtle = "2.6"
 libc = "0.2"
 zip = { version = "9.1.3", default-features = false, features = ["deflate"] }
+# Parses registry page and asset URLs as the publisher does.
+url = "2"
 
 [target.'cfg(unix)'.dependencies]
 socket2 = "0.6"

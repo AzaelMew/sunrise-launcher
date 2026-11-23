@@ -7,6 +7,7 @@ pub mod game_identity;
 pub mod holder;
 pub mod icon;
 pub mod index;
+pub mod index_v2;
 pub mod install_lock;
 pub mod layouts;
 #[cfg(any(target_os = "linux", target_os = "macos", windows))]
