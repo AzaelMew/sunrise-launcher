@@ -548,3 +548,58 @@ fn a_damaged_snapshot_pointer_drops_the_cache_but_keeps_the_serial_floor() {
         assert!(fresh.load_cached(now_2026_11_24()).is_ok());
     }
 }
+
+fn change_context(cache: &Path, force_refresh: bool) -> RefreshContext<'_> {
+    RefreshContext {
+        cache_dir: cache,
+        keys: REGISTRY_KEYS,
+        source: "https://example.org/v2/index.json",
+        force_refresh,
+        now_unix: now_2026_11_24(),
+    }
+}
+
+#[test]
+fn a_change_within_the_freshness_window_reuses_the_verified_index_without_fetching() {
+    let temp = tempfile::tempdir().unwrap();
+    let cache = temp.path().join(CACHE_DIR);
+    let loaded = Mutex::new(None);
+    let (bytes, sig) = load_fixture("two-ports-index.json");
+    refresh_in(&loaded, &change_context(&cache, false), |_| {
+        Ok((bytes, sig))
+    })
+    .unwrap();
+
+    let catalog = change_index_in(&loaded, &change_context(&cache, false), |_| {
+        panic!("an index verified within the window must not be fetched again")
+    })
+    .unwrap();
+    assert_eq!(catalog.index.serial, 41);
+    assert!(!catalog.from_cache);
+}
+
+#[test]
+fn a_change_whose_refetch_fails_uses_the_last_verified_index() {
+    let temp = tempfile::tempdir().unwrap();
+    let cache = temp.path().join(CACHE_DIR);
+    let loaded = Mutex::new(None);
+    let (bytes, sig) = load_fixture("two-ports-index.json");
+    refresh_in(&loaded, &change_context(&cache, false), |_| {
+        Ok((bytes.clone(), sig))
+    })
+    .unwrap();
+
+    // Past the window the index is fetched again, and this copy's signature is for other bytes:
+    // the index and signature of two publishes, as the registry site can serve them.
+    let other_sig = fs::read(fixtures().join("two-ports-index.other.minisig")).unwrap();
+    let mismatched = |_: &str| Ok((bytes.clone(), other_sig.clone()));
+    let catalog = change_index_in(&loaded, &change_context(&cache, true), mismatched).unwrap();
+    assert_eq!(catalog.index.serial, 41);
+    assert!(catalog.from_cache);
+
+    // After a restart only the copy on disk is left, and it serves the same way.
+    let restarted = Mutex::new(None);
+    let catalog = change_index_in(&restarted, &change_context(&cache, true), mismatched).unwrap();
+    assert_eq!(catalog.index.serial, 41);
+    assert!(catalog.from_cache);
+}

@@ -229,6 +229,50 @@ pub fn refreshed_index() -> Result<Catalog, LoadError> {
     load_process_index(true)
 }
 
+/// The verified catalogue an install, update or provider switch plans against: the in-memory copy
+/// while it is fresh, else a new fetch. When that fetch fails for any reason, the last verified
+/// copy (in memory, then on disk) serves instead, so a passing registry or network fault never
+/// blocks a change Discover already showed.
+pub fn change_index() -> Result<Catalog, LoadError> {
+    let source = location();
+    let cache = cache_dir();
+    let ctx = RefreshContext {
+        cache_dir: &cache,
+        keys: REGISTRY_KEYS,
+        source: &source,
+        force_refresh: false,
+        now_unix: now_unix_seconds(),
+    };
+    change_index_in(&LOADED, &ctx, fetch_raw)
+}
+
+fn change_index_in<F>(
+    loaded: &Mutex<Option<LoadedState>>,
+    ctx: &RefreshContext<'_>,
+    fetch: F,
+) -> Result<Catalog, LoadError>
+where
+    F: FnOnce(&str) -> Result<(Vec<u8>, Vec<u8>), String>,
+{
+    refresh_in(loaded, ctx, fetch).or_else(|error| {
+        let known = loaded
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .filter(|state| state.source == ctx.source)
+            .map(|state| state.catalog.clone());
+        match known {
+            Some(catalog) => Ok(Catalog {
+                from_cache: true,
+                ..catalog
+            }),
+            None => Store::new(ctx.cache_dir.to_path_buf(), ctx.keys)
+                .load_cached(ctx.now_unix)
+                .map_err(|_| error),
+        }
+    })
+}
+
 fn load_process_index(force_refresh: bool) -> Result<Catalog, LoadError> {
     let source = location();
     let cache = cache_dir();

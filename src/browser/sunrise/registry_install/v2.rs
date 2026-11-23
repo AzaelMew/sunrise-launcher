@@ -1441,8 +1441,8 @@ pub fn install_registry_v2(
     choose: impl FnOnce() -> Result<FirstBuild, String>,
     hooks: V2Hooks<'_>,
 ) -> Result<InstalledBatch, InstallError> {
-    let catalog = catalogue_v2::refreshed_index()
-        .map_err(|error| InstallError::Unproved(error.to_string()))?;
+    let catalog =
+        catalogue_v2::change_index().map_err(|error| InstallError::Unproved(error.to_string()))?;
     install_registry_v2_with(
         instance,
         identity,
@@ -1467,8 +1467,8 @@ pub fn update_registry_v2(
     hooks: V2Hooks<'_>,
     approve: &dyn Fn(&ChangeImpact) -> bool,
 ) -> Result<InstalledBatch, InstallError> {
-    let catalog = catalogue_v2::refreshed_index()
-        .map_err(|error| InstallError::Unproved(error.to_string()))?;
+    let catalog =
+        catalogue_v2::change_index().map_err(|error| InstallError::Unproved(error.to_string()))?;
     update_registry_v2_with(
         instance,
         identity,
@@ -1494,8 +1494,8 @@ pub fn switch_provider_v2(
     choose: impl FnOnce() -> Result<FirstBuild, String>,
     hooks: V2ProviderSwitchHooks<'_>,
 ) -> Result<InstalledBatch, InstallError> {
-    let catalog = catalogue_v2::refreshed_index()
-        .map_err(|error| InstallError::Unproved(error.to_string()))?;
+    let catalog =
+        catalogue_v2::change_index().map_err(|error| InstallError::Unproved(error.to_string()))?;
     switch_provider_v2_with(
         instance,
         identity,
