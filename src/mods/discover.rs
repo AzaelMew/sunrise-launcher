@@ -298,9 +298,20 @@ impl Launcher {
                         .zip(entry)
                         .and_then(|(rows, entry)| rows.archives.get(&entry.file)?.icon.clone());
                     let fits = card_data.fit.fits();
-                    let working = self.registry_card_control(&id, |label| {
-                        dim(button(("alt-add", n), label)).into_any_element()
-                    });
+                    // A card says only that it is working, in a label about Install's size:
+                    // the strip above the page says each step, and the card keeps its shape.
+                    let working = match self.registry_card(&id) {
+                        Some(crate::mods_page::install::Card::Progress(stage)) => {
+                            Some(if stage == sunrise::InstallProgress::Publishing {
+                                tr("Finishing…")
+                            } else {
+                                tr("Installing…")
+                            })
+                        }
+                        Some(crate::mods_page::install::Card::Waiting) => Some(tr("Waiting…")),
+                        _ => None,
+                    }
+                    .map(|label| dim(button(("alt-add", n), label)).into_any_element());
                     let issue = self.registry_card_note(&id);
 
                     // An installed mod says so once, where Install would be: its version,
