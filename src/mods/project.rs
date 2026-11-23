@@ -1153,6 +1153,27 @@ impl Launcher {
         if !vp.description.trim().is_empty() {
             body.push(prose(self.theme, &vp.description));
         }
+        if !vp.dependencies.is_empty() {
+            let mut list = card().flex().flex_col();
+            for (n, dep) in vp.dependencies.iter().enumerate() {
+                list = list.child(self.v2_dependency_line(n, dep, cx));
+            }
+            body.push(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.))
+                    .pt(px(8.))
+                    .child(
+                        div()
+                            .text_size(px(tokens::HEADING))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(tr("Dependencies")),
+                    )
+                    .child(list)
+                    .into_any_element(),
+            );
+        }
 
         let versions_heading = div()
             .flex()
@@ -1486,6 +1507,99 @@ impl Launcher {
             .child(about);
 
         self.project_layout(header, head, gallery, body, side)
+    }
+
+    /// One dependency, as Modrinth lists them: its picture and name, which open its page when the
+    /// registry has it, the versions it must be, and whether it is required.
+    fn v2_dependency_line(
+        &mut self,
+        n: usize,
+        dep: &super::model::discover_v2::V2Dependency,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        use super::model::discover_v2::V2Provider;
+        let p = palette();
+        let (picture, id, name, detail) = match &dep.provider {
+            V2Provider::Listed { id, name, icon } => (
+                icon.as_deref()
+                    .and_then(|rel| self.v2_mod_image(id, rel, images::ROW)),
+                id.clone(),
+                name.clone(),
+                None,
+            ),
+            V2Provider::Several(count) => (
+                None,
+                dep.mod_id.clone(),
+                dep.mod_id.clone(),
+                Some(trf(
+                    "{count} mods on the registry provide it: installing asks which one",
+                    &[("count", &count.to_string())],
+                )),
+            ),
+            V2Provider::Missing => (
+                None,
+                dep.mod_id.clone(),
+                dep.mod_id.clone(),
+                Some(tr("Not on the registry").to_owned()),
+            ),
+        };
+        let mut title = div()
+            .id(("alt-v2-dependency", n))
+            .truncate()
+            .font_weight(FontWeight::SEMIBOLD)
+            .text_size(px(tokens::LABEL))
+            .child(name.clone());
+        if let V2Provider::Listed { id, .. } = &dep.provider {
+            let project = id.clone();
+            title = title
+                .reach()
+                .cursor_pointer()
+                .hover(|s| s.text_color(c(p.accent_ink)))
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    this.mods_show_v2_project(project.clone());
+                    cx.notify();
+                }));
+        }
+        let range = dep
+            .range
+            .clone()
+            .unwrap_or_else(|| tr("any version").to_owned());
+        div()
+            .flex()
+            .items_center()
+            .gap(px(12.))
+            .px(px(14.))
+            .py(px(10.))
+            .when(n > 0, |d| d.border_t_1().border_color(c(p.divider)))
+            .child(tile(picture, &id, &name, 36.))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .child(
+                        div()
+                            .flex()
+                            .items_baseline()
+                            .gap(px(8.))
+                            .min_w_0()
+                            .child(title)
+                            .child(
+                                div()
+                                    .flex_none()
+                                    .font_family(crate::theme::MONO)
+                                    .text_size(px(tokens::SMALL))
+                                    .text_color(c(p.muted))
+                                    .child(range),
+                            ),
+                    )
+                    .children(detail.map(|text| div().truncate().child(muted(text)))),
+            )
+            .child(match dep.required {
+                true => tag(tr("Required")),
+                false => tag(tr("Optional")),
+            })
     }
 
     /// Captioned screenshot gallery for a v2 mod page: fetches verified content-addressed images

@@ -479,5 +479,11 @@
   "Installing…": "Installing…",
   "Waiting…": "Waiting…",
   "Installing to {profile} failed.": "Installing to {profile} failed.",
-  "Finishing…": "Finishing…"
+  "Finishing…": "Finishing…",
+  "Dependencies": "Dependencies",
+  "{count} mods on the registry provide it: installing asks which one": "{count} mods on the registry provide it: installing asks which one",
+  "Not on the registry": "Not on the registry",
+  "any version": "any version",
+  "Required": "Required",
+  "Optional": "Optional"
 }
