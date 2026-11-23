@@ -470,3 +470,116 @@ fn benchmark_shared_startup_response() {
         );
     }
 }
+
+#[test]
+fn static_offers_and_launcher_update_do_not_wait_on_sdk_lookups() {
+    let Some(static_asset) = ASSET else {
+        return;
+    };
+    if installation::sdk_target(selected_game_architecture(&Settings::default())).is_none() {
+        return;
+    }
+    let events = RefCell::new(Vec::new());
+    let list = vec![
+        serde_json::json!({
+            "tag_name": "26.3-0.1.9",
+            "assets": [{"name": sunrise_launcher_sdk::INDEX, "size": 1}]
+        }),
+        serde_json::json!({
+            "tag_name": "26.3-0.1.8",
+            "assets": [{"name": static_asset, "size": 1}]
+        }),
+    ];
+    let updates = releases_and_updates_with_sdk(
+        || Ok(list),
+        Vec::new,
+        Some(Stable),
+        || {
+            assert_eq!(*events.borrow(), ["releases:static"]);
+            events.borrow_mut().push("launcher");
+            Ok(newer_launcher())
+        },
+        |r| {
+            let releases = r.unwrap();
+            let sdk_offered = releases
+                .iter()
+                .find(|rel| rel.tag == "26.3-0.1.9")
+                .and_then(|rel| rel.asset.as_ref())
+                .is_some();
+            let static_offered = releases
+                .iter()
+                .find(|rel| rel.tag == "26.3-0.1.8")
+                .and_then(|rel| rel.asset.as_ref())
+                .is_some();
+            assert!(static_offered, "known static build is offered immediately");
+            if sdk_offered {
+                events.borrow_mut().push("releases:sdk");
+            } else {
+                events.borrow_mut().push("releases:static");
+            }
+        },
+        |candidates, _target| {
+            assert_eq!(*events.borrow(), ["releases:static", "launcher"]);
+            events.borrow_mut().push("sdk");
+            candidates
+                .iter()
+                .any(|rel| rel.tag == "26.3-0.1.9" && rel.asset.is_some())
+        },
+    );
+    assert_eq!(
+        *events.borrow(),
+        ["releases:static", "launcher", "sdk", "releases:sdk"]
+    );
+    assert_eq!(updates.sunrise.unwrap().tag, "26.3-0.1.9");
+    assert_eq!(updates.launcher.is_some(), LAUNCHER_ASSET.is_some());
+}
+
+#[test]
+fn nightly_bookkeeping_uses_final_catalogue_when_newest_nightly_is_sdk_only() {
+    let Some(static_asset) = ASSET else {
+        return;
+    };
+    if installation::sdk_target(selected_game_architecture(&Settings::default())).is_none() {
+        return;
+    }
+    let list = vec![
+        serde_json::json!({
+            "tag_name": "nightly",
+            "name": "Nightly 2026-11-20 · abc1234",
+            "prerelease": true,
+            "assets": [{"name": sunrise_launcher_sdk::INDEX, "size": 1}]
+        }),
+        serde_json::json!({
+            "tag_name": "26.3-0.1.8",
+            "assets": [{"name": static_asset, "size": 1}]
+        }),
+    ];
+    let mut seen = Vec::new();
+    let mut final_catalogue = None;
+    let _ = releases_and_updates_with_sdk(
+        || Ok(list),
+        Vec::new,
+        Some(crate::instances::Channel::Nightly),
+        || Ok(None),
+        |r| {
+            let releases = r.unwrap();
+            let top_nightly = crate::instances::Channel::Nightly
+                .builds(&releases)
+                .next()
+                .map(|rel| rel.tag.clone());
+            seen.push(top_nightly);
+            final_catalogue = Some(releases);
+        },
+        |_candidates, _target| true,
+    );
+    // Pre-verification catalogue omits the unverified SDK-only Nightly, so bookkeeping must wait
+    // for the final catalogue (as startup does after `releases_and_updates` returns).
+    assert_eq!(seen.len(), 2);
+    assert_eq!(seen[0], None);
+    assert_eq!(seen[1].as_deref(), Some("nightly-2026-11-20-abc1234"));
+    let final_top = crate::instances::Channel::Nightly
+        .builds(final_catalogue.as_ref().unwrap())
+        .next()
+        .map(|rel| rel.tag.as_str());
+    assert_eq!(final_top, Some("nightly-2026-11-20-abc1234"));
+}
