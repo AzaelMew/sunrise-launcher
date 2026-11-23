@@ -317,6 +317,9 @@ fn release_versions_and_build_ids_are_strictly_validated() {
         "dev-2026-11-23-short",
         "nightly-2026-11-23-ABCDEF0",
         "26.3-0.1.0-rc.1",
+        "026.3-0.1.0",
+        "26.03-0.1.0",
+        "26.3.0.0-0.1.0",
         "26.3-0.1.0+meta",
         "26.3-0.1",
         "26-0.1.0",
@@ -397,6 +400,7 @@ fn page_and_asset_urls_reject_missing_hosts_credentials_and_bad_ports() {
         "https://[::1/wayfinder",
         "https://example.org\\evil",
         "ftp://example.org/wayfinder",
+        "https://999.999.999.999/wayfinder",
     ] {
         let mut page_bad = golden_json();
         page_bad["projects"][0]["homepage"] = json!(bad_url);
