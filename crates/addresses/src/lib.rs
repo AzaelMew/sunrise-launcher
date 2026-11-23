@@ -16,6 +16,9 @@ pub const MOD_IMAGES: &str = "https://sunrise-org.github.io/sunrise-mods/";
 /// A registry project's page on the website is `<this>/<id>`.
 pub const MOD_PAGES: &str = "https://playsunrise.net/mods";
 
+/// The registry service's API, through the website: ratings (`/ratings`, `/<id>/rating`).
+pub const MOD_API: &str = "https://playsunrise.net/api/mods";
+
 /// The registry's form for reporting a project.
 pub const MOD_REPORT: &str =
     "https://github.com/sunrise-org/sunrise-mods/issues/new?template=report.yml";

@@ -48,7 +48,8 @@ pub mod fonts {
 /// (`"folder-01"`, `"more-vertical"`…). `github` is GitHub's mark, drawn for Sunrise (filled,
 /// its cat cut out by a mask), for Settings' credit link. `sparkles` (Home's What's
 /// new), `chat` (the sidebar's Discord link), `t-shirt` (the Skins tab) and `alert-02`
-/// (unreviewed-mod warnings) are drawn for Sunrise in the same 1.6 stroke.
+/// (unreviewed-mod warnings) are drawn for Sunrise in the same 1.6 stroke, and so are `star` and
+/// `star-filled` (mod ratings), the second filled.
 pub mod glass_icons {
     macro_rules! icons {
         ($($name:literal),* $(,)?) => {
@@ -100,6 +101,8 @@ pub mod glass_icons {
         "shield",
         "sliders-horizontal",
         "sparkles",
+        "star",
+        "star-filled",
         "stop",
         "t-shirt",
         "tick-02",

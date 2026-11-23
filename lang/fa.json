@@ -1858,5 +1858,17 @@
   "Switch and turn it off": "Switch and turn it off",
   "Waiting…": "Waiting…",
   "Installing to {profile} failed.": "Installing to {profile} failed.",
-  "Finishing…": "Finishing…"
+  "Finishing…": "Finishing…",
+  "Couldn't confirm your Minecraft account.": "Couldn't confirm your Minecraft account.",
+  "This mod isn't published in the registry.": "This mod isn't published in the registry.",
+  "The registry can't take ratings right now. Try again later.": "The registry can't take ratings right now. Try again later.",
+  "Couldn't reach the Sunrise registry.": "Couldn't reach the Sunrise registry.",
+  "1 rating": "1 rating",
+  "{count} ratings": "{count} ratings",
+  "Loading ratings…": "Loading ratings…",
+  "No ratings yet": "No ratings yet",
+  "Sign in to rate this mod.": "Sign in to rate this mod.",
+  "Sending…": "Sending…",
+  "Your rating": "Your rating",
+  "Rate this mod": "Rate this mod"
 }
