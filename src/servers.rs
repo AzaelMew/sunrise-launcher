@@ -560,11 +560,14 @@ fn prepare_host_resources(
     if !resources.pending {
         return Ok((engine, resources.path));
     }
+    let expected = resources.path;
     // For a pending managed install, init repairs its resources without changing server.toml
     // or recording a new EULA agreement (sunrise-org/sunrise#4620).
     run(dir, &["init", "--yes"])?;
     match engine_command(dir)? {
-        Some((engine, resources)) if !resources.pending => Ok((engine, resources.path)),
+        Some((engine, resources)) if !resources.pending && resources.path == expected => {
+            Ok((engine, resources.path))
+        }
         _ => Err(Problem::plain(tr(
             "The server's game files are still not prepared.",
         ))),
