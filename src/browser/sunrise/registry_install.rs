@@ -92,8 +92,16 @@ pub enum InstallProgress {
     PreparingBuild,
     Checking,
     Downloading(f32),
+    /// The game build's own download, before its Minecraft files are prepared.
+    DownloadingBuild(f32),
+    /// A game build's preparation: the step under way and, while Mojang's files download, how
+    /// many of how many are done.
+    Minecraft(crate::backend::PrepareStep, Option<(usize, usize)>),
     Preparing,
-    Tools { done: u64, total: u64 },
+    Tools {
+        done: u64,
+        total: u64,
+    },
     Rust(f32),
     Building(Option<f32>),
     Publishing,

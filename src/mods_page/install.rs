@@ -1770,6 +1770,28 @@ pub(crate) fn stage_label(step: InstallProgress) -> String {
             "Downloading {percent}%",
             &[("percent", &format!("{:.0}", f * 100.))],
         ),
+        InstallProgress::DownloadingBuild(f) => trf(
+            "Downloading the build {percent}%",
+            &[("percent", &format!("{:.0}", f * 100.))],
+        ),
+        InstallProgress::Minecraft(step, files) => {
+            use sunrise_launcher::backend::PrepareStep;
+            let count = files.map(|(done, total)| (done.to_string(), total.to_string()));
+            match (step, count) {
+                (PrepareStep::Files, None) => tr("Finding Minecraft's files…").into(),
+                (PrepareStep::Files, Some((done, total))) => trf(
+                    "Downloading Minecraft's files ({done} of {total})",
+                    &[("done", &done), ("total", &total)],
+                ),
+                (PrepareStep::Java, None) => tr("Finding Java…").into(),
+                (PrepareStep::Java, Some((done, total))) => trf(
+                    "Downloading Java ({done} of {total} files)",
+                    &[("done", &done), ("total", &total)],
+                ),
+                (PrepareStep::Sounds, _) => tr("Adding the sounds…").into(),
+                (PrepareStep::Prepare, _) => tr("Preparing Minecraft's files…").into(),
+            }
+        }
         InstallProgress::Preparing => tr("Getting ready…").into(),
         InstallProgress::Rust(fraction) => trf(
             "Downloading build tools {percent}%",
@@ -1794,7 +1816,12 @@ pub(crate) fn stage_label(step: InstallProgress) -> String {
 
 pub(crate) fn stage_fraction(step: InstallProgress) -> Option<f32> {
     match step {
-        InstallProgress::Downloading(f) | InstallProgress::Rust(f) => Some(f),
+        InstallProgress::Downloading(f)
+        | InstallProgress::DownloadingBuild(f)
+        | InstallProgress::Rust(f) => Some(f),
+        InstallProgress::Minecraft(_, Some((done, total))) if total > 0 => {
+            Some(done as f32 / total as f32)
+        }
         InstallProgress::Building(f) => f,
         InstallProgress::Tools { done, total } if total > 0 => Some(done as f32 / total as f32),
         _ => None,
@@ -1873,6 +1900,20 @@ fn failure_line(error: &InstallError) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_build_preparation_names_its_step_and_counts_mojangs_files() {
+        use sunrise_launcher::backend::PrepareStep;
+        let downloading = InstallProgress::Minecraft(PrepareStep::Files, Some((30, 120)));
+        assert_eq!(
+            stage_label(downloading),
+            "Downloading Minecraft's files (30 of 120)"
+        );
+        assert_eq!(stage_fraction(downloading), Some(0.25));
+        let preparing = InstallProgress::Minecraft(PrepareStep::Prepare, None);
+        assert_eq!(stage_label(preparing), "Preparing Minecraft's files…");
+        assert_eq!(stage_fraction(preparing), None);
+    }
 
     #[test]
     fn a_failed_install_says_why_in_a_dialog_not_on_the_card() {
