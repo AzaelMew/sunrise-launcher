@@ -39,7 +39,7 @@ pub const REGISTRY_KEYS: &[&str] = &[];
 
 /// Disposable test-only minisign public key; never compiled into non-test builds.
 #[cfg(test)]
-pub const REGISTRY_KEYS: &[&str] = &["RWRTVU5SSVNFMQr1QL9LchatBXnECeF8+QFFoyWMl4WSRObxT1+DnHXu"];
+pub const REGISTRY_KEYS: &[&str] = &["RWSwC2FU6jlWFepUk56a61uccuXxBaMuB35XctszNB8XOUNzfUDxPror"];
 
 /// A verified v2 registry catalogue loaded from the network or from the verified disk cache.
 #[derive(Clone, Debug)]
@@ -81,9 +81,7 @@ impl From<VerifyError> for LoadError {
 impl fmt::Display for LoadError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::KeyNotConfigured => {
-                f.write_str(tr("Sunrise mod registry key not configured."))
-            }
+            Self::KeyNotConfigured => f.write_str(tr("Sunrise mod registry key not configured.")),
             Self::Fetch(reason) => f.write_str(reason),
             Self::BadSignature(_) => {
                 f.write_str(tr("The mod registry index signature could not be verified."))
@@ -109,6 +107,21 @@ impl std::error::Error for LoadError {}
 #[derive(Debug, Serialize, Deserialize)]
 struct PersistedState {
     highest_serial: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    active: Option<ActiveCache>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct ActiveCache {
+    index: String,
+    signature: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PublishStep {
+    Index,
+    Signature,
+    State,
 }
 
 struct LoadedState {
@@ -118,7 +131,18 @@ struct LoadedState {
     highest_serial: u64,
 }
 
+struct RefreshContext<'a> {
+    cache_dir: &'a Path,
+    keys: &'a [&'a str],
+    source: &'a str,
+    force_refresh: bool,
+    now_unix: i64,
+}
+
 static LOADED: Mutex<Option<LoadedState>> = Mutex::new(None);
+/// Serializes on-disk serial-floor checks and cache publication across stores.
+/// Lock order is always `LOADED` (when held) before `COMMIT_LOCK`.
+static COMMIT_LOCK: Mutex<()> = Mutex::new(());
 
 /// Where the v2 index comes from: `SUNRISE_MOD_INDEX_V2` when set and non-empty, else
 /// [`INDEX_URL`].
@@ -151,7 +175,7 @@ pub fn cache_dir() -> PathBuf {
 pub fn known_index() -> Option<Catalog> {
     LOADED
         .lock()
-        .unwrap()
+        .unwrap_or_else(|e| e.into_inner())
         .as_ref()
         .map(|state| state.catalog.clone())
 }
@@ -168,42 +192,53 @@ pub fn refreshed_index() -> Result<Catalog, LoadError> {
 }
 
 fn load_process_index(force_refresh: bool) -> Result<Catalog, LoadError> {
-    if !has_configured_key(REGISTRY_KEYS) {
+    let source = location();
+    let cache = cache_dir();
+    let ctx = RefreshContext {
+        cache_dir: &cache,
+        keys: REGISTRY_KEYS,
+        source: &source,
+        force_refresh,
+        now_unix: now_unix_seconds(),
+    };
+    refresh_in(&LOADED, &ctx, fetch_raw)
+}
+
+fn refresh_in<F>(
+    loaded: &Mutex<Option<LoadedState>>,
+    ctx: &RefreshContext<'_>,
+    fetch: F,
+) -> Result<Catalog, LoadError>
+where
+    F: FnOnce(&str) -> Result<(Vec<u8>, Vec<u8>), String>,
+{
+    if !has_configured_key(ctx.keys) {
         return Err(LoadError::KeyNotConfigured);
     }
-    let source = location();
-    let prev_highest = {
-        let guard = LOADED.lock().unwrap();
+    {
+        let guard = loaded.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(state) = guard.as_ref() {
-            if !force_refresh && state.source == source && state.at.elapsed() < FRESH {
+            if !ctx.force_refresh && state.source == ctx.source && state.at.elapsed() < FRESH {
                 return Ok(state.catalog.clone());
             }
-            Some(state.highest_serial)
-        } else {
-            None
         }
-    };
-
-    let mut store = Store::with_highest_serial(cache_dir(), REGISTRY_KEYS, prev_highest);
-    let catalog = store.fetch_and_load(&source, now_unix_seconds())?;
-
-    let mut guard = LOADED.lock().unwrap();
-    if let Some(highest) = guard
-        .as_ref()
-        .map(|current| current.highest_serial)
-        .filter(|&highest| catalog.index.serial < highest)
-    {
-        return Err(LoadError::Rollback {
-            got: catalog.index.serial,
-            highest,
-        });
     }
+
+    // Keep network and file I/O outside the lock so concurrent refreshes overlap freely.
+    let fetched = fetch(ctx.source);
+
+    // Serialize the serial-floor check, disk commit, and in-memory update together so a slower
+    // response can never overwrite a newer catalogue on disk.
+    let mut guard = loaded.lock().unwrap_or_else(|e| e.into_inner());
+    let prev_highest = guard.as_ref().map(|state| state.highest_serial);
+    let mut store = Store::with_highest_serial(ctx.cache_dir.to_path_buf(), ctx.keys, prev_highest);
+    let catalog = store.load_from_fetch(fetched, ctx.now_unix)?;
     let highest_serial = guard.as_ref().map_or(catalog.index.serial, |current| {
         current.highest_serial.max(catalog.index.serial)
     });
     *guard = Some(LoadedState {
         at: Instant::now(),
-        source,
+        source: ctx.source.to_owned(),
         catalog: catalog.clone(),
         highest_serial,
     });
@@ -241,22 +276,8 @@ impl Store {
 
     /// Returns the highest accepted serial tracked in memory or on disk.
     pub fn highest_serial(&self) -> Result<Option<u64>, LoadError> {
-        let state_path = self.cache_dir.join(STATE_FILE);
-        let disk_serial = match fs::read_to_string(&state_path) {
-            Ok(text) => {
-                let parsed: PersistedState = serde_json::from_str(&text)
-                    .map_err(|e| LoadError::CorruptState(e.to_string()))?;
-                Some(parsed.highest_serial)
-            }
-            Err(error) if error.kind() == ErrorKind::NotFound => None,
-            Err(error) => return Err(LoadError::CorruptState(error.to_string())),
-        };
-        Ok(match (self.highest_serial, disk_serial) {
-            (Some(mem), Some(disk)) => Some(mem.max(disk)),
-            (Some(mem), None) => Some(mem),
-            (None, Some(disk)) => Some(disk),
-            (None, None) => None,
-        })
+        let disk_serial = self.read_state()?.map(|state| state.highest_serial);
+        Ok(combine_serial(self.highest_serial, disk_serial))
     }
 
     /// Fetches `index.json` and `index.json.minisig` from `source`, verifies the signature and
@@ -269,17 +290,18 @@ impl Store {
 
     /// Applies a completed fetch result against this store's keys, rollback state, and cache.
     ///
-    /// Verification, malformed-payload, and rollback errors on a fetched response are returned
-    /// directly and never masked by a cached copy. Only a fetch failure falls back to the verified
-    /// last-good cache, which is still signature- and serial-checked.
+    /// Verification, invalid signature encoding, malformed-payload, and rollback errors on a
+    /// fetched response are returned directly and never masked by a cached copy. Only a fetch
+    /// failure falls back to the verified last-good cache, which is still signature- and
+    /// serial-checked.
     pub fn load_from_fetch(
         &mut self,
-        fetched: Result<(Vec<u8>, String), String>,
+        fetched: Result<(Vec<u8>, Vec<u8>), String>,
         now_unix: i64,
     ) -> Result<Catalog, LoadError> {
         self.require_keys()?;
         match fetched {
-            Ok((bytes, signature)) => self.accept_bytes(&bytes, &signature, now_unix),
+            Ok((bytes, sig_bytes)) => self.accept_raw_bytes(&bytes, &sig_bytes, now_unix),
             Err(fetch_error) => match self.load_cached(now_unix) {
                 Ok(catalog) => Ok(catalog),
                 Err(
@@ -292,26 +314,85 @@ impl Store {
         }
     }
 
-    /// Verifies exact `bytes` and `signature`, enforces monotonic `serial`, writes the verified
-    /// copy and updated serial to the v2 cache namespace, and returns the accepted catalogue.
+    /// Verifies exact `bytes` and raw `signature_bytes` (returning [`LoadError::BadSignature`] if
+    /// the signature is not valid UTF-8), enforces monotonic `serial`, writes the verified copy
+    /// and updated serial atomically to the v2 cache namespace, and returns the accepted catalogue.
+    pub fn accept_raw_bytes(
+        &mut self,
+        bytes: &[u8],
+        signature_bytes: &[u8],
+        now_unix: i64,
+    ) -> Result<Catalog, LoadError> {
+        self.require_keys()?;
+        let signature = std::str::from_utf8(signature_bytes)
+            .map_err(|e| LoadError::BadSignature(format!("invalid UTF-8 signature: {e}")))?;
+        self.accept_bytes(bytes, signature, now_unix)
+    }
+
+    /// Verifies exact `bytes` and `signature`, enforces monotonic `serial`, publishes the verified
+    /// index, signature, and serial together in the v2 cache namespace, and returns the accepted
+    /// catalogue.
     pub fn accept_bytes(
         &mut self,
         bytes: &[u8],
         signature: &str,
         now_unix: i64,
     ) -> Result<Catalog, LoadError> {
+        self.accept_bytes_inner(bytes, signature, now_unix, |_, path, data| {
+            write_atomic(path, data)
+        })
+    }
+
+    #[cfg(test)]
+    fn accept_bytes_with_writer<W>(
+        &mut self,
+        bytes: &[u8],
+        signature: &str,
+        now_unix: i64,
+        write_file: W,
+    ) -> Result<Catalog, LoadError>
+    where
+        W: FnMut(PublishStep, &Path, &[u8]) -> Result<(), String>,
+    {
+        self.accept_bytes_inner(bytes, signature, now_unix, write_file)
+    }
+
+    fn accept_bytes_inner<W>(
+        &mut self,
+        bytes: &[u8],
+        signature: &str,
+        now_unix: i64,
+        write_file: W,
+    ) -> Result<Catalog, LoadError>
+    where
+        W: FnMut(PublishStep, &Path, &[u8]) -> Result<(), String>,
+    {
         self.require_keys()?;
         let key_refs: Vec<&str> = self.keys.iter().map(String::as_str).collect();
         let index = index_v2::verify_and_parse(bytes, signature, &key_refs)?;
-        let highest = self.highest_serial()?;
+
+        let _commit = COMMIT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let state = self.read_state()?;
+        let highest = combine_serial(
+            self.highest_serial,
+            state.as_ref().map(|s| s.highest_serial),
+        );
         if let Some(prev) = highest.filter(|&prev| index.serial < prev) {
             return Err(LoadError::Rollback {
                 got: index.serial,
                 highest: prev,
             });
         }
-        self.persist_verified(bytes, signature, index.serial)?;
-        self.highest_serial = Some(highest.map_or(index.serial, |prev| prev.max(index.serial)));
+        let next_serial = highest.map_or(index.serial, |prev| prev.max(index.serial));
+        let previous_active = state.and_then(|s| s.active);
+        self.persist_verified_with(
+            bytes,
+            signature,
+            next_serial,
+            previous_active.as_ref(),
+            write_file,
+        )?;
+        self.highest_serial = Some(next_serial);
         let stale_warning = stale_warning_at(&index, now_unix);
         Ok(Catalog {
             index: Arc::new(index),
@@ -324,8 +405,25 @@ impl Store {
     /// signature verification and the highest accepted `serial`.
     pub fn load_cached(&mut self, now_unix: i64) -> Result<Catalog, LoadError> {
         self.require_keys()?;
-        let index_path = self.cache_dir.join(CACHE_INDEX);
-        let sig_path = self.cache_dir.join(CACHE_SIG);
+        let _commit = COMMIT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let state = self.read_state()?;
+        let (index_path, sig_path) = match state.as_ref().and_then(|s| s.active.as_ref()) {
+            Some(active) => {
+                if !plain_cache_name(&active.index) || !plain_cache_name(&active.signature) {
+                    return Err(LoadError::CorruptState(
+                        "invalid cached snapshot file name".into(),
+                    ));
+                }
+                (
+                    self.cache_dir.join(&active.index),
+                    self.cache_dir.join(&active.signature),
+                )
+            }
+            None => (
+                self.cache_dir.join(CACHE_INDEX),
+                self.cache_dir.join(CACHE_SIG),
+            ),
+        };
         let bytes = read_bounded_file(
             &index_path,
             index_v2::MAX_INDEX,
@@ -343,7 +441,10 @@ impl Store {
 
         let key_refs: Vec<&str> = self.keys.iter().map(String::as_str).collect();
         let index = index_v2::verify_and_parse(&bytes, &signature, &key_refs)?;
-        let highest = self.highest_serial()?;
+        let highest = combine_serial(
+            self.highest_serial,
+            state.as_ref().map(|s| s.highest_serial),
+        );
         if let Some(prev) = highest.filter(|&prev| index.serial < prev) {
             return Err(LoadError::Rollback {
                 got: index.serial,
@@ -359,6 +460,20 @@ impl Store {
         })
     }
 
+    #[cfg(test)]
+    fn active_cache_paths(&self) -> Result<Option<(PathBuf, PathBuf)>, LoadError> {
+        let Some(state) = self.read_state()? else {
+            return Ok(None);
+        };
+        let Some(active) = state.active else {
+            return Ok(None);
+        };
+        Ok(Some((
+            self.cache_dir.join(active.index),
+            self.cache_dir.join(active.signature),
+        )))
+    }
+
     fn require_keys(&self) -> Result<(), LoadError> {
         if !self.keys.iter().any(|key| !key.trim().is_empty()) {
             return Err(LoadError::KeyNotConfigured);
@@ -366,24 +481,93 @@ impl Store {
         Ok(())
     }
 
-    fn persist_verified(
+    fn read_state(&self) -> Result<Option<PersistedState>, LoadError> {
+        let state_path = self.cache_dir.join(STATE_FILE);
+        match fs::read_to_string(&state_path) {
+            Ok(text) => {
+                let parsed: PersistedState = serde_json::from_str(&text)
+                    .map_err(|e| LoadError::CorruptState(e.to_string()))?;
+                Ok(Some(parsed))
+            }
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(LoadError::CorruptState(error.to_string())),
+        }
+    }
+
+    fn persist_verified_with<W>(
         &self,
         bytes: &[u8],
         signature: &str,
         serial: u64,
-    ) -> Result<(), LoadError> {
+        previous_active: Option<&ActiveCache>,
+        mut write_file: W,
+    ) -> Result<(), LoadError>
+    where
+        W: FnMut(PublishStep, &Path, &[u8]) -> Result<(), String>,
+    {
         fs::create_dir_all(&self.cache_dir)
             .map_err(|e| LoadError::Fetch(format!("{}: {e}", self.cache_dir.display())))?;
-        write_atomic(&self.cache_dir.join(CACHE_INDEX), bytes).map_err(LoadError::Fetch)?;
-        write_atomic(&self.cache_dir.join(CACHE_SIG), signature.as_bytes())
-            .map_err(LoadError::Fetch)?;
+        let prefix = next_snapshot_prefix(serial).map_err(LoadError::Fetch)?;
+        let index_name = format!("{prefix}.json");
+        let sig_name = format!("{prefix}.json.minisig");
+        let index_path = self.cache_dir.join(&index_name);
+        let sig_path = self.cache_dir.join(&sig_name);
+        let state_path = self.cache_dir.join(STATE_FILE);
+
+        if let Err(err) = write_file(PublishStep::Index, &index_path, bytes) {
+            let _ = fs::remove_file(&index_path);
+            return Err(LoadError::Fetch(err));
+        }
+        if let Err(err) = write_file(PublishStep::Signature, &sig_path, signature.as_bytes()) {
+            let _ = fs::remove_file(&index_path);
+            let _ = fs::remove_file(&sig_path);
+            return Err(LoadError::Fetch(err));
+        }
         let state_json = serde_json::to_vec(&PersistedState {
             highest_serial: serial,
+            active: Some(ActiveCache {
+                index: index_name.clone(),
+                signature: sig_name.clone(),
+            }),
         })
         .map_err(|e| LoadError::CorruptState(e.to_string()))?;
-        write_atomic(&self.cache_dir.join(STATE_FILE), &state_json).map_err(LoadError::Fetch)?;
+        if let Err(err) = write_file(PublishStep::State, &state_path, &state_json) {
+            let _ = fs::remove_file(&index_path);
+            let _ = fs::remove_file(&sig_path);
+            return Err(LoadError::Fetch(err));
+        }
+
+        // Remove the superseded snapshot only after state.json atomically published the new one.
+        if let Some(old) = previous_active {
+            if plain_cache_name(&old.index) && old.index != index_name {
+                let _ = fs::remove_file(self.cache_dir.join(&old.index));
+            }
+            if plain_cache_name(&old.signature) && old.signature != sig_name {
+                let _ = fs::remove_file(self.cache_dir.join(&old.signature));
+            }
+        }
         Ok(())
     }
+}
+
+fn combine_serial(memory: Option<u64>, disk: Option<u64>) -> Option<u64> {
+    match (memory, disk) {
+        (Some(mem), Some(disk)) => Some(mem.max(disk)),
+        (Some(mem), None) => Some(mem),
+        (None, Some(disk)) => Some(disk),
+        (None, None) => None,
+    }
+}
+
+fn plain_cache_name(name: &str) -> bool {
+    !name.is_empty() && name != "." && name != ".." && !name.contains(['/', '\\', ':', '\0'])
+}
+
+fn next_snapshot_prefix(serial: u64) -> Result<String, String> {
+    let mut nonce = [0u8; 8];
+    getrandom::fill(&mut nonce).map_err(|e| format!("random snapshot id: {e}"))?;
+    let hex: String = nonce.iter().map(|b| format!("{b:02x}")).collect();
+    Ok(format!("snapshot-{serial}-{hex}"))
 }
 
 fn has_configured_key(keys: &[&str]) -> bool {
@@ -406,7 +590,7 @@ fn now_unix_seconds() -> i64 {
         .unwrap_or(0)
 }
 
-fn fetch_raw(source: &str) -> Result<(Vec<u8>, String), String> {
+fn fetch_raw(source: &str) -> Result<(Vec<u8>, Vec<u8>), String> {
     let sig_source = signature_location(source);
     let loopback = is_debug_loopback(source);
     if source.starts_with("http://") && !loopback {
@@ -427,9 +611,7 @@ fn fetch_raw(source: &str) -> Result<(Vec<u8>, String), String> {
             index_v2::MAX_SIGNATURE,
             tr("The mod registry signature is too large.").into(),
         )?;
-        let sig_text = String::from_utf8(sig_bytes)
-            .map_err(|e| format!("invalid registry signature encoding: {e}"))?;
-        return Ok((index_bytes, sig_text));
+        return Ok((index_bytes, sig_bytes));
     }
 
     let index_bytes = read_bounded_file(
@@ -442,9 +624,7 @@ fn fetch_raw(source: &str) -> Result<(Vec<u8>, String), String> {
         index_v2::MAX_SIGNATURE,
         tr("The mod registry signature is too large.").into(),
     )?;
-    let sig_text = String::from_utf8(sig_bytes)
-        .map_err(|e| format!("invalid registry signature encoding: {e}"))?;
-    Ok((index_bytes, sig_text))
+    Ok((index_bytes, sig_bytes))
 }
 
 fn is_debug_loopback(source: &str) -> bool {
@@ -536,6 +716,9 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
         .tempfile_in(dir)
         .map_err(|e| format!("{}: {e}", dir.display()))?;
     temp.write_all(bytes)
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    temp.as_file()
+        .sync_all()
         .map_err(|e| format!("{}: {e}", path.display()))?;
     temp.persist(path)
         .map_err(|e| format!("{}: {}", path.display(), e.error))?;

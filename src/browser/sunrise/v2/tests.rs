@@ -1,19 +1,57 @@
 use super::*;
 use std::io::{BufRead, BufReader};
 use std::net::TcpListener;
+use std::sync::mpsc;
 
 fn fixtures() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/smod/tests/index_v2")
 }
 
-fn load_fixture(name: &str) -> (Vec<u8>, String) {
+fn load_fixture(name: &str) -> (Vec<u8>, Vec<u8>) {
     let bytes = fs::read(fixtures().join(name)).unwrap();
-    let sig = fs::read_to_string(fixtures().join(format!("{name}.minisig"))).unwrap();
+    let sig = fs::read(fixtures().join(format!("{name}.minisig"))).unwrap();
     (bytes, sig)
 }
 
 fn now_2026_11_24() -> i64 {
     index_v2::parse_rfc3339_utc("2026-11-24T00:00:00Z").unwrap()
+}
+
+fn spawn_loopback_server(
+    index_bytes: Vec<u8>,
+    sig_bytes: Vec<u8>,
+) -> (String, std::thread::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = std::thread::spawn(move || {
+        for _ in 0..2 {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut request_line = String::new();
+            reader.read_line(&mut request_line).unwrap();
+            loop {
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                if line == "\r\n" || line.is_empty() {
+                    break;
+                }
+            }
+            let path = request_line.split_whitespace().nth(1).unwrap_or("");
+            let (status, body): (&str, &[u8]) = match path {
+                "/v2/index.json" => ("200 OK", &index_bytes),
+                "/v2/index.json.minisig" => ("200 OK", &sig_bytes),
+                _ => ("404 Not Found", b"missing"),
+            };
+            let header = format!(
+                "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            stream.write_all(header.as_bytes()).unwrap();
+            stream.write_all(body).unwrap();
+            stream.flush().unwrap();
+        }
+    });
+    (format!("http://{addr}/v2/index.json"), server)
 }
 
 #[test]
@@ -32,6 +70,7 @@ fn test_key_constant_matches_fixture_and_good_signature_caches_golden_index() {
     assert!(!catalog.from_cache);
     assert_eq!(catalog.stale_warning, None);
     assert_eq!(catalog.index.serial, 41);
+    assert_eq!(catalog.index.builds.len(), 3);
     assert_eq!(catalog.index.projects.len(), 2);
     assert_eq!(catalog.index.revoked.len(), 2);
     assert_eq!(store.highest_serial().unwrap(), Some(41));
@@ -91,7 +130,7 @@ fn bad_signature_and_tampered_bytes_are_refused_without_falling_back_to_cache() 
         .unwrap();
 
     // Wrong key signature is refused directly (does not silently serve the cached copy).
-    let other_sig = fs::read_to_string(fixtures().join("two-ports-index.other.minisig")).unwrap();
+    let other_sig = fs::read(fixtures().join("two-ports-index.other.minisig")).unwrap();
     let err = store
         .load_from_fetch(Ok((bytes.clone(), other_sig)), now_2026_11_24())
         .unwrap_err();
@@ -106,7 +145,8 @@ fn bad_signature_and_tampered_bytes_are_refused_without_falling_back_to_cache() 
     assert!(matches!(err, LoadError::BadSignature(_)), "{err:?}");
 
     // Tampered disk cache is never trusted offline either.
-    fs::write(cache.join(CACHE_INDEX), b"{}").unwrap();
+    let (active_index, _) = store.active_cache_paths().unwrap().unwrap();
+    fs::write(active_index, b"{}").unwrap();
     let err = store.load_cached(now_2026_11_24()).unwrap_err();
     assert!(matches!(err, LoadError::BadSignature(_)), "{err:?}");
 }
@@ -150,15 +190,14 @@ fn lower_serial_is_refused_for_both_fetched_and_cached_copies() {
         .unwrap();
     assert_eq!(newer.index.serial, 42);
     assert_eq!(
-        newer.index.project("Ab3dE9xQ").unwrap().releases[0]
-            .workflow
-            .as_deref(),
-        Some("sunrise-org/sunrise-mods/.github/workflows/release.yml@refs/tags/release-v2")
+        newer.index.project("Ab3dE9xQ").unwrap().releases[0].workflow,
+        "sunrise-org/sunrise-mods/.github/workflows/release.yml@refs/tags/release-v2"
     );
 
-    // Replace cached files with genuinely signed older serial 40; offline load MUST refuse it.
-    fs::write(cache.join(CACHE_INDEX), &bytes_40).unwrap();
-    fs::write(cache.join(CACHE_SIG), &sig_40).unwrap();
+    // Replace active cached files with genuinely signed older serial 40; offline load MUST refuse.
+    let (active_index, active_sig) = store.active_cache_paths().unwrap().unwrap();
+    fs::write(active_index, &bytes_40).unwrap();
+    fs::write(active_sig, &sig_40).unwrap();
     let mut reopened = Store::new(cache, REGISTRY_KEYS);
     let cache_err = reopened
         .load_from_fetch(Err("offline".into()), now_2026_11_24())
@@ -170,6 +209,189 @@ fn lower_serial_is_refused_for_both_fetched_and_cached_copies() {
             highest: 42
         }
     );
+}
+
+#[test]
+fn overlapping_refreshes_keep_fetch_outside_lock_and_cannot_roll_back_disk_cache() {
+    let temp = tempfile::tempdir().unwrap();
+    let cache = temp.path().join(CACHE_DIR);
+    let loaded: Arc<Mutex<Option<LoadedState>>> = Arc::new(Mutex::new(None));
+
+    // Seed with serial 40 first.
+    let (bytes_40, sig_40) = load_fixture("serial-40.json");
+    let seed_ctx = RefreshContext {
+        cache_dir: &cache,
+        keys: REGISTRY_KEYS,
+        source: "https://example.org/v2/index.json",
+        force_refresh: true,
+        now_unix: now_2026_11_24(),
+    };
+    let seeded = refresh_in(&loaded, &seed_ctx, |_| Ok((bytes_40, sig_40))).unwrap();
+    assert_eq!(seeded.index.serial, 40);
+
+    // Start a slower refresh returning serial 41; hold it inside fetch while a faster refresh
+    // commits serial 42. Reaching the fast commit proves fetching stays outside the lock.
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let slow_loaded = Arc::clone(&loaded);
+    let slow_cache = cache.clone();
+    let slow = std::thread::spawn(move || {
+        let (bytes_41, sig_41) = load_fixture("two-ports-index.json");
+        let ctx = RefreshContext {
+            cache_dir: &slow_cache,
+            keys: REGISTRY_KEYS,
+            source: "https://example.org/v2/index.json",
+            force_refresh: true,
+            now_unix: now_2026_11_24(),
+        };
+        refresh_in(&slow_loaded, &ctx, |_| {
+            entered_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+            Ok((bytes_41, sig_41))
+        })
+    });
+
+    entered_rx.recv().unwrap();
+
+    // Fast refresh completes and persists serial 42 while the slow fetch is still in flight.
+    let (bytes_42, sig_42) = load_fixture("serial-42.json");
+    let fast_ctx = RefreshContext {
+        cache_dir: &cache,
+        keys: REGISTRY_KEYS,
+        source: "https://example.org/v2/index.json",
+        force_refresh: true,
+        now_unix: now_2026_11_24(),
+    };
+    let fast = refresh_in(&loaded, &fast_ctx, |_| Ok((bytes_42, sig_42))).unwrap();
+    assert_eq!(fast.index.serial, 42);
+
+    // Let the slower serial-41 fetch return; the serialized floor check must reject it without
+    // touching the on-disk serial-42 catalogue.
+    release_tx.send(()).unwrap();
+    let slow_err = slow.join().unwrap().unwrap_err();
+    assert_eq!(
+        slow_err,
+        LoadError::Rollback {
+            got: 41,
+            highest: 42
+        }
+    );
+
+    // Simulate a restart: a fresh Store must still load serial 42 from disk.
+    let mut reopened = Store::new(cache, REGISTRY_KEYS);
+    assert_eq!(reopened.highest_serial().unwrap(), Some(42));
+    let cached = reopened.load_cached(now_2026_11_24()).unwrap();
+    assert_eq!(cached.index.serial, 42);
+    assert!(cached.from_cache);
+}
+
+#[test]
+fn interrupted_update_preserves_last_good_cached_copy() {
+    let temp = tempfile::tempdir().unwrap();
+    let cache = temp.path().join(CACHE_DIR);
+    let mut store = Store::new(cache.clone(), REGISTRY_KEYS);
+
+    // Seed last-good serial 41.
+    let (bytes_41, sig_41) = load_fixture("two-ports-index.json");
+    store
+        .load_from_fetch(Ok((bytes_41, sig_41)), now_2026_11_24())
+        .unwrap();
+    let (good_index, good_sig) = store.active_cache_paths().unwrap().unwrap();
+
+    let (bytes_42, sig_42_bytes) = load_fixture("serial-42.json");
+    let sig_42 = String::from_utf8(sig_42_bytes).unwrap();
+
+    // Interrupt an update to serial 42 at every stage of publication; the last-good serial-41
+    // snapshot and state must remain intact after each failure.
+    for fail_at in [
+        PublishStep::Index,
+        PublishStep::Signature,
+        PublishStep::State,
+    ] {
+        let err = store
+            .accept_bytes_with_writer(&bytes_42, &sig_42, now_2026_11_24(), |step, path, data| {
+                if step == fail_at {
+                    Err(format!("simulated write failure at {step:?}"))
+                } else {
+                    write_atomic(path, data)
+                }
+            })
+            .unwrap_err();
+        assert!(matches!(err, LoadError::Fetch(_)), "{fail_at:?}: {err:?}");
+
+        let mut reopened = Store::new(cache.clone(), REGISTRY_KEYS);
+        assert_eq!(reopened.highest_serial().unwrap(), Some(41));
+        assert_eq!(
+            reopened.active_cache_paths().unwrap(),
+            Some((good_index.clone(), good_sig.clone()))
+        );
+        let cached = reopened.load_cached(now_2026_11_24()).unwrap();
+        assert!(cached.from_cache);
+        assert_eq!(cached.index.serial, 41);
+        assert_eq!(cached.index.projects.len(), 2);
+
+        // No orphaned uncommitted snapshot files are left behind.
+        let entries: Vec<_> = fs::read_dir(&cache)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect();
+        assert_eq!(entries.len(), 3, "{fail_at:?}: {entries:?}");
+    }
+
+    // A subsequent uninterrupted update commits serial 42 and removes the superseded snapshot.
+    let updated = store
+        .accept_bytes(&bytes_42, &sig_42, now_2026_11_24())
+        .unwrap();
+    assert_eq!(updated.index.serial, 42);
+    assert!(!good_index.exists());
+    assert!(!good_sig.exists());
+    let mut reopened = Store::new(cache, REGISTRY_KEYS);
+    assert_eq!(
+        reopened.load_cached(now_2026_11_24()).unwrap().index.serial,
+        42
+    );
+}
+
+#[test]
+fn non_utf8_signature_is_bad_signature_without_cache_fallback_on_http_and_local_file() {
+    let temp = tempfile::tempdir().unwrap();
+    let cache = temp.path().join(CACHE_DIR);
+    let mut store = Store::new(cache.clone(), REGISTRY_KEYS);
+
+    // Seed a valid last-good cached copy first.
+    let (bytes, sig) = load_fixture("two-ports-index.json");
+    store
+        .load_from_fetch(Ok((bytes.clone(), sig)), now_2026_11_24())
+        .unwrap();
+
+    let non_utf8_sig = vec![0xff, 0xfe, 0xfd, 0x80];
+
+    // Local-file path with non-UTF-8 `.minisig` must return BadSignature, not cached serial 41.
+    let local_index = temp.path().join("local-index.json");
+    let local_sig = temp.path().join("local-index.json.minisig");
+    fs::write(&local_index, &bytes).unwrap();
+    fs::write(&local_sig, &non_utf8_sig).unwrap();
+    let local_err = store
+        .fetch_and_load(local_index.to_str().unwrap(), now_2026_11_24())
+        .unwrap_err();
+    assert!(
+        matches!(local_err, LoadError::BadSignature(_)),
+        "expected BadSignature for local non-UTF-8 sig, got {local_err:?}"
+    );
+
+    // HTTP path with non-UTF-8 `.minisig` must also return BadSignature, not cached serial 41.
+    let (url, server) = spawn_loopback_server(bytes, non_utf8_sig);
+    let http_err = store.fetch_and_load(&url, now_2026_11_24()).unwrap_err();
+    server.join().unwrap();
+    assert!(
+        matches!(http_err, LoadError::BadSignature(_)),
+        "expected BadSignature for HTTP non-UTF-8 sig, got {http_err:?}"
+    );
+
+    // The last-good cached copy remains intact for genuine offline fallback.
+    let cached = store.load_cached(now_2026_11_24()).unwrap();
+    assert!(cached.from_cache);
+    assert_eq!(cached.index.serial, 41);
 }
 
 #[test]
@@ -211,7 +433,7 @@ fn malformed_signed_indexes_are_refused_with_no_salvage() {
             "{fixture}: expected Malformed, got {err:?}"
         );
     }
-    assert!(!cache.join(CACHE_INDEX).exists());
+    assert!(!cache.join(STATE_FILE).exists());
     assert_eq!(store.highest_serial().unwrap(), None);
 }
 
@@ -250,46 +472,13 @@ fn fetch_and_load_verifies_local_files_and_loopback_http() {
         .unwrap();
     assert_eq!(local_catalog.index.serial, 40);
     assert_eq!(
-        local_catalog.index.project("Ab3dE9xQ").unwrap().releases[0]
-            .workflow
-            .as_deref(),
-        Some("sunrise-org/sunrise-mods/.github/workflows/release.yml@refs/tags/release-v1")
+        local_catalog.index.project("Ab3dE9xQ").unwrap().releases[0].workflow,
+        "sunrise-org/sunrise-mods/.github/workflows/release.yml@refs/tags/release-v1"
     );
 
     // Loopback HTTP server serves both `index.json` and `index.json.minisig`.
-    let (index_bytes, sig_text) = load_fixture("two-ports-index.json");
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let addr = listener.local_addr().unwrap();
-    let server = std::thread::spawn(move || {
-        for _ in 0..2 {
-            let (mut stream, _) = listener.accept().unwrap();
-            let mut reader = BufReader::new(stream.try_clone().unwrap());
-            let mut request_line = String::new();
-            reader.read_line(&mut request_line).unwrap();
-            loop {
-                let mut line = String::new();
-                reader.read_line(&mut line).unwrap();
-                if line == "\r\n" || line.is_empty() {
-                    break;
-                }
-            }
-            let path = request_line.split_whitespace().nth(1).unwrap_or("");
-            let (status, body): (&str, &[u8]) = match path {
-                "/v2/index.json" => ("200 OK", &index_bytes),
-                "/v2/index.json.minisig" => ("200 OK", sig_text.as_bytes()),
-                _ => ("404 Not Found", b"missing"),
-            };
-            let header = format!(
-                "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                body.len()
-            );
-            stream.write_all(header.as_bytes()).unwrap();
-            stream.write_all(body).unwrap();
-            stream.flush().unwrap();
-        }
-    });
-
-    let url = format!("http://{addr}/v2/index.json");
+    let (index_bytes, sig_bytes) = load_fixture("two-ports-index.json");
+    let (url, server) = spawn_loopback_server(index_bytes, sig_bytes);
     let mut http_store = Store::new(temp.path().join("http-cache"), REGISTRY_KEYS);
     let http_catalog = http_store.fetch_and_load(&url, now_2026_11_24()).unwrap();
     server.join().unwrap();
