@@ -26,6 +26,11 @@ impl Refusal {
                 named("{mod} isn't ready for your game version yet. Its author needs to update it for this build."),
                 None,
             ),
+            SourceError::Catalogue(why) => return Some(Self {
+                said: why.clone(),
+                details: String::new(),
+                log: None,
+            }),
             SourceError::Dependency { .. } => (
                 named("{mod} can't be added together with the mods this profile has."),
                 None,
@@ -66,6 +71,10 @@ impl Refusal {
             SourceError::Github(Failure::Other(_)) => {
                 (named("{mod} couldn't be read from GitHub."), None)
             }
+            SourceError::DependencyGithub {
+                name: dependency,
+                failure,
+            } => return Self::of(dependency, &SourceError::Github(failure.clone())),
             SourceError::Unproved(_) => (named("Sunrise couldn't add {mod}."), None),
         };
         Some(Self {
@@ -319,5 +328,32 @@ mod tests {
         assert_eq!(built.log, Some(log));
 
         assert_eq!(Refusal::of("Jade", &SourceError::Cancelled), None);
+
+        let dep_missing = Refusal::of(
+            "Corn Delight",
+            &SourceError::DependencyGithub {
+                name: "Farmer's Delight".into(),
+                failure: Failure::NoManifest,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            dep_missing.said,
+            "Farmer's Delight couldn't be read from GitHub. No Sunrise mod at this commit."
+        );
+        assert!(dep_missing.details.is_empty());
+
+        let dep_repo = Refusal::of(
+            "Corn Delight",
+            &SourceError::DependencyGithub {
+                name: "Farmer's Delight".into(),
+                failure: Failure::RepositoryUnavailable,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            dep_repo.said,
+            "Farmer's Delight couldn't be read from GitHub. This repository is private, removed or moved."
+        );
     }
 }

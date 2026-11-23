@@ -1,7 +1,7 @@
 //! Registry and collection requests produce one admitted, fully proved same-base generation.
 use super::{
-    fetch, fetch_with_official, fits_game, index, installed, location, project_of, trust_label,
-    version_of, OfficialRegistry,
+    fetch, fetch_cancellable, fetch_with_official, fits_game, index, installed, location,
+    project_of, trust_label, version_of, OfficialRegistry,
 };
 use crate::{
     backend,
@@ -34,7 +34,7 @@ use source::MixedSources;
 pub use source::{
     add_sources, apply_sources, pack_sources, prepare_pasted_sources, prepare_source,
     read_pasted_sources, update_registry_and_sources, CombinedUpdate, PastedSource, PreparedSource,
-    SourceError, SourceHooks, SourceRequest,
+    SourceDependency, SourceError, SourceHooks, SourceRequest,
 };
 pub use switch::{
     checked_switch_fit, switch_build, switch_profile_build, BuildChoice, SwitchDecision,
@@ -407,15 +407,7 @@ fn registry_edit<'a>(
                     .iter()
                     .map(|row| (row.id.as_str(), row.to.as_str())),
             )
-            .map(|(id, version)| {
-                let project = catalogue.project(id).ok_or_else(unproved_mods)?;
-                let version = project
-                    .versions
-                    .iter()
-                    .find(|v| v.version == version && fits_game(v, &game))
-                    .ok_or_else(unproved_mods)?;
-                Ok((project, version))
-            })
+            .map(|(id, version)| planned_version(&catalogue, id, version, &game))
             .collect::<Result<Vec<_>, String>>()?;
         if versions.is_empty() {
             return Ok(InstalledBatch::default());
@@ -430,6 +422,7 @@ fn registry_edit<'a>(
                 &before,
                 project,
                 version,
+                Some(&cancelled),
                 |f| {
                     (hooks.progress)(InstallProgress::Downloading(
                         (n as f32 + f) / versions.len() as f32,
@@ -542,9 +535,11 @@ fn registry_edit<'a>(
             }
             mod_list::set_all_enabled(next.path(), &disabled, false)?;
         }
-        if let Some(conflict) = manifest_conflict(next.path(), Some(&catalogue), authority, |id| {
-            entries.contains_key(id)
-        })? {
+        if let Some(conflict) =
+            manifest_conflict(next.path(), Some(&catalogue), authority, Side::Both, |id| {
+                entries.contains_key(id)
+            })?
+        {
             if conflicts.contains(&conflict) {
                 return Err(InstallError::Unproved(conflict.reason));
             }
@@ -767,11 +762,13 @@ fn registry_edit<'a>(
                         &mut doc,
                         failed,
                     )?;
-                    if let Some(conflict) =
-                        manifest_conflict(next.path(), Some(&catalogue), authority, |id| {
-                            entries.contains_key(id)
-                        })?
-                    {
+                    if let Some(conflict) = manifest_conflict(
+                        next.path(),
+                        Some(&catalogue),
+                        authority,
+                        Side::Both,
+                        |id| entries.contains_key(id),
+                    )? {
                         return Err(InstallError::Refused(conflict.reason));
                     }
                     let notice = BuildNotice {
@@ -1104,6 +1101,22 @@ fn inventory(home: &Path, authority: Option<&OfficialRegistry>) -> Result<Invent
         .collect()
 }
 
+fn planned_version<'a>(
+    catalogue: &'a index::Index,
+    id: &str,
+    version: &str,
+    game: &str,
+) -> Result<(&'a index::Project, &'a index::Version), String> {
+    let project = catalogue.project(id).ok_or_else(unproved_mods)?;
+    let release = project
+        .versions
+        .iter()
+        .find(|v| v.version == version && fits_game(v, game))
+        .ok_or_else(unproved_mods)?;
+    Ok((project, release))
+}
+
+#[allow(clippy::too_many_arguments)]
 fn stage_package(
     catalogue: &index::Index,
     local: bool,
@@ -1111,6 +1124,7 @@ fn stage_package(
     before: &Inventory,
     p: &index::Project,
     v: &index::Version,
+    cancellation: Option<&native_mods::Cancellation>,
     progress: impl Fn(f32),
 ) -> Result<installed::Entry, InstallError> {
     let shown = project_of(catalogue, p, &v.game).ok_or_else(unproved_mods)?;
@@ -1144,7 +1158,15 @@ fn stage_package(
         .tempdir_in(home)
         .map_err(|e| at(home, e))?;
     let file = &version_of(catalogue, p, v).files[0];
-    let fetched = fetch(file, staging.path(), local, &progress).map_err(InstallError::Download)?;
+    let fetched = fetch_cancellable(file, staging.path(), local, cancellation, &progress).map_err(
+        |error| {
+            if cancellation.is_some_and(native_mods::Cancellation::is_stopped) {
+                InstallError::Cancelled
+            } else {
+                InstallError::Download(error)
+            }
+        },
+    )?;
     let (checked, facts) =
         index::check_file_with_facts(catalogue, p, v, &fetched).map_err(InstallError::Download)?;
     if v.dependencies.is_none()
@@ -1198,9 +1220,15 @@ fn manifest_conflict(
     home: &Path,
     catalogue: Option<&index::Index>,
     authority: Option<&OfficialRegistry>,
+    side: Side,
     staged: impl Fn(&str) -> bool,
 ) -> Result<Option<resolve::ManifestConflict>, InstallError> {
     let packages = inventory(home, authority)?;
+    let overrides = (side == Side::Client)
+        .then(|| {
+            sunrise_launcher_smod::dependencies::Overrides::read(&home.join(mod_list::MODS_DIR))
+        })
+        .transpose()?;
     let enabled: BTreeMap<_, _> = packages
         .iter()
         .filter(|(id, _)| mod_list::is_enabled(home, id))
@@ -1252,7 +1280,7 @@ fn manifest_conflict(
         for namespace in manifest.owned_namespaces() {
             if let Some(peer) = namespaces.insert(namespace, id) {
                 return Ok(Some(resolve::ManifestConflict {
-                    files: [file_for(peer), file_for(id)],
+                    files: vec![file_for(peer), file_for(id)],
                     reason: trf(
                         "{first} and {second} both own the {namespace} namespace.",
                         &[
@@ -1265,12 +1293,22 @@ fn manifest_conflict(
             }
         }
         for (peer, rule) in &manifest.incompatible {
+            let details = rule.details();
+            if side != Side::Both && details.side != Side::Both && details.side != side {
+                continue;
+            }
+            if overrides
+                .as_ref()
+                .is_some_and(|overrides| overrides.get(id, peer).is_some())
+            {
+                continue;
+            }
             if let Some(other) = enabled.get(peer.as_str()) {
                 let version = sunrise_launcher_smod::dependencies::parse_version(&other.version)
                     .map_err(|error| InstallError::Unproved(error.to_string()))?;
-                if rule.details().version.matches(&version) {
+                if details.version.matches(&version) {
                     return Ok(Some(resolve::ManifestConflict {
-                        files: [file_for(id), file_for(peer)],
+                        files: vec![file_for(id), file_for(peer)],
                         reason: trf(
                             "{first} {version} doesn't work with {second} {other_version}.",
                             &[
@@ -1293,7 +1331,7 @@ fn validate_enabled(
     catalogue: &index::Index,
     authority: Option<&OfficialRegistry>,
 ) -> Result<(), InstallError> {
-    match manifest_conflict(home, Some(catalogue), authority, |_| false)? {
+    match manifest_conflict(home, Some(catalogue), authority, Side::Both, |_| false)? {
         Some(conflict) => Err(InstallError::Refused(conflict.reason)),
         None => Ok(()),
     }

@@ -97,7 +97,7 @@ pub(super) struct SourceBatch<'a> {
     pub(super) base: &'a str,
     pub(super) active: Option<&'a managed_play::Active>,
     pub(super) cancellation: &'a native_mods::Cancellation,
-    pub(super) authorize: &'a dyn Fn() -> Result<bool, String>,
+    pub(super) authorize: &'a dyn Fn(&[SourceDependency]) -> Result<bool, String>,
 }
 
 pub(super) fn edit_github(
@@ -165,22 +165,39 @@ pub(super) fn edit_github(
     if let Some(error) = native_mods::known_host_block(Some(edit.base())) {
         return Err(InstallError::Host(error));
     }
-    let catalogue = super::super::fetched_index();
-    let check_graph = || match manifest_conflict(home, catalogue.as_deref(), None, |_| false)? {
-        Some(conflict) => Err(InstallError::Refused(conflict.reason)),
-        None => Ok(()),
+    let additions = match source {
+        Some(source) if previous.is_empty() => super::source::complete_source_add(
+            instance,
+            home,
+            edit.base(),
+            packages,
+            edit.current(),
+            source.cancellation,
+            hooks.progress,
+        )
+        .map_err(InstallError::Source)?,
+        _ => super::source::SourceAdd::default(),
     };
-    if source.is_some() || previous.is_empty() {
-        super::source::check_source_set(home, &staged.off, edit.base(), cancellation).map_err(
-            |error| match error {
-                SourceError::DoesNotFit(why) if source.is_none() => {
-                    InstallError::NotForVersion(why)
-                }
-                error => InstallError::Source(error),
-            },
-        )?;
-    } else {
-        check_graph()?;
+    let home = additions.home(home);
+    let catalogue = super::super::fetched_index();
+    let check_graph =
+        || match manifest_conflict(home, catalogue.as_deref(), None, Side::Client, |_| false)? {
+            Some(conflict) => Err(InstallError::Refused(conflict.reason)),
+            None => Ok(()),
+        };
+    match (source, previous.is_empty()) {
+        (Some(_), true) => (), // Fresh source adds checked their whole catalogue plan above.
+        (source, fresh) if source.is_some() || fresh => {
+            super::source::check_source_set(home, &staged.off, edit.base(), cancellation).map_err(
+                |error| match error {
+                    SourceError::DoesNotFit(why) if source.is_none() => {
+                        InstallError::NotForVersion(why)
+                    }
+                    error => InstallError::Source(error),
+                },
+            )?;
+        }
+        _ => check_graph()?,
     }
     let reviewed_inputs = managed_play::inputs(home, None)?;
     let review = if previous.is_empty() {
@@ -228,7 +245,7 @@ pub(super) fn edit_github(
     };
     cancellation.check()?;
     if let Some(source) = source {
-        if !(source.authorize)()? {
+        if !(source.authorize)(&additions.dependencies)? {
             return Err(InstallError::Cancelled);
         }
     } else if backend::NativeGrant::read()?.is_none()

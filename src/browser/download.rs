@@ -186,8 +186,21 @@ pub(super) fn save_from_anywhere(
 
 /// Downloads `file` into `folder`, checked as [`save`] does.
 pub fn fetch(file: &FileRef, folder: &Path, progress: &dyn Fn(f32)) -> Result<PathBuf, String> {
+    fetch_cancellable(file, folder, None, progress)
+}
+
+/// Downloads `file` into `folder`, checking `cancellation` before starting and on each read.
+pub fn fetch_cancellable(
+    file: &FileRef,
+    folder: &Path,
+    cancellation: Option<&crate::native_mods::Cancellation>,
+    progress: &dyn Fn(f32),
+) -> Result<PathBuf, String> {
     if let Some(why) = refuse(file) {
         return Err(why);
+    }
+    if let Some(cancellation) = cancellation {
+        cancellation.check()?;
     }
     let response = agent(&file.url)?
         .get(&file.url)
@@ -196,5 +209,13 @@ pub fn fetch(file: &FileRef, folder: &Path, progress: &dyn Fn(f32)) -> Result<Pa
             ureq::Error::Status(code, _) => format!("{} answered {code}.", file.url),
             ureq::Error::Transport(t) => format!("No connection: {t}"),
         })?;
-    save(file, response.into_reader(), folder, progress)
+    match cancellation {
+        Some(cancellation) => save(
+            file,
+            cancellation.reader(response.into_reader()),
+            folder,
+            progress,
+        ),
+        None => save(file, response.into_reader(), folder, progress),
+    }
 }

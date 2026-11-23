@@ -9,7 +9,8 @@ use std::{
 use sunrise_launcher::{
     browser::sunrise::{
         BuildNotice, ChangeImpact, CombinedUpdate, InstallError, InstallHooks, InstallProgress,
-        InstalledBatch, NativeQuestion, PreparedSource, ResolveQuestion, SourceError, SourceHooks,
+        InstalledBatch, NativeQuestion, PreparedSource, ResolveQuestion, SourceDependency,
+        SourceError, SourceHooks,
     },
     github_mods::{AddedFrom, Origin},
     managed_play::FirstBuild,
@@ -165,6 +166,20 @@ impl SourceTarget {
 pub(crate) struct SourceQuestion {
     pub(crate) base: String,
     pub(crate) mods: Vec<(String, Origin)>,
+    pub(crate) dependencies: Vec<SourceDependency>,
+}
+
+impl SourceQuestion {
+    pub(crate) fn sources(&self) -> impl Iterator<Item = (&str, &Origin)> {
+        self.mods
+            .iter()
+            .map(|(name, origin)| (name.as_str(), origin))
+            .chain(
+                self.dependencies
+                    .iter()
+                    .filter_map(|dep| Some((dep.name.as_str(), dep.origin.as_ref()?))),
+            )
+    }
 }
 
 pub(crate) struct SourceActivity<'a> {
@@ -877,7 +892,7 @@ impl Launcher {
             .is_none_or(|activity| activity.stopping)
         {
             let _ = reply.send(Ok(false));
-        } else if self.source_already_allowed(&question) {
+        } else if question.dependencies.is_empty() && self.source_already_allowed(&question) {
             let _ = reply.send(Ok(true));
         } else {
             self.reset_install_question_sheet();
@@ -1370,13 +1385,14 @@ impl Launcher {
                 post(Worker::World(question, reply)) && answer.recv().unwrap_or(false)
             };
             let approve = |impact: &ChangeImpact| review(impact, None);
-            let authorize = |prepared: &[PreparedSource]| {
+            let authorize = |prepared: &[PreparedSource], dependencies: &[SourceDependency]| {
                 let question = SourceQuestion {
                     base: prepared[0].base().into(),
                     mods: prepared
                         .iter()
                         .map(|item| (item.name().into(), item.origin().clone()))
                         .collect(),
+                    dependencies: dependencies.to_vec(),
                 };
                 let (reply, answer) = std::sync::mpsc::channel();
                 if !post(Worker::Source(question, reply)) {
@@ -1530,7 +1546,7 @@ impl Launcher {
                         hooks,
                         hooks,
                         &cancellation,
-                        &authorize,
+                        &|prepared| authorize(prepared, &[]),
                         &review,
                         || {
                             let _ = post(Worker::SourcePhase);
@@ -1606,12 +1622,14 @@ fn failure_line(error: &InstallError) -> &'static str {
         InstallError::Unproved(_) => tr("Couldn't check that the mods fit"),
         InstallError::NotForVersion(_) => tr("Not available for your version"),
         InstallError::Source(SourceError::DoesNotFit(_)) => tr("Not available for your version"),
-        InstallError::Source(SourceError::Dependency { .. }) => {
+        InstallError::Source(SourceError::Dependency { .. } | SourceError::Catalogue(_)) => {
             tr("Can't install these mods together")
         }
-        InstallError::Source(SourceError::Unproved(_) | SourceError::Github(_)) => {
-            tr("Fit could not be verified")
-        }
+        InstallError::Source(
+            SourceError::Unproved(_)
+            | SourceError::Github(_)
+            | SourceError::DependencyGithub { .. },
+        ) => tr("Fit could not be verified"),
         InstallError::Source(SourceError::Tools(_)) => {
             tr("Couldn't download build tools. Check your connection and try again.")
         }

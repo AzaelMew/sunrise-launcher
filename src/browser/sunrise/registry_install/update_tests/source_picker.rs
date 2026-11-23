@@ -101,6 +101,9 @@ fn pasted_sources_prove_only_the_selected_packages_together() {
                     && origin.source.as_ref().unwrap().track == SourceTrack::Pinned
                     && origin.added_from == Some(AddedFrom::Github)
             }));
+            let sources = fixture.root.join("sources.json");
+            fs::write(&sources, br#"{"format":1,"sources":[]}"#).unwrap();
+            std::env::set_var("SUNRISE_MOD_SOURCES", sources);
             let identity = install_target(&fixture.instance).unwrap();
             let check = |ids: &[&str]| {
                 prepare_pasted_sources(
@@ -116,7 +119,7 @@ fn pasted_sources_prove_only_the_selected_packages_together() {
                 )
             };
             assert!(
-                matches!(check(&["main_mod"]), Err(SourceError::Dependency { required: Some(id), .. }) if id == "helper_mod")
+                matches!(check(&["main_mod"]), Err(SourceError::Catalogue(why)) if why.contains("helper_mod isn't listed"))
             );
             assert!(matches!(
                 check(&["helper_mod", "main_mod", "unfit_mod"]),
@@ -146,7 +149,10 @@ fn pasted_sources_prove_only_the_selected_packages_together() {
                         resolve: None,
                     },
                     cancellation: &cancel,
-                    authorize: &|_| Ok(true),
+                    authorize: &|_, dependencies| {
+                        assert!(dependencies.is_empty());
+                        Ok(true)
+                    },
                     approve_worlds: &|_| false,
                 },
             )

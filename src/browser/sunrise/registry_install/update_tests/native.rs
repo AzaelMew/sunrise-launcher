@@ -806,7 +806,7 @@ fn pinned_source_preflight_refusal_cancel_and_failed_update_keep_the_profile() {
                             resolve: None,
                         },
                         cancellation,
-                        authorize,
+                        authorize: &|sources, _| authorize(sources),
                         approve_worlds,
                     },
                 )
@@ -863,7 +863,7 @@ fn pinned_source_preflight_refusal_cancel_and_failed_update_keep_the_profile() {
                         resolve: None,
                     },
                     cancellation: &cancellation,
-                    authorize: &|_| panic!("nothing to install"),
+                    authorize: &|_, _| panic!("nothing to install"),
                     approve_worlds: &no_world_question,
                 },
             )

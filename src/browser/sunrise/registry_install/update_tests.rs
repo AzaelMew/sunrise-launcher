@@ -8,6 +8,8 @@ use sunrise_launcher_smod::Package;
 #[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
 mod native;
 #[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
+mod source_dependencies;
+#[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
 mod source_picker;
 
 const BUILD: &str = "developer-local";
