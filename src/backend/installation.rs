@@ -173,6 +173,12 @@ fn save_nightly_receipt(root: &Path, tag: &str) -> Option<ReceiptFailure> {
         })
 }
 
+/// Cancellation and progress callbacks shared across archive and SDK downloads.
+pub(crate) struct Transfer<'a, F> {
+    pub(crate) stop: Option<&'a crate::native_mods::Cancellation>,
+    pub(crate) progress: F,
+}
+
 #[cfg(test)]
 pub(crate) fn install_as(
     release: &Release,
@@ -190,12 +196,13 @@ pub(crate) fn install_as(
         requested_architecture,
         release_facts,
         intent,
-        None,
-        progress,
+        Transfer {
+            stop: None,
+            progress,
+        },
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn install_as_cancellable(
     release: &Release,
     tag: &str,
@@ -203,9 +210,9 @@ pub(crate) fn install_as_cancellable(
     requested_architecture: Option<GameArchitecture>,
     release_facts: Option<(&[u8], &str)>,
     intent: InstallIntent,
-    stop: Option<&crate::native_mods::Cancellation>,
-    progress: impl Fn(f32),
+    transfer: Transfer<'_, impl Fn(f32)>,
 ) -> Result<Option<ReceiptFailure>, String> {
+    let Transfer { stop, progress } = transfer;
     let (url, size) = release
         .asset
         .as_ref()

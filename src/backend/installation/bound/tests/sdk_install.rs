@@ -141,8 +141,10 @@ fn first_play_proves_and_installs_the_two_sdk_slices() {
                     DEV,
                     &proof,
                     InstallIntent::Exact,
-                    None,
-                    |_| {},
+                    crate::backend::installation::Transfer {
+                        stop: None,
+                        progress: |_| {},
+                    },
                     |_, _| unreachable!("SDK reads from the mirror"),
                     (&base, &keys),
                 );
@@ -269,8 +271,10 @@ fn player_archive_still_installs_when_the_index_is_listed() {
                     TAG,
                     &proof,
                     InstallIntent::Exact,
-                    None,
-                    |_| {},
+                    crate::backend::installation::Transfer {
+                        stop: None,
+                        progress: |_| {},
+                    },
                     |_, _| url.clone(),
                     (&base, &keys),
                 )

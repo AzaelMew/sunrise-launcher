@@ -45,16 +45,13 @@ fn game_slices(triple: &str) -> [(Kind, String); 2] {
 }
 
 /// `game_index` and its digest come from the signed game release, not from the SDK host.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn stage_game(
     stage: &Path,
     version: &str,
     triple: &str,
     (game_index, digest): (&[u8], &str),
-    base: &Base,
-    keys: &[PublicKey],
-    stop: Option<&crate::native_mods::Cancellation>,
-    progress: &dyn Fn(f32),
+    (base, keys): (&Base, &[PublicKey]),
+    (stop, progress): (Option<&crate::native_mods::Cancellation>, &dyn Fn(f32)),
 ) -> Result<(PathBuf, GameSlices), Refusal> {
     if let Some(stop) = stop {
         stop.check().map_err(|why| Refusal::Refused {
