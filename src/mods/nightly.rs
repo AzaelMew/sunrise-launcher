@@ -656,7 +656,7 @@ mod tests {
             sha256: "0".repeat(64),
             tag: None,
             asset: None,
-            added_from: None,
+            added_from: Some(sunrise_launcher::github_mods::AddedFrom::Discover),
             source: Some(sunrise_launcher::github_mods::SourceOrigin {
                 repo_id: 42,
                 manifest: "sunrise-mod.toml".into(),

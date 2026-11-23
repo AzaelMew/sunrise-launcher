@@ -720,4 +720,51 @@ mod tests {
         let tracked = tracked_origins(&locals, None);
         assert_eq!(tracked, [discover_source.github.unwrap()]);
     }
+
+    #[test]
+    fn legacy_pasted_branch_and_release_receipts_stay_out_of_update_all() {
+        use sunrise_launcher::github_mods::AddedFrom;
+        let (_, discover_source) = super::super::tests::receipt_fixture();
+
+        let mut legacy_branch = discover_source.clone();
+        legacy_branch.id = "legacy_branch".into();
+        legacy_branch.github.as_mut().unwrap().id = "legacy_branch".into();
+        legacy_branch.github.as_mut().unwrap().added_from = None;
+
+        let mut legacy_release = discover_source.clone();
+        legacy_release.id = "legacy_release".into();
+        legacy_release.github.as_mut().unwrap().id = "legacy_release".into();
+        legacy_release.github.as_mut().unwrap().added_from = None;
+        legacy_release
+            .github
+            .as_mut()
+            .unwrap()
+            .source
+            .as_mut()
+            .unwrap()
+            .track = SourceTrack::Release;
+
+        let mut collection_source = discover_source.clone();
+        collection_source.id = "collection_mod".into();
+        collection_source.github.as_mut().unwrap().id = "collection_mod".into();
+        collection_source.github.as_mut().unwrap().added_from = Some(AddedFrom::Collection {
+            id: "starter".into(),
+            name: "Starter".into(),
+        });
+
+        let locals = [
+            legacy_branch,
+            legacy_release,
+            discover_source.clone(),
+            collection_source.clone(),
+        ];
+        let tracked = tracked_origins(&locals, None);
+        assert_eq!(
+            tracked,
+            [
+                discover_source.github.unwrap(),
+                collection_source.github.unwrap(),
+            ]
+        );
+    }
 }

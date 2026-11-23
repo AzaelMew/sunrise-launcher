@@ -9,13 +9,10 @@ use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use sunrise_launcher_smod::mod_list;
 
 /// Attestation status shown on the unreviewed warning for a local `.smod` file.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LocalAttestation {
-    /// Verified GitHub artifact attestation (wired once the backend verifier lands).
-    Signed { repo: String },
     /// No verified attestation; Sunrise cannot verify who built the file.
     Unsigned,
 }
@@ -28,6 +25,8 @@ pub struct LocalPackage {
     pub name: String,
     pub native: bool,
     pub file_name: String,
+    /// The file or folder path the player picked on disk.
+    pub source_path: PathBuf,
     pub file: PathBuf,
     pub sha256: String,
     pub attestation: LocalAttestation,
@@ -62,7 +61,14 @@ pub fn read_local_smod(path: &Path) -> Result<LocalPackage, String> {
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| "mod.smod".into());
-    validate_staged(bytes, scratch, file_name, LocalAttestation::Unsigned, None)
+    validate_staged(
+        bytes,
+        scratch,
+        file_name,
+        path.to_path_buf(),
+        LocalAttestation::Unsigned,
+        None,
+    )
 }
 
 /// Find and pack every valid Sunrise mod folder under `root` into scratch `.smod` files.
@@ -93,6 +99,7 @@ pub fn read_local_folder(root: &Path) -> Result<Vec<LocalPackage>, String> {
             dir.file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_else(|| folder_label.clone()),
+            dir.clone(),
             LocalAttestation::Unsigned,
             None,
         )?;
@@ -118,6 +125,7 @@ fn validate_staged(
     bytes: Vec<u8>,
     scratch: Arc<tempfile::TempDir>,
     file_name: String,
+    source_path: PathBuf,
     attestation: LocalAttestation,
     origin: Option<Origin>,
 ) -> Result<LocalPackage, String> {
@@ -139,6 +147,7 @@ fn validate_staged(
         name: package.manifest.name,
         native,
         file_name,
+        source_path,
         file: staged,
         sha256: sum,
         attestation,
@@ -187,110 +196,27 @@ fn find_local_mod_dirs(root: &Path) -> Result<Vec<PathBuf>, String> {
     Ok(found)
 }
 
-/// Install validated local `.smod` or local-folder packages into `home`.
+/// Install validated local `.smod` or local-folder packages into `home` through the checked
+/// profile transaction.
 ///
-/// Refuses to overwrite a registry-tracked mod (`mod-browser.json`). An existing untracked local
-/// or from-source mod with the same ID is replaced in place so Add from source can refresh it,
-/// keeping its enabled state; a newly added mod starts enabled.
+/// Refuses to overwrite a registry-tracked or GitHub mod. An existing local mod with the same
+/// manifest ID is replaced in place (even if stored under a different filename or in the other
+/// mod directory), preserving its enabled state; a newly added mod starts enabled.
 pub fn install_local_packages(
     home: &Path,
     packages: &[LocalPackage],
 ) -> Result<Vec<String>, String> {
-    let _guard = crate::browser::lock_home(home).map_err(|e| e.to_string())?;
-    let claims = crate::browser::installed::Installed::read(home)?;
-    let mut seen = BTreeSet::new();
-    for pkg in packages {
-        if !seen.insert(pkg.id.as_str()) {
-            return Err(trf(
-                "Duplicate mod {mod} in the selected packages.",
-                &[("mod", &pkg.id)],
-            ));
-        }
-        let dir = if pkg.native {
-            mod_list::NATIVE_DIR
-        } else {
-            mod_list::DIR
-        };
-        let relative = format!("{dir}/{}.smod", pkg.id);
-        let sidecar = format!("{dir}/{}.origin.json", pkg.id);
-        let other_dir = if pkg.native {
-            mod_list::DIR
-        } else {
-            mod_list::NATIVE_DIR
-        };
-        let other_relative = format!("{other_dir}/{}.smod", pkg.id);
-        let registry_owns = claims.entries.iter().any(|entry| {
-            crate::browser::sunrise::mod_id(entry) == Some(pkg.id.as_str())
-                || entry.file == relative
-                || entry.file == sidecar
-                || entry.file == other_relative
-        });
-        if registry_owns {
-            return Err(trf(
-                "{mod} is installed from the Sunrise registry. Remove it first before installing an unreviewed copy.",
-                &[("mod", &pkg.name)],
-            ));
-        }
+    if !home.exists() {
+        fs::create_dir_all(home).map_err(|e| format!("{}: {e}", home.display()))?;
     }
-
-    let mut installed_names = Vec::with_capacity(packages.len());
-    for pkg in packages {
-        let bytes = fs::read(&pkg.file).map_err(|e| format!("{}: {e}", pkg.file.display()))?;
-        if sha256(&bytes) != pkg.sha256 {
-            return Err(trf(
-                "The staged package for {mod} changed before install. Nothing was written.",
-                &[("mod", &pkg.name)],
-            ));
-        }
-        let target_dir = home.join(if pkg.native {
-            mod_list::NATIVE_DIR
-        } else {
-            mod_list::DIR
-        });
-        let other_dir = home.join(if pkg.native {
-            mod_list::DIR
-        } else {
-            mod_list::NATIVE_DIR
-        });
-        fs::create_dir_all(&target_dir).map_err(|e| format!("{}: {e}", target_dir.display()))?;
-
-        let dest = target_dir.join(format!("{}.smod", pkg.id));
-        let sidecar = target_dir.join(format!("{}.origin.json", pkg.id));
-        let other_dest = other_dir.join(format!("{}.smod", pkg.id));
-        let other_sidecar = other_dir.join(format!("{}.origin.json", pkg.id));
-        let replacing = dest.exists() || other_dest.exists();
-
-        let tmp = target_dir.join(format!(".{}.{}.tmp", pkg.id, std::process::id()));
-        fs::write(&tmp, &bytes).map_err(|e| format!("{}: {e}", tmp.display()))?;
-        fs::rename(&tmp, &dest).map_err(|e| {
-            let _ = fs::remove_file(&tmp);
-            format!("{}: {e}", dest.display())
-        })?;
-        if let Some(origin) = &pkg.origin {
-            let json = serde_json::to_vec_pretty(origin).map_err(|e| e.to_string())?;
-            let sidecar_tmp =
-                target_dir.join(format!(".{}.{}.origin.tmp", pkg.id, std::process::id()));
-            fs::write(&sidecar_tmp, &json)
-                .map_err(|e| format!("{}: {e}", sidecar_tmp.display()))?;
-            fs::rename(&sidecar_tmp, &sidecar).map_err(|e| {
-                let _ = fs::remove_file(&sidecar_tmp);
-                format!("{}: {e}", sidecar.display())
-            })?;
-        } else if sidecar.exists() {
-            let _ = fs::remove_file(&sidecar);
-        }
-        if other_dest.exists() {
-            let _ = fs::remove_file(&other_dest);
-        }
-        if other_sidecar.exists() {
-            let _ = fs::remove_file(&other_sidecar);
-        }
-        if !replacing {
-            crate::browser::mod_list::set_enabled(home, &pkg.id, true)?;
-        }
-        installed_names.push(pkg.name.clone());
-    }
-    Ok(installed_names)
+    crate::browser::sunrise::install_local_at(
+        home,
+        packages,
+        &native_mods::Cancellation::default(),
+        &|_| {},
+        &|_| true,
+    )
+    .map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
@@ -298,7 +224,7 @@ mod tests {
     use super::*;
     use crate::browser::{installed, mod_list as browser_mod_list, Kind, SourceId};
     use crate::github_mods::AddedFrom;
-    use sunrise_launcher_smod::Package;
+    use sunrise_launcher_smod::{mod_list, Package};
 
     fn content_manifest(id: &str, name: &str, version: &str) -> String {
         format!("id = '{id}'\nname = '{name}'\nversion = '{version}'\napi = '0.2'\nside = 'both'\n")
@@ -318,6 +244,7 @@ mod tests {
 
         let pkg = read_local_smod(&smod_path).unwrap();
         assert_eq!(pkg.id, "lantern_tweaks");
+        assert_eq!(pkg.source_path, smod_path);
         assert_eq!(pkg.attestation, LocalAttestation::Unsigned);
         assert!(pkg.origin.is_none());
         assert!(!pkg.native);
@@ -388,5 +315,47 @@ mod tests {
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].id, "camp_lanterns");
         assert!(found[0].origin.as_ref().is_some_and(Origin::is_manual));
+    }
+
+    #[test]
+    fn read_local_folder_preserves_native_uses_json_and_origins_skips_local_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path().join("native-lantern");
+        let home = dir.path().join("profile");
+        fs::create_dir_all(repo.join("src")).unwrap();
+        let manifest = format!(
+            "{}[native]\ngame = '26.3'\nsunrise = '{}'\nmixins = '{}'\n",
+            content_manifest("native_lantern", "Native Lantern", "0.2.0"),
+            "a".repeat(40),
+            "b".repeat(40),
+        );
+        fs::write(repo.join("sunrise-mod.toml"), &manifest).unwrap();
+        fs::write(
+            repo.join("Cargo.toml"),
+            "[package]\nname = 'native_lantern'\nversion = '0.2.0'\nedition = '2024'\n",
+        )
+        .unwrap();
+        fs::write(repo.join("src/lib.rs"), "pub fn f() {}\n").unwrap();
+        let table = br#"{"schema":1,"made_for":"x","entries":[]}"#;
+        fs::write(repo.join(sunrise_launcher_smod::manifest::USES_FILE), table).unwrap();
+
+        let packages = read_local_folder(&repo).unwrap();
+        assert_eq!(packages.len(), 1);
+        assert!(packages[0].native);
+        let carried = Package::entry(
+            &packages[0].file,
+            sunrise_launcher_smod::manifest::USES_FILE,
+            1024,
+        )
+        .unwrap();
+        assert_eq!(carried.as_deref(), Some(table.as_slice()));
+
+        install_local_packages(&home, &packages).unwrap();
+        assert!(home
+            .join(mod_list::NATIVE_DIR)
+            .join("native_lantern.origin.json")
+            .is_file());
+        // CLI GitHub updater enumerates only GitHub origins, never local folder receipts.
+        assert!(crate::github_mods::origins(&home).is_empty());
     }
 }

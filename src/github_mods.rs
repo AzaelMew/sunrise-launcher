@@ -428,13 +428,13 @@ impl Origin {
         }
     }
 
-    /// Whether this mod was added manually via Add from source (GitHub link or local folder),
+    /// Whether this mod was added outside the Sunrise registry or collections,
     /// so it never participates in automatic or Update all checks.
     pub fn is_manual(&self) -> bool {
-        matches!(
+        !matches!(
             self.added_from,
-            Some(AddedFrom::Github | AddedFrom::LocalFolder { .. })
-        ) || (self.added_from.is_none() && self.source.is_none())
+            Some(AddedFrom::Discover | AddedFrom::Collection { .. })
+        )
     }
 
     /// "from GitHub: owner/repo @ tag" (or the commit's first 7 digits), or local folder label.
@@ -553,6 +553,12 @@ impl Packed {
     pub(crate) fn release_origin(&self, found: &Resolved) -> Option<&Origin> {
         self.checked_origin(found)
             .filter(|origin| origin.is_release_asset())
+    }
+
+    /// Release tag and asset filename when this package came from a GitHub release asset.
+    pub fn release_asset<'a>(&'a self, found: &'a Resolved) -> Option<(&'a str, &'a str)> {
+        let origin = self.release_origin(found)?;
+        Some((origin.tag.as_deref()?, origin.asset.as_deref()?))
     }
 
     pub(crate) fn copy_verified(&self, dest: &Path) -> Result<(), String> {
@@ -922,14 +928,18 @@ pub(crate) fn origin_path(home: &Path, id: &str) -> PathBuf {
     home.join(INSTALLED).join(format!("{id}.origin.json"))
 }
 
+pub(crate) fn read_origin_at(path: &Path) -> Option<Origin> {
+    serde_json::from_str(&fs::read_to_string(path).ok()?).ok()
+}
+
 /// The origin of mod `id` installed in `home`, if it came from GitHub or a local folder.
 pub fn origin(home: &Path, id: &str) -> Option<Origin> {
-    serde_json::from_str(&fs::read_to_string(origin_path(home, id)).ok()?).ok()
+    read_origin_at(&origin_path(home, id))
 }
 
 /// The origin sidecar beside an installed `.smod` archive, when present.
 pub(crate) fn origin_for_archive(path: &Path) -> Option<Origin> {
-    serde_json::from_str(&fs::read_to_string(path.with_extension("origin.json")).ok()?).ok()
+    read_origin_at(&path.with_extension("origin.json"))
 }
 
 /// Every mod of `home` installed from GitHub.
@@ -938,7 +948,8 @@ pub fn origins(home: &Path) -> Vec<Origin> {
         .map(|dir| {
             dir.flatten()
                 .filter(|e| e.file_name().to_string_lossy().ends_with(".origin.json"))
-                .filter_map(|e| serde_json::from_str(&fs::read_to_string(e.path()).ok()?).ok())
+                .filter_map(|e| read_origin_at(&e.path()))
+                .filter(|origin| origin.local_folder_path().is_none())
                 .collect()
         })
         .unwrap_or_default();

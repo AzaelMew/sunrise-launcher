@@ -12,9 +12,7 @@ use gpui::rgb;
 use std::{collections::BTreeSet, path::PathBuf, sync::Arc};
 use sunrise_launcher::{
     browser::sunrise::{self, sources::Failure, PastedSource, PreparedSource, SourceError},
-    github_mods::{
-        self, FetchError, LocalAttestation, LocalPackage, Packed, ResolveError, Resolved,
-    },
+    github_mods::{self, FetchError, LocalPackage, Packed, ResolveError, Resolved},
     native_mods::Cancellation,
 };
 
@@ -30,11 +28,19 @@ pub(crate) enum GithubSelection {
     Source(Vec<PreparedSource>),
 }
 
+pub(crate) struct LocalInput {
+    pub(crate) target: GithubTarget,
+    pub(crate) label: String,
+    pub(crate) names: Vec<String>,
+    pub(crate) packages: Vec<LocalPackage>,
+}
+
 pub(crate) struct Feedback {
     pub(crate) profile: instances::Instance,
     pub(crate) link: String,
     pub(crate) result: Result<String, (String, String)>,
     pub(crate) retry: Option<Arc<GithubInput>>,
+    pub(crate) local: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -99,16 +105,7 @@ impl PendingConfirm {
     }
 
     fn unsigned_local_file(&self) -> bool {
-        matches!(
-            self,
-            Self::Local {
-                folder: None,
-                packages,
-                ..
-            } if packages
-                .iter()
-                .any(|p| matches!(p.attestation, LocalAttestation::Unsigned))
-        )
+        matches!(self, Self::Local { folder: None, .. })
     }
 
     fn provenance(&self) -> WarningProvenance {
@@ -119,23 +116,14 @@ impl PendingConfirm {
                 ..
             } => {
                 let pkg = &packages[0];
-                match &pkg.attestation {
-                    LocalAttestation::Signed { repo } => WarningProvenance {
-                        icon: "github",
-                        headline: trf("Built by github.com/{repo}, not reviewed", &[("repo", repo)]),
-                        detail: trf(
-                            "File: {file} · Build matches that GitHub repository, but Sunrise has not checked the code.",
-                            &[("file", &pkg.file_name)],
-                        ),
-                    },
-                    LocalAttestation::Unsigned => WarningProvenance {
-                        icon: "warning",
-                        headline: tr("Unsigned local file, not reviewed").into(),
-                        detail: trf(
-                            "File: {file} · Sunrise cannot verify who built this file or where it came from.",
-                            &[("file", &pkg.file_name)],
-                        ),
-                    },
+                let path = pkg.source_path.display().to_string();
+                WarningProvenance {
+                    icon: "warning",
+                    headline: tr("Unsigned local file, not reviewed").into(),
+                    detail: trf(
+                        "File: {file} · Sunrise cannot verify who built this file or where it came from.",
+                        &[("file", &path)],
+                    ),
                 }
             }
             Self::Local {
@@ -159,27 +147,59 @@ impl PendingConfirm {
                 }
             }
             Self::Github(input) => {
-                let mods = match &input.selection {
-                    GithubSelection::Add(packages) => packages
-                        .iter()
-                        .map(|p| p.name.as_str())
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                    GithubSelection::Source(packages) => packages
-                        .iter()
-                        .map(PreparedSource::name)
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                };
-                let sha: String = input.source.commit.chars().take(7).collect();
                 let repo = input.source.name();
+                let detail = match &input.selection {
+                    GithubSelection::Add(packages) => {
+                        let mods = packages
+                            .iter()
+                            .map(|p| p.name.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        let assets: Vec<(&str, &str)> = packages
+                            .iter()
+                            .filter_map(|p| p.release_asset(&input.source))
+                            .collect();
+                        if !assets.is_empty() && assets.len() == packages.len() {
+                            let tag = assets[0].0;
+                            let files = assets
+                                .iter()
+                                .map(|(_, asset)| *asset)
+                                .collect::<Vec<_>>()
+                                .join(", ");
+                            trf(
+                                "Mods: {mods} · Release {tag} ({files}) · Sunrise has not checked this code.",
+                                &[("mods", &mods), ("tag", tag), ("files", &files)],
+                            )
+                        } else if let Some(tag) = input.source.tag.as_deref() {
+                            trf(
+                                "Mods: {mods} · Release {tag} · Sunrise has not checked this code.",
+                                &[("mods", &mods), ("tag", tag)],
+                            )
+                        } else {
+                            let sha: String = input.source.commit.chars().take(7).collect();
+                            trf(
+                                "Mods: {mods} · Commit {sha} · Sunrise has not checked this code.",
+                                &[("mods", &mods), ("sha", &sha)],
+                            )
+                        }
+                    }
+                    GithubSelection::Source(packages) => {
+                        let mods = packages
+                            .iter()
+                            .map(PreparedSource::name)
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        let sha: String = input.source.commit.chars().take(7).collect();
+                        trf(
+                            "Mods: {mods} · Commit {sha} · Sunrise has not checked this code.",
+                            &[("mods", &mods), ("sha", &sha)],
+                        )
+                    }
+                };
                 WarningProvenance {
                     icon: "github",
                     headline: trf("From github.com/{repo}, not reviewed", &[("repo", &repo)]),
-                    detail: trf(
-                        "Mods: {mods} · Commit {sha} · Sunrise has not checked this code.",
-                        &[("mods", &mods), ("sha", &sha)],
-                    ),
+                    detail,
                 }
             }
         }
@@ -322,13 +342,24 @@ enum Stage {
     Checking(Box<SourceCheck>),
     Pick(Box<Pick>),
     Warn(Box<PendingConfirm>),
-    InstallingLocal(Receiver<Result<Vec<String>, String>>),
     Failed {
         error: FormError,
         expanded: bool,
         from_choose: bool,
     },
     InstallFailed(Box<CheckedFailure>, bool),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PickerKind {
+    LocalFile,
+    LocalFolder,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PendingPicker {
+    token: u64,
+    kind: PickerKind,
 }
 
 impl Default for Stage {
@@ -358,6 +389,8 @@ pub(super) struct Github {
     repo_needs_focus: bool,
     target: Option<GithubTarget>,
     pending_failure: Option<CheckedFailure>,
+    next_picker: u64,
+    pending_picker: Option<PendingPicker>,
 }
 
 impl Github {
@@ -376,16 +409,52 @@ impl Github {
         self.target = None;
         self.warn_needs_focus = false;
         self.repo_needs_focus = false;
+        self.pending_picker = None;
         self.text.set(String::new());
+    }
+
+    fn start_picker(&mut self, kind: PickerKind) -> u64 {
+        self.next_picker = self.next_picker.wrapping_add(1);
+        let token = self.next_picker;
+        self.pending_picker = Some(PendingPicker { token, kind });
+        token
+    }
+
+    fn clear_picker(&mut self) {
+        self.pending_picker = None;
+    }
+
+    fn finish_picker(
+        &mut self,
+        token: u64,
+        kind: PickerKind,
+        outcome: Result<Option<PathBuf>, String>,
+    ) -> Option<PathBuf> {
+        let stage_matches = match kind {
+            PickerKind::LocalFile => matches!(self.stage, Stage::Choose(_)),
+            PickerKind::LocalFolder => matches!(self.stage, Stage::Repository),
+        };
+        if self.pending_picker != Some(PendingPicker { token, kind }) || !stage_matches {
+            return None;
+        }
+        self.pending_picker = None;
+        match outcome {
+            Ok(path) => path,
+            Err(why) => {
+                self.stage = Stage::Failed {
+                    error: FormError::new(tr("Couldn't open the file picker."), why),
+                    expanded: false,
+                    from_choose: kind == PickerKind::LocalFile,
+                };
+                None
+            }
+        }
     }
 
     pub(super) fn busy(&self) -> bool {
         matches!(
             self.stage,
-            Stage::Resolving(..)
-                | Stage::ReadingLocal { .. }
-                | Stage::Checking(_)
-                | Stage::InstallingLocal(_)
+            Stage::Resolving(..) | Stage::ReadingLocal { .. } | Stage::Checking(_)
         )
     }
 
@@ -519,6 +588,7 @@ impl Launcher {
             link,
             result,
             retry,
+            local,
         } = feedback;
         let same_profile = self.selected_instance().is_some_and(|current| {
             current.home == profile.home
@@ -555,11 +625,13 @@ impl Launcher {
                             Stage::InstallFailed(Box::new(failure), false)
                         }
                         _ => {
-                            self.github.text.set(link);
+                            if !local {
+                                self.github.text.set(link);
+                            }
                             Stage::Failed {
                                 error: FormError::new(&line, detail),
                                 expanded: false,
-                                from_choose: false,
+                                from_choose: local,
                             }
                         }
                     };
@@ -599,34 +671,31 @@ impl Launcher {
                 packages,
                 folder,
             } => {
-                let current = match self.github_target() {
-                    Ok(current) => current,
-                    Err(error) => {
-                        self.github.stage = Stage::Failed {
-                            error: FormError::new(tr("Can't start the install"), error),
-                            expanded: false,
-                            from_choose: folder.is_none(),
-                        };
-                        return;
-                    }
-                };
-                if !target.same_destination(&current) {
+                let label = folder
+                    .as_ref()
+                    .map(|p| p.display().to_string())
+                    .or_else(|| {
+                        packages
+                            .first()
+                            .map(|p| p.source_path.display().to_string())
+                    })
+                    .unwrap_or_default();
+                let names = packages.iter().map(|p| p.name.clone()).collect();
+                let input = Arc::new(LocalInput {
+                    target,
+                    label,
+                    names,
+                    packages,
+                });
+                if let Err(error) = self.queue_local(input) {
                     self.github.stage = Stage::Failed {
-                        error: FormError::new(
-                            tr("The profile or game build changed. Check the source again; nothing was changed."),
-                            String::new(),
-                        ),
+                        error: FormError::new(&error, String::new()),
                         expanded: false,
                         from_choose: folder.is_none(),
                     };
-                    return;
+                } else {
+                    self.close_sheet();
                 }
-                let home = target.home().to_path_buf();
-                let (tx, rx) = crate::wake::channel();
-                self.github.stage = Stage::InstallingLocal(rx);
-                std::thread::spawn(move || {
-                    let _ = tx.send(github_mods::install_local_packages(&home, &packages));
-                });
             }
         }
     }
@@ -635,6 +704,7 @@ impl Launcher {
         if self.github.target.is_none() || self.github.busy() {
             return;
         }
+        let token = self.github.start_picker(PickerKind::LocalFile);
         let pick = cx.prompt_for_paths(PathPromptOptions {
             files: true,
             directories: false,
@@ -642,14 +712,24 @@ impl Launcher {
             prompt: Some(tr("Choose a .smod file").into()),
         });
         cx.spawn(async move |this, cx| {
-            if let Ok(Ok(Some(mut paths))) = pick.await {
-                if let Some(path) = paths.pop() {
-                    let _ = this.update(cx, |this, cx| {
-                        this.start_read_local_smod(path);
-                        cx.notify();
-                    });
+            let outcome: Result<Option<PathBuf>, String> = match pick.await {
+                Ok(Ok(paths)) => Ok(paths.and_then(|mut p| p.pop())),
+                Ok(Err(e)) => Err(e.to_string()),
+                Err(e) => Err(e.to_string()),
+            };
+            let _ = this.update(cx, |this, cx| {
+                if this.ui.sheet != Some(Sheet::GithubAdd) || this.github.target.is_none() {
+                    this.github.clear_picker();
+                    return;
                 }
-            }
+                if let Some(path) = this
+                    .github
+                    .finish_picker(token, PickerKind::LocalFile, outcome)
+                {
+                    this.start_read_local_smod(path);
+                }
+                cx.notify();
+            });
         })
         .detach();
     }
@@ -658,6 +738,7 @@ impl Launcher {
         if self.ui.sheet != Some(Sheet::GithubAdd) || self.github.target.is_none() {
             return;
         }
+        self.github.clear_picker();
         let (tx, rx) = crate::wake::channel();
         self.github.stage = Stage::ReadingLocal {
             rx,
@@ -675,6 +756,7 @@ impl Launcher {
         if self.github.target.is_none() || self.github.busy() {
             return;
         }
+        let token = self.github.start_picker(PickerKind::LocalFolder);
         let pick = cx.prompt_for_paths(PathPromptOptions {
             files: false,
             directories: true,
@@ -682,14 +764,24 @@ impl Launcher {
             prompt: Some(tr("Choose a mod folder").into()),
         });
         cx.spawn(async move |this, cx| {
-            if let Ok(Ok(Some(mut paths))) = pick.await {
-                if let Some(path) = paths.pop() {
-                    let _ = this.update(cx, |this, cx| {
-                        this.start_read_local_folder(path);
-                        cx.notify();
-                    });
+            let outcome: Result<Option<PathBuf>, String> = match pick.await {
+                Ok(Ok(paths)) => Ok(paths.and_then(|mut p| p.pop())),
+                Ok(Err(e)) => Err(e.to_string()),
+                Err(e) => Err(e.to_string()),
+            };
+            let _ = this.update(cx, |this, cx| {
+                if this.ui.sheet != Some(Sheet::GithubAdd) || this.github.target.is_none() {
+                    this.github.clear_picker();
+                    return;
                 }
-            }
+                if let Some(path) =
+                    this.github
+                        .finish_picker(token, PickerKind::LocalFolder, outcome)
+                {
+                    this.start_read_local_folder(path);
+                }
+                cx.notify();
+            });
         })
         .detach();
     }
@@ -698,6 +790,7 @@ impl Launcher {
         if self.ui.sheet != Some(Sheet::GithubAdd) || self.github.target.is_none() {
             return;
         }
+        self.github.clear_picker();
         let (tx, rx) = crate::wake::channel();
         self.github.stage = Stage::ReadingLocal {
             rx,
@@ -715,6 +808,7 @@ impl Launcher {
         if !self.github.can_resolve() || self.github.target.is_none() {
             return;
         }
+        self.github.clear_picker();
         let link = match github_mods::parse(self.github.text.text()) {
             Ok(link) => link,
             Err(why) => {
@@ -740,39 +834,6 @@ impl Launcher {
                 self.github.close();
             }
             return false;
-        }
-        if let Stage::InstallingLocal(rx) = &self.github.stage {
-            let result = match rx.try_recv() {
-                Ok(result) => result,
-                Err(std::sync::mpsc::TryRecvError::Empty) => return false,
-                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                    Err(tr("Install stopped unexpectedly.").into())
-                }
-            };
-            match result {
-                Ok(names) => {
-                    self.close_sheet();
-                    self.mods.reload_installed();
-                    self.mods.reset_lists();
-                    self.mods_refresh();
-                    let message = match names.as_slice() {
-                        [one] => trf("Installed {mod}.", &[("mod", one)]),
-                        _ => trf(
-                            "Installed {count} mods.",
-                            &[("count", &names.len().to_string())],
-                        ),
-                    };
-                    self.mods.message = Some(Ok(message));
-                }
-                Err(error) => {
-                    self.github.stage = Stage::Failed {
-                        error: FormError::new(tr("Couldn't install the mod."), error),
-                        expanded: false,
-                        from_choose: true,
-                    };
-                }
-            }
-            return true;
         }
         if let Stage::ReadingLocal { rx, from_choose } = &self.github.stage {
             let from_choose = *from_choose;
@@ -1150,6 +1211,7 @@ impl Launcher {
                             cx.listener(move |this, _: &ClickEvent, _, cx| {
                                 match choice {
                                     SourceChoice::Repository => {
+                                        this.github.clear_picker();
                                         this.github.stage = Stage::Repository;
                                         this.github.repo_needs_focus = true;
                                     }
@@ -1162,21 +1224,13 @@ impl Launcher {
             return sheets::frame("github-add-sheet", 560., body, cx);
         }
 
-        // Reading or installing local packages.
-        if matches!(
-            self.github.stage,
-            Stage::ReadingLocal { .. } | Stage::InstallingLocal(_)
-        ) {
-            let label = if matches!(self.github.stage, Stage::InstallingLocal(_)) {
-                tr("Installing mod…")
-            } else {
-                tr("Reading mod files…")
-            };
+        // Reading local packages before showing the unreviewed warning.
+        if matches!(self.github.stage, Stage::ReadingLocal { .. }) {
             let body = div()
                 .flex()
                 .flex_col()
                 .child(sheets::title(tr("Add from source").into()))
-                .child(muted(label))
+                .child(muted(tr("Reading mod files…")))
                 .child(widgets::progress_bar(None, &self.theme).flex_none())
                 .child(div().flex().justify_end().child(
                     button("github-add-cancel", tr("Cancel")).on_click(cx.listener(
@@ -1396,14 +1450,7 @@ impl Launcher {
                     }
                 };
                 body.child(sheets::title(tr("Add from source").into()))
-                    .child(
-                        muted(&format!(
-                            "{} @ {:.7}",
-                            failure.retry.source.name(),
-                            failure.retry.source.commit,
-                        ))
-                        .truncate(),
-                    )
+                    .child(muted(&failure.retry.source.label()).truncate())
                     .child(muted(&selected.join(", ")).truncate())
             } else {
                 let focused = !resolving && focus.is_focused(window);
@@ -1537,6 +1584,7 @@ impl Launcher {
             let back = (checked_failure.is_none() && !resolving).then(|| {
                 button("add-source-back", tr("Back")).on_click(cx.listener(
                     |this, _: &ClickEvent, _, cx| {
+                        this.github.clear_picker();
                         this.github.stage = Stage::Choose(SourceChoice::Repository);
                         cx.notify();
                     },
@@ -1848,29 +1896,36 @@ pub(crate) mod tests {
         let target = GithubTarget::fixture(dir.path());
         let unsigned = PendingConfirm::Local {
             target: target.clone(),
-            packages: vec![pkg.clone()],
+            packages: vec![pkg],
             folder: None,
         };
         assert_eq!(unsigned.badge(), ManualBadge::Local);
         assert!(unsigned.unsigned_local_file());
         let prov = unsigned.provenance();
         assert_eq!(prov.headline, tr("Unsigned local file, not reviewed"));
-        assert!(prov.detail.contains("custom-tweaks-0.1.0.smod"));
+        assert!(prov.detail.contains(&smod.display().to_string()));
 
-        let mut signed_pkg = pkg;
-        signed_pkg.attestation = LocalAttestation::Signed {
-            repo: "alexdev/lantern-tweaks".into(),
-        };
-        let signed = PendingConfirm::Local {
-            target: target.clone(),
-            packages: vec![signed_pkg],
-            folder: None,
-        };
-        assert_eq!(signed.badge(), ManualBadge::Local);
-        assert!(!signed.unsigned_local_file());
-        assert_eq!(
-            signed.provenance().headline,
-            "Built by github.com/alexdev/lantern-tweaks, not reviewed"
+        // GitHub release assets describe the release tag and asset filename rather than a commit SHA.
+        let release_input = checked_subset(target.clone());
+        let release_confirm = PendingConfirm::Github(GithubInput {
+            target: release_input.target.clone(),
+            link: release_input.link.clone(),
+            source: release_input.source.clone(),
+            selection: match &release_input.selection {
+                GithubSelection::Add(packages) => GithubSelection::Add(packages.clone()),
+                GithubSelection::Source(_) => unreachable!(),
+            },
+        });
+        let release_prov = release_confirm.provenance();
+        assert!(
+            release_prov.detail.contains("Release v1 (two.smod)"),
+            "{}",
+            release_prov.detail
+        );
+        assert!(
+            !release_prov.detail.contains("aaaaaaa"),
+            "{}",
+            release_prov.detail
         );
 
         let repo_dir = dir.path().join("camp-lanterns");
@@ -1892,6 +1947,83 @@ pub(crate) mod tests {
             folder.provenance().headline,
             tr("Local repository folder, not reviewed")
         );
+    }
+
+    #[test]
+    fn picker_handles_cancellation_errors_and_stale_callbacks() {
+        let mut form = Github::new();
+        form.stage = Stage::Choose(SourceChoice::LocalFile);
+
+        // User cancellation leaves the stage quietly on Choose.
+        let token = form.start_picker(PickerKind::LocalFile);
+        assert_eq!(
+            form.finish_picker(token, PickerKind::LocalFile, Ok(None)),
+            None
+        );
+        assert!(matches!(form.stage, Stage::Choose(_)));
+
+        // Picker errors surface as a failure instead of quiet cancellation.
+        let token = form.start_picker(PickerKind::LocalFile);
+        assert_eq!(
+            form.finish_picker(
+                token,
+                PickerKind::LocalFile,
+                Err("portal unavailable".into()),
+            ),
+            None
+        );
+        assert!(matches!(
+            &form.stage,
+            Stage::Failed {
+                error,
+                from_choose: true,
+                ..
+            } if error.line == tr("Couldn't open the file picker.")
+                && error.detail == "portal unavailable"
+        ));
+
+        // Stale callbacks after closing, switching stage, or opening a newer picker are ignored.
+        form.stage = Stage::Choose(SourceChoice::LocalFile);
+        let stale = form.start_picker(PickerKind::LocalFile);
+        form.close();
+        assert_eq!(
+            form.finish_picker(
+                stale,
+                PickerKind::LocalFile,
+                Ok(Some(PathBuf::from("a.smod")))
+            ),
+            None
+        );
+
+        form.stage = Stage::Repository;
+        let first = form.start_picker(PickerKind::LocalFolder);
+        let second = form.start_picker(PickerKind::LocalFolder);
+        assert_eq!(
+            form.finish_picker(
+                first,
+                PickerKind::LocalFolder,
+                Ok(Some(PathBuf::from("old")))
+            ),
+            None
+        );
+        assert_eq!(
+            form.finish_picker(
+                second,
+                PickerKind::LocalFolder,
+                Ok(Some(PathBuf::from("fresh"))),
+            ),
+            Some(PathBuf::from("fresh"))
+        );
+
+        // Callback arriving after stage switched away from Repository is ignored.
+        form.stage = Stage::Repository;
+        let moved = form.start_picker(PickerKind::LocalFolder);
+        form.stage = Stage::Choose(SourceChoice::Repository);
+        assert_eq!(
+            form.finish_picker(moved, PickerKind::LocalFolder, Err("late error".into())),
+            None
+        );
+        assert!(matches!(form.stage, Stage::Choose(_)));
     }
 
     pub(crate) fn checked_subset(target: GithubTarget) -> Arc<GithubInput> {

@@ -429,8 +429,7 @@ pub(super) fn stage_removal<'a>(
             rows.remove(id)?;
             changed_rows = true;
         }
-        if item.verified_github_origin(home).ok().flatten().is_some() {
-            let origin = crate::github_mods::origin_path(home, id);
+        if let Some((origin, _)) = item.verified_origin_sidecar(home).ok().flatten() {
             let origin_name = origin.strip_prefix(home).map_err(|_| unverified())?;
             let origin_name = origin_name
                 .to_str()
