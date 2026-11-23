@@ -982,6 +982,7 @@ impl Launcher {
                     .flex_1()
                     .min_h_0()
                     .overflow_y_scroll()
+                    .pr(px(14.))
                     .flex()
                     .flex_col()
                     .gap(px(14.))
