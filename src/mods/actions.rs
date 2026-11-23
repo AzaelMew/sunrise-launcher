@@ -132,6 +132,11 @@ impl Launcher {
         self.submit_registry_change(Kind::InstallV2, &project_id, ids, BTreeMap::new());
     }
 
+    /// Install a collection's picked projects from the signed v2 index, planned together.
+    pub(super) fn add_v2_collection(&mut self, collection: &str, project_ids: Vec<String>) {
+        self.submit_registry_change(Kind::InstallV2, collection, project_ids, BTreeMap::new());
+    }
+
     /// A direct switch has no world-loss question. Enabling still requires the dependencies;
     /// the native consent and build gates decide whether the game can use native code.
     pub(super) fn toggle(&mut self, row: &Row) {

@@ -21,16 +21,18 @@ impl Launcher {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let mut page = self.discover_shell(window, focus, cx);
-        let (cards, categories, build_listed, stale_warning, from_cache) =
+        let (cards, collections, categories, build_listed, stale_warning, from_cache) =
             match &self.ui.mods.v2_catalog {
                 V2Catalog::Ready {
                     cards,
+                    collections,
                     categories,
                     build_listed,
                     stale_warning,
                     from_cache,
                 } => (
                     cards.clone(),
+                    collections.clone(),
                     categories.clone(),
                     *build_listed,
                     stale_warning.clone(),
@@ -71,7 +73,8 @@ impl Launcher {
             };
 
         let f = self.ui.mods.filters.clone();
-        let shown = discover_v2::discover(&cards, &f);
+        let mut shown = discover_v2::discover(&cards, &f);
+        discover_v2::fold_members(&mut shown, &collections, &f);
         let total = shown.len();
         let hidden_other_builds = discover_v2::hidden_other_build_count(&cards, &f);
         let fitting_shown = if f.show_all {
@@ -298,20 +301,9 @@ impl Launcher {
                         .zip(entry)
                         .and_then(|(rows, entry)| rows.archives.get(&entry.file)?.icon.clone());
                     let fits = card_data.fit.fits();
-                    // A card says only that it is working, in a label about Install's size:
-                    // the strip above the page says each step, and the card keeps its shape.
-                    let working = match self.registry_card(&id) {
-                        Some(crate::mods_page::install::Card::Progress(stage)) => {
-                            Some(if stage == sunrise::InstallProgress::Publishing {
-                                tr("Finishing…")
-                            } else {
-                                tr("Installing…")
-                            })
-                        }
-                        Some(crate::mods_page::install::Card::Waiting) => Some(tr("Waiting…")),
-                        _ => None,
-                    }
-                    .map(|label| dim(button(("alt-add", n), label)).into_any_element());
+                    let working = self
+                        .card_working_label(&id)
+                        .map(|label| dim(button(("alt-add", n), label)).into_any_element());
                     let issue = self.registry_card_note(&id);
 
                     // An installed mod says so once, where Install would be: its version,
@@ -375,6 +367,15 @@ impl Launcher {
                     } else if let Some(reason) = card_data.fit.reason() {
                         facts.push(unfit_pill(reason));
                     }
+                    if let Some(collection) = collections
+                        .iter()
+                        .find(|c| c.members.iter().any(|&(member, _)| member == i))
+                    {
+                        facts.push(muted(trf(
+                            "Part of {collection}",
+                            &[("collection", &collection.name)],
+                        )));
+                    }
 
                     let mut card_el = browse_card(
                         ("alt-card", n),
@@ -417,7 +418,9 @@ impl Launcher {
             cx,
         );
         let results = self.with_port_groups(grid, ungrouped_cards, &port_groups, cx);
-        let shown_total = total.max(port_groups.len());
+        let shown_collections = discover_v2::discover_collections(&collections, &cards, &f);
+        let results = self.with_collections(results, &collections, &shown_collections, &cards, cx);
+        let shown_total = total.max(port_groups.len()).max(shown_collections.len());
         page.child(self.discover_results(results, shown_total, "discover", empty, cx))
             .into_any_element()
     }
@@ -763,6 +766,122 @@ impl Launcher {
                     }
                 }),
             )
+    }
+
+    /// What a working card says where Install was, in a label about Install's size: the strip
+    /// above the page says each step, and the card keeps its shape.
+    fn card_working_label(&self, id: &str) -> Option<&'static str> {
+        match self.registry_card(id) {
+            Some(crate::mods_page::install::Card::Progress(stage)) => {
+                Some(if stage == sunrise::InstallProgress::Publishing {
+                    tr("Finishing…")
+                } else {
+                    tr("Installing…")
+                })
+            }
+            Some(crate::mods_page::install::Card::Waiting) => Some(tr("Waiting…")),
+            _ => None,
+        }
+    }
+
+    /// The collections matching Discover's filters, as cards above the mods.
+    fn with_collections(
+        &mut self,
+        results: Div,
+        collections: &[discover_v2::V2Collection],
+        shown: &[usize],
+        cards: &[discover_v2::V2Card],
+        cx: &mut Context<Self>,
+    ) -> Div {
+        if shown.is_empty() {
+            return results;
+        }
+        let mut grid = self.discover_grid();
+        for (n, &i) in shown.iter().enumerate() {
+            let collection = &collections[i];
+            let id = collection.id.clone();
+            let picture = collection
+                .icon
+                .as_deref()
+                .and_then(|rel| self.v2_mod_image(&id, rel, images::ICON));
+            let (fitting, all) = (collection.fitting(cards), collection.members.len());
+            let fit = match fitting {
+                0 => unfit_pill(tr("No mod in it fits this build").to_owned()),
+                _ => fit_pill(trf(
+                    "{fitting} of {all} mods fit build",
+                    &[("fitting", &fitting.to_string()), ("all", &all.to_string())],
+                )),
+            };
+            let installed = self.discover_installed();
+            let is_installed = |project: &str| {
+                installed.is_some_and(|rows| rows.registry_entry(project).is_some())
+            };
+            let added = collection
+                .members
+                .iter()
+                .filter(|&&(i, _)| is_installed(&cards[i].id))
+                .count();
+            // Install takes the members on by default that fit, as the page opens picked.
+            let to_install =
+                collection.to_install(cards, &collection.initial_picks(cards), &is_installed);
+            let mut facts = vec![fit, tag(tr("Collection"))];
+            if added > 0 {
+                facts.push(muted(trf(
+                    "{added} of {total} added",
+                    &[("added", &added.to_string()), ("total", &all.to_string())],
+                )));
+            }
+            let control = match self.card_working_label(&id) {
+                Some(label) => dim(button(("alt-collection-add", n), label)).into_any_element(),
+                None if to_install.is_empty() && added > 0 => added_mark(),
+                None if to_install.is_empty() => {
+                    dim(button(("alt-collection-add", n), tr("Install")))
+                        .on_click(|_, _, cx| cx.stop_propagation())
+                        .into_any_element()
+                }
+                None => {
+                    let (card, ids) = (id.clone(), to_install);
+                    button(("alt-collection-add", n), tr("Install"))
+                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            cx.stop_propagation();
+                            this.add_v2_collection(&card, ids.clone());
+                            cx.notify();
+                        }))
+                        .into_any_element()
+                }
+            };
+            let note = self.registry_card_note(&id);
+            let card = browse_card(
+                ("alt-collection-card", n),
+                picture,
+                &id,
+                &collection.name,
+                &collection.publisher,
+                &collection.summary,
+                facts,
+                Some(control),
+                note,
+            )
+            .when(fitting == 0, |card| card.opacity(0.62))
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                this.mods_show_v2_collection(id.clone(), Page::Discover);
+                cx.notify();
+            }));
+            grid = grid.child(card);
+        }
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(14.))
+            .child(
+                div()
+                    .text_size(px(tokens::BODY))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(c(palette().text))
+                    .child(tr("Collections")),
+            )
+            .child(grid)
+            .child(results)
     }
 
     fn discover_grid(&self) -> Div {

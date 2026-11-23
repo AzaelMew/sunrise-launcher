@@ -122,6 +122,7 @@ fn make_index(projects: Vec<Project>, revoked: Vec<Revoked>) -> Index {
         }],
         projects,
         revoked,
+        collections: Vec::new(),
     };
     index
         .check()
