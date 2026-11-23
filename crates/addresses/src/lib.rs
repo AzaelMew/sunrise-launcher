@@ -1,8 +1,5 @@
 //! The outside addresses the launcher has built in, vanilla's aside, in one place.
 
-/// The mod registry's policy, which the launcher's mod pages link.
-pub const MOD_POLICY: &str = "https://playsunrise.net/mods/policy";
-
 /// The mod registry's index, published by sunrise-org/sunrise-mods (`SUNRISE_MOD_INDEX` overrides it).
 pub const MOD_INDEX: &str = "https://sunrise-org.github.io/sunrise-mods/index.json";
 
