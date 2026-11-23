@@ -94,6 +94,46 @@ fn programs_are_laid_out_as_install_sh_does() {
 }
 
 #[test]
+fn set_up_refuses_refresh_for_a_different_minecraft_version_than_active_runtime() {
+    let root = scratch("runtime-version-mismatch");
+    let old_version = root.join("versions/v1");
+    fs::create_dir_all(old_version.join(".local/sunrise-client/26.3-pre-1")).unwrap();
+    fs::write(old_version.join(PROGRAM), "server").unwrap();
+    fs::write(
+        old_version.join("research-lock.json"),
+        r#"{"minecraft":{"version":"26.3-pre-1"}}"#,
+    )
+    .unwrap();
+    let old_resources = old_version.join(".local/sunrise-client/26.3-pre-1");
+    fs::write(old_resources.join("sunrise-resources.json"), "{}").unwrap();
+
+    let rt = root.join("runtime");
+    set_up_in(&rt, &old_version, "v1", "26.3-pre-1", &old_resources).unwrap();
+    // Simulate missing game files for the active runtime while a newer build pins 26.3.
+    fs::remove_dir_all(game_files(&rt, "26.3-pre-1")).unwrap();
+
+    let new_version = root.join("versions/v2");
+    let new_resources = new_version.join(".local/sunrise-client/26.3");
+    fs::create_dir_all(&new_resources).unwrap();
+    fs::write(new_version.join(PROGRAM), "server-new").unwrap();
+    fs::write(
+        new_version.join("research-lock.json"),
+        r#"{"minecraft":{"version":"26.3"}}"#,
+    )
+    .unwrap();
+    fs::write(new_resources.join("sunrise-resources.json"), "{}").unwrap();
+
+    let error = set_up_in(&rt, &new_version, "v2", "26.3", &new_resources).unwrap_err();
+    assert!(error.contains("26.3-pre-1"), "unexpected error: {error}");
+    assert!(error.contains("26.3"), "unexpected error: {error}");
+    assert!(
+        !game_files(&rt, "26.3").exists(),
+        "must not copy mismatched game files"
+    );
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn native_server_setup_uses_base_resources_and_native_programs() {
     const ACTOR: &str = "SUNRISE_TEST_NATIVE_SERVER_SETUP";
     if std::env::var_os(ACTOR).is_none() {

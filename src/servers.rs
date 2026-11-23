@@ -302,7 +302,20 @@ fn set_up_in(
     let releases = root.join("releases");
     fs::create_dir_all(&releases).map_err(|e| format!("{}: {e}", releases.display()))?;
     let release = releases.join(tag);
-    if !root.join("current").exists() {
+    let current = root.join("current");
+    if current.exists() {
+        let active_version = backend::hosting_game_version(&current)?;
+        if active_version != game_version {
+            return Err(trf(
+                "The active server runtime uses Minecraft {active}, but Sunrise {tag} uses Minecraft {selected}. Choose a Sunrise build for Minecraft {active}.",
+                &[
+                    ("active", &active_version),
+                    ("tag", tag),
+                    ("selected", game_version),
+                ],
+            ));
+        }
+    } else {
         if !release.join(PROGRAM).is_file() {
             let scratch = releases.join(format!(".{tag}.copying"));
             let _ = fs::remove_dir_all(&scratch);
@@ -318,7 +331,7 @@ fn set_up_in(
                 .map_err(|e| e.to_string())?;
             point(&link, &root.join("game-files/sunrise-client")).map_err(|e| e.to_string())?;
         }
-        point(&root.join("current"), &release).map_err(|e| e.to_string())?;
+        point(&current, &release).map_err(|e| e.to_string())?;
     }
     // The game files: a copy (preparing again rewrites files in place), swapped in whole.
     // Native builds share their base's prepared resources, as Play does; only the
