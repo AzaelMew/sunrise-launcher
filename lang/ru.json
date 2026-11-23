@@ -1875,5 +1875,10 @@
   "No Stable build yet. Plays Nightly until there is one.": "No Stable build yet. Plays Nightly until there is one.",
   "The mod registry file has no signature.": "The mod registry file has no signature.",
   "Sunrise couldn't verify the profile's saved game build ({check}: {error}).": "Sunrise couldn't verify the profile's saved game build ({check}: {error}).",
-  "Sunrise couldn't verify the profile's saved game build ({check}).": "Sunrise couldn't verify the profile's saved game build ({check})."
+  "Sunrise couldn't verify the profile's saved game build ({check}).": "Sunrise couldn't verify the profile's saved game build ({check}).",
+  "That attestation file is too large.": "That attestation file is too large.",
+  "Signed local file, not reviewed": "Signed local file, not reviewed",
+  "File: {file} · Built by {repo} ({workflow}) · Sunrise has not checked this code.": "File: {file} · Built by {repo} ({workflow}) · Sunrise has not checked this code.",
+  "Attestation check failed, not reviewed": "Attestation check failed, not reviewed",
+  "File: {file} · The bundled attestation could not be verified ({reason}).": "File: {file} · The bundled attestation could not be verified ({reason})."
 }
