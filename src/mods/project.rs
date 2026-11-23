@@ -1004,6 +1004,36 @@ impl Launcher {
         use sunrise_launcher::browser::details::category_label;
 
         let p = palette();
+        let open_id = self.ui.mods.open.as_ref().map(|o| o.id.clone());
+        // Opened from Installed or Discover alike, an installed mod keeps its own controls here.
+        let (rows, _) = self.labeled_installed_rows();
+        let installed_row = rows.iter().find(|row| {
+            row.v2_installed()
+                && row
+                    .entry
+                    .as_ref()
+                    .is_some_and(|e| Some(&e.project) == open_id.as_ref())
+        });
+        let busy = self.mods_busy()
+            || self.mods_locked().is_some()
+            || self
+                .ui
+                .mods
+                .snapshot
+                .as_ref()
+                .is_none_or(|snapshot| !snapshot.ready());
+        let cells = installed_row.map(|row| {
+            model::cells(
+                row,
+                self.ui.mods.errors.get(&row.id).map(String::as_str),
+                self.build_here()
+                    .filter(|_| row.on)
+                    .and_then(|run| run.state_of(&row.id, &row.version)),
+            )
+        });
+        let controls = installed_row
+            .zip(cells.as_ref())
+            .map(|(row, cells)| self.installed_project_controls(row, cells, busy, cx));
         let vp = match self.ui.mods.open.as_ref().and_then(|o| o.v2_page.as_ref()) {
             None => {
                 return page
@@ -1020,6 +1050,8 @@ impl Launcher {
                             .child(tr("This mod can't be shown")),
                     )
                     .child(note(error.clone()))
+                    // An installed mod the registry no longer lists can still be removed here.
+                    .children(controls.map(|controls| controls.max_w(px(320.))))
                     .into_any_element();
             }
             Some(Ok(vp)) => (**vp).clone(),
@@ -1289,11 +1321,47 @@ impl Launcher {
         );
 
         // Right sticky side panel: action card + publisher provenance + pin callout + About card.
-        let working = self.registry_card_control(&vp.id, |label| {
+        // An update runs under the installed mod's id, which can differ from the project's.
+        let installed_id = installed_row
+            .map(|row| row.id.as_str())
+            .filter(|id| *id != vp.id);
+        let working_id = installed_id
+            .filter(|id| {
+                matches!(
+                    self.registry_card(id),
+                    Some(crate::mods_page::install::Card::Progress(_))
+                        | Some(crate::mods_page::install::Card::Waiting)
+                )
+            })
+            .unwrap_or(&vp.id);
+        let working = self.registry_card_control(working_id, |label| {
             dim(crate::frame::button("alt-project-add", label).w_full()).into_any_element()
         });
+        let update = installed_row
+            .zip(cells.as_ref())
+            .filter(|(_, cells)| cells.action == Some(model::RowAction::Update))
+            .and_then(|(row, _)| row.update.as_ref().map(|to| (row, to)));
         let primary_control: AnyElement = if let Some(control) = working {
             control
+        } else if let Some((row, to)) = update {
+            let b = primary(
+                "alt-project-update",
+                trf(
+                    "Update {from} → {to}",
+                    &[("from", &row.version), ("to", to)],
+                ),
+            )
+            .w_full();
+            if busy {
+                dim(b).into_any_element()
+            } else {
+                let row = row.clone();
+                b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    this.update_one(&row);
+                    cx.notify();
+                }))
+                .into_any_element()
+            }
         } else if let Some(version) = &installed_version {
             super::discover::install_fact(version, pending).into_any_element()
         } else if vp.will_install.is_some() {
@@ -1390,9 +1458,11 @@ impl Launcher {
             )
             .child(primary_control)
             .children(self.registry_card_outcome(&vp.id, cx))
+            .children(installed_id.and_then(|id| self.registry_card_outcome(id, cx)))
             .when(vp.will_install.is_none(), |d| {
                 d.children(vp.fit.reason().map(note))
             })
+            .children(controls)
             .child(div().h(px(1.)).bg(c(p.divider)))
             .child(self.rating_block(&vp.id, cx))
             .child(div().h(px(1.)).bg(c(p.divider)))

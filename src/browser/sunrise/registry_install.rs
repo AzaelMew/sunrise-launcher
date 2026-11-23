@@ -91,6 +91,8 @@ fn remember_unfit_sha256(base: &str, sha256: &str) {
 pub enum InstallProgress {
     PreparingBuild,
     Checking,
+    /// Another build or a cache cleanup holds the build folder: this install waits for it.
+    Waiting,
     Downloading(f32),
     /// The game build's own download, before its Minecraft files are prepared.
     DownloadingBuild(f32),
@@ -666,17 +668,20 @@ fn registry_edit<'a>(
             let routes = if build_packages.is_empty() {
                 Vec::new()
             } else {
-                native_mods::source_routes(next.path(), edit.base(), cancelled)
-                    .map_err(|error| {
-                        InstallError::Unproved(match error {
-                            native_mods::SourceCheckError::Dependency(detail) => detail,
-                            native_mods::SourceCheckError::Fit(failed) => failed.into(),
-                            native_mods::SourceCheckError::Busy => {
-                                native_mods::cache_error(crate::native_cache::Error::Busy)
-                            }
-                        })
-                    })?
-                    .mods
+                native_mods::source_routes(next.path(), edit.base(), cancelled, &|| {
+                    (hooks.progress)(InstallProgress::Waiting)
+                })
+                .map_err(|error| match error {
+                    // Stopped while it waited for another build.
+                    _ if cancelled.is_stopped() => InstallError::Cancelled,
+                    native_mods::SourceCheckError::Dependency(detail) => {
+                        InstallError::Unproved(detail)
+                    }
+                    native_mods::SourceCheckError::Fit(failed) => {
+                        InstallError::Unproved(failed.into())
+                    }
+                })?
+                .mods
             };
             let mut rejection = None;
             for (id, route) in routes {
@@ -969,6 +974,7 @@ fn build_progress(step: native_mods::Step, progress: &dyn Fn(InstallProgress)) {
     progress(match step {
         // Registry actions already opened their progress before asking for build proof.
         native_mods::Step::Starting => return,
+        native_mods::Step::Waiting => InstallProgress::Waiting,
         native_mods::Step::Rust(fraction) => InstallProgress::Rust(fraction),
         native_mods::Step::Tools { done, total, .. } => InstallProgress::Tools { done, total },
         native_mods::Step::Install | native_mods::Step::Done { .. } => {

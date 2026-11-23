@@ -625,9 +625,6 @@ pub(in crate::mods) fn source_error(
         }
         SourceError::Catalogue(why) => why.clone(),
         SourceError::Unproved(_) => tr("Couldn't add this mod").into(),
-        SourceError::Busy => {
-            tr("Sunrise is building mods right now. Try again when that finishes.").into()
-        }
         SourceError::Changed(_) => {
             tr("The profile or game build changed. Check the source again; nothing was changed.")
                 .into()

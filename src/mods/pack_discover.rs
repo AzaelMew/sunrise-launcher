@@ -307,7 +307,6 @@ impl Launcher {
         let category_menu = self.discover_menu(&category_now, Menu::Category, category_options, cx);
         let sort_menu = self.discover_menu(tr(sort_now.label()), Menu::Sort, sort_options, cx);
         self.filter_bar(
-            None,
             category_menu,
             f.show_all,
             |this| {
