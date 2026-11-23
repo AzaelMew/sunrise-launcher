@@ -9,7 +9,7 @@ use sunrise_launcher_smod::{
 mod bound;
 pub(super) use bound::sdk_target;
 pub use bound::NightlyReceiptWarning;
-pub(crate) use bound::{BoundVariant, GameDownload, GameProof};
+pub(crate) use bound::{prove_release_files, BoundVariant, GameDownload, GameProof};
 
 const STAGE_PREFIX: &str = ".build-stage-";
 const REPAIR: &str = ".repair-";
