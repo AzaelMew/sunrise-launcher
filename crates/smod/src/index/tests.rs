@@ -326,9 +326,11 @@ fn data_packs_and_shader_folder_packs_are_read_by_their_content() {
     };
     let data = pack(&["pack.mcmeta", "data/x/function/a.mcfunction"]);
     assert_eq!(inspect(&Kind::DataPack, &data).unwrap().api, "94");
+    assert_eq!(zip_kind(&data), Kind::DataPack);
     let looks = pack(&["pack.mcmeta", "assets/x/textures/a.png"]);
     let e = inspect(&Kind::DataPack, &looks).unwrap_err();
     assert!(e.contains("data/"), "{e}");
+    assert_eq!(zip_kind(&looks), Kind::ResourcePack);
     let no_meta = pack(&["data/x/function/a.mcfunction"]);
     assert!(
         inspect(&Kind::DataPack, &no_meta)
@@ -337,6 +339,7 @@ fn data_packs_and_shader_folder_packs_are_read_by_their_content() {
     );
     let shaders = pack(&["shaders/composite.fsh", "shaders/lang/en_us.lang"]);
     assert_eq!(inspect(&Kind::ShaderPack, &shaders).unwrap().api, "");
+    assert_eq!(zip_kind(&shaders), Kind::ShaderPack);
     let e = inspect(&Kind::ShaderPack, &looks).unwrap_err();
     assert!(e.contains("shaders/"), "{e}");
     let sneaky = pack(&["shaders/a.fsh", "../../x"]);
@@ -348,6 +351,7 @@ fn data_packs_and_shader_folder_packs_are_read_by_their_content() {
     // Both are zips, and a reader from before them keeps them as unknown kinds.
     for kind in [Kind::DataPack, Kind::ShaderPack] {
         assert_eq!(kind.extension(), Some("zip"));
+        assert!(open(&kind).is_ok());
         assert_eq!(Kind::from(kind.name().to_owned()), kind);
     }
     std::fs::remove_dir_all(&dir).unwrap();
@@ -448,6 +452,7 @@ fn shader_packs_pass_the_game_s_own_check() {
         "{not_a_pack}"
     );
     assert_eq!(Kind::Shader.extension(), Some("sshader"));
+    assert!(open(&Kind::Shader).is_ok());
 }
 
 /// The facts of a file that is exactly what `v` lists, with the manifest's dependencies `deps`.

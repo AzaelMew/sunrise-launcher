@@ -211,7 +211,7 @@ impl Launcher {
             play_pressed: None,
             bench: perf::Bench::from_env(),
             starting_pack: None,
-            mods: mods_page::Mods::new(),
+            mods: mods_page::Mods::new(cx),
             github: github_mods_page::Github::new(),
             instances: instances_page::Instances::default(),
             worlds: worlds_page::Worlds::default(),
@@ -358,6 +358,9 @@ impl Launcher {
             self.content_scroll = Scrollbar::default();
             self.mods_sticky.reset();
             self.settings_sticky.reset();
+            if page == Page::Mods {
+                self.mods.reset_lists();
+            }
         }
     }
 

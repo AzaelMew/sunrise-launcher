@@ -202,10 +202,10 @@ fn installs_with_dependencies_then_updates_and_removes() {
     assert_eq!(entry.number, "2");
     assert!(update_for(&fake, &entry, GAME).unwrap().is_none());
 
-    let removed = remove_pack(&home, &entry).unwrap();
+    let removed = remove(&home, "addon").unwrap();
     assert_eq!(removed.project, "addon");
     assert!(!home.join("resourcepacks/addon-2.zip").exists());
-    assert!(remove_pack(&home, &entry).is_err());
+    assert!(remove(&home, "addon").is_err());
     assert_eq!(Installed::load(&home).entries.len(), 1);
     fs::remove_dir_all(&home).unwrap();
 }
@@ -264,13 +264,7 @@ fn nothing_is_installed_when_a_check_fails() {
         fs::read(home.join("resourcepacks/good-1.zip")).unwrap(),
         b"mine"
     );
-    let missing: Entry = serde_json::from_value(entry_json(
-        "good",
-        "resource-pack",
-        "resourcepacks/good-1.zip",
-    ))
-    .unwrap();
-    assert!(remove_pack(&home, &missing).is_err());
+    assert!(remove(&home, "good").is_err());
     assert!(home.join("resourcepacks/good-1.zip").exists());
 
     let jar = project("jar", Kind::Mod);
@@ -292,42 +286,81 @@ fn entry_json(project: &str, kind: &str, file: &str) -> serde_json::Value {
     })
 }
 
-/// A folder the player put where a pack's file was, or a linked pack folder, is refused and
-/// both the files and the entry stay intact.
+/// Only a ported mod's folder in `sunrise-mods/` is removed recursively: a folder the player put
+/// where a pack's file was, or one reached through a link, is refused and the entry kept.
 #[test]
-fn remove_pack_refuses_a_folder_and_a_linked_pack_folder() {
+fn only_a_ported_mods_own_folder_is_removed_recursively() {
     let home = home("remove-folders");
     fs::create_dir_all(home.join("resourcepacks/mine")).unwrap();
     fs::write(home.join("resourcepacks/mine/pack.mcmeta"), "{}").unwrap();
-    let outside = home.join("elsewhere");
+    let outside = home.join("elsewhere/ruby");
     fs::create_dir_all(&outside).unwrap();
-    fs::write(outside.join("keep.zip"), "mine").unwrap();
+    fs::write(outside.join("keep.txt"), "mine").unwrap();
     fs::write(
         home.join("mod-browser.json"),
         serde_json::json!({ "entries": [
             entry_json("pack", "resource-pack", "resourcepacks/mine"),
-            entry_json("linked", "resource-pack", "resourcepacks/keep.zip"),
+            entry_json("ruby", "mod", "sunrise-mods/ruby"),
+            entry_json("deep", "mod", "sunrise-mods/ruby/deeper"),
         ]})
         .to_string(),
     )
     .unwrap();
-    let pack = Installed::load(&home).lookup("pack").cloned().unwrap();
-    let refused = remove_pack(&home, &pack).unwrap_err();
-    assert!(refused.contains("isn't a pack file"), "{refused}");
+    let refused = remove(&home, "pack").unwrap_err();
+    assert!(refused.contains("is a folder"), "{refused}");
     assert!(home.join("resourcepacks/mine/pack.mcmeta").exists());
-    assert_eq!(Installed::load(&home).entries.len(), 2);
+    assert_eq!(Installed::load(&home).entries.len(), 3);
 
-    // `resourcepacks` is a link out of the game folder: nothing behind it is removed.
+    // `sunrise-mods` is a link out of the game folder: nothing behind it is removed.
     #[cfg(unix)]
     {
-        fs::remove_dir_all(home.join("resourcepacks")).unwrap();
-        std::os::unix::fs::symlink(&outside, home.join("resourcepacks")).unwrap();
-        let linked = Installed::load(&home).lookup("linked").cloned().unwrap();
-        let refused = remove_pack(&home, &linked).unwrap_err();
-        assert!(refused.contains("isn't a pack file"), "{refused}");
-        assert!(outside.join("keep.zip").exists());
-        fs::remove_file(home.join("resourcepacks")).unwrap();
+        std::os::unix::fs::symlink(home.join("elsewhere"), home.join("sunrise-mods")).unwrap();
+        assert!(remove(&home, "ruby").unwrap_err().contains("is a folder"));
+        assert!(outside.join("keep.txt").exists());
+        fs::remove_file(home.join("sunrise-mods")).unwrap();
     }
+    // A folder deeper than the mod's own is not one an earlier launcher made.
+    fs::create_dir_all(home.join("sunrise-mods/ruby/deeper")).unwrap();
+    assert!(remove(&home, "deep").is_err());
+    assert!(home.join("sunrise-mods/ruby/deeper").exists());
+    fs::remove_dir_all(home.join("sunrise-mods")).unwrap();
+    fs::create_dir_all(home.join("sunrise-mods/ruby")).unwrap();
+    assert!(remove(&home, "ruby").is_ok());
+    assert!(!home.join("sunrise-mods/ruby").exists());
+    fs::remove_dir_all(&home).unwrap();
+}
+
+#[test]
+fn a_java_mod_an_earlier_launcher_ported_can_still_be_removed() {
+    let home = home("legacy-java-mod");
+    fs::create_dir_all(home.join("sunrise-mods/ruby")).unwrap();
+    fs::write(
+        home.join("sunrise-mods/ruby/sunrise-mod.toml"),
+        "id = \"ruby\"\n",
+    )
+    .unwrap();
+    fs::write(
+        home.join("sunrise-mods.txt"),
+        "mod.ruby:true\nmod.other:true\n",
+    )
+    .unwrap();
+    // What the earlier launcher listed: its own fields beyond the ones this one keeps.
+    let manifest = serde_json::json!({ "entries": [{
+        "source": "modrinth", "project": "ruby", "slug": "ruby", "title": "Ruby", "kind": "mod",
+        "version": "1", "number": "1", "file": "sunrise-mods/ruby", "checksum": "SHA-512:00",
+        "page": "", "verdict": "Works", "skipped": ["needs Pack lib"], "namespaces": ["ruby"]
+    }]});
+    fs::write(home.join("mod-browser.json"), manifest.to_string()).unwrap();
+    assert_eq!(Installed::load(&home).entries.len(), 1);
+
+    let removed = remove(&home, "ruby").unwrap();
+    assert_eq!(removed.kind, Kind::Mod);
+    assert!(!home.join("sunrise-mods/ruby").exists());
+    assert_eq!(
+        fs::read_to_string(home.join("sunrise-mods.txt")).unwrap(),
+        "mod.other:true\n"
+    );
+    assert!(Installed::load(&home).entries.is_empty());
     fs::remove_dir_all(&home).unwrap();
 }
 

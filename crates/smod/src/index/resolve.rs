@@ -459,6 +459,51 @@ fn plan_install(
     (plan, None)
 }
 
+/// List installed mods that directly or transitively require `id`, from the indexed metadata
+/// for matching installed artifacts. An optional or out-of-side dependency is not a blocker.
+pub fn removal_dependents(
+    index: &Index,
+    installed: &[InstalledMod],
+    id: &str,
+    side: Side,
+) -> Result<Vec<ModVersion>, String> {
+    let mut reverse = BTreeMap::<&str, Vec<&InstalledMod>>::new();
+    for m in installed {
+        let Some(version) = index
+            .project(&m.id)
+            .filter(|p| p.kind.is_mod())
+            .and_then(|p| p.versions.iter().find(|v| m.is_file(v)))
+        else {
+            continue;
+        };
+        for dep in version
+            .dependencies
+            .iter()
+            .flatten()
+            .filter(|d| !d.optional && d.applies(side))
+        {
+            dep.range(&m.id, &m.version)?;
+            reverse.entry(&dep.id).or_default().push(m);
+        }
+    }
+    let mut seen = BTreeSet::from([id]);
+    let mut queue = vec![id];
+    let mut dependents = Vec::new();
+    while let Some(id) = queue.pop() {
+        for m in reverse.get(id).into_iter().flatten() {
+            if seen.insert(&m.id) {
+                queue.push(&m.id);
+                dependents.push(ModVersion {
+                    id: m.id.clone(),
+                    version: m.version.clone(),
+                });
+            }
+        }
+    }
+    dependents.sort_by(|a, b| a.id.cmp(&b.id));
+    Ok(dependents)
+}
+
 #[derive(PartialEq, Eq)]
 enum Fit {
     Yes,
@@ -1188,6 +1233,36 @@ impl<'a> Catalog<'a> {
             replacements,
         })
     }
+}
+
+/// Check selected versions as exact pins, reusing the install catalog per Minecraft release and side.
+/// This has no installed files and assumes native SDK fit: a publisher can't know a player's build.
+/// Package side is a join contract; only dependency side filters client and dedicated installations.
+pub fn uninstallable_versions(index: &Index, include: impl Fn(&Version) -> bool) -> Vec<String> {
+    let mut by_game = BTreeMap::<_, Vec<_>>::new();
+    for p in index.projects.iter().filter(|p| p.kind.is_mod()) {
+        for v in p.versions.iter().filter(|v| include(v)) {
+            by_game
+                .entry(v.game.as_str())
+                .or_default()
+                .push((p.id.as_str(), v.version.as_str()));
+        }
+    }
+    let mut problems = Vec::new();
+    for (game, versions) in by_game {
+        let present = Present::new();
+        let installed = Selected::new();
+        for (side, label) in [(Side::Client, "client"), (Side::Server, "dedicated server")] {
+            let catalog = Catalog::new(index, game, side, |_, _| true, &present);
+            for &(id, version) in &versions {
+                let roots = Roots::from([(id, vec![version])]);
+                if let Err(reason) = catalog.solve(&roots, &installed) {
+                    problems.push(format!("{id} {version} ({label}): {reason}"));
+                }
+            }
+        }
+    }
+    problems
 }
 
 /// Test the same comparators with an extra exact comparator to opt in to the prerelease. If it

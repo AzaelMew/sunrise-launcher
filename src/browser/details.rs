@@ -74,6 +74,22 @@ impl Filters {
     }
 }
 
+/// One value a filter can take.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Tag {
+    pub name: String,
+    /// The group a category is in on its source (`categories`, `features`, `resolutions`).
+    pub header: String,
+}
+
+/// The values each filter can take for a kind.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Tags {
+    pub categories: Vec<Tag>,
+    /// Sunrise's registry only: the tags its projects of the kind carry, the most used first.
+    pub tags: Vec<String>,
+}
+
 /// A category as playsunrise.net names it (`categoryLabel` in the site's `mods-logic.ts`):
 /// `game-mechanics` reads "Game mechanics", `gui` "GUI". English: the launcher translates the
 /// names its tables have.

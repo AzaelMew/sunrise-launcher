@@ -3,7 +3,7 @@ use std::{collections::BTreeMap, path::Path};
 use sunrise_launcher_smod::{
     index::{
         Index,
-        resolve::{self, InstallPlan, InstalledMod, Request, RequestResult},
+        resolve::{self, InstallPlan, InstalledMod, ModVersion, Request, RequestResult},
     },
     manifest::Side,
 };
@@ -24,6 +24,13 @@ struct Case {
     native_fits: BTreeMap<String, BTreeMap<String, bool>>,
     expected: InstallPlan,
     refusals: BTreeMap<String, Vec<String>>,
+    removal: Option<Removal>,
+}
+
+#[derive(Deserialize)]
+struct Removal {
+    id: String,
+    expected: Vec<ModVersion>,
 }
 
 #[test]
@@ -175,6 +182,7 @@ fn registry_resolution_fixtures() {
             native_fits,
             expected,
             refusals,
+            removal,
         } in cases
         {
             let install = |requests: &[Request]| {
@@ -204,6 +212,13 @@ fn registry_resolution_fixtures() {
                 }
             }
             assert_eq!(plan, expected, "{name}");
+            if let Some(removal) = removal {
+                assert_eq!(
+                    resolve::removal_dependents(&index, &installed, &removal.id, side).unwrap(),
+                    removal.expected,
+                    "{name}",
+                );
+            }
         }
     }
 }
