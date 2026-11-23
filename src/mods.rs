@@ -770,6 +770,11 @@ impl Launcher {
     }
 
     fn mods_show_installed_project(&mut self, row: &Row) {
+        // A signed registry mod has the same page as in Discover, with its installed controls.
+        if let Some(entry) = row.entry.as_ref().filter(|_| row.v2_installed()) {
+            self.mods_show_v2_project(entry.project.clone());
+            return;
+        }
         self.ui.mods.nightly.open = None;
         self.ui.mods.nightly.collection = None;
         let (id, installed) = match &row.local {
@@ -784,6 +789,25 @@ impl Launcher {
         };
         self.ui.page = Page::Project;
         self.mods_load_page(id, Page::Installed, Some(installed));
+    }
+
+    /// The page of a mod just removed from `home` has nothing left to show: go back to where it
+    /// was opened from.
+    pub(crate) fn mods_leave_removed(&mut self, home: &Path, ids: &[String]) {
+        if self.ui.page != Page::Project || self.mods_home() != home {
+            return;
+        }
+        let rows = self.rows();
+        let gone = self.ui.mods.open.as_ref().is_some_and(|open| {
+            ids.contains(&open.id)
+                || rows.iter().any(|row| {
+                    ids.contains(&row.id)
+                        && row.entry.as_ref().is_some_and(|e| e.project == open.id)
+                })
+        });
+        if let Some(open) = self.ui.mods.open.take_if(|_| gone) {
+            self.ui.page = open.from;
+        }
     }
 
     fn is_collection(&self, id: &str) -> bool {

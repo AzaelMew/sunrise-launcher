@@ -1332,8 +1332,54 @@ impl Launcher {
         let working = self.registry_card_control(&vp.id, |label| {
             dim(crate::frame::button("alt-project-add", label).w_full()).into_any_element()
         });
+        // Opened from Installed or Discover alike, an installed mod keeps its own controls here.
+        let (rows, _) = self.labeled_installed_rows();
+        let installed_row = rows.iter().find(|row| {
+            row.v2_installed() && row.entry.as_ref().is_some_and(|e| e.project == vp.id)
+        });
+        let busy = self.mods_busy()
+            || self.mods_locked().is_some()
+            || self
+                .ui
+                .mods
+                .snapshot
+                .as_ref()
+                .is_none_or(|snapshot| !snapshot.ready());
+        let cells = installed_row.map(|row| {
+            model::cells(
+                row,
+                self.ui.mods.errors.get(&row.id).map(String::as_str),
+                self.build_here()
+                    .filter(|_| row.on)
+                    .and_then(|run| run.state_of(&row.id, &row.version)),
+                self.settings.native_mods_allowed_at.is_some(),
+            )
+        });
+        let update = installed_row
+            .zip(cells.as_ref())
+            .filter(|(_, cells)| cells.action == Some(model::RowAction::Update))
+            .and_then(|(row, _)| row.update.as_ref().map(|to| (row, to)));
         let primary_control: AnyElement = if let Some(control) = working {
             control
+        } else if let Some((row, to)) = update {
+            let b = primary(
+                "alt-project-update",
+                trf(
+                    "Update {from} → {to}",
+                    &[("from", &row.version), ("to", to)],
+                ),
+            )
+            .w_full();
+            if busy {
+                dim(b).into_any_element()
+            } else {
+                let row = row.clone();
+                b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    this.update_one(&row);
+                    cx.notify();
+                }))
+                .into_any_element()
+            }
         } else if let Some(version) = &installed_version {
             super::discover::install_fact(version, pending).into_any_element()
         } else if vp.will_install.is_some() {
@@ -1459,6 +1505,11 @@ impl Launcher {
             .when(vp.will_install.is_none(), |d| {
                 d.children(vp.fit.reason().map(note))
             })
+            .children(
+                installed_row
+                    .zip(cells.as_ref())
+                    .map(|(row, cells)| self.installed_project_controls(row, cells, busy, cx)),
+            )
             .child(div().h(px(1.)).bg(c(p.divider)))
             .child(self.rating_block(&vp.id, cx))
             .child(div().h(px(1.)).bg(c(p.divider)))

@@ -402,6 +402,13 @@ impl Installs {
         }
     }
 
+    /// The mods a Remove that just finished took out of its profile.
+    pub(super) fn removed(&self, event: &Worker) -> Option<(&Path, &[String])> {
+        let run = self.running.as_ref()?;
+        let request = run.requests.first().filter(|r| r.kind == Kind::Remove)?;
+        matches!(event, Worker::Done(Ok(_))).then_some((&run.profile.home, &request.ids))
+    }
+
     pub(super) fn github_feedback(&self, event: &Worker) -> Option<Feedback> {
         let run = self.running.as_ref()?;
         let Worker::Done(result) = event else {
