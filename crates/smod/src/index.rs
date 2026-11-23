@@ -167,7 +167,7 @@ pub struct Project {
     pub source: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub icon: Option<String>,
-    /// From the kind's list ([`page::categories`]), at most 3.
+    /// Category slugs for the project's kind, at most 3.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub categories: Vec<String>,
     /// Free-form, lowercase, at most 10.
@@ -1069,22 +1069,6 @@ fn check_shader_folder_pack(path: &Path) -> Result<String, String> {
     Ok(String::new())
 }
 
-/// What a zip's file is, by its content: a `shaders/` folder makes a shader pack, a `data/` folder
-/// without `assets/` a data pack, anything else a resource pack (checked as one).
-pub fn zip_kind(path: &Path) -> Kind {
-    let Ok((_, names)) = plain_zip(path) else {
-        return Kind::ResourcePack;
-    };
-    let root = |dir: &str| names.iter().any(|n| n.starts_with(dir));
-    if root("shaders/") {
-        Kind::ShaderPack
-    } else if root("data/") && !root("assets/") {
-        Kind::DataPack
-    } else {
-        Kind::ResourcePack
-    }
-}
-
 /// `pack.mcmeta`'s pack format (`pack_format`, or `min_format` in newer packs), empty when it
 /// names none; refused when it has no `pack` object.
 fn pack_format(zip: &mut zip::ZipArchive<std::fs::File>) -> Result<String, String> {
@@ -1113,21 +1097,6 @@ fn pack_format(zip: &mut zip::ZipArchive<std::fs::File>) -> Result<String, Strin
         })
         .unwrap_or_default();
     Ok(format)
-}
-
-/// The kinds the registry takes submissions for; other kinds wait for their
-/// formats.
-pub fn open(kind: &Kind) -> Result<(), String> {
-    match kind {
-        Kind::Mod
-        | Kind::NativeMod
-        | Kind::Modpack
-        | Kind::ResourcePack
-        | Kind::Shader
-        | Kind::ShaderPack
-        | Kind::DataPack => Ok(()),
-        Kind::Other(name) => Err(format!("the registry doesn't take {name} yet")),
-    }
 }
 
 fn names(caps: &[Capability]) -> String {
