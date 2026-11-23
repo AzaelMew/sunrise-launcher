@@ -153,9 +153,10 @@ impl HomeState {
     }
 
     /// Feather the scene just behind the text. There is no fill or outline on the header;
-    /// the picture stays unshaded away from the text and fades at all four edges.
+    /// the picture stays unshaded away from the text, and the shade is a wide, soft oval with
+    /// no edge to read as a box.
     pub(crate) fn profile_scrim(&self) -> impl IntoElement {
-        const BLUR: f32 = 24.;
+        const BLUR: f32 = 40.;
         let hero = self.hero.clone();
         let shade = gpui::BoxShadow {
             color: Hsla::from(rgb(palette().hero.shade))
@@ -171,11 +172,10 @@ impl HomeState {
                 if let Some(hero) = hero.get() {
                     // At three blur radii in from each edge, the text is in the shadow's
                     // full-strength centre, above the opacity Paint uses to fit the ink.
-                    window.paint_drop_shadows(
-                        hero.dilate(px(3. * BLUR)),
-                        Default::default(),
-                        &[shade],
-                    );
+                    // Rounded to an oval: the text's corners still sit well inside it.
+                    let area = hero.dilate(px(3. * BLUR));
+                    let round = area.size.width.min(area.size.height) / 2.;
+                    window.paint_drop_shadows(area, gpui::Corners::all(round), &[shade]);
                 }
             },
         )
