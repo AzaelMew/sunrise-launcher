@@ -501,30 +501,43 @@ fn the_production_key_verifies_the_first_published_index() {
 }
 
 #[test]
-fn a_state_naming_another_file_is_refused_and_never_deletes_the_serial_floor() {
+fn a_damaged_snapshot_pointer_drops_the_cache_but_keeps_the_serial_floor() {
     let temp = tempfile::tempdir().unwrap();
     let cache = temp.path().join(CACHE_DIR);
     let mut store = Store::new(cache.clone(), REGISTRY_KEYS);
-    let (bytes_41, sig_41) = load_fixture("two-ports-index.json");
+    let (bytes_42, sig_42) = load_fixture("serial-42.json");
     store
-        .load_from_fetch(Ok((bytes_41, sig_41)), now_2026_11_24())
+        .load_from_fetch(Ok((bytes_42.clone(), sig_42.clone())), now_2026_11_24())
         .unwrap();
 
-    // A damaged state whose snapshot would derive the state file's own name.
-    fs::write(
-        cache.join(STATE_FILE),
-        br#"{"highest_serial":41,"active":{"snapshot":"state"}}"#,
-    )
-    .unwrap();
-    let (bytes_42, sig_42) = load_fixture("serial-42.json");
-    let mut reopened = Store::new(cache.clone(), REGISTRY_KEYS);
-    assert!(matches!(
-        reopened.load_from_fetch(Ok((bytes_42, sig_42)), now_2026_11_24()),
-        Err(LoadError::CorruptState(_))
-    ));
-    assert!(matches!(
-        reopened.load_cached(now_2026_11_24()),
-        Err(LoadError::CorruptState(_))
-    ));
-    assert!(cache.join(STATE_FILE).exists());
+    for active in [
+        // Would derive the state file's own name.
+        r#"{"snapshot":"state"}"#,
+        // An earlier build's pointer shape.
+        r#"{"index":"snapshot-42-0000000000000000.json","signature":"x.minisig"}"#,
+    ] {
+        fs::write(
+            cache.join(STATE_FILE),
+            format!(r#"{{"highest_serial":42,"active":{active}}}"#),
+        )
+        .unwrap();
+        let mut reopened = Store::new(cache.clone(), REGISTRY_KEYS);
+        assert!(reopened.load_cached(now_2026_11_24()).is_err());
+        assert!(cache.join(STATE_FILE).exists());
+
+        // The floor still refuses an older index, and a current one replaces the pointer.
+        let (bytes_41, sig_41) = load_fixture("two-ports-index.json");
+        assert!(matches!(
+            reopened.load_from_fetch(Ok((bytes_41, sig_41)), now_2026_11_24()),
+            Err(LoadError::Rollback {
+                got: 41,
+                highest: 42
+            })
+        ));
+        let mut fresh = Store::new(cache.clone(), REGISTRY_KEYS);
+        fresh
+            .load_from_fetch(Ok((bytes_42.clone(), sig_42.clone())), now_2026_11_24())
+            .unwrap();
+        assert!(fresh.load_cached(now_2026_11_24()).is_ok());
+    }
 }
