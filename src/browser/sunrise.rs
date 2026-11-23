@@ -1344,14 +1344,14 @@ pub use registry_install::{
     pack_sources, plan_v2_install, plan_v2_update, prepare_pasted_sources, prepare_source,
     read_pasted_sources, remove_mods, revoked_for_package, switch_build, switch_build_v2,
     switch_profile_build, switch_profile_build_v2, switch_provider_v2, turn_off_revoked_v2,
-    update_github, update_registry, update_registry_and_sources, update_registry_v2, BuildChange,
-    BuildChoice, BuildNotice, ChangeImpact, CombinedUpdate, InstallError, InstallHooks,
-    InstallProgress, InstalledBatch, InstalledV2Mod, ManualRelease, NativeQuestion, PastedSource,
-    PlannedV2Release, PreparedSource, ProviderCandidate, ProviderChoiceNeeded, ProviderConflict,
-    ProviderSwitchPreview, PublisherChangeQuestion, ResolveQuestion, SourceDependency, SourceError,
-    SourceHooks, SourceRequest, SwitchDecision, SwitchHooks, SwitchQuestion, Switched,
-    UpdateRequest, V2AffectedDependent, V2Hooks, V2InstallOptions, V2Ownership, V2Plan,
-    V2ProviderSwitchHooks, V2SwitchHooks,
+    unfit_updates_revision, update_github, update_registry, update_registry_and_sources,
+    update_registry_v2, BuildChange, BuildChoice, BuildNotice, ChangeImpact, CombinedUpdate,
+    InstallError, InstallHooks, InstallProgress, InstalledBatch, InstalledV2Mod, ManualRelease,
+    NativeQuestion, PastedSource, PlannedV2Release, PreparedSource, ProviderCandidate,
+    ProviderChoiceNeeded, ProviderConflict, ProviderSwitchPreview, PublisherChangeQuestion,
+    ResolveQuestion, SourceDependency, SourceError, SourceHooks, SourceRequest, SwitchDecision,
+    SwitchHooks, SwitchQuestion, Switched, UpdateRequest, V2AffectedDependent, V2Hooks,
+    V2InstallOptions, V2Ownership, V2Plan, V2ProviderSwitchHooks, V2SwitchHooks,
 };
 #[cfg(test)]
 mod tests;
