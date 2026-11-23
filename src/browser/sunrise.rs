@@ -1766,6 +1766,7 @@ mod dependencies;
 pub mod pack;
 mod registry_install;
 pub mod sources;
+pub mod v2;
 pub(crate) use registry_install::check_activation;
 pub use registry_install::{
     add_github, add_sources, apply_sources, checked_switch_fit, install_registry, install_target,
