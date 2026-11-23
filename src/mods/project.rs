@@ -1044,6 +1044,37 @@ impl Launcher {
         use sunrise_launcher::browser::details::category_label;
 
         let p = palette();
+        let open_id = self.ui.mods.open.as_ref().map(|o| o.id.clone());
+        // Opened from Installed or Discover alike, an installed mod keeps its own controls here.
+        let (rows, _) = self.labeled_installed_rows();
+        let installed_row = rows.iter().find(|row| {
+            row.v2_installed()
+                && row
+                    .entry
+                    .as_ref()
+                    .is_some_and(|e| Some(&e.project) == open_id.as_ref())
+        });
+        let busy = self.mods_busy()
+            || self.mods_locked().is_some()
+            || self
+                .ui
+                .mods
+                .snapshot
+                .as_ref()
+                .is_none_or(|snapshot| !snapshot.ready());
+        let cells = installed_row.map(|row| {
+            model::cells(
+                row,
+                self.ui.mods.errors.get(&row.id).map(String::as_str),
+                self.build_here()
+                    .filter(|_| row.on)
+                    .and_then(|run| run.state_of(&row.id, &row.version)),
+                self.settings.native_mods_allowed_at.is_some(),
+            )
+        });
+        let controls = installed_row
+            .zip(cells.as_ref())
+            .map(|(row, cells)| self.installed_project_controls(row, cells, busy, cx));
         let vp = match self.ui.mods.open.as_ref().and_then(|o| o.v2_page.as_ref()) {
             None => {
                 return page
@@ -1060,6 +1091,8 @@ impl Launcher {
                             .child(tr("This mod can't be shown")),
                     )
                     .child(note(error.clone()))
+                    // An installed mod the registry no longer lists can still be removed here.
+                    .children(controls.map(|controls| controls.max_w(px(320.))))
                     .into_any_element();
             }
             Some(Ok(vp)) => (**vp).clone(),
@@ -1332,29 +1365,6 @@ impl Launcher {
         let working = self.registry_card_control(&vp.id, |label| {
             dim(crate::frame::button("alt-project-add", label).w_full()).into_any_element()
         });
-        // Opened from Installed or Discover alike, an installed mod keeps its own controls here.
-        let (rows, _) = self.labeled_installed_rows();
-        let installed_row = rows.iter().find(|row| {
-            row.v2_installed() && row.entry.as_ref().is_some_and(|e| e.project == vp.id)
-        });
-        let busy = self.mods_busy()
-            || self.mods_locked().is_some()
-            || self
-                .ui
-                .mods
-                .snapshot
-                .as_ref()
-                .is_none_or(|snapshot| !snapshot.ready());
-        let cells = installed_row.map(|row| {
-            model::cells(
-                row,
-                self.ui.mods.errors.get(&row.id).map(String::as_str),
-                self.build_here()
-                    .filter(|_| row.on)
-                    .and_then(|run| run.state_of(&row.id, &row.version)),
-                self.settings.native_mods_allowed_at.is_some(),
-            )
-        });
         let update = installed_row
             .zip(cells.as_ref())
             .filter(|(_, cells)| cells.action == Some(model::RowAction::Update))
@@ -1505,11 +1515,7 @@ impl Launcher {
             .when(vp.will_install.is_none(), |d| {
                 d.children(vp.fit.reason().map(note))
             })
-            .children(
-                installed_row
-                    .zip(cells.as_ref())
-                    .map(|(row, cells)| self.installed_project_controls(row, cells, busy, cx)),
-            )
+            .children(controls)
             .child(div().h(px(1.)).bg(c(p.divider)))
             .child(self.rating_block(&vp.id, cx))
             .child(div().h(px(1.)).bg(c(p.divider)))
