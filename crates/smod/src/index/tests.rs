@@ -549,3 +549,33 @@ fn a_collection_keeps_a_published_download_count_and_a_missing_one_apart() {
         assert_eq!(Index::parse(&written.to_string()).unwrap(), index);
     }
 }
+
+#[test]
+fn legacy_native_binaries_field_is_ignored_when_parsing_an_index() {
+    let mut raw: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(fixtures().join("index-v1.json")).unwrap())
+            .unwrap();
+    raw["projects"][0]["versions"][0]["native_binaries"] = serde_json::json!([{
+        "build": "not-a-valid-build\n",
+        "target": "bad",
+        "file": {
+            "name": "../ignored.tar.xz",
+            "url": "http://example.invalid/ignored.tar.xz",
+            "size": 0,
+            "sha256": "not-hex"
+        }
+    }]);
+    let text = raw.to_string();
+    let parsed = Index::parse(&text).unwrap();
+    assert!(parsed.left_out.is_empty(), "{:?}", parsed.left_out);
+    assert_eq!(parsed, sample());
+    serde_json::from_str::<Index>(&text)
+        .unwrap()
+        .check()
+        .unwrap();
+    assert!(
+        !serde_json::to_string(&parsed)
+            .unwrap()
+            .contains("native_binaries")
+    );
+}

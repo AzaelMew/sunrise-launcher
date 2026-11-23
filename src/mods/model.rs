@@ -70,8 +70,6 @@ pub(super) struct Card {
     pub(super) updated: String,
     pub(super) first: String,
     pub(super) fit: Fit,
-    /// A native mod with no prebuilt binary for this game: it is built on this computer.
-    pub(super) builds_locally: bool,
     /// A collection's card: how many mods it lists.
     pub(super) members: Option<usize>,
     /// The collection that lists this mod, by name: it shows in Discover only as that card.
@@ -82,6 +80,13 @@ pub(super) struct Card {
     /// Id, name, summary and authors in lower case, what the search box matches. Made once
     /// in [`cards`]: Discover filters on every frame it draws.
     haystack: String,
+}
+
+impl Card {
+    /// Every fitting native mod is built on this computer (collections list their own members).
+    pub(super) fn builds_locally(&self) -> bool {
+        self.members.is_none() && self.make == Make::Native && self.fit.fits()
+    }
 }
 
 pub(super) fn make_of(p: &index::Project) -> Option<Make> {
@@ -147,12 +152,6 @@ pub(super) fn cards(index: &Index, game: &str) -> Vec<Card> {
                     .unwrap_or("")
                     .into(),
                 fit: fit_of(index, p, game),
-                // Only claimed when the registry lists no prebuilt at all: which one fits this
-                // computer is decided at install, by build and platform.
-                builds_locally: make == Make::Native
-                    && index
-                        .installable(p, game)
-                        .is_some_and(|v| v.native_binaries.is_empty()),
                 members: None,
                 part_of: part_of.get(p.id.as_str()).map(|c| c.name.clone()),
                 library: libraries.contains(&p.id),
