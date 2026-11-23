@@ -478,5 +478,6 @@
   "Switch and turn it off": "Switch and turn it off",
   "Installing…": "Installing…",
   "Waiting…": "Waiting…",
-  "Installing to {profile} failed.": "Installing to {profile} failed."
+  "Installing to {profile} failed.": "Installing to {profile} failed.",
+  "Finishing…": "Finishing…"
 }
