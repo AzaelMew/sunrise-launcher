@@ -379,7 +379,10 @@ impl Profile {
         } else {
             current.receipts[position].acknowledged = true;
         }
-        current.generation = current.generation.checked_add(1).ok_or_else(|| unsettled!())?;
+        current.generation = current
+            .generation
+            .checked_add(1)
+            .ok_or_else(|| unsettled!())?;
         let next = serde_json::to_vec(&current).map_err(|error| error.to_string())?;
         let targets = [current.base().to_owned(), current.executable().to_owned()]
             .into_iter()

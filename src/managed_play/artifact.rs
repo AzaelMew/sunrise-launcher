@@ -1,5 +1,5 @@
 //! Exact identity of an installed executable and the files it reads beside itself.
-use super::{digest_file, plain_file, require_dir, validate_tag};
+use super::{digest_file, plain_file, require_dir, unsettled, validate_tag};
 use crate::{backend, native_mods::sdk_cache::GameSlices};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};

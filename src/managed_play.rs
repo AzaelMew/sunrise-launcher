@@ -55,7 +55,9 @@ impl ReferencePublication {
             locks::{LockMode, Release},
             runtime_leases::Registry,
         };
-        let readers = DISPLAY_PUBLICATION.lock().map_err(|error| unsettled!(error))?;
+        let readers = DISPLAY_PUBLICATION
+            .lock()
+            .map_err(|error| unsettled!(error))?;
         // This guard is never handed off. Release it explicitly even if an unrelated
         // concurrent fork still has a transient copy of the file descriptor.
         let fence = Registry::with_release(cache, Release::Unlock)
@@ -82,8 +84,36 @@ use std::{
     path::{Path, PathBuf},
 };
 
-fn unsettled() -> String {
-    crate::i18n::tr("Sunrise couldn't verify the profile's saved game build.").into()
+/// Refuses a saved game build, naming the check that refused it (`file:line`) and the error it
+/// had in hand, if any. Printed to stderr as well: about a hundred checks say the same sentence,
+/// and the player's report must still tell them apart.
+macro_rules! unsettled {
+    () => {
+        $crate::managed_play::unsettled_at(concat!(file!(), ":", line!()), None)
+    };
+    ($error:expr) => {
+        $crate::managed_play::unsettled_at(
+            concat!(file!(), ":", line!()),
+            Some(&$error as &dyn std::fmt::Display),
+        )
+    };
+}
+pub(crate) use unsettled;
+
+pub(crate) fn unsettled_at(check: &str, error: Option<&dyn std::fmt::Display>) -> String {
+    let check = check.strip_prefix("src/").unwrap_or(check);
+    let reason = match error {
+        Some(error) => crate::i18n::trf(
+            "Sunrise couldn't verify the profile's saved game build ({check}: {error}).",
+            &[("check", check), ("error", &error.to_string())],
+        ),
+        None => crate::i18n::trf(
+            "Sunrise couldn't verify the profile's saved game build ({check}).",
+            &[("check", check)],
+        ),
+    };
+    eprintln!("{reason}");
+    reason
 }
 
 fn validate_tag(tag: &str) -> Result<(), String> {
@@ -841,7 +871,10 @@ impl Active {
                 }
                 (
                     previous.profile,
-                    previous.generation.checked_add(1).ok_or_else(|| unsettled!())?,
+                    previous
+                        .generation
+                        .checked_add(1)
+                        .ok_or_else(|| unsettled!())?,
                     resources.unwrap_or_else(|| previous.resources.clone()),
                     previous.receipts.clone(),
                     previous.variant.clone(),
@@ -858,7 +891,10 @@ impl Active {
                 }
                 (
                     previous.profile,
-                    previous.generation.checked_add(1).ok_or_else(|| unsettled!())?,
+                    previous
+                        .generation
+                        .checked_add(1)
+                        .ok_or_else(|| unsettled!())?,
                     resources,
                     previous.receipts.clone(),
                     variant,
