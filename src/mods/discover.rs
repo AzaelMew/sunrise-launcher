@@ -433,13 +433,19 @@ impl Launcher {
         }
         let has_filters = !f.text.trim().is_empty() || f.category.is_some();
         if !has_any_cards && !has_filters {
-            return empty_state(
-                "search-01",
-                trf("No mods fit {target} yet", &[("target", profile_target)]),
-                tr("Mods show up here once the registry lists releases for this build."),
-                None,
-            )
-            .into_any_element();
+            // Show all lists every build, so an empty list there means an empty registry.
+            let (title, line) = if f.show_all {
+                (
+                    tr("The registry lists no mods yet").to_owned(),
+                    tr("Mods show up here once the registry lists their releases."),
+                )
+            } else {
+                (
+                    trf("No mods fit {target} yet", &[("target", profile_target)]),
+                    tr("Mods show up here once the registry lists releases for this build."),
+                )
+            };
+            return empty_state("search-01", title, line, None).into_any_element();
         }
         let action = has_filters.then(|| {
             button("alt-discover-clear", tr("Clear filters")).on_click(cx.listener(
