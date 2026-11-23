@@ -767,7 +767,7 @@ fn a_trash_failure_preserves_the_whole_detached_profile() {
     assert!(!selected.home.exists());
     assert!(deletion_recovery::interrupted_in(&game).is_empty());
     drop(error); // Quit before the result is delivered or while it remains open.
-    let mut notices = deletion_recovery::interrupted_in(&game);
+    let mut notices = deletion_recovery::settled_scan(&game, |found| found.len() == 1);
     assert_eq!(notices.len(), 1);
     let notice = notices.pop().unwrap();
     // The worker canonicalizes its root; startup can see a Windows short-name alias.
