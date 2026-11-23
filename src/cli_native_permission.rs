@@ -74,6 +74,7 @@ fn github_native_from(
         registry_crates: Some(&registry_consent),
         continue_after_failure: &|_| false,
         resolve: None,
+        cancellation: None,
     };
     let report = |action, origin: github_mods::Origin| {
         println!(

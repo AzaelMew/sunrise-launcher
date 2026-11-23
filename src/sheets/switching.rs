@@ -852,6 +852,7 @@ impl Launcher {
                             }),
                             continue_after_failure: &|_| false,
                             resolve: None,
+                            cancellation: None,
                         },
                         choose_provider: Some(&|need| {
                             let (answer, reply) = std::sync::mpsc::channel();

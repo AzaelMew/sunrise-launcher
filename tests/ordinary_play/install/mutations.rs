@@ -353,6 +353,7 @@ fn remove_cutoff_worker() {
         registry_crates: None,
         continue_after_failure: &|_| panic!("content-only"),
         resolve: None,
+        cancellation: None,
     };
     let error = remove_mods(
         &instance,

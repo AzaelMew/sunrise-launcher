@@ -923,6 +923,36 @@ impl Launcher {
         }
     }
 
+    pub(crate) fn stop_registry_install(&mut self) {
+        let Some(cancellation) = self
+            .mods
+            .installs
+            .running
+            .as_ref()
+            .map(|run| run.cancellation.clone())
+        else {
+            return;
+        };
+        cancellation.stop();
+        if cancellation.is_stopped() {
+            self.answer_source_question(Ok(false));
+            if let Some((_, reply)) = self.mods.installs.world.take() {
+                let _ = reply.send(false);
+            }
+            if let Some((_, reply)) = self.mods.installs.question.take() {
+                let _ = reply.send(false);
+            }
+        }
+    }
+
+    pub(crate) fn registry_install_stopping(&self) -> bool {
+        self.mods
+            .installs
+            .running
+            .as_ref()
+            .is_some_and(|run| run.cancellation.is_stopped())
+    }
+
     pub(crate) fn source_outcome(&self, id: &str) -> Option<&Result<(), SourceError>> {
         let home = &self.selected_instance()?.home;
         self.mods
@@ -1460,6 +1490,7 @@ impl Launcher {
                 },
                 resolve: (kind == Kind::Install)
                     .then_some(&resolve as &dyn Fn(&ResolveQuestion) -> bool),
+                cancellation: Some(&cancellation),
             };
             let review = |impact: &ChangeImpact, sources: Option<&ChangeImpact>| {
                 if cancellation.is_stopped() {
@@ -1747,7 +1778,14 @@ pub(crate) fn stage_label(step: InstallProgress) -> String {
             "Getting build tools ({size})",
             &[("size", &sunrise_launcher::storage::format_bytes(total))],
         ),
-        InstallProgress::Building(_) => tr("Building").into(),
+        InstallProgress::Building(Some(fraction)) => trf(
+            "Building {percent}%",
+            &[(
+                "percent",
+                &format!("{:.0}", (fraction * 100.0).clamp(0.0, 100.0)),
+            )],
+        ),
+        InstallProgress::Building(None) => tr("Building").into(),
         InstallProgress::Publishing => tr("Finishing…").into(),
         InstallProgress::Reviewing => tr("Review changes…").into(),
     }

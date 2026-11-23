@@ -191,6 +191,8 @@ pub struct InstallHooks<'a> {
     pub continue_after_failure: &'a dyn Fn(&BuildNotice) -> bool,
     /// Interactive approval of a fully prepared same-base conflict plan; absent in automation.
     pub resolve: Option<&'a dyn Fn(&ResolveQuestion) -> bool>,
+    /// Optional cancellation token observed during build-tool downloads and native builds.
+    pub cancellation: Option<&'a native_mods::Cancellation>,
 }
 
 /// Capture the Install target before it queues. The initial default profile may not have
@@ -305,7 +307,8 @@ fn registry_edit<'a>(
         (hooks.progress)(InstallProgress::Downloading(f))
     })?;
     let game = backend::game_version(edit.base());
-    let cancelled = native_mods::Cancellation::default();
+    let default_cancelled = native_mods::Cancellation::default();
+    let cancelled = hooks.cancellation.unwrap_or(&default_cancelled);
     let old = edit.candidate()?;
     let before = inventory(old.path(), authority)?;
     let (ids, above) = match &action {
@@ -454,7 +457,7 @@ fn registry_edit<'a>(
                 &before,
                 project,
                 version,
-                Some(&cancelled),
+                Some(cancelled),
                 |f| {
                     (hooks.progress)(InstallProgress::Downloading(
                         (n as f32 + f) / versions.len() as f32,
@@ -634,7 +637,7 @@ fn registry_edit<'a>(
                 Err(e) => return Err(at(&list, e).into()),
             };
             mod_list::set_enabled(next.path(), id, true)?;
-            let trial = prove_edit(&edit, next.path(), instance, &cancelled, &hooks);
+            let trial = prove_edit(&edit, next.path(), instance, cancelled, &hooks);
             match selection {
                 Some(selection) => fs::write(&list, selection),
                 None => fs::remove_file(&list),
@@ -683,7 +686,7 @@ fn registry_edit<'a>(
             let routes = if build_packages.is_empty() {
                 Vec::new()
             } else {
-                native_mods::source_routes(next.path(), edit.base(), &cancelled)
+                native_mods::source_routes(next.path(), edit.base(), cancelled)
                     .map_err(|error| {
                         InstallError::Unproved(match error {
                             native_mods::SourceCheckError::Dependency(detail) => detail,
@@ -728,7 +731,7 @@ fn registry_edit<'a>(
             None
         } else {
             edit.prepare_first(&|_| (hooks.progress)(InstallProgress::Preparing))?;
-            let prove = || prove_edit(&edit, next.path(), instance, &cancelled, &hooks);
+            let prove = || prove_edit(&edit, next.path(), instance, cancelled, &hooks);
             Some(match prove() {
                 Ok(proof) => proof,
                 Err(native_mods::Failed::Mods {
@@ -812,13 +815,20 @@ fn registry_edit<'a>(
                         return Err(InstallError::Compile(notice));
                     }
                     result.failure = Some(notice);
-                    let proof = prove().map_err(|e| InstallError::Unproved(e.into()))?;
+                    let proof = prove().map_err(|e| {
+                        if cancelled.is_stopped() {
+                            InstallError::Cancelled
+                        } else {
+                            InstallError::Unproved(e.into())
+                        }
+                    })?;
                     if entries.is_empty() {
                         // Only the already-live predecessors survived. No pointer needs advancing.
                         return Ok(result);
                     }
                     proof
                 }
+                Err(_) if cancelled.is_stopped() => return Err(InstallError::Cancelled),
                 Err(error) => return Err(InstallError::Unproved(error.into())),
             })
         };
@@ -936,12 +946,12 @@ fn registry_edit<'a>(
             }
         };
         if let Some(proof) = proof {
-            let published = edit.publish_install(proof, &cancelled, &retired_holds, authorize)?;
+            let published = edit.publish_install(proof, cancelled, &retired_holds, authorize)?;
             if let Some(mixed) = &mut mixed {
                 mixed.published(published, committed_inputs);
             }
         } else {
-            edit.publish_pending(next.path(), committed_inputs, &cancelled, authorize)?;
+            edit.publish_pending(next.path(), committed_inputs, cancelled, authorize)?;
         }
         for (id, entry) in entries {
             if let Some(previous) = before.get(&id) {

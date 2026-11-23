@@ -1512,7 +1512,8 @@ fn v2_edit_with(
         (hooks.install.progress)(InstallProgress::Downloading(f))
     })?;
     let base_build = edit.base().to_owned();
-    let cancelled = native_mods::Cancellation::default();
+    let default_cancelled = native_mods::Cancellation::default();
+    let cancelled = hooks.install.cancellation.unwrap_or(&default_cancelled);
     let old = edit.candidate()?;
     let before = inventory_v2(old.path(), &index)?;
     let chosen_pins = chosen(&instance.home);
@@ -1627,7 +1628,7 @@ fn v2_edit_with(
     (hooks.install.progress)(InstallProgress::Preparing);
     edit.prepare_first(&|_| {})
         .map_err(InstallError::Unproved)?;
-    let proof = match prove_edit(&edit, next.path(), instance, &cancelled, &hooks.install) {
+    let proof = match prove_edit(&edit, next.path(), instance, cancelled, &hooks.install) {
         Ok(proof) => proof,
         Err(native_mods::Failed::Mods {
             left,
@@ -1648,6 +1649,7 @@ fn v2_edit_with(
             }
             return Err(InstallError::Unproved(error));
         }
+        Err(_) if cancelled.is_stopped() => return Err(InstallError::Cancelled),
         Err(error) => return Err(InstallError::Unproved(error.to_string())),
     };
 
@@ -1691,7 +1693,7 @@ fn v2_edit_with(
 
     (hooks.install.progress)(InstallProgress::Publishing);
     let authorize = || mutations::bind_worlds(&instance.home, &suspect, &reviewed_worlds);
-    edit.publish_install(proof, &cancelled, &retired_holds, authorize)?;
+    edit.publish_install(proof, cancelled, &retired_holds, authorize)?;
     commit_pending_pins(&pin_dir, &pending_pins).map_err(InstallError::Unproved)?;
 
     let mut result = InstalledBatch::default();
@@ -1756,7 +1758,12 @@ pub(crate) fn switch_provider_v2_with(
         (hooks.install.install.progress)(InstallProgress::Downloading(f))
     })?;
     let base_build = edit.base().to_owned();
-    let cancelled = native_mods::Cancellation::default();
+    let default_cancelled = native_mods::Cancellation::default();
+    let cancelled = hooks
+        .install
+        .install
+        .cancellation
+        .unwrap_or(&default_cancelled);
     let old = edit.candidate()?;
     let before = inventory_v2(old.path(), &index)?;
 
@@ -1952,10 +1959,16 @@ pub(crate) fn switch_provider_v2_with(
         &edit,
         next.path(),
         instance,
-        &cancelled,
+        cancelled,
         &hooks.install.install,
     )
-    .map_err(|error| InstallError::Unproved(error.to_string()))?;
+    .map_err(|error| {
+        if cancelled.is_stopped() {
+            InstallError::Cancelled
+        } else {
+            InstallError::Unproved(error.to_string())
+        }
+    })?;
 
     let (suspect, _) = mutations::update_worlds(next.path(), std::iter::once(&current.package))?;
     let worlds = mutations::world_evidence(&instance.home, &suspect)?;
@@ -1974,7 +1987,7 @@ pub(crate) fn switch_provider_v2_with(
 
     (hooks.install.install.progress)(InstallProgress::Publishing);
     let authorize = || mutations::bind_worlds(&instance.home, &suspect, &worlds);
-    edit.publish_install(proof, &cancelled, &BTreeSet::new(), authorize)?;
+    edit.publish_install(proof, cancelled, &BTreeSet::new(), authorize)?;
     commit_pending_pins(&pin_dir, &pending_pins).map_err(InstallError::Unproved)?;
 
     let mut result = InstalledBatch::default();
