@@ -38,6 +38,34 @@ pub struct Index {
     pub categories: Vec<Category>,
     pub projects: Vec<Project>,
     pub revoked: Vec<Revoked>,
+    /// Publisher-curated sets of listed projects; an index from before collections has none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub collections: Vec<Collection>,
+}
+
+/// A set of listed projects curated by the one account that owns all of their repositories.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Collection {
+    /// Permanent 8-character base62 identity, never a project's.
+    pub id: String,
+    pub name: String,
+    pub summary: String,
+    /// Longer text, `""` when the collection has none.
+    #[serde(default)]
+    pub description: String,
+    /// The GitHub account that owns every member's repository.
+    pub publisher: String,
+    /// Relative path under `pages/<collection>/`.
+    pub icon: String,
+    /// Listed projects in the collection's own order.
+    pub members: Vec<Member>,
+}
+
+/// One project in a collection, and whether it is picked when a player opens the collection.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Member {
+    pub project: String,
+    pub default: bool,
 }
 
 /// One offered Sunrise game build listed in the v2 index.
@@ -423,6 +451,50 @@ impl Index {
             }
         }
 
+        let mut seen_collections = HashSet::new();
+        for collection in &self.collections {
+            let id = &collection.id;
+            if !valid_project_id(id) || seen_projects.contains(id.as_str()) {
+                return Err(format!("invalid collection id {id:?}"));
+            }
+            if !seen_collections.insert(id.as_str()) {
+                return Err(format!("duplicate collection id {id:?}"));
+            }
+            if collection.name.trim().is_empty() || collection.summary.trim().is_empty() {
+                return Err(format!("collection {id}: name and summary must be non-empty"));
+            }
+            check_page_path(id, &collection.icon)
+                .map_err(|e| format!("collection {id}: icon: {e}"))?;
+            if collection.members.len() < 2 || !collection.members.iter().any(|m| m.default) {
+                return Err(format!(
+                    "collection {id}: needs at least two members and one picked by default"
+                ));
+            }
+            let mut members = HashSet::new();
+            for member in &collection.members {
+                let Some(project) = self.project(&member.project) else {
+                    return Err(format!(
+                        "collection {id}: member {:?} is not a listed project",
+                        member.project
+                    ));
+                };
+                if !members.insert(member.project.as_str()) {
+                    return Err(format!(
+                        "collection {id}: member {:?} is listed twice",
+                        member.project
+                    ));
+                }
+                // The owner's rule: only the publisher of every member curates a collection.
+                let owner = project.repository.name.split_once('/').map(|(owner, _)| owner);
+                if owner != Some(collection.publisher.as_str()) {
+                    return Err(format!(
+                        "collection {id}: member {} is not published by {:?}",
+                        member.project, collection.publisher
+                    ));
+                }
+            }
+        }
+
         let mut seen_revoked = HashSet::new();
         for row in &self.revoked {
             if !valid_project_id(&row.project) {
@@ -441,6 +513,11 @@ impl Index {
         }
 
         Ok(())
+    }
+
+    /// Finds a collection by its permanent ID.
+    pub fn collection(&self, id: &str) -> Option<&Collection> {
+        self.collections.iter().find(|c| c.id == id)
     }
 
     /// Finds an offered build by its exact build ID.

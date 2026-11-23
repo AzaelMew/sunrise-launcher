@@ -6,7 +6,7 @@
 //! content-addressed (`pages/<project id>/<sha256>.<png|jpg>`).
 use super::{Make, SourceLink};
 use std::cmp::Ordering;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use sunrise_launcher::i18n::{tr, trf};
 use sunrise_launcher_smod::index::Kind;
 use sunrise_launcher_smod::index_v2::{self, FitVerdict, Index, Project, Release};
@@ -491,6 +491,109 @@ pub(in crate::mods) fn hidden_other_build_count(cards: &[V2Card], filters: &V2Fi
         })
         .filter(|c| card_matches_query(c, &words))
         .count()
+}
+
+/// A publisher's collection, its members resolved to their Discover cards.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(in crate::mods) struct V2Collection {
+    pub(in crate::mods) id: String,
+    pub(in crate::mods) name: String,
+    pub(in crate::mods) summary: String,
+    pub(in crate::mods) description: String,
+    pub(in crate::mods) publisher: String,
+    /// Verified content-addressed relative path (`pages/<id>/<sha256>.<png|jpg>`), if valid.
+    pub(in crate::mods) icon: Option<String>,
+    /// Each member's position in the cards, and whether it is picked when the collection opens.
+    pub(in crate::mods) members: Vec<(usize, bool)>,
+}
+
+impl V2Collection {
+    /// How many members have a release for the selected build.
+    pub(in crate::mods) fn fitting(&self, cards: &[V2Card]) -> usize {
+        self.members
+            .iter()
+            .filter(|&&(i, _)| cards[i].fit.fits())
+            .count()
+    }
+
+    /// What opening the collection picks: the members on by default that fit the build.
+    pub(in crate::mods) fn initial_picks(&self, cards: &[V2Card]) -> BTreeSet<String> {
+        self.members
+            .iter()
+            .filter(|&&(i, default)| default && cards[i].fit.fits())
+            .map(|&(i, _)| cards[i].id.clone())
+            .collect()
+    }
+
+    /// What Install installs: the picked members that fit and aren't installed, in the
+    /// collection's order. A member that doesn't fit the build is left out.
+    pub(in crate::mods) fn to_install(
+        &self,
+        cards: &[V2Card],
+        picked: &BTreeSet<String>,
+        installed: &dyn Fn(&str) -> bool,
+    ) -> Vec<String> {
+        self.members
+            .iter()
+            .map(|&(i, _)| &cards[i])
+            .filter(|card| card.fit.fits() && picked.contains(&card.id) && !installed(&card.id))
+            .map(|card| card.id.clone())
+            .collect()
+    }
+}
+
+/// The index's collections, each member found among `cards`.
+pub(in crate::mods) fn collections(index: &Index, cards: &[V2Card]) -> Vec<V2Collection> {
+    let at: HashMap<&str, usize> = cards
+        .iter()
+        .enumerate()
+        .map(|(i, card)| (card.id.as_str(), i))
+        .collect();
+    index
+        .collections
+        .iter()
+        .map(|c| V2Collection {
+            id: c.id.clone(),
+            name: c.name.clone(),
+            summary: c.summary.clone(),
+            description: c.description.clone(),
+            publisher: c.publisher.clone(),
+            icon: content_addressed_path(&c.id, &c.icon),
+            members: c
+                .members
+                .iter()
+                .filter_map(|m| Some((*at.get(m.project.as_str())?, m.default)))
+                .collect(),
+        })
+        .collect()
+}
+
+/// The collections Discover lists for `filters`: none under a category, and unless Show all is
+/// on only those with a member that fits. Search matches the collection's own text or any
+/// member's.
+pub(in crate::mods) fn discover_collections(
+    collections: &[V2Collection],
+    cards: &[V2Card],
+    filters: &V2Filters,
+) -> Vec<usize> {
+    if filters.category.is_some() {
+        return Vec::new();
+    }
+    let words = query_words(&filters.text);
+    collections
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| filters.show_all || c.fitting(cards) > 0)
+        .filter(|(_, c)| {
+            let own = [&c.name, &c.summary, &c.publisher].map(|s| s.to_lowercase());
+            words.iter().all(|w| own.iter().any(|s| s.contains(w)))
+                || (!words.is_empty()
+                    && c.members
+                        .iter()
+                        .any(|&(i, _)| card_matches_query(&cards[i], &words)))
+        })
+        .map(|(i, _)| i)
+        .collect()
 }
 
 /// Builds a v2 mod page from `index` for project `id` and `exact_build`.
