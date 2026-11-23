@@ -46,8 +46,8 @@ pub use v2::{
     plan_v2_install, plan_v2_update, revoked_for_package, switch_build_v2, switch_profile_build_v2,
     switch_provider_v2, turn_off_revoked_v2, update_registry_v2, InstalledV2Mod, PlannedV2Release,
     ProviderCandidate, ProviderChoiceNeeded, ProviderConflict, ProviderSwitchPreview,
-    V2AffectedDependent, V2Hooks, V2InstallOptions, V2Ownership, V2Plan, V2ProviderSwitchHooks,
-    V2SwitchHooks,
+    PublisherChangeQuestion, V2AffectedDependent, V2Hooks, V2InstallOptions, V2Ownership, V2Plan,
+    V2ProviderSwitchHooks, V2SwitchHooks,
 };
 
 // Advisory only. Never use these in place of a fresh, admitted worker proof. Key by the

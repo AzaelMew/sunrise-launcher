@@ -249,9 +249,17 @@ impl Launcher {
 
         // The cards grid.
         let limit = self.ui.mods.limit.max(PAGE).min(total);
+        // Competing ports sharing an in-game ID render as alternatives, never as one install.
+        let port_groups = self.discover_port_groups();
+        let grouped_ids = super::ports::grouped_project_ids(&port_groups);
         let mut grid = self.discover_grid();
+        let mut ungrouped_cards = 0usize;
         for (n, &i) in shown.iter().take(limit).enumerate() {
             let card_data = &cards[i];
+            if grouped_ids.contains(&card_data.id) {
+                continue;
+            }
+            ungrouped_cards += 1;
             let id = card_data.id.clone();
             // Icons are loaded strictly from verified content-addressed pages/<id>/<sha256>.<png|jpg>.
             // Screenshots are never fetched on Discover.
@@ -289,7 +297,7 @@ impl Launcher {
                     button(("alt-add", n), tr("Install"))
                         .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                             cx.stop_propagation();
-                            this.add(id_for_add.clone());
+                            this.add_v2(id_for_add.clone());
                             cx.notify();
                         }))
                         .into_any_element(),
@@ -347,7 +355,9 @@ impl Launcher {
             &profile_target,
             cx,
         );
-        page.child(self.discover_results(grid, total, "discover", empty, cx))
+        let results = self.with_port_groups(grid, ungrouped_cards, &port_groups, cx);
+        let shown_total = total.max(port_groups.len());
+        page.child(self.discover_results(results, shown_total, "discover", empty, cx))
             .into_any_element()
     }
 

@@ -867,7 +867,7 @@ fn v2_stage_and_verify_checks_digest_real_attestation_and_publisher_pins() {
         &moved_step,
         pin_dir.path(),
         &BTreeSet::new(),
-        Some(&|change| change.incoming.repository_id == 9999),
+        Some(&|question| question.change.incoming.repository_id == 9999),
         &fetch_good,
         &policy_verifier_for(9999, "newowner/wayfinder", WORKFLOW_V2),
     )

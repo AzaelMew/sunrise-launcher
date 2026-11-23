@@ -104,6 +104,19 @@ pub enum Msg {
         PathBuf,
         Box<Result<crate::browser::sunrise::Switched, String>>,
     ),
+    ProviderSwitchProgress(crate::browser::sunrise::InstallProgress),
+    /// The staged switch is proved; `true` publishes it.
+    ProviderSwitchQuestion(
+        Box<crate::browser::sunrise::ProviderSwitchPreview>,
+        std::sync::mpsc::Sender<bool>,
+    ),
+    /// `Ok(true)` when the profile now uses the new port, `Ok(false)` when it stayed.
+    ProviderSwitched(PathBuf, Result<bool, String>),
+    /// A release's verified publisher changed; `true` accepts the new one.
+    PublisherChangeQuestion(
+        Box<crate::browser::sunrise::PublisherChangeQuestion>,
+        std::sync::mpsc::Sender<bool>,
+    ),
     ReceiptAcknowledged(PathBuf, Result<bool, String>),
     JarConsent {
         jars: Vec<sunrise_launcher_smod::manifest::JarRef>,

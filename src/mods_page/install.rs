@@ -10,7 +10,7 @@ use sunrise_launcher::{
     browser::sunrise::{
         BuildNotice, ChangeImpact, CombinedUpdate, InstallError, InstallHooks, InstallProgress,
         InstalledBatch, NativeQuestion, PreparedSource, ResolveQuestion, SourceDependency,
-        SourceError, SourceHooks,
+        SourceError, SourceHooks, V2Hooks, V2InstallOptions,
     },
     github_mods::{AddedFrom, Origin},
     managed_play::FirstBuild,
@@ -224,6 +224,8 @@ struct RunningSource {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Kind {
     Install,
+    /// Projects from the signed v2 index, by project ID.
+    InstallV2,
     Github,
     Local,
     Source,
@@ -540,7 +542,12 @@ impl Installs {
         }
         if matches!(
             run.requests[0].kind,
-            Kind::Install | Kind::Github | Kind::Local | Kind::Source | Kind::Mixed
+            Kind::Install
+                | Kind::InstallV2
+                | Kind::Github
+                | Kind::Local
+                | Kind::Source
+                | Kind::Mixed
         ) {
             return None;
         }
@@ -1262,7 +1269,7 @@ impl Launcher {
         if ids.is_empty() {
             return Ok(());
         }
-        if kind == Kind::Install
+        if matches!(kind, Kind::Install | Kind::InstallV2)
             && self.accounts.selected().is_none()
             && !sunrise_launcher::developer_offline::selected()
         {
@@ -1499,6 +1506,27 @@ impl Launcher {
                     },
                     choose,
                     hooks,
+                ),
+                Kind::InstallV2 => sunrise::install_registry_v2(
+                    &request.profile,
+                    request.identity,
+                    ids.clone(),
+                    V2InstallOptions::default(),
+                    choose,
+                    V2Hooks {
+                        install: hooks,
+                        choose_provider: None,
+                        confirm_publisher_change: Some(&|question| {
+                            let (reply, answer) = std::sync::mpsc::channel();
+                            launcher
+                                .send(Msg::PublisherChangeQuestion(
+                                    Box::new(question.clone()),
+                                    reply,
+                                ))
+                                .is_ok()
+                                && answer.recv().unwrap_or(false)
+                        }),
+                    },
                 ),
                 Kind::Github => {
                     let input = request.github.as_ref().expect("a checked GitHub request");

@@ -126,6 +126,12 @@ impl Launcher {
         }
     }
 
+    /// Install a project from the signed v2 index (Discover, its pages and port rows).
+    pub(crate) fn add_v2(&mut self, project_id: String) {
+        let ids = vec![project_id.clone()];
+        self.submit_registry_change(Kind::InstallV2, &project_id, ids, BTreeMap::new());
+    }
+
     /// A direct switch has no world-loss question. Enabling still requires the dependencies;
     /// the native consent and build gates decide whether the game can use native code.
     pub(super) fn toggle(&mut self, row: &Row) {
