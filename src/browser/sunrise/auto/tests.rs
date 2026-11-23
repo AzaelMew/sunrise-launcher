@@ -42,6 +42,7 @@ fn write_installed_ruby(home: &Path, version: &str, bytes: &[u8]) -> installed::
     let entry = installed::Entry {
         source: SourceId::Sunrise,
         project: "ruby".into(),
+        mod_id: None,
         slug: "ruby".into(),
         title: "Ruby".into(),
         kind: Kind::Mod,
@@ -53,6 +54,7 @@ fn write_installed_ruby(home: &Path, version: &str, bytes: &[u8]) -> installed::
         dependency: false,
         verdict: None,
         install_hold: None,
+        repository: None,
     };
     let mut list = installed::Installed::load(home);
     list.entries

@@ -29,6 +29,7 @@ const MAX_TRIALS: usize = 64;
 mod conflicts;
 mod source;
 mod switch;
+pub mod v2;
 pub use conflicts::ResolveQuestion;
 use source::MixedSources;
 pub use source::{
@@ -39,6 +40,14 @@ pub use source::{
 pub use switch::{
     checked_switch_fit, switch_build, switch_profile_build, BuildChoice, SwitchDecision,
     SwitchHooks, SwitchQuestion, Switched,
+};
+pub use v2::{
+    checked_switch_fit_v2, classify_v2_ownership, install_registry_v2, inventory_v2,
+    plan_v2_install, plan_v2_update, revoked_for_package, switch_build_v2, switch_profile_build_v2,
+    switch_provider_v2, turn_off_revoked_v2, update_registry_v2, InstalledV2Mod, PlannedV2Release,
+    ProviderCandidate, ProviderChoiceNeeded, ProviderConflict, ProviderSwitchPreview,
+    V2AffectedDependent, V2Hooks, V2InstallOptions, V2Ownership, V2Plan, V2ProviderSwitchHooks,
+    V2SwitchHooks,
 };
 
 // Advisory only. Never use these in place of a fresh, admitted worker proof. Key by the
@@ -55,12 +64,16 @@ pub fn known_unfit_updates(base: &str) -> BTreeSet<String> {
 }
 
 fn remember_unfit(base: &str, release: &index::Version) {
+    remember_unfit_sha256(base, &release.file.sha256);
+}
+
+fn remember_unfit_sha256(base: &str, sha256: &str) {
     UNFIT_UPDATES
         .lock()
         .unwrap()
         .entry(base.into())
         .or_default()
-        .insert(release.file.sha256.to_ascii_lowercase());
+        .insert(sha256.to_ascii_lowercase());
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -86,6 +99,9 @@ pub enum InstallError {
     GithubBuild(String),
     Source(SourceError),
     Compile(BuildNotice),
+    PublisherChanged(Box<crate::attestation::PublisherChange>),
+    AmbiguousProvider(Box<v2::ProviderChoiceNeeded>),
+    ProviderConflict(Box<v2::ProviderConflict>),
     Cancelled,
 }
 
@@ -100,6 +116,22 @@ impl std::fmt::Display for InstallError {
             | Self::Download(text) => f.write_str(text),
             Self::Compile(failure) => f.write_str(&failure.detail),
             Self::Source(error) => error.fmt(f),
+            Self::PublisherChanged(change) => crate::attestation::Error::PublisherChanged(
+                change.clone(),
+            )
+            .fmt(f),
+            Self::AmbiguousProvider(need) => f.write_str(&trf(
+                "{requester} needs {mod}, which is provided by several mods. Choose one to install.",
+                &[("requester", &need.required_by), ("mod", &need.mod_id)],
+            )),
+            Self::ProviderConflict(conflict) => f.write_str(&trf(
+                "{requested} cannot be installed while {installed} is already installed for {mod}. Switch provider instead.",
+                &[
+                    ("requested", &conflict.requested_name),
+                    ("installed", &conflict.installed_name),
+                    ("mod", &conflict.mod_id),
+                ],
+            )),
             Self::Cancelled => f.write_str(tr("Install cancelled.")),
         }
     }
@@ -1230,6 +1262,7 @@ fn stage_package(
     Ok(installed::Entry {
         source: SourceId::Sunrise,
         project: p.id.clone(),
+        mod_id: None,
         slug: p.id.clone(),
         title: p.name.clone(),
         kind: Kind::Mod,
@@ -1241,6 +1274,7 @@ fn stage_package(
         dependency: false,
         verdict: Some(trust_label(checked).into()),
         install_hold: None,
+        repository: None,
     })
 }
 
@@ -1504,19 +1538,22 @@ impl Document {
         Ok(())
     }
     fn replace(&mut self, entry: &installed::Entry) -> Result<(), String> {
+        let key = entry.in_game_mod_id().unwrap_or(&entry.project);
         let encoded = serde_json::to_value(entry).map_err(|e| e.to_string())?;
-        let mut fields = match self.row(&entry.project)? {
+        let mut fields = match self.row(key)? {
             Some(Value::Object(previous)) => previous.clone(),
             Some(_) => return Err(unproved_mods()),
             None => Map::new(),
         };
         fields.remove("launcher_install_hold");
         fields.remove("verdict");
+        fields.remove("mod_id");
+        fields.remove("repository");
         let Value::Object(encoded) = encoded else {
             unreachable!("Entry serializes as an object")
         };
         fields.extend(encoded);
-        self.set(&entry.project, Value::Object(fields))
+        self.set(key, Value::Object(fields))
     }
     fn write(&self, home: &Path) -> Result<(), String> {
         let mut map = self.map.clone();

@@ -1617,3 +1617,22 @@ fn channel_less_cli_play_refuses_to_fall_through_to_installed_stable() {
         STABLE
     );
 }
+
+#[test]
+fn copy_home_preserves_chosen_versions_pins_and_skips_caches() {
+    let from = tempfile::tempdir().unwrap();
+    let to = tempfile::tempdir().unwrap();
+    let target = to.path().join("copy");
+    put(
+        &from.path().join("mod-browser/chosen-versions.json"),
+        r#"{"Ab3dE9xQ":"1.0.0"}"#,
+    );
+    put(&from.path().join("mod-browser/sunrise-index.json"), "{}");
+    let worlds = crate::worlds::SavedWorlds::claim(&from.path().join("saves")).unwrap();
+    copy_home(from.path(), &target, &worlds).unwrap();
+    assert_eq!(
+        fs::read_to_string(target.join("mod-browser/chosen-versions.json")).unwrap(),
+        r#"{"Ab3dE9xQ":"1.0.0"}"#
+    );
+    assert!(!target.join("mod-browser/sunrise-index.json").exists());
+}

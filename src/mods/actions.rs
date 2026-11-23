@@ -572,6 +572,7 @@ mod tests {
                     entry: Entry {
                         source: SourceId::Sunrise,
                         project: "light".into(),
+                        mod_id: None,
                         slug: "light".into(),
                         title: "Light".into(),
                         kind: Kind::Mod,
@@ -583,6 +584,7 @@ mod tests {
                         dependency: false,
                         verdict: None,
                         install_hold: None,
+                        repository: None,
                     },
                     home: selected.clone(),
                     identity,

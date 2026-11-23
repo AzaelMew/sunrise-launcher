@@ -277,6 +277,7 @@ fn switch_keeps_the_registry_mod_when_only_a_sources_original_sdk_is_missing() {
             installed.entries.push(installed::Entry {
                 source: SourceId::Sunrise,
                 project: REGISTRY.into(),
+                mod_id: None,
                 slug: REGISTRY.into(),
                 title: "Registry Lantern".into(),
                 kind: Kind::Mod,
@@ -288,6 +289,7 @@ fn switch_keeps_the_registry_mod_when_only_a_sources_original_sdk_is_missing() {
                 dependency: false,
                 verdict: None,
                 install_hold: None,
+                repository: None,
             });
             installed.save(home).unwrap();
             mod_list::set_enabled(home, REGISTRY, true).unwrap();
