@@ -512,5 +512,14 @@
   "Not on the registry": "Not on the registry",
   "any version": "any version",
   "Required": "Required",
-  "Optional": "Optional"
+  "Optional": "Optional",
+  "Theme accent": "Theme accent",
+  "Violet": "Violet",
+  "Blue": "Blue",
+  "Teal": "Teal",
+  "Green": "Green",
+  "Amber": "Amber",
+  "Red": "Red",
+  "Pink": "Pink",
+  "Pick a colour, or type a colour name, a hue in degrees or #rrggbb. Play darkens a pale accent just enough for its white label.": "Pick a colour, or type a colour name, a hue in degrees or #rrggbb. Play darkens a pale accent just enough for its white label."
 }

@@ -14,6 +14,12 @@ use sunrise_launcher::backend::{PANEL_OPACITY_MAX, PANEL_OPACITY_MIN};
 use sunrise_launcher::theme_files::{self, Entry};
 use sunrise_launcher::themes::{self, Accent};
 
+/// An accent swatch's size, its ring included.
+const SWATCH: f32 = 30.;
+
+/// What [`Accent::ALL`]'s swatches are called, in their order.
+const ACCENT_NAMES: [&str; 7] = ["Violet", "Blue", "Teal", "Green", "Amber", "Red", "Pink"];
+
 /// A theme as Appearance lists it.
 struct Choice {
     /// What `select_theme` takes.
@@ -77,6 +83,8 @@ pub(crate) struct State {
     choices: Option<Vec<Choice>>,
     accent: line_edit::LineEdit,
     accent_focus: Option<FocusHandle>,
+    /// Whether the accent field had the keyboard when last drawn: leaving it takes what is typed.
+    accent_editing: bool,
     panel_opacity: crate::slider::Slider,
     /// The keyboard's place on "Worlds on Home", and the search's request to be taken to it:
     /// whether that was done yet.
@@ -105,6 +113,7 @@ impl Default for State {
             choices: None,
             accent: line_edit::LineEdit::new(String::new(), 32, 18),
             accent_focus: None,
+            accent_editing: false,
             panel_opacity: crate::slider::Slider::default(),
             worlds_focus: None,
             worlds_asked: None,
@@ -818,8 +827,9 @@ impl Launcher {
         )
     }
 
-    /// The accent: its colour, one field that takes a name, a hue or `#rrggbb`, and the way
-    /// back to the theme's own.
+    /// The accent: the theme's own colour and the named ones to pick from, and one field that
+    /// takes any name, hue or `#rrggbb`. What is typed is taken on Enter or when the field is
+    /// left; Escape leaves the accent as it was.
     fn accent_row(&mut self, missing: bool, window: &Window, cx: &mut Context<Self>) -> Div {
         let state = &mut self.ui.settings.appearance;
         let focus = state
@@ -827,11 +837,20 @@ impl Launcher {
             .get_or_insert_with(|| cx.focus_handle().tab_index(0).tab_stop(true))
             .clone();
         let focused = focus.is_focused(window);
+        let left = std::mem::replace(&mut state.accent_editing, focused) && !focused;
         let shown = appearance::accent(&self.settings);
+        let typed = state.accent.text().trim().to_string();
+        if left && !missing && !typed.is_empty() && typed != shown.name() {
+            self.appearance_change(|s| appearance::type_accent(s, &typed), window);
+            // This frame has started in the old colours.
+            cx.notify();
+        }
+        let shown = appearance::accent(&self.settings);
+        let state = &mut self.ui.settings.appearance;
         if !focused {
             state.accent.set(shown.name());
         }
-        let own = themes::own_accent(self.settings.theme.as_deref()) == shown;
+        let own = themes::own_accent(self.settings.theme.as_deref());
         let edit: fn(&mut Self) -> &mut line_edit::LineEdit =
             |this| &mut this.ui.settings.appearance.accent;
         let field_theme = crate::mods::field_theme(self.theme);
@@ -877,36 +896,70 @@ impl Launcher {
                 cx.stop_propagation();
                 cx.notify();
             }));
-        // As tall as the colour and the field beside it.
-        let reset = button("alt-accent-reset", tr("Use theme accent")).h(px(tokens::FIELD));
-        let reset = if own || missing {
-            off(reset)
-        } else {
-            reset.on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-                this.appearance_change(appearance::reset_accent, window);
-                cx.notify();
-            }))
-        };
         let field = line_edit::mouse(field, cx, edit);
-        self.wide_row(
+        // The theme's own colour first, then each named accent the theme doesn't already wear.
+        let picks = std::iter::once((own, true)).chain(
+            Accent::ALL
+                .into_iter()
+                .filter(|a| *a != own)
+                .map(|a| (a, false)),
+        );
+        let mut swatches = div().flex().flex_wrap().items_center().gap(px(8.));
+        for (i, (accent, theirs)) in picks.enumerate() {
+            let on = accent == shown;
+            let tip = if theirs {
+                tr("Theme accent")
+            } else {
+                Accent::ALL
+                    .iter()
+                    .position(|a| *a == accent)
+                    .map_or("", |i| tr(ACCENT_NAMES[i]))
+            };
+            let swatch = div()
+                .id(("alt-accent-swatch", i))
+                .flex_none()
+                .size(px(SWATCH))
+                .rounded_full()
+                .p(px(3.))
+                .border_2()
+                .border_color(if on {
+                    rgb(palette().text).into()
+                } else {
+                    gpui::transparent_black()
+                })
+                .reach_edge()
+                .tooltip(crate::glass_ui::tip(tip))
+                .child(div().size_full().rounded_full().bg(rgb(accent.rgb())));
+            swatches = swatches.child(if missing || on {
+                swatch.cursor_default()
+            } else {
+                swatch
+                    .cursor_pointer()
+                    .hover(|s| s.border_color(rgb(palette().muted)))
+                    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                        if theirs {
+                            this.appearance_change(appearance::reset_accent, window);
+                        } else {
+                            this.appearance_change(|s| appearance::set_accent(s, accent), window);
+                        }
+                        cx.notify();
+                    }))
+            });
+        }
+        stacked(
             tr("Accent"),
-            tr("A colour name, a hue in degrees or #rrggbb, then Enter. Play darkens a pale accent just enough for its white label."),
+            tr("Pick a colour, or type a colour name, a hue in degrees or #rrggbb. Play darkens a pale accent just enough for its white label."),
             div()
-                .child(
-                    div()
-                        .flex_none()
-                        .size(px(tokens::FIELD))
-                        .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
-                        .border_1()
-                        .border_color(rgb(palette().line))
-                        .bg(rgb(palette().accent)),
-                )
+                .flex()
+                .flex_wrap()
+                .items_center()
+                .gap(px(16.))
+                .child(swatches.when(missing, |d| d.opacity(0.4)))
                 .child(if missing {
                     div().opacity(0.4).child(field)
                 } else {
                     div().child(field)
-                })
-                .child(reset),
+                }),
         )
     }
 
@@ -1035,6 +1088,70 @@ impl Launcher {
 mod tests {
     use super::photo_tone;
     use image::{Rgba, RgbaImage};
+
+    /// Runs `test` again in a child process with its own scratch homes; Some(root) inside it.
+    fn scratch_child(test: &str) -> Option<std::path::PathBuf> {
+        const CHILD: &str = "SUNRISE_APPEARANCE_TEST";
+        if let Some(root) = std::env::var_os(CHILD) {
+            return Some(root.into());
+        }
+        let scratch = tempfile::tempdir().unwrap();
+        let root = scratch.path();
+        let nowhere = "http://127.0.0.1:9";
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", &format!("settings::appearance::tests::{test}")])
+            .env(CHILD, root)
+            .env("SUNRISE_HOME", root.join("game"))
+            .env("SUNRISE_LAUNCHER_HOME", root.join("launcher"))
+            .env("SUNRISE_LAUNCHER_LOCATION_FILE", root.join("location.json"))
+            .env("SUNRISE_NO_KEYCHAIN", "1")
+            .env("SUNRISE_LAUNCHER_NO_SELF_UPDATE", "1")
+            .env("SUNRISE_TELEMETRY_URL", "off")
+            .env("XDG_DATA_HOME", root.join("data"))
+            .env("XDG_CONFIG_HOME", root.join("config"))
+            .env("HTTP_PROXY", nowhere)
+            .env("HTTPS_PROXY", nowhere)
+            .env("ALL_PROXY", nowhere)
+            .env_remove("NO_PROXY")
+            .env_remove("SUNRISE_GITHUB_MIRROR")
+            .env_remove("SUNRISE_LAUNCHER_BENCH")
+            .status()
+            .unwrap();
+        assert!(status.success(), "{test} failed in its child process");
+        None
+    }
+
+    #[test]
+    fn a_typed_accent_is_taken_when_the_field_is_left_without_enter() {
+        use sunrise_launcher::appearance;
+        use sunrise_launcher::backend::Settings;
+        use sunrise_launcher::themes::Accent;
+        if scratch_child("a_typed_accent_is_taken_when_the_field_is_left_without_enter").is_none() {
+            return;
+        }
+        let mut app = gpui::TestAppContext::single();
+        let (shell, cx) = app.add_window_view(crate::window_root::Shell::new);
+        let launcher = shell.read_with(cx, |shell, _| shell.launcher());
+        launcher.update(cx, |l, cx| {
+            l.navigate(crate::frame::Page::Settings);
+            l.settings_open(super::Section::Appearance);
+            cx.notify();
+        });
+        cx.run_until_parked();
+        // The field is below the fold of the test window: give it the keyboard directly.
+        let focus = launcher.read_with(cx, |l, _| {
+            let focus = l.ui.settings.appearance.accent_focus.clone();
+            focus.expect("the accent field is drawn")
+        });
+        cx.update(|window, cx| window.focus(&focus, cx));
+        cx.simulate_keystrokes("ctrl-a t e a l");
+        cx.run_until_parked();
+        let accent = || appearance::accent(&Settings::load());
+        assert_ne!(accent(), Accent::TEAL, "not taken before the field is left");
+        cx.update(|window, cx| window.blur(cx));
+        cx.run_until_parked();
+        assert_eq!(accent(), Accent::TEAL);
+    }
 
     #[test]
     fn picture_tone_is_weighted_by_visible_coverage() {
