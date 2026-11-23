@@ -1480,6 +1480,23 @@ fn copy_home(from: &Path, to: &Path, worlds: &crate::worlds::SavedWorlds) -> std
             }
         }
     }
+    // Preserve chosen-versions.json pins while keeping caches inside mod-browser/ out of copies.
+    let chosen_dir = from.join("mod-browser");
+    if let Ok(dir_meta) = chosen_dir.symlink_metadata() {
+        if dir_meta.is_dir() && !crate::native_cache::linked(&dir_meta) {
+            let chosen = chosen_dir.join("chosen-versions.json");
+            match chosen.symlink_metadata() {
+                Ok(meta) if meta.is_file() && !crate::native_cache::linked(&meta) => {
+                    let target_dir = to.join("mod-browser");
+                    fs::create_dir_all(&target_dir)?;
+                    fs::copy(&chosen, target_dir.join("chosen-versions.json"))?;
+                }
+                Ok(_) => return Err(std::io::ErrorKind::InvalidData.into()),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+        }
+    }
     worlds.verify_all()
 }
 

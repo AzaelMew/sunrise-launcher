@@ -479,6 +479,7 @@ fn stable_treats_held_transitive_mod_as_unavailable_and_chooses_older_library() 
                 HeldSource::Registry {
                     project: LIB.into(),
                     version: "1.0.0".into(),
+                    repository: None,
                 },
                 true,
                 HeldReason::NoFit {

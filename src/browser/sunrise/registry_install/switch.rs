@@ -575,6 +575,7 @@ impl<'a> Originals<'a> {
                 HeldSource::Registry {
                     project: id.clone(),
                     version: manifest.version.clone(),
+                    repository: None,
                 }
             } else {
                 HeldSource::Local {
@@ -769,6 +770,7 @@ fn choices(
                     let entry = installed::Entry {
                         source: SourceId::Sunrise,
                         project: id.clone(),
+                        mod_id: None,
                         slug: id.clone(),
                         title: project.name.clone(),
                         kind: Kind::Mod,
@@ -783,6 +785,7 @@ fn choices(
                                 .is_some_and(|row| row["dependency"].as_bool() == Some(true)),
                         verdict: None,
                         install_hold: None,
+                        repository: None,
                     };
                     (file.clone(), Some((file, entry)))
                 };
@@ -1545,6 +1548,7 @@ mod tests {
             installed::Entry {
                 source: SourceId::Sunrise,
                 project: id.into(),
+                mod_id: None,
                 slug: id.into(),
                 title: name.into(),
                 kind: Kind::Mod,
@@ -1556,6 +1560,7 @@ mod tests {
                 dependency: false,
                 verdict: None,
                 install_hold: None,
+                repository: None,
             }
         };
         let core_row = install_entry(

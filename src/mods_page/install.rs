@@ -1644,6 +1644,15 @@ fn failure_line(error: &InstallError) -> &'static str {
         InstallError::GithubBuild(_) => tr("Could not build the selected mods."),
         InstallError::Download(_) => tr("Download failed. Try again"),
         InstallError::Compile(_) => tr("Couldn't build on your computer"),
+        InstallError::PublisherChanged(_) => {
+            tr("This mod's publisher changed. Confirm before installing.")
+        }
+        InstallError::AmbiguousProvider(_) => {
+            tr("Several mods provide a required dependency. Choose one.")
+        }
+        InstallError::ProviderConflict(_) => {
+            tr("Another mod is already installed for that slot. Switch provider instead.")
+        }
         InstallError::Cancelled => tr("Install cancelled."),
     }
 }

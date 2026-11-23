@@ -772,6 +772,7 @@ mod tests {
             entries: vec![installed::Entry {
                 source: SourceId::Sunrise,
                 project: "registry".into(),
+                mod_id: None,
                 slug: "registry".into(),
                 title: "Registry mod".into(),
                 kind: Kind::Mod,
@@ -783,6 +784,7 @@ mod tests {
                 dependency: false,
                 verdict: None,
                 install_hold: None,
+                repository: None,
             }],
         }
         .save(&home)

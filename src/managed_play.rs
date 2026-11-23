@@ -178,6 +178,35 @@ impl CommittedBuildChoice {
     }
 }
 
+/// Exact project, release, SHA-256 digest, and verified repository recorded in the profile's
+/// build lock for a signed schema-2 Sunrise registry mod.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModLock {
+    pub project: String,
+    pub mod_id: String,
+    pub version: String,
+    pub sha256: String,
+    pub repository: crate::browser::installed::VerifiedRepository,
+}
+
+impl ModLock {
+    fn validate(&self) -> Result<(), String> {
+        use sunrise_launcher_smod::{index::valid_id, index_v2::valid_project_id};
+        if !valid_project_id(&self.project)
+            || !valid_id(&self.mod_id)
+            || self.version.is_empty()
+            || self.version.chars().any(char::is_control)
+            || self.sha256.len() != 64
+            || !self.sha256.bytes().all(|b| b.is_ascii_hexdigit())
+            || !self.repository.valid()
+        {
+            return Err(unsettled());
+        }
+        Ok(())
+    }
+}
+
 /// Only this pointer selects a game's executable once its managed profile is initialized.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -194,6 +223,8 @@ pub struct Active {
     receipts: Vec<Receipt>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     build_choice: Option<CommittedBuildChoice>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    mod_locks: Vec<ModLock>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -299,6 +330,8 @@ pub enum HeldSource {
     Registry {
         project: String,
         version: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        repository: Option<crate::browser::installed::VerifiedRepository>,
     },
     Github {
         owner: String,
@@ -396,7 +429,18 @@ impl Held {
             return Err(unsettled());
         }
         let version = match &self.source {
-            HeldSource::Registry { project, version } if project == &self.id => version,
+            HeldSource::Registry {
+                project,
+                version,
+                repository,
+            } if (repository.is_none() && project == &self.id)
+                || (repository
+                    .as_ref()
+                    .is_some_and(crate::browser::installed::VerifiedRepository::valid)
+                    && sunrise_launcher_smod::index_v2::valid_project_id(project)) =>
+            {
+                version
+            }
             HeldSource::Github {
                 owner,
                 repo,
@@ -658,6 +702,16 @@ impl Active {
                 validate_tag(version)?;
             }
         }
+        let mut locked_mods = std::collections::HashSet::new();
+        let mut locked_projects = std::collections::HashSet::new();
+        for lock in &value.mod_locks {
+            lock.validate()?;
+            if !locked_mods.insert(lock.mod_id.as_str())
+                || !locked_projects.insert(lock.project.as_str())
+            {
+                return Err(unsettled());
+            }
+        }
         Ok(value)
     }
 
@@ -694,6 +748,10 @@ impl Active {
 
     pub fn build_choice(&self) -> Option<&CommittedBuildChoice> {
         self.build_choice.as_ref()
+    }
+
+    pub fn mod_locks(&self) -> &[ModLock] {
+        &self.mod_locks
     }
 
     pub fn generation(&self) -> u64 {
@@ -808,6 +866,7 @@ impl Active {
                 )
             }
         };
+        let mod_locks = capture_mod_locks(home)?;
         Ok(Self {
             version: 1,
             profile,
@@ -819,8 +878,39 @@ impl Active {
             inputs: epoch,
             receipts,
             build_choice,
+            mod_locks,
         })
     }
+}
+
+fn capture_mod_locks(home: &Path) -> Result<Vec<ModLock>, String> {
+    let installed = crate::browser::installed::Installed::read(home)?;
+    let mut locks = Vec::new();
+    for entry in installed.entries {
+        if !entry.is_v2_registry() {
+            continue;
+        }
+        let Some(mod_id) = entry.mod_id.clone() else {
+            continue;
+        };
+        let Some(sha256) = entry.sha256().map(str::to_ascii_lowercase) else {
+            continue;
+        };
+        let Some(repository) = entry.repository.clone() else {
+            continue;
+        };
+        let lock = ModLock {
+            project: entry.project,
+            mod_id,
+            version: entry.version,
+            sha256,
+            repository,
+        };
+        lock.validate()?;
+        locks.push(lock);
+    }
+    locks.sort_by(|a, b| a.mod_id.cmp(&b.mod_id));
+    Ok(locks)
 }
 
 fn verify_included(base: &str, image: &str, home: &Path) -> Result<(), String> {

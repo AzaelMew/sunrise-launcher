@@ -137,6 +137,7 @@ fn hold_updates(fixture: &mut Fixture, succeeds: HoldCase, refusals: &[HoldCase]
                 HeldSource::Registry {
                     project: ID.into(),
                     version: "1.0.0".into(),
+                    repository: None,
                 }
             },
             case != HoldCase::PriorOff,
@@ -268,6 +269,7 @@ fn a_proved_unfit_prior_off_update_leaves_the_hold_and_hides_only_that_offer() {
                 HeldSource::Registry {
                     project: ID.into(),
                     version: "1.0.0".into(),
+                    repository: None,
                 },
                 false,
                 HeldReason::NoFit {
