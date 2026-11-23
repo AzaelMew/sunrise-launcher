@@ -265,10 +265,10 @@ pub(crate) fn build_lease(
             Err(crate::native_cache::Error::Busy) => (),
             lease => return Ok(lease),
         }
+        cancellation.check()?;
         if !std::mem::replace(&mut said, true) {
             waiting();
         }
-        cancellation.check()?;
         std::thread::sleep(std::time::Duration::from_millis(250));
     }
 }

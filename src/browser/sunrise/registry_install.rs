@@ -671,11 +671,15 @@ fn registry_edit<'a>(
                 native_mods::source_routes(next.path(), edit.base(), cancelled, &|| {
                     (hooks.progress)(InstallProgress::Waiting)
                 })
-                .map_err(|error| {
-                    InstallError::Unproved(match error {
-                        native_mods::SourceCheckError::Dependency(detail) => detail,
-                        native_mods::SourceCheckError::Fit(failed) => failed.into(),
-                    })
+                .map_err(|error| match error {
+                    // Stopped while it waited for another build.
+                    _ if cancelled.is_stopped() => InstallError::Cancelled,
+                    native_mods::SourceCheckError::Dependency(detail) => {
+                        InstallError::Unproved(detail)
+                    }
+                    native_mods::SourceCheckError::Fit(failed) => {
+                        InstallError::Unproved(failed.into())
+                    }
                 })?
                 .mods
             };

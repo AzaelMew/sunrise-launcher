@@ -645,6 +645,8 @@ fn source_fit(
 ) -> Result<native_mods::Routes, SourceError> {
     // A source check waits for another build quietly, under the step it already shows.
     native_mods::source_routes(home, base, cancellation, &|| ()).map_err(|why| match why {
+        // Stopped while it waited for another build.
+        _ if cancellation.is_stopped() => SourceError::Cancelled,
         native_mods::SourceCheckError::Dependency(detail) => SourceError::Dependency {
             required: None,
             detail,
