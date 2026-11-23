@@ -57,7 +57,7 @@ impl Launcher {
                 .children(photo.map(|path| {
                     gpui::img(path)
                         .size_full()
-                        .object_fit(gpui::ObjectFit::Cover)
+                        .object_fit(gpui::ObjectFit::Contain)
                 }))
                 .when(i + 1 == PREVIEWS && urls.len() > PREVIEWS, |d| {
                     d.child(
@@ -1496,14 +1496,22 @@ impl Launcher {
             .collect::<Vec<_>>()
             .into();
         let count = screenshots.len();
+        let content = self.content_width();
+        let avail = if content < 860. {
+            (content - 62.).max(240.)
+        } else {
+            (content - 442.).max(280.)
+        };
         let columns = if count == 1 {
             1
-        } else if self.window_width < 950. {
+        } else if avail < 680. {
             2
         } else {
-            3
+            count.min(3)
         };
-        let height = if count == 1 { 220. } else { 128. };
+        let tile_w = (avail - 10. * (columns - 1) as f32) / columns as f32;
+        let max_h = if count == 1 { 320. } else { 240. };
+        let height = (tile_w * (9. / 16.)).clamp(110., max_h).round();
         let viewing = self.ui.mods.viewer.is_some();
 
         let mut items = screenshots.iter().enumerate().map(|(i, shot)| {
@@ -1523,6 +1531,7 @@ impl Launcher {
             div()
                 .flex_1()
                 .min_w_0()
+                .max_w(px(height * (16. / 9.)))
                 .flex()
                 .flex_col()
                 .gap(px(6.))
@@ -1542,7 +1551,7 @@ impl Launcher {
                         .children(photo.map(|path| {
                             gpui::img(path)
                                 .size_full()
-                                .object_fit(gpui::ObjectFit::Cover)
+                                .object_fit(gpui::ObjectFit::Contain)
                         }))
                         .track_scroll(&super::viewer::tile(i))
                         .on_click(cx.listener(move |this, _, _, cx| {
