@@ -156,32 +156,50 @@ fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
 }
 
-/// The selected account's certificate: the one held when it is still good, else a new one from
-/// the services with the account's Minecraft token (renewed first as a launch renews it).
-/// Offline play and accounts without the game get none.
-pub fn current() -> Result<Arc<PlayerKey>, String> {
-    let mut accounts = super::Accounts::load();
-    let selected = accounts.selected().map(|a| a.uuid.clone());
-    if let Some((key, came)) = HELD.lock().unwrap().as_ref() {
-        if Some(&key.uuid) == selected.as_ref() && !key.stale(now_ms(), came.elapsed()) {
+/// The certificate of `account`, which must still be the selected one: the one held when it is
+/// still good, else a new one from the services with the account's Minecraft token (renewed first
+/// as a launch renews it). Offline play and accounts without the game get none. A held
+/// certificate that isn't expired yet is kept when a new one can't be had, as the game keeps its
+/// key pair (`AccountProfileKeyPairManager.readOrFetchProfileKeyPair`), and asked for again only
+/// after the refresh interval.
+pub fn current(account: &str) -> Result<Arc<PlayerKey>, String> {
+    let held = HELD
+        .lock()
+        .unwrap()
+        .as_ref()
+        .filter(|(key, _)| key.uuid == account)
+        .map(|(key, came)| (key.clone(), came.elapsed()));
+    if let Some((key, held_for)) = &held {
+        if !key.stale(now_ms(), *held_for) {
             return Ok(key.clone());
         }
     }
-    let ep = Endpoints::live();
-    let launch = super::launch_for_game(
-        &ep,
-        super::client_id().as_deref(),
-        super::store(),
-        &mut accounts,
-    )
-    .map_err(|_| super::NEEDS_OWNER.to_string())?;
-    let _ = accounts.save_renewed();
-    let (account, secrets) = launch.session.ok_or_else(|| {
-        launch
-            .offline
-            .unwrap_or_else(|| super::NEEDS_OWNER.to_string())
-    })?;
-    let key = Arc::new(fetch(&ep, &secrets.minecraft_token, &account.uuid)?);
+    let fetched = (|| {
+        let mut accounts = super::Accounts::load();
+        if accounts.selected().map(|a| a.uuid.as_str()) != Some(account) {
+            return Err(crate::i18n::tr("Another account plays now. Rate again.").to_string());
+        }
+        let ep = Endpoints::live();
+        let launch = super::launch_for_game(
+            &ep,
+            super::client_id().as_deref(),
+            super::store(),
+            &mut accounts,
+        )
+        .map_err(|_| super::NEEDS_OWNER.to_string())?;
+        let _ = accounts.save_renewed();
+        let (selected, secrets) = launch.session.ok_or_else(|| {
+            launch
+                .offline
+                .unwrap_or_else(|| super::NEEDS_OWNER.to_string())
+        })?;
+        fetch(&ep, &secrets.minecraft_token, &selected.uuid)
+    })();
+    let key = match (fetched, held) {
+        (Ok(key), _) => Arc::new(key),
+        (Err(_), Some((key, _))) if !key.expired(now_ms()) => key,
+        (Err(why), _) => return Err(why),
+    };
     *HELD.lock().unwrap() = Some((key.clone(), Instant::now()));
     Ok(key)
 }
@@ -190,7 +208,8 @@ pub fn current() -> Result<Arc<PlayerKey>, String> {
 pub(crate) mod tests {
     use super::*;
 
-    /// A certificate answer as the services give one, around the test key.
+    /// A certificate answer as the services give one, around the test key: a throwaway key made
+    /// for tests (the registry's own test player key), never a real account's.
     pub(crate) fn answer(expires_at: &str, refreshed_after: &str) -> Value {
         let pem = include_str!("../../tests/fixtures/test-player-key.pem");
         let body = pem

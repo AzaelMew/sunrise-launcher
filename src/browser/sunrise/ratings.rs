@@ -44,19 +44,19 @@ pub fn totals() -> Result<HashMap<String, Totals>, String> {
         .collect())
 }
 
-/// The player's own rating of `project`, if they rated it.
-pub fn mine(project: &str) -> Result<Option<u8>, String> {
-    let answer = signed("read", project, 0)?;
+/// The account `account`'s own rating of `project`, if it rated it.
+pub fn mine(account: &str, project: &str) -> Result<Option<u8>, String> {
+    let answer = signed(account, "read", project, 0)?;
     Ok(answer["stars"]
         .as_u64()
         .and_then(|s| u8::try_from(s).ok())
         .filter(|s| (1..=5).contains(s)))
 }
 
-/// Rates `project` with `stars` (1 to 5), replacing the player's earlier rating; answers its new
-/// totals.
-pub fn rate(project: &str, stars: u8) -> Result<Totals, String> {
-    Ok(totals_of(&signed("rate", project, stars)?))
+/// Rates `project` with `stars` (1 to 5) as the account `account`, replacing its earlier rating;
+/// answers the project's new totals.
+pub fn rate(account: &str, project: &str, stars: u8) -> Result<Totals, String> {
+    Ok(totals_of(&signed(account, "rate", project, stars)?))
 }
 
 /// The text a player signs for one request: the service's own first line, so the signature means
@@ -88,7 +88,7 @@ fn proof(
 /// One signed request. A refusal of the proof is tried once more with a new nonce, and a new
 /// certificate when the held one has expired (a nonce used or timed out, a certificate that ran
 /// out on the way).
-fn signed(action: &str, project: &str, stars: u8) -> Result<Value, String> {
+fn signed(account: &str, action: &str, project: &str, stars: u8) -> Result<Value, String> {
     let api = api();
     let project_path = super::super::modrinth::encode(project);
     let url = match action {
@@ -97,7 +97,7 @@ fn signed(action: &str, project: &str, stars: u8) -> Result<Value, String> {
     };
     let mut status = 0;
     for _ in 0..2 {
-        let key = player_key::current()?;
+        let key = player_key::current(account)?;
         let (nonced, nonce) = call("POST", &format!("{api}/rating/nonce"), Some(json!({})))?;
         let Some(nonce) = nonce["nonce"].as_str().filter(|_| nonced == 200) else {
             // No nonce is a registry that can't take ratings now, whatever the project.
@@ -122,6 +122,7 @@ fn refusal(status: u16) -> String {
     match status {
         403 => tr("Couldn't confirm your Minecraft account.").into(),
         404 => tr("This mod isn't published in the registry.").into(),
+        429 => tr("Too many ratings in a short time. Try again later.").into(),
         _ => tr("The registry can't take ratings right now. Try again later.").into(),
     }
 }

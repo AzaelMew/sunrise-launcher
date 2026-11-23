@@ -10,6 +10,8 @@ use sunrise_launcher::browser::sunrise::ratings::{self, Totals};
 pub(super) struct Ratings {
     /// Every rated mod's totals; none until the registry answered.
     totals: Option<HashMap<String, Totals>>,
+    /// The registry didn't answer for the totals: the page shows none this run.
+    totals_failed: bool,
     asked: bool,
     /// Whose own ratings `mine` holds.
     account: Option<String>,
@@ -57,7 +59,7 @@ impl Launcher {
         let (tx, id) = (self.ui.mods.tx.clone(), id.to_owned());
         std::thread::spawn(move || {
             // Not knowing it only leaves the stars empty: rating again replaces it either way.
-            let stars = ratings::mine(&id).ok().flatten();
+            let stars = ratings::mine(&account, &id).ok().flatten();
             let _ = tx.send(Event::Rating(Answer::Mine(account, id, stars)));
         });
     }
@@ -74,7 +76,7 @@ impl Launcher {
         r.error = None;
         let tx = self.ui.mods.tx.clone();
         std::thread::spawn(move || {
-            let result = ratings::rate(&id, stars);
+            let result = ratings::rate(&account, &id, stars);
             let _ = tx.send(Event::Rating(Answer::Rated(account, id, stars, result)));
         });
     }
@@ -83,7 +85,8 @@ impl Launcher {
         let r = &mut self.ui.mods.ratings;
         match answer {
             // Without totals the page shows no average; it never says the registry is down.
-            Answer::Totals(totals) => r.totals = Some(totals.unwrap_or_default()),
+            Answer::Totals(Ok(totals)) => r.totals = Some(totals),
+            Answer::Totals(Err(_)) => r.totals_failed = true,
             Answer::Mine(account, id, stars) => {
                 if r.account.as_ref() == Some(&account) {
                     r.mine.insert(id, stars);
@@ -97,7 +100,9 @@ impl Launcher {
                 match result {
                     Ok(totals) => {
                         r.mine.insert(id.clone(), Some(stars));
-                        r.totals.get_or_insert_default().insert(id, totals);
+                        if let Some(held) = r.totals.as_mut() {
+                            held.insert(id, totals);
+                        }
                     }
                     Err(why) => r.error = Some((id, why)),
                 }
@@ -110,29 +115,32 @@ impl Launcher {
         let p = palette();
         let r = &self.ui.mods.ratings;
         let summary = match r.totals.as_ref().map(|t| t.get(id)) {
-            None => muted(tr("Loading ratings…")),
+            None if r.totals_failed => None,
+            None => Some(muted(tr("Loading ratings…"))),
             Some(Some(t)) if t.count > 0 => {
                 let count = if t.count == 1 {
                     tr("1 rating").to_owned()
                 } else {
                     trf("{count} ratings", &[("count", &t.count.to_string())])
                 };
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(6.))
-                    .child(crate::glass_ui::icon("star-filled", 14., c(p.accent)))
-                    .child(
-                        div()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_size(px(tokens::LABEL))
-                            .child(format!("{:.1}", t.average)),
-                    )
-                    .child(muted(count))
+                Some(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(6.))
+                        .child(crate::glass_ui::icon("star-filled", 14., c(p.accent)))
+                        .child(
+                            div()
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_size(px(tokens::LABEL))
+                                .child(format!("{:.1}", t.average)),
+                        )
+                        .child(muted(count)),
+                )
             }
-            Some(_) => muted(tr("No ratings yet")),
+            Some(_) => Some(muted(tr("No ratings yet"))),
         };
-        let mut block = div().flex().flex_col().gap(px(8.)).child(summary);
+        let mut block = div().flex().flex_col().gap(px(8.)).children(summary);
         let account = self.accounts.selected().map(|a| &a.uuid);
         if account.is_none() {
             return block.child(muted(tr("Sign in to rate this mod.")));

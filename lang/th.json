@@ -1885,5 +1885,7 @@
   "Sign in to rate this mod.": "Sign in to rate this mod.",
   "Sending…": "Sending…",
   "Your rating": "Your rating",
-  "Rate this mod": "Rate this mod"
+  "Rate this mod": "Rate this mod",
+  "Too many ratings in a short time. Try again later.": "Too many ratings in a short time. Try again later.",
+  "Another account plays now. Rate again.": "Another account plays now. Rate again."
 }
