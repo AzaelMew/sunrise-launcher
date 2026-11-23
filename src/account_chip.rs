@@ -123,7 +123,7 @@ impl Launcher {
         if self.accounts.accounts.is_empty() {
             let p = palette();
             let label = tr("Sign in with Microsoft");
-            let icon_only = compact && self.settings.sidebar_expanded && self.window_width < 900.;
+            let icon_only = compact && self.bar_width() < 750.;
             return crate::frame::input(false)
                 .id("account-sign-in")
                 .min_w_0()

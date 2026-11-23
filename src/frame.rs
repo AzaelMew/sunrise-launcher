@@ -61,6 +61,14 @@ pub(super) struct State {
     pub after_install: Option<(crate::launcher_play::PlayIntent, String)>,
     /// A Play (including a destination) that explicitly asked for the sign-in now under way.
     pub after_sign_in: Option<crate::launcher_play::PlayIntent>,
+    /// The sidebar's last open or close, while it may still be easing there.
+    pub rail: Option<crate::motion::Fade>,
+    /// How open the sidebar is in the frame being drawn, or was in the last one: sampled once
+    /// as each frame begins, so the rail, the top bar and the page lay out for the same width.
+    pub rail_drawn: Option<f32>,
+    /// Tests: draw the sidebar this far open, as if part way through an ease.
+    #[cfg(test)]
+    pub rail_pin: Option<f32>,
 }
 
 /// The keyboard's ring, in `color`, around a filled control that has no edge of its own to turn
@@ -437,7 +445,8 @@ impl Launcher {
     fn header(&mut self, cx: &mut Context<Self>) -> Div {
         let p = palette();
         let active = self.ui.page.active_tab();
-        let compact = self.window_width < 900. && self.settings.sidebar_expanded;
+        // Below 900 px with the sidebar open; never with it closed (the window is 800 px at least).
+        let compact = self.bar_width() < 750.;
         // Keep every destination readable; the account chip can shorten its label.
         let mut tabs = div()
             .flex()
@@ -557,6 +566,11 @@ impl Launcher {
         // window has drawn. Nothing on screen is read here: a benchmark reads where the build
         // list was left, and moves it, between frames (`bench_wheel`).
         let now = std::time::Instant::now();
+        self.ui.rail_drawn = Some(self.rail_open_at(now));
+        #[cfg(test)]
+        if let Some(open) = self.ui.rail_pin {
+            self.ui.rail_drawn = Some(open);
+        }
         let gap = self.perf.frame(now);
         if let Some(bench) = &mut self.bench {
             bench.frame(now, gap);
@@ -574,6 +588,9 @@ impl Launcher {
             window.focus(&self.root_focus, cx);
         }
         let rail = self.sidebar(cx);
+        if self.ui.rail.is_some_and(|fade| fade.moving(now)) {
+            window.request_animation_frame();
+        }
         let header = self.header(cx);
         let content = match page {
             Page::Settings => self.settings(window, cx),

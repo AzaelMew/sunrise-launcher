@@ -25,6 +25,13 @@ const SLIDE: tokens::Motion = tokens::Motion {
     curve: tokens::QUICK.curve,
 };
 
+/// The sidebar opening or closing: ease-out, quick enough that a click never waits on it.
+pub const RAIL: tokens::Motion = tokens::Motion {
+    name: "rail",
+    ms: 180,
+    curve: [0.23, 1., 0.32, 1.],
+};
+
 /// Whether the player's system asks for reduced motion (or `SUNRISE_LAUNCHER_MOTION=off`).
 pub fn still() -> bool {
     crate::clock::motion() == crate::clock::Motion::Still
@@ -125,6 +132,17 @@ impl Fade {
         }
         let t = (now.saturating_duration_since(self.at).as_secs_f32() / length).min(1.);
         self.from + (self.target() - self.from) * self.motion.ease(t)
+    }
+
+    /// The strength at `now`, as [`Fade::play`] would draw it, for a fade the caller draws
+    /// itself (the sidebar's width moves the page beside it, so no one element can play it).
+    pub fn value(self, now: Instant) -> f32 {
+        self.value_as(now, still())
+    }
+
+    /// Still on its way at `now`: another frame would draw it somewhere else.
+    pub fn moving(self, now: Instant) -> bool {
+        !still() && now.saturating_duration_since(self.at) < self.length()
     }
 
     /// Ended off: nothing is left to draw.
