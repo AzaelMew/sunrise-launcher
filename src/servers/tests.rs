@@ -330,6 +330,7 @@ fn managed_start_prepares_pending_resources_before_publishing_and_starting() {
     let release = root.join("releases/nightly");
     let data = backend::data_dir();
     let resources = game_files(&root, "26.3-server");
+    let other_resources = game_files(&root, "26.3-other");
     let server = data.join("servers/friends");
     for path in [&release, &server] {
         fs::create_dir_all(path).unwrap();
@@ -337,10 +338,10 @@ fn managed_start_prepares_pending_resources_before_publishing_and_starting() {
     point(&root.join("current"), &release).unwrap();
     let engine = release.join("engine");
     fs::write(&engine, []).unwrap();
-    let reply = |pending| {
+    let reply = |path: &Path, pending| {
         json!({
-            "format": 1, "program": engine, "args": ["--resources", resources, "--dedicated"],
-            "cwd": server, "resources": resources, "resources_pending": pending,
+            "format": 1, "program": engine, "args": ["--resources", path, "--dedicated"],
+            "cwd": server, "resources": path, "resources_pending": pending,
         })
     };
     let program = release.join(PROGRAM);
@@ -351,12 +352,17 @@ fn managed_start_prepares_pending_resources_before_publishing_and_starting() {
 set -eu
 release=$(cd "$(dirname "$0")" && pwd -P)
 resources="$release/../../game-files/sunrise-client/26.3-server"
+other="$release/../../game-files/sunrise-client/26.3-other"
 printf '%s\n' "$3" >> "$2/trace"
 case "$3" in
     engine-command)
         if [ -d "$resources" ]; then
             cat <<'EOF'
 {ready}
+EOF
+        elif [ -d "$other" ]; then
+            cat <<'EOF'
+{other_ready}
 EOF
         else
             cat <<'EOF'
@@ -372,15 +378,18 @@ EOF
             echo 'sunrise-server: preparation failed' >&2
             exit 1
         fi
-        if [ ! -f "$2/still-pending" ]; then
+        if [ -f "$2/changed-path" ]; then
+            mkdir -p "$other"
+        elif [ ! -f "$2/still-pending" ]; then
             mkdir -p "$resources"
         fi ;;
     start) [ -d "$resources" ] && [ -f "$release/.installed" ] ;;
     *) exit 1 ;;
 esac
 "#,
-            ready = reply(false),
-            pending = reply(true)
+            ready = reply(&resources, false),
+            other_ready = reply(&other_resources, false),
+            pending = reply(&resources, true)
         ),
     )
     .unwrap();
@@ -402,6 +411,11 @@ esac
             "The server's game files are still not prepared.",
             "engine-command\ninit\nengine-command\n",
         ),
+        (
+            "changed-path",
+            "The server's game files are still not prepared.",
+            "engine-command\ninit\nengine-command\n",
+        ),
     ] {
         let flag = server.join(mode);
         fs::write(&flag, []).unwrap();
@@ -411,6 +425,9 @@ esac
         assert_eq!(fs::read_to_string(&trace).unwrap(), verbs);
         assert!(!resources.exists());
         assert!(!release.join(".installed").exists());
+        if other_resources.exists() {
+            fs::remove_dir_all(&other_resources).unwrap();
+        }
         fs::remove_file(&trace).unwrap();
         fs::remove_file(flag).unwrap();
     }
