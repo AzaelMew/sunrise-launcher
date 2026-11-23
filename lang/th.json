@@ -1771,7 +1771,6 @@
   "Chosen provider {project} for {dep} is not in the Sunrise registry.": "Chosen provider {project} for {dep} is not in the Sunrise registry.",
   "Chosen provider {project} does not provide {dep}.": "Chosen provider {project} does not provide {dep}.",
   "{mod} needs {dep}, whose fit on Sunrise {build} is not known yet.": "{mod} needs {dep}, whose fit on Sunrise {build} is not known yet.",
-  "{mod} needs {dep}, which has no release fitting Sunrise {build}.": "{mod} needs {dep}, which has no release fitting Sunrise {build}.",
   "Release {version} of {mod} is no longer in the Sunrise registry.": "Release {version} of {mod} is no longer in the Sunrise registry.",
   "{mod} download size did not match the registry ({got} bytes, expected {expected}).": "{mod} download size did not match the registry ({got} bytes, expected {expected}).",
   "{mod} failed its SHA-256 check.": "{mod} failed its SHA-256 check.",
@@ -1848,5 +1847,9 @@
   "Signed out": "Signed out",
   "Account options": "Account options",
   "Set default": "Set default",
-  "Manage skins": "Manage skins"
+  "Manage skins": "Manage skins",
+  "Pinned version {version} of {mod} is outside {range}, which another mod needs.": "Pinned version {version} of {mod} is outside {range}, which another mod needs.",
+  "{mod} needs {dep} {range}, but {version} is planned for another mod.": "{mod} needs {dep} {range}, but {version} is planned for another mod.",
+  "No release of {mod} in {range} fits Sunrise {build}.": "No release of {mod} in {range} fits Sunrise {build}.",
+  "{mod} needs {dep} {range}, which has no release fitting Sunrise {build}.": "{mod} needs {dep} {range}, which has no release fitting Sunrise {build}."
 }

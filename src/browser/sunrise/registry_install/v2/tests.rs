@@ -2,6 +2,7 @@ use super::switch_v2::{make_v2_hold, plan_slot_for_build, SlotPlan};
 use super::*;
 use crate::attestation::{Attested, RELEASE_WORKFLOW_PATH};
 use crate::managed_play::{HeldReason, HeldSource, ModLock};
+use semver::VersionReq;
 use sunrise_launcher_smod::{
     index::browser_state,
     index_v2::{
@@ -368,11 +369,13 @@ fn v2_plan_auto_installs_required_dependencies_and_skips_optional() {
             vec![
                 Dependency {
                     mod_id: "core_lib".into(),
+                    version: VersionReq::STAR,
                     project: None,
                     required: true,
                 },
                 Dependency {
                     mod_id: "fancy_ui".into(),
+                    version: VersionReq::STAR,
                     project: None,
                     required: false,
                 },
@@ -462,6 +465,7 @@ fn v2_plan_never_silently_picks_among_providers_and_honors_explicit_choice_or_pi
             &app_bytes,
             vec![Dependency {
                 mod_id: "wayfinder".into(),
+                version: VersionReq::STAR,
                 project: None,
                 required: true,
             }],
@@ -489,6 +493,7 @@ fn v2_plan_never_silently_picks_among_providers_and_honors_explicit_choice_or_pi
             ),
             vec![Dependency {
                 mod_id: "wayfinder".into(),
+                version: VersionReq::STAR,
                 project: Some("Zz91kLmN".into()),
                 required: true,
             }],
@@ -1228,6 +1233,7 @@ fn v2_provider_switch_detects_pinned_project_and_semver_dependents() {
             &dep_pinned_bytes,
             vec![Dependency {
                 mod_id: "wayfinder".into(),
+                version: VersionReq::STAR,
                 project: Some("Ab3dE9xQ".into()),
                 required: true,
             }],
@@ -1250,6 +1256,7 @@ fn v2_provider_switch_detects_pinned_project_and_semver_dependents() {
             &dep_semver_bytes,
             vec![Dependency {
                 mod_id: "wayfinder".into(),
+                version: VersionReq::STAR,
                 project: None,
                 required: true,
             }],
@@ -1415,4 +1422,86 @@ fn v2_stage_rejects_unlisted_required_dependency_in_manifest() {
         matches!(&err, InstallError::Download(msg) if msg.contains("hidden_dep")),
         "expected unlisted required dependency error, got {err:?}"
     );
+}
+
+#[test]
+fn v2_plan_picks_the_newest_library_release_in_the_range_the_dependent_asks_for() {
+    let lib = |version: &str, fits: &[&str]| {
+        let bytes = smod_bytes("core_lib", "Core Lib", version, "");
+        make_release(
+            "alice/core-lib",
+            version,
+            "26.3-0.1.0",
+            WORKFLOW_V1,
+            fits,
+            &[],
+            &bytes,
+            Vec::new(),
+        )
+    };
+    let app = |range: &str| {
+        let bytes = smod_bytes(
+            "compass",
+            "Compass",
+            "1.0.0",
+            &format!("[dependencies]\ncore_lib = '{range}'\n"),
+        );
+        make_project(
+            "App90123",
+            "compass",
+            "compass",
+            "Compass",
+            2003,
+            "alice/compass",
+            vec![make_release(
+                "alice/compass",
+                "1.0.0",
+                "26.3-0.1.0",
+                WORKFLOW_V1,
+                &["26.3-0.1.0"],
+                &[],
+                &bytes,
+                vec![Dependency {
+                    mod_id: "core_lib".into(),
+                    version: VersionReq::parse(range).unwrap(),
+                    project: None,
+                    required: true,
+                }],
+            )],
+        )
+    };
+    let library = make_project(
+        "Core1234",
+        "core-lib",
+        "core_lib",
+        "Core Lib",
+        2001,
+        "alice/core-lib",
+        vec![
+            lib("2.0.0", &["26.3-0.1.0"]),
+            lib("1.4.0", &["26.3-0.1.1"]),
+            lib("1.3.0", &["26.3-0.1.0"]),
+            lib("1.2.0", &["26.3-0.1.0"]),
+        ],
+    );
+    let plan = |range: &str| {
+        plan_v2_install(
+            &make_index(vec![library.clone(), app(range)], Vec::new()),
+            "26.3-0.1.0",
+            &["App90123".into()],
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &V2InstallOptions::default(),
+            None,
+        )
+    };
+
+    // 2.0.0 is newest but out of range; 1.4.0 is in range but listed for another build.
+    let steps = plan("^1.2").unwrap().steps;
+    assert_eq!(steps[1].project_id, "Core1234");
+    assert_eq!(steps[1].version, "1.3.0");
+
+    // Nothing in range fits this build: refused, naming the range.
+    let refused = plan(">=3").unwrap_err().to_string();
+    assert!(refused.contains(">=3"), "{refused}");
 }

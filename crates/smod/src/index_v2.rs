@@ -160,6 +160,8 @@ pub struct Dependency {
     /// Target in-game mod slot (`[a-z0-9_]{1,64}`, portable filename).
     #[serde(rename = "mod")]
     pub mod_id: String,
+    /// The semver range the provider's release must satisfy, as written in the mod's manifest.
+    pub version: semver::VersionReq,
     /// Optional pinned provider project ID (8-char base62).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project: Option<String>,
