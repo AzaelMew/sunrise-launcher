@@ -19,7 +19,7 @@ pub(super) fn check_title(name: &str, summary: &str) -> Vec<String> {
 
 /// Checks only the description ceiling, for both projects and collections.
 pub(super) fn check_description_limit(description: &str) -> Option<String> {
-    let length = description.chars().count();
+    let length = description.trim().chars().count();
     (length > MAX_DESCRIPTION)
         .then(|| format!("the description is {length} characters: at most {MAX_DESCRIPTION}"))
 }
@@ -38,6 +38,8 @@ mod tests {
             ["the summary is over 160 characters"]
         );
         assert!(check_description_limit(&"a".repeat(MAX_DESCRIPTION)).is_none());
+        // Surrounding whitespace doesn't count toward the ceiling.
+        assert!(check_description_limit(&format!("{}\n", "a".repeat(MAX_DESCRIPTION))).is_none());
         assert!(
             check_description_limit(&"a".repeat(MAX_DESCRIPTION + 1))
                 .unwrap()
