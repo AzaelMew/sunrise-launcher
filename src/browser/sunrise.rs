@@ -1354,3 +1354,9 @@ pub use registry_install::{
 };
 #[cfg(test)]
 mod tests;
+
+pub use registry_install::provider_switch::{
+    provider_switch_dependents, switch_provider, ProviderSwitchDecision, ProviderSwitchDependent,
+    ProviderSwitchHooks, ProviderSwitchQuestion, ProviderSwitchRequest, ProviderSwitched,
+    PublisherChangeDecision, PublisherChangeQuestion,
+};

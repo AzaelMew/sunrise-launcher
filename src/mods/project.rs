@@ -889,6 +889,7 @@ impl Launcher {
                     .when(p.about.is_some(), |d| d.child(details_toggle))
                     .children(details),
             )
+            .children(self.other_ports_card(&p.id, installed_row, busy, cx))
             .children(p.about.as_ref().map(|about| {
                 let source = p.source.clone();
                 card()

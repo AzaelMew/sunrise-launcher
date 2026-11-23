@@ -1,4 +1,6 @@
 //! Registry and collection requests produce one admitted, fully proved same-base generation.
+pub(crate) mod provider_switch;
+
 use super::{
     fetch, fetch_cancellable, fetch_with_official, fits_game, index, installed, location,
     project_of, trust_label, version_of, OfficialRegistry,
