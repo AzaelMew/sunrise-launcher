@@ -553,7 +553,6 @@ impl Launcher {
                 .flex_1()
                 .min_h_0()
                 .overflow_y_scroll()
-                .pr(px(14.))
                 .child(body),
             &self.theme,
         ))

@@ -299,11 +299,8 @@ impl Outcome {
     /// The sentence under a card. A failure says why on the line under it, so a card explains
     /// itself without opening the mod's page.
     fn note(self) -> Option<String> {
-        if let Some((label, detail)) = self.failure {
-            return Some(match detail.trim().is_empty() || detail == label {
-                true => label,
-                false => format!("{label}\n{detail}"),
-            });
+        if self.failure.is_some() {
+            return None;
         }
         if !self.added.is_empty() {
             return Some(trf(
@@ -557,6 +554,30 @@ impl Installs {
         ))
     }
 
+    /// Why a registry install that just ended failed, for a dialog: the card keeps no error.
+    pub(super) fn install_failure(&self, event: &Worker) -> Option<(instances::Instance, String)> {
+        let run = self.running.as_ref()?;
+        if run.source.is_some() || !matches!(run.requests[0].kind, Kind::Install | Kind::InstallV2)
+        {
+            return None;
+        }
+        let (line, detail) = match event {
+            Worker::Done(Ok(done)) => notice_failure(done.failure.as_ref()?, &run.requests[0].card),
+            Worker::Done(Err(InstallError::Cancelled)) => return None,
+            Worker::Done(Err(error @ InstallError::Compile(_))) => {
+                (tr("Stayed. No mods changed.").into(), error.to_string())
+            }
+            Worker::Done(Err(error)) => (failure_line(error).into(), error.to_string()),
+            _ => return None,
+        };
+        let text = if detail.trim().is_empty() || detail == line {
+            line
+        } else {
+            format!("{line}\n\n{detail}")
+        };
+        Some((run.profile.clone(), text))
+    }
+
     pub(super) fn mutation_failure(&self, event: &Worker) -> Option<String> {
         let run = self.running.as_ref()?;
         if let Worker::Mixed(done) = event {
@@ -727,38 +748,10 @@ impl Installs {
                                         (entry.title.clone(), old.clone(), entry.version.clone())
                                     })
                                     .collect(),
-                                failure: done.failure.as_ref().map(|notice| {
-                                    let this = notice
-                                        .changes
-                                        .iter()
-                                        .find(|change| change.project == request.card);
-                                    let label = match this {
-                                        Some(change) if change.predecessor.is_some() => {
-                                            tr("Kept the working version").into()
-                                        }
-                                        Some(change) => change.reason.label(),
-                                        None => {
-                                            tr("Some mods stayed off or kept their old version")
-                                                .into()
-                                        }
-                                    };
-                                    let detail = notice
-                                        .changes
-                                        .iter()
-                                        .map(|change| {
-                                            trf(
-                                                "{mod}: {disposition}. {reason}",
-                                                &[
-                                                    ("mod", &change.title),
-                                                    ("disposition", &change.disposition()),
-                                                    ("reason", &change.reason.detail()),
-                                                ],
-                                            )
-                                        })
-                                        .collect::<Vec<_>>()
-                                        .join("\n\n");
-                                    (label, detail)
-                                }),
+                                failure: done
+                                    .failure
+                                    .as_ref()
+                                    .map(|notice| notice_failure(notice, &request.card)),
                             },
                             Err(InstallError::Compile(notice)) => Outcome {
                                 failure: Some((
@@ -1104,10 +1097,16 @@ impl Launcher {
                 &[("mod", name), ("from", from), ("to", to)],
             ));
         }
-        if lines.is_empty() && done.failure.is_none() {
+        // A failed install says why in a dialog as it ends (`install_failure`); only a hold,
+        // which lasts, stays on the page.
+        let failure = done
+            .failure
+            .clone()
+            .filter(|_| self.registry_install_hold(id).is_some());
+        if lines.is_empty() && failure.is_none() {
             return None;
         }
-        let failure = done.failure.clone().map(|(label, detail)| {
+        let failure = failure.map(|(label, detail)| {
             div()
                 .flex()
                 .items_center()
@@ -1819,6 +1818,33 @@ pub(crate) fn stage_fraction(step: InstallProgress) -> Option<f32> {
     }
 }
 
+/// What a registry install that finished but left mods off or on their old version says:
+/// a line about `card`'s own mod, or the batch, and each change's reason.
+fn notice_failure(notice: &BuildNotice, card: &str) -> (String, String) {
+    let this = notice.changes.iter().find(|change| change.project == card);
+    let label = match this {
+        Some(change) if change.predecessor.is_some() => tr("Kept the working version").into(),
+        Some(change) => change.reason.label(),
+        None => tr("Some mods stayed off or kept their old version").into(),
+    };
+    let detail = notice
+        .changes
+        .iter()
+        .map(|change| {
+            trf(
+                "{mod}: {disposition}. {reason}",
+                &[
+                    ("mod", &change.title),
+                    ("disposition", &change.disposition()),
+                    ("reason", &change.reason.detail()),
+                ],
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    (label, detail)
+}
+
 fn failure_line(error: &InstallError) -> &'static str {
     match error {
         InstallError::Refused(_) => tr("Can't install these mods together"),
@@ -1866,23 +1892,56 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_failed_install_says_why_on_the_card() {
-        let error = InstallError::Unproved(
-            "The mod registry index signature could not be verified.".into(),
-        );
-        let failed = Outcome {
-            failure: Some((failure_line(&error).into(), error.to_string())),
-            ..Outcome::default()
+    fn a_failed_install_says_why_in_a_dialog_not_on_the_card() {
+        let root = homes();
+        let installs = with_running(root.path());
+        let error = || {
+            InstallError::Unproved("The mod registry index signature could not be verified.".into())
         };
+        let (profile, why) = installs
+            .install_failure(&Worker::Done(Err(error())))
+            .unwrap();
+        assert_eq!(profile.id, "A");
         assert_eq!(
-            failed.note().unwrap(),
-            "Couldn't check that the mods fit\nThe mod registry index signature could not be verified."
+            why,
+            "Couldn't check that the mods fit\n\nThe mod registry index signature could not be verified."
         );
-        let bare = Outcome {
-            failure: Some(("Install cancelled.".into(), String::new())),
+        assert!(installs
+            .install_failure(&Worker::Done(Err(InstallError::Cancelled)))
+            .is_none());
+        // Installed, but a dependency was left off: the dialog says so too.
+        let left_off = InstalledBatch {
+            added: Vec::new(),
+            updated: Vec::new(),
+            failure: Some(BuildNotice {
+                changes: vec![sunrise_launcher::browser::sunrise::BuildChange {
+                    project: "lib".into(),
+                    title: "Lib".into(),
+                    reason: sunrise_launcher::browser::installed::InstallHold::Compile,
+                    predecessor: None,
+                }],
+                detail: String::new(),
+                log: None,
+            }),
+        };
+        let (_, why) = installs
+            .install_failure(&Worker::Done(Ok(left_off)))
+            .unwrap();
+        assert_eq!(
+            why,
+            "Some mods stayed off or kept their old version\n\nLib: Keep installed, but off. Its code couldn't build on your computer."
+        );
+        let clean = InstalledBatch {
+            added: Vec::new(),
+            updated: Vec::new(),
+            failure: None,
+        };
+        assert!(installs.install_failure(&Worker::Done(Ok(clean))).is_none());
+        let failed = Outcome {
+            failure: Some((failure_line(&error()).into(), error().to_string())),
             ..Outcome::default()
         };
-        assert_eq!(bare.note().unwrap(), "Install cancelled.");
+        assert_eq!(failed.note(), None);
     }
 
     pub(super) fn request(home: &Path, id: &str, target: &str) -> Request {

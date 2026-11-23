@@ -99,19 +99,34 @@ pub(super) fn prose(theme: crate::theme::Theme, text: &str) -> AnyElement {
     crate::markdown::render(text, &t)
 }
 
-/// "‹ Discover": the way back from a page.
+/// "‹ Discover": the way back from a page. Its padding widens the hit area and the negative
+/// margin keeps the label lined up with the page.
 pub(super) fn back(label: impl Into<SharedString>) -> Stateful<Div> {
+    let p = palette();
     div()
         .id("alt-project-back")
+        .group("alt-project-back")
         .reach()
         .self_start()
         .flex()
         .items_center()
-        .gap(px(8.))
+        .gap(px(4.))
+        .px(px(8.))
+        .py(px(4.))
+        .ml(px(-8.))
+        .my(px(-4.))
+        .rounded(px(6.))
         .text_size(px(tokens::LABEL))
-        .text_color(c(palette().muted))
+        .text_color(c(p.muted))
         .cursor_pointer()
-        .child("‹")
+        .hover(|s| s.bg(c(p.text).opacity(0.06)).text_color(c(p.text)))
+        .child(
+            crate::blocks::icon("chevron-right", 14., c(p.muted))
+                .with_transformation(gpui::Transformation::rotate(gpui::radians(
+                    std::f32::consts::PI,
+                )))
+                .group_hover("alt-project-back", |s| s.text_color(c(p.text))),
+        )
         .child(label.into())
 }
 
@@ -975,14 +990,13 @@ impl Launcher {
             .children(gallery)
             .children(body);
         project_frame()
-            .child(crate::scrollbar::wrap_page(
+            .child(crate::scrollbar::wrap_page_in_margin(
                 "project",
                 div()
                     .id("alt-project-scroll")
                     .flex_1()
                     .min_h_0()
                     .overflow_y_scroll()
-                    .pr(px(14.))
                     .flex()
                     .flex_col()
                     .gap(px(14.))
