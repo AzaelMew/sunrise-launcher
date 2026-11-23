@@ -24,7 +24,6 @@
   "Add from GitHub": "Ṣe afikun lati GitHub",
   "Address on this network": "Adirẹsi lori nẹtiwọki yii",
   "Adventure": "Ìrìn",
-  "After each session: frame-time percentiles and a 14-bucket histogram, tick times, peak memory and startup times, with your machine (OS, CPU and its cores and clocks, memory size, GPU, its memory and driver, drive type, screen size and refresh rate, laptop or desktop, on battery or not) and the settings that change performance.": "Lẹhin igba kọọkan: awọn ipin-akoko fireemu ati histogram 14-garawa, awọn akoko ami, iranti oke ati awọn akoko ibẹrẹ, pẹlu ẹrọ rẹ (OS, Sipiyu ati awọn ohun kohun ati awọn aago, iwọn iranti, GPU, iranti rẹ ati awakọ, iru awakọ, iwọn iboju ati iwọn isọdọtun, kọǹpútà alágbèéká tabi tabili tabili, lori batiri tabi rara) ati awọn eto ti o yipada iṣẹ.",
   "All": "Gbogbo",
   "All notes": "Gbogbo awọn akọsilẹ",
   "Allow": "Gbà láàyè",
@@ -499,7 +498,6 @@
   "Waiting for the server's log…": "Nduro de akọọlẹ olupin…",
   "Website": "Aaye ayelujara",
   "What players see under the server's name (the MOTD).": "Ohun ti awọn oṣere rii labẹ orukọ olupin (MOTD).",
-  "When the game crashes: the error, where in Sunrise's code it happened, your graphics adapter and settings. No log, no world or server, no user name in paths.": "Nigbati ere ba kọlu: aṣiṣe, nibo ni koodu Sunrise ti ṣẹlẹ, ohun ti nmu badọgba eya aworan ati awọn eto. Ko si log, ko si aye tabi olupin, ko si orukọ olumulo ni awọn ọna.",
   "While you play, the game sends an anonymous \"I'm playing\" ping once a minute, so the launcher can show how many people play Sunrise right now. It holds: a random number made when the game starts and forgotten when it closes, the Sunrise version, your OS (Linux, macOS or Windows), and whether you have a world open to LAN or friends. It doesn't hold: your account, your install ID, world or server names, or anything you do in the game, and the server doesn't keep your IP address. It is sent whatever the switches say.": "Lakoko ti o ba nṣere, ere naa firanṣẹ ping ailorukọ kan “Mo n ṣere” ni ẹẹkan iṣẹju kan, nitorinaa ifilọlẹ le ṣafihan iye eniyan ti nṣere Sunrise ni bayi. O dimu: nọmba ID ti a ṣe nigbati ere ba bẹrẹ ati gbagbe nigbati o ba tilekun, ẹya Sunrise, OS rẹ (Linux, macOS tabi Windows), ati boya o ni aye ti o ṣii si LAN tabi awọn ọrẹ. Ko ṣe idaduro: akọọlẹ rẹ, ID fifi sori ẹrọ rẹ, agbaye tabi awọn orukọ olupin, tabi ohunkohun ti o ṣe ninu ere, ati olupin naa ko tọju adiresi IP rẹ. O ti wa ni rán ohunkohun ti awọn yipada sọ.",
   "Who can join": "Tani o le darapo",
   "Who may join": "Tani o le darapọ mọ",
@@ -1902,5 +1900,7 @@
   "1 hour ago": "1 hour ago",
   "{count} hours ago": "{count} hours ago",
   "1 day ago": "1 day ago",
-  "{version} · {when}": "{version} · {when}"
+  "{version} · {when}": "{version} · {when}",
+  "After each session: frame-time percentiles and a 14-bucket histogram, tick times, peak memory and startup times, which of Sunrise's own steps held up frames of a quarter second or longer (their names in the code, how often and for how long), with your machine (OS, CPU and its cores and clocks, memory size, GPU, its memory and driver, drive type, screen size and refresh rate, laptop or desktop, on battery or not) and the settings that change performance.": "After each session: frame-time percentiles and a 14-bucket histogram, tick times, peak memory and startup times, which of Sunrise's own steps held up frames of a quarter second or longer (their names in the code, how often and for how long), with your machine (OS, CPU and its cores and clocks, memory size, GPU, its memory and driver, drive type, screen size and refresh rate, laptop or desktop, on battery or not) and the settings that change performance.",
+  "When the game crashes: the error, where in Sunrise's code it happened and on which of its threads, the native mod whose code crashed if one did, the Sunrise version, your graphics adapter and settings, and your machine (OS, CPU and its cores and clocks, memory size, GPU, its memory and driver, drive type, screen size and refresh rate, laptop or desktop, on battery or not). No log, no world or server, no user name in paths.": "When the game crashes: the error, where in Sunrise's code it happened and on which of its threads, the native mod whose code crashed if one did, the Sunrise version, your graphics adapter and settings, and your machine (OS, CPU and its cores and clocks, memory size, GPU, its memory and driver, drive type, screen size and refresh rate, laptop or desktop, on battery or not). No log, no world or server, no user name in paths."
 }

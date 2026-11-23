@@ -5079,8 +5079,8 @@ pub struct Settings {
     /// a theme being one look.
     #[serde(default)]
     pub appearance: Appearance,
-    /// The player has read what the "I'm playing" ping holds (`telemetry::PING`): on the
-    /// first-run question, or on the Play page once if they answered that before it existed.
+    /// The player has answered the data switches in Settings, where the "I'm playing" ping's
+    /// text (`telemetry::PING`) stands beside them.
     #[serde(default)]
     pub ping_notice_seen: bool,
     /// The player turned the anonymous "I'm playing" ping off (`telemetry::PING`): the game is

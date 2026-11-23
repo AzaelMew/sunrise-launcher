@@ -24,7 +24,6 @@
   "Add from GitHub": "Tambah daripada GitHub",
   "Address on this network": "Alamat di rangkaian ini",
   "Adventure": "Pengembaraan",
-  "After each session: frame-time percentiles and a 14-bucket histogram, tick times, peak memory and startup times, with your machine (OS, CPU and its cores and clocks, memory size, GPU, its memory and driver, drive type, screen size and refresh rate, laptop or desktop, on battery or not) and the settings that change performance.": "Selepas setiap sesi: persentil masa bingkai dan histogram 14 baldi, masa tanda, memori puncak dan masa permulaan, dengan mesin anda (OS, CPU dan teras dan jamnya, saiz memori, GPU, memori dan pemacunya, jenis pemacu, saiz skrin dan kadar segar semula, komputer riba atau desktop, pada bateri atau tidak) dan tetapan yang mengubah prestasi.",
   "All": "Semua",
   "All notes": "Semua nota",
   "Allow": "Benarkan",
@@ -499,7 +498,6 @@
   "Waiting for the server's log…": "Menunggu log pelayan…",
   "Website": "laman web",
   "What players see under the server's name (the MOTD).": "Perkara yang pemain lihat di bawah nama pelayan (MOTD).",
-  "When the game crashes: the error, where in Sunrise's code it happened, your graphics adapter and settings. No log, no world or server, no user name in paths.": "Apabila permainan ranap: ralat, di mana dalam kod Sunrise ia berlaku, penyesuai grafik dan tetapan anda. Tiada log, tiada dunia atau pelayan, tiada nama pengguna dalam laluan.",
   "While you play, the game sends an anonymous \"I'm playing\" ping once a minute, so the launcher can show how many people play Sunrise right now. It holds: a random number made when the game starts and forgotten when it closes, the Sunrise version, your OS (Linux, macOS or Windows), and whether you have a world open to LAN or friends. It doesn't hold: your account, your install ID, world or server names, or anything you do in the game, and the server doesn't keep your IP address. It is sent whatever the switches say.": "Semasa anda bermain, permainan ini menghantar ping \"Saya sedang bermain\" tanpa nama sekali seminit, jadi pelancar boleh menunjukkan bilangan orang yang bermain Sunrise sekarang. Ia mengandungi: nombor rawak yang dibuat apabila permainan bermula dan dilupakan apabila ia ditutup, versi Sunrise, OS anda (Linux, macOS atau Windows) dan sama ada anda mempunyai dunia yang terbuka kepada LAN atau rakan. Ia tidak memegang: akaun anda, ID pemasangan anda, dunia atau nama pelayan atau apa sahaja yang anda lakukan dalam permainan dan pelayan tidak menyimpan alamat IP anda. Ia dihantar apa sahaja yang dikatakan oleh suis.",
   "Who can join": "Siapa boleh join",
   "Who may join": "Siapa yang boleh menyertai",
@@ -1902,5 +1900,7 @@
   "1 hour ago": "1 hour ago",
   "{count} hours ago": "{count} hours ago",
   "1 day ago": "1 day ago",
-  "{version} · {when}": "{version} · {when}"
+  "{version} · {when}": "{version} · {when}",
+  "After each session: frame-time percentiles and a 14-bucket histogram, tick times, peak memory and startup times, which of Sunrise's own steps held up frames of a quarter second or longer (their names in the code, how often and for how long), with your machine (OS, CPU and its cores and clocks, memory size, GPU, its memory and driver, drive type, screen size and refresh rate, laptop or desktop, on battery or not) and the settings that change performance.": "After each session: frame-time percentiles and a 14-bucket histogram, tick times, peak memory and startup times, which of Sunrise's own steps held up frames of a quarter second or longer (their names in the code, how often and for how long), with your machine (OS, CPU and its cores and clocks, memory size, GPU, its memory and driver, drive type, screen size and refresh rate, laptop or desktop, on battery or not) and the settings that change performance.",
+  "When the game crashes: the error, where in Sunrise's code it happened and on which of its threads, the native mod whose code crashed if one did, the Sunrise version, your graphics adapter and settings, and your machine (OS, CPU and its cores and clocks, memory size, GPU, its memory and driver, drive type, screen size and refresh rate, laptop or desktop, on battery or not). No log, no world or server, no user name in paths.": "When the game crashes: the error, where in Sunrise's code it happened and on which of its threads, the native mod whose code crashed if one did, the Sunrise version, your graphics adapter and settings, and your machine (OS, CPU and its cores and clocks, memory size, GPU, its memory and driver, drive type, screen size and refresh rate, laptop or desktop, on battery or not). No log, no world or server, no user name in paths."
 }

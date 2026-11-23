@@ -24,7 +24,6 @@
   "Add from GitHub": "Cuir leis ó GitHub",
   "Address on this network": "Seoladh ar an líonra seo",
   "Adventure": "Eachtraíochta",
-  "After each session: frame-time percentiles and a 14-bucket histogram, tick times, peak memory and startup times, with your machine (OS, CPU and its cores and clocks, memory size, GPU, its memory and driver, drive type, screen size and refresh rate, laptop or desktop, on battery or not) and the settings that change performance.": "Tar éis gach seisiúin: peircintílí fráma-ama agus histeagram 14-buicéad, amanna tic, buaic-chuimhne agus amanna tosaithe, le do mheaisín (OS, LAP agus a chroíleacáin agus cloig, méid cuimhne, GPU, a chuimhne agus a thiománaí, cineál tiomána, méid scáileáin agus ráta athnuachana, ríomhaire glúine nó deasc, ar cheallraí nó nach ea) agus na socruithe a athraíonn feidhmíocht.",
   "All": "Gach",
   "All notes": "Gach nótaí",
   "Allow": "Ceadaigh",
@@ -499,7 +498,6 @@
   "Waiting for the server's log…": "Ag fanacht le logáil an fhreastalaí…",
   "Website": "Suíomh Gréasáin",
   "What players see under the server's name (the MOTD).": "Cad a fheiceann imreoirí faoi ainm an fhreastalaí (an MOTD).",
-  "When the game crashes: the error, where in Sunrise's code it happened, your graphics adapter and settings. No log, no world or server, no user name in paths.": "Nuair a thuairteanna an cluiche: an earráid, i gcás ina cód Sunrise ar tharla sé, do adapter grafaicí agus socruithe. Gan logáil, gan domhan nó freastalaí, gan ainm úsáideora ar chosáin.",
   "While you play, the game sends an anonymous \"I'm playing\" ping once a minute, so the launcher can show how many people play Sunrise right now. It holds: a random number made when the game starts and forgotten when it closes, the Sunrise version, your OS (Linux, macOS or Windows), and whether you have a world open to LAN or friends. It doesn't hold: your account, your install ID, world or server names, or anything you do in the game, and the server doesn't keep your IP address. It is sent whatever the switches say.": "Agus tú ag imirt, seolann an cluiche ping gan ainm \"Tá mé ag imirt\" uair sa nóiméad, ionas gur féidir leis an tosaitheoir a thaispeáint cé mhéad duine a imríonn Sunrise faoi láthair. Tá: uimhir randamach déanta nuair a thosaíonn an cluiche agus a ndéantar dearmad air nuair a dhúnann sé, an leagan Sunrise, do OS (Linux, macOS nó Windows), agus cibé an bhfuil domhan oscailte do LAN nó do chairde agat. Níl: do chuntas, d'aitheantas suiteála, ainmneacha domhanda nó freastalaí, nó aon rud a dhéanann tú sa chluiche, agus ní choinníonn an freastalaí do sheoladh IP. Seoltar é cibé rud a deir na lasca.",
   "Who can join": "Cé atá in ann páirt a ghlacadh",
   "Who may join": "Cé a fhéadfaidh a bheith páirteach",
@@ -1902,5 +1900,7 @@
   "1 hour ago": "1 hour ago",
   "{count} hours ago": "{count} hours ago",
   "1 day ago": "1 day ago",
-  "{version} · {when}": "{version} · {when}"
+  "{version} · {when}": "{version} · {when}",
+  "After each session: frame-time percentiles and a 14-bucket histogram, tick times, peak memory and startup times, which of Sunrise's own steps held up frames of a quarter second or longer (their names in the code, how often and for how long), with your machine (OS, CPU and its cores and clocks, memory size, GPU, its memory and driver, drive type, screen size and refresh rate, laptop or desktop, on battery or not) and the settings that change performance.": "After each session: frame-time percentiles and a 14-bucket histogram, tick times, peak memory and startup times, which of Sunrise's own steps held up frames of a quarter second or longer (their names in the code, how often and for how long), with your machine (OS, CPU and its cores and clocks, memory size, GPU, its memory and driver, drive type, screen size and refresh rate, laptop or desktop, on battery or not) and the settings that change performance.",
+  "When the game crashes: the error, where in Sunrise's code it happened and on which of its threads, the native mod whose code crashed if one did, the Sunrise version, your graphics adapter and settings, and your machine (OS, CPU and its cores and clocks, memory size, GPU, its memory and driver, drive type, screen size and refresh rate, laptop or desktop, on battery or not). No log, no world or server, no user name in paths.": "When the game crashes: the error, where in Sunrise's code it happened and on which of its threads, the native mod whose code crashed if one did, the Sunrise version, your graphics adapter and settings, and your machine (OS, CPU and its cores and clocks, memory size, GPU, its memory and driver, drive type, screen size and refresh rate, laptop or desktop, on battery or not). No log, no world or server, no user name in paths."
 }
