@@ -76,7 +76,7 @@ impl Resources {
                 preparer::run_staged(command, &handoff, log)?;
             }
         }
-        Self::seal_prepared(base, &preparation, &handoff)
+        Self::seal_prepared(base, &preparation, &handoff, None)
     }
 
     /// Finish the shared preparation under its existing lock, before a profile needs it.
@@ -374,16 +374,16 @@ mod tests {
         let stamp = source.join("sunrise-prepare.json");
         fs::write(&manifest, "{}").unwrap();
         fs::write(&stamp, r#"{"output_version":7}"#).unwrap();
-        Resources::seal(root, &source, |_| None).unwrap();
+        Resources::seal(root, &source, |_| Ok(None)).unwrap();
         assert_eq!(Resources::current(root).unwrap(), None);
 
         fs::write(&stamp, r#"{"output_version":8}"#).unwrap();
         fs::write(&manifest, r#"{"profile":"server"}"#).unwrap();
-        Resources::seal(root, &source, |_| None).unwrap();
+        Resources::seal(root, &source, |_| Ok(None)).unwrap();
         assert_eq!(Resources::current(root).unwrap(), None);
 
         fs::write(&manifest, "{}").unwrap();
-        let full = Resources::seal(root, &source, |_| None).unwrap();
+        let full = Resources::seal(root, &source, |_| Ok(None)).unwrap();
         assert_eq!(Resources::current(root).unwrap(), Some(full));
     }
 
