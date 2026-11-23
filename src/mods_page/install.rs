@@ -295,6 +295,31 @@ pub(crate) struct Outcome {
     pub(crate) failure: Option<(String, String)>,
 }
 
+impl Outcome {
+    /// The sentence under a card. A failure says why on the line under it, so a card explains
+    /// itself without opening the mod's page.
+    fn note(self) -> Option<String> {
+        if let Some((label, detail)) = self.failure {
+            return Some(match detail.trim().is_empty() || detail == label {
+                true => label,
+                false => format!("{label}\n{detail}"),
+            });
+        }
+        if !self.added.is_empty() {
+            return Some(trf(
+                "Also installed: {mods}",
+                &[("mods", &crate::mods::names(&self.added))],
+            ));
+        }
+        self.updated.first().map(|(name, from, to)| {
+            trf(
+                "Also updated: {mod} {from} → {to}",
+                &[("mod", name), ("from", from), ("to", to)],
+            )
+        })
+    }
+}
+
 impl Installs {
     pub(super) fn stage(&self) -> Option<InstallProgress> {
         self.running.as_ref().map(|run| run.stage)
@@ -752,6 +777,9 @@ impl Installs {
                                 ..Outcome::default()
                             },
                         };
+                        if let Some((line, detail)) = &outcome.failure {
+                            eprintln!("installing {}: {line}: {detail}", request.card);
+                        }
                         self.outcomes
                             .insert((run.profile.home.clone(), request.card), outcome.clone());
                         for id in request.ids {
@@ -1031,22 +1059,7 @@ impl Launcher {
     }
 
     pub(crate) fn registry_card_note(&self, id: &str) -> Option<String> {
-        let outcome = self.registry_outcome(id)?;
-        if let Some((label, _)) = outcome.failure {
-            return Some(label);
-        }
-        if !outcome.added.is_empty() {
-            return Some(trf(
-                "Also installed: {mods}",
-                &[("mods", &crate::mods::names(&outcome.added))],
-            ));
-        }
-        outcome.updated.first().map(|(name, from, to)| {
-            trf(
-                "Also updated: {mod} {from} → {to}",
-                &[("mod", name), ("from", from), ("to", to)],
-            )
-        })
+        self.registry_outcome(id)?.note()
     }
 
     fn registry_outcome(&self, id: &str) -> Option<Outcome> {
@@ -1845,6 +1858,26 @@ fn failure_line(error: &InstallError) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_failed_install_says_why_on_the_card() {
+        let error = InstallError::Unproved(
+            "The mod registry index signature could not be verified.".into(),
+        );
+        let failed = Outcome {
+            failure: Some((failure_line(&error).into(), error.to_string())),
+            ..Outcome::default()
+        };
+        assert_eq!(
+            failed.note().unwrap(),
+            "Couldn't check that the mods fit\nThe mod registry index signature could not be verified."
+        );
+        let bare = Outcome {
+            failure: Some(("Install cancelled.".into(), String::new())),
+            ..Outcome::default()
+        };
+        assert_eq!(bare.note().unwrap(), "Install cancelled.");
+    }
 
     pub(super) fn request(home: &Path, id: &str, target: &str) -> Request {
         let slug = home.file_name().unwrap().to_str().unwrap();
