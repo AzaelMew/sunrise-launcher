@@ -1,7 +1,7 @@
 //! What the Mods screens show, worked out from the registry index and the installed list:
 //! pure data in and out, no files, no network, no window. Everything here only reads.
 use super::build_run::State as BuildState;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashSet};
 use sunrise_launcher::browser::installed::Entry;
 use sunrise_launcher::i18n::{tr, trf};
 use sunrise_launcher::native_mods;
@@ -9,6 +9,7 @@ use sunrise_launcher_smod::index::{self, Index};
 use sunrise_launcher_smod::manifest::Side;
 
 pub(super) mod collection;
+pub(super) mod discover_v2;
 
 /// What a mod is made of: a native source bundle or a content-only `.smod`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -98,6 +99,7 @@ pub(super) struct Card {
     haystack: String,
 }
 
+#[cfg(test)]
 impl Card {
     /// Every fitting native mod is built on this computer (collections list their own members).
     pub(super) fn builds_locally(&self) -> bool {
@@ -183,27 +185,14 @@ pub(super) fn cards(index: &Index, game: &str) -> Vec<Card> {
     cards
 }
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Sort {
     Downloads,
-    Updated,
-    Newest,
     Name,
 }
 
-impl Sort {
-    pub(super) const ALL: [Sort; 4] = [Sort::Downloads, Sort::Updated, Sort::Newest, Sort::Name];
-
-    pub(super) fn label(self) -> &'static str {
-        match self {
-            Sort::Downloads => tr("Most downloaded"),
-            Sort::Updated => tr("Recently updated"),
-            Sort::Newest => tr("Newest"),
-            Sort::Name => tr("Name"),
-        }
-    }
-}
-
+#[cfg(test)]
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct Filters {
     pub(super) text: String,
@@ -213,6 +202,7 @@ pub(super) struct Filters {
     pub(super) sort: Sort,
 }
 
+#[cfg(test)]
 impl Default for Filters {
     fn default() -> Self {
         Self {
@@ -226,6 +216,7 @@ impl Default for Filters {
 }
 
 /// Indexes into `cards` that pass `f`, in the order asked for.
+#[cfg(test)]
 pub(super) fn discover(cards: &[Card], f: &Filters) -> Vec<usize> {
     let words: Vec<String> = f.text.split_whitespace().map(str::to_lowercase).collect();
     let mut shown: Vec<usize> = (0..cards.len())
@@ -242,34 +233,9 @@ pub(super) fn discover(cards: &[Card], f: &Filters) -> Vec<usize> {
         .collect();
     match f.sort {
         Sort::Downloads => shown.sort_by_key(|&i| std::cmp::Reverse(cards[i].downloads)),
-        Sort::Updated => shown.sort_by(|&a, &b| {
-            cards[b]
-                .updated
-                .cmp(&cards[a].updated)
-                .then(cards[b].downloads.cmp(&cards[a].downloads))
-        }),
-        Sort::Newest => shown.sort_by(|&a, &b| {
-            cards[b]
-                .first
-                .cmp(&cards[a].first)
-                .then(cards[b].downloads.cmp(&cards[a].downloads))
-        }),
         Sort::Name => shown.sort_by_cached_key(|&i| cards[i].name.to_lowercase()),
     }
     shown
-}
-
-/// The categories the mods carry, most used first.
-pub(super) fn categories(cards: &[Card]) -> Vec<String> {
-    let mut uses: HashMap<&str, usize> = HashMap::new();
-    for c in cards {
-        for k in &c.categories {
-            *uses.entry(k).or_default() += 1;
-        }
-    }
-    let mut all: Vec<(&str, usize)> = uses.into_iter().collect();
-    all.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
-    all.into_iter().map(|(k, _)| k.to_owned()).collect()
 }
 
 /// `6814` → `6.8k downloads`.

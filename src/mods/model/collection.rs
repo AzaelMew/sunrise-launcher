@@ -502,6 +502,7 @@ impl View {
 /// Whether a collection's card reads "Installed": every member that is picked by default and
 /// can be installed on this build is. A member left unticked by default, or one this build
 /// can't take, never keeps it from saying so.
+#[cfg(test)]
 pub(in crate::mods) fn installed(
     c: &Collection,
     cards: &[Card],
