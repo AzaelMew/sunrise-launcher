@@ -499,3 +499,32 @@ fn the_production_key_verifies_the_first_published_index() {
     assert_eq!(index.serial, 1795408124);
     assert!(index.build("dev-2026-11-22-7cfdf81").is_some());
 }
+
+#[test]
+fn a_state_naming_another_file_is_refused_and_never_deletes_the_serial_floor() {
+    let temp = tempfile::tempdir().unwrap();
+    let cache = temp.path().join(CACHE_DIR);
+    let mut store = Store::new(cache.clone(), REGISTRY_KEYS);
+    let (bytes_41, sig_41) = load_fixture("two-ports-index.json");
+    store
+        .load_from_fetch(Ok((bytes_41, sig_41)), now_2026_11_24())
+        .unwrap();
+
+    // A damaged state whose snapshot would derive the state file's own name.
+    fs::write(
+        cache.join(STATE_FILE),
+        br#"{"highest_serial":41,"active":{"snapshot":"state"}}"#,
+    )
+    .unwrap();
+    let (bytes_42, sig_42) = load_fixture("serial-42.json");
+    let mut reopened = Store::new(cache.clone(), REGISTRY_KEYS);
+    assert!(matches!(
+        reopened.load_from_fetch(Ok((bytes_42, sig_42)), now_2026_11_24()),
+        Err(LoadError::CorruptState(_))
+    ));
+    assert!(matches!(
+        reopened.load_cached(now_2026_11_24()),
+        Err(LoadError::CorruptState(_))
+    ));
+    assert!(cache.join(STATE_FILE).exists());
+}
