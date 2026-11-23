@@ -1858,5 +1858,8 @@
   "Switching {mod} to {repo}": "Switching {mod} to {repo}",
   "Your current port stays intact if you cancel.": "Your current port stays intact if you cancel.",
   "Uses {id} · checked after switch": "Uses {id} · checked after switch",
-  "Optional {id} plugin · checked after switch": "Optional {id} plugin · checked after switch"
+  "Optional {id} plugin · checked after switch": "Optional {id} plugin · checked after switch",
+  "No mods are listed for {target} yet": "No mods are listed for {target} yet",
+  "The registry lists mods for recent Sunrise builds. Turn on Show all to see mods for other builds.": "The registry lists mods for recent Sunrise builds. Turn on Show all to see mods for other builds.",
+  "Mods show up here once the registry lists releases for this build.": "Mods show up here once the registry lists releases for this build."
 }

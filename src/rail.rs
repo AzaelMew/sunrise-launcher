@@ -126,7 +126,7 @@ impl Launcher {
             .map_or(at_rest, |fade| fade.value(now).clamp(0., 1.))
     }
 
-    fn profile_lock(&self) -> Option<&'static str> {
+    pub(super) fn profile_lock(&self) -> Option<&'static str> {
         profile_lock_reason(
             &self.launch_activity(),
             !self.location_unavailable,
