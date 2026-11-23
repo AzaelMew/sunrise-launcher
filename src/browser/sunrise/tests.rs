@@ -45,6 +45,7 @@ fn seed_installed_hud(index: &Index, home: &Path) -> installed::Entry {
     let entry = installed::Entry {
         source: SourceId::Sunrise,
         project: p.id.clone(),
+        mod_id: None,
         slug: p.id.clone(),
         title: p.name.clone(),
         kind: Kind::Mod,
@@ -56,6 +57,7 @@ fn seed_installed_hud(index: &Index, home: &Path) -> installed::Entry {
         dependency: false,
         verdict: Some("Verified".into()),
         install_hold: None,
+        repository: None,
     };
     let mut list = installed::Installed::load(home);
     list.entries

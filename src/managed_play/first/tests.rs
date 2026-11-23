@@ -568,6 +568,7 @@ fn home_read_recovers_the_first_switch_receipt_after_a_killed_commit() {
             HeldSource::Registry {
                 project: "fireflies".into(),
                 version: "1.0".into(),
+                repository: None,
             },
             true,
             HeldReason::NoFit {

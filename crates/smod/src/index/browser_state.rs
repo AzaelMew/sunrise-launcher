@@ -257,9 +257,9 @@ fn reconcile_locked(
     }
 }
 
-/// Whether `entry` is the registry's row for project `id`.
+/// Whether `entry` is the registry's row for mod or project `id`.
 fn owned_by(entry: &Value, id: &str) -> bool {
-    entry["source"] == "sunrise" && entry["project"] == id
+    entry["source"] == "sunrise" && (entry["mod_id"].as_str() == Some(id) || entry["project"] == id)
 }
 
 fn manifest_document(path: &Path) -> Result<Value, RecoveryProblem> {
@@ -307,9 +307,23 @@ impl Installed {
     }
 
     fn record(&mut self, entry: Value) {
-        let id = entry["project"].clone();
-        self.entries
-            .retain(|e| !(e["source"] == "sunrise" && e["project"] == id));
+        let project = entry["project"].as_str().map(str::to_owned);
+        let mod_id = entry["mod_id"].as_str().map(str::to_owned);
+        self.entries.retain(|e| {
+            if e["source"] != "sunrise" {
+                return true;
+            }
+            if project.as_deref().is_some_and(|p| e["project"] == p) {
+                return false;
+            }
+            if mod_id
+                .as_deref()
+                .is_some_and(|m| e["mod_id"].as_str() == Some(m) || e["project"] == m)
+            {
+                return false;
+            }
+            true
+        });
         self.entries.push(entry);
     }
 
