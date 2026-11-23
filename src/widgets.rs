@@ -535,9 +535,12 @@ pub(crate) fn progress_bar(fraction: Option<(f32, f32)>, t: &Theme) -> Div {
             d.rounded_full()
                 .bg(glass_ui::color(glass_ui::look().accent_soft))
         });
+    // Full width and never resized by its parent's flex: in a column, a growing track's basis of
+    // 0 left it no height, so the bar was never seen while its gap still took room.
     let track = div()
         .relative()
-        .flex_1()
+        .flex_none()
+        .w_full()
         .h(px(6.))
         .bg(plate::alpha(n.card_hi, n.card_hi_alpha))
         .overflow_hidden()

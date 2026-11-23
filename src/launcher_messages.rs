@@ -559,6 +559,9 @@ impl Launcher {
                                 .record_since("launcher.play_to_game_frame_ms", pressed);
                         }
                     }
+                    if job == Job::Prepare {
+                        self.follow_switch_preparation();
+                    }
                     // The MCP server keeps its own server's log; the launcher's are the preparer's
                     // and the game's.
                     if job != Job::Server {
