@@ -587,7 +587,9 @@ impl Launcher {
                     )
                     .w_full()
                     .h(px(tokens::ACTION));
-                    if busy {
+                    let stale_source = nightly::installed_source(row).is_some()
+                        && !self.nightly_catalogue_current();
+                    if busy || stale_source {
                         dim(b).into_any_element()
                     } else {
                         let row = row.clone();

@@ -1349,7 +1349,7 @@ pub use registry_install::{
     InstallProgress, InstalledBatch, InstalledV2Mod, ManualRelease, NativeQuestion, PastedSource,
     PlannedV2Release, PreparedSource, ProviderCandidate, ProviderChoiceNeeded, ProviderConflict,
     ProviderSwitchPreview, PublisherChangeQuestion, ResolveQuestion, SourceDependency, SourceError,
-    SourceHooks, SourceRequest, SwitchDecision, SwitchHooks, SwitchQuestion, Switched,
+    SourceHooks, SourceProof, SourceRequest, SwitchDecision, SwitchHooks, SwitchQuestion, Switched,
     UpdateRequest, V2AffectedDependent, V2Hooks, V2InstallOptions, V2Ownership, V2Plan,
     V2ProviderSwitchHooks, V2SwitchHooks,
 };
