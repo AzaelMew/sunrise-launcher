@@ -438,16 +438,19 @@ impl Fixture {
         fs::remove_file(self.home.join("args")).unwrap();
     }
 
-    fn decision_worker(&self, mode: &str) {
+    fn decision_worker_command(&self, mode: &str) -> Command {
         let mut worker = Command::new(std::env::current_exe().unwrap());
         for (key, value) in self.registry_client(&[]).get_envs() {
             worker.env(key, value.unwrap());
         }
-        let out = worker
+        worker
             .args(["--exact", "install::profile_decision_worker", "--nocapture"])
-            .env("FIXTURE_PROFILE_DECISION", mode)
-            .output()
-            .unwrap();
+            .env("FIXTURE_PROFILE_DECISION", mode);
+        worker
+    }
+
+    fn decision_worker(&self, mode: &str) {
+        let out = self.decision_worker_command(mode).output().unwrap();
         assert!(
             out.status.success(),
             "{}\n{}",
@@ -586,15 +589,7 @@ fn switch_holds_content_in_place_and_an_override_cannot_replace_it() {
             // Isolate replacement authority from the separate saved-world decision.
             fs::rename(world.parent().unwrap(), fixture.root.join("verified-save")).unwrap();
         } else {
-            let switched = fixture
-                .registry_client(&["--json", "switch", OTHER])
-                .output()
-                .unwrap();
-            assert!(switched.status.success(), "{switched:?}");
-            assert_eq!(
-                serde_json::from_slice::<Value>(&switched.stdout).unwrap()["build"],
-                OTHER
-            );
+            fixture.decision_worker("switch-package-already-off");
         }
         let active = Active::parse(&fixture.pointer()).unwrap();
         assert_eq!(active.base(), OTHER);
@@ -841,15 +836,7 @@ fn switch_takedowns_never_delete_old_files_on_the_word_of_an_override() {
             });
         }
         fixture.publish_registry(&registry);
-        let result = fixture
-            .registry_client(&["--json", "switch", OTHER])
-            .output()
-            .unwrap();
-        assert!(
-            result.status.success(),
-            "{}",
-            String::from_utf8_lossy(&result.stderr)
-        );
+        fixture.decision_worker("switch-package-takedowns");
         let active = Active::parse(&fixture.pointer()).unwrap();
         assert!(active.pending_changes().unwrap().removed.is_empty());
         let holds = active.holds().collect::<Vec<_>>();
@@ -1069,15 +1056,34 @@ fn profile_decision_worker() {
         assert!(result.err().unwrap().contains("profile was replaced"));
         return;
     }
-    if mode == "switch-native-catalogue-mismatch" {
-        sunrise_launcher::backend::Settings::load()
-            .allow_native_mods()
-            .unwrap();
+    if mode.starts_with("switch-creatures-") {
+        native_retry::creature_decision_worker(&mode, &instance, identity);
+        return;
+    }
+    if mode.starts_with("switch-package-") {
+        let (tag, expected, unproved, trial_count) = match mode.as_str() {
+            "switch-package-catalogue-mismatch" => (OTHER, vec!["Night Light"], false, 2),
+            "switch-package-no-consent" => (OTHER, vec!["Night Light"], true, 2),
+            "switch-package-newer-list" => {
+                ("v26.4-fixture", vec!["Lanterns", "Night Light"], true, 3)
+            }
+            "switch-package-already-off" => (OTHER, vec!["Fireflies"], false, 1),
+            "switch-package-takedowns" => {
+                (OTHER, vec!["Lantern Core", "Private Lanterns"], false, 1)
+            }
+            _ => unreachable!(),
+        };
+        if mode == "switch-package-catalogue-mismatch" {
+            sunrise_launcher::backend::Settings::load()
+                .allow_native_mods()
+                .unwrap();
+        }
         let trials = std::cell::Cell::new(0);
+        let approvals = std::cell::Cell::new(0);
         let result = switch_build(
             &instance,
             identity,
-            OTHER,
+            tag,
             SwitchHooks {
                 cancellation: &Cancellation::default(),
                 progress: &|step| {
@@ -1086,12 +1092,24 @@ fn profile_decision_worker() {
                     }
                 },
                 registry_crates: None,
-                approve: &|_| panic!("no worlds in the fixture"),
+                approve: &|q| {
+                    approvals.set(approvals.get() + 1);
+                    let (off, other) = if unproved {
+                        (&q.unproved, &q.held)
+                    } else {
+                        (&q.held, &q.unproved)
+                    };
+                    assert_eq!(*off, expected);
+                    assert!(other.is_empty());
+                    assert!(!q.worlds.needed());
+                    Ok(SwitchDecision::TurnOff)
+                },
                 at_cutoff: &|| Ok(()),
             },
         );
         assert!(matches!(result.unwrap(), Switched::Changed(_)));
-        assert_eq!(trials.get(), 2, "try native against the exact target, then keep the archive off only after a proved revision mismatch");
+        assert_eq!(approvals.get(), 1);
+        assert_eq!(trials.get(), trial_count);
         return;
     }
     let path = PathBuf::from(std::env::var_os("SUNRISE_MOD_INDEX").unwrap());
@@ -1143,7 +1161,11 @@ fn profile_decision_worker() {
                         assert_eq!(q.worlds.newer, ["Glass Basin"]);
                     }
                     assert_eq!(q.worlds.affected[0].world, "Glass Basin");
-                    Ok(decide())
+                    Ok(if decide() {
+                        SwitchDecision::TurnOff
+                    } else {
+                        SwitchDecision::Cancel
+                    })
                 },
                 at_cutoff: &|| {
                     cutoff.set(cutoff.get() + 1);

@@ -11,7 +11,7 @@ pub struct SwitchHooks<'a> {
     pub cancellation: &'a native_mods::Cancellation,
     pub progress: &'a dyn Fn(InstallProgress),
     pub registry_crates: Option<&'a dyn Fn(&native_mods::Consent) -> bool>,
-    pub approve: &'a dyn Fn(&SwitchQuestion) -> Result<bool, String>,
+    pub approve: &'a dyn Fn(&SwitchQuestion) -> Result<SwitchDecision, String>,
     pub at_cutoff: &'a dyn Fn() -> Result<(), String>,
 }
 
@@ -25,22 +25,117 @@ pub struct SwitchQuestion {
     pub removed: Vec<(String, String)>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SwitchDecision {
+    Cancel,
+    TurnOff,
+    Remove,
+}
+
 impl SwitchQuestion {
+    pub fn needed(&self) -> bool {
+        self.worlds.needed() || self.has_omissions() || !self.removed.is_empty()
+    }
+
+    pub fn has_omissions(&self) -> bool {
+        !self.held.is_empty() || !self.unproved.is_empty()
+    }
+
+    pub fn omission_summary(&self) -> String {
+        let count = self.held.len() + self.unproved.len();
+        if count == 1 {
+            tr("1 mod can’t move to this build yet. You can keep it installed but turned off, or remove it.").into()
+        } else {
+            trf(
+                "{count} mods can’t move to this build yet. You can keep them installed but turned off, or remove them.",
+                &[("count", &count.to_string())],
+            )
+        }
+    }
+
     pub fn hold_lines(&self) -> impl Iterator<Item = String> + '_ {
         self.held
             .iter()
-            .map(|name| {
-                trf(
-                    "{mod} will be turned off. Needs an update from its author.",
-                    &[("mod", name)],
-                )
+            .map(|name| trf("{mod} — Not compatible with this build.", &[("mod", name)]))
+            .chain(
+                self.unproved
+                    .iter()
+                    .map(|name| trf("{mod} — Fit could not be verified.", &[("mod", name)])),
+            )
+    }
+
+    pub fn world_lines(&self) -> Vec<String> {
+        #[derive(Default)]
+        struct Summary<'a> {
+            newer: bool,
+            unknown_order: bool,
+            mods: Option<&'a [String]>,
+        }
+        let mut by_world: BTreeMap<&str, Summary<'_>> = BTreeMap::new();
+        for risk in &self.worlds.affected {
+            if !risk.mods.is_empty() {
+                by_world.entry(risk.world.as_str()).or_default().mods = Some(&risk.mods);
+            }
+        }
+        for world in &self.worlds.newer {
+            by_world.entry(world.as_str()).or_default().newer = true;
+        }
+        for world in &self.worlds.unknown_order {
+            by_world.entry(world.as_str()).or_default().unknown_order = true;
+        }
+        let omitted: BTreeSet<&str> = self
+            .held
+            .iter()
+            .chain(&self.unproved)
+            .map(String::as_str)
+            .collect();
+        by_world
+            .into_iter()
+            .filter_map(|(world, summary)| {
+                let age = if summary.newer {
+                    Some(tr("last played on a newer game"))
+                } else if summary.unknown_order {
+                    Some(tr("last game build is unknown"))
+                } else {
+                    None
+                };
+                let mods = summary.mods.map(|list| {
+                    let listed: BTreeSet<&str> = list.iter().map(String::as_str).collect();
+                    if !omitted.is_empty() && listed == omitted {
+                        tr("content from the mods above may be lost").into()
+                    } else if !omitted.is_empty() && omitted.is_subset(&listed) {
+                        let extra: Vec<_> = list
+                            .iter()
+                            .map(String::as_str)
+                            .filter(|name| !omitted.contains(*name))
+                            .collect();
+                        trf(
+                            "content from the mods above and {mods} may be lost",
+                            &[("mods", &extra.join(", "))],
+                        )
+                    } else {
+                        trf(
+                            "content from these mods may be lost: {mods}",
+                            &[("mods", &list.join(", "))],
+                        )
+                    }
+                });
+                match (age, mods) {
+                    (Some(age), Some(mods)) => Some(trf(
+                        "{world}: {age}; {mods}.",
+                        &[("world", world), ("age", age), ("mods", &mods)],
+                    )),
+                    (Some(age), None) => {
+                        Some(trf("{world}: {age}.", &[("world", world), ("age", age)]))
+                    }
+                    (None, Some(mods)) => Some(trf(
+                        "{world}: {mods}.",
+                        &[("world", world), ("mods", &mods)],
+                    )),
+                    (None, None) => None,
+                }
             })
-            .chain(self.unproved.iter().map(|name| {
-                trf(
-                    "{mod} will be turned off. Fit could not be verified.",
-                    &[("mod", name)],
-                )
-            }))
+            .collect()
     }
 }
 
@@ -128,7 +223,7 @@ pub fn switch_build(
         .prefix("switch-download-")
         .tempdir_in(old.path())
         .map_err(|e| at(old.path(), e))?;
-    let choices = choices(
+    let mut choices = choices(
         &original,
         &catalogue,
         local,
@@ -136,37 +231,40 @@ pub fn switch_build(
         download.path(),
         hooks.progress,
     )?;
+    let mut omissions = Omissions {
+        unproved: prune_missing_uses(&mut choices, &original, tag)?,
+        ..Omissions::default()
+    };
+    let prove = |home: &Path| {
+        edit.prove(
+            home,
+            instance.native_profile,
+            hooks.cancellation,
+            |step| super::build_progress(step, hooks.progress),
+            hooks.registry_crates,
+            None,
+        )
+    };
     let mut selected = None;
-    let mut omissions = Omissions::default();
-    best_survivor_set(&choices, &original.mods, |set| {
+    best_survivor_set(&mut choices, &original.mods, |set| {
+        let mut rejected = BTreeSet::new();
         (hooks.progress)(InstallProgress::Preparing);
         let Some(enabled) = enabled_set(&set, &original.mods) else {
-            return Ok(false);
+            return Ok(Trial::Conflict);
         };
         let next = edit.candidate()?;
         apply(next.path(), &original, &set, &enabled)?;
         validate_enabled(next.path(), &catalogue, official.as_ref()).map_err(|e| e.to_string())?;
-        let prove = |home: &Path| {
-            edit.prove(
-                home,
-                instance.native_profile,
-                hooks.cancellation,
-                |step| {
-                    super::build_progress(step, hooks.progress);
-                },
-                hooks.registry_crates,
-                None,
-            )
-        };
         let Some(proof) = exact_image(
             prove(next.path()),
             &set,
             &enabled,
             hooks.cancellation,
             &mut omissions,
+            &mut rejected,
         )?
         else {
-            return Ok(false);
+            return Ok(Trial::reject(rejected));
         };
         // An intentionally off native choice still needs proof for its legitimate activation.
         // It may activate its required off dependencies, but never evict another enabled mod.
@@ -176,7 +274,7 @@ pub fn switch_build(
             }
             let mut activated = enabled.clone();
             if !activate(id, &set, &mut activated) || !fits(&set, &activated) {
-                return Ok(false);
+                return Ok(Trial::Conflict);
             }
             let trial = edit.candidate()?;
             apply(trial.path(), &original, &set, &activated)?;
@@ -186,23 +284,27 @@ pub fn switch_build(
                 &activated,
                 hooks.cancellation,
                 &mut omissions,
+                &mut rejected,
             )?
             .is_none()
             {
-                return Ok(false);
+                return Ok(Trial::reject(rejected));
             }
         }
-        selected = Some((next, proof, set));
-        Ok(true)
+        let kept = set.keys().map(|&id| id.to_owned()).collect::<BTreeSet<_>>();
+        let replaced = set
+            .iter()
+            .filter(|(_, package)| package.replacement.is_some())
+            .map(|(&id, _)| id.to_owned())
+            .collect::<Vec<_>>();
+        selected = Some((next, proof, kept, replaced));
+        Ok(Trial::Fit)
     })?;
-    let (next, proof, set) = selected.ok_or_else(unproved_switch)?;
+    let (next, mut proof, kept, replaced) = selected.ok_or_else(unproved_switch)?;
     let mut holds = Vec::new();
-    let mut held = Vec::new();
-    let mut unknown = Vec::new();
     for (id, old) in &original.mods {
         let manifest = &old.seen.package.manifest;
-        let chosen = set.get(id.as_str());
-        if chosen.is_none() && !original.removed.contains_key(id) && !old.held {
+        if !kept.contains(id) && !original.removed.contains_key(id) && !old.held {
             let path = &old.seen.package.path;
             let directory = path
                 .parent()
@@ -236,11 +338,6 @@ pub fn switch_build(
                     detail: None,
                 },
             };
-            if reason.unproved() {
-                unknown.push(manifest.name.clone());
-            } else {
-                held.push(manifest.name.clone());
-            }
             holds.push(Held::new(
                 id.clone(),
                 manifest.name.replace(char::is_control, " "),
@@ -252,6 +349,7 @@ pub fn switch_build(
             )?);
         }
     }
+    let (held, unknown, hold_labels) = omission_labels(&holds);
     let affected = crate::worlds::unproved_mod_effects(
         old.path(),
         edit.current(),
@@ -259,11 +357,12 @@ pub fn switch_build(
         // The staged image proves compatibility with the target, not that the old
         // game and the new one interpret saved definitions in the same way.
         None,
-        original.removed.keys().map(String::as_str).chain(
-            set.iter()
-                .filter(|(_, package)| package.replacement.is_some())
-                .map(|(&id, _)| id),
-        ),
+        original
+            .removed
+            .keys()
+            .chain(&replaced)
+            .map(String::as_str)
+            .chain(holds.iter().map(Held::id)),
     )?;
     let resources = edit.switch_resources()?;
     let mut order = None;
@@ -275,7 +374,12 @@ pub fn switch_build(
     let (fence, worlds) = Fence::hold(
         &instance.home,
         affected,
-        |id| &original.mods[id].seen.package.manifest.name,
+        |id| {
+            hold_labels
+                .get(id)
+                .map(String::as_str)
+                .unwrap_or(&original.mods[id].seen.package.manifest.name)
+        },
         Some(TargetAge {
             data_version: backend::prepared_world_version(&resources),
             compare_saved: &mut compare,
@@ -288,13 +392,45 @@ pub fn switch_build(
         unproved: unknown,
         removed: original.removed.values().cloned().collect(),
     };
-    if question.worlds.needed() && !(hooks.approve)(&question)? {
-        return Ok(Switched::Stayed);
+    let mut removed = original.removed;
+    let mut removal = None;
+    if question.needed() {
+        match (hooks.approve)(&question)? {
+            SwitchDecision::Cancel => return Ok(Switched::Stayed),
+            SwitchDecision::TurnOff => (),
+            SwitchDecision::Remove if !holds.is_empty() => {
+                let present = inventory(next.path(), None)?;
+                let staged = mutations::stage_removal(
+                    &instance.home,
+                    next.path(),
+                    edit.current(),
+                    holds.iter().map(Held::id),
+                    &present,
+                )
+                .map_err(|error| error.to_string())?;
+                removed.extend(staged.archives.iter().map(|archive| {
+                    (
+                        archive.target.id.clone(),
+                        (
+                            archive.target.name.clone(),
+                            tr("Removed when switching builds").into(),
+                        ),
+                    )
+                }));
+                holds.clear();
+                proof = prove(next.path()).map_err(String::from)?;
+                removal = Some(staged);
+            }
+            SwitchDecision::Remove => (),
+        }
     }
-    let active = edit.publish_switch(proof, hooks.cancellation, holds, original.removed, || {
+    let active = edit.publish_switch(proof, hooks.cancellation, holds, removed, || {
         let (_, current, proof) = super::super::complete_index(&source, local)?;
         if current != evidence || proof.is_some() != official.is_some() {
             return Err(tr("The mod registry changed while the switch was being prepared. Nothing was switched.").into());
+        }
+        if let Some(removal) = removal {
+            removal.revalidate(&instance.home)?;
         }
         fence.revalidate(&instance.home)
     }, || {
@@ -338,14 +474,9 @@ impl<'a> Originals<'a> {
         let mut removed = BTreeMap::new();
         for (id, seen) in inventory(home, official)? {
             let manifest = &seen.package.manifest;
-            let origin_at = crate::github_mods::origin_path(home, &id);
-            let github = match fs::symlink_metadata(&origin_at) {
-                Ok(meta) if meta.is_file() => {
-                    Some(crate::github_mods::origin(home, &id).ok_or_else(unproved_switch)?)
-                }
-                Err(error) if error.kind() == io::ErrorKind::NotFound => None,
-                _ => return Err(unproved_switch()),
-            };
+            let github = seen
+                .verified_github_origin(home)
+                .map_err(|()| unproved_switch())?;
             let has_row = doc.row(&id)?.is_some();
             if has_row != seen.registry_claim || (has_row && github.is_some()) {
                 return Err(unproved_switch());
@@ -356,18 +487,6 @@ impl<'a> Originals<'a> {
                 .as_ref()
                 .is_some_and(|origin| origin.source.is_some());
             let source = if let Some(origin) = github {
-                let matches = if built_from_source {
-                    seen.github_origin(home).as_ref() == Some(&origin)
-                } else {
-                    // Older GitHub receipts can sit beside a flat, local package. They
-                    // identify its bytes for holds but do not grant registry ownership.
-                    origin.id == id
-                        && origin.version == manifest.version
-                        && seen.digest.as_deref() == Some(&origin.sha256)
-                };
-                if !matches {
-                    return Err(unproved_switch());
-                }
                 HeldSource::Github {
                     owner: origin.owner,
                     repo: origin.repo,
@@ -655,49 +774,178 @@ pub(super) fn sha256_bytes(hex: &str) -> Result<[u8; 32], String> {
     Ok(bytes)
 }
 
-fn best_survivor_set<'a>(
-    slots: &'a Choices,
+fn omission_labels(holds: &[Held]) -> (Vec<String>, Vec<String>, BTreeMap<String, String>) {
+    let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+    for hold in holds {
+        *counts.entry(hold.title().to_lowercase()).or_default() += 1;
+    }
+    let mut held = Vec::new();
+    let mut unproved = Vec::new();
+    let mut labels = BTreeMap::new();
+    for hold in holds {
+        let label = if counts[&hold.title().to_lowercase()] > 1 {
+            format!("{} ({})", hold.title(), hold.id())
+        } else {
+            hold.title().to_owned()
+        };
+        labels.insert(hold.id().to_owned(), label.clone());
+        if hold.reason().unproved() {
+            unproved.push(label);
+        } else {
+            held.push(label);
+        }
+    }
+    (held, unproved, labels)
+}
+
+// A bare native archive pinned to a different build has no cross-build proof to try.
+// Keep alternate versions eligible and leave any supplied uses list to the target SDK.
+// Local developer builds require the exact checkout revision, so a mismatch there is a
+// known incompatibility rather than an unverified fit.
+fn prune_missing_uses(
+    slots: &mut Choices,
+    original: &Originals<'_>,
+    tag: &str,
+) -> Result<BTreeSet<String>, String> {
+    let developer = crate::developer_install::uses_developer(tag);
+    let mut revision = None;
+    let mut omitted = BTreeSet::new();
+    for (id, choices) in slots.iter_mut().filter(|(_, choices)| !choices.is_empty()) {
+        for choice in std::mem::take(choices) {
+            if let Some(native) = &choice.manifest.native {
+                // If the full revision isn't known, leave the verdict to the exact builder.
+                let target = revision.get_or_insert_with(|| native_mods::revision_of(tag).ok());
+                if target
+                    .as_ref()
+                    .is_some_and(|target| *target != native.sunrise)
+                {
+                    let path = match &choice.replacement {
+                        Some((file, _)) => file,
+                        None => &original.mods[id].seen.package.path,
+                    };
+                    let archive =
+                        zip::ZipArchive::new(fs::File::open(path).map_err(|e| at(path, e))?)
+                            .map_err(|e| at(path, e))?;
+                    if archive
+                        .index_for_name(sunrise_launcher_smod::manifest::USES_FILE)
+                        .is_none()
+                    {
+                        continue;
+                    }
+                }
+            }
+            choices.push(choice);
+        }
+        if choices.is_empty() && !developer {
+            omitted.insert(id.clone());
+        }
+    }
+    Ok(prune_dependents(slots, &omitted))
+}
+
+fn prune_dependents(slots: &mut Choices, unproved: &BTreeSet<String>) -> BTreeSet<String> {
+    let variants = || {
+        slots
+            .iter()
+            .filter(|(_, choices)| !choices.is_empty())
+            .map(|(id, choices)| (id.as_str(), choices.iter()))
+    };
+    let mut unfit: BTreeSet<_> = slots
+        .iter()
+        .filter(|(id, choices)| choices.is_empty() && !unproved.contains(*id))
+        .map(|(id, _)| id.as_str())
+        .collect();
+    spread_to_dependents(variants(), &mut unfit);
+    let mut unknown: BTreeSet<_> = unproved.iter().map(String::as_str).collect();
+    spread_to_dependents(variants(), &mut unknown);
+    let unknown = unknown
+        .difference(&unfit)
+        .map(|&id| id.to_owned())
+        .collect();
+    let mut unavailable: BTreeSet<_> = slots
+        .iter()
+        .filter(|(_, choices)| choices.is_empty())
+        .map(|(id, _)| id.as_str())
+        .collect();
+    spread_to_dependents(variants(), &mut unavailable);
+    let unavailable: BTreeSet<_> = unavailable.into_iter().map(str::to_owned).collect();
+    slots.retain(|id, choices| {
+        if unavailable.contains(id) {
+            return false;
+        }
+        choices.retain(|choice| {
+            !choice
+                .manifest
+                .required_client_dependencies()
+                .any(|(dep, _)| unavailable.contains(dep))
+        });
+        true
+    });
+    unknown
+}
+
+type Rejected = BTreeSet<(String, String)>;
+
+enum Trial {
+    Fit,
+    Conflict,
+    Rejected(Rejected),
+}
+
+impl Trial {
+    fn reject(rejected: Rejected) -> Self {
+        if rejected.is_empty() {
+            Self::Conflict
+        } else {
+            Self::Rejected(rejected)
+        }
+    }
+}
+
+fn best_survivor_set(
+    slots: &mut Choices,
     original: &BTreeMap<String, Original>,
-    mut trial: impl FnMut(Set<'a>) -> Result<bool, String>,
+    mut trial: impl FnMut(Set<'_>) -> Result<Trial, String>,
 ) -> Result<(), String> {
-    struct Search<'a> {
+    struct Search<'a, 'budget> {
         slots: Vec<(&'a str, &'a [Package], bool)>,
         remaining: Vec<usize>,
-        checked: usize,
+        checked: &'budget mut usize,
     }
-    impl<'a> Search<'a> {
+    impl<'a> Search<'a, '_> {
         fn rank(
             &mut self,
             at: usize,
             retained: usize,
             chosen: &mut Set<'a>,
-            trial: &mut impl FnMut(Set<'a>) -> Result<bool, String>,
-        ) -> Result<bool, String> {
+            trial: &mut impl FnMut(Set<'a>) -> Result<Trial, String>,
+        ) -> Result<Trial, String> {
             if retained > self.remaining[at] {
-                return Ok(false);
+                return Ok(Trial::Conflict);
             }
-            self.checked += 1;
-            if self.checked > MAX_TRIALS * 128 {
+            *self.checked += 1;
+            if *self.checked > MAX_TRIALS * 128 {
                 return Err(too_many());
             }
             let Some(&(id, choices, original)) = self.slots.get(at) else {
                 let mut reachable = BTreeSet::new();
                 for &(id, _, was) in &self.slots {
                     if was && chosen.contains_key(id) && !activate(id, chosen, &mut reachable) {
-                        return Ok(false);
+                        return Ok(Trial::Conflict);
                     }
                 }
                 return if reachable.len() == chosen.len() {
                     trial(chosen.clone())
                 } else {
-                    Ok(false)
+                    Ok(Trial::Conflict)
                 };
             };
             if let Some(left) = retained.checked_sub(usize::from(original)) {
                 for choice in choices {
                     chosen.insert(id, choice);
-                    if self.rank(at + 1, left, chosen, trial)? {
-                        return Ok(true);
+                    match self.rank(at + 1, left, chosen, trial)? {
+                        Trial::Conflict => (),
+                        result => return Ok(result),
                     }
                 }
                 chosen.remove(id);
@@ -705,33 +953,49 @@ fn best_survivor_set<'a>(
             self.rank(at + 1, retained, chosen, trial)
         }
     }
-    let slots: Vec<_> = slots
-        .iter()
-        .map(|(id, choices)| (id.as_str(), choices.as_slice(), original.contains_key(id)))
-        .collect();
-    let mut remaining = vec![0; slots.len() + 1];
-    for (i, (_, choices, was)) in slots.iter().enumerate().rev() {
-        remaining[i] = remaining[i + 1] + usize::from(*was && !choices.is_empty());
-    }
-    let mut search = Search {
-        slots,
-        remaining,
-        checked: 0,
-    };
     let mut tried = 0;
-    let mut checked_trial = |chosen| {
-        tried += 1;
-        if tried > MAX_TRIALS {
-            return Err(too_many());
+    let mut checked = 0;
+    'rerank: loop {
+        let mut checked_trial = |chosen| {
+            tried += 1;
+            if tried > MAX_TRIALS {
+                return Err(too_many());
+            }
+            trial(chosen)
+        };
+        let variants = slots
+            .iter()
+            .map(|(id, choices)| (id.as_str(), choices.as_slice(), original.contains_key(id)))
+            .collect::<Vec<_>>();
+        let mut remaining = vec![0; variants.len() + 1];
+        for (i, (_, _, was)) in variants.iter().enumerate().rev() {
+            remaining[i] = remaining[i + 1] + usize::from(*was);
         }
-        trial(chosen)
-    };
-    for retained in (0..=search.remaining[0]).rev() {
-        if search.rank(0, retained, &mut BTreeMap::new(), &mut checked_trial)? {
-            return Ok(());
+        let mut search = Search {
+            slots: variants,
+            remaining,
+            checked: &mut checked,
+        };
+        for retained in (0..=search.remaining[0]).rev() {
+            match search.rank(0, retained, &mut BTreeMap::new(), &mut checked_trial)? {
+                Trial::Fit => return Ok(()),
+                Trial::Conflict => (),
+                Trial::Rejected(rejected) => {
+                    // The SDK verdict is about these exact bytes, not this combination.
+                    // Re-rank with the still-eligible versions, not subsets of failed ones.
+                    for (id, digest) in rejected {
+                        slots
+                            .get_mut(&id)
+                            .expect("trial choice")
+                            .retain(|choice| choice.digest.as_ref() != Some(&digest));
+                    }
+                    prune_dependents(slots, &BTreeSet::new());
+                    continue 'rerank;
+                }
+            }
         }
+        return Err(unproved_switch());
     }
-    Err(unproved_switch())
 }
 
 fn activate<'a>(id: &'a str, set: &Set<'a>, selected: &mut BTreeSet<&'a str>) -> bool {
@@ -855,8 +1119,10 @@ fn exact_image(
     enabled: &BTreeSet<&str>,
     cancellation: &native_mods::Cancellation,
     omissions: &mut Omissions,
+    rejected: &mut Rejected,
 ) -> Result<Option<CandidateImage>, String> {
     use native_mods::{Failed, Why};
+    let variants = || set.iter().map(|(&id, &pkg)| (id, std::iter::once(pkg)));
     match result {
         Ok(image) => Ok(Some(image)),
         Err(Failed::Mods {
@@ -872,6 +1138,11 @@ fn exact_image(
                         enabled.contains(*id) && p.manifest.version == omission.version
                     })
                     .ok_or_else(unproved_switch)?;
+                if !compiling && matches!(omission.why, Why::Unfit(_) | Why::Unproved(_)) {
+                    if let Some(digest) = &package.digest {
+                        rejected.insert((id.into(), digest.clone()));
+                    }
+                }
                 match omission.why {
                     Why::Unfit(detail) if !compiling => {
                         unfit.insert(id);
@@ -901,8 +1172,8 @@ fn exact_image(
             // The builder only sees native bundles and reports one cause per omitted
             // dependent. Use the entire trial's required client closure, including content
             // and all of its causes. A known incompatibility alone defeats that trial.
-            spread_to_dependents(set, &mut unfit);
-            spread_to_dependents(set, &mut unknown);
+            spread_to_dependents(variants(), &mut unfit);
+            spread_to_dependents(variants(), &mut unknown);
             omissions
                 .unproved
                 .extend(unknown.difference(&unfit).map(|&id| id.to_owned()));
@@ -922,7 +1193,7 @@ fn exact_image(
             // Only this source's original SDK is missing. Keep trying the remaining
             // packages against the target SDK, including listed native mods.
             let mut unknown = BTreeSet::from([id]);
-            spread_to_dependents(set, &mut unknown);
+            spread_to_dependents(variants(), &mut unknown);
             omissions
                 .unproved
                 .extend(unknown.into_iter().map(str::to_owned));
@@ -951,7 +1222,7 @@ fn exact_image(
             if unknown.is_empty() {
                 return Err(unproved_switch());
             }
-            spread_to_dependents(set, &mut unknown);
+            spread_to_dependents(variants(), &mut unknown);
             omissions
                 .unproved
                 .extend(unknown.into_iter().map(str::to_owned));
@@ -961,18 +1232,24 @@ fn exact_image(
     }
 }
 
-fn spread_to_dependents<'a>(set: &Set<'a>, omitted: &mut BTreeSet<&'a str>) {
-    let mut before = 0;
-    while before != omitted.len() {
-        before = omitted.len();
-        for (&id, package) in set {
-            if package
-                .manifest
-                .required_client_dependencies()
-                .any(|(dep, _)| omitted.contains(dep.as_str()))
-            {
+fn spread_to_dependents<'a>(
+    variants: impl Iterator<Item = (&'a str, impl Iterator<Item = &'a Package>)> + Clone,
+    omitted: &mut BTreeSet<&'a str>,
+) {
+    loop {
+        let before = omitted.len();
+        for (id, mut choices) in variants.clone() {
+            if choices.all(|package| {
+                package
+                    .manifest
+                    .required_client_dependencies()
+                    .any(|(dep, _)| omitted.contains(dep.as_str()))
+            }) {
                 omitted.insert(id);
             }
+        }
+        if before == omitted.len() {
+            return;
         }
     }
 }
@@ -982,7 +1259,7 @@ fn unproved_switch() -> String {
 }
 
 fn too_many() -> String {
-    tr("Not every compatible mod set could be checked. Nothing was switched.").into()
+    tr("There are too many possible mod combinations to check. Remove mods you no longer need from this profile, then try switching again. Nothing was switched.").into()
 }
 
 #[cfg(test)]
@@ -1033,7 +1310,7 @@ mod tests {
             let authority = official.then(|| OfficialRegistry::fixture(&catalogue));
             let originals =
                 Originals::read(before.path(), None, &catalogue, authority.as_ref()).unwrap();
-            let options = choices(
+            let mut options = choices(
                 &originals,
                 &catalogue,
                 true,
@@ -1042,14 +1319,15 @@ mod tests {
                 &|_| {},
             )
             .unwrap();
-            best_survivor_set(&options, &originals.mods, |set| {
+            prune_dependents(&mut options, &BTreeSet::new());
+            best_survivor_set(&mut options, &originals.mods, |set| {
                 apply(
                     candidate.path(),
                     &originals,
                     &set,
                     &enabled_set(&set, &originals.mods).unwrap(),
                 )?;
-                Ok(true)
+                Ok(Trial::Fit)
             })
             .unwrap();
             let changed = candidate.path().join(&row.file);
@@ -1066,5 +1344,311 @@ mod tests {
             }
             assert_eq!(fs::read(archive).unwrap(), old);
         }
+    }
+
+    #[test]
+    fn reranks_to_a_fitting_version_and_keeps_dependents_enabled_after_sdk_rejection() {
+        let before = tempfile::tempdir().unwrap();
+        let candidate = tempfile::tempdir().unwrap();
+        let download = tempfile::tempdir().unwrap();
+        let mut catalogue = super::super::super::tests::sample();
+        let template = catalogue.projects[0].clone();
+        catalogue.projects.clear();
+
+        let pack_native = |version: &str, sunrise_pin: char| {
+            let manifest = format!(
+                "id='light_core'\nname='Light Core'\nversion='{version}'\napi='{}'\nside='both'\ncapabilities=['registries']\n[native]\nsunrise='{}'\nmixins='{}'\ngame='26.3'\n",
+                sunrise_launcher_smod::manifest::API,
+                sunrise_pin.to_string().repeat(40),
+                "c".repeat(40),
+            );
+            let cargo = format!("[package]\nname='light_core'\nversion='{version}'\n");
+            sunrise_launcher_smod::Package::write_files(
+                &manifest,
+                &[
+                    ("Cargo.toml", cargo.as_bytes()),
+                    ("src/lib.rs", b""),
+                    (sunrise_launcher_smod::manifest::USES_FILE, b"{}"),
+                ],
+            )
+            .unwrap()
+        };
+        let bytes_v1 = pack_native("1.0.0", 'a');
+        let bytes_v2 = pack_native("2.0.0", 'a');
+        let file_v1 = download.path().join("light_core-1.0.0.smod");
+        let file_v2 = download.path().join("light_core-2.0.0.smod");
+        fs::write(&file_v1, &bytes_v1).unwrap();
+        fs::write(&file_v2, &bytes_v2).unwrap();
+
+        let make_version = |kind: &index::Kind,
+                            version: &str,
+                            file: &Path,
+                            bytes: &[u8],
+                            deps: Vec<index::Dependency>| {
+            let facts = index::inspect(kind, file).unwrap();
+            let mut row = template.versions[0].clone();
+            row.version = version.into();
+            row.game = "26.3".into();
+            row.api = facts.api;
+            row.side = facts.side;
+            row.capabilities =
+                serde_json::from_value(serde_json::json!(facts.capabilities)).unwrap();
+            row.dependencies = Some(deps);
+            row.file = index::File {
+                name: file.file_name().unwrap().to_str().unwrap().to_owned(),
+                url: format!("file://{}", file.display()),
+                size: bytes.len() as u64,
+                sha256: index::sha256(bytes),
+                signature: None,
+            };
+            row
+        };
+
+        let dep_bytes = sunrise_launcher_smod::Package::write_files(
+            &format!(
+                "id='lanterns'\nname='Lanterns'\nversion='1.0.0'\napi='{}'\nside='both'\ncapabilities=['registries']\n[dependencies]\nlight_core='>=1.0.0'\n",
+                sunrise_launcher_smod::manifest::API
+            ),
+            &[],
+        )
+        .unwrap();
+        let dep_file = download.path().join("lanterns-1.0.0.smod");
+        fs::write(&dep_file, &dep_bytes).unwrap();
+
+        catalogue.projects.push(index::Project {
+            id: "light_core".into(),
+            name: "Light Core".into(),
+            kind: index::Kind::NativeMod,
+            key: None,
+            versions: vec![
+                make_version(
+                    &index::Kind::NativeMod,
+                    "2.0.0",
+                    &file_v2,
+                    &bytes_v2,
+                    Vec::new(),
+                ),
+                make_version(
+                    &index::Kind::NativeMod,
+                    "1.0.0",
+                    &file_v1,
+                    &bytes_v1,
+                    Vec::new(),
+                ),
+            ],
+            ..template.clone()
+        });
+        catalogue.projects.push(index::Project {
+            id: "lanterns".into(),
+            name: "Lanterns".into(),
+            kind: index::Kind::Mod,
+            key: None,
+            versions: vec![make_version(
+                &index::Kind::Mod,
+                "1.0.0",
+                &dep_file,
+                &dep_bytes,
+                vec![index::Dependency {
+                    id: "light_core".into(),
+                    version: ">=1.0.0".into(),
+                    optional: false,
+                    side: None,
+                }],
+            )],
+            ..template
+        });
+
+        let install_entry = |id: &str, name: &str, version: &str, dir: &str, bytes: &[u8]| {
+            let rel = format!("{dir}/{id}.smod");
+            for root in [before.path(), candidate.path()] {
+                fs::create_dir_all(root.join(dir)).unwrap();
+                fs::write(root.join(&rel), bytes).unwrap();
+            }
+            installed::Entry {
+                source: SourceId::Sunrise,
+                project: id.into(),
+                slug: id.into(),
+                title: name.into(),
+                kind: Kind::Mod,
+                version: version.into(),
+                number: version.into(),
+                file: rel,
+                checksum: format!("SHA-256:{}", index::sha256(bytes)),
+                page: String::new(),
+                dependency: false,
+                verdict: None,
+                install_hold: None,
+            }
+        };
+        let core_row = install_entry(
+            "light_core",
+            "Light Core",
+            "2.0.0",
+            native_mods::INSTALLED,
+            &bytes_v2,
+        );
+        let dep_row = install_entry(
+            "lanterns",
+            "Lanterns",
+            "1.0.0",
+            mod_list::MODS_DIR,
+            &dep_bytes,
+        );
+        for root in [before.path(), candidate.path()] {
+            let mut doc = Document::read(root).unwrap();
+            doc.replace(&core_row).unwrap();
+            doc.replace(&dep_row).unwrap();
+            doc.write(root).unwrap();
+            mod_list::set_all_enabled(root, &["light_core", "lanterns"], true).unwrap();
+        }
+
+        let authority = OfficialRegistry::fixture(&catalogue);
+        let originals = Originals::read(before.path(), None, &catalogue, Some(&authority)).unwrap();
+        let mut options = choices(
+            &originals,
+            &catalogue,
+            true,
+            "26.3",
+            download.path(),
+            &|_| {},
+        )
+        .unwrap();
+        let cancellation = native_mods::Cancellation::default();
+        let mut omissions = Omissions::default();
+        let mut seen_versions = Vec::new();
+        best_survivor_set(&mut options, &originals.mods, |set| {
+            let enabled = enabled_set(&set, &originals.mods).unwrap();
+            let core_version = set["light_core"].manifest.version.clone();
+            seen_versions.push((core_version.clone(), set.contains_key("lanterns")));
+            if core_version == "2.0.0" {
+                let mut rejected = BTreeSet::new();
+                let outcome = exact_image(
+                    Err(native_mods::Failed::Mods {
+                        left: vec![native_mods::LeftOut {
+                            id: "light_core".into(),
+                            version: "2.0.0".into(),
+                            why: native_mods::Why::Unfit("hook changed".into()),
+                            detail: None,
+                        }],
+                        error: "Light Core 2.0.0 does not fit".into(),
+                        compiling: false,
+                        log: None,
+                    }),
+                    &set,
+                    &enabled,
+                    &cancellation,
+                    &mut omissions,
+                    &mut rejected,
+                )?;
+                assert!(outcome.is_none());
+                return Ok(Trial::reject(rejected));
+            }
+            apply(candidate.path(), &originals, &set, &enabled)?;
+            Ok(Trial::Fit)
+        })
+        .unwrap();
+
+        assert_eq!(
+            seen_versions,
+            vec![("2.0.0".into(), true), ("1.0.0".into(), true)]
+        );
+        assert_eq!(
+            fs::read(candidate.path().join(&core_row.file)).unwrap(),
+            bytes_v1
+        );
+        assert!(mod_list::is_enabled(candidate.path(), "light_core"));
+        assert!(mod_list::is_enabled(candidate.path(), "lanterns"));
+    }
+
+    #[test]
+    fn omission_labels_append_mod_ids_when_display_names_collide() {
+        let hold = |id: &str, title: &str, unproved: bool| {
+            Held::new(
+                id.into(),
+                title.into(),
+                [7; 32],
+                (HeldRoot::Native, format!("{id}.smod")),
+                HeldSource::Local {
+                    version: "1.0.0".into(),
+                },
+                true,
+                if unproved {
+                    HeldReason::Unproved {
+                        build: "dev-2026-11-22".into(),
+                    }
+                } else {
+                    HeldReason::NoFit {
+                        build: "dev-2026-11-22".into(),
+                        detail: None,
+                    }
+                },
+            )
+            .unwrap()
+        };
+        let holds = vec![
+            hold("alpha_lantern", "Lanterns", false),
+            hold("beetles", "Beetles", true),
+            hold("beta_lantern", "lanterns", true),
+        ];
+        let (held, unproved, _) = omission_labels(&holds);
+        assert_eq!(held, ["Lanterns (alpha_lantern)"]);
+        assert_eq!(unproved, ["Beetles", "lanterns (beta_lantern)"]);
+        let question = SwitchQuestion {
+            build: "dev-2026-11-22".into(),
+            worlds: Question::default(),
+            held,
+            unproved,
+            removed: Vec::new(),
+        };
+        let lines: Vec<_> = question.hold_lines().collect();
+        assert!(lines[0].contains("Lanterns (alpha_lantern)"), "{lines:?}");
+        assert!(
+            lines[1].contains("Beetles") && !lines[1].contains("(beetles)"),
+            "{lines:?}"
+        );
+        assert!(lines[2].contains("lanterns (beta_lantern)"), "{lines:?}");
+    }
+
+    #[test]
+    fn world_lines_group_per_world_and_refer_to_omitted_mods_above() {
+        use crate::worlds::switch::WorldRisk;
+        let question = SwitchQuestion {
+            build: "dev-2026-11-22-bbbbbbb".into(),
+            worlds: Question {
+                affected: vec![
+                    WorldRisk {
+                        world: "Exact Match".into(),
+                        mods: vec!["Beetles".into(), "Creature Library".into()],
+                    },
+                    WorldRisk {
+                        world: "Glass Basin".into(),
+                        mods: vec![
+                            "Creature Library".into(),
+                            "Beetles".into(),
+                            "Fireflies".into(),
+                        ],
+                    },
+                    WorldRisk {
+                        world: "Subset Only".into(),
+                        mods: vec!["Fireflies".into()],
+                    },
+                ],
+                newer: vec!["Glass Basin".into(), "Newer Only".into()],
+                unknown_order: vec!["Unknown Build".into()],
+            },
+            held: vec!["Creature Library".into()],
+            unproved: vec!["Beetles".into()],
+            removed: Vec::new(),
+        };
+        assert_eq!(
+            question.world_lines(),
+            [
+                "Exact Match: content from the mods above may be lost.",
+                "Glass Basin: last played on a newer game; content from the mods above and Fireflies may be lost.",
+                "Newer Only: last played on a newer game.",
+                "Subset Only: content from these mods may be lost: Fireflies.",
+                "Unknown Build: last game build is unknown.",
+            ]
+        );
     }
 }

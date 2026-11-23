@@ -5,7 +5,8 @@ use std::{
 };
 use sunrise_launcher::{
     browser::sunrise::{
-        install_target, switch_build, InstallProgress, SwitchHooks, SwitchQuestion, Switched,
+        install_target, switch_build, InstallProgress, SwitchDecision, SwitchHooks, SwitchQuestion,
+        Switched,
     },
     managed_play::{self, Active, Profile, ReceiptHint},
     profile_txn::Identity,
@@ -30,7 +31,7 @@ struct Running {
     tag: String,
     progress: InstallProgress,
     stop: native_mods::Cancellation,
-    question: Option<(Box<SwitchQuestion>, Sender<bool>)>,
+    question: Option<(Box<SwitchQuestion>, Sender<SwitchDecision>)>,
 }
 
 impl Launcher {
@@ -113,7 +114,7 @@ impl Launcher {
                         let (answer, reply) = std::sync::mpsc::channel();
                         tx.send(Msg::SwitchQuestion(Box::new(question.clone()), answer))
                             .map_err(|_| tr("Switch cancelled.").to_owned())?;
-                        Ok(reply.recv().unwrap_or(false))
+                        Ok(reply.recv().unwrap_or(SwitchDecision::Cancel))
                     },
                 },
             );
@@ -128,7 +129,7 @@ impl Launcher {
         if running.progress != InstallProgress::Publishing {
             running.stop.stop();
             if let Some((_, reply)) = running.question.take() {
-                let _ = reply.send(false);
+                let _ = reply.send(SwitchDecision::Cancel);
             }
         }
     }
@@ -139,7 +140,11 @@ impl Launcher {
         }
     }
 
-    pub(crate) fn switch_question(&mut self, question: Box<SwitchQuestion>, reply: Sender<bool>) {
+    pub(crate) fn switch_question(
+        &mut self,
+        question: Box<SwitchQuestion>,
+        reply: Sender<SwitchDecision>,
+    ) {
         if let Some(running) = self
             .ui
             .sheets
@@ -151,7 +156,7 @@ impl Launcher {
             running.question = Some((question, reply));
             self.ui.sheets.details = false;
         } else {
-            let _ = reply.send(false);
+            let _ = reply.send(SwitchDecision::Cancel);
         }
     }
 
@@ -205,51 +210,110 @@ impl Launcher {
             .as_ref()
             .expect("Switch sheet follows its worker");
         let build = build_name(&running.tag);
-        let head = title(trf("Switch to {build}", &[("build", &build)]));
         let body = if let Some((question, _)) = &running.question {
             let show = self.ui.sheets.details;
+            let omissions = question.has_omissions();
+            let answer = |decision| {
+                cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    if let Some((_, reply)) = this
+                        .ui
+                        .sheets
+                        .switching
+                        .running
+                        .as_mut()
+                        .and_then(|running| running.question.take())
+                    {
+                        let _ = reply.send(decision);
+                    }
+                    cx.notify();
+                })
+            };
+            let has_mod_block = omissions || !question.removed.is_empty();
+            let mod_block = has_mod_block.then(|| {
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(6.))
+                    .children(omissions.then(|| muted(question.omission_summary())))
+                    .child(
+                        div()
+                            .id("switch-mods")
+                            .max_h(px(184.))
+                            .overflow_y_scroll()
+                            .flex()
+                            .flex_col()
+                            .gap(px(5.))
+                            .children((omissions && !show).then(|| {
+                                let mut names: Vec<_> = question
+                                    .held
+                                    .iter()
+                                    .chain(&question.unproved)
+                                    .map(String::as_str)
+                                    .collect();
+                                names.sort_unstable();
+                                div().child(names.join(", "))
+                            }))
+                            .children(
+                                show.then(|| question.hold_lines().map(|line| div().child(line)))
+                                    .into_iter()
+                                    .flatten(),
+                            )
+                            .children(question.removed.iter().map(|(name, reason)| {
+                                div().child(if show {
+                                    trf(
+                                        "{mod} was taken down: {reason}",
+                                        &[("mod", name), ("reason", reason)],
+                                    )
+                                } else {
+                                    trf(
+                                        "{mod} was taken down and will be removed.",
+                                        &[("mod", name)],
+                                    )
+                                })
+                            })),
+                    )
+            });
+            let world_block = question.worlds.needed().then(|| {
+                let mut block = div().flex().flex_col().gap(px(6.));
+                if has_mod_block {
+                    block = block
+                        .pt(px(12.))
+                        .border_t_1()
+                        .border_color(rgb(palette().line));
+                }
+                block
+                    .child(muted(tr(
+                        "Your worlds stay in place. Check what could change before you switch.",
+                    )))
+                    .child(
+                        div()
+                            .id("switch-worlds")
+                            .max_h(px(150.))
+                            .overflow_y_scroll()
+                            .flex()
+                            .flex_col()
+                            .gap(px(5.))
+                            .children(
+                                question
+                                    .world_lines()
+                                    .into_iter()
+                                    .map(|line| div().child(line)),
+                            ),
+                    )
+            });
             div()
                 .flex()
                 .flex_col()
-                .child(head)
-                .child(muted(tr(
-                    "Your worlds stay in place. Check what could change before you switch.",
-                )))
-                .child(
-                    div()
-                        .id("switch-worlds")
-                        .max_h(px(208.))
-                        .overflow_y_scroll()
-                        .gap(px(5.))
-                        .children(
-                            question
-                                .worlds
-                                .lines()
-                                .into_iter()
-                                .map(|line| div().child(line)),
-                        )
-                        .children(question.hold_lines().map(|line| div().child(line)))
-                        .children(question.removed.iter().map(|(name, reason)| {
-                            div().child(if show {
-                                trf(
-                                    "{mod} was taken down: {reason}",
-                                    &[("mod", name), ("reason", reason)],
-                                )
-                            } else {
-                                trf(
-                                    "{mod} was taken down and will be removed.",
-                                    &[("mod", name)],
-                                )
-                            })
-                        })),
-                )
+                .child(title(trf("Switch to {build}?", &[("build", &build)])))
+                .children(mod_block)
+                .children(world_block)
                 .child(
                     div()
                         .flex()
                         .flex_wrap()
                         .justify_end()
                         .gap(px(8.))
-                        .child(
+                        .children((omissions || !question.removed.is_empty()).then(|| {
                             button(
                                 "switch-why",
                                 if show {
@@ -261,39 +325,34 @@ impl Launcher {
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.ui.sheets.details ^= true;
                                 cx.notify();
-                            })),
-                        )
+                            }))
+                        }))
                         .child(
-                            crate::frame::primary("switch-stay", tr("Stay on this version"))
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.cancel_switch();
-                                    this.open_sheet(Sheet::Versions);
-                                    cx.notify();
-                                })),
+                            button("switch-stay", tr("Cancel"))
+                                .on_click(answer(SwitchDecision::Cancel)),
                         )
+                        .children(omissions.then(|| {
+                            button("switch-remove", tr("Switch and remove them"))
+                                .text_color(rgb(palette().danger))
+                                .on_click(answer(SwitchDecision::Remove))
+                        }))
                         .child(
-                            button("switch-anyway", tr("Switch anyway")).on_click(cx.listener(
-                                |this, _, _, cx| {
-                                    if let Some((_, reply)) = this
-                                        .ui
-                                        .sheets
-                                        .switching
-                                        .running
-                                        .as_mut()
-                                        .and_then(|running| running.question.take())
-                                    {
-                                        let _ = reply.send(true);
-                                    }
-                                    cx.notify();
+                            crate::frame::primary(
+                                "switch-anyway",
+                                if omissions {
+                                    tr("Switch and turn them off")
+                                } else {
+                                    tr("Switch anyway")
                                 },
-                            )),
+                            )
+                            .on_click(answer(SwitchDecision::TurnOff)),
                         ),
                 )
         } else {
             div()
                 .flex()
                 .flex_col()
-                .child(head)
+                .child(title(trf("Switch to {build}", &[("build", &build)])))
                 .child(muted(if running.progress == InstallProgress::Publishing {
                     tr("Applying the switch.").into()
                 } else {
@@ -437,7 +496,7 @@ impl Launcher {
         let show = self.ui.sheets.details;
         let removed_line = |(name, reason): &(String, String)| {
             trf(
-                "{mod} was taken down: {reason}",
+                "{mod} was removed: {reason}",
                 &[("mod", name), ("reason", reason)],
             )
         };
@@ -466,7 +525,7 @@ impl Launcher {
                 div().child(if show {
                     removed_line(row)
                 } else {
-                    trf("{mod} was taken down and removed.", &[("mod", &row.0)])
+                    trf("{mod} was removed.", &[("mod", &row.0)])
                 })
             }));
         let body = div()
