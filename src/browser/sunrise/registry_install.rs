@@ -53,6 +53,7 @@ pub use v2::{
 // Advisory only. Never use these in place of a fresh, admitted worker proof. Key by the
 // base build and verified archive hash, not the Minecraft version or catalogue version number.
 static UNFIT_UPDATES: Mutex<BTreeMap<String, BTreeSet<String>>> = Mutex::new(BTreeMap::new());
+static UNFIT_UPDATES_REVISION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 pub fn known_unfit_updates(base: &str) -> BTreeSet<String> {
     UNFIT_UPDATES
@@ -63,17 +64,27 @@ pub fn known_unfit_updates(base: &str) -> BTreeSet<String> {
         .unwrap_or_default()
 }
 
+/// Monotonic revision bumped whenever [`remember_unfit_sha256`] records a new unfit update,
+/// so views caching mod update status (such as Home) refresh even when the inventory and
+/// registry index are unchanged.
+pub fn unfit_updates_revision() -> u64 {
+    UNFIT_UPDATES_REVISION.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 fn remember_unfit(base: &str, release: &index::Version) {
     remember_unfit_sha256(base, &release.file.sha256);
 }
 
 fn remember_unfit_sha256(base: &str, sha256: &str) {
-    UNFIT_UPDATES
+    if UNFIT_UPDATES
         .lock()
         .unwrap()
         .entry(base.into())
         .or_default()
-        .insert(sha256.to_ascii_lowercase());
+        .insert(sha256.to_ascii_lowercase())
+    {
+        UNFIT_UPDATES_REVISION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
