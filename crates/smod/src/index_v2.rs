@@ -474,6 +474,34 @@ impl Index {
         })
     }
 
+    /// Returns any exact-digest takedown row matching `sha256`, regardless of project ownership.
+    /// Whole-project takedowns (`sha256: None`) are not returned here because they require proved
+    /// project ownership.
+    pub fn revoked_by_sha256(&self, sha256: &str) -> Option<&Revoked> {
+        self.revoked.iter().find(|row| {
+            row.sha256
+                .as_deref()
+                .is_some_and(|taken| taken.eq_ignore_ascii_case(sha256))
+        })
+    }
+
+    /// Finds every `(Project, Release)` pair providing `mod_id` whose archive SHA-256 equals
+    /// `sha256`. Used to adopt a v1 receipt only when verified digest history uniquely identifies
+    /// one v2 project.
+    pub fn releases_by_sha256(&self, mod_id: &str, sha256: &str) -> Vec<(&Project, &Release)> {
+        self.projects
+            .iter()
+            .filter(|project| project.mod_id == mod_id)
+            .flat_map(|project| {
+                project
+                    .releases
+                    .iter()
+                    .filter(|release| release.file.sha256.eq_ignore_ascii_case(sha256))
+                    .map(move |release| (project, release))
+            })
+            .collect()
+    }
+
     /// Parses `self.generated` as UTC Unix seconds.
     pub fn generated_unix_seconds(&self) -> Result<i64, String> {
         parse_rfc3339_utc(&self.generated)

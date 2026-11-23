@@ -9,6 +9,7 @@ use sunrise_launcher_smod::{index, manifest, mod_list};
 
 /// One candidate the game discovers by extension or unpacked manifest. A directory is
 /// game content, not a managed archive destination implied by its name or manifest ID.
+#[derive(Clone, Debug)]
 pub struct ScannedPackage {
     pub manifest: manifest::Manifest,
     pub path: PathBuf,
@@ -158,11 +159,16 @@ pub(super) fn browser_repair(
             serde_json::from_value(raw.clone()).map_err(|e| at(&path, e))?;
         let package = by_file.get(relative).ok_or_else(unsettled)?;
         let id = &package.manifest.id;
+        let id_ok = if row.mod_id.is_some() {
+            row.mod_id.as_deref() == Some(id.as_str()) && row.is_v2_registry()
+        } else {
+            &row.project == id
+        };
         if package.directory
             || !installed::in_folders(file)
             || row.kind != Kind::Mod
             || row.source != SourceId::Sunrise
-            || &row.project != id
+            || !id_ok
             || sunrise::mod_id(&row) != Some(id.as_str())
             || claims.single(id).map_err(|e| e.render(crate::i18n::trf))? != Some(position)
         {
@@ -177,6 +183,9 @@ pub(super) fn browser_repair(
                 .checksum
                 .eq_ignore_ascii_case(&format!("SHA-256:{digest}"))
         {
+            continue;
+        }
+        if row.mod_id.is_some() {
             continue;
         }
         let kind = if package.manifest.native.is_some() {

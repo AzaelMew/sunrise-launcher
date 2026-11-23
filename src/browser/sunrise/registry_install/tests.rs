@@ -21,6 +21,7 @@ pub(super) fn archive(
     installed::Entry {
         source: SourceId::Sunrise,
         project: id.into(),
+        mod_id: None,
         slug: id.into(),
         title: name.into(),
         kind: Kind::Mod,
@@ -32,6 +33,7 @@ pub(super) fn archive(
         dependency: false,
         verdict: None,
         install_hold: None,
+        repository: None,
     }
 }
 
