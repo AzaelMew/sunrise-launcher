@@ -63,13 +63,12 @@ enum Menu {
     Sort,
 }
 
-#[allow(dead_code)]
 enum Catalog {
     Idle,
     Loading,
     /// Shared, not owned: Discover draws from it every frame and clones only the handles.
-    Ready(Rc<[Card]>, Rc<[String]>),
-    Failed(String),
+    Ready(Rc<[Card]>),
+    Failed,
 }
 
 struct V2CatalogPayload {
@@ -362,7 +361,8 @@ enum Event {
         Result<actions::EnabledMods, String>,
         Option<u64>,
     ),
-    Catalog(String, Result<(Vec<Card>, Vec<String>), String>),
+    /// The v1 index's cards for this game, or `None` when it couldn't be read.
+    Catalog(String, Option<Vec<Card>>),
     V2Catalog(Option<String>, Result<V2CatalogPayload, String>),
     Page(u64, Result<Box<model::Page>, String>),
     V2Page(u64, Result<Box<model::discover_v2::V2Page>, String>),
@@ -746,7 +746,7 @@ impl Launcher {
     }
 
     fn is_collection(&self, id: &str) -> bool {
-        matches!(&self.ui.mods.catalog, Catalog::Ready(cards, _)
+        matches!(&self.ui.mods.catalog, Catalog::Ready(cards)
             if cards.iter().any(|c| c.id == id && c.members.is_some()))
             || sunrise::known_index().is_some_and(|index| index.collection(id).is_some())
     }
@@ -990,10 +990,8 @@ impl Launcher {
                 Event::Catalog(game, result) => {
                     if m.catalog_game.as_ref() == Some(&game) {
                         m.catalog = match result {
-                            Ok((cards, categories)) => {
-                                Catalog::Ready(cards.into(), categories.into())
-                            }
-                            Err(error) => Catalog::Failed(error),
+                            Some(cards) => Catalog::Ready(cards.into()),
+                            None => Catalog::Failed,
                         };
                     }
                 }
@@ -1222,11 +1220,9 @@ impl Launcher {
         self.ui.mods.catalog = Catalog::Loading;
         let tx = self.ui.mods.tx.clone();
         std::thread::spawn(move || {
-            let result = sunrise::index().map(|index| {
-                let cards = model::cards(&index, &game);
-                let categories = model::categories(&cards);
-                (cards, categories)
-            });
+            let result = sunrise::index()
+                .ok()
+                .map(|index| model::cards(&index, &game));
             let _ = tx.send(Event::Catalog(game, result));
         });
     }

@@ -2,7 +2,6 @@
 use super::*;
 use crate::mods_page::install::{stage_label, SourcePicks};
 use std::collections::BTreeSet;
-use sunrise_launcher_smod::index::Collection;
 
 /// The open collection and the mods ticked on its page.
 pub(in crate::mods) struct CollectionOpen {
@@ -11,24 +10,6 @@ pub(in crate::mods) struct CollectionOpen {
 }
 
 impl Launcher {
-    // Retained until the v1/sources cutover removes the legacy Nightly/Dev source catalogue.
-    #[allow(dead_code)]
-    pub(in crate::mods) fn open_source_collection(&mut self, collection: &Collection) {
-        self.ui.page = Page::Project;
-        self.ui.mods.open = None;
-        let state = &mut self.ui.mods.nightly;
-        state.open = None;
-        state.collection = Some(CollectionOpen {
-            id: collection.id.clone(),
-            ticked: collection
-                .members
-                .iter()
-                .filter(|member| member.default)
-                .map(|member| member.id.clone())
-                .collect(),
-        });
-    }
-
     /// Source mods already added to this profile.
     fn added_sources(&self) -> BTreeSet<String> {
         self.discover_installed()

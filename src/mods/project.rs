@@ -264,7 +264,7 @@ impl Launcher {
             .map_or(Page::Discover, |o| o.from);
         let parent = self.ui.mods.open.as_ref().and_then(|o| o.parent.clone());
         let parent_name = parent.as_ref().and_then(|id| match &self.ui.mods.catalog {
-            Catalog::Ready(cards, _) => cards.iter().find(|c| c.id == *id).map(|c| c.name.clone()),
+            Catalog::Ready(cards) => cards.iter().find(|c| c.id == *id).map(|c| c.name.clone()),
             _ => None,
         });
         let back_label = match (back_to, &parent_name) {
