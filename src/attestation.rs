@@ -897,6 +897,45 @@ mod tests {
     }
 
     #[test]
+    fn a_matching_pin_is_written_again_so_success_means_durable() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(PINS_FILE);
+        let pin_a = PublisherPin {
+            repository_id: 1001,
+            repository_name: "alice/mod-a".to_owned(),
+            workflow_path: RELEASE_WORKFLOW_PATH.to_owned(),
+        };
+        let pin_b = PublisherPin {
+            repository_id: 2002,
+            ..pin_a.clone()
+        };
+        pin_or_check_in(dir.path(), "Ab3dE9xQ", &pin_a).unwrap();
+        let saved = fs::read_to_string(&path).unwrap();
+        // Stands in for a pin a save made visible before its flush failed: same pin, but bytes
+        // the store would not write.
+        let value: Value = serde_json::from_str(&saved).unwrap();
+        fs::write(&path, value.to_string()).unwrap();
+        assert_eq!(
+            pin_or_check_in(dir.path(), "Ab3dE9xQ", &pin_a).unwrap(),
+            PinStatus::Matched
+        );
+        assert_eq!(fs::read_to_string(&path).unwrap(), saved);
+
+        // A confirmation repeated after its pin became visible saves it again too.
+        let change = pin_or_check_in(dir.path(), "Ab3dE9xQ", &pin_b)
+            .unwrap_err()
+            .publisher_change()
+            .expect("must return A -> B")
+            .clone();
+        accept_pin_in(dir.path(), &change).unwrap();
+        let accepted = fs::read_to_string(&path).unwrap();
+        let value: Value = serde_json::from_str(&accepted).unwrap();
+        fs::write(&path, value.to_string()).unwrap();
+        accept_pin_in(dir.path(), &change).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), accepted);
+    }
+
+    #[test]
     fn publisher_change_text_includes_both_repository_ids_when_names_match() {
         let old = PublisherPin {
             repository_id: 1001,
