@@ -10,3 +10,4 @@ OFL-BricolageGrotesque.txt crates/theme/fonts/OFL-BricolageGrotesque.txt
 OFL-PixelifySans.txt crates/theme/fonts/OFL-PixelifySans.txt
 MIT-Pixelarticons.txt crates/theme/icons/pixel/LICENSE-pixelarticons.txt
 MIT-Hugeicons.txt crates/theme/icons/glass/LICENSE-hugeicons.txt
+Apache-Sigstore.txt crates/attestation/LICENSE-APACHE-SIGSTORE
