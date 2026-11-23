@@ -46,9 +46,9 @@ impl FirstBuild {
 
     pub fn installed(image: &str) -> Result<Self, String> {
         let base = if native_mods::is_native(image) {
-            let data = native_mods::about(image).ok_or_else(unsettled)?;
+            let data = native_mods::about(image).ok_or_else(|| unsettled!())?;
             if data.target != native_mods::Target::Client || native_mods::is_native(&data.base) {
-                return Err(unsettled());
+                return Err(unsettled!());
             }
             data.base
         } else {
@@ -98,19 +98,19 @@ impl Bound {
                     || record.image != preferred.tag
                     || record.proof.is_some()
                 {
-                    return Err(unsettled());
+                    return Err(unsettled!());
                 }
                 super::validate_tag(&base.tag)?;
                 if preferred.tag != base.tag {
                     super::validate_tag(&preferred.tag)?;
                 } else if base != preferred {
-                    return Err(unsettled());
+                    return Err(unsettled!());
                 }
                 None
             }
             Selection::Download { archive } => {
                 if record.base != record.image {
-                    return Err(unsettled());
+                    return Err(unsettled!());
                 }
                 archive.validate(&record.base)?;
                 record.proof.map(GameProof::saved).transpose()?
@@ -145,7 +145,7 @@ impl Bound {
                 }
             }
         }
-        Err(unsettled())
+        Err(unsettled!())
     }
 }
 
@@ -291,11 +291,11 @@ impl Profile {
         if inputs(self.home(), None)? != active.inputs
             || inputs(destination, None)? != active.inputs
         {
-            return Err(unsettled());
+            return Err(unsettled!());
         }
         getrandom::fill(&mut active.profile).map_err(|e| e.to_string())?;
         if active.profile == [0; 16] {
-            return Err(unsettled());
+            return Err(unsettled!());
         }
         active.generation = 1;
         active.receipts.clear();
@@ -362,7 +362,7 @@ impl Profile {
         let _references = ReferencePublication::begin(&home)?;
         let before = profile_txn::references(&home)?
             .pointer
-            .ok_or_else(unsettled)?;
+            .ok_or_else(|| unsettled!())?;
         let mut current = Active::parse(&before)?;
         let Some(position) = current
             .receipts
@@ -372,14 +372,17 @@ impl Profile {
             return Ok(false);
         };
         if current != *shown {
-            return Err(unsettled());
+            return Err(unsettled!());
         }
         if current.receipts[position].waiting_for_update.is_empty() {
             current.receipts.remove(position);
         } else {
             current.receipts[position].acknowledged = true;
         }
-        current.generation = current.generation.checked_add(1).ok_or_else(unsettled)?;
+        current.generation = current
+            .generation
+            .checked_add(1)
+            .ok_or_else(|| unsettled!())?;
         let next = serde_json::to_vec(&current).map_err(|error| error.to_string())?;
         let targets = [current.base().to_owned(), current.executable().to_owned()]
             .into_iter()
@@ -471,13 +474,13 @@ impl Profile {
         let _manifest = game_lock(home)?;
         crate::browser::installed::recover_game_install(home).map_err(String::from)?;
         if self.active()?.as_ref() != Some(active) || inputs(home, None)? != active.inputs {
-            return Err(unsettled().into());
+            return Err(unsettled!().into());
         }
         active.verify_artifacts()?;
         active
             .resources
             .check_play_output(active.base())
-            .map_err(|issue| issue.message(unsettled))?;
+            .map_err(|issue| issue.message(|| unsettled!()))?;
         super::verify_included(active.base(), active.executable(), home)?;
         if native_mods::is_native(active.executable()) {
             cancellation.admit_native_work().map_err(String::from)?;
@@ -529,7 +532,7 @@ impl Profile {
                 },
             )?;
             if initial.inputs != epoch {
-                return Err(unsettled());
+                return Err(unsettled!());
             }
             initial
         };
@@ -552,7 +555,7 @@ impl Profile {
             let _manifest = game_lock(&home)?;
             let _references = ReferencePublication::begin(&home)?;
             if inputs(&home, None)? != bound.inputs {
-                return Err(unsettled());
+                return Err(unsettled!());
             }
             bound.verify_image()?;
             self.0.resume_bootstrap()?
@@ -602,7 +605,7 @@ impl FirstAttempt<'_> {
     /// Verify under the game-manifest lock before checking or compiling this first set.
     pub(super) fn verify_inputs(&self) -> Result<(), String> {
         if inputs(&self.home, None)? != self.bound.inputs {
-            return Err(unsettled());
+            return Err(unsettled!());
         }
         Ok(())
     }
@@ -705,7 +708,7 @@ fn publish_generation(
     stage.seal(pointer, &files)?.publish(|| {
         active.verify_artifacts()?;
         if inputs(home, None)? != epoch {
-            return Err(unsettled());
+            return Err(unsettled!());
         }
         cancellation.publication_guard()
     })?;

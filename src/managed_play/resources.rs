@@ -43,7 +43,7 @@ impl Resources {
         match backend::check_play_output(root, &resources.path_at(root)) {
             Ok(()) => Ok(Some(resources)),
             Err(backend::Unprepared::Incomplete | backend::Unprepared::ServerOnly) => Ok(None),
-            Err(issue) => Err(issue.message(unsettled)),
+            Err(issue) => Err(issue.message(|| unsettled!())),
         }
     }
 
@@ -317,7 +317,7 @@ pub(super) fn copy_tree(
 }
 
 fn setup_error(path: &Path) -> String {
-    format!("{}: {}", path.display(), unsettled())
+    format!("{}: {}", path.display(), unsettled!())
 }
 fn at(path: &Path, error: io::Error) -> String {
     format!("{}: {error}", path.display())

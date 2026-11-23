@@ -1858,5 +1858,7 @@
   "{host} serves this mod's code. Turn {host} on for the game to load it.": "{host} serves this mod's code. Turn {host} on for the game to load it.",
   "{host} can't serve {mod}: it doesn't run everywhere {mod} must.": "{host} can't serve {mod}: it doesn't run everywhere {mod} must.",
   "No Stable build yet. Plays Nightly until there is one.": "No Stable build yet. Plays Nightly until there is one.",
-  "The mod registry file has no signature.": "The mod registry file has no signature."
+  "The mod registry file has no signature.": "The mod registry file has no signature.",
+  "Sunrise couldn't verify the profile's saved game build ({check}: {error}).": "Sunrise couldn't verify the profile's saved game build ({check}: {error}).",
+  "Sunrise couldn't verify the profile's saved game build ({check}).": "Sunrise couldn't verify the profile's saved game build ({check})."
 }

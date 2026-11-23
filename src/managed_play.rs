@@ -55,7 +55,9 @@ impl ReferencePublication {
             locks::{LockMode, Release},
             runtime_leases::Registry,
         };
-        let readers = DISPLAY_PUBLICATION.lock().map_err(|_| unsettled())?;
+        let readers = DISPLAY_PUBLICATION
+            .lock()
+            .map_err(|error| unsettled!(error))?;
         // This guard is never handed off. Release it explicitly even if an unrelated
         // concurrent fork still has a transient copy of the file descriptor.
         let fence = Registry::with_release(cache, Release::Unlock)
@@ -82,8 +84,38 @@ use std::{
     path::{Path, PathBuf},
 };
 
-fn unsettled() -> String {
-    crate::i18n::tr("Sunrise couldn't verify the profile's saved game build.").into()
+/// Refuses a saved game build, naming the check that refused it (`file:line`) and the error it
+/// had in hand, if any. Printed to stderr as well: about a hundred checks say the same sentence,
+/// and the player's report must still tell them apart.
+macro_rules! unsettled {
+    () => {
+        $crate::managed_play::unsettled_at(concat!(file!(), ":", line!()), None)
+    };
+    ($error:expr) => {
+        $crate::managed_play::unsettled_at(
+            concat!(file!(), ":", line!()),
+            Some(&$error as &dyn std::fmt::Display),
+        )
+    };
+}
+pub(crate) use unsettled;
+
+pub(crate) fn unsettled_at(check: &str, error: Option<&dyn std::fmt::Display>) -> String {
+    // `file!()` uses the host's separators: the same text on every platform.
+    let check = check.replace('\\', "/");
+    let check = check.strip_prefix("src/").unwrap_or(&check);
+    let reason = match error {
+        Some(error) => crate::i18n::trf(
+            "Sunrise couldn't verify the profile's saved game build ({check}: {error}).",
+            &[("check", check), ("error", &error.to_string())],
+        ),
+        None => crate::i18n::trf(
+            "Sunrise couldn't verify the profile's saved game build ({check}).",
+            &[("check", check)],
+        ),
+    };
+    eprintln!("{reason}");
+    reason
 }
 
 fn validate_tag(tag: &str) -> Result<(), String> {
@@ -96,7 +128,7 @@ fn validate_tag(tag: &str) -> Result<(), String> {
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b"-_.+@".contains(&b))
     {
-        return Err(unsettled());
+        return Err(unsettled!());
     }
     Ok(())
 }
@@ -168,7 +200,7 @@ impl CommittedBuildChoice {
         let mut id = [0u8; 16];
         getrandom::fill(&mut id).map_err(|e| e.to_string())?;
         if id == [0; 16] {
-            return Err(unsettled());
+            return Err(unsettled!());
         }
         Ok(Self {
             id,
@@ -201,7 +233,7 @@ impl ModLock {
             || !self.sha256.bytes().all(|b| b.is_ascii_hexdigit())
             || !self.repository.valid()
         {
-            return Err(unsettled());
+            return Err(unsettled!());
         }
         Ok(())
     }
@@ -418,7 +450,7 @@ impl Held {
     fn validate(&self) -> Result<String, String> {
         use sunrise_launcher_smod::{index::valid_id, manifest::revision};
         if !crate::profile_txn::valid_smod_leaf(&self.leaf) {
-            return Err(unsettled());
+            return Err(unsettled!());
         }
         // The journal's portable key is the folded leaf, even across the two roots.
         let key = self.leaf.to_ascii_lowercase();
@@ -426,7 +458,7 @@ impl Held {
             || self.title.trim().is_empty()
             || self.title.chars().any(char::is_control)
         {
-            return Err(unsettled());
+            return Err(unsettled!());
         }
         let version = match &self.source {
             HeldSource::Registry {
@@ -453,10 +485,10 @@ impl Held {
                 version
             }
             HeldSource::Local { version } => version,
-            _ => return Err(unsettled()),
+            _ => return Err(unsettled!()),
         };
         if version.is_empty() || version.chars().any(char::is_control) {
-            return Err(unsettled());
+            return Err(unsettled!());
         }
         validate_tag(self.reason.build())?;
         Ok(key)
@@ -532,7 +564,7 @@ pub(crate) fn try_display_active_at(
         Ok(guard) => guard,
         Err(std::sync::TryLockError::WouldBlock) => return Err(DisplayActiveError::Publishing),
         Err(std::sync::TryLockError::Poisoned(_)) => {
-            return Err(DisplayActiveError::Read(unsettled()))
+            return Err(DisplayActiveError::Read(unsettled!()))
         }
     };
     let _publication = match Registry::existing(data)
@@ -655,12 +687,12 @@ impl Active {
     pub fn parse(bytes: &[u8]) -> Result<Self, String> {
         let value: Self = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
         if value.version != 1 || value.profile == [0; 16] || value.generation == 0 {
-            return Err(unsettled());
+            return Err(unsettled!());
         }
         validate_tag(value.base())?;
         validate_tag(value.executable())?;
         if value.base() == value.executable() && value.base != value.executable {
-            return Err(unsettled());
+            return Err(unsettled!());
         }
         let mut receipts = std::collections::HashSet::new();
         let mut holds = std::collections::HashSet::new();
@@ -671,7 +703,7 @@ impl Active {
                 || (receipt.waiting_for_update.is_empty() && receipt.acknowledged)
                 || !receipt.has_report()
             {
-                return Err(unsettled());
+                return Err(unsettled!());
             }
             if let Some(report) = &receipt.report {
                 if let Some(base) = &report.base {
@@ -685,18 +717,18 @@ impl Active {
                         title.trim().is_empty() || title.chars().any(char::is_control)
                     })
                 {
-                    return Err(unsettled());
+                    return Err(unsettled!());
                 }
             }
             for held in &receipt.waiting_for_update {
                 if !paths.insert(held.validate()?) || !holds.insert(held.id()) {
-                    return Err(unsettled());
+                    return Err(unsettled!());
                 }
             }
         }
         if let Some(choice) = &value.build_choice {
             if choice.id == [0; 16] || (choice.channel.is_none() && choice.version.is_none()) {
-                return Err(unsettled());
+                return Err(unsettled!());
             }
             if let Some(version) = &choice.version {
                 validate_tag(version)?;
@@ -709,7 +741,7 @@ impl Active {
             if !locked_mods.insert(lock.mod_id.as_str())
                 || !locked_projects.insert(lock.project.as_str())
             {
-                return Err(unsettled());
+                return Err(unsettled!());
             }
         }
         Ok(value)
@@ -781,7 +813,7 @@ impl Active {
     #[cfg(windows)]
     pub(crate) fn verify_runtime_copy(&self, directory: &Path) -> Result<(), String> {
         if Artifact::capture_at(self.executable(), directory)? != self.executable {
-            return Err(unsettled());
+            return Err(unsettled!());
         }
         Ok(())
     }
@@ -800,7 +832,7 @@ impl Active {
             || (self.executable != self.base
                 && Artifact::capture(self.executable())? != self.executable)
         {
-            return Err(unsettled());
+            return Err(unsettled!());
         }
         self.resources.verify(self.base())
     }
@@ -818,7 +850,7 @@ impl Active {
         scan_packages(home)?;
         verify_included(base, executable, home)?;
         if inputs(home, None)? != epoch {
-            return Err(unsettled());
+            return Err(unsettled!());
         }
         let base = Artifact::capture(base)?;
         let executable = if executable == base.tag {
@@ -837,11 +869,14 @@ impl Active {
                 resources,
             } => {
                 if base != previous.base {
-                    return Err(unsettled());
+                    return Err(unsettled!());
                 }
                 (
                     previous.profile,
-                    previous.generation.checked_add(1).ok_or_else(unsettled)?,
+                    previous
+                        .generation
+                        .checked_add(1)
+                        .ok_or_else(|| unsettled!())?,
                     resources.unwrap_or_else(|| previous.resources.clone()),
                     previous.receipts.clone(),
                     previous.variant.clone(),
@@ -854,11 +889,14 @@ impl Active {
                 variant,
             } => {
                 if base.tag == previous.base() {
-                    return Err(unsettled());
+                    return Err(unsettled!());
                 }
                 (
                     previous.profile,
-                    previous.generation.checked_add(1).ok_or_else(unsettled)?,
+                    previous
+                        .generation
+                        .checked_add(1)
+                        .ok_or_else(|| unsettled!())?,
                     resources,
                     previous.receipts.clone(),
                     variant,
@@ -935,7 +973,7 @@ fn capture_mod_locks(home: &Path) -> Result<Vec<ModLock>, String> {
         lock.validate()?;
         if !locked_mods.insert(lock.mod_id.clone()) || !locked_projects.insert(lock.project.clone())
         {
-            return Err(unsettled());
+            return Err(unsettled!());
         }
         locks.push(lock);
     }
@@ -948,7 +986,7 @@ fn verify_included(base: &str, image: &str, home: &Path) -> Result<(), String> {
         && native_mods::about(image)
             .is_none_or(|about| about.base != base || !about.left_out.is_empty())
     {
-        return Err(unsettled());
+        return Err(unsettled!());
     }
     native_status::check_exact_compiled_profile(&native_status::included(image)?, home)
 }
