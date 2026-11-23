@@ -9,7 +9,6 @@ use sunrise_launcher::native_mods::Cancellation;
 pub(in crate::mods) enum Event {
     Catalogue(Catalogue),
     Detail(u64, Box<Inspection>),
-    Image(sources::ReadmeImage, Option<PathBuf>),
     Icon(sources::SourceIcon, Option<PathBuf>),
     Updates(Box<CheckedUpdates>),
 }
@@ -42,7 +41,6 @@ pub(in crate::mods) struct CheckedUpdates {
 
 #[derive(Default)]
 pub(in crate::mods) struct Work {
-    pub(super) images: HashMap<sources::ReadmeImage, Option<Option<PathBuf>>>,
     pub(super) icons: HashMap<sources::SourceIcon, Option<PathBuf>>,
     icon_misses: sources::IconMisses,
     pub(super) release_pins: HashMap<String, sources::SourceCommit>,
@@ -80,9 +78,6 @@ impl Launcher {
                 }
                 open.inspection = Some(*detail);
                 add = std::mem::take(&mut open.add_when_read);
-            }
-            Event::Image(image, path) => {
-                state.work.images.insert(image, Some(path));
             }
             Event::Icon(icon, path) => {
                 state.work.icons.insert(icon, path);
@@ -177,34 +172,6 @@ impl Launcher {
                 request,
                 Box::new(Inspection { data }),
             )));
-        });
-    }
-
-    /// A README image's file once it has loaded, asking for it the first time.
-    pub(in crate::mods) fn readme_picture(
-        &mut self,
-        image: &sources::ReadmeImage,
-    ) -> Option<PathBuf> {
-        match self.ui.mods.nightly.work.images.get(image) {
-            Some(Some(path)) => path.clone(),
-            Some(None) => None,
-            None => {
-                self.request_nightly_image(image.clone());
-                None
-            }
-        }
-    }
-
-    pub(super) fn request_nightly_image(&mut self, image: sources::ReadmeImage) {
-        use std::collections::hash_map::Entry;
-        let Entry::Vacant(entry) = self.ui.mods.nightly.work.images.entry(image.clone()) else {
-            return;
-        };
-        entry.insert(None);
-        let tx = self.ui.mods.tx.clone();
-        std::thread::spawn(move || {
-            let path = sources::readme_image(&image).ok();
-            let _ = tx.send(super::super::Event::Nightly(Event::Image(image, path)));
         });
     }
 

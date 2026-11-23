@@ -69,8 +69,7 @@ pub(super) fn picture_size(path: &std::path::Path) -> Option<(u32, u32)> {
     })
 }
 
-/// A gallery picture: an address the image cache fetches, a content-addressed v2 registry image,
-/// or a source's pinned README image.
+/// A gallery picture: an address the image cache fetches or a content-addressed v2 registry image.
 #[derive(Clone)]
 pub(super) enum Picture {
     Url(String),
@@ -79,7 +78,6 @@ pub(super) enum Picture {
         relative_path: String,
         caption: String,
     },
-    Readme(sunrise_launcher::browser::sunrise::sources::ReadmeImage),
 }
 
 pub(super) struct Viewer {
@@ -154,7 +152,6 @@ impl Launcher {
                 relative_path,
                 ..
             } => self.v2_mod_image(project_id, relative_path, size),
-            Picture::Readme(image) => self.readme_picture(image),
         }
     }
 
