@@ -69,6 +69,8 @@ pub(super) struct State {
     /// Tests: draw the sidebar this far open, as if part way through an ease.
     #[cfg(test)]
     pub rail_pin: Option<f32>,
+    /// When the status strip appeared, so each appearance eases in once without jumping the page.
+    pub status_strip_since: Option<Instant>,
 }
 
 /// The keyboard's ring, in `color`, around a filled control that has no edge of its own to turn
@@ -713,6 +715,33 @@ impl Launcher {
             _ => self.mods(window, cx),
         };
         let status = self.status_strip(cx);
+        let status = if let Some(strip) = status {
+            let since = *self.ui.status_strip_since.get_or_insert_with(Instant::now);
+            static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+            let start = *START.get_or_init(Instant::now);
+            let id = since.saturating_duration_since(start).as_micros() as usize;
+            Some(
+                div()
+                    .id("status-strip-wrapper")
+                    .flex_none()
+                    .overflow_hidden()
+                    .with_animation(
+                        ElementId::named_usize("status-strip-enter", id),
+                        crate::motion::eased(sunrise_launcher_theme::QUICK),
+                        |d, p| {
+                            if p < 1. {
+                                d.max_h(px(64. * p)).opacity(p)
+                            } else {
+                                d.opacity(1.)
+                            }
+                        },
+                    )
+                    .child(strip),
+            )
+        } else {
+            self.ui.status_strip_since = None;
+            None
+        };
         let pane = div()
             .relative()
             .flex_1()
