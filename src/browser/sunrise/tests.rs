@@ -113,14 +113,14 @@ fn schema_one_stable_native_records_keep_the_signed_source_on_the_install_path()
     let project = catalogue.project("release_probe").unwrap();
     let version = newest(&catalogue, project, "26.3").unwrap();
     let rebuilt_for = "b".repeat(40);
-    let binary = version
-        .native_binary(&rebuilt_for, "x86_64-unknown-linux-gnu")
-        .unwrap();
-    assert!(version
-        .native_binary(&rebuilt_for, "aarch64-apple-darwin")
-        .is_err());
+    let raw: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let other_signature = raw["projects"][0]["versions"][0]["native_binaries"][0]["file"]
+        ["signature"]
+        .as_str()
+        .unwrap()
+        .to_owned();
 
-    // Even with exact binary metadata, the installer selects and verifies the .smod.
+    // Legacy binary metadata in the JSON is ignored; the installer selects and verifies the .smod.
     let offer = version_of(&catalogue, project, version);
     assert!(offer.blocked.is_none());
     assert_eq!(offer.files.len(), 1);
@@ -131,7 +131,7 @@ fn schema_one_stable_native_records_keep_the_signed_source_on_the_install_path()
         Trust::Verified
     );
     let mut wrong_signature = version.clone();
-    wrong_signature.file.signature = binary.file.signature.clone();
+    wrong_signature.file.signature = Some(other_signature);
     assert!(
         index::check_file(&catalogue, project, &wrong_signature, &source)
             .unwrap_err()
@@ -397,7 +397,6 @@ fn searches_by_kind_and_words() {
     let mut dated = counted.clone();
     let base = dated.projects[0].versions[0].clone();
     let version_on = |day: &str| index::Version {
-        native_binaries: Vec::new(),
         published: day.into(),
         ..base.clone()
     };

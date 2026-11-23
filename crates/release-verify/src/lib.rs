@@ -11,7 +11,6 @@ use ring::signature::{Ed25519KeyPair, KeyPair};
 
 #[cfg(test)]
 mod fixture_tests;
-pub mod native_build;
 
 /// The checksum list's asset name.
 pub const SUMS: &str = "SHA256SUMS";
@@ -604,8 +603,7 @@ impl SigningKey {
         self.sign_bytes(&message(tag, sums))
     }
 
-    /// A base64 signature line over `message` as it is (a prebuilt native build's
-    /// [`native_build::message`]).
+    /// A base64 signature line over `message` as it is (such as [`launcher_message`]).
     pub fn sign_bytes(&self, message: &[u8]) -> String {
         STANDARD.encode(self.0.sign(message).as_ref())
     }
