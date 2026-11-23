@@ -19,7 +19,11 @@ use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
+mod local;
 mod source;
+pub use local::{
+    install_local_packages, read_local_folder, read_local_smod, LocalAttestation, LocalPackage,
+};
 pub(crate) use source::{forward, pack_pasted, pack_pin, pack_pins};
 pub use source::{SourceOrigin, SourceTrack};
 
@@ -396,13 +400,48 @@ pub struct Origin {
 #[serde(rename_all = "snake_case")]
 pub enum AddedFrom {
     Github,
+    LocalFolder { path: String },
     Discover,
     Collection { id: String, name: String },
 }
 
 impl Origin {
-    /// "from GitHub: owner/repo @ tag" (or the commit's first 7 digits).
+    pub fn local_folder(id: String, version: String, path: String, sha256: String) -> Self {
+        Self {
+            id,
+            version,
+            owner: String::new(),
+            repo: String::new(),
+            tag: None,
+            commit: String::new(),
+            asset: None,
+            sha256,
+            source: None,
+            added_from: Some(AddedFrom::LocalFolder { path }),
+        }
+    }
+
+    pub fn local_folder_path(&self) -> Option<&str> {
+        match &self.added_from {
+            Some(AddedFrom::LocalFolder { path }) => Some(path.as_str()),
+            _ => None,
+        }
+    }
+
+    /// Whether this mod was added outside the Sunrise registry or collections,
+    /// so it never participates in automatic or Update all checks.
+    pub fn is_manual(&self) -> bool {
+        !matches!(
+            self.added_from,
+            Some(AddedFrom::Discover | AddedFrom::Collection { .. })
+        )
+    }
+
+    /// "from GitHub: owner/repo @ tag" (or the commit's first 7 digits), or local folder label.
     pub fn label(&self) -> String {
+        if let Some(path) = self.local_folder_path() {
+            return trf("from local folder: {path}", &[("path", path)]);
+        }
         label(
             &format!("{}/{}", self.owner, self.repo),
             self.tag.as_deref(),
@@ -415,12 +454,25 @@ impl Origin {
     }
 
     pub fn is_release_asset(&self) -> bool {
-        self.source.is_none()
+        self.local_folder_path().is_none()
+            && self.source.is_none()
             && self.tag.as_deref().is_some_and(ref_ok)
             && self.asset.as_deref().is_some_and(asset_name)
     }
 
     pub(crate) fn matches_archive(&self, id: &str, version: &str, digest: &str) -> bool {
+        if let Some(path) = self.local_folder_path() {
+            return !path.is_empty()
+                && self.id == id
+                && self.version == version
+                && self.owner.is_empty()
+                && self.repo.is_empty()
+                && self.tag.is_none()
+                && self.commit.is_empty()
+                && self.asset.is_none()
+                && self.source.is_none()
+                && self.sha256.eq_ignore_ascii_case(digest);
+        }
         self.id == id
             && self.version == version
             && plain(&self.owner)
@@ -501,6 +553,12 @@ impl Packed {
     pub(crate) fn release_origin(&self, found: &Resolved) -> Option<&Origin> {
         self.checked_origin(found)
             .filter(|origin| origin.is_release_asset())
+    }
+
+    /// Release tag and asset filename when this package came from a GitHub release asset.
+    pub fn release_asset<'a>(&'a self, found: &'a Resolved) -> Option<(&'a str, &'a str)> {
+        let origin = self.release_origin(found)?;
+        Some((origin.tag.as_deref()?, origin.asset.as_deref()?))
     }
 
     pub(crate) fn copy_verified(&self, dest: &Path) -> Result<(), String> {
@@ -870,9 +928,18 @@ pub(crate) fn origin_path(home: &Path, id: &str) -> PathBuf {
     home.join(INSTALLED).join(format!("{id}.origin.json"))
 }
 
-/// The origin of mod `id` installed in `home`, if it came from GitHub.
+pub(crate) fn read_origin_at(path: &Path) -> Option<Origin> {
+    serde_json::from_str(&fs::read_to_string(path).ok()?).ok()
+}
+
+/// The origin of mod `id` installed in `home`, if it came from GitHub or a local folder.
 pub fn origin(home: &Path, id: &str) -> Option<Origin> {
-    serde_json::from_str(&fs::read_to_string(origin_path(home, id)).ok()?).ok()
+    read_origin_at(&origin_path(home, id))
+}
+
+/// The origin sidecar beside an installed `.smod` archive, when present.
+pub(crate) fn origin_for_archive(path: &Path) -> Option<Origin> {
+    read_origin_at(&path.with_extension("origin.json"))
 }
 
 /// Every mod of `home` installed from GitHub.
@@ -881,7 +948,8 @@ pub fn origins(home: &Path) -> Vec<Origin> {
         .map(|dir| {
             dir.flatten()
                 .filter(|e| e.file_name().to_string_lossy().ends_with(".origin.json"))
-                .filter_map(|e| serde_json::from_str(&fs::read_to_string(e.path()).ok()?).ok())
+                .filter_map(|e| read_origin_at(&e.path()))
+                .filter(|origin| origin.local_folder_path().is_none())
                 .collect()
         })
         .unwrap_or_default();

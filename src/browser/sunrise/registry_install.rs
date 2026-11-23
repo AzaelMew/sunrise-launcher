@@ -1013,27 +1013,59 @@ impl SeenPackage {
             return None;
         }
         crate::github_mods::origin(home, id).filter(|row| {
-            self.digest.as_ref().is_some_and(|digest| {
-                row.matches_archive(id, &self.package.manifest.version, digest)
-            })
+            row.local_folder_path().is_none()
+                && self.digest.as_ref().is_some_and(|digest| {
+                    row.matches_archive(id, &self.package.manifest.version, digest)
+                })
         })
     }
 
-    /// Reads and verifies the GitHub receipt at `origin_path(home, id)` when present.
-    /// Source-tracked receipts require the canonical native archive path; legacy receipts
-    /// match by id, version and SHA-256 even when the `.smod` was renamed or moved.
-    fn verified_github_origin(
+    /// Reads and verifies the `.origin.json` receipt beside this archive (either a GitHub
+    /// receipt in `sunrise-native-mods/` or a local-folder receipt beside a native or content
+    /// archive). Returns `Err(())` when an origin sidecar exists at the canonical path but
+    /// cannot be verified against this archive.
+    fn verified_origin_sidecar(
         &self,
         home: &Path,
-    ) -> Result<Option<crate::github_mods::Origin>, ()> {
+    ) -> Result<Option<(PathBuf, crate::github_mods::Origin)>, ()> {
         let id = &self.package.manifest.id;
-        let origin_at = crate::github_mods::origin_path(home, id);
+        let native = self.package.manifest.native.is_some();
+        let origin_at = if native {
+            crate::github_mods::origin_path(home, id)
+        } else {
+            home.join(sunrise_launcher_smod::mod_list::DIR)
+                .join(format!("{id}.origin.json"))
+        };
         let origin = match fs::symlink_metadata(&origin_at) {
-            Ok(meta) if meta.is_file() => crate::github_mods::origin(home, id).ok_or(())?,
+            Ok(meta) if meta.is_file() => {
+                crate::github_mods::read_origin_at(&origin_at).ok_or(())?
+            }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             _ => return Err(()),
         };
-        let matches = if origin.source.is_some() {
+        let canonical = home
+            .join(if native {
+                native_mods::INSTALLED
+            } else {
+                sunrise_launcher_smod::mod_list::DIR
+            })
+            .join(format!("{id}.smod"));
+        // A predecessor kept under a name that differs only by case is still this receipt's leaf.
+        let at_canonical = self.package.path.parent() == canonical.parent()
+            && self
+                .package
+                .path
+                .file_name()
+                .zip(canonical.file_name())
+                .is_some_and(|(leaf, expected)| leaf.eq_ignore_ascii_case(expected));
+        let matches = if origin.local_folder_path().is_some() {
+            at_canonical
+                && self.digest.as_deref().is_some_and(|digest| {
+                    origin.matches_archive(id, &self.package.manifest.version, digest)
+                })
+        } else if !native {
+            false
+        } else if origin.source.is_some() {
             self.github_origin(home).as_ref() == Some(&origin)
         } else {
             origin.id == *id
@@ -1044,10 +1076,22 @@ impl SeenPackage {
                     .is_some_and(|digest| origin.sha256.eq_ignore_ascii_case(digest))
         };
         if matches {
-            Ok(Some(origin))
+            Ok(Some((origin_at, origin)))
         } else {
             Err(())
         }
+    }
+
+    /// Reads and verifies a GitHub receipt at `origin_path(home, id)` when present,
+    /// excluding local-folder receipts.
+    fn verified_github_origin(
+        &self,
+        home: &Path,
+    ) -> Result<Option<crate::github_mods::Origin>, ()> {
+        Ok(self
+            .verified_origin_sidecar(home)?
+            .map(|(_, origin)| origin)
+            .filter(|origin| origin.local_folder_path().is_none()))
     }
 }
 
@@ -1505,11 +1549,13 @@ fn at(path: &Path, error: impl std::fmt::Display) -> String {
 }
 
 mod github;
+mod local;
 mod mutations;
 #[cfg(test)]
 mod tests;
 #[cfg(all(test, debug_assertions, unix))]
 mod update_tests;
-pub use github::{add_github, update_github};
+pub use github::{add_github, install_github_manual, update_github, ManualRelease};
+pub use local::{install_local, install_local_at};
 pub(crate) use mutations::check_activation;
 pub use mutations::{remove_mods, ChangeImpact};

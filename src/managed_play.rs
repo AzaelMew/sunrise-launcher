@@ -9,7 +9,7 @@ mod inputs;
 mod resources;
 mod roots;
 pub use client::{headless_first, Client, FailedBuild, ModRecovery, Progress, StartError, Started};
-pub(crate) use first::copy_install_inputs;
+pub(crate) use first::{changed_files, copy_install_inputs};
 pub(crate) use first::{CandidateImage, Edit};
 pub use first::{FirstAttempt, FirstBuild, Profile};
 pub(crate) use inputs::inputs;

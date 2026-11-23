@@ -275,6 +275,57 @@ pub(crate) fn modal_frame(
         )
 }
 
+/// A prominent warning modal frame: strong warning border, edge-to-edge warning header band
+/// supplied by `body`, and press-outside closes just like [`frame`].
+pub(crate) fn warning_frame(
+    id: &'static str,
+    width: f32,
+    border: Hsla,
+    body: Div,
+    cx: &mut Context<Launcher>,
+) -> Stateful<Div> {
+    div()
+        .id(id)
+        .absolute()
+        .inset_0()
+        .occlude()
+        .flex()
+        .items_center()
+        .justify_center()
+        .p(px(16.))
+        .bg(palette().scrim())
+        .on_mouse_down(MouseButton::Right, |_: &MouseDownEvent, _, cx| {
+            cx.stop_propagation()
+        })
+        .on_mouse_down(MouseButton::Middle, |_: &MouseDownEvent, _, cx| {
+            cx.stop_propagation()
+        })
+        .on_scroll(|_, _, cx| cx.stop_propagation())
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|this, _: &MouseDownEvent, _, cx| {
+                this.close_sheet();
+                cx.notify();
+            }),
+        )
+        .child(
+            body.id((id, 1usize))
+                .w(px(width))
+                .max_w_full()
+                .max_h_full()
+                .overflow_y_scroll()
+                .track_scroll(&crate::frame::scrolls("sheet"))
+                .rounded(crate::tokens::r(crate::tokens::R_PANEL))
+                .border_2()
+                .border_color(border)
+                .bg(rgb(palette().raised))
+                .text_color(rgb(palette().text))
+                .on_mouse_down(MouseButton::Left, |_: &MouseDownEvent, _, cx| {
+                    cx.stop_propagation()
+                }),
+        )
+}
+
 pub(crate) fn title(text: String) -> Div {
     div()
         .text_size(px(tokens::TITLE))
@@ -500,7 +551,7 @@ impl Launcher {
     /// sheet asked for.
     pub(crate) fn live_sheet(
         &mut self,
-        window: &Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Stateful<Div>> {
         if self.ui.sheets.registry.is_some() {

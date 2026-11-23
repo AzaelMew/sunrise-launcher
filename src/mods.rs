@@ -64,13 +64,12 @@ enum Menu {
     Sort,
 }
 
-#[allow(dead_code)]
 enum Catalog {
     Idle,
     Loading,
     /// Shared, not owned: Discover draws from it every frame and clones only the handles.
-    Ready(Rc<[Card]>, Rc<[String]>),
-    Failed(String),
+    Ready(Rc<[Card]>),
+    Failed,
 }
 
 struct V2CatalogPayload {
@@ -363,7 +362,8 @@ enum Event {
         Result<actions::EnabledMods, String>,
         Option<u64>,
     ),
-    Catalog(String, Result<(Vec<Card>, Vec<String>), String>),
+    /// The v1 index's cards for this game, or `None` when it couldn't be read.
+    Catalog(String, Option<Vec<Card>>),
     V2Catalog(Option<String>, Result<V2CatalogPayload, String>),
     Page(u64, Result<Box<model::Page>, String>),
     V2Page(u64, Result<Box<model::discover_v2::V2Page>, String>),
@@ -566,8 +566,13 @@ fn read_local(home: &Path, archives: &mut HashMap<String, ArchiveDisplay>) -> Ve
 }
 
 /// The read-only Home view uses the same Installed classification as the full rows.
+pub(crate) use model::ManualBadge;
+pub(crate) use ui::manual_badge_pill;
+
+/// The small pieces of a mod's Installed row that Home shows without reading its archive again.
 pub(crate) struct HomeModFacts {
     pub(crate) kind: &'static str,
+    pub(crate) badge: Option<ManualBadge>,
     pub(crate) status: Option<String>,
 }
 
@@ -747,7 +752,7 @@ impl Launcher {
     }
 
     fn is_collection(&self, id: &str) -> bool {
-        matches!(&self.ui.mods.catalog, Catalog::Ready(cards, _)
+        matches!(&self.ui.mods.catalog, Catalog::Ready(cards)
             if cards.iter().any(|c| c.id == id && c.members.is_some()))
             || sunrise::known_index().is_some_and(|index| index.collection(id).is_some())
     }
@@ -825,11 +830,13 @@ impl Launcher {
                 .filter(|row| row.on)
             {
                 let error = self.ui.mods.errors.get(&row.id).map(String::as_str);
+                let badge = row.manual_badge();
                 let cells = model::cells(&row, error, None, native_allowed);
                 labels.insert(
                     row.id,
                     HomeModFacts {
                         kind: cells.kind,
+                        badge,
                         status: cells.status.map(|state| state.label),
                     },
                 );
@@ -991,10 +998,8 @@ impl Launcher {
                 Event::Catalog(game, result) => {
                     if m.catalog_game.as_ref() == Some(&game) {
                         m.catalog = match result {
-                            Ok((cards, categories)) => {
-                                Catalog::Ready(cards.into(), categories.into())
-                            }
-                            Err(error) => Catalog::Failed(error),
+                            Some(cards) => Catalog::Ready(cards.into()),
+                            None => Catalog::Failed,
                         };
                     }
                 }
@@ -1078,7 +1083,7 @@ impl Launcher {
 
     /// Reads what is installed again when the files' fingerprint moved (an install, a toggle or a
     /// build elsewhere), and asks for the registry once. Reads only.
-    fn mods_refresh(&mut self) {
+    pub(crate) fn mods_refresh(&mut self) {
         let home = self.mods_home();
         self.mods
             .follow_home(self.selected_instance().map(|i| i.home.clone()));
@@ -1223,11 +1228,9 @@ impl Launcher {
         self.ui.mods.catalog = Catalog::Loading;
         let tx = self.ui.mods.tx.clone();
         std::thread::spawn(move || {
-            let result = sunrise::index().map(|index| {
-                let cards = model::cards(&index, &game);
-                let categories = model::categories(&cards);
-                (cards, categories)
-            });
+            let result = sunrise::index()
+                .ok()
+                .map(|index| model::cards(&index, &game));
             let _ = tx.send(Event::Catalog(game, result));
         });
     }
@@ -1678,7 +1681,7 @@ impl Launcher {
                     .items_center()
                     .gap(px(8.))
                     .child(field)
-                    .child(self.github_add_button(cx))
+                    .child(self.add_from_source_button(cx))
                     .into_any_element()
             } else {
                 field.into_any_element()

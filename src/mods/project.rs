@@ -201,29 +201,25 @@ impl Launcher {
                 cx.notify();
             }))
         };
-        let github_update = row
-            .local
-            .as_ref()
-            .and_then(|local| local.github.clone())
-            .filter(|origin| origin.is_release_asset())
-            .map(|origin| {
-                if let Some(progress) = self.registry_card_control(&row.id, |label| {
-                    dim(button("alt-project-github-progress", label)).into_any_element()
-                }) {
-                    return progress;
-                }
-                let button = button("alt-project-github-update", tr("Check for update"));
-                if busy {
-                    dim(button).into_any_element()
-                } else {
-                    button
-                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                            this.open_github_add(Some(origin.clone()));
-                            cx.notify();
-                        }))
-                        .into_any_element()
-                }
-            });
+        let manual_badge = row.manual_badge();
+        let manual_refresh = manual_badge.map(|_| {
+            if let Some(progress) = self.registry_card_control(&row.id, |label| {
+                dim(button("alt-project-github-progress", label)).into_any_element()
+            }) {
+                return progress;
+            }
+            let button = button("alt-project-manual-refresh", tr("Add from source"));
+            if busy {
+                dim(button).into_any_element()
+            } else {
+                button
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                        this.open_add_from_source();
+                        cx.notify();
+                    }))
+                    .into_any_element()
+            }
+        });
         let remove = row
             .selectable_archive()
             .then(|| self.remove_mod_button(&row.id, busy, cx));
@@ -231,6 +227,16 @@ impl Launcher {
             .flex()
             .flex_col()
             .gap(px(8.))
+            .children(manual_badge.map(|badge| {
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .child(ui::manual_badge_pill(badge))
+                    .child(muted(tr(
+                        "No automatic updates. Refresh via Add from source.",
+                    )))
+            }))
             .children(status)
             .children(
                 hold.as_ref()
@@ -250,7 +256,7 @@ impl Launcher {
                         tr("Turned off")
                     }))
                     .children(allow)
-                    .children(github_update)
+                    .children(manual_refresh)
                     .children(remove),
             )
     }
@@ -264,7 +270,7 @@ impl Launcher {
             .map_or(Page::Discover, |o| o.from);
         let parent = self.ui.mods.open.as_ref().and_then(|o| o.parent.clone());
         let parent_name = parent.as_ref().and_then(|id| match &self.ui.mods.catalog {
-            Catalog::Ready(cards, _) => cards.iter().find(|c| c.id == *id).map(|c| c.name.clone()),
+            Catalog::Ready(cards) => cards.iter().find(|c| c.id == *id).map(|c| c.name.clone()),
             _ => None,
         });
         let back_label = match (back_to, &parent_name) {

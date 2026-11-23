@@ -458,7 +458,8 @@ impl Launcher {
             .as_ref()
             .into_iter()
             .flat_map(|snapshot| &snapshot.rows.local)
-            .filter_map(|local| local.github.as_ref());
+            .filter_map(|local| local.github.as_ref())
+            .filter(|origin| !origin.is_manual());
         let checked = self
             .ui
             .mods
@@ -528,6 +529,7 @@ fn tracked_origins(local: &[model::Local], only: Option<&Origin>) -> Vec<Origin>
     local
         .iter()
         .filter_map(|local| local.github.as_ref())
+        .filter(|origin| !origin.is_manual())
         .filter(|origin| only.is_none_or(|only| only == *origin))
         .filter(|origin| {
             origin
@@ -636,5 +638,77 @@ mod tests {
             ..only
         };
         assert!(tracked_origins(&locals, Some(&stale)).is_empty());
+    }
+
+    #[test]
+    fn manual_from_source_mods_are_excluded_from_tracked_source_updates() {
+        use sunrise_launcher::github_mods::AddedFrom;
+        let (_, mut manual_github) = super::super::tests::receipt_fixture();
+        manual_github.github.as_mut().unwrap().added_from = Some(AddedFrom::Github);
+
+        let mut manual_folder = manual_github.clone();
+        manual_folder.id = "folder_mod".into();
+        manual_folder.github = Some(Origin::local_folder(
+            "folder_mod".into(),
+            "0.4.0".into(),
+            "/tmp/camp-lanterns".into(),
+            "0".repeat(64),
+        ));
+
+        let mut discover_source = manual_github.clone();
+        discover_source.id = "discover_mod".into();
+        discover_source.github.as_mut().unwrap().id = "discover_mod".into();
+        discover_source.github.as_mut().unwrap().added_from = Some(AddedFrom::Discover);
+
+        let locals = [manual_github, manual_folder, discover_source.clone()];
+        let tracked = tracked_origins(&locals, None);
+        assert_eq!(tracked, [discover_source.github.unwrap()]);
+    }
+
+    #[test]
+    fn legacy_pasted_branch_and_release_receipts_stay_out_of_update_all() {
+        use sunrise_launcher::github_mods::AddedFrom;
+        let (_, discover_source) = super::super::tests::receipt_fixture();
+
+        let mut legacy_branch = discover_source.clone();
+        legacy_branch.id = "legacy_branch".into();
+        legacy_branch.github.as_mut().unwrap().id = "legacy_branch".into();
+        legacy_branch.github.as_mut().unwrap().added_from = None;
+
+        let mut legacy_release = discover_source.clone();
+        legacy_release.id = "legacy_release".into();
+        legacy_release.github.as_mut().unwrap().id = "legacy_release".into();
+        legacy_release.github.as_mut().unwrap().added_from = None;
+        legacy_release
+            .github
+            .as_mut()
+            .unwrap()
+            .source
+            .as_mut()
+            .unwrap()
+            .track = SourceTrack::Release;
+
+        let mut collection_source = discover_source.clone();
+        collection_source.id = "collection_mod".into();
+        collection_source.github.as_mut().unwrap().id = "collection_mod".into();
+        collection_source.github.as_mut().unwrap().added_from = Some(AddedFrom::Collection {
+            id: "starter".into(),
+            name: "Starter".into(),
+        });
+
+        let locals = [
+            legacy_branch,
+            legacy_release,
+            discover_source.clone(),
+            collection_source.clone(),
+        ];
+        let tracked = tracked_origins(&locals, None);
+        assert_eq!(
+            tracked,
+            [
+                discover_source.github.unwrap(),
+                collection_source.github.unwrap(),
+            ]
+        );
     }
 }

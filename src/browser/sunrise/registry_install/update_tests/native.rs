@@ -33,7 +33,7 @@ fn release(fixture: &mut Fixture, version: &str, pin: char, source: &[u8]) -> Ve
     )
 }
 
-fn configure_tool(fixture: &Fixture) {
+pub(super) fn configure_tool(fixture: &Fixture) {
     let runtime = fixture.root.join("sdk/runtime/bin");
     fs::create_dir_all(&runtime).unwrap();
     fs::copy(

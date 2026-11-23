@@ -1,7 +1,7 @@
 //! What the Mods screens show, worked out from the registry index and the installed list:
 //! pure data in and out, no files, no network, no window. Everything here only reads.
 use super::build_run::State as BuildState;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashSet};
 use sunrise_launcher::browser::installed::Entry;
 use sunrise_launcher::i18n::{tr, trf};
 use sunrise_launcher::native_mods;
@@ -56,8 +56,23 @@ impl Fit {
     }
 }
 
+/// Badge shown on Home's Mods tab and Installed for unreviewed mods added outside the registry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ManualBadge {
+    FromSource,
+    Local,
+}
+
+impl ManualBadge {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::FromSource => tr("From source"),
+            Self::Local => tr("Local"),
+        }
+    }
+}
+
 /// One mod in Discover.
-#[allow(dead_code)]
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct Card {
     pub(super) id: String,
@@ -174,25 +189,7 @@ pub(super) fn cards(index: &Index, game: &str) -> Vec<Card> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Sort {
     Downloads,
-    Updated,
-    Newest,
     Name,
-}
-
-#[cfg(test)]
-impl Sort {
-    #[allow(dead_code)]
-    pub(super) const ALL: [Sort; 4] = [Sort::Downloads, Sort::Updated, Sort::Newest, Sort::Name];
-
-    #[allow(dead_code)]
-    pub(super) fn label(self) -> &'static str {
-        match self {
-            Sort::Downloads => tr("Most downloaded"),
-            Sort::Updated => tr("Recently updated"),
-            Sort::Newest => tr("Newest"),
-            Sort::Name => tr("Name"),
-        }
-    }
 }
 
 #[cfg(test)]
@@ -236,34 +233,9 @@ pub(super) fn discover(cards: &[Card], f: &Filters) -> Vec<usize> {
         .collect();
     match f.sort {
         Sort::Downloads => shown.sort_by_key(|&i| std::cmp::Reverse(cards[i].downloads)),
-        Sort::Updated => shown.sort_by(|&a, &b| {
-            cards[b]
-                .updated
-                .cmp(&cards[a].updated)
-                .then(cards[b].downloads.cmp(&cards[a].downloads))
-        }),
-        Sort::Newest => shown.sort_by(|&a, &b| {
-            cards[b]
-                .first
-                .cmp(&cards[a].first)
-                .then(cards[b].downloads.cmp(&cards[a].downloads))
-        }),
         Sort::Name => shown.sort_by_cached_key(|&i| cards[i].name.to_lowercase()),
     }
     shown
-}
-
-/// The categories the mods carry, most used first.
-pub(super) fn categories(cards: &[Card]) -> Vec<String> {
-    let mut uses: HashMap<&str, usize> = HashMap::new();
-    for c in cards {
-        for k in &c.categories {
-            *uses.entry(k).or_default() += 1;
-        }
-    }
-    let mut all: Vec<(&str, usize)> = uses.into_iter().collect();
-    all.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
-    all.into_iter().map(|(k, _)| k.to_owned()).collect()
 }
 
 /// `6814` → `6.8k downloads`.
@@ -804,10 +776,28 @@ impl Row {
             Some(AddedFrom::Collection { name, .. }) => name,
             Some(AddedFrom::Discover) => tr("Sunrise mods"),
             Some(AddedFrom::Github) => tr("From GitHub"),
+            Some(AddedFrom::LocalFolder { .. }) => tr("From source"),
             // Only the paste flow installed GitHub packages without a source tracker.
             None if origin.source.is_none() => tr("From GitHub"),
             None => tr("Source"),
         }
+    }
+
+    /// Badge for mods added outside the Sunrise registry: "From source" (GitHub link or local
+    /// repository folder) or "Local" (a local `.smod` file).
+    pub(crate) fn manual_badge(&self) -> Option<ManualBadge> {
+        let local = self.local.as_ref()?;
+        match &local.github {
+            None => Some(ManualBadge::Local),
+            Some(origin) if origin.is_manual() => Some(ManualBadge::FromSource),
+            Some(_) => None,
+        }
+    }
+
+    /// Whether this mod was added manually (via Add from source or as a local `.smod`) and must
+    /// not receive automatic or Update all updates.
+    pub(super) fn is_manual(&self) -> bool {
+        self.manual_badge().is_some()
     }
 
     pub(super) fn installed_details(&self) -> Page {
