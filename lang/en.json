@@ -547,5 +547,6 @@
   "Downloading Java ({done} of {total} files)": "Downloading Java ({done} of {total} files)",
   "Adding the sounds…": "Adding the sounds…",
   "Preparing Minecraft's files…": "Preparing Minecraft's files…",
-  "Default": "Default"
+  "Default": "Default",
+  "Waiting for another build to finish…": "Waiting for another build to finish…"
 }
