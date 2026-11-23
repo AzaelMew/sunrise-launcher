@@ -83,6 +83,8 @@ pub(crate) struct SheetsState {
     publisher_change: Option<publisher_change::PendingPublisherChange>,
     provider_choice: Option<provider_choice::PendingProviderChoice>,
     pub(super) profile_action: Option<crate::profile_delete::Action>,
+    /// A build waits on the unreviewed-code warning for native mods nobody reviewed.
+    pub(crate) unreviewed: Option<crate::github_mods_page::PendingUnreviewed>,
 }
 
 /// A held update as the bottom bar and the Resolve sheet read it.
@@ -414,6 +416,7 @@ impl Launcher {
     pub(crate) fn blocking_dialog(&self) -> bool {
         self.ui.sheets.publisher_change.is_some()
             || self.ui.sheets.provider_choice.is_some()
+            || self.ui.sheets.unreviewed.is_some()
             || self.source_question().is_some()
             || self.mods.installs.question.is_some()
             || self.mods.installs.world.is_some()
@@ -454,7 +457,9 @@ impl Launcher {
         if self.ui.sheet == Some(Sheet::SwitchProvider) {
             self.cancel_provider_switch();
         }
-        if self.dismiss_publisher_change() || self.answer_provider_choice(None) {
+        if let Some(pending) = self.ui.sheets.unreviewed.take() {
+            pending.refuse();
+        } else if self.dismiss_publisher_change() || self.answer_provider_choice(None) {
             // Keep the current version and remembered publisher; install no provider.
         } else if self.source_question().is_some() {
             self.answer_source_question(Ok(false));
@@ -476,6 +481,7 @@ impl Launcher {
     pub(crate) fn sheet_escape(&mut self) -> bool {
         let prompt_open = self.ui.sheets.publisher_change.is_some()
             || self.ui.sheets.provider_choice.is_some()
+            || self.ui.sheets.unreviewed.is_some()
             || self.source_question().is_some()
             || self.mods.installs.question.is_some()
             || self.mods.installs.world.is_some();
@@ -579,6 +585,9 @@ impl Launcher {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Stateful<Div>> {
+        if let Some(sheet) = self.unreviewed_build_sheet(window, cx) {
+            return Some(sheet);
+        }
         if let Some(pending) = &self.ui.sheets.publisher_change {
             return Some(self.publisher_change_sheet(&pending.question, cx));
         }

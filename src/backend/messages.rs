@@ -136,6 +136,12 @@ pub enum Msg {
     },
     /// Where the native-mods build is.
     NativeProgress(crate::native_mods::Step),
+    /// A build reached native mods that neither came verified from the registry nor were
+    /// confirmed: the unreviewed-code warning answers `reply` (true builds them).
+    ConfirmUnreviewed(
+        Vec<crate::native_mods::Unreviewed>,
+        std::sync::mpsc::Sender<bool>,
+    ),
     /// The native-mods build ended: the version built, or why not.
     Native(Result<String, crate::native_mods::Failed>),
     /// An imported game build is installed (`build_import::install`): its version, or why not.

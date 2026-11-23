@@ -4,7 +4,7 @@ use super::*;
 /// Plan enabled native mods for an instance. Worker-only filesystem and release reads.
 pub fn routes(home: &Path, base: Option<&str>) -> Result<Routes, Failed> {
     let lease = crate::native_cache::Cache::acquire(&backend::build_dir()).map_err(cache_error)?;
-    let Some(folder) = stage_installed(home, root().join("installed.routes"))? else {
+    let Some(folder) = stage_installed(home, root().join("installed.routes"), None)? else {
         return Ok(Routes::default());
     };
     classify(&folder, base, &lease, &Cancellation::default())
@@ -32,7 +32,8 @@ pub(crate) fn source_routes(
 ) -> Result<Routes, SourceCheckError> {
     cancellation.check()?;
     let scratch = tempfile::tempdir().map_err(|error| error.to_string())?;
-    let folder = stage_installed(home, scratch.path().join("mods"))?
+    let folder = stage_installed(home, scratch.path().join("mods"), None)
+        .map_err(SourceCheckError::Fit)?
         .ok_or(SourceCheckError::Fit(Failed::Nothing))?;
     let found = scan_bundles(&folder)?;
     let side = sunrise_launcher_smod::manifest::Side::Client;
@@ -261,7 +262,7 @@ pub struct UpdateCheck {
 /// or Nightly `to`. Worker-only: it reads releases.
 pub fn update_check(home: &Path, to: &str) -> Result<UpdateCheck, Failed> {
     let _lease = crate::native_cache::Cache::acquire(&backend::build_dir()).map_err(cache_error)?;
-    let folder = stage_installed(home, root().join("installed.routes"))?;
+    let folder = stage_installed(home, root().join("installed.routes"), None)?;
     let found = match &folder {
         Some(folder) => scan_bundles(folder)?,
         None => Vec::new(),

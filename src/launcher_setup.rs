@@ -12,6 +12,14 @@ impl Launcher {
         })
         .detach();
         let (tx, rx) = wake::channel();
+        // A build that reaches native mods nobody reviewed waits on the window's warning.
+        let asks = tx.clone();
+        native_mods::ask_unreviewed_with(move |found| {
+            let (reply, answer) = std::sync::mpsc::channel();
+            asks.send(Msg::ConfirmUnreviewed(found.to_vec(), reply))
+                .is_ok()
+                && answer.recv().unwrap_or(false)
+        });
         let appearance = cx.observe_window_appearance(window, |this, window, cx| {
             this.theme = this.settings_theme(window);
             cx.notify();

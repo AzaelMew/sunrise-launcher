@@ -750,7 +750,8 @@ enum Cmd {
         /// game build to use (defaults to the newest installed release or Nightly)
         #[arg(long)]
         version: Option<String>,
-        /// Build native code from a folder the registry did not review (asked again on every run)
+        /// Build native code the registry did not review: a folder, or a profile's mods that were
+        /// copied in by hand (asked again on every run)
         #[arg(long)]
         trust_native_code: bool,
         /// Native mods use the pinned SDK's optimized compilation settings.
@@ -1339,10 +1340,14 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
             if let Some(requested) = version.as_deref().filter(|tag| *tag != base) {
                 return Err(trf("This profile uses {build}, not {requested}. Use Switch to change its game build.", &[("build", &base), ("requested", requested)]));
             }
-            // The profile's own mods were reviewed by the registry or confirmed when they were
-            // added; a folder of source is code nobody reviewed.
+            // A folder of source is code nobody reviewed. A profile's own mods build when the
+            // registry verified them or the player confirmed them; the rest, such as files
+            // copied in by hand, only when this run trusts them.
             if folder.is_some() {
                 native_permission(trust_native_code)?;
+            }
+            if trust_native_code {
+                trust_unreviewed_builds();
             }
             let target = match profile {
                 Some(profile) => {
@@ -2542,6 +2547,9 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
         } => {
             let link = github_mods::parse(&url)?;
             let found = github_mods::resolve(&link, &github_mods::api)?;
+            if trust_native_code {
+                trust_unreviewed_builds();
+            }
             github_native(GithubInstall {
                 instance: &instance,
                 found: &found,
@@ -2561,6 +2569,9 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
         } => {
             let mut origins = github_mods::origins(&home);
             origins.retain(|o| id.as_deref().is_none_or(|i| o.id == i));
+            if trust_native_code {
+                trust_unreviewed_builds();
+            }
             if origins.is_empty() {
                 return Err(match id {
                     Some(i) => format!("{i} wasn't installed from GitHub."),
@@ -3778,7 +3789,9 @@ mod catalog_tests;
 
 #[path = "cli_native_permission.rs"]
 mod native_permission_impl;
-use native_permission_impl::{github_native, native_permission, GithubInstall};
+use native_permission_impl::{
+    github_native, native_permission, trust_unreviewed_builds, GithubInstall,
+};
 
 mod developer_builds;
 

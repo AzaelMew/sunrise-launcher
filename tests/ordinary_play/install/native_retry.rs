@@ -18,6 +18,8 @@ fn switch_proves_native_against_the_exact_target_even_with_an_unlike_catalogue_g
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(&path, &bytes).unwrap();
     let hash = index::sha256(&bytes);
+    // As a verified registry install records it, so the build asks nothing.
+    sunrise_launcher::backend::allow_native_files_in(&fixture.data, [hash.clone()]).unwrap();
     let facts = index::inspect(&kind, &path).unwrap();
     let mut version = template.versions[0].clone();
     version.version = "1".into();
@@ -122,6 +124,8 @@ fn switch_reports_a_newer_uses_list_and_its_content_dependent_as_unknown() {
         let path = fixture.home.join(layer).join(format!("{id}.smod"));
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, &bytes).unwrap();
+        sunrise_launcher::backend::allow_native_files_in(&fixture.data, [index::sha256(&bytes)])
+            .unwrap();
         sunrise_launcher::browser::mod_list::set_enabled(&fixture.home, id, true).unwrap();
         archives.push((id, title, path, bytes));
     }

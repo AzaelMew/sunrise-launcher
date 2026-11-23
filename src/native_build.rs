@@ -86,8 +86,11 @@ impl Launcher {
         };
         std::thread::spawn(move || {
             let result = native_mods::installed_mods(&instance.home)
-                .and_then(|folder| native_mods::bundles(&folder).map(|_| folder))
-                .map_err(native_mods::Failed::Other)
+                .and_then(|folder| {
+                    native_mods::bundles(&folder)
+                        .map(|_| folder)
+                        .map_err(native_mods::Failed::Other)
+                })
                 .and_then(|folder| {
                     native_mods::build(
                         &base,

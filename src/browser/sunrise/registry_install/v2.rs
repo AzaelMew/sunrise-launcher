@@ -1420,6 +1420,12 @@ pub(crate) fn stage_and_verify_v2_release(
         }
     }
 
+    // The signed index listed these bytes and their attestation verified: a build takes them
+    // without the unreviewed-code warning.
+    if matches!(project.kind, V2Kind::NativeMod) {
+        backend::allow_native_files_in(pin_dir, [actual_sha256.clone()])
+            .map_err(InstallError::Unproved)?;
+    }
     let entry = installed::Entry {
         source: SourceId::Sunrise,
         project: project.id.clone(),

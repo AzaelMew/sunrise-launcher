@@ -1,15 +1,18 @@
-//! Serialize settings writes with the per-source grants of Add from source, so an ordinary
-//! Settings save can never drop or replay a grant another write made.
+//! Serialize settings writes with the per-source grants of Add from source and the native files
+//! allowed to build, so an ordinary Settings save can never drop or replay a grant another write
+//! made.
 use super::{data_dir, write_private, Settings, SourceModGrant};
 use crate::i18n::tr;
 use serde_json::{Map, Value};
 use std::{
+    collections::BTreeSet,
     fs, io,
     path::{Path, PathBuf},
 };
 
 const SETTINGS: &str = "settings.json";
 const SOURCE_GRANTS: &str = "source_mod_grants";
+const NATIVE_FILES: &str = "allowed_native_files";
 
 // Owned file lock, released when the caller drops it.
 struct SettingsFence {
@@ -76,10 +79,12 @@ impl Settings {
         let Value::Object(mut now) = serde_json::to_value(self).map_err(|e| e.to_string())? else {
             unreachable!("Settings serializes as an object");
         };
-        if let Some(value) = live.get(SOURCE_GRANTS) {
-            now.insert(SOURCE_GRANTS.into(), value.clone());
-        } else {
-            now.remove(SOURCE_GRANTS);
+        for key in [SOURCE_GRANTS, NATIVE_FILES] {
+            if let Some(value) = live.get(key) {
+                now.insert(key.into(), value.clone());
+            } else {
+                now.remove(key);
+            }
         }
         file.write(&now)
     }
@@ -118,6 +123,49 @@ impl Settings {
     }
 }
 
+/// The SHA-256 of each native package file this computer builds without asking: a registry
+/// release whose signed index entry and attestation matched it, or a file the player confirmed
+/// the unreviewed-code warning for. It lives in the launcher's data folder, never in a game
+/// folder, which a modpack could write.
+pub fn allowed_native_files() -> Result<BTreeSet<String>, String> {
+    allowed_native_files_in(&data_dir())
+}
+
+pub(crate) fn allowed_native_files_in(data: &Path) -> Result<BTreeSet<String>, String> {
+    let live: Map<String, Value> = SettingsFence::open(data)?.read()?;
+    Ok(live
+        .get(NATIVE_FILES)
+        .and_then(|value| serde_json::from_value(value.clone()).ok())
+        .unwrap_or_default())
+}
+
+/// Adds `digests` to [`allowed_native_files`] in one fenced settings write.
+pub fn allow_native_files(digests: impl IntoIterator<Item = String>) -> Result<(), String> {
+    allow_native_files_in(&data_dir(), digests)
+}
+
+pub fn allow_native_files_in(
+    data: &Path,
+    digests: impl IntoIterator<Item = String>,
+) -> Result<(), String> {
+    let file = SettingsFence::open(data)?;
+    let mut live: Map<String, Value> = file.read()?;
+    let mut allowed: BTreeSet<String> = live
+        .remove(NATIVE_FILES)
+        .and_then(|value| serde_json::from_value(value).ok())
+        .unwrap_or_default();
+    allowed.extend(
+        digests
+            .into_iter()
+            .map(|digest| digest.to_ascii_lowercase()),
+    );
+    live.insert(
+        NATIVE_FILES.into(),
+        serde_json::to_value(&allowed).map_err(|error| error.to_string())?,
+    );
+    file.write(&live)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -151,5 +199,19 @@ mod tests {
         stale.save_to(data).unwrap();
         let loaded = Settings::load_from(data);
         assert_eq!(loaded.source_mod_grants, [first, second]);
+    }
+
+    #[test]
+    fn allowed_native_files_survive_stale_settings_saves() {
+        let tmp = tempfile::tempdir().unwrap();
+        let data = tmp.path();
+        let stale = Settings::default();
+        allow_native_files_in(data, ["AB12".to_owned()]).unwrap();
+        allow_native_files_in(data, ["cd34".to_owned()]).unwrap();
+        stale.save_to(data).unwrap();
+        assert_eq!(
+            allowed_native_files_in(data).unwrap(),
+            BTreeSet::from(["ab12".to_owned(), "cd34".to_owned()])
+        );
     }
 }

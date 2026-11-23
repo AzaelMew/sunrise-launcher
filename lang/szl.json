@@ -1909,5 +1909,14 @@
   "File: {file} · The bundled attestation could not be verified ({reason}).": "File: {file} · The bundled attestation could not be verified ({reason}).",
   "The active server runtime uses Minecraft {active}, but Sunrise {tag} uses Minecraft {selected}. Choose a Sunrise build for Minecraft {active}.": "The active server runtime uses Minecraft {active}, but Sunrise {tag} uses Minecraft {selected}. Choose a Sunrise build for Minecraft {active}.",
   "Reviewed by Sunrise": "Reviewed by Sunrise",
-  "This native code isn't reviewed by the Sunrise registry. Read its source, then pass --trust-native-code to run it.": "This native code isn't reviewed by the Sunrise registry. Read its source, then pass --trust-native-code to run it."
+  "This native code isn't reviewed by the Sunrise registry. Read its source, then pass --trust-native-code to run it.": "This native code isn't reviewed by the Sunrise registry. Read its source, then pass --trust-native-code to run it.",
+  "Build unreviewed mod": "Build unreviewed mod",
+  "Build unreviewed mods": "Build unreviewed mods",
+  "Local file, not reviewed": "Local file, not reviewed",
+  "Local files, not reviewed": "Local files, not reviewed",
+  "Only continue if you wrote this code yourself or trust the person who gave it to you. You are asked once for each file.": "Only continue if you wrote this code yourself or trust the person who gave it to you. You are asked once for each file.",
+  "{mod} ({file})": "{mod} ({file})",
+  "Nothing was built: {mods} didn't come from the Sunrise registry, and nobody has checked their code. Confirm the warning to build them, or pass --trust-native-code on the command line.": "Nothing was built: {mods} didn't come from the Sunrise registry, and nobody has checked their code. Confirm the warning to build them, or pass --trust-native-code on the command line.",
+  "Building native code nobody reviewed: {mods}": "Building native code nobody reviewed: {mods}",
+  "{files} · These files are in this profile's mods folder, but did not come from the Sunrise registry. Sunrise cannot verify who built them or where they came from.": "{files} · These files are in this profile's mods folder, but did not come from the Sunrise registry. Sunrise cannot verify who built them or where they came from."
 }

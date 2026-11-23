@@ -10,6 +10,22 @@ pub(super) fn native_permission(trust: bool) -> Result<(), String> {
     }
 }
 
+/// Lets this run's builds take a profile's native mods that neither came verified from the
+/// registry nor were confirmed, such as files copied into it by hand. Nothing is remembered.
+pub(super) fn trust_unreviewed_builds() {
+    native_mods::ask_unreviewed_with(|found| {
+        let names: Vec<&str> = found.iter().map(|p| p.name.as_str()).collect();
+        eprintln!(
+            "{}",
+            trf(
+                "Building native code nobody reviewed: {mods}",
+                &[("mods", &names.join(", "))]
+            )
+        );
+        true
+    });
+}
+
 pub(super) struct GithubInstall<'a> {
     pub instance: &'a instances::Instance,
     pub found: &'a github_mods::Resolved,

@@ -62,6 +62,9 @@ mod release_notes;
 mod settings_file;
 pub use release_assets::PLATFORMS;
 pub use release_notes::{markdown_to_text, notes_summary};
+#[cfg(test)]
+pub(crate) use settings_file::allowed_native_files_in;
+pub use settings_file::{allow_native_files, allow_native_files_in, allowed_native_files};
 
 /// `a == b`, in a const context.
 const fn same(a: &str, b: &str) -> bool {

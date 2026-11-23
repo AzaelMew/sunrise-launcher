@@ -463,6 +463,12 @@ impl Launcher {
                     self.launcher_checked_now = result.is_ok().then(Instant::now);
                     self.note_launcher_check(*result);
                 }
+                Msg::ConfirmUnreviewed(found, reply) => {
+                    let pending = crate::github_mods_page::PendingUnreviewed::new(found, reply);
+                    if let Some(earlier) = self.ui.sheets.unreviewed.replace(pending) {
+                        earlier.refuse();
+                    }
+                }
                 Msg::NativeProgress(step) => {
                     self.native_step = Some(step.shown());
                     self.native_progress = Some(step.progress());
