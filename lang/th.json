@@ -1856,5 +1856,6 @@
   "{host} serves it and stays off": "{host} serves it and stays off",
   "Needs {host}": "Needs {host}",
   "{host} serves this mod's code. Turn {host} on for the game to load it.": "{host} serves this mod's code. Turn {host} on for the game to load it.",
-  "{host} can't serve {mod}: it doesn't run everywhere {mod} must.": "{host} can't serve {mod}: it doesn't run everywhere {mod} must."
+  "{host} can't serve {mod}: it doesn't run everywhere {mod} must.": "{host} can't serve {mod}: it doesn't run everywhere {mod} must.",
+  "The mod registry file has no signature.": "The mod registry file has no signature."
 }

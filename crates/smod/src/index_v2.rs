@@ -1,4 +1,5 @@
-//! The signed v2 mod registry catalogue (`v2/index.json` + `v2/index.json.minisig`).
+//! The signed v2 mod registry catalogue (`v2/index.json`, signed by `v2/index.json.minisig`;
+//! readers fetch both as one `v2/index.signed`).
 //!
 //! Readers verify the minisign signature over the exact bytes of `index.json` before parsing.
 //! Schema 2 ignores unknown fields for forward compatibility, and refuses any malformed payload

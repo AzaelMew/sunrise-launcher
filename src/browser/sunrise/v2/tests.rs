@@ -13,6 +13,11 @@ fn load_fixture(name: &str) -> (Vec<u8>, Vec<u8>) {
     (bytes, sig)
 }
 
+/// The published `index.signed`: the signature file's four lines, then the index bytes.
+fn signed(index: &[u8], sig: &[u8]) -> Vec<u8> {
+    [sig, index].concat()
+}
+
 fn now_2026_11_24() -> i64 {
     index_v2::parse_rfc3339_utc("2026-11-24T00:00:00Z").unwrap()
 }
@@ -23,35 +28,33 @@ fn spawn_loopback_server(
 ) -> (String, std::thread::JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
+    let body = signed(&index_bytes, &sig_bytes);
     let server = std::thread::spawn(move || {
-        for _ in 0..2 {
-            let (mut stream, _) = listener.accept().unwrap();
-            let mut reader = BufReader::new(stream.try_clone().unwrap());
-            let mut request_line = String::new();
-            reader.read_line(&mut request_line).unwrap();
-            loop {
-                let mut line = String::new();
-                reader.read_line(&mut line).unwrap();
-                if line == "\r\n" || line.is_empty() {
-                    break;
-                }
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut reader = BufReader::new(stream.try_clone().unwrap());
+        let mut request_line = String::new();
+        reader.read_line(&mut request_line).unwrap();
+        loop {
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            if line == "\r\n" || line.is_empty() {
+                break;
             }
-            let path = request_line.split_whitespace().nth(1).unwrap_or("");
-            let (status, body): (&str, &[u8]) = match path {
-                "/v2/index.json" => ("200 OK", &index_bytes),
-                "/v2/index.json.minisig" => ("200 OK", &sig_bytes),
-                _ => ("404 Not Found", b"missing"),
-            };
-            let header = format!(
-                "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                body.len()
-            );
-            stream.write_all(header.as_bytes()).unwrap();
-            stream.write_all(body).unwrap();
-            stream.flush().unwrap();
         }
+        let path = request_line.split_whitespace().nth(1).unwrap_or("");
+        let (status, body): (&str, &[u8]) = match path {
+            "/v2/index.signed" => ("200 OK", &body),
+            _ => ("404 Not Found", b"missing"),
+        };
+        let header = format!(
+            "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        );
+        stream.write_all(header.as_bytes()).unwrap();
+        stream.write_all(body).unwrap();
+        stream.flush().unwrap();
     });
-    (format!("http://{addr}/v2/index.json"), server)
+    (format!("http://{addr}/v2/index.signed"), server)
 }
 
 #[test]
@@ -364,13 +367,11 @@ fn non_utf8_signature_is_bad_signature_without_cache_fallback_on_http_and_local_
         .load_from_fetch(Ok((bytes.clone(), sig)), now_2026_11_24())
         .unwrap();
 
-    let non_utf8_sig = vec![0xff, 0xfe, 0xfd, 0x80];
+    let non_utf8_sig = b"\xff\n\xfe\n\xfd\n\x80\n".to_vec();
 
-    // Local-file path with non-UTF-8 `.minisig` must return BadSignature, not cached serial 41.
-    let local_index = temp.path().join("local-index.json");
-    let local_sig = temp.path().join("local-index.json.minisig");
-    fs::write(&local_index, &bytes).unwrap();
-    fs::write(&local_sig, &non_utf8_sig).unwrap();
+    // A local file whose signature lines aren't UTF-8 must return BadSignature, not cached serial 41.
+    let local_index = temp.path().join("index.signed");
+    fs::write(&local_index, signed(&bytes, &non_utf8_sig)).unwrap();
     let local_err = store
         .fetch_and_load(local_index.to_str().unwrap(), now_2026_11_24())
         .unwrap_err();
@@ -454,18 +455,11 @@ fn v2_reader_never_reuses_the_v1_cache_file() {
 
 #[test]
 fn fetch_and_load_verifies_local_files_and_loopback_http() {
-    assert_eq!(
-        signature_location("https://sunrise-org.github.io/sunrise-mods/v2/index.json"),
-        "https://sunrise-org.github.io/sunrise-mods/v2/index.json.minisig"
-    );
-    assert_eq!(
-        signature_location("https://example.org/v2/index.json?rev=2"),
-        "https://example.org/v2/index.json.minisig?rev=2"
-    );
-
-    // Local file path override still verifies the `.minisig` beside it.
+    // A local file override is one signed file too.
     let temp = tempfile::tempdir().unwrap();
-    let local_index = fixtures().join("serial-40.json");
+    let (bytes_40, sig_40) = load_fixture("serial-40.json");
+    let local_index = temp.path().join("index.signed");
+    fs::write(&local_index, signed(&bytes_40, &sig_40)).unwrap();
     let mut local_store = Store::new(temp.path().join("local-cache"), REGISTRY_KEYS);
     let local_catalog = local_store
         .fetch_and_load(local_index.to_str().unwrap(), now_2026_11_24())
@@ -476,7 +470,7 @@ fn fetch_and_load_verifies_local_files_and_loopback_http() {
         "sunrise-org/sunrise-mods/.github/workflows/release.yml@refs/tags/release-v1"
     );
 
-    // Loopback HTTP server serves both `index.json` and `index.json.minisig`.
+    // A loopback HTTP server serves `index.signed`.
     let (index_bytes, sig_bytes) = load_fixture("two-ports-index.json");
     let (url, server) = spawn_loopback_server(index_bytes, sig_bytes);
     let mut http_store = Store::new(temp.path().join("http-cache"), REGISTRY_KEYS);
@@ -485,6 +479,19 @@ fn fetch_and_load_verifies_local_files_and_loopback_http() {
     assert!(!http_catalog.from_cache);
     assert_eq!(http_catalog.index.serial, 41);
     assert_eq!(http_catalog.index.projects.len(), 2);
+}
+
+#[test]
+fn a_signed_file_without_four_signature_lines_is_a_fetch_error() {
+    assert_eq!(
+        split_signed(b"one\ntwo\nthree\n".to_vec()).unwrap_err(),
+        "The mod registry file has no signature."
+    );
+    let (index, sig) = split_signed(b"a\nb\nc\nd\n{\"x\":\n1}".to_vec()).unwrap();
+    assert_eq!(
+        (index.as_slice(), sig.as_slice()),
+        (&b"{\"x\":\n1}"[..], &b"a\nb\nc\nd\n"[..])
+    );
 }
 
 #[test]
