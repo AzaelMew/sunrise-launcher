@@ -8,3 +8,5 @@ crates/smod/tests/index/** -text
 packaging/notices.txt text eol=lf
 *.sh text eol=lf
 tools/ci/rust-version text eol=lf
+# The attestation fixture and the artifact it covers, checked against its sha256: never converted.
+crates/attestation/tests/fixtures/** -text

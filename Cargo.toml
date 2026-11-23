@@ -7,8 +7,8 @@ description = "Downloads, prepares and starts Sunrise builds"
 
 [workspace]
 # The copies in crates/ are checked and tested with the launcher.
-members = ["crates/addresses", "crates/bench", "crates/friends", "crates/smod", "crates/mcp", "crates/nbt", "crates/proxy", "crates/release-verify", "crates/resolver", "crates/sdk", "crates/shader-api", "crates/system", "crates/telemetry", "crates/theme"]
-default-members = [".", "crates/addresses", "crates/bench", "crates/friends", "crates/smod", "crates/mcp", "crates/nbt", "crates/proxy", "crates/release-verify", "crates/resolver", "crates/sdk", "crates/shader-api", "crates/system", "crates/telemetry", "crates/theme"]
+members = ["crates/addresses", "crates/attestation", "crates/bench", "crates/friends", "crates/smod", "crates/mcp", "crates/nbt", "crates/proxy", "crates/release-verify", "crates/resolver", "crates/sdk", "crates/shader-api", "crates/system", "crates/telemetry", "crates/theme"]
+default-members = [".", "crates/addresses", "crates/attestation", "crates/bench", "crates/friends", "crates/smod", "crates/mcp", "crates/nbt", "crates/proxy", "crates/release-verify", "crates/resolver", "crates/sdk", "crates/shader-api", "crates/system", "crates/telemetry", "crates/theme"]
 
 [[test]]
 name = "managed_play_process"
@@ -51,6 +51,7 @@ sys-locale = "0.3"
 clap = { version = "4", features = ["derive"] }
 clap_complete = "4"
 # The launcher's own copies of what it used from the game's crates (crates/), so it can leave the game repository.
+sunrise-attestation = { path = "crates/attestation" }
 sunrise-launcher-addresses = { path = "crates/addresses" }
 sunrise-launcher-bench = { path = "crates/bench" }
 sunrise-launcher-friends = { path = "crates/friends" }
