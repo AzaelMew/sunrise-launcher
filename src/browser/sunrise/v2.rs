@@ -40,7 +40,7 @@ pub const REGISTRY_KEYS: &[&str] = &[PRODUCTION_KEY];
 
 /// Disposable test-only minisign public key; never compiled into non-test builds.
 #[cfg(test)]
-pub const REGISTRY_KEYS: &[&str] = &["RWSwC2FU6jlWFepUk56a61uccuXxBaMuB35XctszNB8XOUNzfUDxPror"];
+pub const REGISTRY_KEYS: &[&str] = &["RWSM0IpnOTNhKGM+MxjUjuctYPUzgBRDpKUFyXXIpJH6gHwgkpEL3mN8"];
 
 /// A verified v2 registry catalogue loaded from the network or from the verified disk cache.
 #[derive(Clone, Debug)]
