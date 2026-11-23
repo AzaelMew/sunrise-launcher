@@ -16,7 +16,7 @@ impl Launcher {
         let mut items = div().flex().flex_col();
         if count == 0 {
             items = empty(
-                "server",
+                "computer",
                 tr("No saved servers"),
                 tr("Servers you join or add show up here."),
                 Some(
