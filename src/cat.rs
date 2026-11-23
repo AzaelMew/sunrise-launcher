@@ -1422,7 +1422,7 @@ const WIDTH: f32 = W as f32 * SIZE;
 const FRAME: Duration = Duration::from_millis(83);
 const STEP_FRAME: Duration = Duration::from_millis(40);
 /// The cat's lane runs this far under Play's edge, so the cat comes out from behind the button.
-const UNDER: f32 = 8.;
+pub(crate) const UNDER: f32 = 8.;
 /// A peek shows the head and chest, and lasts this long.
 const PEEK_OUT: f32 = 44.;
 const PEEK: f32 = 4200.;

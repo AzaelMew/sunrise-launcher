@@ -8,6 +8,7 @@ use super::{
     check_staged_v2_candidate, chosen_version_pin, commit_pending_pins, compare_versions,
     fetch_release_bytes, inventory_v2, revoked_for_package, stage_and_verify_v2_release,
     BytesFetcher, InstalledV2Mod, PendingPin, PlannedV2Release, ReleaseVerifier, V2Ownership,
+    V2Transfer,
 };
 use crate::{
     attestation::{self, PublisherChange},
@@ -295,8 +296,10 @@ pub(crate) fn switch_build_v2_with(
                     &pin_dir,
                     &BTreeSet::new(),
                     hooks.confirm_publisher_change,
-                    fetch_bytes,
-                    verify_release,
+                    V2Transfer {
+                        fetch_bytes,
+                        verify_release,
+                    },
                 )
                 .map_err(|error| match error {
                     InstallError::PublisherChanged(change) => change_message(&change),
@@ -387,7 +390,6 @@ pub(crate) fn switch_build_v2_with(
             instance.native_profile,
             hooks.switch.cancellation,
             |step| build_progress(step, hooks.switch.progress),
-            hooks.switch.registry_crates,
             None,
         )
         .map_err(|e| e.to_string())?;
@@ -471,7 +473,6 @@ pub(crate) fn switch_build_v2_with(
                     instance.native_profile,
                     hooks.switch.cancellation,
                     |step| build_progress(step, hooks.switch.progress),
-                    hooks.switch.registry_crates,
                     None,
                 )
                 .map_err(|e| e.to_string())?;
@@ -493,17 +494,19 @@ pub(crate) fn switch_build_v2_with(
     let active = edit.publish_switch(
         final_proof,
         hooks.switch.cancellation,
-        final_holds,
-        final_removed,
-        committed_choice,
+        crate::managed_play::SwitchPublication {
+            holds: final_holds,
+            removed: final_removed,
+            build_choice: committed_choice,
+        },
         || fence.revalidate(&instance.home),
         || {
             (hooks.switch.at_cutoff)()?;
             (hooks.switch.progress)(InstallProgress::Publishing);
+            commit_pending_pins(&pin_dir, &pending_pins)?;
             Ok(())
         },
     )?;
-    commit_pending_pins(&pin_dir, &pending_pins)?;
     Ok(Switched::Changed(Box::new(active)))
 }
 

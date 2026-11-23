@@ -382,6 +382,24 @@ pub(super) fn check_destination<'a>(
                 possible: matches!(conflict, Conflict::Possible),
             });
         }
+        // A profile copied from Windows can carry `\` separators in another row's `file` field;
+        // check the portable `/`-normalized claim alongside the native path on Unix.
+        if !cfg!(windows) && other.contains('\\') {
+            let normalized = other.replace('\\', "/");
+            if home_key(Path::new(&normalized)).is_some() {
+                let (right, right_key) =
+                    locate_claim(&home, &actual_home, Path::new(&normalized)).map_err(lookup)?;
+                if let Some(conflict) =
+                    conflicts(left_key.as_deref(), &left, right_key.as_deref(), &right)
+                {
+                    return Err(ClaimProblem::Conflict {
+                        file: file.to_owned(),
+                        row: row(),
+                        possible: matches!(conflict, Conflict::Possible),
+                    });
+                }
+            }
+        }
     }
     Ok(())
 }

@@ -35,7 +35,7 @@ use source::MixedSources;
 pub use source::{
     add_sources, apply_sources, pack_sources, prepare_pasted_sources, prepare_source,
     read_pasted_sources, update_registry_and_sources, CombinedUpdate, PastedSource, PreparedSource,
-    SourceDependency, SourceError, SourceHooks, SourceRequest,
+    SourceDependency, SourceError, SourceHooks, SourceProof, SourceRequest,
 };
 pub use switch::{
     checked_switch_fit, switch_build, switch_profile_build, BuildChoice, SwitchDecision,
@@ -53,6 +53,7 @@ pub use v2::{
 // Advisory only. Never use these in place of a fresh, admitted worker proof. Key by the
 // base build and verified archive hash, not the Minecraft version or catalogue version number.
 static UNFIT_UPDATES: Mutex<BTreeMap<String, BTreeSet<String>>> = Mutex::new(BTreeMap::new());
+static UNFIT_UPDATES_REVISION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 pub fn known_unfit_updates(base: &str) -> BTreeSet<String> {
     UNFIT_UPDATES
@@ -63,17 +64,27 @@ pub fn known_unfit_updates(base: &str) -> BTreeSet<String> {
         .unwrap_or_default()
 }
 
+/// Monotonic revision bumped whenever [`remember_unfit_sha256`] records a new unfit update,
+/// so views caching mod update status (such as Home) refresh even when the inventory and
+/// registry index are unchanged.
+pub fn unfit_updates_revision() -> u64 {
+    UNFIT_UPDATES_REVISION.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 fn remember_unfit(base: &str, release: &index::Version) {
     remember_unfit_sha256(base, &release.file.sha256);
 }
 
 fn remember_unfit_sha256(base: &str, sha256: &str) {
-    UNFIT_UPDATES
+    if UNFIT_UPDATES
         .lock()
         .unwrap()
         .entry(base.into())
         .or_default()
-        .insert(sha256.to_ascii_lowercase());
+        .insert(sha256.to_ascii_lowercase())
+    {
+        UNFIT_UPDATES_REVISION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -81,8 +92,16 @@ pub enum InstallProgress {
     PreparingBuild,
     Checking,
     Downloading(f32),
+    /// The game build's own download, before its Minecraft files are prepared.
+    DownloadingBuild(f32),
+    /// A game build's preparation: the step under way and, while Mojang's files download, how
+    /// many of how many are done.
+    Minecraft(crate::backend::PrepareStep, Option<(usize, usize)>),
     Preparing,
-    Tools { done: u64, total: u64 },
+    Tools {
+        done: u64,
+        total: u64,
+    },
     Rust(f32),
     Building(Option<f32>),
     Publishing,
@@ -144,14 +163,6 @@ impl From<String> for InstallError {
 }
 
 #[derive(Clone, Debug)]
-pub struct NativeQuestion {
-    pub names: Vec<String>,
-    pub reviewed: bool,
-    /// A proved no-fit changed the named closure after this install's first approval.
-    pub retry: bool,
-}
-
-#[derive(Clone, Debug)]
 pub struct BuildNotice {
     pub changes: Vec<BuildChange>,
     /// Raw compiler/proof error for the headless route, not the visible sheet.
@@ -186,8 +197,6 @@ pub struct InstalledBatch {
 #[derive(Clone, Copy)]
 pub struct InstallHooks<'a> {
     pub progress: &'a dyn Fn(InstallProgress),
-    pub native: &'a dyn Fn(&NativeQuestion) -> Result<bool, String>,
-    pub registry_crates: Option<&'a dyn Fn(&native_mods::Consent) -> bool>,
     pub continue_after_failure: &'a dyn Fn(&BuildNotice) -> bool,
     /// Interactive approval of a fully prepared same-base conflict plan; absent in automation.
     pub resolve: Option<&'a dyn Fn(&ResolveQuestion) -> bool>,
@@ -380,7 +389,6 @@ fn registry_edit<'a>(
     let mut unfit = BTreeSet::new();
     let mut conflicts = Vec::new();
     let mut last_sdk_refusal = None;
-    let mut named_native: Option<BTreeSet<String>> = None;
     'trials: for _ in 0..MAX_TRIALS {
         let options = resolve::WholeOptions {
             conflicts: &conflicts,
@@ -457,11 +465,13 @@ fn registry_edit<'a>(
                 &before,
                 project,
                 version,
-                Some(cancelled),
-                |f| {
-                    (hooks.progress)(InstallProgress::Downloading(
-                        (n as f32 + f) / versions.len() as f32,
-                    ));
+                DownloadControls {
+                    cancellation: Some(cancelled),
+                    progress: |f| {
+                        (hooks.progress)(InstallProgress::Downloading(
+                            (n as f32 + f) / versions.len() as f32,
+                        ));
+                    },
                 },
             )?;
             entries.insert(entry.project.clone(), entry);
@@ -595,37 +605,7 @@ fn registry_edit<'a>(
             if let Some(error) = native_mods::known_host_block(Some(edit.base())) {
                 return Err(InstallError::Host(error));
             }
-            let retry = named_native.is_some();
-            if retry || backend::NativeGrant::read()?.is_none() {
-                let newly_named: Vec<_> = build_packages
-                    .iter()
-                    .copied()
-                    .filter(|p| {
-                        named_native
-                            .as_ref()
-                            .is_none_or(|ids| !ids.contains(&p.package.manifest.id))
-                    })
-                    .collect();
-                if !newly_named.is_empty() {
-                    if !(hooks.native)(&NativeQuestion {
-                        names: newly_named
-                            .iter()
-                            .map(|p| p.package.manifest.name.clone())
-                            .collect(),
-                        reviewed: newly_named.iter().all(|p| p.owned),
-                        retry,
-                    })? {
-                        return Err(InstallError::Cancelled);
-                    }
-                    named_native
-                        .get_or_insert_with(BTreeSet::new)
-                        .extend(newly_named.iter().map(|p| p.package.manifest.id.clone()));
-                }
-            }
-            // This comes from the strict saved grant, never from the dialog reply alone.
-            cancelled
-                .admit_native_work()
-                .map_err(|e| InstallError::Unproved(e.into()))?;
+            cancelled.check().map_err(InstallError::Unproved)?;
         }
         for id in &retired_off {
             // Prove a deliberately off replacement in the private candidate, without
@@ -981,7 +961,6 @@ fn prove_edit(
         instance.native_profile,
         cancellation,
         |step| build_progress(step, hooks.progress),
-        hooks.registry_crates,
         None,
     )
 }
@@ -1202,7 +1181,11 @@ fn planned_version<'a>(
     Ok((project, release))
 }
 
-#[allow(clippy::too_many_arguments)]
+struct DownloadControls<'a, F> {
+    cancellation: Option<&'a native_mods::Cancellation>,
+    progress: F,
+}
+
 fn stage_package(
     catalogue: &index::Index,
     local: bool,
@@ -1210,8 +1193,7 @@ fn stage_package(
     before: &Inventory,
     p: &index::Project,
     v: &index::Version,
-    cancellation: Option<&native_mods::Cancellation>,
-    progress: impl Fn(f32),
+    controls: DownloadControls<'_, impl Fn(f32)>,
 ) -> Result<installed::Entry, InstallError> {
     let shown = project_of(catalogue, p, &v.game).ok_or_else(unproved_mods)?;
     let native = p.kind == index::Kind::NativeMod;
@@ -1244,15 +1226,23 @@ fn stage_package(
         .tempdir_in(home)
         .map_err(|e| at(home, e))?;
     let file = &version_of(catalogue, p, v).files[0];
-    let fetched = fetch_cancellable(file, staging.path(), local, cancellation, &progress).map_err(
-        |error| {
-            if cancellation.is_some_and(native_mods::Cancellation::is_stopped) {
-                InstallError::Cancelled
-            } else {
-                InstallError::Download(error)
-            }
-        },
-    )?;
+    let fetched = fetch_cancellable(
+        file,
+        staging.path(),
+        local,
+        controls.cancellation,
+        &controls.progress,
+    )
+    .map_err(|error| {
+        if controls
+            .cancellation
+            .is_some_and(native_mods::Cancellation::is_stopped)
+        {
+            InstallError::Cancelled
+        } else {
+            InstallError::Download(error)
+        }
+    })?;
     let (checked, facts) =
         index::check_file_with_facts(catalogue, p, v, &fetched).map_err(InstallError::Download)?;
     if v.dependencies.is_none()

@@ -10,11 +10,22 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+/// Maximum accepted sidecar `.sigstore.json` attestation bundle size (1 MiB).
+const MAX_ATTESTATION: u64 = 1024 * 1024;
+
 /// Attestation status shown on the unreviewed warning for a local `.smod` file.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LocalAttestation {
-    /// No verified attestation; Sunrise cannot verify who built the file.
+    /// No attestation bundle came with the package; Sunrise cannot verify who built the file.
     Unsigned,
+    /// A sidecar `.sigstore.json` bundle verified offline against the staged archive's SHA-256.
+    /// Proves the GitHub repository and build workflow, not that Sunrise reviewed the code.
+    Verified {
+        repository: String,
+        workflow: String,
+    },
+    /// A sidecar `.sigstore.json` bundle was present, but failed verification.
+    Failed(String),
 }
 
 /// A validated local `.smod` file or packed local folder ready to install after warning consent.
@@ -35,8 +46,17 @@ pub struct LocalPackage {
     _scratch: Arc<tempfile::TempDir>,
 }
 
+type LocalVerifier<'a> = dyn Fn(&[u8], [u8; 32]) -> Result<crate::attestation::Attested, sunrise_attestation::Error>
+    + 'a;
+
 /// Read and validate one local `.smod` archive into a scratch copy without modifying any profile.
+/// If a sidecar `<file>.sigstore.json` bundle sits beside it, verify it offline against the staged
+/// archive's SHA-256 using the same Sigstore verifier as registry installs.
 pub fn read_local_smod(path: &Path) -> Result<LocalPackage, String> {
+    read_local_smod_with(path, &crate::attestation::verify_local)
+}
+
+fn read_local_smod_with(path: &Path, verify: &LocalVerifier<'_>) -> Result<LocalPackage, String> {
     let meta = fs::metadata(path).map_err(|e| format!("{}: {e}", path.display()))?;
     if !meta.is_file() {
         return Err(tr("Choose a .smod file.").into());
@@ -61,14 +81,59 @@ pub fn read_local_smod(path: &Path) -> Result<LocalPackage, String> {
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| "mod.smod".into());
-    validate_staged(
+    let mut pkg = validate_staged(
         bytes,
         scratch,
         file_name,
         path.to_path_buf(),
         LocalAttestation::Unsigned,
         None,
-    )
+    )?;
+    pkg.attestation = check_sidecar_attestation(path, &pkg.sha256, verify);
+    Ok(pkg)
+}
+
+fn sidecar_bundle_path(smod_path: &Path) -> PathBuf {
+    let mut os = smod_path.as_os_str().to_os_string();
+    os.push(".sigstore.json");
+    PathBuf::from(os)
+}
+
+fn check_sidecar_attestation(
+    smod_path: &Path,
+    sha256_hex: &str,
+    verify: &LocalVerifier<'_>,
+) -> LocalAttestation {
+    let bundle_path = sidecar_bundle_path(smod_path);
+    let file = match fs::File::open(&bundle_path) {
+        Ok(file) => file,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return LocalAttestation::Unsigned;
+        }
+        Err(err) => {
+            return LocalAttestation::Failed(format!("{}: {err}", bundle_path.display()));
+        }
+    };
+    let mut bundle_bytes = Vec::new();
+    if let Err(err) = file
+        .take(MAX_ATTESTATION + 1)
+        .read_to_end(&mut bundle_bytes)
+    {
+        return LocalAttestation::Failed(format!("{}: {err}", bundle_path.display()));
+    }
+    if bundle_bytes.len() as u64 > MAX_ATTESTATION {
+        return LocalAttestation::Failed(tr("That attestation file is too large.").into());
+    }
+    let Some(digest) = crate::attestation::parse_sha256_hex(sha256_hex) else {
+        return LocalAttestation::Failed("invalid staged archive SHA-256".into());
+    };
+    match verify(&bundle_bytes, digest) {
+        Ok(attested) => LocalAttestation::Verified {
+            repository: attested.repository_name,
+            workflow: attested.signer_workflow_ref,
+        },
+        Err(err) => LocalAttestation::Failed(err.to_string()),
+    }
 }
 
 /// Find and pack every valid Sunrise mod folder under `root` into scratch `.smod` files.
@@ -355,5 +420,77 @@ mod tests {
             .is_file());
         // CLI GitHub updater enumerates only GitHub origins, never local folder receipts.
         assert!(crate::github_mods::origins(&home).is_empty());
+    }
+
+    #[test]
+    fn read_local_smod_without_sidecar_bundle_is_unsigned() {
+        let dir = tempfile::tempdir().unwrap();
+        let smod_path = dir.path().join("no-bundle-0.1.0.smod");
+        let bytes = Package::write_files(&content_manifest("no_bundle", "No Bundle", "0.1.0"), &[])
+            .unwrap();
+        fs::write(&smod_path, &bytes).unwrap();
+
+        let pkg = read_local_smod(&smod_path).unwrap();
+        assert_eq!(pkg.attestation, LocalAttestation::Unsigned);
+    }
+
+    #[test]
+    fn read_local_smod_with_mismatched_bundle_reports_failed_attestation() {
+        let dir = tempfile::tempdir().unwrap();
+        let smod_path = dir.path().join("bad-bundle-0.1.0.smod");
+        let bytes =
+            Package::write_files(&content_manifest("bad_bundle", "Bad Bundle", "0.1.0"), &[])
+                .unwrap();
+        fs::write(&smod_path, &bytes).unwrap();
+        // A real Sigstore bundle for a different artifact fails real offline verification.
+        let bundle =
+            include_bytes!("../../crates/attestation/tests/fixtures/ruff-source.sigstore.json");
+        fs::write(sidecar_bundle_path(&smod_path), bundle).unwrap();
+
+        let pkg = read_local_smod(&smod_path).unwrap();
+        assert!(
+            matches!(pkg.attestation, LocalAttestation::Failed(ref msg) if !msg.is_empty()),
+            "expected Failed attestation, got {:?}",
+            pkg.attestation
+        );
+    }
+
+    #[test]
+    fn read_local_smod_with_valid_bundle_reports_verified_publisher() {
+        let dir = tempfile::tempdir().unwrap();
+        let smod_path = dir.path().join("good-bundle-0.1.0.smod");
+        let bytes = Package::write_files(
+            &content_manifest("good_bundle", "Good Bundle", "0.1.0"),
+            &[],
+        )
+        .unwrap();
+        fs::write(&smod_path, &bytes).unwrap();
+        let expected_sha = sha256(&bytes);
+        let expected_digest = crate::attestation::parse_sha256_hex(&expected_sha).unwrap();
+        let bundle =
+            include_bytes!("../../crates/attestation/tests/fixtures/ruff-source.sigstore.json");
+        fs::write(sidecar_bundle_path(&smod_path), bundle).unwrap();
+
+        // Check through the real local reader that the sidecar bundle and the staged archive's
+        // SHA-256 are passed to the verifier, and that a verified Attested becomes Verified.
+        let pkg = read_local_smod_with(&smod_path, &|got_bundle, got_digest| {
+            assert_eq!(got_bundle, bundle);
+            assert_eq!(got_digest, expected_digest);
+            // Also exercise the real offline Sigstore verifier against the fixture's own digest.
+            let fixture_digest = crate::attestation::parse_sha256_hex(
+                "0378ef60356caaad7b84653691a5d57a1d8b57fd59d173cfc27b0fd4a91a13f3",
+            )
+            .unwrap();
+            crate::attestation::verify_local(got_bundle, fixture_digest)
+        })
+        .unwrap();
+
+        assert_eq!(
+            pkg.attestation,
+            LocalAttestation::Verified {
+                repository: "astral-sh/ruff".into(),
+                workflow: "astral-sh/ruff/.github/workflows/release.yml@refs/heads/main".into(),
+            }
+        );
     }
 }

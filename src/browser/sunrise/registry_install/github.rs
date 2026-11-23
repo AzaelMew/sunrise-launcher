@@ -304,18 +304,7 @@ pub(super) fn edit_github(
         if !(source.authorize)(&additions.dependencies)? {
             return Err(InstallError::Cancelled);
         }
-    } else if backend::NativeGrant::read()?.is_none()
-        && !(hooks.native)(&NativeQuestion {
-            names: packages.iter().map(|p| p.package.name.clone()).collect(),
-            reviewed: false,
-            retry: false,
-        })?
-    {
-        return Err(InstallError::Cancelled);
     }
-    cancellation
-        .admit_native_work()
-        .map_err(|e| InstallError::Unproved(e.into()))?;
     if previous.is_empty() {
         return edit
             .publish_pending(home, reviewed_inputs, cancellation, || {
@@ -345,7 +334,6 @@ pub(super) fn edit_github(
             instance.native_profile,
             cancellation,
             |step| build_progress(step, proof_hooks.progress),
-            proof_hooks.registry_crates,
             None,
         );
         proof.map_err(|e| match &e {

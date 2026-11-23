@@ -10,7 +10,6 @@ use sunrise_launcher_smod::dependencies::parse_version;
 pub struct SwitchHooks<'a> {
     pub cancellation: &'a native_mods::Cancellation,
     pub progress: &'a dyn Fn(InstallProgress),
-    pub registry_crates: Option<&'a dyn Fn(&native_mods::Consent) -> bool>,
     pub approve: &'a dyn Fn(&SwitchQuestion) -> Result<SwitchDecision, String>,
     pub at_cutoff: &'a dyn Fn() -> Result<(), String>,
 }
@@ -310,7 +309,6 @@ fn switch_in(
             instance.native_profile,
             hooks.cancellation,
             |step| super::build_progress(step, hooks.progress),
-            hooks.registry_crates,
             None,
         )
     };
@@ -502,7 +500,15 @@ fn switch_in(
             crate::managed_play::CommittedBuildChoice::new(channel, version)
         })
         .transpose()?;
-    let active = edit.publish_switch(proof, hooks.cancellation, holds, removed, build_choice, || {
+    let active = edit.publish_switch(
+        proof,
+        hooks.cancellation,
+        managed_play::SwitchPublication {
+            holds,
+            removed,
+            build_choice,
+        },
+        || {
         let (_, current, proof) = super::super::complete_index(&source, local)?;
         if current != evidence || proof.is_some() != official.is_some() {
             return Err(tr("The mod registry changed while the switch was being prepared. Nothing was switched.").into());
@@ -648,7 +654,6 @@ struct Package {
     manifest: Manifest,
     digest: Option<String>,
     replacement: Option<(PathBuf, installed::Entry)>,
-    unlisted: bool,
     built_from_source: bool,
 }
 
@@ -683,7 +688,6 @@ fn choices(
             let manifest = &old.seen.package.manifest;
             // A complete index can prove fit for unchanged listed content. Absence of these
             // exact bytes from a present project instead means they're a pinned local input.
-            let mut pinned = true;
             if old.seen.registry_claim {
                 let project = catalogue.project(&id).ok_or_else(unproved_switch)?;
                 let mut exact = project
@@ -691,8 +695,7 @@ fn choices(
                     .iter()
                     .filter(|version| old.seen.digest.as_deref() == Some(&version.file.sha256))
                     .peekable();
-                pinned = exact.peek().is_none();
-                if !pinned {
+                if exact.peek().is_some() {
                     let release = exact.find(|version| {
                         version.side != Some(Side::Server)
                             && (manifest.native.is_some() || version.game == game)
@@ -715,7 +718,6 @@ fn choices(
                     manifest: manifest.clone(),
                     digest: old.seen.digest.clone(),
                     replacement: None,
-                    unlisted: pinned,
                     built_from_source: old.built_from_source,
                 });
             }
@@ -812,7 +814,6 @@ fn choices(
                     manifest,
                     digest: Some(version.file.sha256.clone()),
                     replacement,
-                    unlisted: false,
                     built_from_source: false,
                 });
             }
@@ -938,20 +939,14 @@ fn prune_dependents(slots: &mut Choices, unproved: &BTreeSet<String>) -> BTreeSe
         .filter(|(id, choices)| choices.is_empty() && !unproved.contains(*id))
         .map(|(id, _)| id.as_str())
         .collect();
-    spread_to_dependents(variants(), &mut unfit);
     let mut unknown: BTreeSet<_> = unproved.iter().map(String::as_str).collect();
-    spread_to_dependents(variants(), &mut unknown);
-    let unknown = unknown
-        .difference(&unfit)
+    spread_fit_reasons(variants(), &mut unfit, &mut unknown);
+    let unavailable: BTreeSet<String> = unfit
+        .iter()
+        .chain(unknown.iter())
         .map(|&id| id.to_owned())
         .collect();
-    let mut unavailable: BTreeSet<_> = slots
-        .iter()
-        .filter(|(_, choices)| choices.is_empty())
-        .map(|(id, _)| id.as_str())
-        .collect();
-    spread_to_dependents(variants(), &mut unavailable);
-    let unavailable: BTreeSet<_> = unavailable.into_iter().map(str::to_owned).collect();
+    let unknown: BTreeSet<String> = unknown.into_iter().map(str::to_owned).collect();
     slots.retain(|id, choices| {
         if unavailable.contains(id) {
             return false;
@@ -965,6 +960,59 @@ fn prune_dependents(slots: &mut Choices, unproved: &BTreeSet<String>) -> BTreeSe
         true
     });
     unknown
+}
+
+/// Propagate per-version fit reasons to fixed point: a version with any known-incompatible
+/// required dependency is unfit, a version with no unfit dependency but an unverified one is
+/// unknown, and a mod with no remaining available version stays unknown whenever at least one of
+/// its versions is unknown (since proving that dependency could make it fit).
+fn spread_fit_reasons<'a>(
+    variants: impl Iterator<Item = (&'a str, impl Iterator<Item = &'a Package>)> + Clone,
+    unfit: &mut BTreeSet<&'a str>,
+    unknown: &mut BTreeSet<&'a str>,
+) {
+    loop {
+        let before = (unfit.len(), unknown.len());
+        for (id, choices) in variants.clone() {
+            if unfit.contains(id) || unknown.contains(id) {
+                continue;
+            }
+            let mut any_available = false;
+            let mut any_unknown = false;
+            for package in choices {
+                let mut ver_unfit = false;
+                let mut ver_unknown = false;
+                for (dep, _) in package.manifest.required_client_dependencies() {
+                    if unfit.contains(dep.as_str()) {
+                        ver_unfit = true;
+                        break;
+                    }
+                    if unknown.contains(dep.as_str()) {
+                        ver_unknown = true;
+                    }
+                }
+                if ver_unfit {
+                    continue;
+                }
+                if ver_unknown {
+                    any_unknown = true;
+                } else {
+                    any_available = true;
+                    break;
+                }
+            }
+            if !any_available {
+                if any_unknown {
+                    unknown.insert(id);
+                } else {
+                    unfit.insert(id);
+                }
+            }
+        }
+        if before == (unfit.len(), unknown.len()) {
+            return;
+        }
+    }
 }
 
 type Rejected = BTreeSet<(String, String)>;
@@ -1282,21 +1330,15 @@ fn exact_image(
                 .extend(unknown.into_iter().map(str::to_owned));
             Ok(None)
         }
-        Err(error @ (Failed::NoConsent | Failed::Sdk { mod_id: None, .. })) => {
+        Err(error @ Failed::Sdk { mod_id: None, .. }) => {
             cancellation.check()?;
-            // A global refusal proves no native input. As with lost native consent,
-            // do not omit a listed mod without trying its exact build. Only source
-            // receipts get the SDK fallback; other native paths keep their old rules.
-            let no_consent = matches!(error, Failed::NoConsent);
+            // A global refusal proves no native input: do not omit a listed mod without
+            // trying its exact build. Only source receipts get the SDK fallback; other
+            // native paths keep their old rules.
             let mut unknown = BTreeSet::new();
             for (&id, p) in set {
                 if enabled.contains(id) && p.manifest.native.is_some() {
-                    let may_hold = if no_consent {
-                        p.unlisted
-                    } else {
-                        p.built_from_source
-                    };
-                    if !may_hold {
+                    if !p.built_from_source {
                         return Err(error.into());
                     }
                     unknown.insert(id);
@@ -1783,5 +1825,62 @@ mod tests {
         )
         .unwrap();
         assert_eq!(held.id(), "camp_native");
+    }
+
+    #[test]
+    fn prune_dependents_tracks_fit_reason_per_version() {
+        let pkg = |id: &str, version: &str, deps: &[&str]| {
+            let mut text = format!(
+                "id = '{id}'\nname = '{id}'\nversion = '{version}'\napi = '0.2'\nside = 'both'\n"
+            );
+            if !deps.is_empty() {
+                text.push_str("[dependencies]\n");
+                for dep in deps {
+                    text.push_str(&format!("{dep} = '>=0.1.0'\n"));
+                }
+            }
+            Package {
+                manifest: sunrise_launcher_smod::Manifest::parse(&text).unwrap(),
+                digest: None,
+                replacement: None,
+                built_from_source: false,
+            }
+        };
+        let mut slots: Choices = BTreeMap::from([
+            ("dep_unfit".into(), Vec::new()),
+            ("dep_unknown".into(), Vec::new()),
+            (
+                "mixed".into(),
+                vec![
+                    pkg("mixed", "1.0.0", &["dep_unfit"]),
+                    pkg("mixed", "2.0.0", &["dep_unknown"]),
+                ],
+            ),
+            (
+                "both_on_one".into(),
+                vec![pkg("both_on_one", "1.0.0", &["dep_unfit", "dep_unknown"])],
+            ),
+            (
+                "still_fits".into(),
+                vec![
+                    pkg("still_fits", "1.0.0", &["dep_unknown"]),
+                    pkg("still_fits", "2.0.0", &[]),
+                ],
+            ),
+        ]);
+        let unproved = BTreeSet::from(["dep_unknown".to_owned()]);
+        let unknown = prune_dependents(&mut slots, &unproved);
+        assert!(
+            unknown.contains("mixed"),
+            "a mod with one unfit version and one unverified version stays unverified: {unknown:?}"
+        );
+        assert!(
+            !unknown.contains("both_on_one"),
+            "a version needing an unfit dep cannot be saved by proving another dep: {unknown:?}"
+        );
+        assert!(!slots.contains_key("mixed"));
+        assert!(!slots.contains_key("both_on_one"));
+        assert_eq!(slots["still_fits"].len(), 1);
+        assert_eq!(slots["still_fits"][0].manifest.version, "2.0.0");
     }
 }

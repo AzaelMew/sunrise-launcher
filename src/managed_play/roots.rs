@@ -437,7 +437,6 @@ mod tests {
             .evict_inventory_observed(
                 SystemTime::now() + Duration::from_secs(14 * 24 * 60 * 60),
                 Some(0),
-                false,
                 |path| {
                     if path == derived {
                         assert!(!std::mem::replace(&mut selected, true));

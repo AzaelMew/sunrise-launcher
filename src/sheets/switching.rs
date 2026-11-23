@@ -105,7 +105,7 @@ impl Launcher {
 
     pub(crate) fn switch_download_progress(&mut self, tag: &str, fraction: f32) {
         if self.ui.sheets.switching.cache_download.as_deref() == Some(tag) {
-            self.switch_progress(InstallProgress::Downloading(fraction));
+            self.switch_progress(InstallProgress::DownloadingBuild(fraction));
         }
     }
 
@@ -156,7 +156,7 @@ impl Launcher {
         self.open_sheet(Sheet::Switching);
         if let Some(release) = release {
             self.ui.sheets.switching.cache_download = Some(tag);
-            self.switch_progress(InstallProgress::Downloading(0.));
+            self.switch_progress(InstallProgress::DownloadingBuild(0.));
             self.install_cancellable(&release, Some(stop));
         } else {
             self.prepare_switch();
@@ -175,8 +175,29 @@ impl Launcher {
             self.start_switch_worker();
         } else {
             let (tag, stop) = (running.tag.clone(), running.stop.clone());
-            self.switch_progress(InstallProgress::PreparingBuild);
+            self.switch_progress(InstallProgress::Minecraft(
+                backend::PrepareStep::Files,
+                None,
+            ));
             self.prepare_version_cancellable(tag, backend::MinecraftFrom::Install, Some(stop));
+        }
+    }
+
+    /// A line from the preparation a switch waits on: the dialog follows its step, and the
+    /// files done while Mojang's download runs.
+    pub(crate) fn follow_switch_preparation(&mut self) {
+        if let Some(running) = self
+            .ui
+            .sheets
+            .switching
+            .running
+            .as_mut()
+            .filter(|run| matches!(run.progress, InstallProgress::Minecraft(..)))
+        {
+            running.progress = InstallProgress::Minecraft(
+                backend::prepare_step(),
+                sunrise_launcher::mojang::progress(),
+            );
         }
     }
 
@@ -212,6 +233,9 @@ impl Launcher {
             identity,
             choice,
         } = running.pending.take().expect("switch queued");
+        // Both switch routes start by checking the profile's mods; a v2 profile first
+        // refreshes its index, so don't leave the last download or preparation step showing.
+        running.progress = InstallProgress::PreparingBuild;
         let (tag, stop) = (running.tag.clone(), running.stop.clone());
         let tx = self.tx.clone();
         std::thread::spawn(move || {
@@ -220,15 +244,6 @@ impl Launcher {
                 progress: &|stage| {
                     let _ = tx.send(Msg::SwitchProgress(stage));
                 },
-                registry_crates: Some(&|inventory| {
-                    if stop.is_stopped() {
-                        return false;
-                    }
-                    let (answer, reply) = std::sync::mpsc::channel();
-                    tx.send(Msg::NativeRegistryConsent(inventory.clone(), answer))
-                        .is_ok()
-                        && reply.recv().unwrap_or(false)
-                }),
                 at_cutoff: &|| Ok(()),
                 approve: &|question| {
                     if stop.is_stopped() {
@@ -241,11 +256,10 @@ impl Launcher {
                 },
             };
             // A profile holding a mod from the signed v2 index switches through it, which keeps
-            // each mod's chosen project; v1 and local mods keep their exact bytes there.
-            let from_v2 = sunrise_launcher::browser::installed::Installed::read(&instance.home)
-                .is_ok_and(|rows| rows.entries.iter().any(|e| e.mod_id.is_some()));
-            let outcome = if from_v2 {
-                switch_profile_build_v2(
+            // each mod's chosen project; v1 and local mods keep their exact bytes there. A read
+            // failure must not silently drop back to the v1 switch.
+            let outcome = match uses_v2_switch(&instance.home) {
+                Ok(true) => switch_profile_build_v2(
                     &instance,
                     identity,
                     &tag,
@@ -263,9 +277,9 @@ impl Launcher {
                         }),
                         pin_dir: None,
                     },
-                )
-            } else {
-                switch_profile_build(&instance, identity, &tag, choice, hooks)
+                ),
+                Ok(false) => switch_profile_build(&instance, identity, &tag, choice, hooks),
+                Err(error) => Err(error),
             };
             let _ = tx.send(Msg::Switched(instance.home, Box::new(outcome)));
         });
@@ -528,35 +542,39 @@ impl Launcher {
                 )
         } else {
             let stopping = running.stop.is_stopped();
+            let publishing = running.progress == InstallProgress::Publishing;
+            let cancel = button("cancel-switch", tr("Cancel"));
+            // The step's line, the bar and Cancel keep their places while the steps change, so
+            // the dialog never jumps: one line of text, a bar that shuttles while a step has no
+            // known length, and Cancel dimmed once it can no longer stop the switch.
             div()
                 .flex()
                 .flex_col()
                 .child(title(trf("Switch to {build}", &[("build", &build)])))
-                .child(muted(if stopping {
-                    tr("Cancelling…").into()
-                } else if running.progress == InstallProgress::Publishing {
-                    tr("Applying the switch.").into()
+                .child(
+                    muted(if stopping {
+                        tr("Cancelling…").into()
+                    } else if publishing {
+                        tr("Applying the switch.").into()
+                    } else {
+                        stage_label(running.progress)
+                    })
+                    .truncate(),
+                )
+                .child(crate::widgets::progress_bar(
+                    stage_fraction(running.progress)
+                        .filter(|_| !stopping)
+                        .map(|f| (f, f)),
+                    &self.theme,
+                ))
+                .child(div().flex().justify_end().child(if stopping || publishing {
+                    crate::widgets::disabled(cancel)
                 } else {
-                    stage_label(running.progress)
+                    cancel.on_click(cx.listener(|this, _, _, cx| {
+                        this.cancel_switch();
+                        cx.notify();
+                    }))
                 }))
-                .children(
-                    (!stopping)
-                        .then(|| stage_fraction(running.progress))
-                        .flatten()
-                        .map(|f| crate::widgets::progress_bar(Some((f, f)), &self.theme)),
-                )
-                .children(
-                    (!stopping && running.progress != InstallProgress::Publishing).then(|| {
-                        div().flex().justify_end().child(
-                            button("cancel-switch", tr("Cancel")).on_click(cx.listener(
-                                |this, _, _, cx| {
-                                    this.cancel_switch();
-                                    cx.notify();
-                                },
-                            )),
-                        )
-                    }),
-                )
         };
         frame("switch-game", 610., body, cx)
     }
@@ -863,15 +881,6 @@ impl Launcher {
                             progress: &|stage| {
                                 let _ = tx.send(Msg::ProviderSwitchProgress(stage));
                             },
-                            native: &|_| {
-                                Err(tr(
-                                    "Allow native mods in Settings before switching to this port.",
-                                )
-                                .into())
-                            },
-                            registry_crates: Some(&|consent| {
-                                ask(&|answer| Msg::NativeRegistryConsent(consent.clone(), answer))
-                            }),
                             continue_after_failure: &|_| false,
                             resolve: None,
                             cancellation: None,
@@ -1129,6 +1138,17 @@ impl Launcher {
     }
 }
 
+/// Whether a profile holds any mod installed from the signed v2 index.
+///
+/// Propagates `installed.json` read errors so a corrupt or unreadable manifest never falls back
+/// to the v1 build switch.
+fn uses_v2_switch(home: &std::path::Path) -> Result<bool, String> {
+    Ok(sunrise_launcher::browser::installed::Installed::read(home)?
+        .entries
+        .iter()
+        .any(|e| e.mod_id.is_some()))
+}
+
 /// A partial write or an interrupted writer must not reserve the final report name.
 fn publish_report(
     folder: &std::path::Path,
@@ -1146,8 +1166,55 @@ fn publish_report(
 
 #[cfg(test)]
 mod tests {
-    use super::publish_report;
+    use super::{publish_report, uses_v2_switch};
     use std::io::{self, Write};
+    use sunrise_launcher::browser::{
+        installed::{Entry, Installed},
+        Kind, SourceId,
+    };
+
+    #[test]
+    fn uses_v2_switch_refuses_unreadable_installed_manifest_instead_of_falling_back() {
+        let home = tempfile::tempdir().unwrap();
+        assert_eq!(uses_v2_switch(home.path()), Ok(false));
+
+        let mut list = Installed::default();
+        list.entries.push(Entry {
+            source: SourceId::Sunrise,
+            project: "demo".into(),
+            mod_id: None,
+            slug: "demo".into(),
+            title: "Demo".into(),
+            kind: Kind::Mod,
+            version: "1.0.0".into(),
+            number: "1.0.0".into(),
+            file: "mods/demo.smod".into(),
+            checksum: format!("SHA-256:{}", "00".repeat(32)),
+            page: "https://example.test/demo".into(),
+            dependency: false,
+            verdict: None,
+            install_hold: None,
+            repository: None,
+        });
+        list.save(home.path()).unwrap();
+        assert_eq!(uses_v2_switch(home.path()), Ok(false));
+
+        list.entries[0].mod_id = Some("demo".into());
+        list.save(home.path()).unwrap();
+        assert_eq!(uses_v2_switch(home.path()), Ok(true));
+
+        std::fs::write(
+            home.path()
+                .join(sunrise_launcher_smod::index::browser_state::MANIFEST),
+            "{not valid json",
+        )
+        .unwrap();
+        let error = uses_v2_switch(home.path()).unwrap_err();
+        assert!(
+            error.contains(sunrise_launcher_smod::index::browser_state::MANIFEST),
+            "unexpected error: {error}"
+        );
+    }
 
     #[test]
     fn report_save_can_retry_after_a_partial_write_and_never_clobbers() {

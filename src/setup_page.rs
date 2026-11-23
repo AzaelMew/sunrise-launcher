@@ -439,7 +439,7 @@ impl Render for Setup {
             .flex_col()
             .relative()
             .size_full()
-            .bg(t.side)
+            .bg(c(t.night.side))
             .child(sky)
             .children(titlebar::render(&t, window, cx))
             .child(

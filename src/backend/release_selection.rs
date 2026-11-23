@@ -42,12 +42,12 @@ pub(super) fn dev(tag: &str) -> Result<Option<Release>, String> {
     )
     .ok_or_else(missing)?;
     if let Some(target) = target {
-        super::check_sdk_offer(
+        super::check_sdk_offer_strict(
             &mut dev,
             target,
             &crate::native_mods::sdk_cache::Base::from_env(),
             &sunrise_launcher_release_verify::trusted_keys_for(super::GAME_REPO),
-        );
+        )?;
     }
     Ok(Some(dev))
 }

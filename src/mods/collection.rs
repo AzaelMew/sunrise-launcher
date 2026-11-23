@@ -219,13 +219,6 @@ impl Launcher {
         if summary.bytes > 0 {
             facts = facts.child(fact("download-04", model::size(summary.bytes)));
         }
-        if view
-            .lines
-            .iter()
-            .any(|l| l.ticked && sunrise::is_native_mod(&l.id))
-        {
-            facts = facts.child(fact("shield", tr("Native code").to_string()));
-        }
         facts = facts.child(fact("user", trf("By {authors}", &[("authors", &owners)])));
         let tail = match done {
             true => tr("Each mod updates and is removed on its own, from Installed."),

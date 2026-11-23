@@ -337,8 +337,6 @@ fn conflicting_pair_worker() {
         || managed_play::headless_first(&instance),
         InstallHooks {
             progress: &|_| {},
-            native: &|_| panic!("content-only fixture"),
-            registry_crates: None,
             continue_after_failure: &|_| panic!("content-only fixture"),
             resolve: None,
             cancellation: None,
@@ -380,8 +378,6 @@ fn cutoff_worker() {
                     fs::write(&path, serde_json::to_vec(&now).unwrap()).unwrap();
                 }
             },
-            native: &|_| panic!("content-only fixture"),
-            registry_crates: None,
             continue_after_failure: &|_| panic!("content-only fixture"),
             resolve: None,
             cancellation: None,
@@ -1113,7 +1109,6 @@ fn profile_decision_worker() {
             SwitchHooks {
                 cancellation: &Cancellation::default(),
                 progress: &|_| {},
-                registry_crates: None,
                 approve: &|question| {
                     checked.set(true);
                     assert_eq!(question.build, NIGHTLY);
@@ -1194,7 +1189,6 @@ fn profile_decision_worker() {
             SwitchHooks {
                 cancellation: &Cancellation::default(),
                 progress: &|_| {},
-                registry_crates: None,
                 approve: &|_| panic!("replacement was admitted"),
                 at_cutoff: &|| panic!("replacement reached publication"),
             },
@@ -1209,7 +1203,6 @@ fn profile_decision_worker() {
     if mode.starts_with("switch-package-") {
         let (tag, expected, unproved, trial_count) = match mode.as_str() {
             "switch-package-catalogue-mismatch" => (OTHER, vec!["Night Light"], false, 2),
-            "switch-package-no-consent" => (OTHER, vec!["Night Light"], true, 2),
             "switch-package-newer-list" => {
                 ("v26.4-fixture", vec!["Lanterns", "Night Light"], true, 3)
             }
@@ -1219,11 +1212,6 @@ fn profile_decision_worker() {
             }
             _ => unreachable!(),
         };
-        if mode == "switch-package-catalogue-mismatch" {
-            sunrise_launcher::backend::Settings::load()
-                .allow_native_mods()
-                .unwrap();
-        }
         let trials = std::cell::Cell::new(0);
         let approvals = std::cell::Cell::new(0);
         let result = switch_build(
@@ -1237,7 +1225,6 @@ fn profile_decision_worker() {
                         trials.set(trials.get() + 1);
                     }
                 },
-                registry_crates: None,
                 approve: &|q| {
                     approvals.set(approvals.get() + 1);
                     let (off, other) = if unproved {
@@ -1295,7 +1282,6 @@ fn profile_decision_worker() {
             SwitchHooks {
                 cancellation: &Cancellation::default(),
                 progress: &|_| {},
-                registry_crates: None,
                 approve: &|q| {
                     if mode == "switch-same-archive-stay" {
                         assert!(q.held.is_empty());
@@ -1337,8 +1323,6 @@ fn profile_decision_worker() {
             || panic!("already bound"),
             InstallHooks {
                 progress: &|_| {},
-                native: &|_| panic!("content only"),
-                registry_crates: None,
                 continue_after_failure: &|_| panic!("content only"),
                 resolve: Some(&|q| {
                     assert_eq!(q.requested, ["Fireflies"]);

@@ -98,6 +98,10 @@ impl std::fmt::Display for NightlyReceiptWarning {
 }
 
 impl GameProof {
+    pub(crate) fn archive(&self) -> &str {
+        &self.archive
+    }
+
     pub(crate) fn saved(value: serde_json::Value) -> Result<Self, String> {
         let proof: Self = serde_json::from_value(value).map_err(|e| e.to_string())?;
         let valid = super::valid_archive_digest;
@@ -274,33 +278,14 @@ impl GameDownload {
         keys: &[PublicKey],
         fetch: impl Fn(&str) -> Result<Option<Vec<u8>>, String>,
     ) -> Result<GameProof, String> {
-        use sunrise_launcher_release_verify as verify;
-        let channel = Channel::of(&self.source);
-        let sums = fetch(SUMS)?;
-        let signature = fetch(if channel.is_some() {
-            SIGNATURE_V2
-        } else {
-            SIGNATURE
-        })?
-        .map(|bytes| String::from_utf8_lossy(&bytes).into_owned());
-        let digest = |file: &str| match channel {
-            Some(channel) => verify::build_digest(
-                channel,
-                tag,
-                file,
-                sums.as_deref(),
-                signature.as_deref(),
-                keys,
-            ),
-            None => verify::signed_digest(tag, file, sums.as_deref(), signature.as_deref(), keys),
-        };
-        let archive = digest(&self.file)?;
-        let facts = if self.file == INDEX {
-            Some(digest(RELEASE_FILE)?)
-        } else {
-            digest(RELEASE_FILE).ok()
-        };
-        Ok(GameProof { archive, facts })
+        prove_release_files(
+            &self.source,
+            tag,
+            &self.file,
+            self.file == INDEX,
+            keys,
+            fetch,
+        )
     }
 
     pub(crate) fn install(
@@ -382,8 +367,7 @@ impl GameDownload {
             tag,
             proof,
             intent,
-            stop,
-            progress,
+            super::Transfer { stop, progress },
             asset_url,
             (
                 &Base::from_env(),
@@ -392,17 +376,16 @@ impl GameDownload {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn publish_with(
         &self,
         tag: &str,
         proof: &GameProof,
         intent: InstallIntent,
-        stop: Option<&crate::native_mods::Cancellation>,
-        progress: impl Fn(f32),
+        transfer: super::Transfer<'_, impl Fn(f32)>,
         asset_url: impl Fn(&str, &str) -> String,
         (base, keys): (&Base, &[PublicKey]),
     ) -> Result<InstallOutcome, String> {
+        let super::Transfer { stop, progress } = transfer;
         if let Some(stop) = stop {
             stop.check()?;
         }
@@ -489,10 +472,8 @@ impl GameDownload {
                         tag,
                         triple,
                         (&game_index, &proof.archive),
-                        base,
-                        keys,
-                        stop,
-                        &progress,
+                        (base, keys),
+                        (stop, &progress),
                     )
                     .map_err(|error| match error {
                         Refusal::Host => crate::i18n::trf(
@@ -522,8 +503,7 @@ impl GameDownload {
                 self.requested,
                 facts.as_ref().map(|(bytes, sha)| (bytes.as_slice(), *sha)),
                 intent,
-                stop,
-                progress,
+                super::Transfer { stop, progress },
             )?
         };
         self.installed_at(&home, tag, proof, intent)?;
@@ -583,14 +563,72 @@ impl GameDownload {
     }
 }
 
+/// Verify the signed `SHA256SUMS` digest for `file` (and `sunrise-release.json`, required for
+/// SDK-only installs and optional for static archives). Shared by install and SDK offer checks.
+pub(crate) fn prove_release_files(
+    source: &str,
+    tag: &str,
+    file: &str,
+    require_facts: bool,
+    keys: &[PublicKey],
+    fetch: impl Fn(&str) -> Result<Option<Vec<u8>>, String>,
+) -> Result<GameProof, String> {
+    use sunrise_launcher_release_verify as verify;
+    let channel = Channel::of(source);
+    let sums = fetch(SUMS)?;
+    let signature = fetch(if channel.is_some() {
+        SIGNATURE_V2
+    } else {
+        SIGNATURE
+    })?
+    .map(|bytes| String::from_utf8_lossy(&bytes).into_owned());
+    let digest = |name: &str| match channel {
+        Some(channel) => verify::build_digest(
+            channel,
+            tag,
+            name,
+            sums.as_deref(),
+            signature.as_deref(),
+            keys,
+        ),
+        None => verify::signed_digest(tag, name, sums.as_deref(), signature.as_deref(), keys),
+    };
+    let archive = digest(file)?;
+    let facts = if require_facts {
+        Some(digest(RELEASE_FILE)?)
+    } else {
+        digest(RELEASE_FILE).ok()
+    };
+    Ok(GameProof { archive, facts })
+}
+
 pub(in crate::backend) fn sdk_target(requested: Option<GameArchitecture>) -> Option<&'static str> {
-    match crate::rust_toolchain::host()?.target {
-        target @ ("x86_64-unknown-linux-gnu" | "aarch64-apple-darwin") => Some(target),
-        target @ crate::rust_toolchain::WINDOWS_X64_TARGET
-            if requested == Some(GameArchitecture::X64)
-                && native_windows_architecture() != Some("aarch64") =>
-        {
-            Some(target)
+    sdk_target_for(
+        std::env::consts::OS,
+        native_windows_architecture(),
+        std::env::consts::ARCH,
+        requested,
+    )
+}
+
+/// Resolve the SDK client-slice target using the same Windows compatibility rules as player
+/// archives: x64 runs natively on x64 and under emulation on Windows ARM64, both when x64 is
+/// explicitly selected and as the ARM64-to-x64 fallback.
+fn sdk_target_for(
+    os: &str,
+    windows_arch: Option<&str>,
+    arch: &str,
+    requested: Option<GameArchitecture>,
+) -> Option<&'static str> {
+    match (os, arch) {
+        ("linux", "x86_64") => Some("x86_64-unknown-linux-gnu"),
+        ("macos", "aarch64") => Some("aarch64-apple-darwin"),
+        ("windows", _) => {
+            let requested = requested.unwrap_or_default();
+            let (primary, fallback) = game_assets_for("windows", windows_arch, arch, requested)?;
+            let allows_x64 = architecture_for_asset(primary) == Some(GameArchitecture::X64)
+                || fallback.and_then(architecture_for_asset) == Some(GameArchitecture::X64);
+            allows_x64.then_some(crate::rust_toolchain::WINDOWS_X64_TARGET)
         }
         _ => None,
     }

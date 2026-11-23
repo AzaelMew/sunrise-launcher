@@ -444,7 +444,23 @@ pub fn accept_pin_in(data_dir: &Path, change: &PublisherChange) -> Result<(), Er
 
 fn under_lock<T>(data_dir: &Path, run: impl FnOnce() -> Result<T, Error>) -> Result<T, Error> {
     let err = |e: std::io::Error| Error::PinStore(format!("{PINS_FILE}: {e}"));
+    let existing_ancestor = data_dir
+        .ancestors()
+        .find(|dir| dir.exists())
+        .map(Path::to_path_buf);
     fs::create_dir_all(data_dir).map_err(err)?;
+    if existing_ancestor.as_deref() != Some(data_dir) {
+        // Flush every newly created folder and the existing ancestor holding the top new entry
+        // so a first pin survives power loss however many levels were created.
+        let mut cursor = Some(data_dir);
+        while let Some(dir) = cursor {
+            crate::profile_txn::durable::sync_dir(dir).map_err(err)?;
+            if Some(dir) == existing_ancestor.as_deref() {
+                break;
+            }
+            cursor = dir.parent();
+        }
+    }
     let gate = data_dir.join(PINS_LOCK);
     match fs::symlink_metadata(&gate) {
         Ok(meta) if meta.is_file() => (),
@@ -899,7 +915,8 @@ mod tests {
     #[test]
     fn a_matching_pin_is_written_again_so_success_means_durable() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join(PINS_FILE);
+        let data_dir = dir.path().join("nested/data/dir");
+        let path = data_dir.join(PINS_FILE);
         let pin_a = PublisherPin {
             repository_id: 1001,
             repository_name: "alice/mod-a".to_owned(),
@@ -909,30 +926,43 @@ mod tests {
             repository_id: 2002,
             ..pin_a.clone()
         };
-        pin_or_check_in(dir.path(), "Ab3dE9xQ", &pin_a).unwrap();
-        let saved = fs::read_to_string(&path).unwrap();
-        // Stands in for a pin a save made visible before its flush failed: same pin, but bytes
-        // the store would not write.
-        let value: Value = serde_json::from_str(&saved).unwrap();
-        fs::write(&path, value.to_string()).unwrap();
+
+        // Fail the flush right after the rename: the pin file becomes visible on disk, the call
+        // reports an error, and the next matching install writes and flushes it cleanly.
+        crate::profile_txn::durable::fail_next_replace_flush(&path);
+        assert!(matches!(
+            pin_or_check_in(&data_dir, "Ab3dE9xQ", &pin_a),
+            Err(Error::PinStore(_))
+        ));
         assert_eq!(
-            pin_or_check_in(dir.path(), "Ab3dE9xQ", &pin_a).unwrap(),
+            load_pins_in(&data_dir).unwrap().get("Ab3dE9xQ"),
+            Some(&pin_a)
+        );
+        assert_eq!(
+            pin_or_check_in(&data_dir, "Ab3dE9xQ", &pin_a).unwrap(),
             PinStatus::Matched
         );
-        assert_eq!(fs::read_to_string(&path).unwrap(), saved);
 
-        // A confirmation repeated after its pin became visible saves it again too.
-        let change = pin_or_check_in(dir.path(), "Ab3dE9xQ", &pin_b)
+        // Same for a confirmed publisher change whose flush fails after the rename.
+        let change = pin_or_check_in(&data_dir, "Ab3dE9xQ", &pin_b)
             .unwrap_err()
             .publisher_change()
             .expect("must return A -> B")
             .clone();
-        accept_pin_in(dir.path(), &change).unwrap();
-        let accepted = fs::read_to_string(&path).unwrap();
-        let value: Value = serde_json::from_str(&accepted).unwrap();
-        fs::write(&path, value.to_string()).unwrap();
-        accept_pin_in(dir.path(), &change).unwrap();
-        assert_eq!(fs::read_to_string(&path).unwrap(), accepted);
+        crate::profile_txn::durable::fail_next_replace_flush(&path);
+        assert!(matches!(
+            accept_pin_in(&data_dir, &change),
+            Err(Error::PinStore(_))
+        ));
+        assert_eq!(
+            load_pins_in(&data_dir).unwrap().get("Ab3dE9xQ"),
+            Some(&pin_b)
+        );
+        accept_pin_in(&data_dir, &change).unwrap();
+        assert_eq!(
+            load_pins_in(&data_dir).unwrap().get("Ab3dE9xQ"),
+            Some(&pin_b)
+        );
     }
 
     #[test]

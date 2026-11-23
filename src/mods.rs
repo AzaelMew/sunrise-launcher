@@ -3,10 +3,9 @@
 //! **Real:** the registry list, search, categories, fit, kind and sort (`browser::sunrise`'s index,
 //! read in a worker); a mod's page from the index (versions and their fit, size, licence,
 //! authors, source, mirrored screenshots, what it may do); Add and single Update through the
-//! existing install path (native code asks for permission first, `native_consent`); Installed
-//! from `mod-browser.json` and `sunrise-mods.txt` with on/off, selection, filters, bulk Turn on,
-//! Turn off, Remove and Update N mods (a reviewed plan, applied by a worker); Build… and Allow…
-//! hand over to the one native build path.
+//! existing install path; Installed from `mod-browser.json` and `sunrise-mods.txt` with on/off,
+//! selection, filters, bulk Turn on, Turn off, Remove and Update N mods (a reviewed plan, applied
+//! by a worker); Build… hands over to the one native build path.
 //!
 //! **Not here, said on screen or in the handoff:** Featured (the registry carries no editorial
 //! list), a version picker (the registry installs the newest that fits), dependency lists for
@@ -365,7 +364,6 @@ enum Event {
         PathBuf,
         actions::EnableNotice,
         Result<actions::EnabledMods, String>,
-        Option<u64>,
     ),
     /// The v1 index's cards for this game, or `None` when it couldn't be read.
     Catalog(String, Option<Vec<Card>>),
@@ -376,6 +374,8 @@ enum Event {
     Progress(String, f32),
     /// A pack search's answer, by the number of the search that asked.
     Packs(u64, Result<Vec<sunrise_launcher::browser::Project>, String>),
+    /// The categories Modrinth offers for a pack scope; empty when they could not be read.
+    PackCategories(pack_discover::Scope, Vec<String>),
     /// A pack's page, by its source and id.
     PackPage((SourceId, String), pack_project::PackPage),
     /// A resource or data pack install ended: what it said.
@@ -456,7 +456,7 @@ pub(crate) struct ModsState {
     unfit_details: bool,
     /// The build the build window shows: running, or ended and not yet closed.
     pub(crate) build: Option<build_run::Run>,
-    /// Build was pressed and the build has not started yet (it asks for permission first).
+    /// Build was pressed and the build has not started yet.
     pub(crate) build_wanted: bool,
     /// Whether a mod page's Details (who made it, how it is checked) is open.
     facts_open: bool,
@@ -592,8 +592,19 @@ pub(crate) struct HomeModFacts {
 struct HomeModLabels {
     inventory: u64,
     index: Option<Arc<Index>>,
-    native_allowed: bool,
+    unfit_revision: u64,
     rows: Arc<HashMap<String, HomeModFacts>>,
+}
+
+impl HomeModLabels {
+    fn matches(&self, inventory: u64, index: &Option<Arc<Index>>, unfit_revision: u64) -> bool {
+        let same_index = match (&self.index, index) {
+            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+            (None, None) => true,
+            _ => false,
+        };
+        self.inventory == inventory && self.unfit_revision == unfit_revision && same_index
+    }
 }
 
 impl Launcher {
@@ -820,17 +831,9 @@ impl Launcher {
         inventory: u64,
         index: Option<Arc<Index>>,
     ) -> Arc<HashMap<String, HomeModFacts>> {
-        let native_allowed = self.settings.native_mods_allowed_at.is_some();
+        let unfit_revision = sunrise::unfit_updates_revision();
         if let Some(labels) = &self.ui.mods.home_mod_labels {
-            let same_index = match (&labels.index, &index) {
-                (Some(a), Some(b)) => Arc::ptr_eq(a, b),
-                (None, None) => true,
-                _ => false,
-            };
-            if labels.inventory == inventory
-                && labels.native_allowed == native_allowed
-                && same_index
-            {
+            if labels.matches(inventory, &index, unfit_revision) {
                 return labels.rows.clone();
             }
         }
@@ -844,7 +847,7 @@ impl Launcher {
             {
                 let error = self.ui.mods.errors.get(&row.id).map(String::as_str);
                 let badge = row.manual_badge();
-                let cells = model::cells(&row, error, None, native_allowed);
+                let cells = model::cells(&row, error, None);
                 labels.insert(
                     row.id,
                     HomeModFacts {
@@ -859,7 +862,7 @@ impl Launcher {
         self.ui.mods.home_mod_labels = Some(HomeModLabels {
             inventory,
             index,
-            native_allowed,
+            unfit_revision,
             rows: rows.clone(),
         });
         rows
@@ -869,6 +872,8 @@ impl Launcher {
         self.leave_section(true);
         // Enter Discover with the requested kind, not the shelf we last left open.
         self.ui.mods.shelf = Shelf::Resource;
+        // Force one fresh search for the cleared query even when Resource was already selected.
+        self.ui.mods.packs.status = pack_discover::Status::Idle;
         self.choose_view(Page::PackFind);
     }
 
@@ -1035,8 +1040,8 @@ impl Launcher {
                         }
                     }
                 }
-                Event::Enabled(home, notice, result, allowed_at) => {
-                    self.enabled_mods(&home, notice, result, allowed_at);
+                Event::Enabled(home, notice, result) => {
+                    self.enabled_mods(&home, notice, result);
                 }
                 Event::Page(request, page) => {
                     let scope = self.mods_page_scope();
@@ -1053,6 +1058,7 @@ impl Launcher {
                 Event::Nightly(event) => self.nightly_event(event),
                 Event::Progress(line, f) => m.busy = Some((line, f)),
                 Event::Packs(seq, result) => self.pack_answer(seq, result),
+                Event::PackCategories(scope, found) => self.pack_categories(scope, found),
                 Event::PackPage(key, page) => self.pack_page_answer(key, page),
                 Event::PackDone(result) => self.pack_installed(result),
                 Event::Checked(title, found) => self.checked(title, found),
@@ -1410,7 +1416,6 @@ impl Launcher {
                 unfit_updates: &unfit_updates,
                 enabled: &snap.rows.enabled,
                 unbuilt: &snap.rows.unbuilt,
-                native_allowed: self.settings.native_mods_allowed_at.is_some(),
                 chosen: &snap.rows.chosen,
                 local: &snap.rows.local,
             },
@@ -1477,15 +1482,9 @@ impl Launcher {
         self.ui.mods.busy.is_some() || self.registry_stage().is_some()
     }
 
-    /// Build… on a row: the one native build path, which asks for permission first. The player
-    /// stays where they are: the play bar shows how far it is.
+    /// Build… on a row: the one native build path. The player stays where they are: the play bar shows how far it is.
     fn build(&mut self) {
         self.build_native();
-    }
-
-    /// Allow… on a row: the native-code question, with what it builds.
-    fn allow(&mut self) {
-        self.request_native_build_consent();
     }
 
     pub(super) fn open_url(url: &str, cx: &mut Context<Self>) {
@@ -1939,5 +1938,21 @@ mod installed_refresh_tests {
         assert_eq!(mods.visible_notice(Some(&install)), Some(batch));
         mods.notice = None;
         assert_eq!(mods.visible_notice(None), Some(Ok(backup)));
+    }
+
+    #[test]
+    fn home_mod_labels_invalidate_when_unfit_updates_revision_changes() {
+        let index = Some(Arc::new(Index::default()));
+        let cached = HomeModLabels {
+            inventory: 7,
+            index: index.clone(),
+            unfit_revision: 3,
+            rows: Arc::new(HashMap::new()),
+        };
+        assert!(cached.matches(7, &index, 3));
+        assert!(
+            !cached.matches(7, &index, 4),
+            "a newly recorded unfit update must refresh Home's mod status even with unchanged inventory and index"
+        );
     }
 }

@@ -454,3 +454,21 @@ fn a_projects_own_licence_reads_as_words() {
     assert_eq!(license_label("LGPL-3.0-only"), "LGPL-3.0-only");
     assert_eq!(license_label("LicenseRef-"), "LicenseRef-");
 }
+
+#[test]
+fn pack_categories_are_modrinths_category_and_feature_tags_for_the_type() {
+    let tags = json!([
+        {"name": "vanilla-like", "project_type": "resourcepack", "header": "categories"},
+        {"name": "16x", "project_type": "resourcepack", "header": "resolutions"},
+        {"name": "audio", "project_type": "resourcepack", "header": "features"},
+        {"name": "combat", "project_type": "resourcepack", "header": "categories"},
+        {"name": "magic", "project_type": "mod", "header": "categories"},
+        {"name": "low", "project_type": "shader", "header": "performance impact"}
+    ]);
+    assert_eq!(
+        modrinth::pack_categories(&tags, "resourcepack"),
+        ["combat", "vanilla-like", "audio"]
+    );
+    assert_eq!(modrinth::pack_categories(&tags, "mod"), ["magic"]);
+    assert!(modrinth::pack_categories(&tags, "shader").is_empty());
+}

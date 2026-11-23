@@ -748,8 +748,10 @@ fn v2_stage_and_verify_checks_digest_real_attestation_and_publisher_pins() {
         pin_dir.path(),
         &BTreeSet::new(),
         None,
-        &fetch_real_bundle,
-        &attestation::verify_release,
+        V2Transfer {
+            fetch_bytes: &fetch_real_bundle,
+            verify_release: &attestation::verify_release,
+        },
     )
     .unwrap_err();
     assert!(matches!(bad_attest, InstallError::Refused(_)));
@@ -771,8 +773,10 @@ fn v2_stage_and_verify_checks_digest_real_attestation_and_publisher_pins() {
         pin_dir.path(),
         &BTreeSet::new(),
         None,
-        &fetch_bad_sha,
-        &policy_verifier_for(5001, "alice/wayfinder", WORKFLOW_V1),
+        V2Transfer {
+            fetch_bytes: &fetch_bad_sha,
+            verify_release: &policy_verifier_for(5001, "alice/wayfinder", WORKFLOW_V1),
+        },
     )
     .unwrap_err();
     assert!(matches!(sha_err, InstallError::Download(_)));
@@ -794,8 +798,10 @@ fn v2_stage_and_verify_checks_digest_real_attestation_and_publisher_pins() {
         pin_dir.path(),
         &BTreeSet::new(),
         None,
-        &fetch_good,
-        &policy_verifier_for(5001, "alice/wayfinder", WORKFLOW_V1),
+        V2Transfer {
+            fetch_bytes: &fetch_good,
+            verify_release: &policy_verifier_for(5001, "alice/wayfinder", WORKFLOW_V1),
+        },
     )
     .unwrap();
     assert!(entry.is_v2_registry());
@@ -814,8 +820,10 @@ fn v2_stage_and_verify_checks_digest_real_attestation_and_publisher_pins() {
         pin_dir.path(),
         &BTreeSet::new(),
         None,
-        &fetch_good,
-        &policy_verifier_for(5001, "alice-renamed/wayfinder", WORKFLOW_V2),
+        V2Transfer {
+            fetch_bytes: &fetch_good,
+            verify_release: &policy_verifier_for(5001, "alice-renamed/wayfinder", WORKFLOW_V2),
+        },
     )
     .unwrap();
     commit_pending_pins(pin_dir.path(), &[pin_v2]).unwrap();
@@ -849,8 +857,10 @@ fn v2_stage_and_verify_checks_digest_real_attestation_and_publisher_pins() {
         pin_dir.path(),
         &BTreeSet::new(),
         Some(&|_| false),
-        &fetch_good,
-        &policy_verifier_for(9999, "newowner/wayfinder", WORKFLOW_V2),
+        V2Transfer {
+            fetch_bytes: &fetch_good,
+            verify_release: &policy_verifier_for(9999, "newowner/wayfinder", WORKFLOW_V2),
+        },
     )
     .unwrap_err();
     assert!(matches!(
@@ -874,8 +884,10 @@ fn v2_stage_and_verify_checks_digest_real_attestation_and_publisher_pins() {
         pin_dir.path(),
         &BTreeSet::new(),
         Some(&|question| question.change.incoming.repository_id == 9999),
-        &fetch_good,
-        &policy_verifier_for(9999, "newowner/wayfinder", WORKFLOW_V2),
+        V2Transfer {
+            fetch_bytes: &fetch_good,
+            verify_release: &policy_verifier_for(9999, "newowner/wayfinder", WORKFLOW_V2),
+        },
     )
     .unwrap();
     commit_pending_pins(pin_dir.path(), &[accepted_pin]).unwrap();
@@ -1415,8 +1427,10 @@ fn v2_stage_rejects_unlisted_required_dependency_in_manifest() {
         pin_dir.path(),
         &BTreeSet::new(),
         None,
-        &fetch,
-        &policy_verifier_for(9200, "alice/wayfinder", WORKFLOW_V1),
+        V2Transfer {
+            fetch_bytes: &fetch,
+            verify_release: &policy_verifier_for(9200, "alice/wayfinder", WORKFLOW_V1),
+        },
     )
     .unwrap_err();
     assert!(
@@ -1505,4 +1519,89 @@ fn v2_plan_picks_the_newest_library_release_in_the_range_the_dependent_asks_for(
     // Nothing in range fits this build: refused, naming the range.
     let refused = plan(">=3").unwrap_err().to_string();
     assert!(refused.contains(">=3"), "{refused}");
+}
+
+#[test]
+fn a_verified_native_release_is_allowed_to_build_without_the_warning() {
+    use std::io::Write;
+    let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let manifest = format!(
+        "id='trail'\nname='Trail'\nversion='1.0.0'\napi='0.2'\ncapabilities=['registries']\n[native]\ngame='{}'\nsunrise='{}'\nmixins='{}'\n",
+        crate::backend::PINNED_GAME,
+        "a".repeat(40),
+        "b".repeat(40)
+    );
+    for (name, text) in [
+        ("Cargo.toml", "[package]\nname='trail'\nversion='1.0.0'\n"),
+        ("src/lib.rs", "fn hook() {}"),
+        ("sunrise-mod.toml", manifest.as_str()),
+    ] {
+        zip.start_file(name, zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(text.as_bytes()).unwrap();
+    }
+    let bytes = zip.finish().unwrap().into_inner();
+    let mut proj = make_project(
+        "Tr4iLxQ1",
+        "trail",
+        "trail",
+        "Trail",
+        5002,
+        "alice/trail",
+        vec![make_release(
+            "alice/trail",
+            "1.0.0",
+            "26.3-0.1.0",
+            WORKFLOW_V1,
+            &["26.3-0.1.0"],
+            &[],
+            &bytes,
+            Vec::new(),
+        )],
+    );
+    proj.kind = V2Kind::NativeMod;
+    let idx = make_index(vec![proj.clone()], Vec::new());
+    let step = planned_from(&proj, &proj.releases[0], false);
+    let pin_dir = tempfile::tempdir().unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let fetch = |url: &str, _max: u64| -> Result<Vec<u8>, String> {
+        if url.ends_with(".sigstore.json") {
+            Ok(b"{}".to_vec())
+        } else {
+            Ok(bytes.clone())
+        }
+    };
+    let refused = stage_and_verify_v2_release(
+        &idx,
+        home.path(),
+        &step,
+        pin_dir.path(),
+        &BTreeSet::new(),
+        None,
+        V2Transfer {
+            fetch_bytes: &fetch,
+            verify_release: &policy_verifier_for(9999, "alice/trail", WORKFLOW_V1),
+        },
+    );
+    assert!(refused.is_err());
+    assert!(backend::allowed_native_files_in(pin_dir.path())
+        .unwrap()
+        .is_empty());
+    stage_and_verify_v2_release(
+        &idx,
+        home.path(),
+        &step,
+        pin_dir.path(),
+        &BTreeSet::new(),
+        None,
+        V2Transfer {
+            fetch_bytes: &fetch,
+            verify_release: &policy_verifier_for(5002, "alice/trail", WORKFLOW_V1),
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        backend::allowed_native_files_in(pin_dir.path()).unwrap(),
+        BTreeSet::from([index::sha256(&bytes).to_ascii_lowercase()])
+    );
 }

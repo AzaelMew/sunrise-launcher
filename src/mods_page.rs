@@ -6,7 +6,7 @@ use super::*;
 use std::path::PathBuf;
 use std::sync::Arc;
 use sunrise_launcher::browser::{installed, sunrise};
-use sunrise_launcher::{native_status, profile_txn::Identity};
+use sunrise_launcher::native_status;
 
 pub(crate) mod install;
 
@@ -52,11 +52,6 @@ impl ModsHome {
     fn current(&self) -> PathBuf {
         self.0.clone().unwrap_or_else(backend::game_home)
     }
-
-    fn begin_build_consent(&mut self, selected: PathBuf) -> Arc<PathBuf> {
-        self.follow_home(Some(selected));
-        Arc::new(self.current())
-    }
 }
 
 impl Mods {
@@ -69,10 +64,6 @@ impl Mods {
 
     pub(super) fn home(&self) -> PathBuf {
         self.home.current()
-    }
-
-    pub(super) fn begin_build_consent(&mut self, selected: PathBuf) -> Arc<PathBuf> {
-        self.home.begin_build_consent(selected)
     }
 
     pub(super) fn new() -> Self {
@@ -106,10 +97,6 @@ impl Launcher {
             changed = true;
             let m = &mut self.mods;
             match event {
-                Event::Registry(install::Worker::Native(question, reply)) => {
-                    self.reset_install_question_sheet();
-                    self.pending_consent = Some(PendingConsent::Registry(question, reply));
-                }
                 Event::Registry(install::Worker::Source(question, reply)) => {
                     self.receive_source_question(question, reply);
                 }
@@ -190,14 +177,8 @@ impl Launcher {
         self.start_registry_queue() || changed
     }
 
-    /// Turns a Sunrise mod on after the worker admits its profile. A consent answer
-    /// can only act on the profile (and incarnation) that asked the question.
-    pub(super) fn enable_registry_mod(
-        &mut self,
-        e: &installed::Entry,
-        home: PathBuf,
-        approved: Option<Identity>,
-    ) {
+    /// Turns a Sunrise mod on after the worker admits its profile.
+    pub(super) fn enable_registry_mod(&mut self, e: &installed::Entry, home: PathBuf) {
         let Some(id) = sunrise::mod_id(e) else {
             return;
         };
@@ -213,27 +194,6 @@ impl Launcher {
             self.mods.message = Some(Err(format!("{title} was taken down: {}", revoked.reason)));
             return;
         }
-        if let Some(identity) = approved {
-            self.enable_native_in(home, identity, id.into(), title.into());
-        } else if native_status::is_native_file(&e.file)
-            && self.settings.native_mods_allowed_at.is_none()
-        {
-            match Identity::of(&home) {
-                Ok(identity) => {
-                    self.pending_consent =
-                        Some(PendingConsent::Toggle(Box::new(native_consent::Toggle {
-                            entry: e.clone(),
-                            home,
-                            identity,
-                        })));
-                }
-                Err(error) => self.mods.message = Some(Err(error)),
-            }
-        } else {
-            self.enable_one_in(home, id.into(), title.into());
-        }
+        self.enable_one_in(home, id.into(), title.into());
     }
 }
-
-#[cfg(test)]
-mod tests;

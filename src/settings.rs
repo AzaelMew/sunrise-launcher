@@ -20,7 +20,6 @@ pub(super) enum Section {
     Account,
     Game,
     Appearance,
-    Mods,
     Storage,
     Privacy,
     Launcher,
@@ -40,11 +39,10 @@ pub(super) fn startup_section(location_error: bool, location_note: bool) -> Opti
 }
 
 impl Section {
-    pub(super) const ALL: [Section; 7] = [
+    pub(super) const ALL: [Section; 6] = [
         Section::Account,
         Section::Game,
         Section::Appearance,
-        Section::Mods,
         Section::Storage,
         Section::Privacy,
         Section::Launcher,
@@ -55,7 +53,6 @@ impl Section {
             Section::Account => "Account",
             Section::Game => "Game",
             Section::Appearance => "Appearance",
-            Section::Mods => "Mods",
             Section::Storage => "Storage",
             Section::Privacy => "Privacy",
             Section::Launcher => "Launcher",
@@ -68,7 +65,6 @@ impl Section {
             Section::Account => "user",
             Section::Game => "game-controller-01",
             Section::Appearance => "color-picker",
-            Section::Mods => "puzzle",
             Section::Storage => "folder-01",
             Section::Privacy => "shield",
             // Language and network: no launcher or app icon in the set.
@@ -81,7 +77,6 @@ impl Section {
             Section::Account => "Who plays, and the Microsoft accounts signed in here.",
             Section::Game => "How the game starts. Its build is chosen beside Play on Home.",
             Section::Appearance => "The theme, its accent and what is behind Home.",
-            Section::Mods => "What mods with native code may do on this computer.",
             Section::Storage => "Manage game builds, downloads and where your files are kept.",
             Section::Privacy => "What Sunrise sends, and what it never does.",
             Section::Launcher => "Language, network and this version.",
@@ -355,7 +350,6 @@ impl Launcher {
             Section::Account => self.settings_account(cx),
             Section::Game => self.settings_game(cx),
             Section::Appearance => self.settings_appearance(window, cx),
-            Section::Mods => self.settings_mods(cx),
             Section::Storage => self.settings_storage(cx),
             Section::Privacy => self.settings_privacy(cx),
             Section::Launcher => self.settings_launcher(cx),
@@ -457,7 +451,6 @@ impl Launcher {
         view.account_menu = None;
         view.setup = false;
         view.note = None;
-        self.storage_revoke = None;
         self.storage_confirm = None;
         self.storage_builds.confirm = None;
         self.collection.confirm_delete = false;
@@ -905,60 +898,6 @@ impl Launcher {
             .child(group(vec![while_playing, args]))
             .child(group(vec![source]))
             .child(group(profiles))
-    }
-
-    fn settings_mods(&mut self, cx: &mut Context<Self>) -> Div {
-        let allowed = self.settings.native_mods_allowed_at.is_some();
-        let (about, actions) = match (allowed, self.storage_revoke) {
-            (false, _) => (
-                tr("Not allowed. Sunrise asks the first time a mod needs it, and builds or runs nothing before you answer.").to_string(),
-                div(),
-            ),
-            (true, None) => (
-                tr("Allowed. Mods with native code run inside the game with the same access to your computer as the game has.").to_string(),
-                div().child(match self.storage_counting {
-                    Some(_) => off(button("alt-native-revoke", tr("Counting your mods…"))),
-                    None => button("alt-native-revoke", tr("Take back…"))
-                        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.storage_count_native(cx))),
-                }),
-            ),
-            (true, Some((mods, setups))) => (
-                match (mods, setups) {
-                    (0, _) => tr("No mod with native code is turned on. Sunrise will ask again before the next one.").to_string(),
-                    (1, _) => tr("Sunrise will ask again before running your one mod with native code. Your mod selection won't change.").to_string(),
-                    (_, 1) => trf(
-                        "Sunrise will ask again before running your {mods} mods with native code. Your mod selection won't change.",
-                        &[("mods", &mods.to_string())],
-                    ),
-                    _ => trf(
-                        "Sunrise will ask again before running {mods} mods with native code in {profiles} profiles. Your mod selection won't change.",
-                        &[("mods", &mods.to_string()), ("profiles", &setups.to_string())],
-                    ),
-                },
-                div()
-                    .child(
-                        button("alt-native-keep", tr("Keep it")).on_click(cx.listener(
-                            |this, _: &ClickEvent, _, cx| {
-                                this.storage_revoke = None;
-                                cx.notify();
-                            },
-                        )),
-                    )
-                    .child(danger(button("alt-native-revoke-yes", tr("Take it back"))).on_click(
-                        cx.listener(|this, _: &ClickEvent, _, cx| this.turn_off_native_mods(cx)),
-                    )),
-            ),
-        };
-        let mut native = row(tr("Native code"), about, actions);
-        if let Some(error) = self.storage_revoke_error.clone() {
-            native = div()
-                .flex()
-                .flex_col()
-                .gap(px(8.))
-                .child(native)
-                .child(hint(error));
-        }
-        group(vec![native])
     }
 
     fn settings_storage(&mut self, cx: &mut Context<Self>) -> Div {

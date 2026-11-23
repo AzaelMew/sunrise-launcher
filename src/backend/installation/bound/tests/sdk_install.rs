@@ -53,11 +53,16 @@ fn a_newer_sdk_without_both_client_slices_does_not_win_update_or_first_play() {
     ];
     let list = [row(OLDER, &[INDEX]), row(NEWER, &[INDEX])];
     let full = index_of(&slices, "1.0.0").to_json();
-    let publish_index = |tag, index: &str| {
-        publish(mirror.path(), tag, tag, &key, index.as_bytes(), &[]);
+    let publish_index = |tag, index: &str, with_facts: bool| {
+        let extra: &[(&str, &[u8])] = if with_facts {
+            &[(RELEASE_FILE, FACTS)]
+        } else {
+            &[]
+        };
+        publish(mirror.path(), tag, tag, &key, index.as_bytes(), extra);
     };
-    publish_index(OLDER, &full);
-    publish_index(NEWER, &index_of(&slices[..1], "1.0.0").to_json());
+    publish_index(OLDER, &full, true);
+    publish_index(NEWER, &index_of(&slices[..1], "1.0.0").to_json(), true);
     let releases = game_releases_from(&list, &settings, &base, &keys);
     assert_eq!(releases[0].tag, NEWER);
     assert!(releases[0].asset.is_none());
@@ -69,13 +74,71 @@ fn a_newer_sdk_without_both_client_slices_does_not_win_update_or_first_play() {
     .unwrap();
     assert_eq!(first.base_tag(), OLDER);
 
-    // A parseable replacement with both slices does not become eligible until it is signed.
+    // A parseable replacement with both slices does not become eligible until it is signed,
+    // and even a signed sdk.json with both slices is refused without signed sunrise-release.json.
     fs::write(mirror.path().join(NEWER).join(INDEX), &full).unwrap();
     let releases = game_releases_from(&list, &settings, &base, &keys);
     assert_eq!(sunrise_update(&releases, &[], Stable).unwrap().tag, OLDER);
-    publish_index(NEWER, &full);
+    publish_index(NEWER, &full, false);
+    let releases = game_releases_from(&list, &settings, &base, &keys);
+    assert_eq!(
+        sunrise_update(&releases, &[], Stable).unwrap().tag,
+        OLDER,
+        "missing signed sunrise-release.json must not hide older playable build"
+    );
+    publish_index(NEWER, &full, true);
     let releases = game_releases_from(&list, &settings, &base, &keys);
     assert_eq!(sunrise_update(&releases, &[], Stable).unwrap().tag, NEWER);
+}
+
+#[test]
+fn windows_arm64_sdk_target_allows_x64_and_records_requested_vs_actual_architecture() {
+    use crate::rust_toolchain::WINDOWS_X64_TARGET;
+    // Explicit x64 selection on Windows ARM64.
+    assert_eq!(
+        sdk_target_for(
+            "windows",
+            Some("aarch64"),
+            "aarch64",
+            Some(GameArchitecture::X64)
+        ),
+        Some(WINDOWS_X64_TARGET)
+    );
+    // ARM64 selection on Windows ARM64 falls back to x64 under emulation, matching player archives.
+    assert_eq!(
+        sdk_target_for(
+            "windows",
+            Some("aarch64"),
+            "aarch64",
+            Some(GameArchitecture::Arm64),
+        ),
+        Some(WINDOWS_X64_TARGET)
+    );
+    // Native Windows x64 with explicit x64.
+    assert_eq!(
+        sdk_target_for(
+            "windows",
+            Some("x86_64"),
+            "x86_64",
+            Some(GameArchitecture::X64)
+        ),
+        Some(WINDOWS_X64_TARGET)
+    );
+    // Requested and actual architectures are recorded separately on SDK-only GameDownload.
+    let download = |requested| GameDownload {
+        source: "26.3-0.1.8".into(),
+        file: INDEX.into(),
+        size: 1,
+        requested: Some(requested),
+        time: String::new(),
+        published_at: String::new(),
+    };
+    let explicit_x64 = download(GameArchitecture::X64).architecture().unwrap();
+    assert_eq!(explicit_x64.requested, GameArchitecture::X64);
+    assert_eq!(explicit_x64.binary, GameArchitecture::X64);
+    let arm64_fallback = download(GameArchitecture::Arm64).architecture().unwrap();
+    assert_eq!(arm64_fallback.requested, GameArchitecture::Arm64);
+    assert_eq!(arm64_fallback.binary, GameArchitecture::X64);
 }
 
 #[test]
@@ -141,8 +204,10 @@ fn first_play_proves_and_installs_the_two_sdk_slices() {
                     DEV,
                     &proof,
                     InstallIntent::Exact,
-                    None,
-                    |_| {},
+                    crate::backend::installation::Transfer {
+                        stop: None,
+                        progress: |_| {},
+                    },
                     |_, _| unreachable!("SDK reads from the mirror"),
                     (&base, &keys),
                 );
@@ -269,8 +334,10 @@ fn player_archive_still_installs_when_the_index_is_listed() {
                     TAG,
                     &proof,
                     InstallIntent::Exact,
-                    None,
-                    |_| {},
+                    crate::backend::installation::Transfer {
+                        stop: None,
+                        progress: |_| {},
+                    },
                     |_, _| url.clone(),
                     (&base, &keys),
                 )
@@ -280,6 +347,110 @@ fn player_archive_still_installs_when_the_index_is_listed() {
             assert_eq!(fs::read(game.join(CLIENT)).unwrap(), b"static client");
             assert!(game.join(Artifact::ARCHIVE_RECEIPT).is_file());
             assert!(!game.join(Artifact::SDK_RECEIPT).exists());
+        },
+    );
+}
+
+#[test]
+fn explicit_install_preserves_sdk_lookup_errors_instead_of_saying_no_build() {
+    const MISSING_SLICE: &str = "26.3-0.1.10";
+    const UNREACHABLE: &str = "26.3-0.1.11";
+    let settings = Settings::default();
+    let Some(triple) = sdk_target(selected_game_architecture(&settings)) else {
+        return;
+    };
+    let mirror = tempfile::tempdir().unwrap();
+    let base = Base::Folder(mirror.path().to_owned());
+    let (key, _) = SigningKey::generate().unwrap();
+    let keys = [key.public()];
+    let names = [Kind::Runtime, Kind::Programs].map(|kind| Asset::name(kind, triple, Side::Client));
+    let slices = [(names[0].as_str(), SLICES[0])];
+    // Verified index missing one slice: legitimately has no build for this platform.
+    publish(
+        mirror.path(),
+        MISSING_SLICE,
+        MISSING_SLICE,
+        &key,
+        index_of(&slices, "1.0.0").to_json().as_bytes(),
+        &[("sunrise-release.json", b"{}")],
+    );
+    // UNREACHABLE has no index file at all, simulating a fetch/lookup failure.
+    let list = [row(MISSING_SLICE, &[INDEX]), row(UNREACHABLE, &[INDEX])];
+
+    let no_build =
+        install_explicit_tag_from(&list, MISSING_SLICE, false, &settings, &base, &keys, |_| {
+            panic!("should not install a build missing a slice")
+        })
+        .unwrap_err();
+    assert!(
+        no_build.contains("has no build for this platform"),
+        "verified missing slice should report no build, got: {no_build}"
+    );
+
+    let lookup_err =
+        install_explicit_tag_from(&list, UNREACHABLE, false, &settings, &base, &keys, |_| {
+            panic!("should not install when lookup failed")
+        })
+        .unwrap_err();
+    assert!(
+        !lookup_err.contains("has no build for this platform"),
+        "lookup error should be preserved rather than reported as no build, got: {lookup_err}"
+    );
+}
+
+#[test]
+fn explicit_install_does_not_prune_sdk_only_builds_with_unresolved_catalogue() {
+    isolated_case(
+        "sdk_install::explicit_install_does_not_prune_sdk_only_builds_with_unresolved_catalogue",
+        || {
+            const SDK_TAG: &str = "26.3-0.1.10";
+            const STATIC_TAG: &str = "26.3-0.1.9";
+            let Some(static_asset) = ASSET else {
+                return;
+            };
+            let settings = Settings {
+                keep_versions: Some(1),
+                ..Settings::default()
+            };
+            if sdk_target(selected_game_architecture(&settings)).is_none() {
+                return;
+            }
+            settings.save().unwrap();
+            // Pretend an older SDK-only build is installed and auto-downloaded so auto-prune would
+            // delete it if handed an unresolved catalogue where SDK_TAG had `asset: None`.
+            let sdk_dir = version_dir(SDK_TAG);
+            fs::create_dir_all(&sdk_dir).unwrap();
+            fs::write(sdk_dir.join(CLIENT), b"sdk client").unwrap();
+            fs::write(sdk_dir.join(Artifact::SDK_RECEIPT), b"{}").unwrap();
+            // Create a profile following Stable (which points at SDK_TAG when resolved).
+            let _ = crate::instances::create("Other", None).unwrap();
+
+            let mirror = tempfile::tempdir().unwrap();
+            let base = Base::Folder(mirror.path().to_owned());
+            let (key, _) = SigningKey::generate().unwrap();
+            let keys = [key.public()];
+            let list = [row(SDK_TAG, &[INDEX]), row(STATIC_TAG, &[static_asset])];
+
+            let installed_tag = install_explicit_tag_from(
+                &list,
+                STATIC_TAG,
+                false,
+                &settings,
+                &base,
+                &keys,
+                |_| {
+                    let dir = version_dir(STATIC_TAG);
+                    fs::create_dir_all(&dir).unwrap();
+                    fs::write(dir.join(CLIENT), b"static client").unwrap();
+                    Ok(InstallOutcome::Installed(None))
+                },
+            )
+            .unwrap();
+            assert_eq!(installed_tag, STATIC_TAG);
+            assert!(
+                sdk_dir.join(CLIENT).is_file(),
+                "installed SDK-only build must not be pruned against an unresolved catalogue"
+            );
         },
     );
 }

@@ -29,7 +29,7 @@ use sunrise_launcher_release_verify::{PublicKey, SIGNATURE, SIGNATURE_V2, SUMS};
 use sunrise_launcher_sdk::{self as sdk, Asset, Index, Kind, Side, INDEX};
 
 mod game;
-pub(crate) use game::{offers_game, stage_game, GameSlices};
+pub(crate) use game::{check_game_offer, offers_game, stage_game, GameSlices};
 
 /// The SDK's three compiled slices of one build, each in its own folder (`runtime`, `api`, `engine`).
 #[derive(Clone, Debug, PartialEq)]

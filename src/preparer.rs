@@ -531,16 +531,16 @@ mod tests {
     use super::*;
 
     /// A native build copies the SDK's `sunrise-client` with this, then runs it. Checked in the
-    /// system temp folder (often tmpfs: the plain copy) and under the crate's `target/` (a
-    /// reflink where the disk has them, such as btrfs and XFS).
+    /// system temp folder (often tmpfs: the plain copy) and beside the test binary in Cargo's
+    /// target directory (a reflink where the disk has them, such as btrfs and XFS).
     #[test]
     fn a_cloned_or_copied_executable_stays_executable() {
         use std::os::unix::fs::PermissionsExt;
-        let target = Path::new(env!("CARGO_MANIFEST_DIR")).join("target");
-        fs::create_dir_all(&target).unwrap();
+        let exe = std::env::current_exe().unwrap();
+        let target = exe.parent().unwrap();
         for dir in [
             tempfile::tempdir().unwrap(),
-            tempfile::tempdir_in(&target).unwrap(),
+            tempfile::tempdir_in(target).unwrap(),
         ] {
             let from = dir.path().join("sunrise-client");
             fs::write(&from, b"#!/bin/sh\n").unwrap();
