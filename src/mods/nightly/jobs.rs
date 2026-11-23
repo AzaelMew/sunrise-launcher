@@ -44,7 +44,6 @@ pub(in crate::mods) struct CheckedUpdates {
 pub(in crate::mods) struct Work {
     pub(super) images: HashMap<sources::ReadmeImage, Option<Option<PathBuf>>>,
     pub(super) icons: HashMap<sources::SourceIcon, Option<PathBuf>>,
-    pub(super) card_pins: HashMap<Source, (String, std::time::Instant)>,
     icon_misses: sources::IconMisses,
     pub(super) release_pins: HashMap<String, sources::SourceCommit>,
     checking: bool,
@@ -64,15 +63,6 @@ impl Launcher {
                     .as_ref()
                     .is_none_or(|old| catalogue.checked_at >= old.checked_at)
                 {
-                    if state.catalogue.as_ref().is_none_or(|old| {
-                        old.sources != catalogue.sources || old.collections != catalogue.collections
-                    }) {
-                        state.browse = Browse::new(&catalogue);
-                        state
-                            .work
-                            .card_pins
-                            .retain(|source, _| catalogue.sources.contains(source));
-                    }
                     state.catalogue = Some(catalogue);
                 }
             }
@@ -87,19 +77,6 @@ impl Launcher {
                     } else {
                         pins.remove(open.source.id());
                     }
-                }
-                if let Some(pin) = detail
-                    .data
-                    .build_pin
-                    .as_ref()
-                    .filter(|_| detail.data.error.is_none())
-                {
-                    state.work.card_pins.insert(
-                        open.source.clone(),
-                        (pin.clone(), std::time::Instant::now()),
-                    );
-                } else {
-                    state.work.card_pins.remove(&open.source);
                 }
                 open.inspection = Some(*detail);
                 add = std::mem::take(&mut open.add_when_read);

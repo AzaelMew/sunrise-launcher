@@ -11,6 +11,8 @@ pub(in crate::mods) struct CollectionOpen {
 }
 
 impl Launcher {
+    // Retained until the v1/sources cutover removes the legacy Nightly/Dev source catalogue.
+    #[allow(dead_code)]
     pub(in crate::mods) fn open_source_collection(&mut self, collection: &Collection) {
         self.ui.page = Page::Project;
         self.ui.mods.open = None;

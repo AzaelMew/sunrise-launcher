@@ -9,6 +9,7 @@ use sunrise_launcher_smod::index::{self, Index};
 use sunrise_launcher_smod::manifest::Side;
 
 pub(super) mod collection;
+pub(super) mod discover_v2;
 
 /// What a mod is made of: a native source bundle or a content-only `.smod`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -56,6 +57,7 @@ impl Fit {
 }
 
 /// One mod in Discover.
+#[allow(dead_code)]
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct Card {
     pub(super) id: String,
@@ -82,6 +84,7 @@ pub(super) struct Card {
     haystack: String,
 }
 
+#[cfg(test)]
 impl Card {
     /// Every fitting native mod is built on this computer (collections list their own members).
     pub(super) fn builds_locally(&self) -> bool {
@@ -167,6 +170,7 @@ pub(super) fn cards(index: &Index, game: &str) -> Vec<Card> {
     cards
 }
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Sort {
     Downloads,
@@ -175,9 +179,12 @@ pub(super) enum Sort {
     Name,
 }
 
+#[cfg(test)]
 impl Sort {
+    #[allow(dead_code)]
     pub(super) const ALL: [Sort; 4] = [Sort::Downloads, Sort::Updated, Sort::Newest, Sort::Name];
 
+    #[allow(dead_code)]
     pub(super) fn label(self) -> &'static str {
         match self {
             Sort::Downloads => tr("Most downloaded"),
@@ -188,6 +195,7 @@ impl Sort {
     }
 }
 
+#[cfg(test)]
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct Filters {
     pub(super) text: String,
@@ -197,6 +205,7 @@ pub(super) struct Filters {
     pub(super) sort: Sort,
 }
 
+#[cfg(test)]
 impl Default for Filters {
     fn default() -> Self {
         Self {
@@ -210,6 +219,7 @@ impl Default for Filters {
 }
 
 /// Indexes into `cards` that pass `f`, in the order asked for.
+#[cfg(test)]
 pub(super) fn discover(cards: &[Card], f: &Filters) -> Vec<usize> {
     let words: Vec<String> = f.text.split_whitespace().map(str::to_lowercase).collect();
     let mut shown: Vec<usize> = (0..cards.len())

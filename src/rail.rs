@@ -126,7 +126,7 @@ impl Launcher {
             .map_or(at_rest, |fade| fade.value(now).clamp(0., 1.))
     }
 
-    fn profile_lock(&self) -> Option<&'static str> {
+    pub(super) fn profile_lock(&self) -> Option<&'static str> {
         profile_lock_reason(
             &self.launch_activity(),
             !self.location_unavailable,
@@ -148,6 +148,24 @@ impl Launcher {
             self.clear_profile_notices();
         }
         self.navigate(Page::Home);
+        cx.notify();
+    }
+
+    /// Switches the selected profile inline from Mods › Discover without leaving Discover.
+    pub(super) fn select_discover_profile(&mut self, instance: &Instance, cx: &mut Context<Self>) {
+        if self.profile_lock().is_some() {
+            return;
+        }
+        if !self
+            .selected_instance()
+            .is_some_and(|i| i.id == instance.id)
+        {
+            self.select_instance(instance);
+            self.clear_profile_notices();
+            self.ui.mods.limit = 0;
+            self.mods_refresh();
+        }
+        self.ui.mods.menu = None;
         cx.notify();
     }
 

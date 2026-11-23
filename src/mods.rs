@@ -27,7 +27,6 @@ use sunrise_launcher::browser::{
     installed::{self, Entry},
     mod_list, sunrise, Kind, SourceId,
 };
-use sunrise_launcher::instances::Channel;
 
 mod actions;
 mod build_modal;
@@ -59,8 +58,8 @@ use model::{Card, Row};
 
 #[derive(Clone, Copy, PartialEq)]
 enum Menu {
+    Profile,
     Category,
-    Make,
     Sort,
 }
 
@@ -69,6 +68,25 @@ enum Catalog {
     Loading,
     /// Shared, not owned: Discover draws from it every frame and clones only the handles.
     Ready(Rc<[Card]>, Rc<[String]>),
+    Failed(String),
+}
+
+struct V2CatalogPayload {
+    cards: Vec<model::discover_v2::V2Card>,
+    categories: Vec<String>,
+    stale_warning: Option<String>,
+    from_cache: bool,
+}
+
+enum V2Catalog {
+    Idle,
+    Loading,
+    Ready {
+        cards: Rc<[model::discover_v2::V2Card]>,
+        categories: Rc<[String]>,
+        stale_warning: Option<String>,
+        from_cache: bool,
+    },
     Failed(String),
 }
 
@@ -89,11 +107,13 @@ struct Open {
     id: String,
     installed: Option<InstalledProject>,
     collection: bool,
+    v2: bool,
     request: u64,
     scope: OpenScope,
     /// The screen Back returns to.
     from: Page,
     page: Option<Result<Box<model::Page>, String>>,
+    v2_page: Option<Result<Box<model::discover_v2::V2Page>, String>>,
     /// The collection's page this mod's was opened from: Back returns to it.
     parent: Option<String>,
 }
@@ -102,6 +122,17 @@ impl Open {
     fn finish(&mut self, request: u64, scope: &OpenScope, page: Result<Box<model::Page>, String>) {
         if self.request == request && &self.scope == scope && self.page.is_none() {
             self.page = Some(page);
+        }
+    }
+
+    fn finish_v2(
+        &mut self,
+        request: u64,
+        scope: &OpenScope,
+        page: Result<Box<model::discover_v2::V2Page>, String>,
+    ) {
+        if self.request == request && &self.scope == scope && self.v2_page.is_none() {
+            self.v2_page = Some(page);
         }
     }
 }
@@ -328,7 +359,9 @@ enum Event {
         Option<u64>,
     ),
     Catalog(String, Result<(Vec<Card>, Vec<String>), String>),
+    V2Catalog(Option<String>, Result<V2CatalogPayload, String>),
     Page(u64, Result<Box<model::Page>, String>),
+    V2Page(u64, Result<Box<model::discover_v2::V2Page>, String>),
     Nightly(nightly::Event),
     Progress(String, f32),
     /// A pack search's answer, by the number of the search that asked.
@@ -370,11 +403,13 @@ pub(crate) struct ModsState {
     rx: Receiver<Event>,
     catalog: Catalog,
     catalog_game: Option<String>,
+    v2_catalog: V2Catalog,
+    v2_catalog_build: Option<Option<String>>,
     find: LineEdit,
     find_focus: Option<FocusHandle>,
     have: LineEdit,
     have_focus: Option<FocusHandle>,
-    filters: model::Filters,
+    filters: model::discover_v2::V2Filters,
     menu: Option<Menu>,
     row_filter: model::RowFilter,
     /// The kind Packs › Installed shows.
@@ -445,11 +480,13 @@ impl Default for ModsState {
             rx,
             catalog: Catalog::Idle,
             catalog_game: None,
+            v2_catalog: V2Catalog::Idle,
+            v2_catalog_build: None,
             find: LineEdit::default(),
             find_focus: None,
             have: LineEdit::default(),
             have_focus: None,
-            filters: model::Filters::default(),
+            filters: model::discover_v2::V2Filters::default(),
             menu: None,
             row_filter: model::RowFilter::default(),
             shelf: Shelf::Resource,
@@ -523,25 +560,6 @@ fn read_local(home: &Path, archives: &mut HashMap<String, ArchiveDisplay>) -> Ve
         .collect()
 }
 
-#[derive(Debug, PartialEq, Eq)]
-enum DiscoverCatalogue {
-    Registry,
-    Sources,
-}
-
-impl crate::instances_page::Instances {
-    fn discover_catalogue(&self, selected: Option<&str>) -> DiscoverCatalogue {
-        match self
-            .selected(selected)
-            .map(|profile| profile.channel)
-            .unwrap_or_default()
-        {
-            Channel::Stable => DiscoverCatalogue::Registry,
-            Channel::Nightly | Channel::Dev => DiscoverCatalogue::Sources,
-        }
-    }
-}
-
 /// The read-only Home view uses the same Installed classification as the full rows.
 pub(crate) struct HomeModFacts {
     pub(crate) kind: &'static str,
@@ -597,7 +615,11 @@ impl Launcher {
                         self.ui.page = Page::Installed;
                         return self.installed(window, &have_focus, cx);
                     }
-                    self.mods_load_page(open.id, open.from, open.installed);
+                    if open.v2 {
+                        self.mods_load_v2_page(open.id, open.from);
+                    } else {
+                        self.mods_load_page(open.id, open.from, open.installed);
+                    }
                     if let Some(now) = self.ui.mods.open.as_mut() {
                         now.parent = open.parent;
                     }
@@ -628,18 +650,50 @@ impl Launcher {
             Page::Installed => self.installed(window, &have_focus, cx),
             Page::PackFind => self.pack_find(window, &find_focus, cx),
             Page::PackProject => self.pack_project(cx),
-            _ => match self
-                .instances
-                .discover_catalogue(self.settings.instance.as_deref())
-            {
-                DiscoverCatalogue::Registry => self.discover(window, &find_focus, cx),
-                DiscoverCatalogue::Sources => self.nightly_discover(window, &find_focus, cx),
-            },
+            _ => self.discover(window, &find_focus, cx),
         }
+    }
+
+    /// The exact Sunrise build ID of `instance` for v2 fit checks (unwrapping native-built tags
+    /// back to their base release build).
+    pub(super) fn profile_exact_build(&self, instance: &instances::Instance) -> Option<String> {
+        let raw = self.profile_target(instance)?;
+        if native_mods::is_native(&raw) {
+            crate::glass_instance::native_base(&raw).or(Some(raw))
+        } else {
+            Some(raw)
+        }
+    }
+
+    pub(super) fn selected_exact_build(&self) -> Option<String> {
+        let instance = self.selected_instance()?;
+        self.profile_exact_build(instance)
+    }
+
+    /// Opens a v2 registry mod's page from Discover.
+    pub(super) fn mods_show_v2_project(&mut self, id: String) {
+        self.ui.mods.nightly.open = None;
+        self.ui.mods.nightly.collection = None;
+        let from = match self.ui.page {
+            Page::Project => self
+                .ui
+                .mods
+                .open
+                .as_ref()
+                .map_or(Page::Discover, |o| o.from),
+            Page::Installed => Page::Installed,
+            _ => Page::Discover,
+        };
+        self.ui.page = Page::Project;
+        self.mods_load_v2_page(id, from);
     }
 
     /// Opens a mod's page, from Home or anywhere else. Its details are read in a worker.
     pub(crate) fn mods_show_project(&mut self, id: String) {
+        if sunrise::v2::known_index().is_some_and(|c| c.index.project(&id).is_some()) {
+            self.mods_show_v2_project(id);
+            return;
+        }
         self.ui.mods.nightly.open = None;
         self.ui.mods.nightly.collection = None;
         let from = match self.ui.page {
@@ -939,6 +993,19 @@ impl Launcher {
                         };
                     }
                 }
+                Event::V2Catalog(build, result) => {
+                    if m.v2_catalog_build.as_ref() == Some(&build) {
+                        m.v2_catalog = match result {
+                            Ok(payload) => V2Catalog::Ready {
+                                cards: payload.cards.into(),
+                                categories: payload.categories.into(),
+                                stale_warning: payload.stale_warning,
+                                from_cache: payload.from_cache,
+                            },
+                            Err(error) => V2Catalog::Failed(error),
+                        };
+                    }
+                }
                 Event::Local(key, result) => {
                     if let Some(snap) = m.snapshot.as_mut().filter(|s| s.key == key) {
                         let ready = snap.finish(result);
@@ -957,6 +1024,12 @@ impl Launcher {
                     let scope = self.mods_page_scope();
                     if let Some(open) = self.ui.mods.open.as_mut() {
                         open.finish(request, &scope, page);
+                    }
+                }
+                Event::V2Page(request, page) => {
+                    let scope = self.mods_page_scope();
+                    if let Some(open) = self.ui.mods.open.as_mut() {
+                        open.finish_v2(request, &scope, page);
                     }
                 }
                 Event::Nightly(event) => self.nightly_event(event),
@@ -1062,16 +1135,69 @@ impl Launcher {
         {
             self.read_nightly_catalogue(false);
         }
-        let wants_index = self
+        let wants_v1_index = self
             .ui
             .mods
             .snapshot
             .as_ref()
-            .is_some_and(|s| !s.rows.entries.is_empty())
-            || self.ui.page != Page::Installed;
-        if wants_index {
+            .is_some_and(|s| !s.rows.entries.is_empty());
+        if wants_v1_index {
             self.ensure_mod_catalog();
         }
+        if matches!(self.ui.page, Page::Discover | Page::Project) {
+            self.ensure_v2_catalog(false);
+        }
+    }
+
+    pub(super) fn ensure_v2_catalog(&mut self, force: bool) {
+        let build = self.selected_exact_build();
+        if !force
+            && self.ui.mods.v2_catalog_build.as_ref() == Some(&build)
+            && !matches!(self.ui.mods.v2_catalog, V2Catalog::Idle)
+        {
+            return;
+        }
+        if let Some(catalog) = (!force).then(sunrise::v2::known_index).flatten() {
+            let cards = model::discover_v2::cards(
+                &catalog.index,
+                build.as_deref(),
+                &crate::sheets::build_name,
+            );
+            let categories = model::discover_v2::categories(&cards);
+            self.ui.mods.v2_catalog_build = Some(build);
+            self.ui.mods.v2_catalog = V2Catalog::Ready {
+                cards: cards.into(),
+                categories: categories.into(),
+                stale_warning: catalog.stale_warning,
+                from_cache: catalog.from_cache,
+            };
+            return;
+        }
+        self.ui.mods.v2_catalog_build = Some(build.clone());
+        self.ui.mods.v2_catalog = V2Catalog::Loading;
+        let tx = self.ui.mods.tx.clone();
+        std::thread::spawn(move || {
+            let loaded = if force {
+                sunrise::v2::refreshed_index()
+            } else {
+                sunrise::v2::index()
+            };
+            let result = loaded.map_err(|e| e.to_string()).map(|catalog| {
+                let cards = model::discover_v2::cards(
+                    &catalog.index,
+                    build.as_deref(),
+                    &crate::sheets::build_name,
+                );
+                let categories = model::discover_v2::categories(&cards);
+                V2CatalogPayload {
+                    cards,
+                    categories,
+                    stale_warning: catalog.stale_warning,
+                    from_cache: catalog.from_cache,
+                }
+            });
+            let _ = tx.send(Event::V2Catalog(build, result));
+        });
     }
 
     pub(crate) fn ensure_mod_catalog(&mut self) {
@@ -1117,10 +1243,12 @@ impl Launcher {
             id: id.clone(),
             installed,
             collection,
+            v2: false,
             request,
             scope,
             from,
             page: None,
+            v2_page: None,
             parent: None,
         });
         // Collections and local archives render from state already held by the launcher.
@@ -1140,6 +1268,57 @@ impl Launcher {
                     .ok_or_else(|| trf("{id} isn't a mod in Sunrise's registry.", &[("id", &id)]))
             });
             let _ = tx.send(Event::Page(request, result));
+        });
+    }
+
+    fn mods_load_v2_page(&mut self, id: String, from: Page) {
+        self.ui.mods.facts_open = false;
+        crate::frame::scrolls("project").set_offset(gpui::point(px(0.), px(0.)));
+        let scope = self.mods_page_scope();
+        let exact_build = self.selected_exact_build();
+        self.ui.mods.page_request += 1;
+        let request = self.ui.mods.page_request;
+        let immediate = sunrise::v2::known_index().map(|catalog| {
+            model::discover_v2::page(
+                &catalog.index,
+                &id,
+                exact_build.as_deref(),
+                &crate::sheets::build_name,
+            )
+            .map(Box::new)
+            .ok_or_else(|| trf("{id} isn't a mod in Sunrise's registry.", &[("id", &id)]))
+        });
+        let needs_fetch = immediate.is_none();
+        self.ui.mods.open = Some(Open {
+            id: id.clone(),
+            installed: None,
+            collection: false,
+            v2: true,
+            request,
+            scope,
+            from,
+            page: None,
+            v2_page: immediate,
+            parent: None,
+        });
+        if !needs_fetch {
+            return;
+        }
+        let tx = self.ui.mods.tx.clone();
+        std::thread::spawn(move || {
+            let result = sunrise::v2::index()
+                .map_err(|e| e.to_string())
+                .and_then(|catalog| {
+                    model::discover_v2::page(
+                        &catalog.index,
+                        &id,
+                        exact_build.as_deref(),
+                        &crate::sheets::build_name,
+                    )
+                    .map(Box::new)
+                    .ok_or_else(|| trf("{id} isn't a mod in Sunrise's registry.", &[("id", &id)]))
+                });
+            let _ = tx.send(Event::V2Page(request, result));
         });
     }
 
@@ -1364,13 +1543,7 @@ impl Launcher {
         let focused = focus.is_focused(window);
         let packs = matches!(self.ui.page, Page::Packs | Page::PackFind);
         let placeholder: SharedString = match (packs, installed) {
-            (false, false) => match self
-                .instances
-                .discover_catalogue(self.settings.instance.as_deref())
-            {
-                DiscoverCatalogue::Registry => tr("Search mods…"),
-                DiscoverCatalogue::Sources => tr("Search source projects…"),
-            },
+            (false, false) => tr("Search mods…"),
             (false, true) => tr("Search your mods…"),
             (true, false) => match self.ui.mods.packs.scope {
                 pack_discover::Scope::Resource => tr("Search resource packs…"),
@@ -1438,7 +1611,7 @@ impl Launcher {
                             m.anchor = None;
                         } else {
                             m.filters.text = text;
-                            this.reset_source_results();
+                            m.limit = 0;
                         }
                     }
                     _ => {}
@@ -1506,65 +1679,6 @@ mod enabled_tests {
     use super::*;
 
     #[test]
-    fn discover_changes_catalogues_with_the_selected_profile() {
-        let stable = instances::Instance {
-            id: instances::DEFAULT.into(),
-            name: "Stable profile".into(),
-            kind: instances::Kind::Default,
-            work: "stable".into(),
-            home: "stable".into(),
-            incarnation: None,
-            icon: None,
-            group: None,
-            version: Some("imported-2026-11-20".into()),
-            channel: Channel::Stable,
-            native_profile: native_mods::Profile::Optimized,
-            played: Default::default(),
-            last_played: None,
-            launch: Default::default(),
-        };
-        let nightly = instances::Instance {
-            id: "workshop".into(),
-            name: "Nightly profile".into(),
-            kind: instances::Kind::Own,
-            work: "workshop".into(),
-            home: "workshop".into(),
-            channel: Channel::Nightly,
-            ..stable.clone()
-        };
-        let dev = instances::Instance {
-            id: "testing".into(),
-            channel: Channel::Dev,
-            version: Some("dev-2026-11-21-aaaaaaa".into()),
-            ..nightly.clone()
-        };
-        let profiles = crate::instances_page::Instances {
-            list: vec![stable, nightly, dev],
-            ..Default::default()
-        };
-        assert_eq!(
-            profiles.discover_catalogue(None),
-            DiscoverCatalogue::Registry
-        );
-        assert_eq!(
-            profiles.discover_catalogue(Some("workshop")),
-            DiscoverCatalogue::Sources
-        );
-        assert_eq!(
-            profiles.discover_catalogue(Some("testing")),
-            DiscoverCatalogue::Sources
-        );
-        assert_eq!(
-            profiles.discover_catalogue(None),
-            DiscoverCatalogue::Registry
-        );
-        assert_eq!(
-            crate::instances_page::Instances::default().discover_catalogue(None),
-            DiscoverCatalogue::Sources,
-        );
-    }
-
-    #[test]
     fn reopening_the_same_mod_discards_previous_detail_replies() {
         let scope = |profile: &str, target: &str, game: &str| OpenScope {
             profile: Some(profile.into()),
@@ -1577,10 +1691,12 @@ mod enabled_tests {
             id: "ruby".into(),
             installed: Some(InstalledProject::Registry),
             collection: false,
+            v2: false,
             request: 2,
             scope: scope("current", "new-build", "26.3"),
             from: Page::Installed,
             page: None,
+            v2_page: None,
             parent: None,
         };
         open.finish(1, &current, Err("earlier request".into()));

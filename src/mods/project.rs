@@ -297,6 +297,9 @@ impl Launcher {
         if open.collection {
             return self.collection_page(header, page, cx);
         }
+        if open.v2 {
+            return self.v2_project_page(header, page, cx);
+        }
         let (rows, labels) = self.labeled_installed_rows();
         let installed = rows.iter().position(|row| match &open.installed {
             Some(InstalledProject::Local(file)) => {
@@ -991,5 +994,577 @@ impl Launcher {
                     ),
             )
             .into_any_element()
+    }
+
+    /// A v2 registry mod's page: summary, captioned screenshots (fetched only when this page
+    /// opens), Markdown description, categories, "Published from github.com/owner/repo",
+    /// publisher-pin note, and versions that fit the selected profile's exact build.
+    fn v2_project_page(&mut self, header: Div, page: Div, cx: &mut Context<Self>) -> AnyElement {
+        use super::model::SourceLink;
+        use sunrise_launcher::browser::details::category_label;
+
+        let p = palette();
+        let vp = match self.ui.mods.open.as_ref().and_then(|o| o.v2_page.as_ref()) {
+            None => {
+                return page
+                    .child(header)
+                    .child(muted(tr("Loading…")))
+                    .into_any_element();
+            }
+            Some(Err(error)) => {
+                return page
+                    .child(header)
+                    .child(
+                        div()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(tr("This mod can't be shown")),
+                    )
+                    .child(note(error.clone()))
+                    .into_any_element();
+            }
+            Some(Ok(vp)) => (**vp).clone(),
+        };
+
+        let profile_name = self
+            .selected_instance()
+            .map(|i| i.name.clone())
+            .unwrap_or_else(|| tr("Default").to_owned());
+        let build_label = self
+            .selected_exact_build()
+            .map(|b| crate::sheets::build_name(&b));
+        let target_label = match &build_label {
+            Some(b) => trf(
+                "{profile} ({build})",
+                &[("profile", &profile_name), ("build", b)],
+            ),
+            None => profile_name.clone(),
+        };
+
+        let installed = self.discover_installed();
+        let entry = installed.and_then(|rows| rows.registry_entry(&vp.id));
+        let installed_version = entry.map(|entry| entry.number.clone());
+        let pending = installed.is_some_and(|rows| rows.registry_pending(&vp.id));
+        let package = installed
+            .zip(entry)
+            .and_then(|(rows, entry)| rows.archives.get(&entry.file)?.icon.clone());
+
+        let picture = mod_artwork(
+            vp.icon
+                .as_deref()
+                .and_then(|rel| self.v2_mod_image(&vp.id, rel, images::ICON)),
+            package,
+        );
+
+        let credit = if vp.authors.is_empty() {
+            String::new()
+        } else {
+            trf("by {authors}", &[("authors", &vp.authors)])
+        };
+        let categories = vp.categories.iter().map(|k| {
+            div()
+                .px(px(8.))
+                .py(px(2.))
+                .rounded(crate::tokens::r(crate::tokens::R_SMALL))
+                .border_1()
+                .border_color(c(p.divider))
+                .bg(c(p.field))
+                .text_size(px(tokens::CAPTION))
+                .text_color(c(p.muted))
+                .child(category_label(k))
+        });
+
+        let head = div()
+            .flex()
+            .flex_col()
+            .gap(px(12.))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(16.))
+                    .child(tile(picture.clone(), &vp.id, &vp.name, 64.))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .gap(px(6.))
+                            .child(
+                                div()
+                                    .text_size(px(tokens::DISPLAY))
+                                    .font_weight(FontWeight::BOLD)
+                                    .child(crate::selectable::selectable(vp.name.clone())),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_wrap()
+                                    .items_center()
+                                    .gap(px(8.))
+                                    .when(!credit.is_empty(), |d| {
+                                        d.child(
+                                            div()
+                                                .text_size(px(tokens::LABEL))
+                                                .text_color(c(p.muted))
+                                                .child(credit),
+                                        )
+                                    })
+                                    .child(tag(vp.make.label()))
+                                    .children(categories),
+                            ),
+                    ),
+            )
+            .when(!vp.summary.trim().is_empty(), |d| {
+                d.child(
+                    div()
+                        .text_size(px(tokens::BODY))
+                        .text_color(c(p.text))
+                        .child(vp.summary.clone()),
+                )
+            });
+
+        // Captioned screenshot gallery: fetched ONLY here when the mod page opens.
+        let gallery = self.v2_gallery(&vp.id, &vp.screenshots, cx);
+
+        // Body: Markdown description + fitting versions section.
+        let mut body: Vec<AnyElement> = Vec::new();
+        if !vp.description.trim().is_empty() {
+            body.push(prose(self.theme, &vp.description));
+        }
+
+        let versions_heading = div()
+            .flex()
+            .flex_wrap()
+            .items_baseline()
+            .justify_between()
+            .gap(px(8.))
+            .pt(px(8.))
+            .child(
+                div()
+                    .text_size(px(tokens::HEADING))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(trf(
+                        "Versions that fit {target}",
+                        &[("target", &target_label)],
+                    )),
+            )
+            .when(!vp.other_versions.is_empty(), |d| {
+                let count = vp.other_versions.len();
+                let label = if count == 1 {
+                    tr("1 release for other builds hidden").to_owned()
+                } else {
+                    trf(
+                        "{count} releases for other builds hidden",
+                        &[("count", &count.to_string())],
+                    )
+                };
+                d.child(muted(label))
+            });
+
+        let versions_card = if !vp.fitting_versions.is_empty() {
+            let mut list = card().flex().flex_col();
+            for (idx, line) in vp.fitting_versions.iter().enumerate() {
+                let is_installed_ver = installed_version.as_deref() == Some(line.version.as_str());
+                let badge_el = if is_installed_ver {
+                    super::discover::install_fact(&line.version, pending)
+                } else if idx == 0 {
+                    div()
+                        .px(px(8.))
+                        .py(px(2.))
+                        .rounded(crate::tokens::r(crate::tokens::R_SMALL))
+                        .bg(c(p.success).opacity(0.16))
+                        .border_1()
+                        .border_color(c(p.success).opacity(0.35))
+                        .text_size(px(tokens::CAPTION))
+                        .text_color(c(p.success))
+                        .child(tr("Fits this build"))
+                } else {
+                    div()
+                        .text_size(px(tokens::SMALL))
+                        .text_color(c(p.muted))
+                        .child(tr("Fits this build"))
+                };
+                list = list.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .gap(px(12.))
+                        .px(px(14.))
+                        .py(px(10.))
+                        .when(idx > 0, |d| d.border_t_1().border_color(c(p.divider)))
+                        .child(
+                            div()
+                                .flex()
+                                .items_baseline()
+                                .gap(px(12.))
+                                .child(
+                                    div()
+                                        .font_family(crate::theme::MONO)
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .text_size(px(tokens::LABEL))
+                                        .child(line.version.clone()),
+                                )
+                                .child(muted(line.published.clone()))
+                                .child(muted(model::size(line.size))),
+                        )
+                        .child(badge_el),
+                );
+            }
+            list
+        } else {
+            let mut list = card().flex().flex_col();
+            if let Some(reason) = vp.fit.reason() {
+                list = list.child(
+                    div()
+                        .px(px(14.))
+                        .py(px(12.))
+                        .text_size(px(tokens::LABEL))
+                        .text_color(c(p.muted))
+                        .child(reason),
+                );
+            }
+            for line in &vp.other_versions {
+                let reason = line.verdict.reason().unwrap_or_default();
+                list = list.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .gap(px(12.))
+                        .px(px(14.))
+                        .py(px(10.))
+                        .border_t_1()
+                        .border_color(c(p.divider))
+                        .opacity(0.75)
+                        .child(
+                            div()
+                                .flex()
+                                .items_baseline()
+                                .gap(px(12.))
+                                .child(
+                                    div()
+                                        .font_family(crate::theme::MONO)
+                                        .text_size(px(tokens::LABEL))
+                                        .child(line.version.clone()),
+                                )
+                                .child(muted(line.published.clone())),
+                        )
+                        .child(muted(reason)),
+                );
+            }
+            list
+        };
+        body.push(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(8.))
+                .child(versions_heading)
+                .child(versions_card)
+                .into_any_element(),
+        );
+
+        // Right sticky side panel: action card + publisher provenance + pin callout + About card.
+        let working = self.registry_card_control(&vp.id, |label| {
+            dim(crate::frame::button("alt-project-add", label).w_full()).into_any_element()
+        });
+        let primary_control: AnyElement = if let Some(control) = working {
+            control
+        } else if let Some(version) = &installed_version {
+            super::discover::install_fact(version, pending).into_any_element()
+        } else if vp.will_install.is_some() {
+            let id = vp.id.clone();
+            primary("alt-project-add", self.registry_install_label())
+                .w_full()
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    this.add(id.clone());
+                    cx.notify();
+                }))
+                .into_any_element()
+        } else {
+            dim(crate::frame::button("alt-project-add", tr("Install")))
+                .w_full()
+                .into_any_element()
+        };
+
+        let meta_sub = match &vp.will_install {
+            Some(v) => trf(
+                "{version} · {size}",
+                &[("version", &v.version), ("size", &model::size(v.size))],
+            ),
+            None => vp.fit.reason().unwrap_or_default(),
+        };
+        let repo_href = vp.repository_url.as_ref().map(|link| match link {
+            SourceLink::GitHub(url) | SourceLink::Other(url) => url.clone(),
+        });
+        let published_from_text = trf(
+            "Published from github.com/{repo}",
+            &[("repo", &vp.repository_name)],
+        );
+        let published_row = {
+            let row = div()
+                .id("alt-project-publisher")
+                .flex()
+                .items_center()
+                .gap(px(8.))
+                .text_size(px(tokens::SMALL))
+                .text_color(c(p.muted))
+                .child(crate::glass_ui::icon("github", 14., c(p.muted)))
+                .child(div().min_w_0().truncate().child(published_from_text));
+            if let Some(url) = repo_href {
+                row.cursor_pointer()
+                    .hover(|s| s.text_color(c(p.accent_ink)))
+                    .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| {
+                        Self::open_url(&url, cx);
+                    }))
+            } else {
+                row
+            }
+        };
+
+        let pin_note = div()
+            .p(px(10.))
+            .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
+            .border_1()
+            .border_color(c(p.divider))
+            .bg(c(p.field))
+            .flex()
+            .items_start()
+            .gap(px(8.))
+            .child(
+                div()
+                    .pt(px(2.))
+                    .child(crate::glass_ui::icon("shield", 14., c(p.muted))),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .text_size(px(tokens::SMALL))
+                    .text_color(c(p.muted))
+                    .child(trf(
+                        "First install remembers github.com/{repo} as this mod's publisher. Future updates stop and ask if it ever changes.",
+                        &[("repo", &vp.repository_name)],
+                    )),
+            );
+
+        let action_card = card()
+            .p(px(16.))
+            .flex()
+            .flex_col()
+            .gap(px(12.))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(10.))
+                    .child(tile(picture, &vp.id, &vp.name, 40.))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .child(
+                                div()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_size(px(tokens::BODY))
+                                    .truncate()
+                                    .child(vp.name.clone()),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(tokens::SMALL))
+                                    .text_color(c(p.muted))
+                                    .truncate()
+                                    .child(meta_sub),
+                            ),
+                    )
+                    .when(vp.will_install.is_some(), |d| {
+                        d.child(
+                            div()
+                                .flex_none()
+                                .text_size(px(tokens::CAPTION))
+                                .text_color(c(p.success))
+                                .child(tr("Fits this build")),
+                        )
+                    }),
+            )
+            .child(primary_control)
+            .children(self.registry_card_outcome(&vp.id, cx))
+            .when(vp.will_install.is_none(), |d| {
+                d.children(vp.fit.reason().map(note))
+            })
+            .child(div().h(px(1.)).bg(c(p.divider)))
+            .child(published_row)
+            .child(pin_note);
+
+        let link_url = |link: &Option<SourceLink>| -> Option<String> {
+            link.as_ref().map(|l| match l {
+                SourceLink::GitHub(url) | SourceLink::Other(url) => url.clone(),
+            })
+        };
+        let source_url = link_url(&vp.source).or_else(|| link_url(&vp.repository_url));
+        let homepage_url = link_url(&vp.homepage);
+        let issues_url = link_url(&vp.issues);
+
+        let mut about = card()
+            .p(px(16.))
+            .flex()
+            .flex_col()
+            .gap(px(2.))
+            .child(
+                div()
+                    .pb(px(6.))
+                    .text_size(px(tokens::CAPTION))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(c(p.muted))
+                    .child(tr("ABOUT")),
+            )
+            .child(about_row(tr("In-game ID"), vp.mod_id.clone()))
+            .when(!vp.updated.is_empty(), |d| {
+                d.child(about_row(tr("Updated"), vp.updated.clone()))
+            })
+            .when(!vp.license.is_empty(), |d| {
+                d.child(about_row(tr("Licence"), vp.license.clone()))
+            });
+
+        if let Some(url) = source_url {
+            about = about.child(
+                about_link("alt-v2-source", tr("Source")).on_click(cx.listener(
+                    move |_, _: &ClickEvent, _, cx| {
+                        Self::open_url(&url, cx);
+                    },
+                )),
+            );
+        }
+        if let Some(url) = homepage_url {
+            about = about.child(about_link("alt-v2-homepage", tr("Homepage")).on_click(
+                cx.listener(move |_, _: &ClickEvent, _, cx| {
+                    Self::open_url(&url, cx);
+                }),
+            ));
+        }
+        if let Some(url) = issues_url {
+            about = about.child(
+                about_link("alt-v2-issues", tr("Issues")).on_click(cx.listener(
+                    move |_, _: &ClickEvent, _, cx| {
+                        Self::open_url(&url, cx);
+                    },
+                )),
+            );
+        }
+
+        let side = div()
+            .flex()
+            .flex_col()
+            .gap(px(12.))
+            .child(action_card)
+            .child(about);
+
+        self.project_layout(header, head, gallery, body, side)
+    }
+
+    /// Captioned screenshot gallery for a v2 mod page: fetches verified content-addressed images
+    /// only when the mod page is open.
+    fn v2_gallery(
+        &mut self,
+        project_id: &str,
+        screenshots: &[super::model::discover_v2::V2Screenshot],
+        cx: &mut Context<Self>,
+    ) -> Option<Div> {
+        if screenshots.is_empty() {
+            return None;
+        }
+        let p = palette();
+        let pictures: Rc<[super::viewer::Picture]> = screenshots
+            .iter()
+            .map(|shot| super::viewer::Picture::V2 {
+                project_id: project_id.to_owned(),
+                relative_path: shot.path.clone(),
+                caption: shot.caption.clone(),
+            })
+            .collect::<Vec<_>>()
+            .into();
+        let count = screenshots.len();
+        let columns = if count == 1 {
+            1
+        } else if self.window_width < 950. {
+            2
+        } else {
+            3
+        };
+        let height = if count == 1 { 220. } else { 128. };
+        let viewing = self.ui.mods.viewer.is_some();
+
+        let mut items = screenshots.iter().enumerate().map(|(i, shot)| {
+            let photo = self.v2_mod_image(project_id, &shot.path, images::GALLERY);
+            let all = pictures.clone();
+            let tip_text = if shot.caption.is_empty() {
+                trf(
+                    "Picture {number} of {total}",
+                    &[
+                        ("number", &(i + 1).to_string()),
+                        ("total", &count.to_string()),
+                    ],
+                )
+            } else {
+                shot.caption.clone()
+            };
+            div()
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .gap(px(6.))
+                .child(
+                    div()
+                        .id(ElementId::named_usize("v2-gallery-picture", i))
+                        .reach_edge()
+                        .h(px(height))
+                        .w_full()
+                        .cursor_pointer()
+                        .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
+                        .border_1()
+                        .border_color(c(p.divider))
+                        .bg(p.card())
+                        .overflow_hidden()
+                        .when(!viewing, |d| d.tooltip(crate::glass_ui::tip(tip_text)))
+                        .children(photo.map(|path| {
+                            gpui::img(path)
+                                .size_full()
+                                .object_fit(gpui::ObjectFit::Cover)
+                        }))
+                        .track_scroll(&super::viewer::tile(i))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.viewer_open(all.clone(), i);
+                            cx.notify();
+                        })),
+                )
+                .when(!shot.caption.is_empty(), |d| {
+                    d.child(
+                        div()
+                            .text_size(px(tokens::SMALL))
+                            .text_color(c(p.muted))
+                            .line_clamp(2)
+                            .text_ellipsis()
+                            .child(shot.caption.clone()),
+                    )
+                })
+        });
+
+        let mut grid = div().flex().flex_col().flex_none().gap(px(10.));
+        for _ in 0..count.div_ceil(columns) {
+            grid = grid.child(
+                div()
+                    .flex()
+                    .items_start()
+                    .gap(px(10.))
+                    .children(items.by_ref().take(columns)),
+            );
+        }
+        Some(grid)
     }
 }
