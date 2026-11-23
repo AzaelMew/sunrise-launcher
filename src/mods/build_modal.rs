@@ -209,12 +209,9 @@ impl Launcher {
                 .text_size(px(tokens::LABEL))
                 .text_color(c(palette().muted))
                 .cursor_pointer()
-                .child(blocks::icon(
-                    if run.details {
-                        "chevron-down"
-                    } else {
-                        "chevron-right"
-                    },
+                .child(crate::glass_ui::disclosure_chevron(
+                    "build-details",
+                    run.details,
                     12.,
                     c(palette().muted),
                 ))

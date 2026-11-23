@@ -555,7 +555,12 @@ impl Launcher {
                     .text_color(c(p.accent_ink))
                     .child(build_text),
             )
-            .child(blocks::icon("chevron-down", 12., c(p.muted)));
+            .child(crate::glass_ui::fold_chevron(
+                "discover-profile",
+                open,
+                12.,
+                c(p.muted),
+            ));
 
         let trigger = if let Some(why) = lock {
             dim(trigger_inner).tooltip(crate::glass_ui::tip(why))
@@ -858,7 +863,12 @@ impl Launcher {
                     .cursor_pointer()
                     .hover(|s| s.border_color(c(p.muted)))
                     .child(label.to_owned())
-                    .child(blocks::icon("chevron-down", 12., c(p.muted)))
+                    .child(crate::glass_ui::fold_chevron(
+                        format!("discover-menu-{which:?}"),
+                        open,
+                        12.,
+                        c(p.muted),
+                    ))
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                         this.ui.mods.menu = match this.ui.mods.menu {

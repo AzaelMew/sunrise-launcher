@@ -1072,8 +1072,9 @@ impl Launcher {
                             .text_size(px(tokens::SMALL))
                             .text_color(c(palette().muted))
                             .cursor_pointer()
-                            .child(blocks::icon(
-                                if details { "chevron-down" } else { "chevron-right" },
+                            .child(crate::glass_ui::disclosure_chevron(
+                                "installed-unfit-details",
+                                details,
                                 12.,
                                 c(palette().muted),
                             ))

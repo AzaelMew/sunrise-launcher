@@ -755,12 +755,9 @@ impl Launcher {
             .text_size(px(tokens::SMALL))
             .text_color(c(palette().muted))
             .cursor_pointer()
-            .child(blocks::icon(
-                if open {
-                    "chevron-down"
-                } else {
-                    "chevron-right"
-                },
+            .child(crate::glass_ui::disclosure_chevron(
+                "project-details",
+                open,
                 12.,
                 c(palette().muted),
             ))
