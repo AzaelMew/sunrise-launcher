@@ -6541,6 +6541,7 @@ dependencies = [
  "sunrise-launcher-shader-api",
  "tempfile",
  "toml 1.1.8+spec-1.1.0",
+ "url",
  "windows-sys 0.61.2",
  "zip",
 ]

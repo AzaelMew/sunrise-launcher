@@ -632,25 +632,23 @@ fn is_channel_build(id: &str, channel: &str) -> bool {
             .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
+/// A stable tag: two or three numeric game-version parts without leading zeros, then a full
+/// Sunrise semver with no pre-release or build metadata (the publisher's `stable_tag`).
 fn is_stable_build(id: &str) -> bool {
     let Some((game, version)) = id.split_once('-') else {
         return false;
     };
-    let mut game_parts = 0usize;
-    for part in game.split('.') {
-        if part.is_empty()
-            || !part.bytes().all(|b| b.is_ascii_digit())
-            || part.parse::<u64>().is_err()
-        {
-            return false;
-        }
-        game_parts += 1;
-    }
-    if game_parts < 2 {
-        return false;
-    }
-    semver::Version::parse(version)
-        .is_ok_and(|semver| semver.pre.is_empty() && semver.build.is_empty())
+    let parts: Vec<&str> = game.split('.').collect();
+    let canonical_number = |part: &&str| {
+        !part.is_empty()
+            && part.bytes().all(|b| b.is_ascii_digit())
+            && (*part == "0" || !part.starts_with('0'))
+            && part.parse::<u64>().is_ok()
+    };
+    (2..=3).contains(&parts.len())
+        && parts.iter().all(canonical_number)
+        && semver::Version::parse(version)
+            .is_ok_and(|semver| semver.pre.is_empty() && semver.build.is_empty())
 }
 
 /// Parses an RFC 3339 timestamp into UTC Unix seconds.
@@ -812,89 +810,36 @@ fn check_http_url(url: &str) -> Result<(), String> {
     parse_web_url(url, false)
 }
 
-fn parse_web_url(url: &str, https_only: bool) -> Result<(), String> {
-    let rest = if https_only {
-        url.strip_prefix("https://")
-            .ok_or_else(|| format!("expected an https:// URL, got {url:?}"))?
-    } else {
-        url.strip_prefix("https://")
-            .or_else(|| url.strip_prefix("http://"))
-            .ok_or_else(|| format!("expected an http(s):// URL, got {url:?}"))?
-    };
-    if url.contains('\\') || url.chars().any(|c| c.is_control() || c.is_whitespace()) {
-        return Err(format!("invalid characters in URL {url:?}"));
+fn parse_web_url(text: &str, https_only: bool) -> Result<(), String> {
+    if text.contains('\\') || text.chars().any(|c| c.is_control() || c.is_whitespace()) {
+        return Err(format!("invalid characters in URL {text:?}"));
     }
-    let authority = match rest.find(['/', '?', '#']) {
-        Some(idx) => &rest[..idx],
-        None => rest,
-    };
-    if authority.is_empty() {
-        return Err(format!("URL {url:?} is missing a host"));
-    }
+    // The web parser forgives an empty user (`https://@host`) and an empty port (`host:`);
+    // the written authority must not carry either.
+    let authority = text
+        .split_once("://")
+        .map(|(_, rest)| rest.split(['/', '?', '#']).next().unwrap_or(""))
+        .unwrap_or("");
     if authority.contains('@') {
-        return Err(format!("URL {url:?} must not contain credentials"));
+        return Err(format!("URL {text:?} must not contain credentials"));
     }
-    if let Some(after_open) = authority.strip_prefix('[') {
-        let Some((addr, after_close)) = after_open.split_once(']') else {
-            return Err(format!("URL {url:?} has an unclosed IPv6 host"));
-        };
-        if addr.parse::<std::net::Ipv6Addr>().is_err() {
-            return Err(format!("URL {url:?} has an invalid IPv6 host"));
-        }
-        if !after_close.is_empty() {
-            let port = after_close
-                .strip_prefix(':')
-                .ok_or_else(|| format!("URL {url:?} has an invalid authority"))?;
-            parse_port(port, url)?;
-        }
-    } else {
-        let host = match authority.split_once(':') {
-            Some((host, port)) => {
-                parse_port(port, url)?;
-                host
-            }
-            None => authority,
-        };
-        if host.is_empty()
-            || host.starts_with('.')
-            || host.contains("..")
-            || host.chars().any(|c| {
-                matches!(
-                    c,
-                    '\0'..='\x20'
-                        | '\x7f'
-                        | '#'
-                        | '%'
-                        | '/'
-                        | ':'
-                        | '<'
-                        | '>'
-                        | '?'
-                        | '@'
-                        | '['
-                        | '\\'
-                        | ']'
-                        | '^'
-                        | '|'
-                        | '"'
-                        | '{'
-                        | '}'
-                        | '`'
-                )
-            })
-        {
-            return Err(format!("URL {url:?} has an invalid host"));
-        }
+    if authority.ends_with(':') {
+        return Err(format!("URL {text:?} has an invalid port"));
+    }
+    let url = url::Url::parse(text).map_err(|e| format!("invalid URL {text:?}: {e}"))?;
+    match url.scheme() {
+        "https" => (),
+        "http" if !https_only => (),
+        _ if https_only => return Err(format!("expected an https:// URL, got {text:?}")),
+        _ => return Err(format!("expected an http(s):// URL, got {text:?}")),
+    }
+    if url.host_str().is_none_or(str::is_empty) {
+        return Err(format!("URL {text:?} is missing a host"));
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err(format!("URL {text:?} must not contain credentials"));
     }
     Ok(())
-}
-
-fn parse_port(port: &str, url: &str) -> Result<u16, String> {
-    if port.is_empty() || !port.bytes().all(|b| b.is_ascii_digit()) {
-        return Err(format!("URL {url:?} has an invalid port"));
-    }
-    port.parse::<u16>()
-        .map_err(|_| format!("URL {url:?} has an out-of-range port"))
 }
 
 fn check_hex64(value: &str) -> Result<(), String> {
