@@ -332,13 +332,19 @@ impl Launcher {
             );
         }
 
+        let profile_target = match build_label.as_deref() {
+            Some(b) => trf(
+                "{profile} ({build})",
+                &[("profile", profile_name.as_str()), ("build", b)],
+            ),
+            None => profile_name.clone(),
+        };
         let empty = self.discover_empty_state(
             &f,
             build_listed,
             hidden_other_builds,
             !cards.is_empty(),
-            &profile_name,
-            build_label.as_deref(),
+            &profile_target,
             cx,
         );
         page.child(self.discover_results(grid, total, "discover", empty, cx))
@@ -351,17 +357,9 @@ impl Launcher {
         build_listed: bool,
         hidden_other_builds: usize,
         has_any_cards: bool,
-        profile_name: &str,
-        build_label: Option<&str>,
+        profile_target: &str,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let profile_target = match build_label {
-            Some(b) => trf(
-                "{profile} ({build})",
-                &[("profile", profile_name), ("build", b)],
-            ),
-            None => profile_name.to_owned(),
-        };
         let show_all = |cx: &mut Context<Self>| {
             primary("alt-discover-show-all", tr("Show all")).on_click(cx.listener(
                 |this, _: &ClickEvent, _, cx| {
@@ -376,7 +374,7 @@ impl Launcher {
                 "search-01",
                 trf(
                     "No mods are listed for {target} yet",
-                    &[("target", &profile_target)],
+                    &[("target", profile_target)],
                 ),
                 tr("The registry lists mods for recent Sunrise builds. Turn on Show all to see mods for other builds."),
                 Some(show_all(cx)),
@@ -385,11 +383,11 @@ impl Launcher {
         }
         if !f.show_all && (hidden_other_builds > 0 || has_any_cards) {
             let title = if f.text.is_empty() && f.category.is_none() {
-                trf("No mods fit {target} yet", &[("target", &profile_target)])
+                trf("No mods fit {target} yet", &[("target", profile_target)])
             } else {
                 trf(
                     "No matching mods fit {target}",
-                    &[("target", &profile_target)],
+                    &[("target", profile_target)],
                 )
             };
             let line = if hidden_other_builds > 0 {
