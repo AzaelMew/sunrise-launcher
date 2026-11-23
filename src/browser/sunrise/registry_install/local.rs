@@ -78,9 +78,11 @@ pub fn install_local_at(
     let (before, active, stage) = {
         let _lock =
             sunrise_launcher_smod::install_lock::lock_home(home).map_err(|e| at(home, e))?;
-        crate::browser::installed::recover_game_install(home).map_err(|e| e.to_string())?;
+        crate::browser::installed::recover_game_install(home).map_err(String::from)?;
         if admission.has_bootstrap()? {
-            return Err(tr("Finish the profile's first Play before changing mods.").into());
+            return Err(InstallError::Unproved(
+                tr("Finish the profile's first Play before changing mods.").into(),
+            ));
         }
         let before = managed_play::inputs(home, None)?;
         let active = managed_play::display_active(home)?;
@@ -104,10 +106,12 @@ pub fn install_local_at(
         if managed_play::inputs(next.path(), None)? != before
             || managed_play::inputs(home, None)? != before
         {
-            return Err(tr(
-                "The profile changed while preparing this install. Nothing was changed; try again.",
-            )
-            .into());
+            return Err(InstallError::Unproved(
+                tr(
+                    "The profile changed while preparing this install. Nothing was changed; try again.",
+                )
+                .into(),
+            ));
         }
     }
     let staged = stage_and_review(
@@ -125,7 +129,7 @@ pub fn install_local_at(
     let result = (|| {
         let _lock =
             sunrise_launcher_smod::install_lock::lock_home(home).map_err(|e| at(home, e))?;
-        crate::browser::installed::recover_game_install(home).map_err(|e| e.to_string())?;
+        crate::browser::installed::recover_game_install(home).map_err(String::from)?;
         if managed_play::inputs(home, None)? != before
             || managed_play::inputs(next.path(), None)? != checked_inputs
         {
@@ -474,11 +478,9 @@ fn check_destination_free(
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
         Err(error) => return Err(at(&parent, error).into()),
     };
-    let allowed_leaf = allowed.and_then(|path| {
-        (path.parent() == Some(parent.as_path()))
-            .then(|| path.file_name())
-            .flatten()
-    });
+    let allowed_leaf = allowed
+        .filter(|path| path.parent() == Some(parent.as_path()))
+        .and_then(Path::file_name);
     for entry in entries {
         let entry = entry.map_err(|e| at(&parent, e))?;
         let name = entry.file_name();

@@ -1754,7 +1754,7 @@ mod tests {
         let packages = crate::github_mods::read_local_folder(&repo).unwrap();
         crate::github_mods::install_local_packages(&home, &packages).unwrap();
 
-        let originals = Originals::read(&home, None, None).unwrap();
+        let originals = Originals::read(&home, None, &index::Index::default(), None).unwrap();
         let original = &originals.mods["camp_native"];
         assert_eq!(
             original.source,
