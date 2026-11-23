@@ -19,6 +19,8 @@ const HOSTS: [&str; 4] = [
 ];
 /// The most an image may weigh before decoding.
 pub const MAX_DOWNLOAD: u64 = 8 << 20;
+/// The most a registry v2 image (icon or screenshot) may weigh before decoding.
+pub const MAX_V2_IMAGE: u64 = 5 << 20;
 /// The most the cache keeps on disk.
 pub const MAX_CACHE: u64 = 128 << 20;
 /// Pixels: an icon's side, a gallery image's longest side.
@@ -126,20 +128,7 @@ pub fn fetch(home: &Path, url: &str, size: u32) -> Result<PathBuf, String> {
 
 /// Decodes `bytes`, scales them to fit `size` and writes the PNG.
 pub fn store(home: &Path, url: &str, size: u32, bytes: &[u8]) -> Result<PathBuf, String> {
-    let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes))
-        .with_guessed_format()
-        .map_err(|e| e.to_string())?;
-    let mut limits = image::Limits::default();
-    limits.max_image_width = Some(8192);
-    limits.max_image_height = Some(8192);
-    limits.max_alloc = Some(256 << 20);
-    reader.limits(limits);
-    let decoded = reader.decode().map_err(|e| format!("{url}: {e}"))?;
-    let scaled = if decoded.width() > size || decoded.height() > size {
-        decoded.resize(size, size, image::imageops::FilterType::Triangle)
-    } else {
-        decoded
-    };
+    let scaled = decode_and_scale(url, size, bytes)?;
     let target = path(home, url, size);
     let folder = dir(home);
     fs::create_dir_all(&folder).map_err(|e| format!("{}: {e}", folder.display()))?;
@@ -150,6 +139,162 @@ pub fn store(home: &Path, url: &str, size: u32, bytes: &[u8]) -> Result<PathBuf,
     fs::rename(&part, &target).map_err(|e| format!("{}: {e}", target.display()))?;
     prune(&folder, MAX_CACHE);
     Ok(target)
+}
+
+fn decode_and_scale(label: &str, size: u32, bytes: &[u8]) -> Result<image::DynamicImage, String> {
+    let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .map_err(|e| e.to_string())?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(8192);
+    limits.max_image_height = Some(8192);
+    limits.max_alloc = Some(256 << 20);
+    reader.limits(limits);
+    let decoded = reader.decode().map_err(|e| format!("{label}: {e}"))?;
+    Ok(if decoded.width() > size || decoded.height() > size {
+        decoded.resize(size, size, image::imageops::FilterType::Triangle)
+    } else {
+        decoded
+    })
+}
+
+fn v2_dir(home: &Path) -> PathBuf {
+    home.join("mod-browser/registry-v2/images")
+}
+
+/// Where a verified content-addressed v2 image (`pages/<project>/<sha256>.<png|jpg>`) scaled to
+/// `size` is cached on disk. Rejects any path that is not content-addressed for `project_id`.
+pub fn v2_path(
+    home: &Path,
+    project_id: &str,
+    relative_path: &str,
+    size: u32,
+) -> Result<PathBuf, String> {
+    let sha256 =
+        sunrise_launcher_smod::index_v2::content_addressed_image_sha256(project_id, relative_path)?;
+    Ok(v2_dir(home).join(format!("{sha256}-{size}.png")))
+}
+
+/// The verified v2 image if it is already cached on disk.
+pub fn cached_v2(home: &Path, project_id: &str, relative_path: &str, size: u32) -> Option<PathBuf> {
+    let p = v2_path(home, project_id, relative_path, size).ok()?;
+    p.is_file().then_some(p)
+}
+
+/// Verifies `bytes` against the SHA-256 embedded in `relative_path`, then decodes, scales, and
+/// stores the PNG in the content-addressed v2 cache.
+pub fn store_v2(
+    home: &Path,
+    project_id: &str,
+    relative_path: &str,
+    size: u32,
+    bytes: &[u8],
+) -> Result<PathBuf, String> {
+    if bytes.len() as u64 > MAX_V2_IMAGE {
+        return Err(format!(
+            "{relative_path}: larger than {} MB",
+            MAX_V2_IMAGE >> 20
+        ));
+    }
+    sunrise_launcher_smod::index_v2::verify_image_bytes(project_id, relative_path, bytes)?;
+    let target = v2_path(home, project_id, relative_path, size)?;
+    let scaled = decode_and_scale(relative_path, size, bytes)?;
+    let folder = v2_dir(home);
+    fs::create_dir_all(&folder).map_err(|e| format!("{}: {e}", folder.display()))?;
+    static PART_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let seq = PART_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let part = target.with_extension(format!("part-{seq}"));
+    if let Err(e) = scaled.save_with_format(&part, image::ImageFormat::Png) {
+        let _ = fs::remove_file(&part);
+        return Err(format!("{}: {e}", part.display()));
+    }
+    if let Err(e) = fs::rename(&part, &target) {
+        let _ = fs::remove_file(&part);
+        return Err(format!("{}: {e}", target.display()));
+    }
+    prune(&folder, MAX_CACHE);
+    Ok(target)
+}
+
+/// Loads a content-addressed v2 image relative to `index_location`, verifies its SHA-256 against
+/// its file name before decoding, and caches the scaled PNG.
+pub fn fetch_v2_from(
+    home: &Path,
+    index_location: &str,
+    project_id: &str,
+    relative_path: &str,
+    size: u32,
+) -> Result<PathBuf, String> {
+    let target = v2_path(home, project_id, relative_path, size)?;
+    if target.is_file() {
+        return Ok(target);
+    }
+    let bytes = read_v2_bytes(index_location, relative_path)?;
+    store_v2(home, project_id, relative_path, size, &bytes)
+}
+
+/// Loads a content-addressed v2 image relative to the active v2 registry index location.
+pub fn fetch_v2(
+    home: &Path,
+    project_id: &str,
+    relative_path: &str,
+    size: u32,
+) -> Result<PathBuf, String> {
+    fetch_v2_from(
+        home,
+        &super::sunrise::v2::location(),
+        project_id,
+        relative_path,
+        size,
+    )
+}
+
+fn read_v2_bytes(index_location: &str, relative_path: &str) -> Result<Vec<u8>, String> {
+    let is_http = index_location.starts_with("https://")
+        || (cfg!(debug_assertions)
+            && (index_location.starts_with("http://127.0.0.1:")
+                || index_location.starts_with("http://localhost:")));
+    if is_http {
+        let url = sunrise_launcher_smod::index_v2::image_url(index_location, relative_path)
+            .ok_or_else(|| format!("cannot resolve v2 image path {relative_path}"))?;
+        let response = super::download::agent(&url)?
+            .get(&url)
+            .call()
+            .map_err(|e| format!("{url}: {e}"))?;
+        let mut bytes = Vec::new();
+        response
+            .into_reader()
+            .take(MAX_V2_IMAGE + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|e| format!("{url}: {e}"))?;
+        if bytes.len() as u64 > MAX_V2_IMAGE {
+            return Err(format!("{url}: larger than {} MB", MAX_V2_IMAGE >> 20));
+        }
+        return Ok(bytes);
+    }
+    if index_location.contains("://") {
+        return Err(format!(
+            "{index_location}: v2 images require an https:// index or local file path"
+        ));
+    }
+    let base = Path::new(index_location)
+        .parent()
+        .ok_or_else(|| format!("{index_location}: index path has no parent directory"))?;
+    let file = base.join(relative_path);
+    let mut bytes = Vec::new();
+    fs::File::open(&file)
+        .map_err(|e| format!("{}: {e}", file.display()))?
+        .take(MAX_V2_IMAGE + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("{}: {e}", file.display()))?;
+    if bytes.len() as u64 > MAX_V2_IMAGE {
+        return Err(format!(
+            "{}: larger than {} MB",
+            file.display(),
+            MAX_V2_IMAGE >> 20
+        ));
+    }
+    Ok(bytes)
 }
 
 /// Drops the oldest files until the folder holds at most `max` bytes.
@@ -247,5 +392,72 @@ mod tests {
         prune(&dir(&home), 0);
         assert!(cached(&home, url, ICON).is_none());
         fs::remove_dir_all(&home).unwrap();
+    }
+
+    #[test]
+    fn v2_images_require_content_addressed_path_and_matching_sha256() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("home");
+        let site = dir.path().join("site");
+        let index_path = site.join("index.json");
+        fs::create_dir_all(&site).unwrap();
+        fs::write(&index_path, b"{}").unwrap();
+
+        let mut png = Vec::new();
+        image::RgbaImage::from_pixel(200, 100, image::Rgba([40, 120, 200, 255]))
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+        let sha256: String = <sha2::Sha256 as sha2::Digest>::digest(&png)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        let good_rel = format!("pages/Ab3dE9xQ/{sha256}.png");
+        let on_disk = site.join(&good_rel);
+        fs::create_dir_all(on_disk.parent().unwrap()).unwrap();
+        fs::write(&on_disk, &png).unwrap();
+
+        // Valid content-addressed image verifies, scales, and caches.
+        let index_loc = index_path.to_str().unwrap();
+        let stored = fetch_v2_from(&home, index_loc, "Ab3dE9xQ", &good_rel, ICON).unwrap();
+        assert_eq!(
+            cached_v2(&home, "Ab3dE9xQ", &good_rel, ICON),
+            Some(stored.clone())
+        );
+        assert_eq!(image::open(&stored).unwrap().width(), ICON);
+
+        // Tampered bytes whose SHA-256 doesn't match the filename are rejected and never cached.
+        let other_sha = "0".repeat(64);
+        let tampered_rel = format!("pages/Ab3dE9xQ/{other_sha}.png");
+        let tampered_disk = site.join(&tampered_rel);
+        fs::write(&tampered_disk, &png).unwrap();
+        assert!(fetch_v2_from(&home, index_loc, "Ab3dE9xQ", &tampered_rel, ICON).is_err());
+        assert!(cached_v2(&home, "Ab3dE9xQ", &tampered_rel, ICON).is_none());
+
+        // Non-content-addressed paths, external URLs, wrong project IDs, and traversals are rejected.
+        assert!(fetch_v2_from(
+            &home,
+            index_loc,
+            "Ab3dE9xQ",
+            "pages/Ab3dE9xQ/icon.png",
+            ICON
+        )
+        .is_err());
+        assert!(fetch_v2_from(&home, index_loc, "OtherId1", &good_rel, ICON).is_err());
+        assert!(fetch_v2_from(
+            &home,
+            index_loc,
+            "Ab3dE9xQ",
+            "https://example.com/icon.png",
+            ICON,
+        )
+        .is_err());
+        assert!(fetch_v2_from(
+            &home,
+            index_loc,
+            "Ab3dE9xQ",
+            &format!("pages/Ab3dE9xQ/../Ab3dE9xQ/{sha256}.png"),
+            ICON,
+        )
+        .is_err());
     }
 }

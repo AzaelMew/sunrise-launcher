@@ -69,10 +69,15 @@ pub(super) fn picture_size(path: &std::path::Path) -> Option<(u32, u32)> {
     })
 }
 
-/// A gallery picture: an address the image cache fetches.
+/// A gallery picture: an address the image cache fetches or a content-addressed v2 registry image.
 #[derive(Clone)]
 pub(super) enum Picture {
     Url(String),
+    V2 {
+        project_id: String,
+        relative_path: String,
+        caption: String,
+    },
 }
 
 pub(super) struct Viewer {
@@ -142,6 +147,11 @@ impl Launcher {
     pub(super) fn picture(&mut self, picture: &Picture, size: u32) -> Option<PathBuf> {
         match picture {
             Picture::Url(url) => self.mods_image(url, size),
+            Picture::V2 {
+                project_id,
+                relative_path,
+                ..
+            } => self.v2_mod_image(project_id, relative_path, size),
         }
     }
 
@@ -203,6 +213,10 @@ impl Launcher {
         let v = self.ui.mods.viewer.as_ref()?;
         let (at, count) = (v.at, v.urls.len());
         let picture = v.urls.get(at)?.clone();
+        let caption = match &picture {
+            Picture::V2 { caption, .. } if !caption.is_empty() => Some(caption.clone()),
+            _ => None,
+        };
         let (closing, turn, many) = (v.closing, v.turn, count > 1);
         let (zoomed, (fx, fy), zoom_turn) = (v.zoomed, v.focus, v.zoom_turn);
         let path = self.picture(&picture, images::GALLERY);
@@ -348,16 +362,31 @@ impl Launcher {
                             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                                 this.viewer_step(1, cx);
                             })),
-                    )
-                    .child(
+                    );
+            }
+            if caption.is_some() || many {
+                let mut footer = div()
+                    .absolute()
+                    .w_full()
+                    .top(full.bottom() + px(14.))
+                    .px(px(24.))
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .gap(px(4.));
+                if let Some(caption) = caption {
+                    footer = footer.child(
                         div()
-                            .absolute()
-                            .w_full()
-                            .top(full.bottom() + px(20.))
-                            .flex()
-                            .justify_center()
                             .text_size(px(tokens::LABEL))
                             .text_color(c(palette().text))
+                            .child(caption),
+                    );
+                }
+                if many {
+                    footer = footer.child(
+                        div()
+                            .text_size(px(tokens::SMALL))
+                            .text_color(c(palette().muted))
                             .child(trf(
                                 "Picture {number} of {total}",
                                 &[
@@ -366,6 +395,8 @@ impl Launcher {
                                 ],
                             )),
                     );
+                }
+                controls = controls.child(footer);
             }
             overlay = overlay.child(controls.with_animation(
                 id("alt-viewer-controls"),
