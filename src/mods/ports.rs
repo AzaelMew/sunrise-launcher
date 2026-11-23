@@ -436,7 +436,6 @@ impl Launcher {
 
     fn render_port_groups(&mut self, groups: &[PortGroup], cx: &mut Context<Self>) -> Div {
         let busy = self.mods_busy() || self.mods_locked().is_some();
-        let index_location = v2::location();
         let mut container = div().flex().flex_col().gap(px(12.));
         for (group_idx, group) in groups.iter().enumerate() {
             let header = div()
@@ -465,8 +464,7 @@ impl Launcher {
 
             let mut cards_row = div().flex().flex_wrap().gap(px(12.));
             for (port_idx, port) in group.ports.iter().enumerate() {
-                let icon_url = index_v2::image_url(&index_location, &port.icon);
-                let picture = icon_url.and_then(|url| self.mods_image(&url, images::ICON));
+                let picture = self.v2_mod_image(&port.project_id, &port.icon, images::ICON);
                 let is_installed = port.action == PortAction::Installed;
                 let success = c(palette().success);
                 let fit_badge = port.latest_version.as_ref().map(|ver| {
