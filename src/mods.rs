@@ -895,28 +895,21 @@ impl Launcher {
         self.choose_view(Page::Discover);
     }
 
-    /// The Mods tab: where the player last was this session, else Installed when this setup
-    /// has mods and Discover when it has none.
+    /// The Mods tab: where the player last was this session, else Installed.
     pub(super) fn open_mods(&mut self) {
         self.leave_section(false);
         self.ui.page = self.ui.mods.last_mods.unwrap_or_else(|| {
             self.mods_refresh();
-            match self.rows().is_empty() {
-                true => Page::Discover,
-                false => Page::Installed,
-            }
+            Page::Installed
         });
     }
 
-    /// The Packs tab, by the same rule as [`Self::open_mods`].
+    /// The Packs tab: where the player last was this session, else Installed.
     pub(super) fn open_packs(&mut self) {
         self.leave_section(true);
         self.ui.page = self.ui.mods.last_packs.unwrap_or_else(|| {
             self.load_packs_list(self.mods_home());
-            match self.game_packs.resource.is_empty() && self.game_packs.shader.is_empty() {
-                true => Page::PackFind,
-                false => Page::Packs,
-            }
+            Page::Packs
         });
     }
 
@@ -1649,20 +1642,24 @@ impl Launcher {
         } else {
             line_edit::mouse(field, cx, |this: &mut Launcher| &mut this.ui.mods.find)
         };
-        div()
+        let sub_tabs = div()
             .flex()
+            .flex_wrap()
             .items_center()
-            .gap(px(20.))
-            .child(
-                div()
-                    .flex_none()
-                    .text_size(px(tokens::TITLE))
-                    .font_weight(FontWeight::BOLD)
-                    .child(if packs { tr("Packs") } else { tr("Mods") }),
-            )
+            .justify_between()
+            .gap_x(px(16.))
+            .gap_y(px(8.))
+            .border_b_1()
+            .border_color(gpui::rgb(palette().divider))
             .child(segmented(
                 "alt-mods-tabs",
                 [
+                    (
+                        "alt-mods-tab-installed",
+                        tr("Installed").into(),
+                        installed,
+                        if packs { Page::Packs } else { Page::Installed },
+                    ),
                     (
                         "alt-mods-tab-discover",
                         tr("Discover").into(),
@@ -1673,29 +1670,28 @@ impl Launcher {
                             Page::Discover
                         },
                     ),
-                    (
-                        "alt-mods-tab-installed",
-                        tr("Installed").into(),
-                        installed,
-                        if packs { Page::Packs } else { Page::Installed },
-                    ),
                 ],
                 Launcher::choose_view,
                 cx,
-            ))
-            .child(if installed && !packs {
-                div()
-                    .flex()
-                    .flex_1()
-                    .flex_wrap()
-                    .items_center()
-                    .gap(px(8.))
-                    .child(field)
-                    .child(self.add_from_source_button(cx))
-                    .into_any_element()
-            } else {
-                field.into_any_element()
-            })
+            ));
+        let toolbar = if installed && !packs {
+            div()
+                .flex()
+                .flex_wrap()
+                .items_center()
+                .gap(px(8.))
+                .child(field)
+                .child(self.add_from_source_button(cx))
+                .into_any_element()
+        } else {
+            div().flex().items_center().child(field).into_any_element()
+        };
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(12.))
+            .child(sub_tabs)
+            .child(toolbar)
     }
 }
 

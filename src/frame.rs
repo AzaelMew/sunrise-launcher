@@ -86,16 +86,21 @@ impl State {
     ) -> Option<Instant> {
         match self.page_switched {
             Some((last_page, switched_at)) => {
-                if last_page != page {
+                if last_page.active_tab() != page.active_tab() {
                     let started = (!still).then_some(now);
                     self.page_switched = Some((page, started));
                     started
-                } else if still {
-                    None
                 } else {
-                    switched_at.filter(|&at| {
-                        now.saturating_duration_since(at) < crate::motion::PAGE.duration()
-                    })
+                    if last_page != page {
+                        self.page_switched = Some((page, switched_at));
+                    }
+                    if still {
+                        None
+                    } else {
+                        switched_at.filter(|&at| {
+                            now.saturating_duration_since(at) < crate::motion::PAGE.duration()
+                        })
+                    }
                 }
             }
             None => {
@@ -711,40 +716,33 @@ impl Launcher {
                 } else {
                     self.join(cx)
                 };
-                // The page's header, as Mods has it: its name, then Join and Host as one
-                // control, the chosen one filled.
-                let tabs = div()
-                    .flex()
-                    .items_center()
-                    .gap(px(20.))
-                    .px(px(24.))
-                    .pt(px(24.))
-                    .child(
-                        div()
-                            .flex_none()
-                            .text_size(px(tokens::TITLE))
-                            .font_weight(FontWeight::BOLD)
-                            .child(tr("Servers")),
-                    )
-                    .child(crate::mods::segmented(
-                        "servers-tabs",
-                        [
-                            (
-                                "servers-join",
-                                tr("Join").into(),
-                                page == Page::Join,
-                                Page::Join,
-                            ),
-                            (
-                                "servers-host",
-                                tr("Host").into(),
-                                page == Page::Hosting,
-                                Page::Hosting,
-                            ),
-                        ],
-                        Launcher::navigate,
-                        cx,
-                    ));
+                // Join and Host as underline sub-tabs, matching Mods and Packs.
+                let tabs = div().px(px(24.)).pt(px(20.)).child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .border_b_1()
+                        .border_color(rgb(palette().divider))
+                        .child(crate::mods::segmented(
+                            "servers-tabs",
+                            [
+                                (
+                                    "servers-join",
+                                    tr("Join").into(),
+                                    page == Page::Join,
+                                    Page::Join,
+                                ),
+                                (
+                                    "servers-host",
+                                    tr("Host").into(),
+                                    page == Page::Hosting,
+                                    Page::Hosting,
+                                ),
+                            ],
+                            Launcher::navigate,
+                            cx,
+                        )),
+                );
                 div()
                     .flex()
                     .flex_col()
@@ -985,5 +983,10 @@ mod tests {
         // Reduced motion snaps without starting a transition.
         let t2 = t1 + std::time::Duration::from_millis(400);
         assert!(state.page_transition(Page::Home, t2, true).is_none());
+        // Sub-tabs within the same top-level section do not replay the whole-page entrance.
+        let t3 = t2 + std::time::Duration::from_millis(50);
+        assert_eq!(state.page_transition(Page::Installed, t3, false), Some(t3));
+        let t4 = t3 + std::time::Duration::from_millis(300);
+        assert!(state.page_transition(Page::Discover, t4, false).is_none());
     }
 }
