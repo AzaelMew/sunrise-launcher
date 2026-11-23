@@ -175,6 +175,17 @@ pub(crate) fn scrolls(key: &'static str) -> gpui::ScrollHandle {
     })
 }
 
+/// The handle the last frame drew the page called `key` with, if it drew that page. Read
+/// between frames: unlike [`scrolls`], it doesn't keep the page's handle for the next one.
+pub(crate) fn drawn_scroll(key: &'static str) -> Option<gpui::ScrollHandle> {
+    SCROLLS.with_borrow(|s| {
+        s.live
+            .iter()
+            .find(|(live, _)| *live == key)
+            .map(|(_, handle)| handle.clone())
+    })
+}
+
 /// The same for a page that keeps its own handle.
 pub(crate) fn scrolls_with(handle: &gpui::ScrollHandle) {
     SCROLLS.with_borrow_mut(|s| s.live.push(("", handle.clone())));

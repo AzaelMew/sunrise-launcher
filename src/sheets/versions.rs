@@ -703,14 +703,15 @@ impl Launcher {
     }
 }
 
-/// `sunrise-launcher benchmark`: after each frame, looks at the build list and sends one wheel
-/// step over it through the window's ordinary input path, so the list scrolls, caches and
-/// redraws as it does under a player's wheel. Nothing is read inside a frame.
+/// `sunrise-launcher benchmark`: after each frame, looks at the list it scrolls (the build
+/// picker's, or Installed's: [`perf::Bench::list`]) and sends one wheel step over it through the
+/// window's ordinary input path, so the list scrolls, caches and redraws as it does under a
+/// player's wheel. Nothing is read inside a frame.
 ///
-/// It keeps looking while the release list loads and the picker lays out the rows it brings;
-/// the benchmark's timed phase only begins once they are drawn ([`perf::Bench::after_frame`]).
-/// With no profile, no rows, or rows that fit, the phase ends there and no more frames are
-/// asked for.
+/// It keeps looking while the list loads and is laid out with the rows it brings; the
+/// benchmark's timed phase only begins once they are drawn ([`perf::Bench::after_frame`]). With
+/// no profile, no rows, a list that couldn't be read, or rows that fit, the phase ends there and
+/// no more frames are asked for.
 pub(crate) fn bench_wheel(launcher: gpui::WeakEntity<Launcher>, window: &mut Window) {
     window.on_next_frame(move |window, cx| {
         let Some(entity) = launcher.upgrade() else {
@@ -718,7 +719,10 @@ pub(crate) fn bench_wheel(launcher: gpui::WeakEntity<Launcher>, window: &mut Win
         };
         let this = entity.read(cx);
         let timed = this.bench.as_ref().is_some_and(perf::Bench::timing_scroll);
-        let (target, bounds) = this.bench_target(timed);
+        let (target, bounds) = match this.bench.as_ref().map(perf::Bench::list) {
+            Some(perf::List::Installed) => this.installed_bench_target(),
+            _ => this.bench_target(timed),
+        };
         let now = std::time::Instant::now();
         let step = entity.update(cx, |l, _| l.bench.as_mut()?.after_frame(now, target));
         if let Some(step) = step {
@@ -826,7 +830,10 @@ mod tests {
             );
             // A cold start: the picker opens while the release list is still on its way.
             l.releases = Load::Loading;
-            l.bench = Some(crate::perf::Bench::switched_for_test(out.clone()));
+            l.bench = Some(crate::perf::Bench::switched_for_test(
+                out.clone(),
+                crate::perf::List::Builds,
+            ));
         });
         // The tick that opens the picker and schedules the wheel, as the pump runs it.
         launcher.update(cx, |l, cx| l.drain(handle, cx));
