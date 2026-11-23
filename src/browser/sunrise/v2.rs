@@ -112,10 +112,36 @@ struct PersistedState {
     active: Option<ActiveCache>,
 }
 
+/// The committed snapshot, by its ID (`snapshot-<serial>-<16 hex digits>`); both file names are
+/// derived from it, so a damaged state file can never name another file in the cache.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct ActiveCache {
-    index: String,
-    signature: String,
+    snapshot: String,
+}
+
+impl ActiveCache {
+    fn index_name(&self) -> String {
+        format!("{}.json", self.snapshot)
+    }
+
+    fn signature_name(&self) -> String {
+        format!("{}.json.minisig", self.snapshot)
+    }
+}
+
+fn valid_snapshot_id(id: &str) -> bool {
+    let Some(rest) = id.strip_prefix("snapshot-") else {
+        return false;
+    };
+    let Some((serial, nonce)) = rest.split_once('-') else {
+        return false;
+    };
+    !serial.is_empty()
+        && serial.bytes().all(|b| b.is_ascii_digit())
+        && nonce.len() == 16
+        && nonce
+            .bytes()
+            .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -409,17 +435,10 @@ impl Store {
         let _commit = COMMIT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let state = self.read_state()?;
         let (index_path, sig_path) = match state.as_ref().and_then(|s| s.active.as_ref()) {
-            Some(active) => {
-                if !plain_cache_name(&active.index) || !plain_cache_name(&active.signature) {
-                    return Err(LoadError::CorruptState(
-                        "invalid cached snapshot file name".into(),
-                    ));
-                }
-                (
-                    self.cache_dir.join(&active.index),
-                    self.cache_dir.join(&active.signature),
-                )
-            }
+            Some(active) => (
+                self.cache_dir.join(active.index_name()),
+                self.cache_dir.join(active.signature_name()),
+            ),
             None => (
                 self.cache_dir.join(CACHE_INDEX),
                 self.cache_dir.join(CACHE_SIG),
@@ -470,8 +489,8 @@ impl Store {
             return Ok(None);
         };
         Ok(Some((
-            self.cache_dir.join(active.index),
-            self.cache_dir.join(active.signature),
+            self.cache_dir.join(active.index_name()),
+            self.cache_dir.join(active.signature_name()),
         )))
     }
 
@@ -488,6 +507,13 @@ impl Store {
             Ok(text) => {
                 let parsed: PersistedState = serde_json::from_str(&text)
                     .map_err(|e| LoadError::CorruptState(e.to_string()))?;
+                if parsed
+                    .active
+                    .as_ref()
+                    .is_some_and(|active| !valid_snapshot_id(&active.snapshot))
+                {
+                    return Err(LoadError::CorruptState("invalid cached snapshot id".into()));
+                }
                 Ok(Some(parsed))
             }
             Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
@@ -508,9 +534,11 @@ impl Store {
     {
         fs::create_dir_all(&self.cache_dir)
             .map_err(|e| LoadError::Fetch(format!("{}: {e}", self.cache_dir.display())))?;
-        let prefix = next_snapshot_prefix(serial).map_err(LoadError::Fetch)?;
-        let index_name = format!("{prefix}.json");
-        let sig_name = format!("{prefix}.json.minisig");
+        let next = ActiveCache {
+            snapshot: next_snapshot_id(serial).map_err(LoadError::Fetch)?,
+        };
+        let index_name = next.index_name();
+        let sig_name = next.signature_name();
         let index_path = self.cache_dir.join(&index_name);
         let sig_path = self.cache_dir.join(&sig_name);
         let state_path = self.cache_dir.join(STATE_FILE);
@@ -526,10 +554,7 @@ impl Store {
         }
         let state_json = serde_json::to_vec(&PersistedState {
             highest_serial: serial,
-            active: Some(ActiveCache {
-                index: index_name.clone(),
-                signature: sig_name.clone(),
-            }),
+            active: Some(next.clone()),
         })
         .map_err(|e| LoadError::CorruptState(e.to_string()))?;
         if let Err(err) = write_file(PublishStep::State, &state_path, &state_json) {
@@ -539,13 +564,9 @@ impl Store {
         }
 
         // Remove the superseded snapshot only after state.json atomically published the new one.
-        if let Some(old) = previous_active {
-            if plain_cache_name(&old.index) && old.index != index_name {
-                let _ = fs::remove_file(self.cache_dir.join(&old.index));
-            }
-            if plain_cache_name(&old.signature) && old.signature != sig_name {
-                let _ = fs::remove_file(self.cache_dir.join(&old.signature));
-            }
+        if let Some(old) = previous_active.filter(|old| **old != next) {
+            let _ = fs::remove_file(self.cache_dir.join(old.index_name()));
+            let _ = fs::remove_file(self.cache_dir.join(old.signature_name()));
         }
         Ok(())
     }
@@ -560,11 +581,7 @@ fn combine_serial(memory: Option<u64>, disk: Option<u64>) -> Option<u64> {
     }
 }
 
-fn plain_cache_name(name: &str) -> bool {
-    !name.is_empty() && name != "." && name != ".." && !name.contains(['/', '\\', ':', '\0'])
-}
-
-fn next_snapshot_prefix(serial: u64) -> Result<String, String> {
+fn next_snapshot_id(serial: u64) -> Result<String, String> {
     let mut nonce = [0u8; 8];
     getrandom::fill(&mut nonce).map_err(|e| format!("random snapshot id: {e}"))?;
     let hex: String = nonce.iter().map(|b| format!("{b:02x}")).collect();
