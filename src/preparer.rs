@@ -219,10 +219,10 @@ fn run(
 
 pub(crate) fn run_staged(
     command: Command,
-    handoff: Handoff<'_>,
+    handoff: &Handoff<'_>,
     line: &dyn Fn(String),
 ) -> Result<(), String> {
-    let (status, errors) = run(command, &mut |text| line(text), Some(&handoff))?;
+    let (status, errors) = run(command, &mut |text| line(text), Some(handoff))?;
     for error in errors {
         line(error);
     }

@@ -61,7 +61,7 @@ impl Pinned {
             .unwrap()
             .refresh(
                 fixture.instance.native_profile,
-                &native_mods::Cancellation::default(),
+                (&native_mods::Cancellation::default(), None),
                 |_| {},
                 None,
                 None,

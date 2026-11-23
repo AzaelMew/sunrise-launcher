@@ -1628,5 +1628,7 @@
   "Search your shader packs…": "Search your shader packs…",
   "Search your data packs…": "Search your data packs…",
   "Search pages, profiles, worlds, mods, settings and shortcuts…": "Search pages, profiles, worlds, mods, settings and shortcuts…",
-  "Search by date or commit…": "Search by date or commit…"
+  "Search by date or commit…": "Search by date or commit…",
+  "Could not read the build's preparer source: {error}": "Could not read the build's preparer source: {error}",
+  "These files are for a dedicated server only.": "These files are for a dedicated server only."
 }

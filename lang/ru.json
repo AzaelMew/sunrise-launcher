@@ -1643,5 +1643,7 @@
   "Public IPv4 unavailable for this listener": "Подключение по внешнему IPv4 недоступно",
   "No game address is available through Tailscale.": "Адрес игрового сервера в Tailscale недоступен.",
   "Friends you share this computer with can reach all of it, not only Minecraft.": "Друзья, которым вы предоставите доступ к этому компьютеру, смогут подключаться к любым его портам, включая порты других приложений.",
-  "The game port is unavailable, so Sunrise can't check access to that port.": "Игровой порт недоступен, поэтому Sunrise не может проверить доступ к нему."
+  "The game port is unavailable, so Sunrise can't check access to that port.": "Игровой порт недоступен, поэтому Sunrise не может проверить доступ к нему.",
+  "Could not read the build's preparer source: {error}": "Could not read the build's preparer source: {error}",
+  "These files are for a dedicated server only.": "These files are for a dedicated server only."
 }

@@ -1,7 +1,7 @@
 use super::*;
 use std::{
     fs,
-    process::{Child, Stdio},
+    process::{Child, Command, Stdio},
     time::{Duration, Instant},
 };
 
@@ -47,9 +47,9 @@ fn interrupted_prepare_retains_the_same_build_and_profile_exclusion() {
                 .begin_first(|| FirstBuild::installed(BUILD), |_| {})
                 .unwrap();
             let preparation = backend::prepare_lock(BUILD).unwrap();
-            first
-                .run_prepare(actor("prepare"), &preparation, &|_| {})
-                .unwrap();
+            let handoff = preparation.handoff(Some(first.handoff()));
+            crate::preparer::run_staged(actor("prepare"), &handoff, &|_| {}).unwrap();
+            Resources::prepare(BUILD, &preparation, Some(first.handoff())).unwrap();
             panic!("test should have killed this launcher while the preparer was held");
         }
         "already-open-launcher" => {
@@ -201,7 +201,7 @@ fn game_replacements_repair_only_owned_row_fields_and_advance_the_same_base() {
         let local = profile
             .refresh(
                 native_mods::Profile::Optimized,
-                &cancellation,
+                (&cancellation, None),
                 |_| {},
                 None,
                 None,
@@ -226,10 +226,10 @@ fn game_replacements_repair_only_owned_row_fields_and_advance_the_same_base() {
         let current = profile
             .refresh(
                 native_mods::Profile::Optimized,
-                &cancellation,
+                (&cancellation, None),
                 |_| {},
-                None,
                 Some(&registry),
+                None,
                 None,
             )
             .unwrap()
@@ -261,7 +261,7 @@ fn game_replacements_repair_only_owned_row_fields_and_advance_the_same_base() {
     assert!(profile
         .refresh(
             native_mods::Profile::Optimized,
-            &cancellation,
+            (&cancellation, None),
             |_| {},
             None,
             None,

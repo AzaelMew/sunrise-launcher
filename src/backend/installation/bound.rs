@@ -704,6 +704,46 @@ mod tests {
     }
 
     #[test]
+    fn same_tag_repair_preserves_server_only_preparation() {
+        isolated_case("same_tag_repair_preserves_server_only_preparation", || {
+            let (download, proof, url, server) = serve_windows_archive(
+                GameArchitecture::X64,
+                "sunrise-windows-x64.zip",
+                b"repaired image",
+            );
+            let root = version_dir(TAG);
+            let resources = resources_at(&root);
+            fs::create_dir_all(&resources).unwrap();
+            fs::write(root.join(COMPLETE), "").unwrap();
+            fs::write(root.join(CLIENT), "old image").unwrap();
+            let files = [
+                (RESOURCES_MANIFEST, r#"{"profile":"server"}"#),
+                (PREPARATION_STAMP, r#"{"output_version":7}"#),
+                ("registries.json", "{}"),
+            ];
+            for (name, content) in files {
+                fs::write(resources.join(name), content).unwrap();
+            }
+
+            download
+                .publish(
+                    TAG,
+                    &proof,
+                    InstallIntent::Repair,
+                    |_| {},
+                    |_, _| url.clone(),
+                )
+                .unwrap();
+            server.join().unwrap();
+
+            assert_eq!(fs::read(root.join(CLIENT)).unwrap(), b"repaired image");
+            for (name, content) in files {
+                assert_eq!(fs::read_to_string(resources.join(name)).unwrap(), content);
+            }
+        });
+    }
+
+    #[test]
     fn a_committed_nightly_survives_receipt_failure_and_retries_only_the_receipt() {
         isolated_case(
             "a_committed_nightly_survives_receipt_failure_and_retries_only_the_receipt",

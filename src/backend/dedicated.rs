@@ -123,6 +123,18 @@ pub(super) fn verify_paths(tag: &str, command: &Command) -> Result<(), String> {
     Ok(())
 }
 
+/// Dedicated startup accepts both profiles. The game's dedicated loader checks its own output
+/// version; the client's full-output stamp is not a prerequisite for a dedicated command.
+pub(super) fn need_prepared(tag: &str, command: &Command) -> Result<(), String> {
+    let _preparation = super::prepare_lock(tag)?;
+    if !super::prepared_at(&resources(tag)) {
+        return Err(super::prepare_first(tag));
+    }
+    verify_paths(tag, command)?;
+    super::complete_reports(&versions_dir(), tag);
+    Ok(())
+}
+
 /// A direct launch uses only the dedicated argv, the isolated root, and the dedicated
 /// overrides. Windows may replace the installed program with that root's prepared copy.
 pub(super) fn verify(

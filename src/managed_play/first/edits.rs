@@ -424,7 +424,10 @@ impl Edit<'_> {
                     &proof.tag,
                     &proof.candidate,
                     proof.inputs,
-                    Generation::Advance(&old),
+                    Generation::Advance {
+                        previous: &old,
+                        resources: None,
+                    },
                 )?;
                 (active, stage)
             }
