@@ -502,7 +502,15 @@ fn switch_in(
             crate::managed_play::CommittedBuildChoice::new(channel, version)
         })
         .transpose()?;
-    let active = edit.publish_switch(proof, hooks.cancellation, holds, removed, build_choice, || {
+    let active = edit.publish_switch(
+        proof,
+        hooks.cancellation,
+        managed_play::SwitchPublication {
+            holds,
+            removed,
+            build_choice,
+        },
+        || {
         let (_, current, proof) = super::super::complete_index(&source, local)?;
         if current != evidence || proof.is_some() != official.is_some() {
             return Err(tr("The mod registry changed while the switch was being prepared. Nothing was switched.").into());

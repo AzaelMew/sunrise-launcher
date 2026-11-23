@@ -382,8 +382,7 @@ impl GameDownload {
             tag,
             proof,
             intent,
-            stop,
-            progress,
+            super::Transfer { stop, progress },
             asset_url,
             (
                 &Base::from_env(),
@@ -392,17 +391,16 @@ impl GameDownload {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn publish_with(
         &self,
         tag: &str,
         proof: &GameProof,
         intent: InstallIntent,
-        stop: Option<&crate::native_mods::Cancellation>,
-        progress: impl Fn(f32),
+        transfer: super::Transfer<'_, impl Fn(f32)>,
         asset_url: impl Fn(&str, &str) -> String,
         (base, keys): (&Base, &[PublicKey]),
     ) -> Result<InstallOutcome, String> {
+        let super::Transfer { stop, progress } = transfer;
         if let Some(stop) = stop {
             stop.check()?;
         }
@@ -489,10 +487,8 @@ impl GameDownload {
                         tag,
                         triple,
                         (&game_index, &proof.archive),
-                        base,
-                        keys,
-                        stop,
-                        &progress,
+                        (base, keys),
+                        (stop, &progress),
                     )
                     .map_err(|error| match error {
                         Refusal::Host => crate::i18n::trf(
@@ -522,8 +518,7 @@ impl GameDownload {
                 self.requested,
                 facts.as_ref().map(|(bytes, sha)| (bytes.as_slice(), *sha)),
                 intent,
-                stop,
-                progress,
+                super::Transfer { stop, progress },
             )?
         };
         self.installed_at(&home, tag, proof, intent)?;

@@ -493,9 +493,11 @@ pub(crate) fn switch_build_v2_with(
     let active = edit.publish_switch(
         final_proof,
         hooks.switch.cancellation,
-        final_holds,
-        final_removed,
-        committed_choice,
+        crate::managed_play::SwitchPublication {
+            holds: final_holds,
+            removed: final_removed,
+            build_choice: committed_choice,
+        },
         || fence.revalidate(&instance.home),
         || {
             (hooks.switch.at_cutoff)()?;

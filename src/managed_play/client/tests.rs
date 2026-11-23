@@ -370,9 +370,7 @@ fn recovery_binds_first_play_and_refuses_a_result_from_before_switch() {
             .publish_switch(
                 proof,
                 &cancelled,
-                vec![],
-                Default::default(),
-                None,
+                crate::managed_play::SwitchPublication::default(),
                 || Ok(()),
                 || Ok(()),
             )
