@@ -850,6 +850,7 @@ mod tests {
             }],
             projects,
             revoked: vec![],
+            collections: Vec::new(),
         }
     }
 
