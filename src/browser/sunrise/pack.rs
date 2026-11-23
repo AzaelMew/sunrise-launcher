@@ -52,11 +52,6 @@ fn read(work: &Path) -> Option<Installed> {
     Some(pack)
 }
 
-/// Imported Java packs also have a `pack.json`, with a different record format.
-pub(super) fn is_pack(work: &Path) -> bool {
-    read(work).is_some()
-}
-
 /// The profile's game folder.
 pub fn home(work: &Path) -> PathBuf {
     work.join("home")

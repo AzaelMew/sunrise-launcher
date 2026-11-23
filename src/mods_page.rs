@@ -3,7 +3,6 @@
 //! turned on and off, and what was installed updated or removed (`sunrise_launcher::browser`).
 
 use super::*;
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use sunrise_launcher::browser::{installed, sunrise};
@@ -15,20 +14,11 @@ pub(super) enum Event {
     Registry(install::Worker),
     /// What the automatic updates did (`sunrise::auto`).
     LegacyBackupNotice(String),
-    /// A project page's part, an image or a filter's values (`mods_project`).
+    /// An image loaded in the background (`mods_project`).
     Loaded(super::mods_project::Loaded),
 }
 
 pub(super) struct Mods {
-    focus: FocusHandle,
-    pub(super) focused: bool,
-    results_list: cull::Cull,
-    installed_list: cull::Cull,
-    pub(super) report_list: cull::Cull,
-    pub(super) installed: Vec<installed::Entry>,
-    /// The registry native mods' versions the player picked on their Versions tab, by id
-    /// (`sunrise::chosen`), read with `installed`.
-    pub(super) chosen: std::collections::BTreeMap<String, String>,
     /// The game folder the browser installs into and lists: the selected instance's.
     home: ModsHome,
     pub(crate) installs: install::Installs,
@@ -38,7 +28,7 @@ pub(super) struct Mods {
     /// The instance and the mods whose compile failed in the last stop: their chips say so until
     /// the next build attempt, whatever the player chose.
     pub(super) unbuilt: Option<(String, Vec<String>)>,
-    /// The project page, filters and images.
+    /// The project images cache and fetch queue.
     pub(super) browse: super::mods_project::Browse,
     pub(super) tx: Sender<Event>,
     rx: Receiver<Event>,
@@ -67,20 +57,6 @@ impl ModsHome {
 }
 
 impl Mods {
-    pub(super) fn reset_lists(&self) {
-        self.results_list.reset();
-        self.installed_list.reset();
-        self.report_list.reset();
-    }
-
-    /// The game folder installs go into: the selected instance's, once the page has read it.
-    /// Reads what the browser installed in the game folder again, with the versions picked.
-    pub(super) fn reload_installed(&mut self) {
-        let home = self.home();
-        self.installed = installed::Installed::load(&home).entries;
-        self.chosen = sunrise::chosen(&home);
-    }
-
     /// Points the folder installs and toggles go into at `home`, the selected instance's folder,
     /// without reading or writing anything: the Mods screens (`mods`) call it so
     /// that a native-code consent answered later continues in the folder they show.
@@ -96,16 +72,9 @@ impl Mods {
         self.home.begin_build_consent(selected)
     }
 
-    pub(super) fn new(cx: &mut App) -> Self {
+    pub(super) fn new() -> Self {
         let (tx, rx) = crate::wake::channel();
         Self {
-            focus: cx.focus_handle().tab_index(0).tab_stop(true),
-            focused: false,
-            results_list: cull::Cull::default(),
-            installed_list: cull::Cull::default(),
-            report_list: cull::Cull::default(),
-            installed: Vec::new(),
-            chosen: Default::default(),
             home: ModsHome::default(),
             installs: install::Installs::default(),
             message: None,
@@ -115,10 +84,6 @@ impl Mods {
             tx,
             rx,
         }
-    }
-
-    pub(super) fn note_focus(&mut self, window: &Window) {
-        self.focused = self.focus.is_focused(window);
     }
 }
 
@@ -153,8 +118,6 @@ impl Launcher {
                     }
                     if m.installs.handle(event) {
                         done = true;
-                        m.reload_installed();
-                        m.installed_list.reset();
                     } else if m.installs.question.is_some() || m.installs.world.is_some() {
                         self.reset_install_question_sheet();
                     }
