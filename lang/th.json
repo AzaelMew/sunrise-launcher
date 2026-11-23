@@ -1887,5 +1887,11 @@
   "Your rating": "Your rating",
   "Rate this mod": "Rate this mod",
   "Too many ratings in a short time. Try again later.": "Too many ratings in a short time. Try again later.",
-  "Another account plays now. Rate again.": "Another account plays now. Rate again."
+  "Another account plays now. Rate again.": "Another account plays now. Rate again.",
+  "Dependencies": "Dependencies",
+  "{count} mods on the registry provide it: installing asks which one": "{count} mods on the registry provide it: installing asks which one",
+  "Not on the registry": "Not on the registry",
+  "any version": "any version",
+  "Required": "Required",
+  "Optional": "Optional"
 }

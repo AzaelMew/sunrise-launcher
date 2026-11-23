@@ -199,6 +199,55 @@ pub(in crate::mods) struct V2Page {
     pub(in crate::mods) fitting_versions: Vec<V2VersionLine>,
     /// Remaining releases (not fitting this build or revoked), newest first.
     pub(in crate::mods) other_versions: Vec<V2VersionLine>,
+    /// What the release Install picks (else the newest) depends on, required ones first.
+    pub(in crate::mods) dependencies: Vec<V2Dependency>,
+}
+
+/// One dependency on a v2 mod page.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(in crate::mods) struct V2Dependency {
+    pub(in crate::mods) mod_id: String,
+    /// The semver range the provider's release must satisfy; `None` when any version will do.
+    pub(in crate::mods) range: Option<String>,
+    pub(in crate::mods) required: bool,
+    pub(in crate::mods) provider: V2Provider,
+}
+
+/// Which registry project provides a dependency, found the way an install finds it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(in crate::mods) enum V2Provider {
+    /// The pinned project, or the only listed project with that in-game ID.
+    Listed {
+        id: String,
+        name: String,
+        icon: Option<String>,
+    },
+    /// Several listed projects provide the ID: the install asks which one.
+    Several(usize),
+    /// No listed project provides it.
+    Missing,
+}
+
+fn provider(index: &Index, dep: &index_v2::Dependency) -> V2Provider {
+    let listed = |p: &&Project| make_of(&p.kind).is_some() && index.revoked(&p.id, None).is_none();
+    let found: Vec<&Project> = match dep.project.as_deref() {
+        Some(pin) => index
+            .project(pin)
+            .filter(|p| p.mod_id == dep.mod_id)
+            .filter(listed)
+            .into_iter()
+            .collect(),
+        None => index.projects_for_mod(&dep.mod_id).filter(listed).collect(),
+    };
+    match found.as_slice() {
+        [] => V2Provider::Missing,
+        [p] => V2Provider::Listed {
+            id: p.id.clone(),
+            name: p.name.clone(),
+            icon: content_addressed_path(&p.id, &p.icon),
+        },
+        several => V2Provider::Several(several.len()),
+    }
 }
 
 fn make_of(kind: &Kind) -> Option<Make> {
@@ -628,6 +677,7 @@ pub(in crate::mods) fn page(
     let (fit, updated) = project_fit(index, p, &sorted, exact_build, build_label);
     let mut fitting_versions = Vec::new();
     let mut other_versions = Vec::new();
+    let mut picked: Option<&Release> = None;
     for release in &sorted {
         let verdict = release_verdict(index, p, release, exact_build, build_label);
         let line = V2VersionLine {
@@ -637,6 +687,7 @@ pub(in crate::mods) fn page(
             verdict,
         };
         if line.verdict.fits() {
+            picked.get_or_insert(release);
             fitting_versions.push(line);
         } else {
             other_versions.push(line);
@@ -655,6 +706,18 @@ pub(in crate::mods) fn page(
         })
         .collect();
     let repository_url = SourceLink::read(&format!("https://github.com/{}", p.repository.name));
+    let mut dependencies: Vec<V2Dependency> = picked
+        .or(sorted.first().copied())
+        .map_or(&[][..], |release| &release.dependencies)
+        .iter()
+        .map(|dep| V2Dependency {
+            mod_id: dep.mod_id.clone(),
+            range: (dep.version != semver::VersionReq::STAR).then(|| dep.version.to_string()),
+            required: dep.required,
+            provider: provider(index, dep),
+        })
+        .collect();
+    dependencies.sort_by_key(|dep| !dep.required);
 
     Some(V2Page {
         id: p.id.clone(),
@@ -678,6 +741,7 @@ pub(in crate::mods) fn page(
         will_install,
         fitting_versions,
         other_versions,
+        dependencies,
     })
 }
 
@@ -1024,6 +1088,80 @@ mod tests {
         assert_eq!(
             p.other_versions[0].verdict.reason().as_deref(),
             Some("Doesn't fit Stable · 0.1.0")
+        );
+    }
+
+    #[test]
+    fn v2_page_lists_the_installed_release_dependencies_with_their_providers() {
+        let build = "26.3-0.1.0";
+        let dep = |mod_id: &str, version: &str, project: Option<&str>, required: bool| {
+            index_v2::Dependency {
+                mod_id: mod_id.to_owned(),
+                version: semver::VersionReq::parse(version).unwrap(),
+                project: project.map(str::to_owned),
+                required,
+            }
+        };
+        let mut fitting = make_release("1.0.0", "2026-11-10", build, &[build], &[], '1');
+        fitting.dependencies = vec![
+            dep("map_icons", "*", None, false),
+            dep("core_lib", "^2.1", Some("CoreLib1"), true),
+            dep("render_api", "^1", None, true),
+            dep("ghost", "^1", None, true),
+            dep("other_lib", "^1", Some("CoreLib1"), true),
+        ];
+        let mut newer = make_release("2.0.0", "2026-11-22", build, &[], &[build], '2');
+        newer.dependencies = vec![dep("only_in_newer", "^1", None, true)];
+        let index = sample_index(
+            vec![
+                make_project(
+                    "Ab3dE9xQ",
+                    "wayfinder",
+                    "Wayfinder",
+                    "",
+                    &[],
+                    vec![fitting, newer],
+                ),
+                make_project("CoreLib1", "core-lib", "Core Lib", "", &[], Vec::new()),
+                make_project("Render01", "render-api", "Render A", "", &[], Vec::new()),
+                make_project("Render02", "render-api", "Render B", "", &[], Vec::new()),
+                make_project("MapIcon1", "map-icons", "Map Icons", "", &[], Vec::new()),
+            ],
+            Vec::new(),
+        );
+        let p = page(&index, "Ab3dE9xQ", Some(build), &label_build).unwrap();
+        let rows: Vec<_> = p
+            .dependencies
+            .iter()
+            .map(|d| {
+                (
+                    d.mod_id.as_str(),
+                    d.range.as_deref(),
+                    d.required,
+                    &d.provider,
+                )
+            })
+            .collect();
+        let listed = |id: &str, name: &str| V2Provider::Listed {
+            id: id.to_owned(),
+            name: name.to_owned(),
+            icon: Some(format!("pages/{id}/{}.png", hex64('a'))),
+        };
+        assert_eq!(
+            rows,
+            vec![
+                (
+                    "core_lib",
+                    Some("^2.1"),
+                    true,
+                    &listed("CoreLib1", "Core Lib")
+                ),
+                ("render_api", Some("^1"), true, &V2Provider::Several(2)),
+                ("ghost", Some("^1"), true, &V2Provider::Missing),
+                // Pinned to a project that provides a different mod: nothing to link to.
+                ("other_lib", Some("^1"), true, &V2Provider::Missing),
+                ("map_icons", None, false, &listed("MapIcon1", "Map Icons")),
+            ]
         );
     }
 
