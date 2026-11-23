@@ -7,36 +7,20 @@ use sunrise_launcher::browser::sunrise::SourceError;
 impl Launcher {
     pub(in crate::mods) fn nightly_project(&mut self, cx: &mut Context<Self>) -> AnyElement {
         // A mod the registry lists shows the registry's description and screenshots; otherwise
-        // its README. Pictures go in the same gallery and viewer as a registry mod's.
+        // its listing summary.
         let registry_page = self.ui.mods.nightly.open.as_ref().and_then(|open| {
             let index = sunrise::known_index()?;
             let project = index.project(open.source.id())?;
             (!project.description.trim().is_empty())
                 .then(|| (project.description.clone(), project.screenshots.clone()))
         });
-        // A registry entry without screenshots keeps the README's pictures.
         let pictures = match &registry_page {
             Some((_, screenshots)) if !screenshots.is_empty() => screenshots
                 .iter()
                 .cloned()
                 .map(super::super::viewer::Picture::Url)
                 .collect(),
-            _ => self
-                .ui
-                .mods
-                .nightly
-                .open
-                .as_ref()
-                .and_then(|open| open.inspection.as_ref()?.data.readme.as_ref())
-                .map(|readme| {
-                    readme
-                        .images()
-                        .iter()
-                        .cloned()
-                        .map(super::super::viewer::Picture::Readme)
-                        .collect()
-                })
-                .unwrap_or_default(),
+            _ => Vec::new(),
         };
         let gallery = self.gallery(pictures, cx);
         let state = &self.ui.mods.nightly;
@@ -44,7 +28,6 @@ impl Launcher {
         let source = &open.source;
         let inspection = open.inspection.as_ref();
         let details = inspection.map(|i| &i.data);
-        let readme = details.and_then(|d| d.readme.as_ref());
         let commit = details.and_then(|d| d.commit.as_ref());
         let failure = details
             .and_then(|detail| detail.error.clone())
@@ -308,44 +291,22 @@ impl Launcher {
                         .on_click(cx.listener(move |_, _, _, cx| cx.open_url(&repo_url))),
                 ),
             );
-        let saved_readme = readme.is_some()
-            && matches!(
-                details.and_then(|details| details.error.as_ref()),
-                Some(sources::Failure::Offline(_) | sources::Failure::RateLimited { .. })
-            );
-        let readme_label = registry_page.is_none().then(|| {
-            muted(if saved_readme {
-                tr("README from the repository · saved copy")
-            } else {
-                tr("README from the repository")
-            })
-            .into_any_element()
-        });
-        let body = if let Some((description, _)) = &registry_page {
-            prose(self.theme, description)
-        } else if let Some(readme) = readme {
-            // Its pictures are in the gallery above.
-            crate::markdown::render_pinned(readme, &self.theme, |_| div().into_any_element())
-        } else if inspection.is_none() {
-            note(tr("Checking the pinned source…")).into_any_element()
-        } else {
-            card()
-                .p(px(14.))
-                .flex()
-                .flex_col()
-                .gap(px(6.))
-                .items_start()
-                .child(
-                    div()
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .child(tr("README unavailable")),
-                )
-                .child(note(tr("You can still inspect the source on GitHub.")))
-                .children(
-                    (details.is_some_and(|d| d.error.is_none()) && !busy)
-                        .then(|| retry("nightly-readme-retry", cx)),
-                )
-                .into_any_element()
+        let body = match source_page_body(
+            registry_page
+                .as_ref()
+                .map(|(description, _)| description.as_str()),
+            source.summary(),
+        ) {
+            SourcePageBody::Registry(description) => Some(prose(self.theme, description)),
+            SourcePageBody::Summary(summary) => Some(
+                div()
+                    .text_size(px(tokens::BODY))
+                    .line_height(px(22.))
+                    .text_color(c(palette().text))
+                    .child(crate::selectable::selectable(summary.to_owned()))
+                    .into_any_element(),
+            ),
+            SourcePageBody::Empty => None,
         };
         let header = div()
             .flex()
@@ -363,13 +324,7 @@ impl Launcher {
                 })),
             )
             .children(self.strip(cx));
-        self.project_layout(
-            header,
-            title,
-            gallery,
-            readme_label.into_iter().chain([body]),
-            panel,
-        )
+        self.project_layout(header, title, gallery, body, panel)
     }
 
     pub(in crate::mods) fn nightly_log_button(
@@ -554,6 +509,26 @@ impl Launcher {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum SourcePageBody<'a> {
+    Registry(&'a str),
+    Summary(&'a str),
+    Empty,
+}
+
+fn source_page_body<'a>(
+    registry_description: Option<&'a str>,
+    summary: &'a str,
+) -> SourcePageBody<'a> {
+    if let Some(description) = registry_description.filter(|text| !text.trim().is_empty()) {
+        SourcePageBody::Registry(description)
+    } else if !summary.trim().is_empty() {
+        SourcePageBody::Summary(summary)
+    } else {
+        SourcePageBody::Empty
+    }
+}
+
 fn project_made_for_build(
     profile: Option<&str>,
     inspected: Option<&str>,
@@ -650,6 +625,23 @@ pub(in crate::mods) fn source_error(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn source_page_shows_registry_description_or_listing_summary() {
+        assert_eq!(
+            source_page_body(Some("# Registry notes"), "Listing summary"),
+            SourcePageBody::Registry("# Registry notes")
+        );
+        assert_eq!(
+            source_page_body(Some("   "), "Listing summary"),
+            SourcePageBody::Summary("Listing summary")
+        );
+        assert_eq!(
+            source_page_body(None, "Listing summary"),
+            SourcePageBody::Summary("Listing summary")
+        );
+        assert_eq!(source_page_body(None, "  "), SourcePageBody::Empty);
+    }
 
     #[test]
     fn build_badge_describes_the_installed_commit_not_a_newer_inspection() {

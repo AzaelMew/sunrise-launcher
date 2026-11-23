@@ -13,7 +13,6 @@ use std::{
 use sunrise_launcher_smod::{index::Collection, manifest};
 
 mod github;
-mod readme;
 #[cfg(debug_assertions)]
 pub(crate) use github::fixture_link_api;
 pub(crate) use github::{branch_ahead, github_archive, pasted_source};
@@ -21,7 +20,6 @@ pub use github::{
     details, resolve, resolve_batch, resolve_each, Details, Failure, IconMisses, SourceCommit,
     SourceIcon,
 };
-pub use readme::{readme_image, Readme, ReadmeImage};
 
 /// Proven origin of a manual GitHub source install, separate from release assets.
 pub(crate) struct PastedPin {
