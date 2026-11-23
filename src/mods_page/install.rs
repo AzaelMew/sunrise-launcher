@@ -299,11 +299,8 @@ impl Outcome {
     /// The sentence under a card. A failure says why on the line under it, so a card explains
     /// itself without opening the mod's page.
     fn note(self) -> Option<String> {
-        if let Some((label, detail)) = self.failure {
-            return Some(match detail.trim().is_empty() || detail == label {
-                true => label,
-                false => format!("{label}\n{detail}"),
-            });
+        if self.failure.is_some() {
+            return None;
         }
         if !self.added.is_empty() {
             return Some(trf(
@@ -555,6 +552,32 @@ impl Installs {
                 details: false,
             },
         ))
+    }
+
+    /// Why a registry install that just ended failed, for a dialog: the card keeps no error.
+    pub(super) fn install_failure(&self, event: &Worker) -> Option<(instances::Instance, String)> {
+        let run = self.running.as_ref()?;
+        if run.source.is_some() || !matches!(run.requests[0].kind, Kind::Install | Kind::InstallV2)
+        {
+            return None;
+        }
+        let Worker::Done(Err(error)) = event else {
+            return None;
+        };
+        if matches!(error, InstallError::Cancelled) {
+            return None;
+        }
+        let line = match error {
+            InstallError::Compile(_) => tr("Stayed. No mods changed."),
+            error => failure_line(error),
+        };
+        let detail = error.to_string();
+        let text = if detail.trim().is_empty() || detail == line {
+            line.to_owned()
+        } else {
+            format!("{line}\n\n{detail}")
+        };
+        Some((run.profile.clone(), text))
     }
 
     pub(super) fn mutation_failure(&self, event: &Worker) -> Option<String> {
@@ -1866,23 +1889,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_failed_install_says_why_on_the_card() {
-        let error = InstallError::Unproved(
-            "The mod registry index signature could not be verified.".into(),
-        );
-        let failed = Outcome {
-            failure: Some((failure_line(&error).into(), error.to_string())),
-            ..Outcome::default()
+    fn a_failed_install_says_why_in_a_dialog_not_on_the_card() {
+        let root = homes();
+        let installs = with_running(root.path());
+        let error = || {
+            InstallError::Unproved("The mod registry index signature could not be verified.".into())
         };
+        let (profile, why) = installs
+            .install_failure(&Worker::Done(Err(error())))
+            .unwrap();
+        assert_eq!(profile.id, "A");
         assert_eq!(
-            failed.note().unwrap(),
-            "Couldn't check that the mods fit\nThe mod registry index signature could not be verified."
+            why,
+            "Couldn't check that the mods fit\n\nThe mod registry index signature could not be verified."
         );
-        let bare = Outcome {
-            failure: Some(("Install cancelled.".into(), String::new())),
+        assert!(installs
+            .install_failure(&Worker::Done(Err(InstallError::Cancelled)))
+            .is_none());
+        let failed = Outcome {
+            failure: Some((failure_line(&error()).into(), error().to_string())),
             ..Outcome::default()
         };
-        assert_eq!(bare.note().unwrap(), "Install cancelled.");
+        assert_eq!(failed.note(), None);
     }
 
     pub(super) fn request(home: &Path, id: &str, target: &str) -> Request {

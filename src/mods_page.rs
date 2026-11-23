@@ -100,6 +100,7 @@ impl Launcher {
         let mut loaded = Vec::new();
         let mut github_feedback = None;
         let mut refused_here = None;
+        let mut failed_here = None;
         let mut done = false;
         while let Ok(event) = self.mods.rx.try_recv() {
             changed = true;
@@ -121,6 +122,9 @@ impl Launcher {
                     }
                     if let Some(error) = m.installs.mutation_failure(&event) {
                         m.message = Some(Err(error));
+                    }
+                    if let Some(failed) = m.installs.install_failure(&event) {
+                        failed_here = Some(failed);
                     }
                     if m.installs.handle(event) {
                         done = true;
@@ -158,6 +162,13 @@ impl Launcher {
             self.show_github_result(feedback);
         }
         // The profile that asked hears why at once; another one finds it on the mod's page.
+        if let Some((profile, why)) = failed_here {
+            if self.selected_instance().is_some_and(|i| {
+                i.home == profile.home && i.id == profile.id && i.incarnation == profile.incarnation
+            }) {
+                self.open_notice(why, None);
+            }
+        }
         if let Some((profile, refused)) = refused_here {
             if self.selected_instance().is_some_and(|i| {
                 i.home == profile.home && i.id == profile.id && i.incarnation == profile.incarnation
