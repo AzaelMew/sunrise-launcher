@@ -816,23 +816,17 @@ impl Row {
     /// repository folder) or "Local" (a local `.smod` file).
     pub(crate) fn manual_badge(&self) -> Option<ManualBadge> {
         let local = self.local.as_ref()?;
-        if local.github.is_some() {
-            Some(ManualBadge::FromSource)
-        } else {
-            Some(ManualBadge::Local)
+        match &local.github {
+            None => Some(ManualBadge::Local),
+            Some(origin) if origin.is_manual() => Some(ManualBadge::FromSource),
+            Some(_) => None,
         }
     }
 
     /// Whether this mod was added manually (via Add from source or as a local `.smod`) and must
     /// not receive automatic or Update all updates.
     pub(super) fn is_manual(&self) -> bool {
-        let Some(local) = &self.local else {
-            return false;
-        };
-        match &local.github {
-            None => true,
-            Some(origin) => origin.is_manual(),
-        }
+        self.manual_badge().is_some()
     }
 
     pub(super) fn installed_details(&self) -> Page {

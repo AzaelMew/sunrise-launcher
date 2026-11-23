@@ -1,14 +1,20 @@
-//! Installed's link form. Fetching only reads packages; the normal install worker owns mutation.
+//! "Add from source" dialog (repository folder/link or local `.smod` file) and its prominent
+//! unreviewed-code warning. Reading and checking happen in the background; nothing is installed
+//! until the player explicitly confirms the warning.
 use super::*;
+use crate::blocks;
 use crate::frame::{button, input, primary, Page, Reach as _};
+use crate::mods::ManualBadge;
 use crate::mods_page::install::GithubTarget;
 use crate::paint::palette;
 use crate::sheets::{self, Sheet};
 use gpui::rgb;
-use std::{collections::BTreeSet, sync::Arc};
+use std::{collections::BTreeSet, path::PathBuf, sync::Arc};
 use sunrise_launcher::{
     browser::sunrise::{self, sources::Failure, PastedSource, PreparedSource, SourceError},
-    github_mods::{self, FetchError, Origin, Packed, ResolveError, Resolved},
+    github_mods::{
+        self, FetchError, LocalAttestation, LocalPackage, Packed, ResolveError, Resolved,
+    },
     native_mods::Cancellation,
 };
 
@@ -22,7 +28,6 @@ pub(crate) struct GithubInput {
 pub(crate) enum GithubSelection {
     Add(Vec<Packed>),
     Source(Vec<PreparedSource>),
-    Update(Box<Packed>),
 }
 
 pub(crate) struct Feedback {
@@ -30,6 +35,155 @@ pub(crate) struct Feedback {
     pub(crate) link: String,
     pub(crate) result: Result<String, (String, String)>,
     pub(crate) retry: Option<Arc<GithubInput>>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum SourceChoice {
+    #[default]
+    Repository,
+    LocalFile,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WarningAction {
+    Cancel,
+    Confirm,
+}
+
+impl WarningAction {
+    /// Cancel is always the default on the unreviewed-code warning.
+    const DEFAULT: Self = Self::Cancel;
+}
+
+struct WarningProvenance {
+    icon: &'static str,
+    headline: String,
+    detail: String,
+}
+
+enum PendingConfirm {
+    Github(GithubInput),
+    Local {
+        target: GithubTarget,
+        packages: Vec<LocalPackage>,
+        folder: Option<PathBuf>,
+    },
+}
+
+impl PendingConfirm {
+    fn badge(&self) -> ManualBadge {
+        match self {
+            Self::Github(_)
+            | Self::Local {
+                folder: Some(_), ..
+            } => ManualBadge::FromSource,
+            Self::Local { folder: None, .. } => ManualBadge::Local,
+        }
+    }
+
+    fn count(&self) -> usize {
+        match self {
+            Self::Github(input) => match &input.selection {
+                GithubSelection::Add(packages) => packages.len(),
+                GithubSelection::Source(packages) => packages.len(),
+            },
+            Self::Local { packages, .. } => packages.len(),
+        }
+    }
+
+    fn any_native(&self) -> bool {
+        match self {
+            Self::Github(_) => true,
+            Self::Local { packages, .. } => packages.iter().any(|p| p.native),
+        }
+    }
+
+    fn unsigned_local_file(&self) -> bool {
+        matches!(
+            self,
+            Self::Local {
+                folder: None,
+                packages,
+                ..
+            } if packages
+                .iter()
+                .any(|p| matches!(p.attestation, LocalAttestation::Unsigned))
+        )
+    }
+
+    fn provenance(&self) -> WarningProvenance {
+        match self {
+            Self::Local {
+                folder: None,
+                packages,
+                ..
+            } => {
+                let pkg = &packages[0];
+                match &pkg.attestation {
+                    LocalAttestation::Signed { repo } => WarningProvenance {
+                        icon: "github",
+                        headline: trf("Built by github.com/{repo}, not reviewed", &[("repo", repo)]),
+                        detail: trf(
+                            "File: {file} · Build matches that GitHub repository, but Sunrise has not checked the code.",
+                            &[("file", &pkg.file_name)],
+                        ),
+                    },
+                    LocalAttestation::Unsigned => WarningProvenance {
+                        icon: "warning",
+                        headline: tr("Unsigned local file, not reviewed").into(),
+                        detail: trf(
+                            "File: {file} · Sunrise cannot verify who built this file or where it came from.",
+                            &[("file", &pkg.file_name)],
+                        ),
+                    },
+                }
+            }
+            Self::Local {
+                folder: Some(folder),
+                packages,
+                ..
+            } => {
+                let mods = packages
+                    .iter()
+                    .map(|p| p.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let folder_name = folder.display().to_string();
+                WarningProvenance {
+                    icon: "folder",
+                    headline: tr("Local repository folder, not reviewed").into(),
+                    detail: trf(
+                        "Folder: {folder} · Mods: {mods} · Sunrise has not checked this code.",
+                        &[("folder", &folder_name), ("mods", &mods)],
+                    ),
+                }
+            }
+            Self::Github(input) => {
+                let mods = match &input.selection {
+                    GithubSelection::Add(packages) => packages
+                        .iter()
+                        .map(|p| p.name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    GithubSelection::Source(packages) => packages
+                        .iter()
+                        .map(PreparedSource::name)
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                };
+                let sha: String = input.source.commit.chars().take(7).collect();
+                let repo = input.source.name();
+                WarningProvenance {
+                    icon: "github",
+                    headline: trf("From github.com/{repo}, not reviewed", &[("repo", &repo)]),
+                    detail: trf(
+                        "Mods: {mods} · Commit {sha} · Sunrise has not checked this code.",
+                        &[("mods", &mods), ("sha", &sha)],
+                    ),
+                }
+            }
+        }
+    }
 }
 
 struct FormError {
@@ -56,9 +210,15 @@ impl FormError {
     }
 }
 
+enum LocalRead {
+    File(Box<LocalPackage>),
+    Folder(PathBuf, Vec<LocalPackage>),
+}
+
 enum PickInput {
     Assets(Resolved, Vec<Packed>),
     Source(Resolved, Vec<PastedSource>),
+    LocalFolder(PathBuf, Vec<LocalPackage>),
 }
 
 impl PickInput {
@@ -78,12 +238,24 @@ impl PickInput {
                     )
                 })
                 .collect(),
+            Self::LocalFolder(_, mods) => mods
+                .iter()
+                .map(|p| (p.id.as_str(), p.name.as_str(), p.version.as_str()))
+                .collect(),
         }
     }
 
-    fn resolved(&self) -> &Resolved {
+    fn subtitle(&self) -> String {
         match self {
-            Self::Assets(resolved, _) | Self::Source(resolved, _) => resolved,
+            Self::Assets(resolved, _) | Self::Source(resolved, _) => resolved.label(),
+            Self::LocalFolder(path, _) => path.display().to_string(),
+        }
+    }
+
+    fn resolved(&self) -> Option<&Resolved> {
+        match self {
+            Self::Assets(resolved, _) | Self::Source(resolved, _) => Some(resolved),
+            Self::LocalFolder(_, _) => None,
         }
     }
 }
@@ -111,23 +283,17 @@ impl Pick {
         }
     }
 
-    fn checked(self, target: GithubTarget, link: String, update: bool) -> GithubInput {
+    fn checked(self, target: GithubTarget, link: String) -> GithubInput {
         let Self {
             input, selected, ..
         } = self;
         let (source, selection) = match input {
             PickInput::Assets(source, mut mods) => {
                 mods.retain(|package| selected.contains(&package.id));
-                let selection = if update {
-                    GithubSelection::Update(Box::new(
-                        mods.pop().expect("the update names one package"),
-                    ))
-                } else {
-                    GithubSelection::Add(mods)
-                };
-                (source, selection)
+                (source, GithubSelection::Add(mods))
             }
             PickInput::Source(..) => unreachable!("sources need a selected-set fit proof"),
+            PickInput::LocalFolder(..) => unreachable!("local folders install locally"),
         };
         GithubInput {
             target,
@@ -145,15 +311,30 @@ impl Pick {
     }
 }
 
-#[derive(Default)]
 enum Stage {
-    #[default]
-    Link,
-    Resolving(Receiver<Result<Resolution, FormError>>, Cancellation),
+    Choose(SourceChoice),
+    Repository,
+    Resolving(Receiver<Result<PickInput, FormError>>, Cancellation),
+    ReadingLocal {
+        rx: Receiver<Result<LocalRead, FormError>>,
+        from_choose: bool,
+    },
     Checking(Box<SourceCheck>),
     Pick(Box<Pick>),
-    Failed(FormError, bool),
+    Warn(Box<PendingConfirm>),
+    InstallingLocal(Receiver<Result<Vec<String>, String>>),
+    Failed {
+        error: FormError,
+        expanded: bool,
+        from_choose: bool,
+    },
     InstallFailed(Box<CheckedFailure>, bool),
+}
+
+impl Default for Stage {
+    fn default() -> Self {
+        Self::Choose(SourceChoice::Repository)
+    }
 }
 
 struct SourceCheck {
@@ -167,18 +348,15 @@ struct CheckedFailure {
     retry: Arc<GithubInput>,
 }
 
-enum Resolution {
-    Ready(Box<PickInput>),
-    Current,
-}
-
 #[derive(Default)]
 pub(super) struct Github {
     text: line_edit::LineEdit,
     stage: Stage,
     focus: Option<FocusHandle>,
+    cancel_focus: Option<FocusHandle>,
+    warn_needs_focus: bool,
+    repo_needs_focus: bool,
     target: Option<GithubTarget>,
-    update: Option<Origin>,
     pending_failure: Option<CheckedFailure>,
 }
 
@@ -194,21 +372,32 @@ impl Github {
             Stage::Checking(check) => check.cancellation.stop(),
             _ => (),
         }
-        self.stage = Stage::Link;
+        self.stage = Stage::Choose(SourceChoice::Repository);
         self.target = None;
-        self.update = None;
+        self.warn_needs_focus = false;
+        self.repo_needs_focus = false;
         self.text.set(String::new());
     }
 
     pub(super) fn busy(&self) -> bool {
-        matches!(self.stage, Stage::Resolving(..) | Stage::Checking(_))
+        matches!(
+            self.stage,
+            Stage::Resolving(..)
+                | Stage::ReadingLocal { .. }
+                | Stage::Checking(_)
+                | Stage::InstallingLocal(_)
+        )
     }
 
     fn can_resolve(&self) -> bool {
         !self.text.text().trim().is_empty()
             && match &self.stage {
-                Stage::Link => true,
-                Stage::Failed(error, _) => error.retry,
+                Stage::Repository => true,
+                Stage::Failed {
+                    error,
+                    from_choose: false,
+                    ..
+                } => error.retry,
                 _ => false,
             }
     }
@@ -216,9 +405,8 @@ impl Github {
 
 fn resolve_link(
     link: &github_mods::Link,
-    update: Option<&Origin>,
     cancellation: &Cancellation,
-) -> Result<Resolution, FormError> {
+) -> Result<PickInput, FormError> {
     let found = github_mods::resolve(link, &github_mods::api).map_err(|error| match error {
         error @ ResolveError::NoRelease(_) => {
             FormError::new(tr("This release wasn’t found."), error.into())
@@ -228,17 +416,12 @@ fn resolve_link(
         }
         ResolveError::Transfer(why) => FormError::transport(why),
     })?;
-    if update.is_some_and(|old| !github_mods::is_update(old, &found)) {
-        return Ok(Resolution::Current);
-    }
-    if update.is_none() && found.assets.is_empty() {
+    if found.assets.is_empty() {
         let sources = sunrise::read_pasted_sources(link, &found, cancellation)
             .map_err(|error| pasted_source_error(&found.repo, error))?;
-        return Ok(Resolution::Ready(Box::new(PickInput::Source(
-            found, sources,
-        ))));
+        return Ok(PickInput::Source(found, sources));
     }
-    let mut mods = github_mods::fetch_checked(&found).map_err(|error| match error {
+    let mods = github_mods::fetch_checked(&found).map_err(|error| match error {
         FetchError::NoMods { release, detail } => FormError::new(
             if release {
                 tr("No Sunrise mods were found in this release.")
@@ -252,22 +435,10 @@ fn resolve_link(
         }
         FetchError::Transfer(why) => FormError::transport(why),
     })?;
-    if let Some(old) = update {
-        mods.retain(|package| package.id == old.id);
-        if mods.is_empty() || found.assets.is_empty() {
-            return Err(FormError::new(
-                tr("The new release does not contain this mod."),
-                trf(
-                    "No release package was found for {mod}. The installed mod is unchanged.",
-                    &[("mod", &old.id)],
-                ),
-            ));
-        }
-    }
-    Ok(Resolution::Ready(Box::new(PickInput::Assets(found, mods))))
+    Ok(PickInput::Assets(found, mods))
 }
 
-/// A source the GitHub form couldn't take, said as every refusal is (`mods::refused`): what it
+/// A source the form couldn't take, said as every refusal is (`mods::refused`): what it
 /// means for the mod people know as `name`, with the checker's words behind Show details.
 fn pasted_source_error(name: &str, error: SourceError) -> FormError {
     eprintln!("GitHub source preflight: {error}");
@@ -281,47 +452,59 @@ fn pasted_source_error(name: &str, error: SourceError) -> FormError {
 }
 
 impl Launcher {
-    pub(super) fn github_add_button(&self, cx: &mut Context<Self>) -> Stateful<Div> {
-        button("github-add", tr("Add from GitHub")).on_click(cx.listener(
-            |this, _: &ClickEvent, window, cx| {
-                this.open_github_add(None);
-                let focus = this
-                    .github
-                    .focus
-                    .get_or_insert_with(|| cx.focus_handle().tab_index(0).tab_stop(true));
-                window.focus(focus, cx);
+    pub(crate) fn add_from_source_button(&self, cx: &mut Context<Self>) -> Stateful<Div> {
+        div()
+            .id("add-from-source")
+            .tab_index(0)
+            .flex_none()
+            .flex()
+            .items_center()
+            .justify_center()
+            .gap(px(6.))
+            .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
+            .border_1()
+            .border_color(rgb(palette().line))
+            .px(px(12.))
+            .h(px(tokens::CONTROL))
+            .text_color(rgb(palette().text))
+            .text_size(px(tokens::LABEL))
+            .font_weight(FontWeight::SEMIBOLD)
+            .cursor_pointer()
+            .hover(|s| s.bg(rgb(palette().hover)))
+            .focus_visible(|s| s.border_color(rgb(palette().focus)))
+            .seen()
+            .child(blocks::icon("plus", 14., rgb(palette().text).into()))
+            .child(tr("Add from source"))
+            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                this.open_add_from_source();
                 cx.notify();
-            },
-        ))
+            }))
     }
 
-    pub(super) fn open_github_add(&mut self, update: Option<Origin>) {
+    pub(crate) fn open_add_from_source(&mut self) {
         self.github.close();
         self.open_sheet(Sheet::GithubAdd);
         match self.github_target() {
             Ok(target) => self.github.target = Some(target),
             Err(error) => {
-                self.github.stage =
-                    Stage::Failed(FormError::new(tr("Can't start the install"), error), false);
+                self.github.stage = Stage::Failed {
+                    error: FormError::new(tr("Can't start the install"), error),
+                    expanded: false,
+                    from_choose: true,
+                };
                 return;
             }
         }
-        if update.is_none()
-            && self.github.pending_failure.as_ref().is_some_and(|f| {
-                self.github
-                    .target
-                    .as_ref()
-                    .is_some_and(|current| f.retry.target.same_destination(current))
-            })
-        {
+        if self.github.pending_failure.as_ref().is_some_and(|f| {
+            self.github
+                .target
+                .as_ref()
+                .is_some_and(|current| f.retry.target.same_destination(current))
+        }) {
             if let Some(failure) = self.github.pending_failure.take() {
                 self.github.stage = Stage::InstallFailed(Box::new(failure), false);
                 self.mods.message = None;
             }
-        } else if let Some(update) = update {
-            self.github.text.set(update.source_url());
-            self.github.update = Some(update);
-            self.github_resolve();
         }
     }
 
@@ -368,7 +551,11 @@ impl Launcher {
                         }
                         _ => {
                             self.github.text.set(link);
-                            Stage::Failed(FormError::new(&line, detail), false)
+                            Stage::Failed {
+                                error: FormError::new(&line, detail),
+                                expanded: false,
+                                from_choose: false,
+                            }
                         }
                     };
                     self.mods.message = None;
@@ -384,20 +571,153 @@ impl Launcher {
         }
     }
 
+    fn enter_warning(&mut self, pending: PendingConfirm) {
+        self.github.stage = Stage::Warn(Box::new(pending));
+        self.github.warn_needs_focus = true;
+    }
+
+    fn handle_warning_action(&mut self, action: WarningAction) {
+        match action {
+            WarningAction::Cancel => self.close_sheet(),
+            WarningAction::Confirm => self.confirm_unreviewed(),
+        }
+    }
+
+    fn confirm_unreviewed(&mut self) {
+        let Stage::Warn(pending) = std::mem::take(&mut self.github.stage) else {
+            return;
+        };
+        match *pending {
+            PendingConfirm::Github(input) => self.submit_checked_github(input),
+            PendingConfirm::Local {
+                target,
+                packages,
+                folder,
+            } => {
+                let current = match self.github_target() {
+                    Ok(current) => current,
+                    Err(error) => {
+                        self.github.stage = Stage::Failed {
+                            error: FormError::new(tr("Can't start the install"), error),
+                            expanded: false,
+                            from_choose: folder.is_none(),
+                        };
+                        return;
+                    }
+                };
+                if !target.same_destination(&current) {
+                    self.github.stage = Stage::Failed {
+                        error: FormError::new(
+                            tr("The profile or game build changed. Check the source again; nothing was changed."),
+                            String::new(),
+                        ),
+                        expanded: false,
+                        from_choose: folder.is_none(),
+                    };
+                    return;
+                }
+                let home = target.home().to_path_buf();
+                let (tx, rx) = crate::wake::channel();
+                self.github.stage = Stage::InstallingLocal(rx);
+                std::thread::spawn(move || {
+                    let _ = tx.send(github_mods::install_local_packages(&home, &packages));
+                });
+            }
+        }
+    }
+
+    fn pick_local_smod(&mut self, cx: &mut Context<Self>) {
+        if self.github.target.is_none() || self.github.busy() {
+            return;
+        }
+        let pick = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some(tr("Choose a .smod file").into()),
+        });
+        cx.spawn(async move |this, cx| {
+            if let Ok(Ok(Some(mut paths))) = pick.await {
+                if let Some(path) = paths.pop() {
+                    let _ = this.update(cx, |this, cx| {
+                        this.start_read_local_smod(path);
+                        cx.notify();
+                    });
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn start_read_local_smod(&mut self, path: PathBuf) {
+        if self.ui.sheet != Some(Sheet::GithubAdd) || self.github.target.is_none() {
+            return;
+        }
+        let (tx, rx) = crate::wake::channel();
+        self.github.stage = Stage::ReadingLocal {
+            rx,
+            from_choose: true,
+        };
+        std::thread::spawn(move || {
+            let result = github_mods::read_local_smod(&path)
+                .map(|pkg| LocalRead::File(Box::new(pkg)))
+                .map_err(|why| FormError::new(tr("Couldn't open that .smod file."), why));
+            let _ = tx.send(result);
+        });
+    }
+
+    fn pick_local_folder(&mut self, cx: &mut Context<Self>) {
+        if self.github.target.is_none() || self.github.busy() {
+            return;
+        }
+        let pick = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some(tr("Choose a mod folder").into()),
+        });
+        cx.spawn(async move |this, cx| {
+            if let Ok(Ok(Some(mut paths))) = pick.await {
+                if let Some(path) = paths.pop() {
+                    let _ = this.update(cx, |this, cx| {
+                        this.start_read_local_folder(path);
+                        cx.notify();
+                    });
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn start_read_local_folder(&mut self, path: PathBuf) {
+        if self.ui.sheet != Some(Sheet::GithubAdd) || self.github.target.is_none() {
+            return;
+        }
+        let (tx, rx) = crate::wake::channel();
+        self.github.stage = Stage::ReadingLocal {
+            rx,
+            from_choose: false,
+        };
+        std::thread::spawn(move || {
+            let result = github_mods::read_local_folder(&path)
+                .map(|packages| LocalRead::Folder(path, packages))
+                .map_err(|why| FormError::new(tr("Couldn't read that mod folder."), why));
+            let _ = tx.send(result);
+        });
+    }
+
     fn github_resolve(&mut self) {
         if !self.github.can_resolve() || self.github.target.is_none() {
             return;
         }
-        let update = self.github.update.clone();
-        let link = update
-            .as_ref()
-            .map(|old| Ok(old.follows()))
-            .unwrap_or_else(|| github_mods::parse(self.github.text.text()));
-        let link = match link {
+        let link = match github_mods::parse(self.github.text.text()) {
             Ok(link) => link,
             Err(why) => {
-                self.github.stage =
-                    Stage::Failed(FormError::new(tr("Enter a GitHub link."), why), false);
+                self.github.stage = Stage::Failed {
+                    error: FormError::new(tr("Enter a GitHub link."), why),
+                    expanded: false,
+                    from_choose: false,
+                };
                 return;
             }
         };
@@ -405,7 +725,7 @@ impl Launcher {
         let cancellation = Cancellation::default();
         self.github.stage = Stage::Resolving(rx, cancellation.clone());
         std::thread::spawn(move || {
-            let _ = tx.send(resolve_link(&link, update.as_ref(), &cancellation));
+            let _ = tx.send(resolve_link(&link, &cancellation));
         });
     }
 
@@ -415,6 +735,84 @@ impl Launcher {
                 self.github.close();
             }
             return false;
+        }
+        if let Stage::InstallingLocal(rx) = &self.github.stage {
+            let result = match rx.try_recv() {
+                Ok(result) => result,
+                Err(std::sync::mpsc::TryRecvError::Empty) => return false,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    Err(tr("Install stopped unexpectedly.").into())
+                }
+            };
+            match result {
+                Ok(names) => {
+                    self.close_sheet();
+                    self.mods.reload_installed();
+                    self.mods.reset_lists();
+                    self.mods_refresh();
+                    let message = match names.as_slice() {
+                        [one] => trf("Installed {mod}.", &[("mod", one)]),
+                        _ => trf(
+                            "Installed {count} mods.",
+                            &[("count", &names.len().to_string())],
+                        ),
+                    };
+                    self.mods.message = Some(Ok(message));
+                }
+                Err(error) => {
+                    self.github.stage = Stage::Failed {
+                        error: FormError::new(tr("Couldn't install the mod."), error),
+                        expanded: false,
+                        from_choose: true,
+                    };
+                }
+            }
+            return true;
+        }
+        if let Stage::ReadingLocal { rx, from_choose } = &self.github.stage {
+            let from_choose = *from_choose;
+            let result = match rx.try_recv() {
+                Ok(result) => result,
+                Err(std::sync::mpsc::TryRecvError::Empty) => return false,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => Err(FormError::new(
+                    tr("Couldn't read the selected source."),
+                    String::new(),
+                )),
+            };
+            match result {
+                Ok(LocalRead::File(pkg)) => {
+                    if let Some(target) = self.github.target.clone() {
+                        self.enter_warning(PendingConfirm::Local {
+                            target,
+                            packages: vec![*pkg],
+                            folder: None,
+                        });
+                    }
+                }
+                Ok(LocalRead::Folder(path, packages)) => {
+                    if packages.len() == 1 {
+                        if let Some(target) = self.github.target.clone() {
+                            self.enter_warning(PendingConfirm::Local {
+                                target,
+                                packages,
+                                folder: Some(path),
+                            });
+                        }
+                    } else {
+                        self.github.stage = Stage::Pick(Box::new(Pick::new(
+                            PickInput::LocalFolder(path, packages),
+                        )));
+                    }
+                }
+                Err(error) => {
+                    self.github.stage = Stage::Failed {
+                        error,
+                        expanded: false,
+                        from_choose,
+                    };
+                }
+            }
+            return true;
         }
         if let Stage::Checking(check) = &self.github.stage {
             let result = match check.rx.try_recv() {
@@ -428,14 +826,17 @@ impl Launcher {
             if let Stage::Checking(mut check) = std::mem::take(&mut self.github.stage) {
                 match result {
                     Ok(sources) => {
-                        if let Some(target) = self.github.target.take() {
+                        if let (Some(target), Some(resolved)) = (
+                            self.github.target.clone(),
+                            check.pick.input.resolved().cloned(),
+                        ) {
                             let input = GithubInput {
                                 target,
                                 link: self.github.text.text().to_owned(),
-                                source: check.pick.input.resolved().clone(),
+                                source: resolved,
                                 selection: GithubSelection::Source(sources),
                             };
-                            self.submit_checked_github(input);
+                            self.enter_warning(PendingConfirm::Github(input));
                         }
                     }
                     Err(error) => {
@@ -450,25 +851,28 @@ impl Launcher {
             return false;
         };
         match rx.try_recv() {
-            Ok(Ok(Resolution::Ready(input))) => {
-                let pick = Pick::new(*input);
+            Ok(Ok(input)) => {
+                let pick = Pick::new(input);
                 if pick.selected.len() == 1 {
                     self.github_submit(pick);
                 } else {
                     self.github.stage = Stage::Pick(Box::new(pick));
                 }
             }
-            Ok(Ok(Resolution::Current)) => {
-                self.close_sheet();
-                self.mods.message = Some(Ok(tr("This GitHub mod is up to date.").into()));
+            Ok(Err(error)) => {
+                self.github.stage = Stage::Failed {
+                    error,
+                    expanded: false,
+                    from_choose: false,
+                };
             }
-            Ok(Err(error)) => self.github.stage = Stage::Failed(error, false),
             Err(std::sync::mpsc::TryRecvError::Empty) => return false,
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                self.github.stage = Stage::Failed(
-                    FormError::transport(tr("GitHub lookup stopped.").into()),
-                    false,
-                )
+                self.github.stage = Stage::Failed {
+                    error: FormError::transport(tr("GitHub lookup stopped.").into()),
+                    expanded: false,
+                    from_choose: false,
+                };
             }
         }
         true
@@ -485,52 +889,72 @@ impl Launcher {
     }
 
     fn github_submit(&mut self, mut pick: Pick) {
-        if let PickInput::Source(_, choices) = &pick.input {
-            let Some(target) = self.github.target.as_ref() else {
-                return;
-            };
-            let target = match target.source() {
-                Ok(target) => target,
-                Err(error) => {
-                    pick.error = Some(FormError::new(tr("Not available for your version"), error));
-                    self.github.stage = Stage::Pick(Box::new(pick));
+        match &pick.input {
+            PickInput::Source(_, choices) => {
+                let Some(target) = self.github.target.as_ref() else {
                     return;
+                };
+                let target = match target.source() {
+                    Ok(target) => target,
+                    Err(error) => {
+                        pick.error =
+                            Some(FormError::new(tr("Not available for your version"), error));
+                        self.github.stage = Stage::Pick(Box::new(pick));
+                        return;
+                    }
+                };
+                let selected: Vec<_> = choices
+                    .iter()
+                    .filter(|package| pick.selected.contains(&package.origin().id))
+                    .cloned()
+                    .collect();
+                let name = match selected.as_slice() {
+                    [one] => one.name().to_owned(),
+                    _ => tr("One of these mods").to_owned(),
+                };
+                let cancellation = Cancellation::default();
+                let (tx, rx) = crate::wake::channel();
+                self.github.stage = Stage::Checking(Box::new(SourceCheck {
+                    pick: Box::new(pick),
+                    rx,
+                    cancellation: cancellation.clone(),
+                }));
+                std::thread::spawn(move || {
+                    let result = sunrise::prepare_pasted_sources(
+                        target.instance(),
+                        target.identity(),
+                        target.base(),
+                        selected,
+                        &cancellation,
+                    )
+                    .map_err(|error| pasted_source_error(&name, error));
+                    let _ = tx.send(result);
+                });
+            }
+            PickInput::Assets(..) => {
+                if let Some(target) = self.github.target.clone() {
+                    let input = pick.checked(target, self.github.text.text().to_owned());
+                    self.enter_warning(PendingConfirm::Github(input));
                 }
-            };
-            let selected: Vec<_> = choices
-                .iter()
-                .filter(|package| pick.selected.contains(&package.origin().id))
-                .cloned()
-                .collect();
-            let name = match selected.as_slice() {
-                [one] => one.name().to_owned(),
-                _ => tr("One of these mods").to_owned(),
-            };
-            let cancellation = Cancellation::default();
-            let (tx, rx) = crate::wake::channel();
-            self.github.stage = Stage::Checking(Box::new(SourceCheck {
-                pick: Box::new(pick),
-                rx,
-                cancellation: cancellation.clone(),
-            }));
-            std::thread::spawn(move || {
-                let result = sunrise::prepare_pasted_sources(
-                    target.instance(),
-                    target.identity(),
-                    target.base(),
-                    selected,
-                    &cancellation,
-                )
-                .map_err(|error| pasted_source_error(&name, error));
-                let _ = tx.send(result);
-            });
-        } else if let Some(target) = self.github.target.take() {
-            let input = pick.checked(
-                target,
-                self.github.text.text().to_owned(),
-                self.github.update.is_some(),
-            );
-            self.submit_checked_github(input);
+            }
+            PickInput::LocalFolder(..) => {
+                if let Some(target) = self.github.target.clone() {
+                    let Pick {
+                        input: PickInput::LocalFolder(path, mut packages),
+                        selected,
+                        ..
+                    } = pick
+                    else {
+                        unreachable!()
+                    };
+                    packages.retain(|p| selected.contains(&p.id));
+                    self.enter_warning(PendingConfirm::Local {
+                        target,
+                        packages,
+                        folder: Some(path),
+                    });
+                }
+            }
         }
     }
 
@@ -554,7 +978,7 @@ impl Launcher {
 
     pub(crate) fn github_add_sheet(
         &mut self,
-        window: &Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let focus = self
@@ -562,19 +986,284 @@ impl Launcher {
             .focus
             .get_or_insert_with(|| cx.focus_handle().tab_index(0).tab_stop(true))
             .clone();
+        if self.github.repo_needs_focus {
+            self.github.repo_needs_focus = false;
+            window.focus(&focus, cx);
+        }
+        if matches!(self.github.stage, Stage::Warn(_)) {
+            return self.unreviewed_warning_sheet(window, cx);
+        }
         let muted = |text: &str| {
             div()
                 .text_size(px(tokens::LABEL))
                 .text_color(rgb(palette().muted))
                 .child(text.to_owned())
         };
+        let narrow = f32::from(window.viewport_size().width) < 920.;
+        let profile_name = self
+            .github
+            .target
+            .as_ref()
+            .map(|t| t.profile_name().to_owned())
+            .or_else(|| self.selected_instance().map(|i| i.name.clone()))
+            .unwrap_or_else(|| tr("this profile").into());
+
+        // Step 1: choose Repository (local folder or link) or Local .smod file.
+        if let Stage::Choose(choice) = self.github.stage {
+            let option_card = |id: &'static str,
+                               kind: SourceChoice,
+                               icon: &'static str,
+                               heading: &'static str,
+                               desc: &'static str,
+                               cx: &mut Context<Self>| {
+                let selected = choice == kind;
+                let accent = Hsla::from(rgb(palette().accent_ink));
+                let rest_border = Hsla::from(rgb(palette().line));
+                let hover_border = Hsla::from(rgb(palette().muted));
+                div()
+                    .id(id)
+                    .reach()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .gap(px(10.))
+                    .p(px(16.))
+                    .rounded(crate::tokens::r(tokens::R_CARD))
+                    .border_1()
+                    .border_color(if selected {
+                        accent.opacity(0.85)
+                    } else {
+                        rest_border
+                    })
+                    .bg(if selected {
+                        accent.opacity(0.14)
+                    } else {
+                        Hsla::from(rgb(palette().card_color)).opacity(0.6)
+                    })
+                    .cursor_pointer()
+                    .hover(move |s| s.border_color(if selected { accent } else { hover_border }))
+                    .child(
+                        div()
+                            .size(px(36.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded(crate::tokens::r(tokens::R_CONTROL))
+                            .border_1()
+                            .border_color(rgb(palette().line))
+                            .bg(rgb(palette().field))
+                            .child(blocks::icon(icon, 18., Hsla::from(rgb(palette().text)))),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(4.))
+                            .child(
+                                div()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(rgb(palette().text))
+                                    .child(tr(heading)),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(tokens::SMALL))
+                                    .text_color(rgb(palette().muted))
+                                    .child(tr(desc)),
+                            ),
+                    )
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        this.github.stage = Stage::Choose(kind);
+                        cx.notify();
+                    }))
+            };
+            let choices = div()
+                .flex()
+                .when(narrow, |d| d.flex_col())
+                .gap(px(12.))
+                .child(option_card(
+                    "add-source-opt-repo",
+                    SourceChoice::Repository,
+                    "folder",
+                    "Repository (local folder or link)",
+                    "Build a mod from a GitHub link or a folder on this computer. Marked From source.",
+                    cx,
+                ))
+                .child(option_card(
+                    "add-source-opt-local",
+                    SourceChoice::LocalFile,
+                    "package",
+                    "Local .smod file",
+                    "Install a .smod package file already saved on this computer. Marked Local.",
+                    cx,
+                ));
+            let warn_color = Hsla::from(rgb(palette().warning));
+            let notice = div()
+                .flex()
+                .items_center()
+                .gap(px(8.))
+                .px(px(12.))
+                .py(px(10.))
+                .rounded(crate::tokens::r(tokens::R_CONTROL))
+                .border_1()
+                .border_color(warn_color.opacity(0.35))
+                .bg(warn_color.opacity(0.08))
+                .child(blocks::icon("warning", 15., warn_color))
+                .child(
+                    div()
+                        .text_size(px(tokens::SMALL))
+                        .text_color(rgb(palette().muted))
+                        .child(tr(
+                            "Neither option is reviewed by Sunrise, and neither updates automatically.",
+                        )),
+                );
+            let body = div()
+                .flex()
+                .flex_col()
+                .child(sheets::title(tr("Add from source").into()))
+                .child(muted(&trf(
+                    "Choose where to install an unreviewed mod for {profile}.",
+                    &[("profile", &profile_name)],
+                )))
+                .child(choices)
+                .child(notice)
+                .child(
+                    div()
+                        .flex()
+                        .justify_end()
+                        .gap(px(8.))
+                        .child(
+                            button("add-source-cancel", tr("Cancel")).on_click(cx.listener(
+                                |this, _: &ClickEvent, _, cx| {
+                                    this.close_sheet();
+                                    cx.notify();
+                                },
+                            )),
+                        )
+                        .child(primary("add-source-continue", tr("Continue")).on_click(
+                            cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                match choice {
+                                    SourceChoice::Repository => {
+                                        this.github.stage = Stage::Repository;
+                                        this.github.repo_needs_focus = true;
+                                    }
+                                    SourceChoice::LocalFile => this.pick_local_smod(cx),
+                                }
+                                cx.notify();
+                            }),
+                        )),
+                );
+            return sheets::frame("github-add-sheet", 560., body, cx);
+        }
+
+        // Reading or installing local packages.
+        if matches!(
+            self.github.stage,
+            Stage::ReadingLocal { .. } | Stage::InstallingLocal(_)
+        ) {
+            let label = if matches!(self.github.stage, Stage::InstallingLocal(_)) {
+                tr("Installing mod…")
+            } else {
+                tr("Reading mod files…")
+            };
+            let body = div()
+                .flex()
+                .flex_col()
+                .child(sheets::title(tr("Add from source").into()))
+                .child(muted(label))
+                .child(widgets::progress_bar(None, &self.theme).flex_none())
+                .child(div().flex().justify_end().child(
+                    button("github-add-cancel", tr("Cancel")).on_click(cx.listener(
+                        |this, _: &ClickEvent, _, cx| {
+                            this.close_sheet();
+                            cx.notify();
+                        },
+                    )),
+                ));
+            return sheets::frame("github-add-sheet", 500., body, cx);
+        }
+
+        // Failure directly from Step 1 (e.g. bad local .smod or profile target error).
+        if let Stage::Failed {
+            error,
+            expanded,
+            from_choose: true,
+        } = &self.github.stage
+        {
+            let can_back = self.github.target.is_some();
+            let expanded = *expanded;
+            let line = error.line.clone();
+            let detail = error.detail.clone();
+            let mut body = div()
+                .flex()
+                .flex_col()
+                .child(sheets::title(tr("Add from source").into()))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .gap(px(8.))
+                        .child(
+                            div()
+                                .text_size(px(tokens::LABEL))
+                                .text_color(rgb(palette().danger))
+                                .child(line),
+                        )
+                        .children((!detail.is_empty()).then(|| {
+                            button(
+                                "github-add-details",
+                                crate::mods::refused::details_label(expanded),
+                            )
+                            .on_click(cx.listener(
+                                |this, _: &ClickEvent, _, cx| {
+                                    if let Stage::Failed { expanded, .. } = &mut this.github.stage {
+                                        *expanded ^= true;
+                                    }
+                                    cx.notify();
+                                },
+                            ))
+                        })),
+                );
+            if expanded && !detail.is_empty() {
+                body = body.child(crate::mods::refused::details_box(
+                    "github-add-error-detail",
+                    detail,
+                ));
+            }
+            let body = body.child(
+                div()
+                    .flex()
+                    .justify_end()
+                    .gap(px(8.))
+                    .children(can_back.then(|| {
+                        button("add-source-back", tr("Back")).on_click(cx.listener(
+                            |this, _: &ClickEvent, _, cx| {
+                                this.github.stage = Stage::Choose(SourceChoice::LocalFile);
+                                cx.notify();
+                            },
+                        ))
+                    }))
+                    .child(
+                        primary("github-add-cancel", tr("Cancel")).on_click(cx.listener(
+                            |this, _: &ClickEvent, _, cx| {
+                                this.close_sheet();
+                                cx.notify();
+                            },
+                        )),
+                    ),
+            );
+            return sheets::frame("github-add-sheet", 500., body, cx);
+        }
+
         let body = div().flex().flex_col();
         let picker = match &self.github.stage {
             Stage::Pick(pick) => Some((pick.as_ref(), false)),
             Stage::Checking(check) => Some((check.pick.as_ref(), true)),
             _ => None,
         };
-        let (body, action) = if let Some((pick, checking)) = picker {
+        let (body, back_action, action) = if let Some((pick, checking)) = picker {
             let rows = div()
                 .id("github-add-list")
                 .max_h(px(184.))
@@ -628,25 +1317,25 @@ impl Launcher {
                             }))
                     },
                 ));
-            let button = primary(
+            let next = primary(
                 "github-add-install",
                 if checking {
                     tr("Checking fit…")
                 } else {
-                    tr("Install")
+                    tr("Continue")
                 },
             );
-            let button = if checking || pick.error.is_some() || pick.selected.is_empty() {
-                widgets::disabled(button)
+            let next = if checking || pick.error.is_some() || pick.selected.is_empty() {
+                widgets::disabled(next)
             } else {
-                button.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                next.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                     this.github_pick();
                     cx.notify();
                 }))
             };
             (
                 body.child(sheets::title(tr("Choose mods to install").into()))
-                    .child(muted(&pick.input.resolved().label()).truncate())
+                    .child(muted(&pick.input.subtitle()).truncate())
                     .child(muted(tr(github_mods::WARNING)))
                     .child(rows)
                     .children(pick.error.as_ref().map(|error| {
@@ -683,7 +1372,8 @@ impl Launcher {
                                 )
                             }))
                     })),
-                button,
+                None,
+                next,
             )
         } else {
             let resolving = self.github.busy();
@@ -699,9 +1389,8 @@ impl Launcher {
                     GithubSelection::Source(packages) => {
                         packages.iter().map(PreparedSource::name).collect()
                     }
-                    GithubSelection::Update(_) => unreachable!("only Add is retryable"),
                 };
-                body.child(sheets::title(tr("Add from GitHub").into()))
+                body.child(sheets::title(tr("Add from source").into()))
                     .child(
                         muted(&format!(
                             "{} @ {:.7}",
@@ -746,8 +1435,7 @@ impl Launcher {
                                 line_edit::Key::Edited
                                 | line_edit::Key::Paste
                                 | line_edit::Key::Cut(_) => {
-                                    this.github.stage = Stage::Link;
-                                    this.github.update = None;
+                                    this.github.stage = Stage::Repository;
                                 }
                                 _ => {}
                             }
@@ -756,17 +1444,35 @@ impl Launcher {
                         }));
                     line_edit::mouse(field, cx, |this| &mut this.github.text)
                 };
-                body.child(sheets::title(tr("Add from GitHub").into()))
+                let choose_folder = {
+                    let btn = button("add-source-pick-folder", tr("Choose local folder…"));
+                    if resolving {
+                        widgets::disabled(btn)
+                    } else {
+                        btn.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                            this.pick_local_folder(cx);
+                            cx.notify();
+                        }))
+                    }
+                };
+                body.child(sheets::title(tr("Add from source").into()))
                     .child(
                         div()
                             .flex()
                             .flex_col()
-                            .gap(px(8.))
+                            .gap(px(10.))
                             .child(muted(tr(
-                                "Paste a link to a repository, release, tag, branch or commit.",
+                                "Paste a GitHub link to a repository, release, tag, branch or commit, or choose a mod folder on this computer.",
                             )))
                             .child(field)
-                            .child(muted(tr(github_mods::WARNING))),
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(10.))
+                                    .child(choose_folder)
+                                    .child(muted(tr("Marked From source · no auto-updates"))),
+                            ),
                     )
             };
             if resolving {
@@ -780,7 +1486,9 @@ impl Launcher {
                 );
             }
             let error = match &self.github.stage {
-                Stage::Failed(error, expanded) => Some((error, expanded)),
+                Stage::Failed {
+                    error, expanded, ..
+                } => Some((error, expanded)),
                 Stage::InstallFailed(failure, expanded) => Some((&failure.error, expanded)),
                 _ => None,
             };
@@ -805,7 +1513,7 @@ impl Launcher {
                             .on_click(cx.listener(
                                 |this, _: &ClickEvent, _, cx| {
                                     match &mut this.github.stage {
-                                        Stage::Failed(_, expanded)
+                                        Stage::Failed { expanded, .. }
                                         | Stage::InstallFailed(_, expanded) => *expanded ^= true,
                                         _ => (),
                                     }
@@ -821,10 +1529,21 @@ impl Launcher {
                     ));
                 }
             }
+            let back = (checked_failure.is_none() && !resolving).then(|| {
+                button("add-source-back", tr("Back")).on_click(cx.listener(
+                    |this, _: &ClickEvent, _, cx| {
+                        this.github.stage = Stage::Choose(SourceChoice::Repository);
+                        cx.notify();
+                    },
+                ))
+            });
             let next = primary(
                 "github-add-continue",
                 if checked_failure.is_some()
-                    || matches!(&self.github.stage, Stage::Failed(error, _) if error.retry)
+                    || matches!(
+                        &self.github.stage,
+                        Stage::Failed { error, .. } if error.retry
+                    )
                 {
                     tr("Try again")
                 } else {
@@ -844,13 +1563,15 @@ impl Launcher {
             } else {
                 widgets::disabled(next)
             };
-            (body, next)
+            (body, back, next)
         };
         let body = body.child(
             div()
                 .flex()
-                .justify_end()
+                .items_center()
                 .gap(px(8.))
+                .children(back_action)
+                .child(div().flex_1())
                 .child(
                     button("github-add-cancel", tr("Cancel")).on_click(cx.listener(
                         |this, _: &ClickEvent, _, cx| {
@@ -861,7 +1582,218 @@ impl Launcher {
                 )
                 .child(action),
         );
-        sheets::frame("github-add-sheet", 500., body, cx)
+        sheets::frame("github-add-sheet", 520., body, cx)
+    }
+
+    fn unreviewed_warning_sheet(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let cancel_focus = self
+            .github
+            .cancel_focus
+            .get_or_insert_with(|| cx.focus_handle().tab_index(0).tab_stop(true))
+            .clone();
+        if self.github.warn_needs_focus {
+            self.github.warn_needs_focus = false;
+            window.focus(&cancel_focus, cx);
+        }
+        let Stage::Warn(pending) = &self.github.stage else {
+            unreachable!("only called for Stage::Warn");
+        };
+        let badge = pending.badge();
+        let multiple = pending.count() > 1;
+        let native = pending.any_native();
+        let prov = pending.provenance();
+        let warn = Hsla::from(rgb(if pending.unsigned_local_file() {
+            palette().danger
+        } else {
+            palette().warning
+        }));
+
+        let heading = if multiple {
+            tr("These mods have not been reviewed")
+        } else {
+            tr("This mod has not been reviewed")
+        };
+        let safety_lead = if multiple {
+            tr("Nobody has checked these mods for safety.")
+        } else {
+            tr("Nobody has checked this mod for safety.")
+        };
+        let safety_body = if native {
+            tr("Native mod code is compiled and runs directly on this computer with your permissions — it can read, change, or delete your files.")
+        } else {
+            tr("Unreviewed mod files have not been checked by Sunrise and can change how your game behaves.")
+        };
+        let trust_line = trf(
+            "Only continue if you wrote this mod yourself or trust the person who gave it to you. It will be labelled {badge} and will not receive automatic updates.",
+            &[("badge", badge.label())],
+        );
+        let confirm_label = if multiple {
+            tr("Install unreviewed mods")
+        } else {
+            tr("Install unreviewed mod")
+        };
+
+        let header = div()
+            .flex()
+            .items_center()
+            .gap(px(14.))
+            .px(px(24.))
+            .py(px(18.))
+            .bg(warn.opacity(0.22))
+            .border_b_1()
+            .border_color(warn.opacity(0.45))
+            .child(
+                div()
+                    .size(px(44.))
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(crate::tokens::r(tokens::R_CARD))
+                    .bg(warn.opacity(0.2))
+                    .border_1()
+                    .border_color(warn.opacity(0.55))
+                    .child(blocks::icon("warning", 22., warn)),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.))
+                    .min_w_0()
+                    .child(
+                        div()
+                            .text_size(px(tokens::CAPTION))
+                            .font_weight(FontWeight::BOLD)
+                            .text_color(warn)
+                            .child(tr("UNREVIEWED CODE WARNING")),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(tokens::TITLE))
+                            .font_weight(FontWeight::BOLD)
+                            .text_color(rgb(palette().text))
+                            .child(heading),
+                    ),
+            );
+
+        let provenance_card = div()
+            .flex()
+            .flex_col()
+            .gap(px(6.))
+            .p(px(14.))
+            .rounded(crate::tokens::r(tokens::R_CARD))
+            .bg(warn.opacity(0.10))
+            .border_1()
+            .border_color(warn.opacity(0.45))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .child(blocks::icon(prov.icon, 16., warn))
+                    .child(
+                        div()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(rgb(palette().text))
+                            .child(prov.headline),
+                    ),
+            )
+            .child(
+                div()
+                    .text_size(px(tokens::SMALL))
+                    .text_color(rgb(palette().muted))
+                    .child(prov.detail),
+            );
+
+        let confirm = button("add-source-confirm", confirm_label)
+            .border_color(warn.opacity(0.65))
+            .bg(warn.opacity(0.12))
+            .hover(move |s| s.bg(warn.opacity(0.22)))
+            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                this.handle_warning_action(WarningAction::Confirm);
+                cx.notify();
+            }))
+            .on_key_down(cx.listener(|this, e: &KeyDownEvent, _, cx| {
+                if matches!(e.keystroke.key.as_str(), "enter" | "space") {
+                    this.handle_warning_action(WarningAction::Confirm);
+                    cx.stop_propagation();
+                    cx.notify();
+                }
+            }));
+
+        let cancel = primary("add-source-cancel", tr("Cancel"))
+            .track_focus(&cancel_focus)
+            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                this.handle_warning_action(WarningAction::Cancel);
+                cx.notify();
+            }))
+            .on_key_down(cx.listener(|this, e: &KeyDownEvent, _, cx| {
+                if matches!(e.keystroke.key.as_str(), "enter" | "space") {
+                    this.handle_warning_action(WarningAction::Cancel);
+                    cx.stop_propagation();
+                    cx.notify();
+                }
+            }));
+
+        let content = div()
+            .flex()
+            .flex_col()
+            .gap(px(16.))
+            .p(px(24.))
+            .child(provenance_card)
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(4.))
+                    .child(
+                        div()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(rgb(palette().text))
+                            .child(safety_lead),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(tokens::LABEL))
+                            .text_color(rgb(palette().muted))
+                            .child(safety_body),
+                    ),
+            )
+            .child(
+                div()
+                    .text_size(px(tokens::LABEL))
+                    .text_color(rgb(palette().muted))
+                    .child(trust_line),
+            )
+            .child(
+                div()
+                    .flex()
+                    .justify_end()
+                    .gap(px(10.))
+                    .child(confirm)
+                    .child(cancel),
+            );
+
+        let body = div()
+            .flex()
+            .flex_col()
+            .overflow_hidden()
+            .child(header)
+            .child(content)
+            .on_key_down(cx.listener(|this, e: &KeyDownEvent, _, cx| {
+                if e.keystroke.key == "enter" {
+                    this.handle_warning_action(WarningAction::DEFAULT);
+                    cx.stop_propagation();
+                    cx.notify();
+                }
+            }));
+
+        sheets::warning_frame("github-add-sheet", 560., warn, body, cx)
     }
 }
 
@@ -892,6 +1824,70 @@ pub(crate) mod tests {
         let offline =
             pasted_source_error("Jade", SourceError::Github(Failure::Offline("dns".into())));
         assert!(offline.retry);
+    }
+
+    #[test]
+    fn unreviewed_warning_defaults_to_cancel_and_describes_provenance() {
+        assert_eq!(WarningAction::DEFAULT, WarningAction::Cancel);
+        assert_ne!(WarningAction::DEFAULT, WarningAction::Confirm);
+
+        let dir = tempfile::tempdir().unwrap();
+        let smod = dir.path().join("custom-tweaks-0.1.0.smod");
+        let bytes = Package::write_files(
+            "id = 'custom_tweaks'\nname = 'Custom Tweaks'\nversion = '0.1.0'\napi = '0.2'\nside = 'both'\n",
+            &[],
+        )
+        .unwrap();
+        std::fs::write(&smod, &bytes).unwrap();
+        let pkg = github_mods::read_local_smod(&smod).unwrap();
+
+        let target = GithubTarget::fixture(dir.path());
+        let unsigned = PendingConfirm::Local {
+            target: target.clone(),
+            packages: vec![pkg.clone()],
+            folder: None,
+        };
+        assert_eq!(unsigned.badge(), ManualBadge::Local);
+        assert!(unsigned.unsigned_local_file());
+        let prov = unsigned.provenance();
+        assert_eq!(prov.headline, tr("Unsigned local file, not reviewed"));
+        assert!(prov.detail.contains("custom-tweaks-0.1.0.smod"));
+
+        let mut signed_pkg = pkg;
+        signed_pkg.attestation = LocalAttestation::Signed {
+            repo: "alexdev/lantern-tweaks".into(),
+        };
+        let signed = PendingConfirm::Local {
+            target: target.clone(),
+            packages: vec![signed_pkg],
+            folder: None,
+        };
+        assert_eq!(signed.badge(), ManualBadge::Local);
+        assert!(!signed.unsigned_local_file());
+        assert_eq!(
+            signed.provenance().headline,
+            "Built by github.com/alexdev/lantern-tweaks, not reviewed"
+        );
+
+        let repo_dir = dir.path().join("camp-lanterns");
+        std::fs::create_dir_all(&repo_dir).unwrap();
+        std::fs::write(
+            repo_dir.join("sunrise-mod.toml"),
+            "id = 'camp_lanterns'\nname = 'Camp Lanterns'\nversion = '0.4.0'\napi = '0.2'\nside = 'both'\n",
+        )
+        .unwrap();
+        let folder_pkgs = github_mods::read_local_folder(&repo_dir).unwrap();
+        let folder = PendingConfirm::Local {
+            target,
+            packages: folder_pkgs,
+            folder: Some(repo_dir),
+        };
+        assert_eq!(folder.badge(), ManualBadge::FromSource);
+        assert!(!folder.unsigned_local_file());
+        assert_eq!(
+            folder.provenance().headline,
+            tr("Local repository folder, not reviewed")
+        );
     }
 
     pub(crate) fn checked_subset(target: GithubTarget) -> Arc<GithubInput> {
@@ -933,6 +1929,6 @@ pub(crate) mod tests {
         let mut pick = Pick::new(PickInput::Assets(found, checked));
         assert_eq!(pick.selected.len(), 2);
         pick.toggle("one");
-        Arc::new(pick.checked(target, "https://github.com/fixture/add".into(), false))
+        Arc::new(pick.checked(target, "https://github.com/fixture/add".into()))
     }
 }

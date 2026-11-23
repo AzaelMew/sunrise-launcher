@@ -942,7 +942,7 @@ impl Launcher {
 
     /// Reads what is installed again when the files' fingerprint moved (an install, a toggle or a
     /// build elsewhere), and asks for the registry once. Reads only.
-    fn mods_refresh(&mut self) {
+    pub(crate) fn mods_refresh(&mut self) {
         let home = self.mods_home();
         self.mods
             .follow_home(self.selected_instance().map(|i| i.home.clone()));

@@ -514,7 +514,8 @@ impl Launcher {
             .as_ref()
             .into_iter()
             .flat_map(|snapshot| &snapshot.rows.local)
-            .filter_map(|local| local.github.as_ref());
+            .filter_map(|local| local.github.as_ref())
+            .filter(|origin| !origin.is_manual());
         let checked = self
             .ui
             .mods
@@ -693,5 +694,30 @@ mod tests {
             ..only
         };
         assert!(tracked_origins(&locals, Some(&stale)).is_empty());
+    }
+
+    #[test]
+    fn manual_from_source_mods_are_excluded_from_tracked_source_updates() {
+        use sunrise_launcher::github_mods::AddedFrom;
+        let (_, mut manual_github) = super::super::tests::receipt_fixture();
+        manual_github.github.as_mut().unwrap().added_from = Some(AddedFrom::Github);
+
+        let mut manual_folder = manual_github.clone();
+        manual_folder.id = "folder_mod".into();
+        manual_folder.github = Some(Origin::local_folder(
+            "folder_mod".into(),
+            "0.4.0".into(),
+            "/tmp/camp-lanterns".into(),
+            "0".repeat(64),
+        ));
+
+        let mut discover_source = manual_github.clone();
+        discover_source.id = "discover_mod".into();
+        discover_source.github.as_mut().unwrap().id = "discover_mod".into();
+        discover_source.github.as_mut().unwrap().added_from = Some(AddedFrom::Discover);
+
+        let locals = [manual_github, manual_folder, discover_source.clone()];
+        let tracked = tracked_origins(&locals, None);
+        assert_eq!(tracked, [discover_source.github.unwrap()]);
     }
 }

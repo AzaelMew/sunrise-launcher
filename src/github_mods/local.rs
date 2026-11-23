@@ -156,7 +156,7 @@ fn find_local_mod_dirs(root: &Path) -> Result<Vec<PathBuf>, String> {
         if dir.join("sunrise-mod.toml").is_file() {
             let text = fs::read_to_string(dir.join("sunrise-mod.toml"))
                 .map_err(|e| format!("{}: {e}", dir.join("sunrise-mod.toml").display()))?;
-            let manifest = sunrise_launcher_smod::manifest::parse(&text)?;
+            let manifest = sunrise_launcher_smod::Manifest::parse(&text)?;
             if manifest.native.is_none() {
                 out.push(dir.to_path_buf());
                 return Ok(());
@@ -192,9 +192,12 @@ fn find_local_mod_dirs(root: &Path) -> Result<Vec<PathBuf>, String> {
 /// Refuses to overwrite a registry-tracked mod (`mod-browser.json`). An existing untracked local
 /// or from-source mod with the same ID is replaced in place so Add from source can refresh it,
 /// keeping its enabled state; a newly added mod starts enabled.
-pub fn install_local_packages(home: &Path, packages: &[LocalPackage]) -> Result<Vec<String>, String> {
-    let _guard = crate::browser::lock_home(home)?;
-    let claims = crate::browser::installed::Installed::read(home).map_err(|e| e.details(trf))?;
+pub fn install_local_packages(
+    home: &Path,
+    packages: &[LocalPackage],
+) -> Result<Vec<String>, String> {
+    let _guard = crate::browser::lock_home(home).map_err(|e| e.to_string())?;
+    let claims = crate::browser::installed::Installed::read(home)?;
     let mut seen = BTreeSet::new();
     for pkg in packages {
         if !seen.insert(pkg.id.as_str()) {
@@ -216,15 +219,12 @@ pub fn install_local_packages(home: &Path, packages: &[LocalPackage]) -> Result<
             mod_list::NATIVE_DIR
         };
         let other_relative = format!("{other_dir}/{}.smod", pkg.id);
-        let registry_owns = claims
-            .single(&pkg.id)
-            .map_err(|e| e.render(trf))?
-            .is_some()
-            || claims.entries.iter().any(|entry| {
-                entry.file == relative
-                    || entry.file == sidecar
-                    || entry.file == other_relative
-            });
+        let registry_owns = claims.entries.iter().any(|entry| {
+            crate::browser::sunrise::mod_id(entry) == Some(pkg.id.as_str())
+                || entry.file == relative
+                || entry.file == sidecar
+                || entry.file == other_relative
+        });
         if registry_owns {
             return Err(trf(
                 "{mod} is installed from the Sunrise registry. Remove it first before installing an unreviewed copy.",
@@ -270,7 +270,8 @@ pub fn install_local_packages(home: &Path, packages: &[LocalPackage]) -> Result<
             let json = serde_json::to_vec_pretty(origin).map_err(|e| e.to_string())?;
             let sidecar_tmp =
                 target_dir.join(format!(".{}.{}.origin.tmp", pkg.id, std::process::id()));
-            fs::write(&sidecar_tmp, &json).map_err(|e| format!("{}: {e}", sidecar_tmp.display()))?;
+            fs::write(&sidecar_tmp, &json)
+                .map_err(|e| format!("{}: {e}", sidecar_tmp.display()))?;
             fs::rename(&sidecar_tmp, &sidecar).map_err(|e| {
                 let _ = fs::remove_file(&sidecar_tmp);
                 format!("{}: {e}", sidecar.display())
@@ -285,9 +286,107 @@ pub fn install_local_packages(home: &Path, packages: &[LocalPackage]) -> Result<
             let _ = fs::remove_file(&other_sidecar);
         }
         if !replacing {
-            mod_list::set_enabled(home, &pkg.id, true)?;
+            crate::browser::mod_list::set_enabled(home, &pkg.id, true)?;
         }
         installed_names.push(pkg.name.clone());
     }
     Ok(installed_names)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::browser::{installed, mod_list as browser_mod_list, Kind, SourceId};
+    use crate::github_mods::AddedFrom;
+    use sunrise_launcher_smod::Package;
+
+    fn content_manifest(id: &str, name: &str, version: &str) -> String {
+        format!("id = '{id}'\nname = '{name}'\nversion = '{version}'\napi = '0.2'\nside = 'both'\n")
+    }
+
+    #[test]
+    fn read_and_install_local_smod_marks_unsigned_and_refuses_registry_overwrite() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("profile");
+        let smod_path = dir.path().join("lantern-tweaks-0.1.0.smod");
+        let bytes = Package::write_files(
+            &content_manifest("lantern_tweaks", "Lantern Tweaks", "0.1.0"),
+            &[],
+        )
+        .unwrap();
+        fs::write(&smod_path, &bytes).unwrap();
+
+        let pkg = read_local_smod(&smod_path).unwrap();
+        assert_eq!(pkg.id, "lantern_tweaks");
+        assert_eq!(pkg.attestation, LocalAttestation::Unsigned);
+        assert!(pkg.origin.is_none());
+        assert!(!pkg.native);
+
+        let installed = install_local_packages(&home, &[pkg.clone()]).unwrap();
+        assert_eq!(installed, ["Lantern Tweaks"]);
+        assert!(home
+            .join(mod_list::DIR)
+            .join("lantern_tweaks.smod")
+            .is_file());
+        assert!(!home
+            .join(mod_list::DIR)
+            .join("lantern_tweaks.origin.json")
+            .exists());
+        assert!(browser_mod_list::is_enabled(&home, "lantern_tweaks"));
+
+        // Refreshing via Add from source preserves disabled state.
+        browser_mod_list::set_enabled(&home, "lantern_tweaks", false).unwrap();
+        install_local_packages(&home, &[pkg.clone()]).unwrap();
+        assert!(!browser_mod_list::is_enabled(&home, "lantern_tweaks"));
+
+        // Refuses to overwrite a registry-tracked mod.
+        let tracked = installed::Installed {
+            entries: vec![installed::Entry {
+                source: SourceId::Sunrise,
+                kind: Kind::Mod,
+                project: "lantern-project".into(),
+                slug: "lantern-tweaks".into(),
+                title: "Lantern Tweaks".into(),
+                version: "0.1.0".into(),
+                number: "0.1.0".into(),
+                file: format!("{}/lantern_tweaks.smod", mod_list::DIR),
+                checksum: String::new(),
+                page: String::new(),
+                dependency: false,
+                verdict: None,
+                install_hold: None,
+            }],
+        };
+        tracked.save(&home).unwrap();
+        assert!(install_local_packages(&home, &[pkg]).is_err());
+    }
+
+    #[test]
+    fn read_and_install_local_folder_records_manual_from_source_origin() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path().join("camp-lanterns");
+        let home = dir.path().join("profile");
+        fs::create_dir_all(&repo).unwrap();
+        fs::write(
+            repo.join("sunrise-mod.toml"),
+            content_manifest("camp_lanterns", "Camp Lanterns", "0.4.0"),
+        )
+        .unwrap();
+
+        let packages = read_local_folder(&repo).unwrap();
+        assert_eq!(packages.len(), 1);
+        let origin = packages[0].origin.as_ref().unwrap();
+        assert!(origin.is_manual());
+        assert_eq!(origin.local_folder_path(), Some(repo.to_str().unwrap()));
+        assert!(matches!(
+            origin.added_from,
+            Some(AddedFrom::LocalFolder { .. })
+        ));
+
+        install_local_packages(&home, &packages).unwrap();
+        let found = crate::native_status::untracked_content(&home);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].id, "camp_lanterns");
+        assert!(found[0].origin.as_ref().is_some_and(Origin::is_manual));
+    }
 }

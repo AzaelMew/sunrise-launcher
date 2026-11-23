@@ -365,15 +365,14 @@ fn untracked_in(
             let name = package
                 .as_ref()
                 .map_or_else(|_| id.clone(), |p| p.manifest.name.clone());
-            let origin =
-                (package.is_ok() && path.file_name()?.to_str()? == format!("{id}.smod"))
-                    .then(|| crate::github_mods::origin_for_archive(&path))
-                    .flatten()
-                    .filter(|origin| native || origin.local_folder_path().is_some())
-                    .filter(|origin| {
-                        sunrise_launcher_smod::index::sha256_file(&path)
-                            .is_ok_and(|digest| origin.matches_archive(&id, &version, &digest))
-                    });
+            let origin = (package.is_ok() && path.file_name()?.to_str()? == format!("{id}.smod"))
+                .then(|| crate::github_mods::origin_for_archive(&path))
+                .flatten()
+                .filter(|origin| native || origin.local_folder_path().is_some())
+                .filter(|origin| {
+                    sunrise_launcher_smod::index::sha256_file(&path)
+                        .is_ok_and(|digest| origin.matches_archive(&id, &version, &digest))
+                });
             let internals = package
                 .as_ref()
                 .map(|p| declared_internals(&p.manifest))

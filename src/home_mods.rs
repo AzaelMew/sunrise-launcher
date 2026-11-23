@@ -128,6 +128,7 @@ pub(crate) struct Item {
     pub picture: Picture,
     pub open: Open,
     pub on: bool,
+    pub(crate) manual_badge: Option<crate::mods::ManualBadge>,
     // Matches the version in native-mods.json when counting what the build left out.
     mod_version: Option<String>,
 }
@@ -176,6 +177,7 @@ pub(crate) fn read(home: &Path) -> Vec<Item> {
                 picture: Picture::Project(e.project.clone()),
                 open: Open::Project(e.project.clone()),
                 on: mod_list::is_enabled(home, id),
+                manual_badge: None,
                 mod_version: Some(e.number.clone()),
             })
         })
@@ -185,8 +187,14 @@ pub(crate) fn read(home: &Path) -> Vec<Item> {
         .into_iter()
         .chain(native_status::untracked_content(home));
     mods.extend(by_hand.map(|file| {
+        let manual_badge = match &file.origin {
+            None => Some(crate::mods::ManualBadge::Local),
+            Some(origin) if origin.is_manual() => Some(crate::mods::ManualBadge::FromSource),
+            Some(_) => None,
+        };
         Item {
             on: mod_list::is_enabled(home, &file.id),
+            manual_badge,
             mod_version: Some(file.version),
             name: file.name,
             kind: Kind::Mod,
@@ -220,6 +228,7 @@ pub(crate) fn read(home: &Path) -> Vec<Item> {
         })),
         open: Open::Pack(pack.kind, pack.file.clone()),
         on: pack.enabled,
+        manual_badge: None,
         mod_version: None,
         id: pack.file,
         name: pack.title,
@@ -617,14 +626,7 @@ impl Launcher {
             } else {
                 let fact = mod_facts.as_ref().and_then(|facts| facts.get(&item.id));
                 let kind = fact.map(|fact| fact.kind).filter(|kind| !kind.is_empty());
-                let badge = fact.and_then(|fact| fact.badge).or_else(|| match &item.picture {
-                    Picture::Project(_) => None,
-                    Picture::Local { source: Some(_), .. } => {
-                        Some(crate::mods::ManualBadge::FromSource)
-                    }
-                    Picture::Local { source: None, .. } => Some(crate::mods::ManualBadge::Local),
-                    Picture::Pack(_) => None,
-                });
+                let badge = fact.and_then(|fact| fact.badge).or(item.manual_badge);
                 (
                     kind.map(str::to_owned),
                     badge,
@@ -669,6 +671,7 @@ mod tests {
             },
             open: Open::Installed(name.into()),
             on,
+            manual_badge: None,
             mod_version: (kind == Kind::Mod).then(|| "1.0.0".into()),
         }
     }
@@ -874,5 +877,48 @@ mod tests {
         assert!(!snapshot.tabs.resources[0].on);
         assert_eq!(snapshot.launch.mods_off, 0);
         std::fs::remove_dir_all(&home).unwrap();
+    }
+
+    #[test]
+    fn home_read_marks_manual_from_source_and_local_mods_with_badges() {
+        use sunrise_launcher::github_mods::{
+            install_local_packages, read_local_folder, read_local_smod,
+        };
+        use sunrise_launcher_smod::Package;
+
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("profile");
+        let smod = dir.path().join("local-mod.smod");
+        let bytes = Package::write_files(
+            "id = 'local_mod'\nname = 'Local Mod'\nversion = '0.1.0'\napi = '0.2'\nside = 'both'\n",
+            &[],
+        )
+        .unwrap();
+        std::fs::write(&smod, &bytes).unwrap();
+        let local_pkg = read_local_smod(&smod).unwrap();
+
+        let repo = dir.path().join("repo-mod");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::write(
+            repo.join("sunrise-mod.toml"),
+            "id = 'repo_mod'\nname = 'Repo Mod'\nversion = '0.2.0'\napi = '0.2'\nside = 'both'\n",
+        )
+        .unwrap();
+        let folder_pkgs = read_local_folder(&repo).unwrap();
+
+        install_local_packages(&home, &[local_pkg]).unwrap();
+        install_local_packages(&home, &folder_pkgs).unwrap();
+
+        let items = read(&home);
+        let local_item = items.iter().find(|i| i.id == "local_mod").unwrap();
+        let repo_item = items.iter().find(|i| i.id == "repo_mod").unwrap();
+        assert_eq!(
+            local_item.manual_badge,
+            Some(crate::mods::ManualBadge::Local)
+        );
+        assert_eq!(
+            repo_item.manual_badge,
+            Some(crate::mods::ManualBadge::FromSource)
+        );
     }
 }

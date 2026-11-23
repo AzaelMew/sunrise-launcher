@@ -553,7 +553,7 @@ impl Launcher {
                 row.update = update;
             }
             if let Some(origin) = row.local.as_ref().and_then(|local| local.github.as_ref()) {
-                if row.authors.is_empty() {
+                if row.authors.is_empty() && !origin.owner.is_empty() {
                     row.authors.clone_from(&origin.owner);
                 }
             }
@@ -914,6 +914,7 @@ impl Launcher {
                     ),
             )
             .children(action)
+            .when(no_auto_updates, |d| d.child(muted(tr("No auto-updates"))))
         };
         row.reach()
             .cursor_pointer()
