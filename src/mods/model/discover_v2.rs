@@ -6,7 +6,7 @@
 //! content-addressed (`pages/<project id>/<sha256>.<png|jpg>`).
 use super::{Make, SourceLink};
 use std::cmp::Ordering;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap, HashSet};
 use sunrise_launcher::i18n::{tr, trf};
 use sunrise_launcher_smod::index::Kind;
 use sunrise_launcher_smod::index_v2::{self, FitVerdict, Index, Project, Release};
@@ -542,6 +542,126 @@ pub(in crate::mods) fn hidden_other_build_count(cards: &[V2Card], filters: &V2Fi
         .count()
 }
 
+/// A publisher's collection, its members resolved to their Discover cards.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(in crate::mods) struct V2Collection {
+    pub(in crate::mods) id: String,
+    pub(in crate::mods) name: String,
+    pub(in crate::mods) summary: String,
+    pub(in crate::mods) description: String,
+    pub(in crate::mods) publisher: String,
+    /// Verified content-addressed relative path (`pages/<id>/<sha256>.<png|jpg>`), if valid.
+    pub(in crate::mods) icon: Option<String>,
+    /// Each member's position in the cards, and whether it is picked when the collection opens.
+    pub(in crate::mods) members: Vec<(usize, bool)>,
+}
+
+impl V2Collection {
+    /// How many members have a release for the selected build.
+    pub(in crate::mods) fn fitting(&self, cards: &[V2Card]) -> usize {
+        self.members
+            .iter()
+            .filter(|&&(i, _)| cards[i].fit.fits())
+            .count()
+    }
+
+    /// What opening the collection picks: the members on by default that fit the build.
+    pub(in crate::mods) fn initial_picks(&self, cards: &[V2Card]) -> BTreeSet<String> {
+        self.members
+            .iter()
+            .filter(|&&(i, default)| default && cards[i].fit.fits())
+            .map(|&(i, _)| cards[i].id.clone())
+            .collect()
+    }
+
+    /// What Install installs: the picked members that fit and aren't installed, in the
+    /// collection's order. A member that doesn't fit the build is left out.
+    pub(in crate::mods) fn to_install(
+        &self,
+        cards: &[V2Card],
+        picked: &BTreeSet<String>,
+        installed: &dyn Fn(&str) -> bool,
+    ) -> Vec<String> {
+        self.members
+            .iter()
+            .map(|&(i, _)| &cards[i])
+            .filter(|card| card.fit.fits() && picked.contains(&card.id) && !installed(&card.id))
+            .map(|card| card.id.clone())
+            .collect()
+    }
+}
+
+/// The index's collections, each member found among `cards`.
+pub(in crate::mods) fn collections(index: &Index, cards: &[V2Card]) -> Vec<V2Collection> {
+    let at: HashMap<&str, usize> = cards
+        .iter()
+        .enumerate()
+        .map(|(i, card)| (card.id.as_str(), i))
+        .collect();
+    index
+        .collections
+        .iter()
+        .map(|c| V2Collection {
+            id: c.id.clone(),
+            name: c.name.clone(),
+            summary: c.summary.clone(),
+            description: c.description.clone(),
+            publisher: c.publisher.clone(),
+            icon: content_addressed_path(&c.id, &c.icon),
+            members: c
+                .members
+                .iter()
+                .filter_map(|m| Some((*at.get(m.project.as_str())?, m.default)))
+                .collect(),
+        })
+        .collect()
+}
+
+/// Browsing shows a collection's members only inside its card, Show all included; a search
+/// still finds a member by name.
+pub(in crate::mods) fn fold_members(
+    shown: &mut Vec<usize>,
+    collections: &[V2Collection],
+    filters: &V2Filters,
+) {
+    if !filters.text.trim().is_empty() {
+        return;
+    }
+    let folded: HashSet<usize> = collections
+        .iter()
+        .flat_map(|c| c.members.iter().map(|&(i, _)| i))
+        .collect();
+    shown.retain(|i| !folded.contains(i));
+}
+
+/// The collections Discover lists for `filters`: none under a category, and unless Show all is
+/// on only those with a member that fits. Search matches the collection's own text or any
+/// member's.
+pub(in crate::mods) fn discover_collections(
+    collections: &[V2Collection],
+    cards: &[V2Card],
+    filters: &V2Filters,
+) -> Vec<usize> {
+    if filters.category.is_some() {
+        return Vec::new();
+    }
+    let words = query_words(&filters.text);
+    collections
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| filters.show_all || c.fitting(cards) > 0)
+        .filter(|(_, c)| {
+            let own = [&c.name, &c.summary, &c.publisher].map(|s| s.to_lowercase());
+            words.iter().all(|w| own.iter().any(|s| s.contains(w)))
+                || (!words.is_empty()
+                    && c.members
+                        .iter()
+                        .any(|&(i, _)| card_matches_query(&cards[i], &words)))
+        })
+        .map(|(i, _)| i)
+        .collect()
+}
+
 /// Builds a v2 mod page from `index` for project `id` and `exact_build`.
 pub(in crate::mods) fn page(
     index: &Index,
@@ -628,7 +748,9 @@ pub(in crate::mods) fn page(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sunrise_launcher_smod::index_v2::{Build, Category, File, Repository, Revoked, Screenshot};
+    use sunrise_launcher_smod::index_v2::{
+        Build, Category, Collection, File, Member, Repository, Revoked, Screenshot,
+    };
 
     fn hex64(ch: char) -> String {
         std::iter::repeat_n(ch, 64).collect()
@@ -745,6 +867,7 @@ mod tests {
             ],
             projects,
             revoked,
+            collections: Vec::new(),
         }
     }
 
@@ -1072,5 +1195,91 @@ mod tests {
             ..V2Filters::default()
         };
         assert_eq!(discover(&cards, &all).len(), 1);
+    }
+
+    #[test]
+    fn a_collection_picks_its_default_members_that_fit_and_installs_only_the_rest() {
+        let build = "26.3-0.1.0";
+        let project = |id: &str, slug: &str, fits: &[&str], ch| {
+            let not = if fits.is_empty() { vec![build] } else { vec![] };
+            make_project(
+                id,
+                slug,
+                slug,
+                "A block set.",
+                &["utility"],
+                vec![make_release("1.0.0", "2026-11-10", build, fits, &not, ch)],
+            )
+        };
+        let mut index = sample_index(
+            vec![
+                project("Ab3dE9xQ", "fences", &[build], '1'),
+                project("Bc4eF0yR", "doors", &[build], '2'),
+                project("Cd5fG1zS", "roofs", &[], '3'),
+            ],
+            vec![],
+        );
+        let member = |project: &str, default| Member {
+            project: project.to_owned(),
+            default,
+        };
+        index.collections = vec![Collection {
+            id: "Qm4tZ81c".to_owned(),
+            name: "Macaw's Builds".to_owned(),
+            summary: "Fences, doors and roofs.".to_owned(),
+            description: String::new(),
+            publisher: "author".to_owned(),
+            icon: format!("pages/Qm4tZ81c/{}.png", hex64('9')),
+            members: vec![
+                member("Ab3dE9xQ", true),
+                member("Bc4eF0yR", false),
+                member("Cd5fG1zS", true),
+            ],
+        }];
+        let cards = cards(&index, Some(build), &label_build);
+        let found = collections(&index, &cards);
+        let collection = &found[0];
+        assert_eq!(collection.fitting(&cards), 2);
+        // Doors is off by default, and Roofs has no release for this build.
+        let picks = collection.initial_picks(&cards);
+        assert_eq!(picks, BTreeSet::from(["Ab3dE9xQ".to_owned()]));
+        let all = ["Ab3dE9xQ", "Bc4eF0yR", "Cd5fG1zS"]
+            .map(str::to_owned)
+            .into();
+        assert_eq!(
+            collection.to_install(&cards, &all, &|id| id == "Ab3dE9xQ"),
+            ["Bc4eF0yR"]
+        );
+
+        let filters = |text: &str, category: Option<&str>| V2Filters {
+            text: text.to_owned(),
+            category: category.map(str::to_owned),
+            ..V2Filters::default()
+        };
+        let shown = |text, category| discover_collections(&found, &cards, &filters(text, category));
+        assert_eq!(shown("macaw", None), [0]);
+        assert_eq!(
+            shown("doors", None),
+            [0],
+            "a member's name finds its collection"
+        );
+        assert!(shown("lantern", None).is_empty());
+        assert!(shown("", Some("utility")).is_empty());
+
+        // Browsing shows the collection's card in place of its members, Show all included; a
+        // search finds a member.
+        let mods = |text: &str, show_all| {
+            let filters = V2Filters {
+                text: text.to_owned(),
+                show_all,
+                ..V2Filters::default()
+            };
+            let mut shown = discover(&cards, &filters);
+            fold_members(&mut shown, &found, &filters);
+            shown.len()
+        };
+        assert_eq!(mods("", false), 0);
+        assert_eq!(mods("", true), 0);
+        assert_eq!(mods("doors", false), 1);
     }
 }
