@@ -249,10 +249,12 @@ pub(crate) fn group_ports(
             })
         });
 
+        // The plainest name heads the group ("Simply Light", not "Simply Light (ports collection)").
         let display_name = ports
-            .first()
-            .map(|p| p.name.clone())
-            .unwrap_or_else(|| mod_id.to_owned());
+            .iter()
+            .map(|p| p.name.as_str())
+            .min_by_key(|name| name.chars().count())
+            .map_or_else(|| mod_id.to_owned(), str::to_owned);
         groups.push(PortGroup {
             mod_id: mod_id.to_owned(),
             display_name,
@@ -392,17 +394,25 @@ impl Launcher {
                 );
             }
         }
-        let build_id = self
-            .selected_instance()
-            .and_then(|instance| self.version_of(instance))
-            .map(String::as_str);
+        let build_id = self.ports_build();
         group_ports(
             index,
-            build_id,
+            build_id.as_deref(),
             &installed_map,
             &self.ui.mods.filters.text,
             self.ui.mods.filters.category.as_deref(),
         )
+    }
+
+    /// The selected profile's exact Sunrise build, as the index's `fits` lists name it: a native
+    /// profile's version carries a build suffix that its base build drops.
+    fn ports_build(&self) -> Option<String> {
+        let raw = self.profile_target(self.selected_instance()?)?;
+        if native_mods::is_native(&raw) {
+            crate::glass_instance::native_base(&raw).or(Some(raw))
+        } else {
+            Some(raw)
+        }
     }
 
     pub(super) fn with_port_groups(
@@ -670,10 +680,7 @@ impl Launcher {
             .selected_instance()
             .map(|i| i.name.clone())
             .unwrap_or_else(|| tr("Sunrise").into());
-        let build_id = self
-            .selected_instance()
-            .and_then(|i| self.version_of(i))
-            .map(String::as_str);
+        let build_id = self.ports_build();
         let current_project = row
             .entry
             .as_ref()
@@ -684,7 +691,7 @@ impl Launcher {
             current_project,
             &row.id,
             &row.version,
-            build_id,
+            build_id.as_deref(),
         )?;
         let heading = if other.alternatives.len() == 1 {
             trf(
