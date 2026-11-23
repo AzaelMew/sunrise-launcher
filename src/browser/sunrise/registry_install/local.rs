@@ -828,8 +828,9 @@ mod tests {
             super::super::update_tests::roster("alpha"),
         );
 
-        // Same file name: the candidate's alpha.smod is the new archive by review time.
-        let v2 = package("alpha.smod", "2.0.0", &[(block, b"{}")]);
+        // Same file name, and the block is gone: by review time the candidate's alpha.smod is
+        // already the new archive, so only the live copy still shows what the world loses.
+        let v2 = package("alpha.smod", "2.0.0", &[]);
         let risked = AtomicBool::new(false);
         let err = install_local_at(
             &home,
