@@ -10,7 +10,8 @@ pub(crate) struct GameSlices {
     slices: BTreeMap<String, String>,
 }
 
-/// The game release must sign an index listing both client slices for this target.
+/// The game release must sign both `sdk.json` (listing both client slices for this target) and
+/// `sunrise-release.json`, matching the exact proof required by `GameDownload::prove_with`.
 pub(crate) fn offers_game(
     version: &str,
     source: &str,
@@ -22,10 +23,27 @@ pub(crate) fn offers_game(
     if channel.is_some_and(|channel| !sunrise_launcher_release_verify::is_build(channel, version)) {
         return false;
     }
-    let index = signed_game_index(base, source, version, channel, keys).and_then(|bytes| {
-        let commit = game_commit(version, channel, &bytes)?;
-        checked_game_index(version, &bytes, &commit)
-    });
+    let Ok(proof) = crate::backend::installation::prove_release_files(
+        source,
+        version,
+        INDEX,
+        true,
+        keys,
+        |name| {
+            base.release_file(source, version, name)
+                .map_err(|error| error.to_string())
+        },
+    ) else {
+        return false;
+    };
+    let Ok(Some(bytes)) = base.release_file(source, version, INDEX) else {
+        return false;
+    };
+    if sunrise_launcher_release_verify::check(INDEX, proof.archive(), &sha256(&bytes)).is_err() {
+        return false;
+    }
+    let index = game_commit(version, channel, &bytes)
+        .and_then(|commit| checked_game_index(version, &bytes, &commit));
     index.is_ok_and(|index| {
         game_slices(triple)
             .iter()
