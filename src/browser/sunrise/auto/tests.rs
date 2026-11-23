@@ -1,75 +1,45 @@
-//! Automatic updates against fixture indexes: a content mod `ruby` whose versions are real
-//! `.smod` files on disk, listed in an index the way the registry lists them.
 use super::*;
-use crate::browser::sunrise::tests::{sample, scratch};
-const GAME: &str = crate::backend::PINNED_GAME;
+use crate::browser::Kind;
+use std::io::Write;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 
-const MANIFEST: &str = "id = \"ruby\"\nname = \"Ruby\"\napi = \"0.2\"\nside = \"both\"\n\
-                        capabilities = [\"registries\"]\n";
-const BLOCK: &[u8] = br#"{"template": "minecraft:iron_block"}"#;
-const ITEM: &[u8] = br#"{"template": "minecraft:diamond"}"#;
+const REPLACED_V1_1_2: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/replaced-v1.1.2.json"
+));
 
-/// `ruby` at `version` with blocks `blocks` and items `items`, written into `dir`.
-fn ruby(dir: &Path, version: &str, blocks: &[&str], items: &[&str]) -> PathBuf {
-    let names: Vec<(String, &[u8])> = blocks
-        .iter()
-        .map(|b| (format!("data/ruby/sunrise/block/{b}.json"), BLOCK))
-        .chain(
-            items
-                .iter()
-                .map(|i| (format!("data/ruby/sunrise/item/{i}.json"), ITEM)),
-        )
-        .collect();
-    let files: Vec<(&str, &[u8])> = names.iter().map(|(n, b)| (n.as_str(), *b)).collect();
-    let manifest = format!("{MANIFEST}version = \"{version}\"\n");
-    let bytes = sunrise_launcher_smod::Package::write_files(&manifest, &files).unwrap();
-    let path = dir.join(format!("ruby-{version}.smod"));
-    fs::write(&path, bytes).unwrap();
-    path
+fn dir(name: &str) -> PathBuf {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let n = NEXT.fetch_add(1, Ordering::Relaxed);
+    let d = std::env::temp_dir().join(format!(
+        "sunrise-auto-test-{name}-{}-{n}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&d);
+    fs::create_dir_all(&d).unwrap();
+    d
 }
 
-/// An index listing `ruby`'s `versions` (newest first: version, game, file on disk).
-fn index_of(versions: &[(&str, &str, &Path)]) -> Index {
-    let mut index = sample();
-    let base = index.project("coords_hud").unwrap().clone();
-    let listed = versions
-        .iter()
-        .map(|(version, game, path)| index::Version {
-            native_binaries: Vec::new(),
-            version: (*version).into(),
-            api: "0.2".into(),
-            side: Some(sunrise_launcher_smod::manifest::Side::Both),
-            capabilities: vec![sunrise_launcher_smod::Capability::Registries].into(),
-            game: (*game).into(),
-            requires: Vec::new(),
-            file: index::File {
-                name: path.file_name().unwrap().to_string_lossy().into_owned(),
-                url: format!("file://{}", path.display()),
-                size: fs::metadata(path).unwrap().len(),
-                sha256: index::sha256_file(path).unwrap(),
-                signature: None,
-            },
-            ..base.versions[0].clone()
-        })
-        .collect();
-    index.projects.push(index::Project {
-        id: "ruby".into(),
-        name: "Ruby".into(),
-        key: None,
-        versions: listed,
-        ..base
-    });
-    index
+fn smod_bytes(id: &str, version: &str) -> Vec<u8> {
+    let mut buf = Vec::new();
+    {
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
+        let opts = zip::write::SimpleFileOptions::default();
+        zip.start_file("sunrise-mod.toml", opts).unwrap();
+        writeln!(zip, "id = \"{id}\"\nversion = \"{version}\"").unwrap();
+        zip.finish().unwrap();
+    }
+    buf
 }
 
-const PLAY: Context = Context {
-    in_pack: false,
-    game: GAME,
-};
-
-/// The browser's entry for `ruby` at `version`.
-fn entry(version: &str) -> installed::Entry {
-    installed::Entry {
+fn write_installed_ruby(home: &Path, version: &str, bytes: &[u8]) -> installed::Entry {
+    let mods_dir = home.join("sunrise-mods");
+    fs::create_dir_all(&mods_dir).unwrap();
+    let file_path = mods_dir.join("ruby.smod");
+    fs::write(&file_path, bytes).unwrap();
+    let hash = index::sha256_file(&file_path).unwrap();
+    let entry = installed::Entry {
         source: SourceId::Sunrise,
         project: "ruby".into(),
         slug: "ruby".into(),
@@ -78,679 +48,195 @@ fn entry(version: &str) -> installed::Entry {
         version: version.into(),
         number: version.into(),
         file: "sunrise-mods/ruby.smod".into(),
-        checksum: String::new(),
+        checksum: format!("SHA-256:{hash}"),
         page: String::new(),
         dependency: false,
         verdict: None,
         install_hold: None,
-    }
-}
-
-fn version_of(d: Decision) -> Option<String> {
-    match d {
-        Decision::Update(v) => Some(v.version.clone()),
-        Decision::Skip => None,
-    }
-}
-
-#[test]
-fn updates_forward_on_the_same_game_only() {
-    let dir = scratch("auto-decide");
-    let (a, b, c) = (
-        ruby(&dir, "1.0.0", &["a"], &[]),
-        ruby(&dir, "1.1.0", &["a"], &[]),
-        ruby(&dir, "1.2.0", &["a"], &[]),
-    );
-    let index = index_of(&[
-        ("1.2.0", GAME, &c),
-        ("1.1.0", GAME, &b),
-        ("1.0.0", GAME, &a),
-    ]);
-    let to = |e: &installed::Entry, ctx: &Context| version_of(decide(&index, e, ctx));
-    assert_eq!(to(&entry("1.0.0"), &PLAY), Some("1.2.0".into()));
-    assert_eq!(to(&entry("1.2.0"), &PLAY), None, "already the newest");
-    assert_eq!(
-        to(&entry("0.9.0"), &PLAY),
-        None,
-        "a version the index no longer lists"
-    );
-    let in_pack = Context {
-        in_pack: true,
-        game: GAME,
     };
-    assert_eq!(to(&entry("1.0.0"), &in_pack), None, "a modpack's profile");
-    let native = installed::Entry {
-        file: "sunrise-native-mods/ruby.smod".into(),
-        ..entry("1.0.0")
-    };
-    assert_eq!(
-        to(&native, &PLAY),
-        None,
-        "native mods require an explicit update"
-    );
-    let data = installed::Entry {
-        kind: Kind::DataPack,
-        ..entry("1.0.0")
-    };
-    assert_eq!(to(&data, &PLAY), None);
-    let modrinth = installed::Entry {
-        source: SourceId::Modrinth,
-        ..entry("1.0.0")
-    };
-    assert_eq!(to(&modrinth, &PLAY), None);
-
-    // Never backwards: the newest was taken down while it is installed.
-    let mut down = index.clone();
-    down.revoked.push(index::Revoked {
-        id: "ruby".into(),
-        sha256: Some(index::sha256_file(&c).unwrap()),
-        reason: "Test.".into(),
-        date: String::new(),
-    });
-    assert_eq!(version_of(decide(&down, &entry("1.2.0"), &PLAY)), None);
-    // Never across Minecraft versions: what is installed was for another game.
-    let other = index_of(&[("1.2.0", GAME, &c), ("1.0.0", "26.2", &a)]);
-    assert_eq!(version_of(decide(&other, &entry("1.0.0"), &PLAY)), None);
-    fs::remove_dir_all(&dir).unwrap();
+    let mut list = installed::Installed::load(home);
+    list.entries
+        .retain(|row| !(row.source == SourceId::Sunrise && row.project == "ruby"));
+    list.entries.push(entry.clone());
+    list.save(home).unwrap();
+    entry
 }
 
-#[test]
-fn a_new_version_that_drops_content_is_named() {
-    let dir = scratch("auto-dropped");
-    let old = ruby(&dir, "1.0.0", &["lamp", "ore"], &["gem"]);
-    let more = ruby(&dir, "1.1.0", &["lamp", "ore", "brick"], &["gem"]);
-    let less = ruby(&dir, "1.2.0", &["lamp"], &[]);
-    assert!(dropped(&old, &more).unwrap().is_empty());
-    assert_eq!(
-        dropped(&old, &less).unwrap(),
-        ["block ruby:ore", "item ruby:gem"]
-    );
-    fs::remove_dir_all(&dir).unwrap();
-}
-
-/// The installed ruby: the browser's entry and the file's bytes.
-fn installed_ruby(home: &Path) -> (String, Vec<u8>) {
-    let list = installed::Installed::load(home);
-    let e = list.find(SourceId::Sunrise, "ruby").unwrap();
-    (e.version.clone(), fs::read(home.join(&e.file)).unwrap())
-}
-
-#[test]
-fn updates_holds_and_keeps_the_replaced_file_until_the_next_start() {
-    let dir = scratch("auto-run");
-    let home = dir.join("home");
-    let v1 = ruby(&dir, "1.0.0", &["lamp", "ore"], &[]);
-    let v2 = ruby(&dir, "1.1.0", &["lamp", "ore", "brick"], &[]);
-    let v3 = ruby(&dir, "1.2.0", &["lamp"], &[]);
-    let first = index_of(&[("1.0.0", GAME, &v1)]);
-    let p = first.project("ruby").unwrap();
-    install_version_guarded(
-        &first,
-        true,
-        p,
-        &p.versions[0],
-        &home,
-        &|_| Ok(()),
-        &|_, _| {},
-    )
-    .unwrap();
-
-    // 1.1.0 adds a block: updated, the 1.0.0 file kept aside.
-    let index = index_of(&[("1.1.0", GAME, &v2), ("1.0.0", GAME, &v1)]);
-    let report = run_with(&index, true, &home, &PLAY, &|_, _| {});
-    assert_eq!(report.updated, ["Ruby 1.1.0"]);
-    assert!(
-        report.held.is_empty() && report.failed.is_empty(),
-        "{report:?}"
-    );
-    assert_eq!(
-        installed_ruby(&home),
-        ("1.1.0".into(), fs::read(&v2).unwrap())
-    );
-    let kept = kept_list(&home).unwrap();
-    assert_eq!(kept.len(), 1);
-    assert_eq!(
-        fs::read(home.join(&kept[0].copy)).unwrap(),
-        fs::read(&v1).unwrap()
-    );
-    // A second run in the same launcher keeps it. The next start can prove the installed
-    // package is intact and retire the advisory record without deleting the old copy.
-    run_with(&index, true, &home, &PLAY, &|_, _| {});
-    assert!(home.join(&kept[0].copy).is_file());
-    save_kept(
-        &home,
-        &[Kept {
-            session: None,
-            ..kept[0].clone()
-        }],
-    )
-    .unwrap();
-    recover(&home).unwrap();
-    assert!(home.join(&kept[0].copy).is_file());
-    assert!(kept_list(&home).unwrap().is_empty());
-
-    // 1.2.0 drops two blocks: it waits, and 1.1.0 stays as it was.
-    let index = index_of(&[
-        ("1.2.0", GAME, &v3),
-        ("1.1.0", GAME, &v2),
-        ("1.0.0", GAME, &v1),
-    ]);
-    let report = run_with(&index, true, &home, &PLAY, &|_, _| {});
-    assert!(report.updated.is_empty(), "{report:?}");
-    assert_eq!(report.held.len(), 1);
-    assert!(
-        report.held[0].contains("block ruby:brick, block ruby:ore"),
-        "{}",
-        report.held[0]
-    );
-    assert_eq!(
-        installed_ruby(&home),
-        ("1.1.0".into(), fs::read(&v2).unwrap())
-    );
-    assert!(kept_list(&home).unwrap().is_empty());
-    assert!(!home.join("mod-browser/downloads/ruby-1.2.0.smod").exists());
-    fs::remove_dir_all(&dir).unwrap();
+fn legacy_ledger(checksum: &str, copy: &str, pid: u32) -> String {
+    REPLACED_V1_1_2
+        .replace("SHA-256:PACKAGE_DIGEST", checksum)
+        .replace("mod-browser/replaced/ruby", copy)
+        .replace("\"pid\": 0", &format!("\"pid\": {pid}"))
 }
 
 #[test]
 fn backup_paths_stay_in_the_backup_folder() {
-    let dir = scratch("auto-backup-path");
-    let home = dir.join("home");
-    let v1 = ruby(&dir, "1.0.0", &["lamp"], &[]);
-    let index = index_of(&[("1.0.0", GAME, &v1)]);
-    let p = index.project("ruby").unwrap();
-    install_version_guarded(
-        &index,
-        true,
-        p,
-        &p.versions[0],
-        &home,
-        &|_| Ok(()),
-        &|_, _| {},
-    )
-    .unwrap();
-    let mut entry = installed::Installed::load(&home).entries.remove(0);
-    entry.version = "../../outside".into();
-    let kept = keep(&home, &entry).unwrap();
-    assert!(kept.copy.starts_with("mod-browser/replaced/ruby."));
-    assert!(home.join(&kept.copy).is_file());
+    let root = dir("backup-path");
+    let home = root.join("home");
+    let v1 = smod_bytes("ruby", "1.0.0");
+    let entry = write_installed_ruby(&home, "1.0.0", &v1);
+    let outside = root.join("outside");
+    fs::write(&outside, &v1).unwrap();
+    fs::create_dir_all(home.join(KEPT_DIR)).unwrap();
+    let ledger = home.join(KEPT);
 
-    let outside = home.join("outside");
-    fs::write(&outside, b"untouched").unwrap();
-    save_kept(
-        &home,
-        &[Kept {
-            copy: "mod-browser/replaced/../../outside".into(),
-            pid: 0,
-            ..kept
-        }],
+    // An escaping backup path is refused and leaves the outside file untouched.
+    fs::write(
+        &ledger,
+        legacy_ledger(&entry.checksum, "mod-browser/replaced/../../outside", 12345),
     )
     .unwrap();
     assert!(recover(&home).is_err());
-    assert_eq!(fs::read(outside).unwrap(), b"untouched");
-    fs::remove_dir_all(dir).unwrap();
-}
+    assert!(outside.is_file());
+    assert!(ledger.is_file());
 
-#[test]
-fn a_failed_restore_and_ledger_save_cannot_lose_the_backup_on_same_process_retry() {
-    let dir = scratch("failed-restore-save");
-    let home = dir.join("home");
-    let old = ruby(&dir, "1.0.0", &["lamp"], &[]);
-    let new = ruby(&dir, "1.1.0", &["lamp", "brick"], &[]);
-    let first = index_of(&[("1.0.0", GAME, &old)]);
-    let ruby = first.project("ruby").unwrap();
-    let _lock = crate::browser::lock_home(&home).unwrap();
-    install_version_guarded(
-        &first,
-        true,
-        ruby,
-        &ruby.versions[0],
-        &home,
-        &|_| Ok(()),
-        &|_, _| {},
-    )
-    .unwrap();
-    let entry = installed::Installed::load(&home).entries.remove(0);
-    let kept = keep(&home, &entry).unwrap();
-    let ledger = fs::read(home.join(KEPT)).unwrap();
-    let target = entry.path(&home).unwrap();
-    fs::remove_file(&target).unwrap();
-    fs::create_dir(&target).unwrap(); // A directory occupying the live file makes the real restore fail.
-    let error = finish_failed_update(&home, &kept, |_, rows| {
-        assert_eq!(rows.len(), 1);
-        assert!(rows[0].session.is_none());
-        Err("injected save refusal".into())
-    })
-    .unwrap_err();
-    assert!(error.contains("restore failed") && error.contains("injected save refusal"));
-    assert_eq!(fs::read(home.join(KEPT)).unwrap(), ledger);
-    // A file reappears, but not its exact bytes. The old updater used to copy that over its backup.
-    fs::remove_dir(&target).unwrap();
-    fs::write(&target, b"incomplete live bytes").unwrap();
-    let next = index_of(&[("1.1.0", GAME, &new), ("1.0.0", GAME, &old)]);
-    let report = run_with(&next, true, &home, &PLAY, &|_, _| {});
-    assert_eq!(report.held.len(), 1);
-    assert!(report.updated.is_empty());
-    assert_eq!(
-        fs::read(home.join(&kept.copy)).unwrap(),
-        fs::read(old).unwrap()
-    );
-    assert_eq!(fs::read(home.join(KEPT)).unwrap(), ledger);
-    assert_eq!(fs::read(target).unwrap(), b"incomplete live bytes");
+    // A stamped backup file directly inside `mod-browser/replaced/` is accepted and retired.
+    let copy = "mod-browser/replaced/ruby.0123456789abcdef01234567";
+    fs::write(home.join(copy), &v1).unwrap();
+    fs::write(&ledger, legacy_ledger(&entry.checksum, copy, 12345)).unwrap();
+    assert!(recover(&home).is_ok());
+    assert!(!ledger.is_file());
+    assert!(home.join(copy).is_file());
+    let _ = fs::remove_dir_all(&root);
 }
 
 #[test]
 fn an_omitted_installed_claim_cannot_authorize_retiring_the_backup() {
-    let dir = scratch("ambiguous-installed-claim");
-    let home = dir.join("home");
-    let v1 = ruby(&dir, "1.0.0", &["lamp"], &[]);
-    let index = index_of(&[("1.0.0", GAME, &v1)]);
-    let project = index.project("ruby").unwrap();
-    install_version_guarded(
-        &index,
-        true,
-        project,
-        &project.versions[0],
-        &home,
-        &|_| Ok(()),
-        &|_, _| {},
-    )
-    .unwrap();
-    let entry = installed::Installed::load(&home).entries.remove(0);
-    let mut kept = keep(&home, &entry).unwrap();
-    kept.session = None;
-    let backup = home.join(&kept.copy);
-    save_kept(&home, &[kept]).unwrap();
-    let ledger = fs::read(home.join(KEPT)).unwrap();
-    let path = home.join(installed::MANIFEST);
-    let exact = fs::read(&path).unwrap();
-    let mut list: serde_json::Value = serde_json::from_slice(&exact).unwrap();
-    let omitted = serde_json::json!({"source":"sunrise", "project":"ruby", "file":"../external"});
-    list["entries"].as_array_mut().unwrap().push(omitted);
-    let disputed = serde_json::to_vec(&list).unwrap();
-    fs::write(&path, &disputed).unwrap();
-    assert_eq!(installed::Installed::load(&home).entries.len(), 1);
+    let root = dir("omitted-claim");
+    let home = root.join("home");
+    let v1 = smod_bytes("ruby", "1.0.0");
+    let v2 = smod_bytes("ruby", "1.0.1");
+    let old = write_installed_ruby(&home, "1.0.0", &v1);
+    let _live = write_installed_ruby(&home, "1.0.1", &v2);
+    let backup = home.join(KEPT_DIR).join("ruby");
+    fs::create_dir_all(backup.parent().unwrap()).unwrap();
+    fs::write(&backup, &v1).unwrap();
+    let ledger = home.join(KEPT);
+    let ledger_text = legacy_ledger(&old.checksum, "mod-browser/replaced/ruby", 12345);
+    fs::write(&ledger, &ledger_text).unwrap();
+
+    let manifest = home.join(installed::MANIFEST);
+    let valid_manifest = fs::read_to_string(&manifest).unwrap();
+    let mut raw: serde_json::Value = serde_json::from_str(&valid_manifest).unwrap();
+    raw["entries"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!({
+            "source": "sunrise",
+            "project": "ruby",
+            "slug": "ruby",
+            "title": "Ruby",
+            "kind": "mod",
+            "version": "1.0.0",
+            "number": "1.0.0",
+            "file": "../external",
+            "checksum": old.checksum,
+            "page": ""
+        }));
+    let tampered = serde_json::to_string_pretty(&raw).unwrap();
+    fs::write(&manifest, &tampered).unwrap();
+
     assert!(recover(&home).is_err());
-    assert_eq!(fs::read(&path).unwrap(), disputed);
-    assert_eq!(fs::read(home.join(KEPT)).unwrap(), ledger);
-    assert_eq!(fs::read(&backup).unwrap(), fs::read(&v1).unwrap());
-    fs::write(&path, exact).unwrap();
-    recover(&home).unwrap();
-    assert!(!home.join(KEPT).exists());
+    assert_eq!(fs::read_to_string(&manifest).unwrap(), tampered);
+    assert_eq!(fs::read_to_string(&ledger).unwrap(), ledger_text);
     assert!(backup.is_file());
+
+    // Once the manifest is valid again, recovery retires the legacy ledger while keeping the copy.
+    fs::write(&manifest, &valid_manifest).unwrap();
+    assert!(recover(&home).is_ok());
+    assert!(!ledger.exists());
+    assert!(backup.is_file());
+    let _ = fs::remove_dir_all(&root);
 }
 
 #[test]
-fn unproved_backup_stops_the_old_updater_but_not_play() {
-    let dir = scratch("auto-restore-retry");
-    let home = dir.join("home");
-    let v1 = ruby(&dir, "1.0.0", &["lamp"], &[]);
-    let index = index_of(&[("1.0.0", GAME, &v1)]);
-    let p = index.project("ruby").unwrap();
-    install_version_guarded(
-        &index,
-        true,
-        p,
-        &p.versions[0],
-        &home,
-        &|_| Ok(()),
-        &|_, _| {},
-    )
-    .unwrap();
-    let ledger = home.join(KEPT);
-    let backup = home.join("mod-browser/replaced/ruby");
+fn unproved_backup_stops_recovery_but_not_play() {
+    let root = dir("legacy-recovery");
+    let home = root.join("home");
+    let v1 = smod_bytes("ruby", "1.0.0");
+    let v2 = smod_bytes("ruby", "1.0.1");
+    let old = write_installed_ruby(&home, "1.0.0", &v1);
+    let _live = write_installed_ruby(&home, "1.0.1", &v2);
+    let backup = home.join(KEPT_DIR).join("ruby");
     fs::create_dir_all(backup.parent().unwrap()).unwrap();
-    fs::copy(&v1, &backup).unwrap();
-    let valid = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/replaced-v1.1.2.json"
-    ))
-    .replace("PACKAGE_DIGEST", &index::sha256_file(&v1).unwrap())
-    .replace("\"pid\": 0", &format!("\"pid\": {}", std::process::id()));
-    // A reused legacy PID does not grant ownership to this launcher.
+    fs::write(&backup, &v1).unwrap();
+    let ledger = home.join(KEPT);
+
+    // Real v1.1.2 ledger (no session field) retires even when the old PID happens to match ours.
+    let valid = legacy_ledger(
+        &old.checksum,
+        "mod-browser/replaced/ruby",
+        std::process::id(),
+    );
     fs::write(&ledger, &valid).unwrap();
-    assert!(run(&home, &PLAY, false, &|_, _| {}).is_none());
+    assert!(recover(&home).is_ok());
     assert!(!ledger.exists());
     assert!(backup.is_file());
-    let active = installed_ruby(&home);
-    let v2 = ruby(&dir, "1.1.0", &["lamp", "brick"], &[]);
-    let newer = index_of(&[("1.1.0", GAME, &v2), ("1.0.0", GAME, &v1)]);
-    for (bytes, copy) in [
-        (b"invalid JSON".as_slice(), "present"),
-        (valid.as_bytes(), "missing"),
-        (valid.as_bytes(), "directory"),
+
+    // Corrupt ledger, missing backup or directory backup: recover keeps everything and lets Play continue.
+    for (name, bytes, remove_backup, dir_backup) in [
+        ("invalid-json", "{".to_owned(), false, false),
+        ("missing-backup", valid.clone(), true, false),
+        ("dir-backup", valid, true, true),
     ] {
-        fs::write(&ledger, bytes).unwrap();
-        match copy {
-            "missing" => fs::remove_file(&backup).unwrap(),
-            "directory" => fs::create_dir(&backup).unwrap(),
-            _ => (),
+        fs::write(&ledger, &bytes).unwrap();
+        if remove_backup {
+            let _ = fs::remove_file(&backup);
+            let _ = fs::remove_dir_all(&backup);
+        } else {
+            let _ = fs::remove_dir_all(&backup);
+            fs::write(&backup, &v1).unwrap();
         }
-        let report = run(&home, &PLAY, false, &|_, _| {}).unwrap();
-        assert!(report.lines()[0].contains("You can still play."));
-        assert!(report.failed.is_empty());
-        let report = run_with(&newer, true, &home, &PLAY, &|_, _| {});
-        assert!(report.updated.is_empty());
-        assert!(update_to(&newer, "ruby", "1.1.0", &home, &|_, _| {}).is_err());
-        assert_eq!(fs::read(&ledger).unwrap(), bytes);
-        assert_eq!(backup.is_file(), copy == "present");
-        assert_eq!(backup.is_dir(), copy == "directory");
-        assert_eq!(installed_ruby(&home), active);
+        if dir_backup {
+            fs::create_dir_all(&backup).unwrap();
+        }
+        let error = recover(&home).unwrap_err();
+        assert!(error.contains("You can still play."), "{name}: {error}");
+        assert_eq!(fs::read_to_string(&ledger).unwrap(), bytes, "{name}");
+        assert_eq!(backup.is_dir(), dir_backup, "{name}");
+        assert_eq!(backup.is_file(), !remove_backup, "{name}");
+        assert_eq!(fs::read(home.join("sunrise-mods/ruby.smod")).unwrap(), v2);
     }
-    fs::remove_dir_all(dir).unwrap();
+    let _ = fs::remove_dir_all(&root);
 }
 
 #[test]
 fn an_unproved_live_package_is_not_overwritten_from_the_old_ledger() {
-    let dir = scratch("auto-rollback");
-    let home = dir.join("home");
-    let v1 = ruby(&dir, "1.0.0", &["lamp"], &[]);
-    let index = index_of(&[("1.0.0", GAME, &v1)]);
-    let p = index.project("ruby").unwrap();
-    install_version_guarded(
-        &index,
-        true,
-        p,
-        &p.versions[0],
-        &home,
-        &|_| Ok(()),
-        &|_, _| {},
+    let root = dir("unproved-live");
+    let home = root.join("home");
+    let v1 = smod_bytes("ruby", "1.0.0");
+    let old = write_installed_ruby(&home, "1.0.0", &v1);
+    let backup = home.join(KEPT_DIR).join("ruby");
+    fs::create_dir_all(backup.parent().unwrap()).unwrap();
+    fs::write(&backup, &v1).unwrap();
+    let ledger = home.join(KEPT);
+    fs::write(
+        &ledger,
+        legacy_ledger(&old.checksum, "mod-browser/replaced/ruby", 12345),
     )
     .unwrap();
-    let before = installed::Installed::load(&home);
-    let old = before.find(SourceId::Sunrise, "ruby").unwrap().clone();
-    // An earlier launcher kept 1.0.0, then stopped with a half-written file and the list still
-    // naming 1.0.0.
-    let mut k = keep(&home, &old).unwrap();
-    k.session = None;
-    let backup = home.join(&k.copy);
-    save_kept(&home, &[k]).unwrap();
-    fs::write(home.join(&old.file), b"half").unwrap();
-    assert_eq!(run(&home, &PLAY, false, &|_, _| {}).unwrap().held.len(), 1);
-    assert_eq!(installed_ruby(&home), ("1.0.0".into(), b"half".to_vec()));
-    assert_eq!(fs::read(backup).unwrap(), fs::read(v1).unwrap());
+
+    // Corrupt the live package bytes so they no longer match mod-browser.json.
+    fs::write(home.join("sunrise-mods/ruby.smod"), b"half").unwrap();
+    assert!(recover(&home).is_err());
+    assert_eq!(
+        fs::read(home.join("sunrise-mods/ruby.smod")).unwrap(),
+        b"half"
+    );
+    assert_eq!(fs::read(&backup).unwrap(), v1);
     assert_eq!(kept_list(&home).unwrap().len(), 1);
-    fs::remove_dir_all(&dir).unwrap();
+    let _ = fs::remove_dir_all(&root);
 }
 
 #[test]
 fn lock_failure_reports_an_unchecked_update_not_a_retained_backup() {
-    let scratch = tempfile::tempdir().unwrap();
-    let home = scratch.path().join("not-a-directory");
-    fs::write(&home, b"keep").unwrap();
-    let lines = run(&home, &PLAY, false, &|_, _| {}).unwrap().lines();
+    let root = dir("lock-failure");
+    let home = root.join("home-as-file");
+    fs::write(&home, b"not a directory").unwrap();
     assert_eq!(
-        lines,
-        ["The launcher couldn't check for unfinished mod updates. You can still play."]
+        recover(&home).unwrap_err(),
+        "The launcher couldn't check for unfinished mod updates. You can still play."
     );
-    assert_eq!(fs::read(home).unwrap(), b"keep");
-}
-
-#[test]
-fn the_report_says_what_changed_and_nothing_otherwise() {
-    assert!(Report::default().lines().is_empty());
-    let r = Report {
-        updated: vec!["Ruby 1.1.0".into(), "Glow 2.0".into()],
-        held: vec!["held".into()],
-        ..Report::default()
-    };
-    assert_eq!(
-        r.lines(),
-        ["Updated automatically: Ruby 1.1.0, Glow 2.0.", "held"]
-    );
-}
-
-/// Turning a mod off in the Mods page is the player's choice, and an automatic update replaces
-/// the file without undoing it (#10071). A new install and the player's own install turn it on.
-#[test]
-fn an_automatic_update_keeps_a_disabled_mod_off() {
-    use crate::browser::mod_list;
-    use crate::browser::sunrise::install_version;
-    let dir = scratch("auto-disabled");
-    let home = dir.join("home");
-    let v1 = ruby(&dir, "1.0.0", &["lamp"], &[]);
-    let v2 = ruby(&dir, "1.1.0", &["lamp", "ore"], &[]);
-    let v3 = ruby(&dir, "1.2.0", &["lamp", "ore", "brick"], &[]);
-    let first = index_of(&[("1.0.0", GAME, &v1)]);
-    let p = first.project("ruby").unwrap();
-    install_version(&first, true, p, &p.versions[0], &home, &|_, _| {}).unwrap();
-    assert!(mod_list::is_enabled(&home, "ruby"), "a new install is on");
-
-    // The player turns it off; the automatic update replaces its file and leaves it off.
-    mod_list::set_enabled(&home, "ruby", false).unwrap();
-    let index = index_of(&[("1.1.0", GAME, &v2), ("1.0.0", GAME, &v1)]);
-    let report = run_with(&index, true, &home, &PLAY, &|_, _| {});
-    assert_eq!(report.updated, ["Ruby 1.1.0"], "{report:?}");
-    assert!(
-        !mod_list::is_enabled(&home, "ruby"),
-        "the update kept it off"
-    );
-    assert_eq!(
-        installed_ruby(&home),
-        ("1.1.0".into(), fs::read(&v2).unwrap())
-    );
-
-    // Turned back on, the next automatic update leaves it on.
-    mod_list::set_enabled(&home, "ruby", true).unwrap();
-    let index = index_of(&[("1.2.0", GAME, &v3), ("1.1.0", GAME, &v2)]);
-    let report = run_with(&index, true, &home, &PLAY, &|_, _| {});
-    assert_eq!(report.updated, ["Ruby 1.2.0"], "{report:?}");
-    assert!(mod_list::is_enabled(&home, "ruby"));
-
-    // The player's own install of the installed, disabled mod turns it on again.
-    mod_list::set_enabled(&home, "ruby", false).unwrap();
-    let v4 = ruby(&dir, "1.3.0", &["lamp"], &[]);
-    let index = index_of(&[("1.3.0", GAME, &v4), ("1.2.0", GAME, &v3)]);
-    let p = index.project("ruby").unwrap();
-    install_version(&index, true, p, &p.versions[0], &home, &|_, _| {}).unwrap();
-    assert!(
-        mod_list::is_enabled(&home, "ruby"),
-        "an explicit install is on"
-    );
-    assert_eq!(
-        installed_ruby(&home),
-        ("1.3.0".into(), fs::read(&v4).unwrap())
-    );
-}
-
-#[test]
-fn auto_update_and_manual_mutation_do_not_race_or_lose_entries() {
-    use std::sync::mpsc::channel;
-    use std::sync::Arc;
-    use std::time::Duration;
-
-    let dir = scratch("auto-race-install");
-    let home = dir.join("home");
-    let v1 = ruby(&dir, "1.0.0", &["block1"], &[]);
-    let v2 = ruby(&dir, "1.1.0", &["block1"], &[]);
-    let index = Arc::new(index_of(&[("1.1.0", GAME, &v2), ("1.0.0", GAME, &v1)]));
-
-    // Start with Ruby 1.0.0 installed.
-    let p_ruby = index.project("ruby").unwrap();
-    install_version_guarded(
-        &index,
-        true,
-        p_ruby,
-        &p_ruby.versions[1], // 1.0.0
-        &home,
-        &|_| Ok(()),
-        &|_, _| {},
-    )
-    .unwrap();
-
-    let initial = installed::Installed::load(&home);
-    assert_eq!(initial.entries.len(), 1);
-    assert_eq!(initial.entries[0].version, "1.0.0");
-
-    let (auto_started_tx, auto_started_rx) = channel();
-    let (auto_resume_tx, auto_resume_rx) = channel();
-
-    let home_auto = home.clone();
-    let index_auto = index.clone();
-    let auto_thread = std::thread::spawn(move || {
-        let resume = std::sync::Mutex::new(auto_resume_rx);
-        run_with(&index_auto, true, &home_auto, &PLAY, &|_line, _fraction| {
-            let _ = auto_started_tx.send(());
-            if let Ok(rx) = resume.lock() {
-                let _ = rx.recv_timeout(Duration::from_secs(5));
-            }
-        })
-    });
-
-    auto_started_rx
-        .recv_timeout(Duration::from_secs(5))
-        .expect("auto update started");
-
-    let home_manual = home.clone();
-    let index_manual = index.clone();
-    let manual_thread = std::thread::spawn(move || {
-        let p_coords = index_manual.project("coords_hud").unwrap();
-        install_version_guarded(
-            &index_manual,
-            true,
-            p_coords,
-            &p_coords.versions[0],
-            &home_manual,
-            &|_| Ok(()),
-            &|_, _| {},
-        )
-    });
-
-    let _ = auto_resume_tx.send(());
-
-    let report = auto_thread.join().expect("auto thread finished");
-    assert_eq!(report.updated, vec!["Ruby 1.1.0"]);
-
-    let manual_result = manual_thread.join().expect("manual thread finished");
-    assert!(manual_result.is_ok(), "{:?}", manual_result.err());
-
-    let final_installed = installed::Installed::load(&home);
-    assert_eq!(
-        final_installed.entries.len(),
-        2,
-        "entries clobbered: {:?}",
-        final_installed.entries
-    );
-    let ruby_entry = final_installed
-        .find(SourceId::Sunrise, "ruby")
-        .expect("ruby present");
-    assert_eq!(ruby_entry.version, "1.1.0");
-    let coords_entry = final_installed
-        .find(SourceId::Sunrise, "coords_hud")
-        .expect("coords_hud present");
-    assert_eq!(coords_entry.version, "0.1.0");
-
-    fs::remove_dir_all(&dir).unwrap();
-}
-
-#[test]
-fn auto_update_does_not_revive_concurrently_removed_mod() {
-    use std::sync::mpsc::channel;
-    use std::sync::Arc;
-    use std::time::Duration;
-
-    let dir = scratch("auto-race-remove");
-    let home = dir.join("home");
-    let v1 = ruby(&dir, "1.0.0", &["block1"], &[]);
-    let v2 = ruby(&dir, "1.1.0", &["block1"], &[]);
-    let index = Arc::new(index_of(&[("1.1.0", GAME, &v2), ("1.0.0", GAME, &v1)]));
-
-    let p_ruby = index.project("ruby").unwrap();
-    install_version_guarded(
-        &index,
-        true,
-        p_ruby,
-        &p_ruby.versions[1],
-        &home,
-        &|_| Ok(()),
-        &|_, _| {},
-    )
-    .unwrap();
-    let p_coords = index.project("coords_hud").unwrap();
-    install_version_guarded(
-        &index,
-        true,
-        p_coords,
-        &p_coords.versions[0],
-        &home,
-        &|_| Ok(()),
-        &|_, _| {},
-    )
-    .unwrap();
-
-    assert_eq!(installed::Installed::load(&home).entries.len(), 2);
-
-    let (auto_started_tx, auto_started_rx) = channel();
-    let (auto_resume_tx, auto_resume_rx) = channel();
-
-    let home_auto = home.clone();
-    let index_auto = index.clone();
-    let auto_thread = std::thread::spawn(move || {
-        let resume = std::sync::Mutex::new(auto_resume_rx);
-        run_with(&index_auto, true, &home_auto, &PLAY, &|_line, _fraction| {
-            let _ = auto_started_tx.send(());
-            if let Ok(rx) = resume.lock() {
-                let _ = rx.recv_timeout(Duration::from_secs(5));
-            }
-        })
-    });
-
-    auto_started_rx
-        .recv_timeout(Duration::from_secs(5))
-        .expect("auto update started");
-
-    let home_manual = home.clone();
-    let remove_thread = std::thread::spawn(move || installed::remove(&home_manual, "coords_hud"));
-
-    let _ = auto_resume_tx.send(());
-
-    let _report = auto_thread.join().expect("auto thread finished");
-    let remove_result = remove_thread.join().expect("remove thread finished");
-    assert!(remove_result.is_ok(), "{:?}", remove_result.err());
-
-    let final_installed = installed::Installed::load(&home);
-    assert_eq!(final_installed.entries.len(), 1);
-    assert!(final_installed
-        .find(SourceId::Sunrise, "coords_hud")
-        .is_none());
-    let ruby_entry = final_installed
-        .find(SourceId::Sunrise, "ruby")
-        .expect("ruby present");
-    assert_eq!(ruby_entry.version, "1.1.0");
-
-    fs::remove_dir_all(&dir).unwrap();
-}
-
-#[test]
-fn content_ids_are_the_declaration_files_of_the_mods_own_namespace() {
-    let dir = scratch("auto-content-ids");
-    let files: [(&str, &[u8]); 8] = [
-        ("data/ruby/sunrise/block/gem_block.json", BLOCK),
-        ("data/ruby/sunrise/item/gem.json", ITEM),
-        ("data/ruby/sunrise/entity_type/golem.json", b"{}"),
-        ("data/ruby/sunrise/mob_effect/shine.json", b"{}"),
-        ("data/ruby/sunrise/menu/forge.json", b"{}"),
-        ("data/ruby/sunrise/creative_tab/gems.json", b"{}"),
-        ("data/ruby/recipe/gem.json", b"{}"),
-        ("assets/ruby/lang/en_us.json", b"{}"),
-    ];
-    let manifest = format!("{MANIFEST}version = \"1.0.0\"\n");
-    let path = dir.join("ruby.smod");
-    fs::write(
-        &path,
-        sunrise_launcher_smod::Package::write_files(&manifest, &files).unwrap(),
-    )
-    .unwrap();
-    let ids: Vec<String> = content_ids(&path).unwrap().into_iter().collect();
-    assert_eq!(
-        ids,
-        [
-            "block ruby:gem_block",
-            "creative tab ruby:gems",
-            "effect ruby:shine",
-            "entity ruby:golem",
-            "item ruby:gem",
-            "menu ruby:forge",
-        ]
-    );
+    assert_eq!(fs::read(&home).unwrap(), b"not a directory");
+    let _ = fs::remove_dir_all(&root);
 }

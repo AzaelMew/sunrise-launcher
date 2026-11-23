@@ -775,8 +775,8 @@ fn the_game_plays_only_as_an_account_that_owns_it() {
 }
 
 #[test]
-fn files_from_launchers_with_offline_names_load_and_lose_them_on_save() {
-    let dir = std::env::temp_dir().join(format!("sunrise-old-offline-{}", std::process::id()));
+fn retired_account_and_settings_fields_are_ignored_on_load_without_deleting_files() {
+    let dir = std::env::temp_dir().join(format!("sunrise-retired-fields-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("skins")).unwrap();
     let store = MemoryStore::default();
@@ -788,13 +788,11 @@ fn files_from_launchers_with_offline_names_load_and_lose_them_on_save() {
         serde_json::json!({ "builder_1": { "skin": true, "cape": true, "model": "slim" } });
     let path = dir.join("accounts.json");
     std::fs::write(&path, old.to_string()).unwrap();
-    for file in ["builder_1.png", "builder_1.cape.png"] {
-        std::fs::write(dir.join("skins").join(file), b"png").unwrap();
-    }
+    let skin_file = dir.join("skins/builder_1.png");
+    std::fs::write(&skin_file, b"png").unwrap();
     let mut accounts = Accounts::load_from(&path);
     assert_eq!(accounts.accounts, vec![notch()]);
     assert!(accounts.selected().is_none());
-    // The account plays, and the save drops the names, their looks and their files.
     let (_, ep) = mock(|_| {});
     let pass = launch_for_game(&ep, Some("test-client"), &store, &mut accounts).unwrap();
     assert_eq!(pass.session.unwrap().0.uuid, UUID);
@@ -805,11 +803,15 @@ fn files_from_launchers_with_offline_names_load_and_lose_them_on_save() {
         saved,
         serde_json::json!({ "accounts": accounts.accounts, "selected": UUID })
     );
-    assert!(!dir.join("skins").exists());
-    // The developer option of 0.2.58 reads as nothing and is not written back.
-    let settings = crate::backend::Settings::parse(r#"{"dev_offline": true, "keep_versions": 3}"#);
+    assert!(skin_file.is_file());
+    // Retired settings fields are ignored on load and not written back.
+    let settings = crate::backend::Settings::parse(
+        r#"{"dev_offline": true, "welcomed": true, "corners": 12, "keep_versions": 3}"#,
+    );
     let saved = serde_json::to_value(&settings).unwrap();
     assert!(saved.get("dev_offline").is_none(), "{saved}");
+    assert!(saved.get("welcomed").is_none(), "{saved}");
+    assert!(saved.get("corners").is_none(), "{saved}");
     assert_eq!(saved["keep_versions"], 3);
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -1235,7 +1237,6 @@ fn a_switch_is_saved_and_survives_a_restart() {
             named("c3", "Cinder"),
         ],
         selected: Some("a1".into()),
-        ..Accounts::default()
     }
     .save_to(&path)
     .unwrap();

@@ -544,3 +544,56 @@ fn approved_update_refuses_changed_worlds_or_catalogue_at_cutoff() {
         },
     );
 }
+
+#[test]
+fn install_resolves_newest_matching_dependency_and_refuses_conflicting_ranges() {
+    Fixture::run(
+        concat!(
+            module_path!(),
+            "::install_resolves_newest_matching_dependency_and_refuses_conflicting_ranges"
+        ),
+        |mut fixture| {
+            fixture.project("light_core", "Light Core", index::Kind::Mod);
+            fixture.project("fireflies", "Fireflies", index::Kind::Mod);
+            fixture.project("two", "Two", index::Kind::Mod);
+            fixture.release("light_core", "1.0.0", "", &[]);
+            let core_1_1 = fixture.release("light_core", "1.1.0", "", &[]);
+            fixture.release("light_core", "2.0.0", "", &[]);
+            fixture.release(
+                "fireflies",
+                "1.0.0",
+                "[dependencies]\nlight_core='^1'\n",
+                &[],
+            );
+            fixture.release("two", "1.0.0", "[dependencies]\nlight_core='^2'\n", &[]);
+
+            // Conflicting dependency ranges refuse the whole set without touching the profile.
+            assert!(fixture
+                .apply(Action::Install(projects(&["fireflies", "two"])))
+                .is_err());
+            assert!(!fixture.home().join("sunrise-mods/fireflies.smod").exists());
+            assert!(!fixture.home().join("sunrise-mods/two.smod").exists());
+            assert!(!fixture.home().join(CORE).exists());
+
+            // Installing one picks the newest dependency version matching its range.
+            let batch = fixture
+                .apply(Action::Install(projects(&["fireflies"])))
+                .unwrap();
+            let core = batch
+                .added
+                .iter()
+                .find(|entry| entry.project == "light_core")
+                .unwrap();
+            let fireflies = batch
+                .added
+                .iter()
+                .find(|entry| entry.project == "fireflies")
+                .unwrap();
+            assert_eq!(core.version, "1.1.0");
+            assert!(core.dependency);
+            assert!(!fireflies.dependency);
+            assert_eq!(fs::read(fixture.home().join(CORE)).unwrap(), core_1_1);
+            assert!(fixture.home().join("sunrise-mods/fireflies.smod").is_file());
+        },
+    );
+}
