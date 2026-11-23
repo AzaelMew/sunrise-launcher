@@ -330,3 +330,60 @@ fn explicit_install_preserves_sdk_lookup_errors_instead_of_saying_no_build() {
         "lookup error should be preserved rather than reported as no build, got: {lookup_err}"
     );
 }
+
+#[test]
+fn explicit_install_does_not_prune_sdk_only_builds_with_unresolved_catalogue() {
+    isolated_case(
+        "sdk_install::explicit_install_does_not_prune_sdk_only_builds_with_unresolved_catalogue",
+        || {
+            const SDK_TAG: &str = "26.3-0.1.10";
+            const STATIC_TAG: &str = "26.3-0.1.9";
+            let Some(static_asset) = ASSET else {
+                return;
+            };
+            let settings = Settings {
+                keep_versions: Some(1),
+                ..Settings::default()
+            };
+            if sdk_target(selected_game_architecture(&settings)).is_none() {
+                return;
+            }
+            settings.save().unwrap();
+            // Pretend an older SDK-only build is installed and auto-downloaded so auto-prune would
+            // delete it if handed an unresolved catalogue where SDK_TAG had `asset: None`.
+            let sdk_dir = version_dir(SDK_TAG);
+            fs::create_dir_all(&sdk_dir).unwrap();
+            fs::write(sdk_dir.join(CLIENT), b"sdk client").unwrap();
+            fs::write(sdk_dir.join(Artifact::SDK_RECEIPT), b"{}").unwrap();
+            // Create a profile following Stable (which points at SDK_TAG when resolved).
+            let _ = crate::instances::create("Other", None).unwrap();
+
+            let mirror = tempfile::tempdir().unwrap();
+            let base = Base::Folder(mirror.path().to_owned());
+            let (key, _) = SigningKey::generate().unwrap();
+            let keys = [key.public()];
+            let list = [row(SDK_TAG, &[INDEX]), row(STATIC_TAG, &[static_asset])];
+
+            let installed_tag = install_explicit_tag_from(
+                &list,
+                STATIC_TAG,
+                false,
+                &settings,
+                &base,
+                &keys,
+                |_| {
+                    let dir = version_dir(STATIC_TAG);
+                    fs::create_dir_all(&dir).unwrap();
+                    fs::write(dir.join(CLIENT), b"static client").unwrap();
+                    Ok(InstallOutcome::Installed(None))
+                },
+            )
+            .unwrap();
+            assert_eq!(installed_tag, STATIC_TAG);
+            assert!(
+                sdk_dir.join(CLIENT).is_file(),
+                "installed SDK-only build must not be pruned against an unresolved catalogue"
+            );
+        },
+    );
+}

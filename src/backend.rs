@@ -4078,11 +4078,12 @@ fn install_explicit_tag_from(
     if let Some(target) = target {
         check_sdk_offer_strict(&mut release, target, base, keys)?;
     }
-    let mut catalog = static_only_offers(&candidates);
-    if let Some(slot) = catalog.iter_mut().find(|r| r.tag == release.tag) {
-        *slot = release.clone();
-    }
-    install_selected_release(&release, Some(&catalog), as_update, install)
+    let has_unresolved_sdk = target.is_some()
+        && candidates
+            .iter()
+            .any(|r| r.tag != release.tag && is_sdk_candidate(r));
+    let catalog = (!has_unresolved_sdk).then_some(candidates.as_slice());
+    install_selected_release(&release, catalog, as_update, install)
 }
 
 fn install_offered_tag(
