@@ -1,4 +1,6 @@
-//! Signed v2 mod registry catalogue reader (`v2/index.json` + `v2/index.json.minisig`).
+//! Signed v2 mod registry catalogue reader (`v2/index.signed`: the minisign signature's four lines,
+//! then `index.json` exactly, published as one file so the two can never come from different
+//! publishes).
 //!
 //! Verifies the minisign signature over the exact fetched (or cached) bytes against the built-in
 //! registry key list before parsing, persists the last verified copy in its own cache namespace
@@ -57,7 +59,7 @@ pub struct Catalog {
 pub enum LoadError {
     /// No registry public key is configured in this build.
     KeyNotConfigured,
-    /// Fetching `index.json` or `index.json.minisig` failed and no valid cached copy could be used.
+    /// Fetching `index.signed` failed and no valid cached copy could be used.
     Fetch(String),
     /// The minisign signature over `index.json` failed verification.
     BadSignature(String),
@@ -189,17 +191,17 @@ pub fn location() -> String {
         .unwrap_or_else(|| INDEX_URL.to_owned())
 }
 
-/// Derives the `.minisig` address or file path beside `index_location`.
-pub fn signature_location(index_location: &str) -> String {
-    if let Some(mut parsed) = url::Url::parse(index_location)
-        .ok()
-        .filter(|parsed| matches!(parsed.scheme(), "https" | "http"))
-    {
-        let next_path = format!("{}.minisig", parsed.path());
-        parsed.set_path(&next_path);
-        return parsed.to_string();
-    }
-    format!("{index_location}.minisig")
+/// Splits `index.signed` after its fourth line: the minisign signature file, then the index bytes.
+fn split_signed(mut bytes: Vec<u8>) -> Result<(Vec<u8>, Vec<u8>), String> {
+    let end = bytes
+        .iter()
+        .enumerate()
+        .filter(|&(_, &b)| b == b'\n')
+        .nth(3)
+        .map(|(i, _)| i + 1)
+        .ok_or_else(|| tr("The mod registry file has no signature.").to_owned())?;
+    let index = bytes.split_off(end);
+    Ok((index, bytes))
 }
 
 /// The v2 catalogue cache folder under the game home.
@@ -360,7 +362,7 @@ impl Store {
         Ok(combine_serial(self.highest_serial, disk_serial))
     }
 
-    /// Fetches `index.json` and `index.json.minisig` from `source`, verifies the signature and
+    /// Fetches `index.signed` from `source`, verifies the signature and
     /// serial, caches the verified copy, and falls back to the verified cache only on fetch error.
     pub fn fetch_and_load(&mut self, source: &str, now_unix: i64) -> Result<Catalog, LoadError> {
         self.require_keys()?;
@@ -665,40 +667,18 @@ fn now_unix_seconds() -> i64 {
 }
 
 fn fetch_raw(source: &str) -> Result<(Vec<u8>, Vec<u8>), String> {
-    let sig_source = signature_location(source);
     let loopback = is_debug_loopback(source);
     if source.starts_with("http://") && !loopback {
         return Err(tr("The mod registry requires HTTPS.").into());
     }
-    if source.starts_with("https://") || loopback {
-        let index_bytes = fetch_http_bytes(
-            source,
-            loopback,
-            source == INDEX_URL,
-            index_v2::MAX_INDEX,
-            tr("The mod registry index is too large.").into(),
-        )?;
-        let sig_bytes = fetch_http_bytes(
-            &sig_source,
-            loopback,
-            source == INDEX_URL,
-            index_v2::MAX_SIGNATURE,
-            tr("The mod registry signature is too large.").into(),
-        )?;
-        return Ok((index_bytes, sig_bytes));
-    }
-
-    let index_bytes = read_bounded_file(
-        Path::new(source),
-        index_v2::MAX_INDEX,
-        tr("The mod registry index is too large.").into(),
-    )?;
-    let sig_bytes = read_bounded_file(
-        Path::new(&sig_source),
-        index_v2::MAX_SIGNATURE,
-        tr("The mod registry signature is too large.").into(),
-    )?;
-    Ok((index_bytes, sig_bytes))
+    let max = index_v2::MAX_SIGNATURE + index_v2::MAX_INDEX;
+    let too_large = || tr("The mod registry index is too large.").to_owned();
+    let bytes = if source.starts_with("https://") || loopback {
+        fetch_http_bytes(source, loopback, source == INDEX_URL, max, too_large())?
+    } else {
+        read_bounded_file(Path::new(source), max, too_large())?
+    };
+    split_signed(bytes)
 }
 
 fn is_debug_loopback(source: &str) -> bool {
