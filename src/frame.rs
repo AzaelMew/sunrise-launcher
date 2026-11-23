@@ -71,6 +71,8 @@ pub(super) struct State {
     pub rail_pin: Option<f32>,
     /// When the status strip appeared, so each appearance eases in once without jumping the page.
     pub status_strip_since: Option<Instant>,
+    /// When the status strip went away, so its space closes as smoothly as it opened.
+    pub status_strip_gone: Option<Instant>,
     /// The last drawn page and when we switched to it (None on first draw or once settled).
     pub page_switched: Option<(Page, Option<Instant>)>,
 }
@@ -801,8 +803,23 @@ impl Launcher {
                     .child(strip),
             )
         } else {
-            self.ui.status_strip_since = None;
-            None
+            if self.ui.status_strip_since.take().is_some() {
+                self.ui.status_strip_gone = Some(Instant::now());
+            }
+            let quick = sunrise_launcher_theme::QUICK;
+            self.ui
+                .status_strip_gone
+                .filter(|gone| gone.elapsed() < quick.duration())
+                .map(|gone| {
+                    static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+                    let start = *START.get_or_init(Instant::now);
+                    let id = gone.saturating_duration_since(start).as_micros() as usize;
+                    div().id("status-strip-closing").flex_none().with_animation(
+                        ElementId::named_usize("status-strip-exit", id),
+                        crate::motion::eased(quick),
+                        |d, p| d.h(px((tokens::ACTION + 2.) * (1. - p))),
+                    )
+                })
         };
         let pane = div()
             .relative()
