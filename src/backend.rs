@@ -1732,13 +1732,11 @@ pub fn resources_summary(prepared: bool, sounds: bool, version: &str) -> String 
 }
 
 /// Whether the resources `from` prepared are the ones preparing `to` would make: both pin the same
-/// Minecraft jars (research-lock.json) and their preparers make the same output. A preparer
-/// declares what it makes with `OUTPUT_VERSION` (crates/sunrise-prepare/src/lib.rs, whose sources
-/// ship in the release folder), bumped by hand when the output changes and checked by CI
-/// (tools/prepare_output.py), so a release that changes the preparer's code but not its output
-/// keeps the resources. Preparers from before the number are known by their sources
-/// (`LEGACY_OUTPUT_VERSIONS`); older ones still are compared file by file (`same_preparer`).
-fn resources_compatible(from: &Path, to: &Path, manifest: &serde_json::Value) -> bool {
+/// Minecraft jars (research-lock.json) and their preparers declare the same `OUTPUT_VERSION`
+/// (`crates/sunrise-prepare/src/lib.rs`, whose sources ship in the release folder), bumped by hand
+/// when the output changes and checked by CI (`tools/prepare_output.py`), so a release that
+/// changes the preparer's code but not its output keeps the resources.
+fn resources_compatible(from: &Path, to: &Path) -> bool {
     let pins = |dir: &Path| {
         read_json(&dir.join("research-lock.json")).map(|lock| {
             ["version", "client_sha1", "server_sha1"].map(|k| lock["minecraft"][k].clone())
@@ -1752,192 +1750,24 @@ fn resources_compatible(from: &Path, to: &Path, manifest: &serde_json::Value) ->
     }
     match (output_version_at(from), output_version_at(to)) {
         (Some(a), Some(b)) => a == b,
-        (None, None) => same_preparer(from, to, manifest),
         _ => false,
     }
 }
 
-/// The `OUTPUT_VERSION` of a version folder's preparer: the constant in its sources, or for a
-/// preparer from before it, the number `LEGACY_OUTPUT_VERSIONS` gives its fingerprint. None for
-/// an unknown older preparer.
+/// The `OUTPUT_VERSION` declared by a version folder's preparer sources, or `None` if absent.
 fn output_version_at(dir: &Path) -> Option<u32> {
-    output_version_in(dir, &LEGACY_OUTPUT_VERSIONS)
-}
-
-fn output_version_in(dir: &Path, legacy: &[(&str, u32)]) -> Option<u32> {
     let crate_dir = dir.join(PREPARER_CRATE);
     let lib = fs::read_to_string(crate_dir.join("src/lib.rs")).ok()?;
-    let declared = lib.lines().find_map(|line| {
+    lib.lines().find_map(|line| {
         line.strip_prefix("pub const OUTPUT_VERSION: u32 = ")?
             .strip_suffix(';')?
             .parse()
             .ok()
-    });
-    if declared.is_some() {
-        return declared;
-    }
-    let fingerprint = legacy_fingerprint(dir)?;
-    legacy
-        .iter()
-        .find(|(known, _)| *known == fingerprint)
-        .map(|&(_, version)| version)
-}
-
-/// Preparers from before `OUTPUT_VERSION`, by `legacy_fingerprint`, whose output
-/// tools/prepare_output.py measured: what they prepare is version 1's.
-const LEGACY_OUTPUT_VERSIONS: [(&str, u32); 2] = [
-    // v0.2.52 to v0.2.64
-    (
-        "54218ade1c058b1f15ea4094bf8c1a7893adb37b1ed5cc803ddae8e950c31704",
-        1,
-    ),
-    // v0.2.49 to v0.2.51
-    (
-        "da9ffe7558129c38b44abf43289e81946fe9f2512e5e07272eeae0cf0b4f1254",
-        1,
-    ),
-];
-
-/// The vanilla exporters those preparers ran (the `*_exporters_sha256` of their manifests), in
-/// mods/sunrise/src/test/java/dev/sunriselab/parity.
-const LEGACY_EXPORTERS: [&str; 18] = [
-    "ParityData.java",
-    "VanillaBlockBehaviourExporter.java",
-    "VanillaBlockLandingOracle.java",
-    "VanillaBlockStateBindingOracle.java",
-    "VanillaCollisionOracle.java",
-    "VanillaCommandParseOracle.java",
-    "VanillaCreativeTabsExporter.java",
-    "VanillaCuboidModelOracle.java",
-    "VanillaDamageSourceOracle.java",
-    "VanillaEntityAttributeOracle.java",
-    "VanillaEntityModelExporter.java",
-    "VanillaEntityTypesExporter.java",
-    "VanillaFaceVisibilityOracle.java",
-    "VanillaGameplayFactsExporter.java",
-    "VanillaHeightmapOracle.java",
-    "VanillaMobDataExporter.java",
-    "VanillaMovementRegistryOracle.java",
-    "VanillaPlayerHealthOracle.java",
-];
-
-/// The digest preparers before `OUTPUT_VERSION` gave their crate's sources: `Cargo.toml`, `build.rs` and `src/*.rs`, CRs dropped.
-fn preparer_sources_sha256(crate_dir: &Path) -> Option<String> {
-    use sha2::Digest;
-    let mut files = Vec::new();
-    for name in ["Cargo.toml", "build.rs"] {
-        files.push((name.to_string(), fs::read(crate_dir.join(name)).ok()?));
-    }
-    let mut sources: Vec<String> = fs::read_dir(crate_dir.join("src"))
-        .ok()?
-        .filter_map(Result::ok)
-        .map(|e| e.file_name().to_string_lossy().into_owned())
-        .filter(|n| n.ends_with(".rs"))
-        .collect();
-    sources.sort();
-    for name in sources {
-        let data = fs::read(crate_dir.join("src").join(&name)).ok()?;
-        files.push((format!("src/{name}"), data));
-    }
-    let mut hash = sha2::Sha256::new();
-    for (name, data) in files {
-        let data: Vec<u8> = data.into_iter().filter(|b| *b != b'\r').collect();
-        hash.update(format!("{name}\0{}\0", data.len()));
-        hash.update(&data);
-    }
-    Some(hash.finalize().iter().map(|b| format!("{b:02x}")).collect())
-}
-
-/// A version folder's preparer as the launchers before `OUTPUT_VERSION` compared it: the digest
-/// of its sources ([`preparer_sources_sha256`]) and of the exporters it ran, line endings
-/// as checked out ignored.
-fn legacy_fingerprint(dir: &Path) -> Option<String> {
-    use sha2::Digest;
-    let sources = preparer_sources_sha256(&dir.join(PREPARER_CRATE))?;
-    let mut hash = sha2::Sha256::new();
-    hash.update(sources.as_bytes());
-    for name in LEGACY_EXPORTERS {
-        let path = format!("mods/sunrise/src/test/java/dev/sunriselab/parity/{name}");
-        let data: Vec<u8> = fs::read(dir.join(&path))
-            .ok()?
-            .into_iter()
-            .filter(|b| *b != b'\r')
-            .collect();
-        hash.update(format!("{path}\0{}\0", data.len()));
-        hash.update(&data);
-    }
-    Some(hash.finalize().iter().map(|b| format!("{b:02x}")).collect())
-}
-
-/// How launchers before `OUTPUT_VERSION` compared two preparers, for versions older than the
-/// ones `LEGACY_OUTPUT_VERSIONS` knows. The manifest records the hashes of the vanilla exporters
-/// the resources were made with (mods/sunrise/src/test/java/.../parity), and the preparer writes
-/// every file and the manifest's `schema`, so both need the same preparer and the same exporter
-/// sources. The preparer is crates/sunrise-prepare and tools/prepare_native_client.py (the
-/// Python preparer of older versions, a wrapper of the binary since); a file only one of the two
-/// versions has is a different preparer. The helpers the Python preparer imported (lab.py and
-/// the test_*_parity.py modules) change between releases in how they find and check the
-/// player's files, which the output does not depend on; they are not compared.
-fn same_preparer(from: &Path, to: &Path, manifest: &serde_json::Value) -> bool {
-    let Some(fields) = manifest.as_object() else {
-        return false;
-    };
-    let mut preparer = vec![PathBuf::from("tools/prepare_native_client.py")];
-    for dir in [from, to] {
-        preparer.extend(files_under(dir, Path::new(PREPARER_CRATE)));
-    }
-    let same_or_absent = |path: &Path| match (fs::read(from.join(path)), fs::read(to.join(path))) {
-        (Ok(a), Ok(b)) => a == b,
-        (Err(a), Err(b)) => {
-            a.kind() == std::io::ErrorKind::NotFound && b.kind() == std::io::ErrorKind::NotFound
-        }
-        _ => false,
-    };
-    if !preparer.iter().all(|p| same_or_absent(p)) {
-        return false;
-    }
-    let mut sources = vec![
-        "mods/sunrise/src/test/java/dev/sunriselab/parity/VanillaHeightmapOracle.java".to_string(),
-    ];
-    for (_, value) in fields
-        .iter()
-        .filter(|(key, _)| key.ends_with("_exporters_sha256"))
-    {
-        let Some(files) = value.as_object() else {
-            return false;
-        };
-        sources.extend(files.keys().cloned());
-    }
-    let same = |source: &str| {
-        let path = Path::new(source);
-        path.is_relative()
-            && path
-                .components()
-                .all(|c| matches!(c, std::path::Component::Normal(_)))
-            && matches!((fs::read(from.join(path)), fs::read(to.join(path))), (Ok(a), Ok(b)) if a == b)
-    };
-    sources.iter().all(|s| same(s))
+    })
 }
 
 /// Where a version folder keeps the preparer's sources (the release package copies them).
 const PREPARER_CRATE: &str = "crates/sunrise-prepare";
-
-/// The files under `dir/relative`, as paths relative to `dir`.
-fn files_under(dir: &Path, relative: &Path) -> Vec<PathBuf> {
-    let Ok(entries) = fs::read_dir(dir.join(relative)) else {
-        return Vec::new();
-    };
-    let mut files = Vec::new();
-    for entry in entries.flatten() {
-        let path = relative.join(entry.file_name());
-        match entry.file_type() {
-            Ok(t) if t.is_dir() => files.extend(files_under(dir, &path)),
-            Ok(_) => files.push(path),
-            Err(_) => {}
-        }
-    }
-    files
-}
 
 pub(crate) fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
     copy_dir_except(from, to, None)
@@ -1981,10 +1811,10 @@ pub(crate) fn reuse_prepared(versions: &Path, tag: &str) -> Option<String> {
             continue;
         };
         let from = resources_at(&source);
-        let Some(manifest) = read_json(&from.join(RESOURCES_MANIFEST)) else {
+        if read_json(&from.join(RESOURCES_MANIFEST)).is_none() {
             continue;
-        };
-        if !resources_compatible(&source, &target, &manifest) {
+        }
+        if !resources_compatible(&source, &target) {
             continue;
         }
         // Copied beside it and renamed when complete: an interrupted copy is never "prepared".
@@ -4683,10 +4513,6 @@ impl WhilePlaying {
     }
 }
 
-/// The roundest the look's corners go, in px (Settings > Appearance > Corners), and how round
-/// they are until the player picks.
-pub const MAX_CORNERS: u8 = 24;
-pub const DEFAULT_CORNERS: u8 = 4;
 /// A button's corner radius as the look draws it, and the roundest the player can set, in px.
 pub const DEFAULT_CORNER_RADIUS: u8 = 9;
 pub const MAX_CORNER_RADIUS: u8 = 30;
@@ -4753,9 +4579,6 @@ pub struct Settings {
     /// started with `SUNRISE_NO_HEARTBEAT`. On by default, as upstream sends it.
     #[serde(default)]
     pub ping_off: bool,
-    /// The player has been through the first-run welcome (theme, accent).
-    #[serde(default)]
-    pub welcomed: bool,
     /// The player without an account that owns the game has read, once, why the launcher needs
     /// one now (the owner gate's screen).
     #[serde(default)]
@@ -4821,10 +4644,6 @@ pub struct Settings {
     /// move even when the system asks for less.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reduce_motion: Option<bool>,
-    /// How round the look's corners are: their radius in px, 0 (square) to [`MAX_CORNERS`];
-    /// unset is [`DEFAULT_CORNERS`] (read it with [`Settings::corners`]).
-    #[serde(default, rename = "corners", skip_serializing_if = "Option::is_none")]
-    pub corners_px: Option<u8>,
     /// How round every corner in the launcher is, as a button's corner radius in px: 0 square,
     /// [`DEFAULT_CORNER_RADIUS`] the look as drawn, up to [`MAX_CORNER_RADIUS`]; cards and panels
     /// keep their proportion to it. Unset is the default (read it with [`Settings::corner_radius`]).
@@ -4844,11 +4663,6 @@ pub struct Settings {
 }
 
 impl Settings {
-    /// The look's corner radius in px: the player's, else [`DEFAULT_CORNERS`].
-    pub fn corners(&self) -> u8 {
-        self.corners_px.unwrap_or(DEFAULT_CORNERS).min(MAX_CORNERS)
-    }
-
     /// The saved panel opacity override. `None` keeps the theme's default paint.
     pub fn panel_opacity(&self) -> Option<u8> {
         self.panel_opacity
@@ -7206,10 +7020,7 @@ pub fn {f}("
         let versions =
             std::env::temp_dir().join(format!("sunrise-launcher-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&versions);
-        let oracle = "mods/sunrise/src/test/java/dev/sunriselab/parity/VanillaHeightmapOracle.java";
-        let camera = "mods/sunrise/src/test/java/dev/sunriselab/parity/VanillaCameraOracle.java";
-        let collision =
-            "mods/sunrise/src/test/java/dev/sunriselab/parity/VanillaCollisionOracle.java";
+        let crate_file = "crates/sunrise-prepare/src/lib.rs";
         let write = |tag: &str, path: &str, text: &str| {
             let path = versions.join(tag).join(path);
             fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -7219,14 +7030,10 @@ pub fn {f}("
             write(tag, COMPLETE, "");
             let lock = serde_json::json!({"minecraft": {"version": minecraft, "client_sha1": "c", "server_sha1": "s"}});
             write(tag, "research-lock.json", &lock.to_string());
-            write(tag, "tools/prepare_native_client.py", "schema 7");
-            write(tag, oracle, "heightmap");
-            write(tag, collision, "collision");
-            write(tag, camera, tag); // Not an exporter: it may change freely.
+            write(tag, crate_file, "pub const OUTPUT_VERSION: u32 = 1;\n");
         };
         let prepared = |tag: &str, minecraft: &str| {
-            let manifest =
-                serde_json::json!({"schema": 7, "collision_exporters_sha256": {collision: "x"}});
+            let manifest = serde_json::json!({"schema": 7});
             write(
                 tag,
                 &format!(".local/sunrise-client/{minecraft}/{RESOURCES_MANIFEST}"),
@@ -7275,20 +7082,25 @@ pub fn {f}("
         // Already prepared: nothing to do.
         assert_eq!(reuse_prepared(&versions, "v2026.10.13.1"), None);
 
-        // Another Minecraft version, a changed exporter or a changed prepare script: prepare again.
+        // Another Minecraft version, another output version, or a version without OUTPUT_VERSION:
+        // prepare again.
         release("v2026.10.14", "26.4");
         assert_eq!(reuse_prepared(&versions, "v2026.10.14"), None);
         release("v2026.10.15", "26.3");
-        write("v2026.10.15", collision, "collision, fixed");
+        write(
+            "v2026.10.15",
+            crate_file,
+            "pub const OUTPUT_VERSION: u32 = 2;\n",
+        );
         assert_eq!(reuse_prepared(&versions, "v2026.10.15"), None);
         release("v2026.10.16", "26.3");
-        write("v2026.10.16", "tools/prepare_native_client.py", "schema 8");
+        write("v2026.10.16", crate_file, "fn prepare() {}\n");
         assert_eq!(reuse_prepared(&versions, "v2026.10.16"), None);
         assert!(!is_prepared("v2026.10.15") && !is_prepared("v2026.10.16"));
 
-        // A version an older launcher installed without preparing it is caught up by the sweep
-        // that starting the window, `versions` and `update` run; the incompatible ones stay as
-        // they are, and a second sweep has nothing to do.
+        // A version installed without preparing it is caught up by the sweep that starting the
+        // window, `versions` and `update` run; the incompatible ones stay as they are, and a
+        // second sweep has nothing to do.
         release("v2026.10.17", "26.3");
         assert_eq!(
             reuse_prepared_in(&versions),
@@ -7297,23 +7109,6 @@ pub fn {f}("
         assert!(is_prepared("v2026.10.17"));
         assert!(!is_prepared("v2026.10.15") && !is_prepared("v2026.10.16"));
         assert!(reuse_prepared_in(&versions).is_empty());
-
-        // Versions with sunrise-prepare: its sources are the preparer, so the same sources
-        // reuse each other's resources, and a change or a version without them prepares again.
-        let crate_file = "crates/sunrise-prepare/src/lib.rs";
-        release("v2026.10.18", "26.3");
-        write("v2026.10.18", crate_file, "rust preparer");
-        assert_eq!(reuse_prepared(&versions, "v2026.10.18"), None);
-        prepared("v2026.10.18", "26.3");
-        release("v2026.10.19", "26.3");
-        write("v2026.10.19", crate_file, "rust preparer");
-        assert_eq!(
-            reuse_prepared(&versions, "v2026.10.19"),
-            Some("v2026.10.18".into())
-        );
-        release("v2026.10.20", "26.3");
-        write("v2026.10.20", crate_file, "rust preparer, changed");
-        assert_eq!(reuse_prepared(&versions, "v2026.10.20"), None);
         let _ = fs::remove_dir_all(&versions);
     }
 
@@ -7330,7 +7125,6 @@ pub fn {f}("
             fs::write(path, text).unwrap();
         };
         let lib = "crates/sunrise-prepare/src/lib.rs";
-        // A preparer with its sources (as releases ship them) and the exporters it runs.
         let release = |tag: &str, code: &str| {
             write(tag, COMPLETE, "");
             let lock = serde_json::json!({"minecraft": {"version": "26.3", "client_sha1": "c", "server_sha1": "s"}});
@@ -7338,13 +7132,6 @@ pub fn {f}("
             write(tag, "crates/sunrise-prepare/Cargo.toml", "[package]");
             write(tag, "crates/sunrise-prepare/build.rs", "fn main() {}");
             write(tag, lib, code);
-            for name in LEGACY_EXPORTERS {
-                write(
-                    tag,
-                    &format!("mods/sunrise/src/test/java/dev/sunriselab/parity/{name}"),
-                    name,
-                );
-            }
         };
         let prepared = |tag: &str| {
             write(
@@ -7386,30 +7173,12 @@ pub fn {f}("
         write("v0.3.3", "research-lock.json", &lock.to_string());
         assert_eq!(reuse_prepared(&versions, "v0.3.3"), None);
 
-        // A preparer from before the number is known by its fingerprint.
+        // A preparer without a declared OUTPUT_VERSION is not reused.
         release("v0.2.64", "fn prepare() {}");
-        let fingerprint = legacy_fingerprint(&versions.join("v0.2.64")).unwrap();
-        let legacy = [(fingerprint.as_str(), 1)];
-        let at = |tag: &str| output_version_in(&versions.join(tag), &legacy);
-        assert_eq!(at("v0.2.64"), Some(1));
-        assert_eq!(at("v0.3.2"), Some(2));
-        // Line endings as checked out don't count; an exporter's or the sources' change does.
-        write(
-            "v0.2.64",
-            "mods/sunrise/src/test/java/dev/sunriselab/parity/ParityData.java",
-            "ParityData.java\r",
-        );
-        assert_eq!(at("v0.2.64"), Some(1));
-        write(
-            "v0.2.64",
-            "mods/sunrise/src/test/java/dev/sunriselab/parity/VanillaCollisionOracle.java",
-            "changed",
-        );
-        assert_eq!(at("v0.2.64"), None);
-        release("v0.2.65", "fn prepare() { changed() }");
-        assert_eq!(at("v0.2.65"), None);
-        // A folder without the preparer's sources has no number.
-        assert_eq!(output_version_in(&versions.join("missing"), &legacy), None);
+        assert_eq!(output_version_at(&versions.join("v0.2.64")), None);
+        assert_eq!(output_version_at(&versions.join("v0.3.2")), Some(2));
+        assert_eq!(output_version_at(&versions.join("missing")), None);
+        assert_eq!(reuse_prepared(&versions, "v0.2.64"), None);
         let _ = fs::remove_dir_all(&versions);
     }
 
