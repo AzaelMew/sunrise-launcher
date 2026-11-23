@@ -85,7 +85,9 @@ pub fn install_local_at(
             ));
         }
         let before = managed_play::inputs(home, None)?;
-        let active = managed_play::display_active(home)?;
+        // Under Admission and the home lock: read the profile's own pointer, as Profile::active
+        // does. display_active would refuse while any other profile publishes.
+        let active = managed_play::Active::read_pointer(home)?;
         let targets = match &active {
             Some(current) => [current.base().to_owned(), current.executable().to_owned()]
                 .into_iter()
