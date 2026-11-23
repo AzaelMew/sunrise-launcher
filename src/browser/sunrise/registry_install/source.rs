@@ -8,6 +8,9 @@ use crate::{
     github_mods::{self, AddedFrom, Origin, Packed},
 };
 
+mod dependencies;
+pub use dependencies::SourceDependency;
+pub(super) use dependencies::{complete_source_add, SourceAdd};
 #[cfg(test)]
 mod graph_tests;
 mod mixed;
@@ -64,10 +67,16 @@ impl PreparedSource {
 pub enum SourceError {
     Cancelled,
     Github(Failure),
+    DependencyGithub {
+        name: String,
+        failure: Failure,
+    },
     Dependency {
         required: Option<String>,
         detail: String,
     },
+    /// A public catalogue or resolver explanation, not a raw filesystem or network error.
+    Catalogue(String),
     DoesNotFit(String),
     /// Another native build or a cache cleanup holds the build folder: a later try may pass.
     Busy,
@@ -96,10 +105,22 @@ impl std::fmt::Display for SourceError {
             }
             Self::Github(Failure::NoManifest) => f.write_str(tr("No Sunrise mod at this commit.")),
             Self::Github(Failure::Offline(detail) | Failure::Other(detail)) => f.write_str(detail),
+            Self::DependencyGithub {
+                failure: Failure::Offline(detail),
+                ..
+            } => f.write_str(detail),
+            Self::DependencyGithub { name, failure } => {
+                let why = Self::Github(failure.clone()).to_string();
+                f.write_str(&trf(
+                    "{mod} couldn't be read from GitHub. {why}",
+                    &[("mod", name), ("why", &why)],
+                ))
+            }
             Self::Busy => f.write_str(tr(
                 "A native build or cache cleanup is running. Try again when it finishes.",
             )),
             Self::Dependency { detail, .. }
+            | Self::Catalogue(detail)
             | Self::Build { detail, .. }
             | Self::DoesNotFit(detail)
             | Self::Unproved(detail)
@@ -163,6 +184,7 @@ pub fn prepare_source(
             identity,
             base,
             vec![(PastedSource { package, origin }, predecessor)],
+            false,
             cancellation,
         )
         .map(|mut prepared| prepared.pop().expect("one source was checked"))
@@ -230,8 +252,8 @@ pub fn read_pasted_sources(
     }
 }
 
-/// Check once against the same staged graph: dependencies can be supplied by another
-/// selected package, and nothing outside this selection is offered for native consent.
+/// Check the selected set with the profile's catalogue. The queued worker repeats this
+/// fit check against the same profile inputs, and only its exact staged set goes to consent.
 pub fn prepare_pasted_sources(
     instance: &Instance,
     identity: Identity,
@@ -247,6 +269,7 @@ pub fn prepare_pasted_sources(
             .into_iter()
             .map(|package| (package, None))
             .collect(),
+        true,
         cancellation,
     );
     if cancellation.is_stopped() {
@@ -261,6 +284,7 @@ fn prepare_packages(
     identity: Identity,
     base: &str,
     packages: Vec<(PastedSource, Option<Origin>)>,
+    follow_catalogue: bool,
     cancellation: &native_mods::Cancellation,
 ) -> Result<Vec<PreparedSource>, SourceError> {
     let stage = tempfile::tempdir().map_err(|e| e.to_string())?;
@@ -280,7 +304,19 @@ fn prepare_packages(
         result[0].active.as_ref(),
         base,
     )?;
-    check_source_set(stage.path(), &trial.off, base, cancellation)?;
+    if follow_catalogue {
+        complete_source_add(
+            instance,
+            stage.path(),
+            base,
+            &entries,
+            result[0].active.as_ref(),
+            cancellation,
+            &|_| {},
+        )?;
+    } else {
+        check_source_set(stage.path(), &trial.off, base, cancellation)?;
+    }
     Ok(result)
 }
 
@@ -405,9 +441,12 @@ fn source_is_published(
 pub struct SourceHooks<'a> {
     pub install: InstallHooks<'a>,
     pub cancellation: &'a native_mods::Cancellation,
-    pub authorize: &'a dyn Fn(&[PreparedSource]) -> Result<bool, String>,
+    pub authorize: &'a SourceAuthorization<'a>,
     pub approve_worlds: &'a dyn Fn(&ChangeImpact) -> bool,
 }
+
+pub type SourceAuthorization<'a> =
+    dyn Fn(&[PreparedSource], &[SourceDependency]) -> Result<bool, String> + 'a;
 
 pub fn apply_sources(
     instance: &Instance,
@@ -456,7 +495,7 @@ pub fn apply_sources(
             base: &first.base,
             active: first.active.as_ref(),
             cancellation,
-            authorize: &|| (hooks.authorize)(prepared),
+            authorize: &|dependencies| (hooks.authorize)(prepared, dependencies),
         }),
     )
     .map_err(SourceError::from);
@@ -493,36 +532,47 @@ pub(super) fn check_source_set(
             }
         }
         let catalogue = super::super::fetched_index();
-        if let Some(conflict) = manifest_conflict(home, catalogue.as_deref(), None, |_| false)? {
+        if let Some(conflict) =
+            manifest_conflict(home, catalogue.as_deref(), None, Side::Client, |_| false)?
+        {
             return Err(SourceError::Dependency {
                 required: None,
                 detail: conflict.reason,
             });
         }
-        let routes =
-            native_mods::source_routes(home, base, cancellation).map_err(|why| match why {
-                native_mods::SourceCheckError::Dependency(detail) => SourceError::Dependency {
-                    required: None,
-                    detail,
-                },
-                native_mods::SourceCheckError::Fit(native_mods::Failed::Mods { error, .. }) => {
-                    SourceError::DoesNotFit(error)
-                }
-                native_mods::SourceCheckError::Fit(why) => SourceError::Unproved(why.to_string()),
-                native_mods::SourceCheckError::Busy => SourceError::Busy,
-            })?;
-        for (_, route) in routes.mods {
-            match route {
-                native_mods::Route::Prebuilt | native_mods::Route::Fits { .. } => (),
-                native_mods::Route::Unfit { line, .. } | native_mods::Route::Unproven { line } => {
-                    return Err(SourceError::DoesNotFit(line))
-                }
-                native_mods::Route::Unchecked { reason }
-                | native_mods::Route::Invalid { reason } => {
-                    return Err(SourceError::Unproved(reason))
-                }
-            }
-        }
-        Ok(())
+        source_fit(home, base, cancellation)?
+            .mods
+            .into_iter()
+            .try_for_each(|(_, route)| checked_source_route(route))
     })
+}
+
+fn source_fit(
+    home: &Path,
+    base: &str,
+    cancellation: &native_mods::Cancellation,
+) -> Result<native_mods::Routes, SourceError> {
+    native_mods::source_routes(home, base, cancellation).map_err(|why| match why {
+        native_mods::SourceCheckError::Dependency(detail) => SourceError::Dependency {
+            required: None,
+            detail,
+        },
+        native_mods::SourceCheckError::Fit(native_mods::Failed::Mods { error, .. }) => {
+            SourceError::DoesNotFit(error)
+        }
+        native_mods::SourceCheckError::Fit(why) => SourceError::Unproved(why.to_string()),
+        native_mods::SourceCheckError::Busy => SourceError::Busy,
+    })
+}
+
+fn checked_source_route(route: native_mods::Route) -> Result<(), SourceError> {
+    match route {
+        native_mods::Route::Prebuilt | native_mods::Route::Fits { .. } => Ok(()),
+        native_mods::Route::Unfit { line, .. } | native_mods::Route::Unproven { line } => {
+            Err(SourceError::DoesNotFit(line))
+        }
+        native_mods::Route::Unchecked { reason } | native_mods::Route::Invalid { reason } => {
+            Err(SourceError::Unproved(reason))
+        }
+    }
 }

@@ -5,7 +5,8 @@ use std::{
 };
 use sunrise_launcher::{
     browser::sunrise::{
-        install_target, switch_build, InstallProgress, SwitchHooks, SwitchQuestion, Switched,
+        install_target, switch_profile_build, BuildChoice, InstallProgress, SwitchDecision,
+        SwitchHooks, SwitchQuestion, Switched,
     },
     managed_play::{self, Active, Profile, ReceiptHint},
     profile_txn::Identity,
@@ -28,9 +29,18 @@ struct ReceiptRead {
 
 struct Running {
     tag: String,
+    back: Option<Sheet>,
+    pending: Option<Pending>,
     progress: InstallProgress,
     stop: native_mods::Cancellation,
-    question: Option<(Box<SwitchQuestion>, Sender<bool>)>,
+    question: Option<(Box<SwitchQuestion>, Sender<SwitchDecision>)>,
+}
+
+/// The selected profile and build survive download and preparation, not a new read of Home.
+struct Pending {
+    instance: instances::Instance,
+    identity: Identity,
+    choice: Option<BuildChoice>,
 }
 
 impl Launcher {
@@ -61,16 +71,35 @@ impl Launcher {
         {
             return false;
         }
-        self.ui.sheets.error = result.as_ref().err().cloned();
+        if let Some(running) = &self.ui.sheets.switching.running {
+            let pending = running.pending.as_ref().expect("switch download is queued");
+            if running.stop.is_stopped() {
+                let home = pending.instance.home.clone();
+                self.switch_finished(&home, Ok(Switched::Stayed));
+            } else if let Err(error) = result {
+                let home = pending.instance.home.clone();
+                self.switch_finished(&home, Err(error.clone()));
+            } else {
+                self.prepare_switch();
+            }
+        } else {
+            self.ui.sheets.error = result.as_ref().err().cloned();
+        }
         true
+    }
+
+    pub(crate) fn switch_download_progress(&mut self, tag: &str, fraction: f32) {
+        if self.ui.sheets.switching.cache_download.as_deref() == Some(tag) {
+            self.switch_progress(InstallProgress::Downloading(fraction));
+        }
     }
 
     pub(crate) fn switch_busy(&self) -> bool {
         self.ui.sheets.switching.running.is_some() || self.ui.sheets.switching.ack
     }
 
-    pub(super) fn begin_switch(&mut self, tag: String) {
-        if self.launch_busy() || self.client.is_some() {
+    pub(super) fn begin_switch(&mut self, tag: String, choice: Option<BuildChoice>) {
+        if self.launch_busy() || self.client.is_some() || self.removing.contains(&tag) {
             return;
         }
         let Some(instance) = self.selected_instance().cloned() else {
@@ -83,26 +112,96 @@ impl Launcher {
                 return;
             }
         };
+        let release = self.release_to_install(&tag);
         let stop = native_mods::Cancellation::default();
         self.ui.sheets.switching.running = Some(Running {
             tag: tag.clone(),
+            back: self.ui.sheet,
+            pending: Some(Pending {
+                instance,
+                identity,
+                choice,
+            }),
             progress: InstallProgress::PreparingBuild,
             stop: stop.clone(),
             question: None,
         });
         self.open_sheet(Sheet::Switching);
+        if let Some(release) = release {
+            self.ui.sheets.switching.cache_download = Some(tag);
+            self.switch_progress(InstallProgress::Downloading(0.));
+            self.install_cancellable(&release, Some(stop));
+        } else {
+            self.prepare_switch();
+        }
+    }
+
+    fn prepare_switch(&mut self) {
+        let running = self
+            .ui
+            .sheets
+            .switching
+            .running
+            .as_ref()
+            .expect("switch queued");
+        if backend::check_prepared(&running.tag) {
+            self.start_switch_worker();
+        } else {
+            let (tag, stop) = (running.tag.clone(), running.stop.clone());
+            self.switch_progress(InstallProgress::PreparingBuild);
+            self.prepare_version_cancellable(tag, backend::MinecraftFrom::Install, Some(stop));
+        }
+    }
+
+    pub(crate) fn finish_switch_preparation(&mut self) {
+        let Some(running) = self.ui.sheets.switching.running.as_ref() else {
+            return;
+        };
+        let Some(pending) = running.pending.as_ref() else {
+            return;
+        };
+        let error = self.prepare_error.take();
+        if running.stop.is_stopped() {
+            let home = pending.instance.home.clone();
+            self.switch_finished(&home, Ok(Switched::Stayed));
+        } else if let Some(error) = error {
+            let home = pending.instance.home.clone();
+            self.switch_finished(&home, Err(error));
+        } else {
+            self.start_switch_worker();
+        }
+    }
+
+    fn start_switch_worker(&mut self) {
+        let running = self
+            .ui
+            .sheets
+            .switching
+            .running
+            .as_mut()
+            .expect("switch queued");
+        let Pending {
+            instance,
+            identity,
+            choice,
+        } = running.pending.take().expect("switch queued");
+        let (tag, stop) = (running.tag.clone(), running.stop.clone());
         let tx = self.tx.clone();
         std::thread::spawn(move || {
-            let outcome = switch_build(
+            let outcome = switch_profile_build(
                 &instance,
                 identity,
                 &tag,
+                choice,
                 SwitchHooks {
                     cancellation: &stop,
                     progress: &|stage| {
                         let _ = tx.send(Msg::SwitchProgress(stage));
                     },
                     registry_crates: Some(&|inventory| {
+                        if stop.is_stopped() {
+                            return false;
+                        }
                         let (answer, reply) = std::sync::mpsc::channel();
                         tx.send(Msg::NativeRegistryConsent(inventory.clone(), answer))
                             .is_ok()
@@ -110,10 +209,13 @@ impl Launcher {
                     }),
                     at_cutoff: &|| Ok(()),
                     approve: &|question| {
+                        if stop.is_stopped() {
+                            return Ok(SwitchDecision::Cancel);
+                        }
                         let (answer, reply) = std::sync::mpsc::channel();
                         tx.send(Msg::SwitchQuestion(Box::new(question.clone()), answer))
                             .map_err(|_| tr("Switch cancelled.").to_owned())?;
-                        Ok(reply.recv().unwrap_or(false))
+                        Ok(reply.recv().unwrap_or(SwitchDecision::Cancel))
                     },
                 },
             );
@@ -128,7 +230,7 @@ impl Launcher {
         if running.progress != InstallProgress::Publishing {
             running.stop.stop();
             if let Some((_, reply)) = running.question.take() {
-                let _ = reply.send(false);
+                let _ = reply.send(SwitchDecision::Cancel);
             }
         }
     }
@@ -139,19 +241,23 @@ impl Launcher {
         }
     }
 
-    pub(crate) fn switch_question(&mut self, question: Box<SwitchQuestion>, reply: Sender<bool>) {
+    pub(crate) fn switch_question(
+        &mut self,
+        question: Box<SwitchQuestion>,
+        reply: Sender<SwitchDecision>,
+    ) {
         if let Some(running) = self
             .ui
             .sheets
             .switching
             .running
             .as_mut()
-            .filter(|_| self.ui.sheet == Some(Sheet::Switching))
+            .filter(|run| self.ui.sheet == Some(Sheet::Switching) && !run.stop.is_stopped())
         {
             running.question = Some((question, reply));
             self.ui.sheets.details = false;
         } else {
-            let _ = reply.send(false);
+            let _ = reply.send(SwitchDecision::Cancel);
         }
     }
 
@@ -160,8 +266,18 @@ impl Launcher {
         home: &std::path::Path,
         result: Result<Switched, String>,
     ) {
-        self.ui.sheets.switching.running = None;
-        self.installed = backend::installed();
+        let running = self.ui.sheets.switching.running.take();
+        let stopped = running.as_ref().is_some_and(|run| run.stop.is_stopped());
+        let back = running.and_then(|run| run.back);
+        let result = if result.is_err() && stopped {
+            Ok(Switched::Stayed)
+        } else {
+            result
+        };
+        self.refresh_installed();
+        if matches!(result, Ok(Switched::Changed(_) | Switched::AlreadySelected)) {
+            self.refresh_instances_list();
+        }
         if self.selected_instance().is_none_or(|i| i.home != home) {
             return;
         }
@@ -183,9 +299,18 @@ impl Launcher {
                     self.close_sheet();
                 }
             }
-            Ok(Switched::Stayed | Switched::AlreadySelected) => {
+            Ok(Switched::Stayed) => {
                 if visible {
-                    self.open_sheet(Sheet::Versions);
+                    if let Some(back) = back {
+                        self.open_sheet(back);
+                    } else {
+                        self.close_sheet();
+                    }
+                }
+            }
+            Ok(Switched::AlreadySelected) => {
+                if visible {
+                    self.close_sheet();
                 }
             }
             Err(error) if visible => {
@@ -205,51 +330,110 @@ impl Launcher {
             .as_ref()
             .expect("Switch sheet follows its worker");
         let build = build_name(&running.tag);
-        let head = title(trf("Switch to {build}", &[("build", &build)]));
         let body = if let Some((question, _)) = &running.question {
             let show = self.ui.sheets.details;
+            let omissions = question.has_omissions();
+            let answer = |decision| {
+                cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    if let Some((_, reply)) = this
+                        .ui
+                        .sheets
+                        .switching
+                        .running
+                        .as_mut()
+                        .and_then(|running| running.question.take())
+                    {
+                        let _ = reply.send(decision);
+                    }
+                    cx.notify();
+                })
+            };
+            let has_mod_block = omissions || !question.removed.is_empty();
+            let mod_block = has_mod_block.then(|| {
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(6.))
+                    .children(omissions.then(|| muted(question.omission_summary())))
+                    .child(
+                        div()
+                            .id("switch-mods")
+                            .max_h(px(184.))
+                            .overflow_y_scroll()
+                            .flex()
+                            .flex_col()
+                            .gap(px(5.))
+                            .children((omissions && !show).then(|| {
+                                let mut names: Vec<_> = question
+                                    .held
+                                    .iter()
+                                    .chain(&question.unproved)
+                                    .map(String::as_str)
+                                    .collect();
+                                names.sort_unstable();
+                                div().child(names.join(", "))
+                            }))
+                            .children(
+                                show.then(|| question.hold_lines().map(|line| div().child(line)))
+                                    .into_iter()
+                                    .flatten(),
+                            )
+                            .children(question.removed.iter().map(|(name, reason)| {
+                                div().child(if show {
+                                    trf(
+                                        "{mod} was taken down: {reason}",
+                                        &[("mod", name), ("reason", reason)],
+                                    )
+                                } else {
+                                    trf(
+                                        "{mod} was taken down and will be removed.",
+                                        &[("mod", name)],
+                                    )
+                                })
+                            })),
+                    )
+            });
+            let world_block = question.worlds.needed().then(|| {
+                let mut block = div().flex().flex_col().gap(px(6.));
+                if has_mod_block {
+                    block = block
+                        .pt(px(12.))
+                        .border_t_1()
+                        .border_color(rgb(palette().line));
+                }
+                block
+                    .child(muted(tr(
+                        "Your worlds stay in place. Check what could change before you switch.",
+                    )))
+                    .child(
+                        div()
+                            .id("switch-worlds")
+                            .max_h(px(150.))
+                            .overflow_y_scroll()
+                            .flex()
+                            .flex_col()
+                            .gap(px(5.))
+                            .children(
+                                question
+                                    .world_lines()
+                                    .into_iter()
+                                    .map(|line| div().child(line)),
+                            ),
+                    )
+            });
             div()
                 .flex()
                 .flex_col()
-                .child(head)
-                .child(muted(tr(
-                    "Your worlds stay in place. Check what could change before you switch.",
-                )))
-                .child(
-                    div()
-                        .id("switch-worlds")
-                        .max_h(px(208.))
-                        .overflow_y_scroll()
-                        .gap(px(5.))
-                        .children(
-                            question
-                                .worlds
-                                .lines()
-                                .into_iter()
-                                .map(|line| div().child(line)),
-                        )
-                        .children(question.hold_lines().map(|line| div().child(line)))
-                        .children(question.removed.iter().map(|(name, reason)| {
-                            div().child(if show {
-                                trf(
-                                    "{mod} was taken down: {reason}",
-                                    &[("mod", name), ("reason", reason)],
-                                )
-                            } else {
-                                trf(
-                                    "{mod} was taken down and will be removed.",
-                                    &[("mod", name)],
-                                )
-                            })
-                        })),
-                )
+                .child(title(trf("Switch to {build}?", &[("build", &build)])))
+                .children(mod_block)
+                .children(world_block)
                 .child(
                     div()
                         .flex()
                         .flex_wrap()
                         .justify_end()
                         .gap(px(8.))
-                        .child(
+                        .children((omissions || !question.removed.is_empty()).then(|| {
                             button(
                                 "switch-why",
                                 if show {
@@ -261,58 +445,60 @@ impl Launcher {
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.ui.sheets.details ^= true;
                                 cx.notify();
-                            })),
-                        )
+                            }))
+                        }))
                         .child(
-                            crate::frame::primary("switch-stay", tr("Stay on this version"))
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.cancel_switch();
-                                    this.open_sheet(Sheet::Versions);
-                                    cx.notify();
-                                })),
+                            button("switch-stay", tr("Cancel"))
+                                .on_click(answer(SwitchDecision::Cancel)),
                         )
+                        .children(omissions.then(|| {
+                            button("switch-remove", tr("Switch and remove them"))
+                                .text_color(rgb(palette().danger))
+                                .on_click(answer(SwitchDecision::Remove))
+                        }))
                         .child(
-                            button("switch-anyway", tr("Switch anyway")).on_click(cx.listener(
-                                |this, _, _, cx| {
-                                    if let Some((_, reply)) = this
-                                        .ui
-                                        .sheets
-                                        .switching
-                                        .running
-                                        .as_mut()
-                                        .and_then(|running| running.question.take())
-                                    {
-                                        let _ = reply.send(true);
-                                    }
-                                    cx.notify();
+                            crate::frame::primary(
+                                "switch-anyway",
+                                if omissions {
+                                    tr("Switch and turn them off")
+                                } else {
+                                    tr("Switch anyway")
                                 },
-                            )),
+                            )
+                            .on_click(answer(SwitchDecision::TurnOff)),
                         ),
                 )
         } else {
+            let stopping = running.stop.is_stopped();
             div()
                 .flex()
                 .flex_col()
-                .child(head)
-                .child(muted(if running.progress == InstallProgress::Publishing {
+                .child(title(trf("Switch to {build}", &[("build", &build)])))
+                .child(muted(if stopping {
+                    tr("Cancelling…").into()
+                } else if running.progress == InstallProgress::Publishing {
                     tr("Applying the switch.").into()
                 } else {
                     stage_label(running.progress)
                 }))
                 .children(
-                    stage_fraction(running.progress)
+                    (!stopping)
+                        .then(|| stage_fraction(running.progress))
+                        .flatten()
                         .map(|f| crate::widgets::progress_bar(Some((f, f)), &self.theme)),
                 )
-                .children((running.progress != InstallProgress::Publishing).then(|| {
-                    div().flex().justify_end().child(
-                        button("cancel-switch", tr("Cancel")).on_click(cx.listener(
-                            |this, _, _, cx| {
-                                this.close_sheet();
-                                cx.notify();
-                            },
-                        )),
-                    )
-                }))
+                .children(
+                    (!stopping && running.progress != InstallProgress::Publishing).then(|| {
+                        div().flex().justify_end().child(
+                            button("cancel-switch", tr("Cancel")).on_click(cx.listener(
+                                |this, _, _, cx| {
+                                    this.cancel_switch();
+                                    cx.notify();
+                                },
+                            )),
+                        )
+                    }),
+                )
         };
         frame("switch-game", 610., body, cx)
     }
@@ -437,7 +623,7 @@ impl Launcher {
         let show = self.ui.sheets.details;
         let removed_line = |(name, reason): &(String, String)| {
             trf(
-                "{mod} was taken down: {reason}",
+                "{mod} was removed: {reason}",
                 &[("mod", name), ("reason", reason)],
             )
         };
@@ -466,7 +652,7 @@ impl Launcher {
                 div().child(if show {
                     removed_line(row)
                 } else {
-                    trf("{mod} was taken down and removed.", &[("mod", &row.0)])
+                    trf("{mod} was removed.", &[("mod", &row.0)])
                 })
             }));
         let body = div()
@@ -482,13 +668,11 @@ impl Launcher {
                     .justify_end()
                     .gap(px(8.))
                     .children(show.then(|| {
-                        button("receipt-copy", tr("Copy report")).on_click(cx.listener(
-                            move |_, _, _, cx| {
-                                cx.write_to_clipboard(gpui::ClipboardItem::new_string(
-                                    copy.as_ref().clone(),
-                                ));
-                            },
-                        ))
+                        crate::frame::copy_button(
+                            "receipt-copy",
+                            tr("Copy report"),
+                            copy.as_ref().clone(),
+                        )
                     }))
                     .children(show.then(|| {
                         button("receipt-save", tr("Save report")).on_click(cx.listener(

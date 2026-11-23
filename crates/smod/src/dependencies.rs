@@ -365,7 +365,7 @@ impl Overrides {
         }
     }
 
-    fn get(&self, owner: &str, target: &str) -> Option<Override> {
+    pub fn get(&self, owner: &str, target: &str) -> Option<Override> {
         self.0.get(owner)?.get(target).copied()
     }
 }

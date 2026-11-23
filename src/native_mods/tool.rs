@@ -15,7 +15,10 @@ use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::{mpsc, Arc, Mutex, MutexGuard};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    mpsc, Arc, Mutex, MutexGuard,
+};
 use std::time::{Duration, Instant};
 
 /// The contract this launcher's plans speak.
@@ -30,7 +33,25 @@ pub(super) const PROGRAM: &str = if cfg!(windows) {
 
 /// Cancellation shared by the owner and worker of one build attempt. It is never reset.
 #[derive(Clone, Default)]
-pub struct Cancellation(Arc<Mutex<Attempt>>);
+pub struct Cancellation {
+    inner: Arc<Mutex<Attempt>>,
+    flag: Arc<AtomicBool>,
+}
+
+/// Clears a tracked process PID when the watched child finishes or exits early.
+pub(crate) struct ProcessGuard {
+    cancellation: Cancellation,
+    pid: u32,
+}
+
+impl Drop for ProcessGuard {
+    fn drop(&mut self) {
+        let mut state = self.cancellation.state();
+        if state.tool == Some(self.pid) {
+            state.tool = None;
+        }
+    }
+}
 
 #[derive(Default)]
 struct Attempt {
@@ -53,9 +74,30 @@ impl Attempt {
 
 impl Cancellation {
     fn state(&self) -> MutexGuard<'_, Attempt> {
-        self.0
+        self.inner
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Atomic stop flag mirrored from [`Self::stop`], for routines taking `&AtomicBool`.
+    pub(crate) fn flag(&self) -> &AtomicBool {
+        &self.flag
+    }
+
+    /// Registers a spawned child process group so [`Self::stop`] terminates it. If already
+    /// stopped, terminates the child immediately and returns the cancellation error.
+    pub(crate) fn track_process(&self, pid: u32) -> Result<ProcessGuard, String> {
+        let mut state = self.state();
+        if state.stopped {
+            drop(state);
+            terminate_process(pid);
+            return Err(super::CANCELLED.into());
+        }
+        state.tool = Some(pid);
+        Ok(ProcessGuard {
+            cancellation: self.clone(),
+            pid,
+        })
     }
 
     pub(crate) fn admit_native_work(&self) -> Result<(), super::Failed> {
@@ -111,25 +153,30 @@ impl Cancellation {
             return;
         }
         state.stopped = true;
+        self.flag.store(true, Ordering::Relaxed);
         #[cfg(windows)]
         if let Some(job) = &state.job {
             let _ = job.terminate();
             return;
         }
         if let Some(pid) = state.tool {
-            // SAFETY: this process group was created for this attempt by `start`.
-            #[cfg(unix)]
-            unsafe {
-                libc::kill(-(pid as libc::pid_t), libc::SIGTERM);
-            }
-            #[cfg(windows)]
-            let _ = crate::process::command(crate::process::taskkill())
-                .args(["/PID", &pid.to_string(), "/T", "/F"])
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status();
+            terminate_process(pid);
         }
     }
+}
+
+fn terminate_process(pid: u32) {
+    // SAFETY: callers only pass PIDs of process groups they spawned for this attempt.
+    #[cfg(unix)]
+    unsafe {
+        libc::kill(-(pid as libc::pid_t), libc::SIGTERM);
+    }
+    #[cfg(windows)]
+    let _ = crate::process::command(crate::process::taskkill())
+        .args(["/PID", &pid.to_string(), "/T", "/F"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
 }
 
 /// The three slice folders a plan names.

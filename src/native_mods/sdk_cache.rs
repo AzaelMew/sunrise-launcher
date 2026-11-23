@@ -846,14 +846,29 @@ fn fetch_into(
     fetched: &mut Fetched,
     progress: &dyn Fn(Fetched),
 ) -> Result<(), Refusal> {
-    if stamp_holds(sdk, name, into) {
-        return Ok(());
-    }
+    fetch_into_cancellable(sdk, base, name, into, fetched, None, progress)
+}
+
+fn fetch_into_cancellable(
+    sdk: &Sdk,
+    base: &Base,
+    name: &str,
+    into: &Path,
+    fetched: &mut Fetched,
+    stop: Option<&super::Cancellation>,
+    progress: &dyn Fn(Fetched),
+) -> Result<(), Refusal> {
     let build = sdk.shown();
     let refused = |why: String| Refusal::Refused {
         build: build.clone(),
         why,
     };
+    if let Some(stop) = stop {
+        stop.check().map_err(refused)?;
+    }
+    if stamp_holds(sdk, name, into) {
+        return Ok(());
+    }
     let cache = |error: std::io::Error| Refusal::Cache(format!("{}: {error}", into.display()));
     let size = sdk
         .index
@@ -901,28 +916,54 @@ fn fetch_into(
             let file = parent.join(format!("{name}.download"));
             let listed = sdk.index.asset(name).map_err(|r| refused(r.to_string()))?;
             let total = fetched.total;
-            crate::backend::save_checked(
-                body,
-                size,
-                name,
-                &listed.sha256,
-                &file,
-                &|fraction: f32| {
-                    // `save_checked` reports nine tenths for the bytes, the rest for its check.
-                    let part = ((fraction / 0.9).min(1.0) * size as f32) as u64;
-                    progress(Fetched {
-                        done: start + part,
-                        total,
-                    });
-                },
-            )
-            .map_err(|error| match error {
-                crate::backend::SaveCheckedError::Download(error) => refused(error),
-                crate::backend::SaveCheckedError::Local(error) => cache(error),
+            let report_progress = |fraction: f32| {
+                // `save_checked` reports nine tenths for the bytes, the rest for its check.
+                let part = ((fraction / 0.9).min(1.0) * size as f32) as u64;
+                progress(Fetched {
+                    done: start + part,
+                    total,
+                });
+            };
+            let saved = match stop {
+                Some(stop) => crate::backend::save_checked(
+                    stop.reader(body),
+                    size,
+                    name,
+                    &listed.sha256,
+                    &file,
+                    &report_progress,
+                ),
+                None => crate::backend::save_checked(
+                    body,
+                    size,
+                    name,
+                    &listed.sha256,
+                    &file,
+                    &report_progress,
+                ),
+            };
+            saved.map_err(|error| {
+                if let Some(stop) = stop {
+                    if let Err(why) = stop.check() {
+                        return refused(why);
+                    }
+                }
+                match error {
+                    crate::backend::SaveCheckedError::Download(error) => refused(error),
+                    crate::backend::SaveCheckedError::Local(error) => cache(error),
+                }
             })?;
             (file.clone(), Some(file))
         }
     };
+    if let Some(stop) = stop {
+        if let Err(why) = stop.check() {
+            if let Some(file) = downloaded {
+                let _ = fs::remove_file(file);
+            }
+            return Err(refused(why));
+        }
+    }
     let unpacked = sdk::unpack(&sdk.index, name, &archive, into, UNPACKED_LIMIT);
     if let Some(file) = downloaded {
         let _ = fs::remove_file(file);

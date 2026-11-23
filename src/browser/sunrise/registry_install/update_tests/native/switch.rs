@@ -31,6 +31,7 @@ impl Pinned {
             &[
                 ("Cargo.toml", b"[package]\nname='native_lantern'\nversion='1.0.0'\n"),
                 ("src/lib.rs", source),
+                (sunrise_launcher_smod::manifest::USES_FILE, b"{}"),
             ],
         )
         .unwrap();
@@ -61,7 +62,7 @@ impl Pinned {
             .unwrap()
             .refresh(
                 fixture.instance.native_profile,
-                &native_mods::Cancellation::default(),
+                (&native_mods::Cancellation::default(), None),
                 |_| {},
                 None,
                 None,
@@ -147,7 +148,11 @@ fn run_switch(
             registry_crates: None,
             approve: &|q| {
                 assert_eq!(q.worlds.affected[0].world, "Uses Native Lantern");
-                Ok(approve(q))
+                Ok(if approve(q) {
+                    SwitchDecision::TurnOff
+                } else {
+                    SwitchDecision::Cancel
+                })
             },
             at_cutoff: &|| Ok(()),
         },

@@ -8,13 +8,20 @@ use gpui::{rgb, MouseButton, MouseDownEvent};
 use instances::{Icon, Instance, Kind};
 use std::{cell::Cell, rc::Rc};
 
-/// How wide the sidebar is, open or closed.
-pub(crate) fn rail_width(open: bool) -> f32 {
-    if open {
-        204.
-    } else {
-        54.
-    }
+/// How wide the sidebar is closed, and open.
+const CLOSED: f32 = 54.;
+const OPEN: f32 = 204.;
+/// The room a row has inside the closed sidebar: its padding and both borders taken off.
+const CLOSED_ROW: f32 = CLOSED - 2. * 5. - 2. - 2.;
+
+/// How wide the sidebar is, `open` of the way from closed (0) to open (1).
+pub(crate) fn rail_width(open: f32) -> f32 {
+    CLOSED + (OPEN - CLOSED) * open
+}
+
+/// A label's opacity as the sidebar opens: it waits for room before showing.
+fn label_opacity(open: f32) -> f32 {
+    ((open - 0.3) / 0.7).clamp(0., 1.)
 }
 
 /// The column a sidebar icon is centred in, open or closed: a closed row's inside (the closed
@@ -23,11 +30,39 @@ pub(crate) fn rail_width(open: bool) -> f32 {
 fn icon_slot(icon: impl IntoElement) -> Div {
     div()
         .flex_none()
-        .w(px(rail_width(false) - 2. * (1. + 5. + 1.)))
+        .w(px(CLOSED_ROW))
         .flex()
         .items_center()
         .justify_center()
         .child(icon)
+}
+
+/// Where the selected profile's actions button is.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum ActionsAt {
+    /// In the row under the mark, the sidebar closed.
+    Under,
+    /// Beside the name, fading in with it.
+    Beside,
+}
+
+/// Where the actions button is built `open` of the way, if at all. Closed, it is under the mark.
+/// Opening, it leaves the row for its place beside the name, which it takes once it fades in,
+/// when it is already clear of the mark: until then it would sit, unseen, over the mark, where a
+/// press on the mark could open the profile's menu, so it isn't built.
+fn actions_at(open: f32) -> Option<ActionsAt> {
+    if open <= 0. {
+        Some(ActionsAt::Under)
+    } else if label_opacity(open) > 0. {
+        Some(ActionsAt::Beside)
+    } else {
+        None
+    }
+}
+
+/// The room under the mark the closed actions button took (28 px), `open` of the way.
+fn actions_room(open: f32) -> f32 {
+    28. * (1. - open).clamp(0., 1.)
 }
 
 fn profile_lock_reason(
@@ -54,8 +89,41 @@ fn profile_lock_reason(
 
 impl Launcher {
     pub(super) fn toggle_sidebar(&mut self) {
-        self.settings.sidebar_expanded = !self.settings.sidebar_expanded;
+        let open = !self.settings.sidebar_expanded;
+        self.settings.sidebar_expanded = open;
+        // From wherever the last toggle had got to: a second press turns it around there.
+        let mut fade = crate::motion::Fade::toward(self.ui.rail, open, std::time::Instant::now());
+        fade.motion = crate::motion::RAIL;
+        self.ui.rail = Some(fade);
         self.save_settings();
+    }
+
+    /// The window's width less what the sidebar takes beyond its closed width, as it is drawn
+    /// now: what the top bar's narrow layouts go by, so they change when the room does, part
+    /// way through an ease, not on the press that starts it.
+    pub(crate) fn bar_width(&self) -> f32 {
+        self.window_width - (rail_width(self.rail_open()) - CLOSED)
+    }
+
+    /// How open the sidebar is drawn: 0 closed, 1 open, between while it eases. The frame's
+    /// one sample (`frame::State::rail_drawn`): a part built later in the same frame never sees
+    /// a width the rail wasn't drawn at.
+    pub(crate) fn rail_open(&self) -> f32 {
+        self.ui
+            .rail_drawn
+            .unwrap_or_else(|| self.rail_open_at(std::time::Instant::now()))
+    }
+
+    /// How open the sidebar is at `now`.
+    pub(crate) fn rail_open_at(&self, now: std::time::Instant) -> f32 {
+        let at_rest = if self.settings.sidebar_expanded {
+            1.
+        } else {
+            0.
+        };
+        self.ui
+            .rail
+            .map_or(at_rest, |fade| fade.value(now).clamp(0., 1.))
     }
 
     fn profile_lock(&self) -> Option<&'static str> {
@@ -150,6 +218,9 @@ impl Launcher {
 
     pub(super) fn sidebar(&mut self, cx: &mut Context<Self>) -> Div {
         let wide = self.settings.sidebar_expanded;
+        let open = self.rail_open();
+        // Labels are drawn once there is any room for them; they fade in as it opens.
+        let labelled = open > 0.;
         let p = palette();
         let lock = self.profile_lock();
         let row = |id: ElementId, label: String, on: bool| {
@@ -171,8 +242,9 @@ impl Launcher {
                 .when(on, |d| d.bg(rgb(p.chrome_raised)))
                 .flex()
                 .items_center()
+                // Icons stay in their column (`icon_slot`); the room after the label eases in.
                 .gap(px(4.))
-                .when(wide, |d| d.pr(px(8.)))
+                .pr(px(8. * open))
                 .when(lock.is_none(), |d| {
                     d.cursor_pointer().hover(|d| d.bg(rgb(p.chrome_raised)))
                 })
@@ -183,7 +255,11 @@ impl Launcher {
             div()
                 .min_w_0()
                 .flex_1()
-                .truncate()
+                .overflow_hidden()
+                .whitespace_nowrap()
+                // An ellipsis would flicker along a label still being uncovered.
+                .when(open >= 1., |d| d.text_ellipsis())
+                .opacity(label_opacity(open))
                 .text_size(px(tokens::LABEL))
                 .child(s)
         };
@@ -233,7 +309,7 @@ impl Launcher {
                 20.,
                 rgb(p.chrome_text).into(),
             )))
-            .when(wide, |d| d.child(txt(tr("New profile").into())))
+            .when(labelled, |d| d.child(txt(tr("New profile").into())))
             .when(lock.is_none(), |d| {
                 d.on_click(cx.listener(|this, _, _, cx| {
                     if this.profile_lock().is_none() {
@@ -260,9 +336,12 @@ impl Launcher {
                 i.name.clone(),
                 on,
             )
-            .child(icon_slot(self.profile_mark(&i, 28.)))
-            .when(wide, |d| d.child(txt(i.name.clone())))
-            .when(wide && more, |d| d.pr(px(36.)))
+            .child(
+                icon_slot(self.profile_mark(&i, 28.))
+                    .when(on, |d| d.debug_selector(|| "selected-profile-mark".into())),
+            )
+            .when(labelled, |d| d.child(txt(i.name.clone())))
+            .when(labelled && more, |d| d.pr(px(36.)))
             .when(deletable, |d| {
                 let i = i.clone();
                 d.on_mouse_down(
@@ -273,14 +352,21 @@ impl Launcher {
                     }),
                 )
             });
-            let actions = more.then(|| {
+            let actions = more.then(|| actions_at(open)).flatten().map(|at| {
                 let top = Rc::new(Cell::new(0.));
                 let read_top = top.clone();
                 let i = i.clone();
                 div()
                     .id(SharedString::from(format!("profile-actions-{}", i.id)))
+                    .debug_selector(|| "selected-profile-actions".into())
                     .reach()
-                    .when(wide, |d| d.absolute().top(px(6.)).right(px(5.)).w(px(28.)))
+                    .when(at == ActionsAt::Beside, |d| {
+                        d.absolute()
+                            .top(px(6.))
+                            .right(px(5.))
+                            .w(px(28.))
+                            .opacity(label_opacity(open))
+                    })
                     .h(px(28.))
                     .flex()
                     .items_center()
@@ -313,13 +399,18 @@ impl Launcher {
                     .child(profile.when(lock.is_none(), |d| {
                         d.on_click(cx.listener(move |this, _, _, cx| this.switch_profile(&i, cx)))
                     }))
-                    .children(actions),
+                    .children(actions)
+                    // The room the closed button took under the mark eases away with the
+                    // width, so the profiles below don't jump as it leaves the row.
+                    .when(more && labelled, |d| {
+                        d.child(div().flex_none().h(px(actions_room(open))))
+                    }),
             );
         }
         let mut rail = div()
             .flex()
             .flex_col()
-            .w(px(rail_width(wide)))
+            .w(px(rail_width(open)))
             .min_h_0()
             .flex_none()
             .gap(px(4.))
@@ -364,7 +455,7 @@ impl Launcher {
                     18.,
                     rgb(p.chrome_muted).into(),
                 )))
-                .when(wide, |d| d.child(txt(label.into())))
+                .when(labelled, |d| d.child(txt(label.into())))
                 .when(settings || !url.is_empty(), |d| {
                     d.on_click(cx.listener(move |this, _, _, cx| {
                         if settings {
@@ -385,6 +476,159 @@ impl Launcher {
 mod tests {
     use super::*;
     use crate::launch_state::Facts;
+
+    #[test]
+    fn the_actions_button_is_under_the_mark_closed_beside_the_name_open_and_absent_between() {
+        // Both settled layouts have it.
+        assert_eq!(actions_at(0.), Some(ActionsAt::Under));
+        assert_eq!(actions_at(1.), Some(ActionsAt::Beside));
+        let (mut hidden, mut beside) = (0, false);
+        for step in 1..=1000 {
+            let open = step as f32 / 1000.;
+            // Inside the rail's padding (5) and border (1): the button sits 5 px from the
+            // right and is 28 wide. The mark is centred in its column after the row's border,
+            // and the column doesn't move as the sidebar opens.
+            let button_left = rail_width(open) - 2. * 5. - 2. - 5. - 28.;
+            let mark_right = 1. + (CLOSED_ROW - 28.) / 2. + 28.;
+            match actions_at(open) {
+                Some(ActionsAt::Under) => panic!("at {open} the button is back under the mark"),
+                Some(ActionsAt::Beside) => {
+                    beside = true;
+                    assert!(
+                        button_left >= mark_right,
+                        "at {open} the button ({button_left}) is over the mark ({mark_right})"
+                    );
+                    assert!(label_opacity(open) > 0., "at {open} it is built unseen");
+                }
+                None => {
+                    assert!(!beside, "at {open} it went away again after showing");
+                    hidden += 1;
+                }
+            }
+            if button_left < mark_right {
+                assert_eq!(
+                    actions_at(open),
+                    None,
+                    "at {open} it would be over the mark"
+                );
+            }
+        }
+        assert!(hidden > 0, "the start of opening leaves it out");
+        // Closed, the button is in the row under the mark; the room it took eases away.
+        assert_eq!(actions_room(0.), 28.);
+        assert_eq!(actions_room(1.), 0.);
+        assert!(
+            (actions_room(0.001) - 28.).abs() < 0.1,
+            "no jump as opening begins"
+        );
+    }
+
+    #[cfg(debug_assertions)]
+    /// Runs `test` again in a child process with scratch homes, as the other window tests do:
+    /// `None` here, the scratch root in the child.
+    fn scratch_child(test: &str) -> Option<std::path::PathBuf> {
+        const CHILD: &str = "SUNRISE_RAIL_TEST";
+        if let Some(root) = std::env::var_os(CHILD) {
+            return Some(root.into());
+        }
+        let scratch = tempfile::tempdir().unwrap();
+        let root = scratch.path();
+        let nowhere = "http://127.0.0.1:9";
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", &format!("rail::tests::{test}")])
+            .env(CHILD, root)
+            .env("SUNRISE_HOME", root.join("game"))
+            .env("SUNRISE_LAUNCHER_HOME", root.join("launcher"))
+            .env("SUNRISE_LAUNCHER_LOCATION_FILE", root.join("location.json"))
+            .env("SUNRISE_NO_KEYCHAIN", "1")
+            .env("SUNRISE_LAUNCHER_NO_SELF_UPDATE", "1")
+            .env("SUNRISE_TELEMETRY_URL", "off")
+            .env("XDG_DATA_HOME", root.join("data"))
+            .env("XDG_CONFIG_HOME", root.join("config"))
+            .env("HTTP_PROXY", nowhere)
+            .env("HTTPS_PROXY", nowhere)
+            .env("ALL_PROXY", nowhere)
+            .env_remove("NO_PROXY")
+            .env_remove("SUNRISE_GITHUB_MIRROR")
+            .env_remove("SUNRISE_LAUNCHER_BENCH")
+            .status()
+            .unwrap();
+        assert!(status.success(), "{test} failed in its child process");
+        None
+    }
+
+    // GPUI Fast records `debug_selector` bounds only with debug assertions: the release
+    // workflow's `cargo test --release` has none to find, so it leaves this test out. Every
+    // debug test run (ci.yml, on each platform) runs it.
+    #[cfg(debug_assertions)]
+    #[test]
+    fn the_actions_button_takes_presses_settled_and_leaves_the_mark_alone_while_hidden() {
+        if scratch_child(
+            "the_actions_button_takes_presses_settled_and_leaves_the_mark_alone_while_hidden",
+        )
+        .is_none()
+        {
+            return;
+        }
+        let profile = instances::create("Cabin", None).unwrap();
+        let mut settings = Settings::load();
+        settings.instance = Some(profile.id.clone());
+        settings.sidebar_expanded = false;
+        settings.save().unwrap();
+        let mut app = gpui::TestAppContext::single();
+        let (shell, cx) = app.add_window_view(crate::window_root::Shell::new);
+        let launcher = shell.read_with(cx, |shell, _| shell.launcher());
+        // A frame with the sidebar `open` of the way, and no menu up.
+        let draw = |cx: &mut gpui::VisualTestContext, open: f32| {
+            launcher.update(cx, |l, cx| {
+                l.ui.rail_pin = Some(open);
+                l.ui.sheets.profile_action = None;
+                cx.notify();
+            });
+            cx.run_until_parked();
+        };
+        let menu = |cx: &mut gpui::VisualTestContext| {
+            launcher.read_with(cx, |l, _| {
+                matches!(
+                    l.ui.sheets.profile_action,
+                    Some(crate::profile_delete::Action::Menu { .. })
+                )
+            })
+        };
+        for open in [0., 1.] {
+            draw(cx, open);
+            let button = cx
+                .debug_bounds("selected-profile-actions")
+                .unwrap_or_else(|| panic!("at {open} the button is drawn"));
+            cx.simulate_click(button.center(), gpui::Modifiers::none());
+            assert!(menu(cx), "at {open} a press on the button opens the menu");
+        }
+        for open in [0.05, 0.15, 0.25] {
+            draw(cx, open);
+            // Not drawn, so nothing to hit and no Tab stop.
+            assert_eq!(
+                cx.debug_bounds("selected-profile-actions"),
+                None,
+                "at {open}"
+            );
+            let mark = cx
+                .debug_bounds("selected-profile-mark")
+                .unwrap_or_else(|| panic!("at {open} the mark is drawn"));
+            cx.simulate_click(mark.center(), gpui::Modifiers::none());
+            assert!(!menu(cx), "at {open} a press on the mark opened the menu");
+        }
+    }
+
+    #[test]
+    fn icons_keep_the_closed_rows_column_and_labels_wait_for_room() {
+        // The icon column is a closed row's inside: the rail less its edges, padding and the
+        // row's own edges, as `icon_slot` was sized from before the sidebar eased.
+        assert_eq!(CLOSED_ROW, rail_width(0.) - 2. * (1. + 5. + 1.));
+        assert_eq!(rail_width(0.), 54.);
+        assert_eq!(rail_width(1.), 204.);
+        assert_eq!(label_opacity(0.2), 0.);
+        assert_eq!(label_opacity(1.), 1.);
+    }
 
     #[test]
     fn profiles_unlock_when_starting_finishes_even_while_the_game_runs() {

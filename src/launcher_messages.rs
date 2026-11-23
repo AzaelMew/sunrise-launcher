@@ -47,9 +47,12 @@ impl Launcher {
                 changed = true;
             }
             Some(perf::Step::Scroll) => {
-                // The build picker's list, the longest the launcher has, scrolled as a wheel
-                // does it rather than from inside a frame.
-                self.open_versions();
+                // The build picker's list, the longest the launcher has, or Installed, scrolled
+                // as a wheel does it rather than from inside a frame.
+                match self.bench.as_ref().map(perf::Bench::list) {
+                    Some(perf::List::Installed) => self.show_installed_mods(),
+                    _ => self.open_versions(),
+                }
                 let launcher = cx.weak_entity();
                 let _ = cx.update_window(window, |_, w, _| crate::sheets::bench_wheel(launcher, w));
                 changed = true;
@@ -299,7 +302,6 @@ impl Launcher {
                         }
                     }
                 }
-                Msg::PinnedBuild { home, result } => self.finish_build_pin(&home, result),
                 Msg::SwitchProgress(stage) => self.switch_progress(stage),
                 Msg::SwitchQuestion(question, reply) => self.switch_question(question, reply),
                 Msg::Switched(home, result) => self.switch_finished(&home, *result),
@@ -354,6 +356,7 @@ impl Launcher {
                 }
                 Msg::Progress(tag, p) => {
                     self.bar = (self.bar.1, p);
+                    self.switch_download_progress(&tag, p);
                     self.installing = Some((tag, p));
                 }
                 Msg::Installed(tag, result) => {
@@ -596,6 +599,7 @@ impl Launcher {
                                     .filter(|_| e.starts_with("Exited with"));
                                 tail.map_or(e.clone(), |t| format!("{e}: {t}"))
                             });
+                            self.finish_switch_preparation();
                         }
                         Job::Client => {
                             self.client = None;

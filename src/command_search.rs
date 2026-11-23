@@ -459,13 +459,8 @@ impl Launcher {
     /// for it and not at all where it has not; on a narrow window the field is its icon alone,
     /// with the word as its tooltip.
     pub(crate) fn search_button(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
-        // The expanded sidebar takes this much from the bar.
-        let bar = self.window_width
-            - if self.settings.sidebar_expanded {
-                150.
-            } else {
-                0.
-            };
+        // What the sidebar, open or on its way, leaves the bar.
+        let bar = self.bar_width();
         let compact = bar < COMPACT_BELOW;
         let badge = bar >= BADGE_FROM;
         let keys = keys("K");

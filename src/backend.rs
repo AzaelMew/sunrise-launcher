@@ -41,6 +41,9 @@ pub struct Release {
     pub date: String,
     /// When it was published, `HH:MM` UTC (empty if GitHub didn't say).
     pub time: String,
+    /// Full publication timestamp (`published_at`, RFC 3339; empty if GitHub didn't say).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub published_at: String,
     /// The preferred archive, or the SDK index if a game release has no player archive here.
     pub asset: Option<(String, u64)>,
     /// Published on GitHub as a pre-release. The rolling Nightly is normalized separately;
@@ -699,17 +702,23 @@ fn parse_releases(
     assets: &[Option<&str>],
     keep: fn(&str) -> bool,
 ) -> Vec<Release> {
-    let mut out = parse_releases_from(list, assets, keep, crate::signed::asset_url);
-    out.sort_by(|(a, a_published), (b, b_published)| {
-        compare_game_versions(&b.tag, &a.tag).then_with(|| {
+    let mut out: Vec<_> = parse_releases_from(list, assets, keep, crate::signed::asset_url)
+        .into_iter()
+        .map(|release| {
             // More than one Dev build can be published on a build day. The abbreviated
-            // commit disambiguates them, but does not order them.
-            if dev_date(&a.tag).is_some() {
-                b_published.cmp(a_published)
-            } else {
-                std::cmp::Ordering::Equal
-            }
+            // commit disambiguates them, but does not order them. Parse once so mixed UTC
+            // offsets compare by instant and invalid timestamps stay consistently last
+            // within the build day.
+            let published = dev_date(&release.tag).and_then(|_| {
+                chrono::DateTime::parse_from_rfc3339(&release.published_at)
+                    .ok()
+                    .map(chrono::DateTime::<chrono::Utc>::from)
+            });
+            (release, published)
         })
+        .collect();
+    out.sort_by(|(a, a_published), (b, b_published)| {
+        compare_game_versions(&b.tag, &a.tag).then_with(|| b_published.cmp(a_published))
     });
     out.into_iter().map(|(release, _)| release).collect()
 }
@@ -725,16 +734,16 @@ pub(crate) fn parse_launcher_releases(
         is_launcher_tag,
         crate::signed::launcher_asset_url,
     );
-    out.sort_by(|(a, _), (b, _)| compare_versions(&b.tag, &a.tag));
-    out.into_iter().map(|(release, _)| release).collect()
+    out.sort_by(|a, b| compare_versions(&b.tag, &a.tag));
+    out
 }
 
-fn parse_releases_from<'a>(
-    list: &'a [serde_json::Value],
+fn parse_releases_from(
+    list: &[serde_json::Value],
     assets: &[Option<&str>],
     keep: fn(&str) -> bool,
     url: fn(&str, &str) -> String,
-) -> Vec<(Release, &'a str)> {
+) -> Vec<Release> {
     let mut out = Vec::new();
     for r in list {
         let tag = r["tag_name"].as_str().unwrap_or_default();
@@ -748,19 +757,17 @@ fn parse_releases_from<'a>(
             })
         });
         let published = r["published_at"].as_str().unwrap_or_default();
-        out.push((
-            Release {
-                tag: tag.into(),
-                name: r["name"].as_str().unwrap_or_default().into(),
-                body: r["body"].as_str().unwrap_or_default().replace("\r\n", "\n"),
-                date: published.chars().take(10).collect(),
-                time: published.get(11..16).unwrap_or_default().into(),
-                asset: found,
-                prerelease: r["prerelease"].as_bool().unwrap_or(false),
-                nightly: None,
-            },
-            published,
-        ));
+        out.push(Release {
+            tag: tag.into(),
+            name: r["name"].as_str().unwrap_or_default().into(),
+            body: r["body"].as_str().unwrap_or_default().replace("\r\n", "\n"),
+            date: published.chars().take(10).collect(),
+            time: published.get(11..16).unwrap_or_default().into(),
+            published_at: published.into(),
+            asset: found,
+            prerelease: r["prerelease"].as_bool().unwrap_or(false),
+            nightly: None,
+        });
     }
     out
 }
@@ -1288,17 +1295,36 @@ fn installed_in(versions: &Path) -> Vec<String> {
 
 /// A small release file (its checksums or their signature), whole; None when it has none.
 pub(crate) fn fetch_small(url: &str) -> Result<Option<Vec<u8>>, String> {
+    fetch_small_cancellable(url, None)
+}
+
+pub(crate) fn fetch_small_cancellable(
+    url: &str,
+    stop: Option<&crate::native_mods::Cancellation>,
+) -> Result<Option<Vec<u8>>, String> {
+    if let Some(stop) = stop {
+        stop.check()?;
+    }
     let response = match get(url) {
         Ok(response) => response,
         Err(e) if e.ends_with("answered 404") => return Ok(None),
         Err(e) => return Err(e),
     };
     let mut body = Vec::new();
-    response
-        .into_reader()
-        .take(1 << 20)
-        .read_to_end(&mut body)
-        .map_err(|e| format!("Download interrupted: {e}"))?;
+    let reader = response.into_reader().take(1 << 20);
+    let result = match stop {
+        Some(stop) => stop.reader(reader).read_to_end(&mut body),
+        None => {
+            let mut reader = reader;
+            reader.read_to_end(&mut body)
+        }
+    };
+    if let Err(e) = result {
+        if let Some(stop) = stop {
+            stop.check()?;
+        }
+        return Err(format!("Download interrupted: {e}"));
+    }
     Ok(Some(body))
 }
 
@@ -1311,6 +1337,20 @@ pub(crate) fn download(
     to: &Path,
     progress: &impl Fn(f32),
 ) -> Result<(), String> {
+    download_cancellable(url, size, sha256, to, None, progress)
+}
+
+pub(crate) fn download_cancellable(
+    url: &str,
+    size: u64,
+    sha256: &str,
+    to: &Path,
+    stop: Option<&crate::native_mods::Cancellation>,
+    progress: &impl Fn(f32),
+) -> Result<(), String> {
+    if let Some(stop) = stop {
+        stop.check()?;
+    }
     let response = get(url)?;
     let size = match size {
         0 => response
@@ -1320,7 +1360,24 @@ pub(crate) fn download(
         n => n,
     };
     let name = url.rsplit('/').next().unwrap_or(url);
-    save_checked(response.into_reader(), size, name, sha256, to, progress).map_err(String::from)
+    let result = match stop {
+        Some(stop) => save_checked(
+            stop.reader(response.into_reader()),
+            size,
+            name,
+            sha256,
+            to,
+            progress,
+        ),
+        None => save_checked(response.into_reader(), size, name, sha256, to, progress),
+    };
+    if let Err(error) = result {
+        if let Some(stop) = stop {
+            stop.check()?;
+        }
+        return Err(error.into());
+    }
+    Ok(())
 }
 
 #[derive(Debug)]
@@ -1386,16 +1443,60 @@ fn write_checked(
         .map_err(SaveCheckedError::Download)
 }
 
-fn unpack(archive: &Path, url: &str, to: &Path) -> Result<(), String> {
+fn unpack(
+    archive: &Path,
+    url: &str,
+    to: &Path,
+    stop: Option<&crate::native_mods::Cancellation>,
+) -> Result<(), String> {
+    if let Some(stop) = stop {
+        stop.check()?;
+    }
     let file = fs::File::open(archive).map_err(|e| e.to_string())?;
-    if url.ends_with(".tar.gz") {
-        tar::Archive::new(flate2::read::GzDecoder::new(file))
-            .unpack(to)
-            .map_err(|e| e.to_string())
+    let result = if url.ends_with(".tar.gz") {
+        match stop {
+            Some(stop) => tar::Archive::new(flate2::read::GzDecoder::new(stop.reader(file)))
+                .unpack(to)
+                .map_err(|e| e.to_string()),
+            None => tar::Archive::new(flate2::read::GzDecoder::new(file))
+                .unpack(to)
+                .map_err(|e| e.to_string()),
+        }
     } else {
-        zip::ZipArchive::new(file)
-            .and_then(|mut z| z.extract(to))
+        // The library's extractor keeps each entry's Unix mode and symlinks (a macOS bundle's
+        // second executable, `sunrise-prepare`, must stay runnable); Stop is checked on every
+        // read of the archive underneath it.
+        zip::ZipArchive::new(CancellableFile { file, stop })
+            .and_then(|mut archive| archive.extract(to))
             .map_err(|e| e.to_string())
+    };
+    if let Err(error) = result {
+        if let Some(stop) = stop {
+            stop.check()?;
+        }
+        return Err(error);
+    }
+    Ok(())
+}
+
+/// The downloaded archive, failing its next read once `stop` is set.
+struct CancellableFile<'a> {
+    file: fs::File,
+    stop: Option<&'a crate::native_mods::Cancellation>,
+}
+
+impl Read for CancellableFile<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if let Some(stop) = self.stop {
+            stop.check().map_err(std::io::Error::other)?;
+        }
+        self.file.read(buf)
+    }
+}
+
+impl std::io::Seek for CancellableFile<'_> {
+    fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
+        self.file.seek(pos)
     }
 }
 
@@ -1404,15 +1505,29 @@ pub use installation::{InstallOutcome, NightlyReceiptWarning};
 /// Installs one signed release or reuses its proved rolling Nightly image. Only a retry of
 /// a known receipt failure skips the normal post-install actions.
 pub fn install(release: &Release, progress: impl Fn(f32)) -> Result<InstallOutcome, String> {
+    install_cancellable(release, None, progress)
+}
+
+pub fn install_cancellable(
+    release: &Release,
+    stop: Option<&crate::native_mods::Cancellation>,
+    progress: impl Fn(f32),
+) -> Result<InstallOutcome, String> {
+    if let Some(stop) = stop {
+        stop.check()?;
+    }
     let tag = &release.tag;
     installation::recover_replacement(tag)?;
     let download = installation::GameDownload::select(release)?;
-    let proof = download.prove(tag)?;
-    let outcome = download.repair(tag, &proof, progress)?;
+    let proof = download.prove_cancellable(tag, stop)?;
+    let outcome = download.repair_cancellable(tag, &proof, stop, progress)?;
     if matches!(outcome, InstallOutcome::Installed(_)) {
         // Preparation has its own admission. Never hold the cache publication lock here;
         // managed First Play instead prepares through its profile-owned staged handoff.
-        reuse_prepared_for(tag);
+        reuse_prepared_for_cancellable(tag, stop);
+        if let Some(stop) = stop {
+            stop.check()?;
+        }
     }
     Ok(outcome)
 }
@@ -1596,6 +1711,7 @@ pub(crate) fn resources_for_game(dir: &Path, game_version: &str) -> PathBuf {
 }
 
 const RESOURCES_MANIFEST: &str = "sunrise-resources.json";
+const PREPARATION_STAMP: &str = "sunrise-prepare.json";
 
 /// The target preparation records the world format of the verified client JAR it used.
 pub(crate) fn prepared_world_version(resources: &Path) -> Option<i32> {
@@ -1653,29 +1769,36 @@ pub fn is_prepared(tag: &str) -> bool {
         &PREPARED,
         &version_dir(tag),
         std::time::Instant::now(),
-        || prepared_at(&resources(tag)),
+        || {
+            let root = version_dir(&resources_owner(tag));
+            check_play_resources(&root, &resources_at(&root)).is_ok()
+        },
     )
 }
 
-/// Whether `tag` is prepared, checked on the disk now: `research-lock.json`, the manifest and
-/// every prepared table are read. The answer replaces the one [`is_prepared`] keeps.
+/// Whether `tag` is prepared, checked on the disk now. The answer replaces the one
+/// [`is_prepared`] keeps.
 pub fn check_prepared(tag: &str) -> bool {
+    check_build_preparation(tag).is_ok()
+}
+
+fn check_build_preparation(tag: &str) -> Result<(), Unprepared> {
     checked_prepared(
         &PREPARED,
         &version_dir(tag),
-        &resources(tag),
+        &version_dir(&resources_owner(tag)),
         std::time::Instant::now(),
     )
 }
 
 fn checked_prepared(
     cache: &Mutex<PreparedCache>,
-    dir: &Path,
-    resources: &Path,
+    key: &Path,
+    root: &Path,
     now: std::time::Instant,
-) -> bool {
-    let prepared = prepared_at(resources);
-    lock_prepared(cache).put(dir, prepared, now);
+) -> Result<(), Unprepared> {
+    let prepared = check_play_resources(root, &resources_at(root));
+    lock_prepared(cache).put(key, prepared.is_ok(), now);
     prepared
 }
 
@@ -1684,14 +1807,73 @@ pub fn forget_prepared() {
     lock_prepared(&PREPARED).0.clear();
 }
 
-/// Whether the prepared folder `resources` is usable: its manifest is a JSON
-/// document and no top-level table a killed preparation or an interrupted
-/// copy left empty. Such a folder used to count as prepared, so Play started
-/// the game on it and the loader crashed on the empty file.
-pub(crate) fn prepared_at(resources: &Path) -> bool {
-    if read_json(&resources.join(RESOURCES_MANIFEST)).is_none() {
-        return false;
+#[derive(Debug)]
+pub(crate) enum Unprepared {
+    Incomplete,
+    ServerOnly,
+    PreparerSource(std::io::Error),
+}
+
+impl Unprepared {
+    pub(crate) fn message(self, incomplete: impl FnOnce() -> String) -> String {
+        match self {
+            Self::Incomplete => incomplete(),
+            Self::ServerOnly => server_only_resources(),
+            Self::PreparerSource(error) => preparer_source_error(&error),
+        }
     }
+}
+
+fn preparer_source_error(error: &std::io::Error) -> String {
+    crate::i18n::trf(
+        "Could not read the build's preparer source: {error}",
+        &[("error", &error.to_string())],
+    )
+}
+
+fn server_only_resources() -> String {
+    crate::i18n::tr("These files are for a dedicated server only.").into()
+}
+
+fn server_profile(manifest: &serde_json::Value) -> bool {
+    manifest["profile"] == "server"
+}
+
+fn play_manifest(resources: &Path, required: Option<u32>) -> Result<serde_json::Value, Unprepared> {
+    let manifest = read_json(&resources.join(RESOURCES_MANIFEST)).ok_or(Unprepared::Incomplete)?;
+    if server_profile(&manifest) {
+        return Err(Unprepared::ServerOnly);
+    }
+    if let Some(required) = required {
+        let stamped = read_json(&resources.join(PREPARATION_STAMP))
+            .and_then(|stamp| stamp["output_version"].as_u64());
+        if stamped != Some(u64::from(required)) {
+            return Err(Unprepared::Incomplete);
+        }
+    }
+    Ok(manifest)
+}
+
+/// Check profile and stamp on a sealed tree, whose files are verified separately by digest.
+pub(crate) fn check_play_output(root: &Path, resources: &Path) -> Result<(), Unprepared> {
+    let required = output_version_at(root).map_err(Unprepared::PreparerSource)?;
+    play_manifest(resources, required).map(drop)
+}
+
+/// A full, current preparation whose top-level tables were not left empty by an interrupted run.
+pub(crate) fn check_play_resources(root: &Path, resources: &Path) -> Result<(), Unprepared> {
+    check_play_output(root, resources)?;
+    prepared_tables_present(resources)
+        .then_some(())
+        .ok_or(Unprepared::Incomplete)
+}
+
+/// The manifest and tables are present, without checking for a playable profile or stamp.
+pub(crate) fn prepared_at(resources: &Path) -> bool {
+    read_json(&resources.join(RESOURCES_MANIFEST)).is_some() && prepared_tables_present(resources)
+}
+
+fn prepared_tables_present(resources: &Path) -> bool {
     let Ok(entries) = fs::read_dir(resources) else {
         return false;
     };
@@ -1738,7 +1920,7 @@ pub fn resources_summary(prepared: bool, sounds: bool, version: &str) -> String 
 /// (tools/prepare_output.py), so a release that changes the preparer's code but not its output
 /// keeps the resources. Preparers from before the number are known by their sources
 /// (`LEGACY_OUTPUT_VERSIONS`); older ones still are compared file by file (`same_preparer`).
-fn resources_compatible(from: &Path, to: &Path, manifest: &serde_json::Value) -> bool {
+fn resources_compatible(from: &Path, to: &Path, resources: &Path, legacy: &[(&str, u32)]) -> bool {
     let pins = |dir: &Path| {
         read_json(&dir.join("research-lock.json")).map(|lock| {
             ["version", "client_sha1", "server_sha1"].map(|k| lock["minecraft"][k].clone())
@@ -1750,32 +1932,46 @@ fn resources_compatible(from: &Path, to: &Path, manifest: &serde_json::Value) ->
     if a != b || a.iter().any(|v| !v.is_string()) {
         return false;
     }
-    match (output_version_at(from), output_version_at(to)) {
+    let declared = |root: &Path| {
+        output_version_at(root).inspect_err(|error| {
+            eprintln!("{}: {}", root.display(), preparer_source_error(error));
+        })
+    };
+    let (Ok(source), Ok(target)) = (declared(from), declared(to)) else {
+        return false;
+    };
+    // Reject unstamped output from a declared preparer even when the destination's same
+    // compatibility version came from a historical source fingerprint.
+    let Ok(manifest) = play_manifest(resources, source.or(target)) else {
+        return false;
+    };
+    let compat_version =
+        |dir, declared: Option<u32>| declared.or_else(|| legacy_output_version(dir, legacy));
+    match (compat_version(from, source), compat_version(to, target)) {
         (Some(a), Some(b)) => a == b,
-        (None, None) => same_preparer(from, to, manifest),
+        (None, None) => same_preparer(from, to, &manifest),
         _ => false,
     }
 }
 
-/// The `OUTPUT_VERSION` of a version folder's preparer: the constant in its sources, or for a
-/// preparer from before it, the number `LEGACY_OUTPUT_VERSIONS` gives its fingerprint. None for
-/// an unknown older preparer.
-fn output_version_at(dir: &Path) -> Option<u32> {
-    output_version_in(dir, &LEGACY_OUTPUT_VERSIONS)
-}
-
-fn output_version_in(dir: &Path, legacy: &[(&str, u32)]) -> Option<u32> {
-    let crate_dir = dir.join(PREPARER_CRATE);
-    let lib = fs::read_to_string(crate_dir.join("src/lib.rs")).ok()?;
-    let declared = lib.lines().find_map(|line| {
+/// The build's own preparer declares the output version it records in its stamp.
+fn output_version_at(dir: &Path) -> std::io::Result<Option<u32>> {
+    let lib = match fs::read_to_string(dir.join(PREPARER_CRATE).join("src/lib.rs")) {
+        Ok(lib) => lib,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    Ok(lib.lines().find_map(|line| {
         line.strip_prefix("pub const OUTPUT_VERSION: u32 = ")?
             .strip_suffix(';')?
             .parse()
             .ok()
-    });
-    if declared.is_some() {
-        return declared;
-    }
+    }))
+}
+
+/// Fingerprints let two preparers agree where older builds did not declare a version or write a
+/// stamp. Use them for comparing preparers, not for requiring a stamp that was never written.
+fn legacy_output_version(dir: &Path, legacy: &[(&str, u32)]) -> Option<u32> {
     let fingerprint = legacy_fingerprint(dir)?;
     legacy
         .iter()
@@ -1981,10 +2177,7 @@ pub(crate) fn reuse_prepared(versions: &Path, tag: &str) -> Option<String> {
             continue;
         };
         let from = resources_at(&source);
-        let Some(manifest) = read_json(&from.join(RESOURCES_MANIFEST)) else {
-            continue;
-        };
-        if !resources_compatible(&source, &target, &manifest) {
+        if !resources_compatible(&source, &target, &from, &LEGACY_OUTPUT_VERSIONS) {
             continue;
         }
         // Copied beside it and renamed when complete: an interrupted copy is never "prepared".
@@ -2017,6 +2210,13 @@ pub(crate) fn reuse_prepared(versions: &Path, tag: &str) -> Option<String> {
 /// another installed version's resources if it has none, whatever its resources lack, then its
 /// data file.
 pub(crate) fn reuse_prepared_for(tag: &str) {
+    reuse_prepared_for_cancellable(tag, None);
+}
+
+fn reuse_prepared_for_cancellable(tag: &str, stop: Option<&crate::native_mods::Cancellation>) {
+    if stop.is_some_and(crate::native_mods::Cancellation::is_stopped) {
+        return;
+    }
     let about = crate::native_mods::about(tag);
     let tag = about.as_ref().map_or(tag, |about| about.base.as_str());
     let Ok(preparation) = prepare_lock(tag) else {
@@ -2024,12 +2224,18 @@ pub(crate) fn reuse_prepared_for(tag: &str) {
     };
     let versions = versions_dir();
     reuse_prepared(&versions, tag);
+    if stop.is_some_and(crate::native_mods::Cancellation::is_stopped) {
+        return;
+    }
     if check_prepared(tag) {
-        if let Err(error) = finish_preparation(tag, &preparation) {
+        if let Err(error) = finish_preparation_cancellable(tag, &preparation, stop) {
             eprintln!("{tag}: {error}");
         }
     }
     drop(preparation);
+    if stop.is_some_and(crate::native_mods::Cancellation::is_stopped) {
+        return;
+    }
     let (root, resources) = (version_dir(tag), resources(tag));
     let spawned = std::thread::Builder::new()
         .name("Prepared data file".into())
@@ -2048,7 +2254,9 @@ pub(crate) fn reuse_prepared_for(tag: &str) {
 /// after every update. After `complete_assets`, as the file answers "missing" for what it lacks.
 /// The version's own preparer writes it (`data-file`); the game still writes it when this didn't, or the preparer is too old to. Only looks for the file, as the game keeps it open for the whole run, which would stop a removal on Windows.
 fn write_data_file(root: &Path, resources: &Path) -> Result<(), String> {
-    if !prepared_at(resources) || resources.join(crate::preparer::DATA_FILE).exists() {
+    if resources.join(crate::preparer::DATA_FILE).exists()
+        || check_play_resources(root, resources).is_err()
+    {
         return Ok(());
     }
     let version = root.file_name().unwrap_or_default().to_string_lossy();
@@ -2218,6 +2426,9 @@ fn refill_own_store(tag: &str, handoff: &crate::preparer::Handoff<'_>) {
     let own = data_dir().join("minecraft");
     let root = versions_dir().join(tag);
     let resources = resources_at(&root);
+    if read_json(&resources.join(RESOURCES_MANIFEST)).is_none_or(|m| server_profile(&m)) {
+        return;
+    }
     let missing = crate::preparer::binary(&root).and_then(|binary| {
         crate::preparer::missing_extras(&binary, &root, &resources, Some(handoff))
             .ok()
@@ -2243,7 +2454,7 @@ fn refill_own_store(tag: &str, handoff: &crate::preparer::Handoff<'_>) {
             .map_err(|e| e.to_string())?;
         Ok(body)
     };
-    if let Err(e) = download_for_owner(&pins, &own, &fetch, &|line| eprintln!("{line}")) {
+    if let Err(e) = download_for_owner(&pins, &own, &fetch, None, &|line| eprintln!("{line}")) {
         eprintln!("{tag}: the missing assets were not downloaded: {e}");
     }
 }
@@ -2256,11 +2467,19 @@ fn complete_assets_in(
     log: &dyn Fn(String),
     handoff: Option<&crate::preparer::Handoff<'_>>,
 ) {
+    let stopped = || {
+        handoff
+            .and_then(crate::preparer::Handoff::stop)
+            .is_some_and(crate::native_mods::Cancellation::is_stopped)
+    };
+    if stopped() {
+        return;
+    }
     // The versions tried this run. Held while adding: the start, an install and Play can complete one version at once.
     static TRIED: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
     let root = versions.join(tag);
     let resources = resources_at(&root);
-    if !resources.join(RESOURCES_MANIFEST).exists() {
+    if read_json(&resources.join(RESOURCES_MANIFEST)).is_none_or(|m| server_profile(&m)) {
         return;
     }
     // A version whose preparer has no `missing-extras` (from before it) keeps what it has.
@@ -2272,6 +2491,9 @@ fn complete_assets_in(
         Ok(_) => return,
         Err(e) => return log(format!("{tag}: {e}")),
     };
+    if stopped() {
+        return;
+    }
     let mut tried = TRIED.lock().unwrap_or_else(|e| e.into_inner());
     if tried.contains(&root) {
         return;
@@ -2279,10 +2501,13 @@ fn complete_assets_in(
     if let Err(error) = Resources::invalidate(&root) {
         return log(format!("{tag}: {error}"));
     }
-    tried.push(root.clone());
     let kinds: Vec<String> = lacking.iter().map(|(kind, _)| kind.clone()).collect();
-    match crate::preparer::add_extras(&binary, &root, &resources, &kinds, &folders(), log, handoff)
-    {
+    let result =
+        crate::preparer::add_extras(&binary, &root, &resources, &kinds, &folders(), log, handoff);
+    if !stopped() {
+        tried.push(root.clone());
+    }
+    match result {
         Ok(Some(added)) => {
             for (kind, error) in added.failed {
                 let what = lacking
@@ -2344,6 +2569,7 @@ fn download_for_owner(
     pins: &sources::Pins,
     dir: &Path,
     fetch: sources::Fetch,
+    cancel: Option<&std::sync::atomic::AtomicBool>,
     log: &dyn Fn(String),
 ) -> Result<(), String> {
     let mut accounts = account::Accounts::load();
@@ -2357,7 +2583,15 @@ fn download_for_owner(
     if let Err(e) = accounts.save_renewed() {
         log(format!("Sunrise: the accounts are not saved: {e}"));
     }
-    download_for(pins, dir, pass, !accounts.accounts.is_empty(), fetch, log)
+    download_for(
+        pins,
+        dir,
+        pass,
+        !accounts.accounts.is_empty(),
+        fetch,
+        cancel.unwrap_or(&mojang::CANCEL),
+        log,
+    )
 }
 
 /// Downloads Minecraft `id` (any version on Mojang's list, its version file's sha1 from it) into
@@ -2378,7 +2612,7 @@ pub fn download_version_for_owner(
         Ok(body)
     };
     let pins = sources::Pins::for_version(id, manifest_sha1);
-    download_for_owner(&pins, &dir, &fetch, log)
+    download_for_owner(&pins, &dir, &fetch, None, log)
         .map_err(|e| e.trim_start_matches("\n  • ").to_string())?;
     Ok(dir)
 }
@@ -2400,6 +2634,7 @@ fn download_for(
     pass: Result<account::Launch, account::NoOwner>,
     signed_in: bool,
     fetch: sources::Fetch,
+    cancel: &std::sync::atomic::AtomicBool,
     log: &dyn Fn(String),
 ) -> Result<(), String> {
     let v = &pins.version;
@@ -2417,7 +2652,7 @@ fn download_for(
                 sources::Os::MacOs => "osx",
                 sources::Os::Windows => "windows",
             };
-            mojang::download(pins, dir, os, 8, fetch, &mojang::CANCEL, log).map_err(|e| {
+            mojang::download(pins, dir, os, 8, fetch, cancel, log).map_err(|e| {
                 format!("\n  • Sunrise tried to download {v} from Mojang for {name}, but: {e}")
             })
         }
@@ -2444,6 +2679,7 @@ fn java(
     compiler: bool,
     games: &[PathBuf],
     manifest: &Path,
+    stop: Option<&crate::native_mods::Cancellation>,
     log: &dyn Fn(String),
 ) -> Result<PathBuf, String> {
     let find = if compiler {
@@ -2451,7 +2687,11 @@ fn java(
     } else {
         crate::jdk::find_runtime
     };
+    let cancel = stop.map_or(&mojang::CANCEL, |stop| stop.flag());
     java_with(find, major, games, manifest, &|component, missing| {
+        if let Some(stop) = stop {
+            stop.check()?;
+        }
         // Mojang builds its Linux Java for glibc: without glibc's loader (NixOS without nix-ld,
         // musl distributions) it cannot start, so don't download it.
         if cfg!(all(target_os = "linux", target_arch = "x86_64"))
@@ -2461,19 +2701,34 @@ fn java(
                 "{missing}\n  • Minecraft's own Java from Mojang needs glibc ({GLIBC_LOADER} is missing; on NixOS, enable programs.nix-ld), so install compatible Java instead."
             ));
         }
-        let fetch = |url: &str| -> Result<Vec<u8>, String> {
-            let mut body = Vec::new();
-            get(url)?
-                .into_reader()
-                .read_to_end(&mut body)
-                .map_err(|e| e.to_string())?;
-            Ok(body)
-        };
+        let fetch = |url: &str| -> Result<Vec<u8>, String> { fetch_bytes_cancellable(url, stop) };
         let runtime = data_dir().join("minecraft").join("runtime");
-        mojang::java_runtime(component, &runtime, 8, &fetch, &mojang::CANCEL, log).map_err(|e| {
+        mojang::java_runtime(component, &runtime, 8, &fetch, cancel, log).map_err(|e| {
             format!("{missing}\n  • Sunrise also tried to download Minecraft's own Java from Mojang, but: {e}")
         })
     })
+}
+
+fn fetch_bytes_cancellable(
+    url: &str,
+    stop: Option<&crate::native_mods::Cancellation>,
+) -> Result<Vec<u8>, String> {
+    if let Some(stop) = stop {
+        stop.check()?;
+    }
+    let mut body = Vec::new();
+    let mut reader = get(url)?.into_reader();
+    let result = match stop {
+        Some(stop) => stop.reader(&mut reader).read_to_end(&mut body),
+        None => reader.read_to_end(&mut body),
+    };
+    if let Err(error) = result {
+        if let Some(stop) = stop {
+            stop.check()?;
+        }
+        return Err(error.to_string());
+    }
+    Ok(body)
 }
 
 /// [`java`] with its Java lookup (`find`) and Mojang download (`download` of a runtime
@@ -2616,6 +2871,23 @@ pub fn preparer(
     preparer_staged(tag, minecraft, from, log, &preparation.handoff(None))
 }
 
+pub fn preparer_cancellable(
+    tag: &str,
+    minecraft: &Path,
+    from: MinecraftFrom,
+    log: &dyn Fn(String),
+    preparation: &crate::preparer::Preparation,
+    stop: &crate::native_mods::Cancellation,
+) -> Result<(Command, PathBuf), String> {
+    preparer_staged(
+        tag,
+        minecraft,
+        from,
+        log,
+        &preparation.handoff_cancellable(None, stop),
+    )
+}
+
 pub(crate) fn preparer_staged(
     tag: &str,
     minecraft: &Path,
@@ -2623,16 +2895,29 @@ pub(crate) fn preparer_staged(
     log: &dyn Fn(String),
     handoff: &crate::preparer::Handoff<'_>,
 ) -> Result<(Command, PathBuf), String> {
+    let stop = handoff.stop();
+    if let Some(stop) = stop {
+        stop.check()?;
+    }
+    let cancel = stop.map_or(&mojang::CANCEL, |stop| stop.flag());
     set_prepare_step(PrepareStep::Files);
     // A native build reads the resources of its base, so it is the base that gets prepared.
     let owner = installed_resources_owner(tag)?;
     let tag = owner.as_str();
     let version = game_version(tag);
     let dir = version_dir(tag);
+    let resources = resources_for_game(&dir, &version);
+    if read_json(&resources.join(RESOURCES_MANIFEST)).is_some_and(|m| server_profile(&m)) {
+        return Err(server_only_resources());
+    }
+    output_version_at(&dir).map_err(|error| preparer_source_error(&error))?;
     let binary = crate::preparer::binary(&dir).ok_or_else(|| crate::preparer::too_old(tag))?;
     // The version's own answer: a sibling's verified import is linked in when found, and whether its exporters ship.
     let needs = crate::preparer::needs(&binary, &dir, log, Some(handoff))?
         .ok_or_else(|| crate::preparer::too_old(tag))?;
+    if let Some(stop) = stop {
+        stop.check()?;
+    }
     let reused = !needs.server_jar;
     let chosen = minecraft.to_path_buf();
     // Resolved even when the game files are reused: the assets still come from the install.
@@ -2647,18 +2932,11 @@ pub(crate) fn preparer_staged(
                 .map(|f| sources::known_folders(sources::Os::current(), &f))
                 .unwrap_or_default(),
         );
-        let fetch = |url: &str| -> Result<Vec<u8>, String> {
-            let mut body = Vec::new();
-            get(url)?
-                .into_reader()
-                .read_to_end(&mut body)
-                .map_err(|e| e.to_string())?;
-            Ok(body)
-        };
+        let fetch = |url: &str| fetch_bytes_cancellable(url, stop);
         let linked = data_dir().join("linked-minecraft");
         if from == MinecraftFrom::Mojang {
             // Straight from Mojang (what is already there and whole is kept), for an owner only.
-            download_for_owner(&pins, &own, &fetch, log)
+            download_for_owner(&pins, &own, &fetch, Some(cancel), log)
                 .map_err(|e| e.trim_start_matches("\n  • ").to_string())?;
             own
         } else {
@@ -2670,13 +2948,17 @@ pub(crate) fn preparer_staged(
                     sources::Resolved::Folder(dir) => dir,
                     sources::Resolved::NotFound(checked) => {
                         let not_found = sources::not_found(&version, &checked, minecraft);
-                        download_for_owner(&pins, &own, &fetch, log).map_err(|e| not_found + &e)?;
+                        download_for_owner(&pins, &own, &fetch, Some(cancel), log)
+                            .map_err(|e| not_found + &e)?;
                         own
                     }
                 }
             }
         }
     };
+    if let Some(stop) = stop {
+        stop.check()?;
+    }
     let manifest = minecraft
         .join("versions")
         .join(&version)
@@ -2701,7 +2983,10 @@ pub(crate) fn preparer_staged(
             .unwrap_or_default(),
     );
     set_prepare_step(PrepareStep::Java);
-    let java_home = java(major, needs.jdk, &games, &manifest, log)?;
+    let java_home = java(major, needs.jdk, &games, &manifest, stop, log)?;
+    if let Some(stop) = stop {
+        stop.check()?;
+    }
     let jar = data_dir()
         .join("server-jars")
         .join(format!("{version}.jar"));
@@ -2714,15 +2999,11 @@ pub(crate) fn preparer_staged(
             }
         })?;
         let json = serde_json::from_str(&manifest_text).map_err(|e| e.to_string())?;
-        let fetch = |url: &str| -> Result<Vec<u8>, String> {
-            let mut body = Vec::new();
-            get(url)?
-                .into_reader()
-                .read_to_end(&mut body)
-                .map_err(|e| e.to_string())?;
-            Ok(body)
-        };
+        let fetch = |url: &str| fetch_bytes_cancellable(url, stop);
         ensure_server_jar(&jar, &json, &fetch, log)?;
+    }
+    if let Some(stop) = stop {
+        stop.check()?;
     }
     let mut cmd = Command::new(binary);
     with_java(&mut cmd, &java_home);
@@ -2741,7 +3022,15 @@ pub fn finish_preparation(
     tag: &str,
     preparation: &crate::preparer::Preparation,
 ) -> Result<(), String> {
-    Resources::prepare(&resources_owner(tag), preparation, None).map(drop)
+    finish_preparation_cancellable(tag, preparation, None)
+}
+
+fn finish_preparation_cancellable(
+    tag: &str,
+    preparation: &crate::preparer::Preparation,
+    stop: Option<&crate::native_mods::Cancellation>,
+) -> Result<(), String> {
+    Resources::prepare_cancellable(&resources_owner(tag), preparation, None, stop).map(drop)
 }
 
 /// Makes sure `jar` holds the server jar `manifest` names: one already cached whose sha1 is not
@@ -2789,6 +3078,24 @@ pub fn sounds(
     preparation: &crate::preparer::Preparation,
 ) {
     sounds_staged(tag, minecraft, log, &preparation.handoff(None));
+}
+
+pub fn sounds_cancellable(
+    tag: &str,
+    minecraft: &Path,
+    log: &dyn Fn(String),
+    preparation: &crate::preparer::Preparation,
+    stop: &crate::native_mods::Cancellation,
+) {
+    if stop.is_stopped() {
+        return;
+    }
+    sounds_staged(
+        tag,
+        minecraft,
+        log,
+        &preparation.handoff_cancellable(None, stop),
+    );
 }
 
 pub(crate) fn sounds_staged(
@@ -3323,21 +3630,22 @@ pub(crate) fn need_base_prepared(
     tag: &str,
     preparation: Option<&crate::preparer::Preparation>,
 ) -> Result<(), String> {
-    if check_prepared(tag) {
-        let _owned = preparation
-            .is_none()
-            .then(|| prepare_lock(tag))
-            .transpose()?;
-        complete_reports(&versions_dir(), tag);
-        Ok(())
-    } else {
-        Err(format!(
-            "{tag} is not prepared yet. Prepare it first: `sunrise-launcher prepare --version {tag}` \
-             uses your own Minecraft {v}, or downloads it from Mojang for the signed-in account \
-             that owns it.",
-            v = game_version(tag)
-        ))
-    }
+    check_build_preparation(tag).map_err(|issue| issue.message(|| prepare_first(tag)))?;
+    let _owned = preparation
+        .is_none()
+        .then(|| prepare_lock(tag))
+        .transpose()?;
+    complete_reports(&versions_dir(), tag);
+    Ok(())
+}
+
+fn prepare_first(tag: &str) -> String {
+    format!(
+        "{tag} is not prepared yet. Prepare it first: `sunrise-launcher prepare --version {tag}` \
+         uses your own Minecraft {v}, or downloads it from Mojang for the signed-in account \
+         that owns it.",
+        v = game_version(tag)
+    )
 }
 
 /// A step Play waits on before the game starts that the window says by name (`Msg::PlayStep`).
@@ -3387,8 +3695,7 @@ pub fn server(tag: &str, folder: &Path, accept_eula: bool) -> Result<Command, St
     if let Some(error) = game_architecture_launch_error(tag) {
         return Err(error);
     }
-    need_prepared(tag)?;
-    dedicated::verify_paths(tag, &command)?;
+    dedicated::need_prepared(tag, &command)?;
     if accept_eula {
         agree_eula(folder)?;
     }
@@ -3435,7 +3742,7 @@ impl Logged {
 
     pub fn start_server(tag: &str, folder: &Path, cmd: Command) -> Result<Self, String> {
         let (cmd, runtime) = prepare_server_command(tag, folder, cmd)?;
-        Self::start_with(|tx| spawn_prepared(Job::Server, cmd, runtime, tx, None))
+        Self::start_with(|tx| spawn_prepared(Job::Server, cmd, runtime, tx, None, None))
     }
 
     fn start_with(
@@ -4095,7 +4402,7 @@ pub fn place_checked(
             .map_err(|_| not_staged())?;
         let fresh = stage.join("checked");
         let _ = fs::remove_dir_all(&fresh);
-        unpack(&archive, &archive.to_string_lossy(), &fresh)?;
+        unpack(&archive, &archive.to_string_lossy(), &fresh, None)?;
         let payload = fresh.join(inside);
         if !payload.exists() {
             return Err("The download has no launcher binary.".into());
@@ -4217,7 +4524,7 @@ fn fill_stage(
         return staged(archive);
     }
     let unpacked = stage.join(UNPACKED);
-    unpack(&archive, url, &unpacked)?;
+    unpack(&archive, url, &unpacked, None)?;
     // A launcher inside Sunrise.app replaces the whole bundle (its Info.plist, icon and
     // signature belong with the binary); a bare binary, as older launchers are, only the binary,
     // which the macOS archive also holds (Sunrise.app/Contents/MacOS/sunrise-launcher).
@@ -4479,8 +4786,21 @@ pub fn spawn_holding(
     tx: Sender<Msg>,
     prepare: Option<(String, crate::preparer::Preparation)>,
 ) -> Result<Running, String> {
+    spawn_holding_cancellable(job, cmd, tx, prepare, None)
+}
+
+pub fn spawn_holding_cancellable(
+    job: Job,
+    cmd: Command,
+    tx: Sender<Msg>,
+    prepare: Option<(String, crate::preparer::Preparation)>,
+    stop: Option<crate::native_mods::Cancellation>,
+) -> Result<Running, String> {
+    if let Some(stop) = &stop {
+        stop.check()?;
+    }
     let (cmd, runtime) = prepare_command(cmd)?;
-    spawn_prepared(job, cmd, runtime, tx, prepare)
+    spawn_prepared(job, cmd, runtime, tx, prepare, stop)
 }
 
 fn spawn_prepared(
@@ -4489,13 +4809,14 @@ fn spawn_prepared(
     runtime: RuntimeGuard,
     tx: Sender<Msg>,
     prepare: Option<(String, crate::preparer::Preparation)>,
+    stop: Option<crate::native_mods::Cancellation>,
 ) -> Result<Running, String> {
     if let Some((_, preparation)) = &prepare {
         let child = preparation
             .handoff(None)
             .spawn(cmd, true)
             .map_err(|e| e.to_string())?;
-        return Ok(monitor(job, child, tx, runtime, prepare));
+        return Ok(monitor(job, child, tx, runtime, prepare, stop));
     }
     #[cfg(unix)]
     {
@@ -4507,12 +4828,12 @@ fn spawn_prepared(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let child = play_log::spawn(&mut cmd)?.into();
-    Ok(monitor(job, child, tx, runtime, None))
+    Ok(monitor(job, child, tx, runtime, None, stop))
 }
 
 /// Use the same streams, process monitor and crash reporting for an admitted game's child.
 pub fn monitor_game(child: Child, tx: Sender<Msg>, runtime: RuntimeGuard) -> Running {
-    monitor(Job::Client, child, tx, runtime, None)
+    monitor(Job::Client, child, tx, runtime, None, None)
 }
 
 fn monitor(
@@ -4521,12 +4842,19 @@ fn monitor(
     tx: Sender<Msg>,
     runtime: RuntimeGuard,
     prepare: Option<(String, crate::preparer::Preparation)>,
+    stop: Option<crate::native_mods::Cancellation>,
 ) -> Running {
     let pid = child.id();
     let group = matches!(job, Job::Prepare);
     if group {
         crate::process::owned::CHILDREN.track_group(pid);
     }
+    let tracked = stop
+        .as_ref()
+        .map(|stop| stop.track_process(pid))
+        .transpose()
+        .ok()
+        .flatten();
     let stdin = child.stdin.take();
     let relayed = child.is_relayed();
     let forwarding = Arc::new(Mutex::new(true));
@@ -4555,6 +4883,7 @@ fn monitor(
     let child = Arc::new(Mutex::new(child));
     let waited = child.clone();
     std::thread::spawn(move || {
+        let tracked = tracked;
         if !relayed {
             for r in readers {
                 let _ = r.join();
@@ -4584,15 +4913,24 @@ fn monitor(
         if group {
             crate::process::owned::CHILDREN.release(pid);
         }
-        let result = status.map_err(|e| e.to_string()).and_then(|s| {
-            let result = match prepare {
-                Some((tag, preparation)) if s.success() => finish_preparation(&tag, &preparation),
-                _ if s.success() => Ok(()),
-                _ => Err(format!("Exited with {s}")),
-            };
+        drop(tracked);
+        let cancelled = stop.as_ref().is_some_and(|stop| stop.is_stopped());
+        let result = if cancelled {
             runtime.game_exited();
-            result
-        });
+            Err(crate::native_mods::CANCELLED.into())
+        } else {
+            status.map_err(|e| e.to_string()).and_then(|s| {
+                let result = match prepare {
+                    Some((tag, preparation)) if s.success() => {
+                        finish_preparation_cancellable(&tag, &preparation, stop.as_ref())
+                    }
+                    _ if s.success() => Ok(()),
+                    _ => Err(format!("Exited with {s}")),
+                };
+                runtime.game_exited();
+                result
+            })
+        };
         let _ = tx.send(Msg::Exit(job, result));
     });
     Running { child, stdin }
@@ -5054,6 +5392,50 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn a_cancellable_zip_unpack_keeps_every_executable_runnable_and_stops_when_asked() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let zip_path = dir.path().join("game.zip");
+        let mut zip = zip::ZipWriter::new(fs::File::create(&zip_path).unwrap());
+        let exec = zip::write::SimpleFileOptions::default().unix_permissions(0o755);
+        for name in [
+            "Sunrise.app/Contents/MacOS/sunrise-client",
+            "Sunrise.app/Contents/MacOS/sunrise-prepare",
+        ] {
+            zip.start_file(name, exec).unwrap();
+            zip.write_all(b"#!/bin/sh\n").unwrap();
+        }
+        zip.start_file(
+            "Sunrise.app/Contents/Info.plist",
+            zip::write::SimpleFileOptions::default().unix_permissions(0o644),
+        )
+        .unwrap();
+        zip.write_all(b"<plist/>").unwrap();
+        zip.finish().unwrap();
+
+        let to = dir.path().join("unpacked");
+        let stop = crate::native_mods::Cancellation::default();
+        unpack(&zip_path, "game.zip", &to, Some(&stop)).unwrap();
+        for name in ["sunrise-client", "sunrise-prepare"] {
+            let mode = fs::metadata(to.join("Sunrise.app/Contents/MacOS").join(name))
+                .unwrap()
+                .permissions()
+                .mode();
+            assert_eq!(mode & 0o111, 0o111, "{name} stays executable");
+        }
+
+        stop.stop();
+        assert!(unpack(
+            &zip_path,
+            "game.zip",
+            &dir.path().join("stopped"),
+            Some(&stop)
+        )
+        .is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn private_files_are_readable_by_their_owner_alone() {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
@@ -5424,7 +5806,9 @@ mod tests {
             (no_owner(), false),
             (no_owner(), true),
         ] {
-            assert!(download_for(&pins, &dir, pass, signed_in, &fetch, &log).is_err());
+            assert!(
+                download_for(&pins, &dir, pass, signed_in, &fetch, &mojang::CANCEL, &log).is_err()
+            );
         }
         assert!(asked.lock().unwrap().is_empty());
         assert!(!dir.exists());
@@ -5435,6 +5819,7 @@ mod tests {
             Err(account::NoOwner::default()),
             false,
             &fetch,
+            &mojang::CANCEL,
             &log,
         )
         .unwrap_err();
@@ -5457,7 +5842,7 @@ mod tests {
             owner: Some((owner, secrets)),
             ..Default::default()
         });
-        assert!(download_for(&pins, &dir, pass, true, &fetch, &log).is_err());
+        assert!(download_for(&pins, &dir, pass, true, &fetch, &mojang::CANCEL, &log).is_err());
         assert!(!asked.lock().unwrap().is_empty());
         let _ = fs::remove_dir_all(&dir);
 
@@ -5470,7 +5855,9 @@ mod tests {
         .unwrap();
         asked.lock().unwrap().clear();
         for (pass, signed_in) in [(Err(account::NoOwner::default()), true), (no_owner(), true)] {
-            assert!(download_for(&pins, &dir, pass, signed_in, &fetch, &log).is_err());
+            assert!(
+                download_for(&pins, &dir, pass, signed_in, &fetch, &mojang::CANCEL, &log).is_err()
+            );
         }
         assert!(asked.lock().unwrap().is_empty());
         let _ = fs::remove_dir_all(&dir);
@@ -5795,6 +6182,69 @@ pub fn {f}("
         assert!(!select_after_update(Some(STABLE), &[STABLE.into()], NEWEST));
     }
 
+    #[test]
+    fn dev_same_day_sort_handles_mixed_offsets_and_invalid_dates_without_panicking() {
+        let zip = "sunrise-windows-x64.zip";
+        let files = serde_json::json!([{"name": zip, "size": 1}]);
+        // Lexicographic text order ("12:00+02:00" > "11:00 bad" > "10:15Z" > "09:30-01:00")
+        // disagrees with UTC instant order (10:30Z > 10:15Z > 10:00Z). Parsing each timestamp once
+        // keeps valid instants newest first and invalid or missing timestamps consistently last
+        // within the build day regardless of input order.
+        let mut entries = vec![
+            serde_json::json!({
+                "tag_name": "dev-2026-11-13-1111111",
+                "name": "Dev 2026-11-13 · 1111111",
+                "prerelease": true,
+                "published_at": "2026-11-13T12:00:00+02:00",
+                "assets": files,
+            }),
+            serde_json::json!({
+                "tag_name": "dev-2026-11-13-bad0000",
+                "name": "Dev 2026-11-13 · bad0000",
+                "prerelease": true,
+                "published_at": "2026-11-13T11:00:00 not-rfc3339",
+                "assets": files,
+            }),
+            serde_json::json!({
+                "tag_name": "dev-2026-11-13-3333333",
+                "name": "Dev 2026-11-13 · 3333333",
+                "prerelease": true,
+                "published_at": "2026-11-13T09:30:00-01:00",
+                "assets": files,
+            }),
+            serde_json::json!({
+                "tag_name": "dev-2026-11-13-2222222",
+                "name": "Dev 2026-11-13 · 2222222",
+                "prerelease": true,
+                "published_at": "2026-11-13T10:15:00Z",
+                "assets": files,
+            }),
+            serde_json::json!({
+                "tag_name": "dev-2026-11-12-0000000",
+                "name": "Dev 2026-11-12 · 0000000",
+                "prerelease": true,
+                "published_at": "2026-11-12T23:59:59Z",
+                "assets": files,
+            }),
+        ];
+        for reversed in [false, true] {
+            if reversed {
+                entries.reverse();
+            }
+            let releases = game_releases_with(&entries, &[Some(zip)]);
+            assert_eq!(
+                releases.iter().map(|r| r.tag.as_str()).collect::<Vec<_>>(),
+                [
+                    "dev-2026-11-13-3333333",
+                    "dev-2026-11-13-2222222",
+                    "dev-2026-11-13-1111111",
+                    "dev-2026-11-13-bad0000",
+                    "dev-2026-11-12-0000000",
+                ]
+            );
+        }
+    }
+
     /// The ARM64 Windows launcher installs the ARM64 build where a release has one, and the x64
     /// build (under emulation) from the releases that have only that, checked against that file's
     /// signed checksum.
@@ -6032,6 +6482,7 @@ pub fn {f}("
             body: String::new(),
             date: String::new(),
             time: String::new(),
+            published_at: String::new(),
             asset: Some((format!("https://example.invalid/{file}"), 1)),
             prerelease: false,
             nightly: None,
@@ -6084,6 +6535,7 @@ pub fn {f}("
             body: String::new(),
             date: String::new(),
             time: String::new(),
+            published_at: String::new(),
             asset: Some((
                 "https://example.invalid/sunrise-windows-arm64.zip".into(),
                 1,
@@ -6590,6 +7042,7 @@ pub fn {f}("
             body: String::new(),
             date: String::new(),
             time: String::new(),
+            published_at: String::new(),
             asset: Some(("u".into(), 1)),
             prerelease: false,
             nightly: None,
@@ -6622,6 +7075,7 @@ pub fn {f}("
             body: String::new(),
             date: String::new(),
             time: String::new(),
+            published_at: String::new(),
             asset: Some(("u".into(), 1)),
             prerelease: false,
             nightly: None,
@@ -6942,6 +7396,7 @@ pub fn {f}("
             body: String::new(),
             date: String::new(),
             time: String::new(),
+            published_at: String::new(),
             asset: Some(("u".into(), 1)),
             prerelease: false,
             nightly: None,
@@ -7052,21 +7507,20 @@ pub fn {f}("
     #[test]
     fn a_drawn_page_asks_the_disk_once_and_the_launch_check_asks_again() {
         use std::time::{Duration, Instant};
-        let dir =
-            std::env::temp_dir().join(format!("sunrise-launcher-cached-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
+        let temp = tempfile::tempdir().unwrap();
+        let version = temp.path();
+        let dir = resources_at(version);
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join(RESOURCES_MANIFEST), "{}").unwrap();
         fs::write(dir.join("items.json"), "{}").unwrap();
-        let version = dir.join("version-folder");
         let cache = Mutex::new(PreparedCache::default());
         let t0 = Instant::now();
         // The page's question: without the cache each of these would run the check.
         let disk_reads = std::cell::Cell::new(0);
         let draw = |now| {
-            cached_prepared(&cache, &version, now, || {
+            cached_prepared(&cache, version, now, || {
                 disk_reads.set(disk_reads.get() + 1);
-                prepared_at(&dir)
+                check_play_resources(version, &dir).is_ok()
             })
         };
         assert!(draw(t0), "a complete folder is prepared");
@@ -7081,7 +7535,7 @@ pub fn {f}("
 
         // Before a launch the folder is checked on the disk, and finds the empty table.
         assert!(
-            !checked_prepared(&cache, &version, &dir, t0),
+            checked_prepared(&cache, version, version, t0).is_err(),
             "an empty table is caught"
         );
         // ... and the pages then show it without checking again.
@@ -7101,7 +7555,6 @@ pub fn {f}("
             "past the time limit a change made by another process shows"
         );
         assert_eq!(disk_reads.get(), 3);
-        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
@@ -7368,6 +7821,11 @@ pub fn {f}("
             "v0.3.1",
             "pub const OUTPUT_VERSION: u32 = 1;\nfn prepare() { faster() }",
         );
+        write(
+            "v0.3.0",
+            &format!(".local/sunrise-client/26.3/{PREPARATION_STAMP}"),
+            r#"{"output_version":1}"#,
+        );
         assert_eq!(reuse_prepared(&versions, "v0.3.1"), Some("v0.3.0".into()));
         assert_eq!(facts("v0.3.1").as_deref(), Some("v0.3.0"));
         // Its output changed, so the number did: prepare again.
@@ -7390,9 +7848,31 @@ pub fn {f}("
         release("v0.2.64", "fn prepare() {}");
         let fingerprint = legacy_fingerprint(&versions.join("v0.2.64")).unwrap();
         let legacy = [(fingerprint.as_str(), 1)];
-        let at = |tag: &str| output_version_in(&versions.join(tag), &legacy);
+        let at = |tag: &str| {
+            let root = versions.join(tag);
+            output_version_at(&root)
+                .unwrap()
+                .or_else(|| legacy_output_version(&root, &legacy))
+        };
         assert_eq!(at("v0.2.64"), Some(1));
         assert_eq!(at("v0.3.2"), Some(2));
+        // The destination's historical fingerprint is not a reason to trust an unstamped
+        // folder that came from a source that declared a version.
+        let (versioned, unstamped) = (versions.join("v0.3.0"), versions.join("v0.2.64"));
+        let source_resources = resources_at(&versioned);
+        assert!(resources_compatible(
+            &versioned,
+            &unstamped,
+            &source_resources,
+            &legacy
+        ));
+        fs::remove_file(source_resources.join(PREPARATION_STAMP)).unwrap();
+        assert!(!resources_compatible(
+            &versioned,
+            &unstamped,
+            &source_resources,
+            &legacy
+        ));
         // Line endings as checked out don't count; an exporter's or the sources' change does.
         write(
             "v0.2.64",
@@ -7409,8 +7889,58 @@ pub fn {f}("
         release("v0.2.65", "fn prepare() { changed() }");
         assert_eq!(at("v0.2.65"), None);
         // A folder without the preparer's sources has no number.
-        assert_eq!(output_version_in(&versions.join("missing"), &legacy), None);
+        assert_eq!(at("missing"), None);
         let _ = fs::remove_dir_all(&versions);
+    }
+
+    #[test]
+    fn reuse_checks_the_source_stamp_even_when_both_preparers_declare_the_same_version() {
+        let temp = tempfile::tempdir().unwrap();
+        let versions = temp.path();
+        let (source, target) = (versions.join("v0.1.0"), versions.join("v0.1.1"));
+        for root in [&source, &target] {
+            let lib = root.join(PREPARER_CRATE).join("src/lib.rs");
+            fs::create_dir_all(lib.parent().unwrap()).unwrap();
+            fs::write(lib, "pub const OUTPUT_VERSION: u32 = 8;\n").unwrap();
+            fs::write(root.join(COMPLETE), "").unwrap();
+            fs::write(
+                root.join("research-lock.json"),
+                r#"{"minecraft":{"version":"26.3","client_sha1":"c","server_sha1":"s"}}"#,
+            )
+            .unwrap();
+        }
+        let from = resources_at(&source);
+        let to = resources_at(&target);
+        fs::create_dir_all(&from).unwrap();
+        fs::write(from.join(RESOURCES_MANIFEST), "{}").unwrap();
+
+        let stamp = from.join(PREPARATION_STAMP);
+        assert_eq!(reuse_prepared(versions, "v0.1.1"), None);
+        for invalid in [
+            "{",
+            "{}",
+            r#"{"output_version":"8"}"#,
+            r#"{"output_version":7}"#,
+            r#"{"output_version":9}"#,
+        ] {
+            fs::write(&stamp, invalid).unwrap();
+            assert_eq!(reuse_prepared(versions, "v0.1.1"), None, "{invalid}");
+            assert!(!to.exists());
+        }
+
+        let current = r#"{"output_version":8}"#;
+        fs::write(&stamp, current).unwrap();
+        fs::write(from.join(RESOURCES_MANIFEST), r#"{"profile":"server"}"#).unwrap();
+        assert_eq!(reuse_prepared(versions, "v0.1.1"), None);
+        fs::write(from.join(RESOURCES_MANIFEST), "{}").unwrap();
+        assert_eq!(
+            reuse_prepared(versions, "v0.1.1").as_deref(),
+            Some("v0.1.0")
+        );
+        assert_eq!(
+            fs::read_to_string(to.join(PREPARATION_STAMP)).unwrap(),
+            current
+        );
     }
 
     #[test]
@@ -7728,7 +8258,7 @@ esac"#
             .status()
             .unwrap();
         assert!(zipped.success());
-        unpack(&zip, "release.zip", &work.join("unpacked")).unwrap();
+        unpack(&zip, "release.zip", &work.join("unpacked"), None).unwrap();
         let new = find_app(&work.join("unpacked")).unwrap();
         replace_bundle(&new, &installed).unwrap();
         let version = fs::read_to_string(installed.join("Contents/Resources/version")).unwrap();
@@ -7888,6 +8418,114 @@ esac"#
             envs.get(OsStr::new("PIPEWIRE_PROPS")),
             Some(&Some(OsStr::new("kept")))
         );
+    }
+
+    #[test]
+    fn cancelling_a_download_stops_mid_transfer() {
+        use std::io::{Read, Write};
+        use std::time::{Duration, Instant};
+
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("sunrise.tar.gz");
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/sunrise.tar.gz", listener.local_addr().unwrap());
+        let (release_server, server_gate) = std::sync::mpsc::channel::<()>();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let _ = stream.read(&mut [0; 4096]);
+            let total = 256 * 1024;
+            let _ = write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {total}\r\nConnection: close\r\n\r\n"
+            );
+            let chunk = vec![b'a'; 64 * 1024];
+            let _ = stream.write_all(&chunk);
+            let _ = stream.flush();
+            // Hold the second chunk until the client cancels or the test ends.
+            let _ = server_gate.recv_timeout(Duration::from_secs(5));
+            let _ = stream.write_all(&chunk);
+        });
+
+        let stop = crate::native_mods::Cancellation::default();
+        let stop_on_progress = stop.clone();
+        let release_on_progress = release_server.clone();
+        let started = Instant::now();
+        let result = download_cancellable(
+            &url,
+            256 * 1024,
+            &"0".repeat(64),
+            &dest,
+            Some(&stop),
+            &|fraction| {
+                if fraction > 0.0 {
+                    stop_on_progress.stop();
+                    let _ = release_on_progress.send(());
+                }
+            },
+        );
+        let _ = release_server.send(());
+        server.join().unwrap();
+        assert_eq!(result.unwrap_err(), crate::native_mods::CANCELLED);
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert!(!dest.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cancelling_finish_preparation_stops_running_data_file_helper() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::time::{Duration, Instant};
+
+        struct Cleanup(PathBuf);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ = fs::remove_dir_all(&self.0);
+            }
+        }
+
+        let tag = format!("cancel-finish-{}", std::process::id());
+        let root = version_dir(&tag);
+        let _cleanup = Cleanup(root.clone());
+        let resources = resources_at(&root);
+        fs::create_dir_all(&resources).unwrap();
+        fs::write(resources.join(RESOURCES_MANIFEST), b"{}").unwrap();
+        let started_marker = root.join("data-file-started");
+        let binary = root.join("sunrise-prepare");
+        fs::write(
+            &binary,
+            format!(
+                "#!/bin/sh\ncase \"$1\" in\n\
+                 missing-extras) printf '%s\\n' '{{\"format\": 1, \"prepared\": true, \"missing\": []}}' ;;\n\
+                 data-file) printf started > \"{}\"; exec sleep 30 ;;\n\
+                 *) exit 2 ;;\n\
+                 esac\n",
+                started_marker.display()
+            ),
+        )
+        .unwrap();
+        fs::set_permissions(&binary, fs::Permissions::from_mode(0o700)).unwrap();
+
+        let stop = crate::native_mods::Cancellation::default();
+        let cancel_on_start = stop.clone();
+        let marker = started_marker.clone();
+        let watcher = std::thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !marker.exists() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            cancel_on_start.stop();
+        });
+
+        let preparation = prepare_lock(&tag).unwrap();
+        let started = Instant::now();
+        let result = finish_preparation_cancellable(&tag, &preparation, Some(&stop));
+        watcher.join().unwrap();
+        assert!(
+            started_marker.exists(),
+            "data-file helper should have started"
+        );
+        assert_eq!(result.unwrap_err(), crate::native_mods::CANCELLED);
+        assert!(started.elapsed() < Duration::from_secs(5));
     }
 }
 

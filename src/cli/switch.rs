@@ -4,7 +4,9 @@ use std::{
     io::{self, BufRead, Write},
     sync::atomic::{AtomicBool, Ordering},
 };
-use sunrise_launcher::browser::sunrise::{install_target, switch_build, SwitchHooks, Switched};
+use sunrise_launcher::browser::sunrise::{
+    install_target, switch_build, SwitchDecision, SwitchHooks, Switched,
+};
 
 static BEFORE_CUTOFF: AtomicBool = AtomicBool::new(true);
 
@@ -72,23 +74,29 @@ pub(super) fn run(instance: &instances::Instance, tag: &str, as_json: bool) -> R
             progress: &|_| {},
             registry_crates: Some(&registry_consent),
             approve: &|question| {
-                let ask = || -> io::Result<bool> {
+                let ask = || -> io::Result<SwitchDecision> {
                     let mut out = io::stderr().lock();
+                    writeln!(
+                        out,
+                        "{}",
+                        trf("Switch to {build}?", &[("build", &question.build)])
+                    )?;
+                    if question.has_omissions() {
+                        writeln!(out, "{}", question.omission_summary())?;
+                    }
                     for line in question
-                        .worlds
-                        .lines()
-                        .into_iter()
-                        .chain(question.hold_lines())
+                        .hold_lines()
                         .chain(question.removed.iter().map(|(name, reason)| {
                             trf(
                                 "{mod} was taken down: {reason}",
                                 &[("mod", name), ("reason", reason)],
                             )
                         }))
+                        .chain(question.world_lines())
                     {
                         writeln!(out, "{}", line.replace(char::is_control, " "))?;
                     }
-                    approve(tty, io::stdin().lock(), out)
+                    approve(tty, question.has_omissions(), io::stdin().lock(), out)
                 };
                 ask().map_err(|error| error.to_string())
             },
@@ -124,7 +132,7 @@ pub(super) fn run(instance: &instances::Instance, tag: &str, as_json: bool) -> R
                         writeln!(output, "{line}")?;
                     }
                     for (name, reason) in changes.removed {
-                        writeln!(output, "{}", trf("{mod} was taken down: {reason}", &[("mod", name), ("reason", reason)]).replace(char::is_control, " "))?;
+                        writeln!(output, "{}", trf("{mod} was removed: {reason}", &[("mod", name), ("reason", reason)]).replace(char::is_control, " "))?;
                     }
                 }
                 Ok(())
@@ -138,27 +146,50 @@ fn cancelled() -> String {
     tr("Switch cancelled. Nothing was switched.").into()
 }
 
-fn approve(tty: bool, mut input: impl BufRead, mut output: impl Write) -> io::Result<bool> {
+fn approve(
+    tty: bool,
+    omissions: bool,
+    mut input: impl BufRead,
+    mut output: impl Write,
+) -> io::Result<SwitchDecision> {
     if !tty {
         writeln!(output, "{}", tr("To decide, run Switch in a terminal."))?;
-        return Ok(false);
+        return Ok(SwitchDecision::Cancel);
     }
-    write!(output, "{} ", tr("Switch anyway? [y/N]"))?;
+    let prompt = if omissions {
+        tr("[y] Switch and turn them off, [r] Switch and remove them, [N] Cancel")
+    } else {
+        tr("Switch anyway? [y/N]")
+    };
+    write!(output, "{prompt} ")?;
     output.flush()?;
     let mut reply = String::new();
     input.read_line(&mut reply)?;
-    Ok(reply.ends_with('\n') && reply.trim().eq_ignore_ascii_case("y"))
+    Ok(if !reply.ends_with('\n') {
+        SwitchDecision::Cancel
+    } else if reply.trim().eq_ignore_ascii_case("y") {
+        SwitchDecision::TurnOff
+    } else if omissions && reply.trim().eq_ignore_ascii_case("r") {
+        SwitchDecision::Remove
+    } else {
+        SwitchDecision::Cancel
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
-    fn only_a_terminal_yes_accepts_the_sealed_world_decision() {
-        assert!(approve(true, &b"y\n"[..], Vec::new()).unwrap());
+    fn only_an_explicit_terminal_answer_accepts_the_sealed_decision() {
+        let decide = |tty, omissions, reply: &str| {
+            approve(tty, omissions, reply.as_bytes(), Vec::new()).unwrap()
+        };
+        assert_eq!(decide(true, false, "y\n"), SwitchDecision::TurnOff);
+        assert_eq!(decide(true, true, "r\n"), SwitchDecision::Remove);
+        assert_eq!(decide(true, false, "r\n"), SwitchDecision::Cancel);
         for reply in ["", "\n", "no\n", "yes?\n", "y", "Y\r"] {
-            assert!(!approve(true, reply.as_bytes(), Vec::new()).unwrap());
+            assert_eq!(decide(true, true, reply), SwitchDecision::Cancel);
         }
-        assert!(!approve(false, &b"y\n"[..], Vec::new()).unwrap());
+        assert_eq!(decide(false, true, "r\n"), SwitchDecision::Cancel);
     }
 }

@@ -111,8 +111,7 @@ pub(in crate::browser::sunrise::registry_install) fn update_registry_and_sources
             SourceHooks {
                 install: source_hooks,
                 cancellation,
-                authorize: authorize_source,
-
+                authorize: &|prepared, _| authorize_source(prepared),
                 approve_worlds: &|impact| {
                     if let Some(checked) = &reviewed {
                         let same = impact.matches_world_review(checked);

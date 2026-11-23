@@ -233,7 +233,7 @@ impl Launcher {
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let p = palette();
-        let at = tokens::FRAME_INSET + crate::rail::rail_width(self.settings.sidebar_expanded) + 8.;
+        let at = tokens::FRAME_INSET + crate::rail::rail_width(self.rail_open()) + 8.;
         let name = target.name.clone();
         let target = target.clone();
         let item = div()
@@ -427,6 +427,7 @@ mod tests {
                 body: String::new(),
                 date: String::new(),
                 time: String::new(),
+                published_at: String::new(),
                 asset: None,
                 prerelease: false,
                 nightly: None,

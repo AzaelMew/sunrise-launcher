@@ -20,6 +20,8 @@ pub(crate) struct GameDownload {
     size: u64,
     requested: Option<GameArchitecture>,
     time: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    published_at: String,
 }
 
 /// Both digests come from the same verified checksum list. The `archive` field in the saved
@@ -191,6 +193,7 @@ impl GameDownload {
             size,
             requested,
             time: release.time.clone(),
+            published_at: release.published_at.clone(),
         };
         binding.validate(tag)?;
         Ok(binding)
@@ -240,16 +243,27 @@ impl GameDownload {
     }
 
     pub(crate) fn prove(&self, tag: &str) -> Result<GameProof, String> {
+        self.prove_cancellable(tag, None)
+    }
+
+    pub(crate) fn prove_cancellable(
+        &self,
+        tag: &str,
+        stop: Option<&crate::native_mods::Cancellation>,
+    ) -> Result<GameProof, String> {
         let keys = sunrise_launcher_release_verify::trusted_keys_for(GAME_REPO);
         if self.file == INDEX {
             let base = Base::from_env();
             self.prove_with(tag, &keys, |name| {
+                if let Some(stop) = stop {
+                    stop.check()?;
+                }
                 base.release_file(&self.source, tag, name)
                     .map_err(|error| error.to_string())
             })
         } else {
             self.prove_with(tag, &keys, |name| {
-                fetch_small(&crate::signed::asset_url(&self.source, name))
+                fetch_small_cancellable(&crate::signed::asset_url(&self.source, name), stop)
             })
         }
     }
@@ -313,16 +327,18 @@ impl GameDownload {
         Ok(())
     }
 
-    pub(in crate::backend) fn repair(
+    pub(in crate::backend) fn repair_cancellable(
         &self,
         tag: &str,
         proof: &GameProof,
+        stop: Option<&crate::native_mods::Cancellation>,
         progress: impl Fn(f32),
     ) -> Result<InstallOutcome, String> {
-        self.publish(
+        self.publish_cancellable(
             tag,
             proof,
             InstallIntent::Repair,
+            stop,
             progress,
             crate::signed::asset_url,
         )
@@ -350,10 +366,23 @@ impl GameDownload {
         progress: impl Fn(f32),
         asset_url: impl Fn(&str, &str) -> String,
     ) -> Result<InstallOutcome, String> {
+        self.publish_cancellable(tag, proof, intent, None, progress, asset_url)
+    }
+
+    fn publish_cancellable(
+        &self,
+        tag: &str,
+        proof: &GameProof,
+        intent: InstallIntent,
+        stop: Option<&crate::native_mods::Cancellation>,
+        progress: impl Fn(f32),
+        asset_url: impl Fn(&str, &str) -> String,
+    ) -> Result<InstallOutcome, String> {
         self.publish_with(
             tag,
             proof,
             intent,
+            stop,
             progress,
             asset_url,
             (
@@ -363,15 +392,20 @@ impl GameDownload {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn publish_with(
         &self,
         tag: &str,
         proof: &GameProof,
         intent: InstallIntent,
+        stop: Option<&crate::native_mods::Cancellation>,
         progress: impl Fn(f32),
         asset_url: impl Fn(&str, &str) -> String,
         (base, keys): (&Base, &[PublicKey]),
     ) -> Result<InstallOutcome, String> {
+        if let Some(stop) = stop {
+            stop.check()?;
+        }
         // A saved binding can reuse an archive regardless of which preference previously
         // installed it. Repair is explicit: it must also prove the new request marker.
         if intent == InstallIntent::Exact && self.is_installed(tag, proof) {
@@ -417,6 +451,7 @@ impl GameDownload {
             body: String::new(),
             date: String::new(),
             time: self.time.clone(),
+            published_at: self.published_at.clone(),
             asset: (self.file != INDEX).then(|| (asset_url(&self.source, &self.file), self.size)),
             prerelease: false,
             nightly: Channel::of(&self.source).map(|_| self.source.clone()),
@@ -435,9 +470,13 @@ impl GameDownload {
                 &release,
                 tag,
                 intent,
+                stop,
                 &progress,
                 |target| self.installed_at(target, tag, proof, intent).is_ok(),
                 |stage| {
+                    if let Some(stop) = stop {
+                        stop.check()?;
+                    }
                     let game_index = sdk_file(INDEX)?;
                     sunrise_launcher_release_verify::check(
                         INDEX,
@@ -452,6 +491,7 @@ impl GameDownload {
                         (&game_index, &proof.archive),
                         base,
                         keys,
+                        stop,
                         &progress,
                     )
                     .map_err(|error| match error {
@@ -469,19 +509,20 @@ impl GameDownload {
             )?
         } else {
             let facts = if let Some(sha) = proof.facts.as_deref() {
-                let bytes = fetch_small(&asset_url(&self.source, RELEASE_FILE))?
+                let bytes = fetch_small_cancellable(&asset_url(&self.source, RELEASE_FILE), stop)?
                     .ok_or_else(|| format!("{RELEASE_FILE}: signed build facts are missing"))?;
                 Some((bytes, sha))
             } else {
                 None
             };
-            super::install_as(
+            super::install_as_cancellable(
                 &release,
                 tag,
                 &proof.archive,
                 self.requested,
                 facts.as_ref().map(|(bytes, sha)| (bytes.as_slice(), *sha)),
                 intent,
+                stop,
                 progress,
             )?
         };
@@ -581,6 +622,7 @@ mod tests {
             size: 1,
             requested,
             time: String::new(),
+            published_at: String::new(),
         };
         assert!(download.validate(DEV).is_ok());
         assert!(download.validate("dev-2026-11-21-0c02068").is_err());
@@ -634,6 +676,7 @@ mod tests {
             requested: Some(requested),
             size: bytes.len() as u64,
             time: String::new(),
+            published_at: String::new(),
         };
         let (url, serve) = serve_archive(asset, bytes);
         (download, proof, url, serve)
@@ -701,6 +744,46 @@ mod tests {
                 server.join().unwrap();
             },
         );
+    }
+
+    #[test]
+    fn same_tag_repair_preserves_server_only_preparation() {
+        isolated_case("same_tag_repair_preserves_server_only_preparation", || {
+            let (download, proof, url, server) = serve_windows_archive(
+                GameArchitecture::X64,
+                "sunrise-windows-x64.zip",
+                b"repaired image",
+            );
+            let root = version_dir(TAG);
+            let resources = resources_at(&root);
+            fs::create_dir_all(&resources).unwrap();
+            fs::write(root.join(COMPLETE), "").unwrap();
+            fs::write(root.join(CLIENT), "old image").unwrap();
+            let files = [
+                (RESOURCES_MANIFEST, r#"{"profile":"server"}"#),
+                (PREPARATION_STAMP, r#"{"output_version":7}"#),
+                ("registries.json", "{}"),
+            ];
+            for (name, content) in files {
+                fs::write(resources.join(name), content).unwrap();
+            }
+
+            download
+                .publish(
+                    TAG,
+                    &proof,
+                    InstallIntent::Repair,
+                    |_| {},
+                    |_, _| url.clone(),
+                )
+                .unwrap();
+            server.join().unwrap();
+
+            assert_eq!(fs::read(root.join(CLIENT)).unwrap(), b"repaired image");
+            for (name, content) in files {
+                assert_eq!(fs::read_to_string(resources.join(name)).unwrap(), content);
+            }
+        });
     }
 
     #[test]
@@ -857,6 +940,7 @@ mod tests {
                     body: String::new(),
                     date: "2026-11-20".into(),
                     time: String::new(),
+                    published_at: String::new(),
                     asset: Some((url, download.size)),
                     prerelease: true,
                     nightly: Some(NIGHTLY.into()),
@@ -1000,6 +1084,7 @@ mod tests {
             size: 0,
             requested: Some(GameArchitecture::Arm64),
             time: String::new(),
+            published_at: String::new(),
         };
         let proof = GameProof {
             archive: "a".repeat(64),

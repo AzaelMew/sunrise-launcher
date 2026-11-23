@@ -353,7 +353,7 @@ impl Edit<'_> {
         self.publish_inner(
             proof,
             cancellation,
-            (None, restored),
+            (None, restored, None),
             authorize,
             || {
                 finishing();
@@ -363,12 +363,14 @@ impl Edit<'_> {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn publish_switch(
         self,
         proof: CandidateImage,
         cancellation: &native_mods::Cancellation,
         holds: Vec<Held>,
         removed: BTreeMap<String, (String, String)>,
+        build_choice: Option<crate::managed_play::CommittedBuildChoice>,
         authorize: impl FnOnce() -> Result<(), String>,
         at_cutoff: impl FnOnce() -> Result<(), String>,
     ) -> Result<Active, String> {
@@ -390,7 +392,7 @@ impl Edit<'_> {
         self.publish_inner(
             proof,
             cancellation,
-            (receipt, &retired),
+            (receipt, &retired, build_choice),
             authorize,
             at_cutoff,
             |_, _| Ok(()),
@@ -401,7 +403,11 @@ impl Edit<'_> {
         self,
         proof: CandidateImage,
         cancellation: &native_mods::Cancellation,
-        (receipt, retired_holds): (Option<Receipt>, &BTreeSet<String>),
+        (receipt, retired_holds, build_choice): (
+            Option<Receipt>,
+            &BTreeSet<String>,
+            Option<crate::managed_play::CommittedBuildChoice>,
+        ),
         authorize: impl FnOnce() -> Result<G, String>,
         at_cutoff: impl FnOnce() -> Result<(), String>,
         observe: impl FnMut(usize, profile_txn::Boundary) -> Result<(), String>,
@@ -424,7 +430,10 @@ impl Edit<'_> {
                     &proof.tag,
                     &proof.candidate,
                     proof.inputs,
-                    Generation::Advance(&old),
+                    Generation::Advance {
+                        previous: &old,
+                        resources: None,
+                    },
                 )?;
                 (active, stage)
             }
@@ -495,6 +504,9 @@ impl Edit<'_> {
         }
         if let Some(receipt) = receipt {
             active.receipts.push(receipt);
+        }
+        if let Some(choice) = build_choice {
+            active.build_choice = Some(choice);
         }
         let files = changed_files(&self.home, &proof.candidate)?;
         let pointer = serde_json::to_vec(&active).map_err(|e| e.to_string())?;

@@ -1138,13 +1138,34 @@ fn fetch(
     local: bool,
     progress: &dyn Fn(f32),
 ) -> Result<PathBuf, String> {
+    fetch_cancellable(file, folder, local, None, progress)
+}
+
+fn fetch_cancellable(
+    file: &FileRef,
+    folder: &Path,
+    local: bool,
+    cancellation: Option<&crate::native_mods::Cancellation>,
+    progress: &dyn Fn(f32),
+) -> Result<PathBuf, String> {
     match file.url.strip_prefix("file://").filter(|_| local) {
         Some(path) => {
+            if let Some(cancellation) = cancellation {
+                cancellation.check()?;
+            }
             let path = local_path(path);
             let reader = fs::File::open(path).map_err(|e| format!("{path}: {e}"))?;
-            download::save_from_anywhere(file, reader, folder, progress)
+            match cancellation {
+                Some(cancellation) => download::save_from_anywhere(
+                    file,
+                    cancellation.reader(reader),
+                    folder,
+                    progress,
+                ),
+                None => download::save_from_anywhere(file, reader, folder, progress),
+            }
         }
-        None => download::fetch(file, folder, progress),
+        None => download::fetch_cancellable(file, folder, cancellation, progress),
     }
 }
 
@@ -1749,10 +1770,11 @@ pub(crate) use registry_install::check_activation;
 pub use registry_install::{
     add_github, add_sources, apply_sources, checked_switch_fit, install_registry, install_target,
     known_unfit_updates, pack_sources, prepare_pasted_sources, prepare_source, read_pasted_sources,
-    remove_mods, switch_build, update_github, update_registry, update_registry_and_sources,
-    BuildNotice, ChangeImpact, CombinedUpdate, InstallError, InstallHooks, InstallProgress,
-    InstalledBatch, NativeQuestion, PastedSource, PreparedSource, ResolveQuestion, SourceError,
-    SourceHooks, SourceRequest, SwitchHooks, SwitchQuestion, Switched, UpdateRequest,
+    remove_mods, switch_build, switch_profile_build, update_github, update_registry,
+    update_registry_and_sources, BuildChoice, BuildNotice, ChangeImpact, CombinedUpdate,
+    InstallError, InstallHooks, InstallProgress, InstalledBatch, NativeQuestion, PastedSource,
+    PreparedSource, ResolveQuestion, SourceDependency, SourceError, SourceHooks, SourceRequest,
+    SwitchDecision, SwitchHooks, SwitchQuestion, Switched, UpdateRequest,
 };
 #[cfg(test)]
 mod tests;

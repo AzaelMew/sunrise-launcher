@@ -1,6 +1,11 @@
 //! The registry's install and removal rules. Planning does not download or write any files.
-use super::{Dependency, Index, Kind, Project, Version, dependencies::required_cycle};
-use crate::{dependencies::parse_version, manifest::Side};
+use super::{
+    Dependency, Index, Kind, Project, Version, dependencies::required_cycle, manifest_dependencies,
+};
+use crate::{
+    dependencies::parse_version,
+    manifest::{Manifest, Side},
+};
 use semver::{Comparator, Op, VersionReq};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -138,10 +143,10 @@ pub enum WholeRefusal {
     Unproved(String),
 }
 
-/// One incompatible pair established from checked archives, not a rejection of either alone.
+/// One incompatible set established from checked archives, not a rejection of any member alone.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ManifestConflict {
-    pub files: [InstalledMod; 2],
+    pub files: Vec<InstalledMod>,
     pub reason: String,
 }
 
@@ -166,7 +171,49 @@ pub fn install_whole(
         game,
         side,
         options.native_fits,
-        (options.messages, Some((options.conflicts, None))),
+        (options.messages, Some((options.conflicts, None, &[], None))),
+    );
+    refusal.map_or(Ok(plan), Err)
+}
+
+/// An exact manifest already checked and staged by the caller. It participates in solving,
+/// but the resolver may not select a registry artifact in its place.
+pub struct FixedMod<'a> {
+    manifest: &'a Manifest,
+    sha256: Option<&'a str>,
+    dependencies: Vec<Dependency>,
+}
+
+impl<'a> FixedMod<'a> {
+    pub fn new(manifest: &'a Manifest, sha256: Option<&'a str>) -> Self {
+        Self {
+            manifest,
+            sha256,
+            dependencies: manifest_dependencies(&manifest.dependencies),
+        }
+    }
+}
+
+pub fn install_with_fixed(
+    index: &Index,
+    requests: &[Request],
+    fixed: &[FixedMod<'_>],
+    unavailable: &BTreeMap<String, String>,
+    game: &str,
+    side: Side,
+    options: WholeOptions<'_, impl Fn(&Project, &Version) -> bool>,
+) -> Result<InstallPlan, WholeRefusal> {
+    let (plan, refusal) = plan_install(
+        index,
+        requests,
+        &[],
+        game,
+        side,
+        options.native_fits,
+        (
+            options.messages,
+            Some((options.conflicts, None, fixed, Some(unavailable))),
+        ),
     );
     refusal.map_or(Ok(plan), Err)
 }
@@ -204,12 +251,20 @@ pub fn update_whole(
         game,
         side,
         options.native_fits,
-        (options.messages, Some((options.conflicts, Some(targets)))),
+        (
+            options.messages,
+            Some((options.conflicts, Some(targets), &[], None)),
+        ),
     );
     refusal.map_or(Ok(plan), Err)
 }
 
-type WholeConstraints<'a> = (&'a [ManifestConflict], Option<UpdateTargets<'a>>);
+type WholeConstraints<'a> = (
+    &'a [ManifestConflict],
+    Option<UpdateTargets<'a>>,
+    &'a [FixedMod<'a>],
+    Option<&'a BTreeMap<String, String>>,
+);
 
 fn plan_install(
     index: &Index,
@@ -254,8 +309,33 @@ fn plan_install(
         }
     }
     let mut catalog = Catalog::new(index, game, side, native_fits, &present);
-    if let Some((blocked, update)) = conflicts {
+    let fixed = conflicts
+        .as_ref()
+        .map_or(&[][..], |(_, _, fixed, _)| *fixed);
+    for row in fixed {
+        let (required, optional) = dependency_ranges(
+            row.dependencies.iter(),
+            side,
+            &row.manifest.id,
+            &row.manifest.version,
+        );
+        catalog.mods.insert(
+            &row.manifest.id,
+            vec![Candidate {
+                version: &row.manifest.version,
+                sha256: row.sha256,
+                installed: true,
+                unindexed: true,
+                number: parse_version(&row.manifest.version).ok(),
+                fit: Fit::Yes,
+                required,
+                optional,
+            }],
+        );
+    }
+    if let Some((blocked, update, _, unavailable)) = conflicts {
         catalog.conflicts = blocked;
+        catalog.unavailable = unavailable;
         if let Some(targets) = update {
             catalog.above = Some(targets.above);
             catalog.minimum = Some(targets.minimum);
@@ -283,7 +363,9 @@ fn plan_install(
     catalog.message = message;
     let installed_choices: Selected<'_> = present
         .keys()
-        .filter_map(|&id| Some((id, catalog.mods.get(id)?.iter().find(|c| c.installed)?)))
+        .copied()
+        .chain(fixed.iter().map(|row| row.manifest.id.as_str()))
+        .filter_map(|id| Some((id, catalog.mods.get(id)?.iter().find(|c| c.installed)?)))
         .collect();
 
     let mut budget = MAX_STATES;
@@ -436,6 +518,20 @@ struct Range<'a> {
     parsed: Result<VersionReq, String>,
 }
 
+fn dependency_ranges<'a>(
+    deps: impl Iterator<Item = &'a Dependency>,
+    side: Side,
+    id: &str,
+    version: &str,
+) -> (Vec<Range<'a>>, Vec<Range<'a>>) {
+    deps.filter(|dep| dep.applies(side))
+        .map(|row| Range {
+            row,
+            parsed: row.range(id, version),
+        })
+        .partition(|range| !range.row.optional)
+}
+
 struct Candidate<'a> {
     version: &'a str,
     sha256: Option<&'a str>,
@@ -461,6 +557,7 @@ struct Catalog<'a> {
     game: &'a str,
     mods: BTreeMap<&'a str, Vec<Candidate<'a>>>,
     conflicts: &'a [ManifestConflict],
+    unavailable: Option<&'a BTreeMap<String, String>>,
     message: Messages,
     above: Option<&'a BTreeMap<String, semver::Version>>,
     minimum: Option<&'a BTreeMap<String, semver::Version>>,
@@ -606,16 +703,12 @@ impl<'a> Catalog<'a> {
                     .versions
                     .iter()
                     .map(|v| {
-                        let mut required = Vec::new();
-                        let mut optional = Vec::new();
-                        for dep in v.dependencies.iter().flatten().filter(|d| d.applies(side)) {
-                            let parsed = dep.range(&p.id, &v.version);
-                            if dep.optional {
-                                optional.push(Range { row: dep, parsed });
-                            } else {
-                                required.push(Range { row: dep, parsed });
-                            }
-                        }
+                        let (required, optional) = dependency_ranges(
+                            v.dependencies.iter().flatten(),
+                            side,
+                            &p.id,
+                            &v.version,
+                        );
                         Candidate {
                             version: &v.version,
                             sha256: Some(&v.file.sha256),
@@ -670,6 +763,7 @@ impl<'a> Catalog<'a> {
             game,
             mods,
             conflicts: &[],
+            unavailable: None,
             message: english,
             above: None,
             minimum: None,
@@ -678,6 +772,9 @@ impl<'a> Catalog<'a> {
     }
 
     fn choices(&self, id: &str, need: &Need<'_>) -> Result<Vec<&Candidate<'a>>, String> {
+        if let Some(reason) = self.unavailable.and_then(|blocked| blocked.get(id)) {
+            return Err(reason.clone());
+        }
         let message = self.message;
         let describe = || {
             let needs = need.describe(message);
