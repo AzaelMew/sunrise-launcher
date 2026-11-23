@@ -18,19 +18,30 @@ pub(crate) fn offers_game(
     base: &Base,
     keys: &[PublicKey],
 ) -> bool {
+    check_game_offer(version, source, triple, base, keys).unwrap_or(false)
+}
+
+/// Checks whether the game release signs an index listing both client slices for this target.
+/// Returns `Ok(true)` when both slices are listed, `Ok(false)` when the verified index omits a
+/// slice (or the build tag does not match its channel), and `Err(Refusal)` when fetching or
+/// verifying the index fails so explicit installs can report the actual failure.
+pub(crate) fn check_game_offer(
+    version: &str,
+    source: &str,
+    triple: &str,
+    base: &Base,
+    keys: &[PublicKey],
+) -> Result<bool, Refusal> {
     let channel = sunrise_launcher_release_verify::Channel::of(source);
     if channel.is_some_and(|channel| !sunrise_launcher_release_verify::is_build(channel, version)) {
-        return false;
+        return Ok(false);
     }
-    let index = signed_game_index(base, source, version, channel, keys).and_then(|bytes| {
-        let commit = game_commit(version, channel, &bytes)?;
-        checked_game_index(version, &bytes, &commit)
-    });
-    index.is_ok_and(|index| {
-        game_slices(triple)
-            .iter()
-            .all(|(_, name)| index.asset(name).is_ok())
-    })
+    let bytes = signed_game_index(base, source, version, channel, keys)?;
+    let commit = game_commit(version, channel, &bytes)?;
+    let index = checked_game_index(version, &bytes, &commit)?;
+    Ok(game_slices(triple)
+        .iter()
+        .all(|(_, name)| index.asset(name).is_ok()))
 }
 
 fn checked_game_index(version: &str, bytes: &[u8], commit: &str) -> Result<Index, Refusal> {
