@@ -141,6 +141,16 @@ fn channel_name(channel: instances::Channel) -> &'static str {
     }
 }
 
+/// The channel an unpinned profile plays now: a Stable profile plays Nightly until Stable has a
+/// build ([`instances::Channel::play_target`]), and the picker marks what plays.
+fn following_now(saved: instances::Channel, waits_for_stable: bool) -> instances::Channel {
+    if waits_for_stable {
+        instances::Channel::Nightly
+    } else {
+        saved
+    }
+}
+
 /// The version part of the build label, shared with the picker row whose heading is its channel.
 fn channel_build(tag: &str) -> Option<(instances::Channel, String)> {
     use instances::Channel;
@@ -1515,7 +1525,11 @@ impl Launcher {
         let active_channel = playing_target
             .as_deref()
             .and_then(instances::Channel::of_build);
-        let follows = pinned.is_none().then_some(instance.channel);
+        let waits_for_stable =
+            instance.channel == instances::Channel::Stable && !self.stable_available();
+        let follows = pinned
+            .is_none()
+            .then_some(following_now(instance.channel, waits_for_stable));
         let is_pack = instance.kind == instances::Kind::Pack;
         let option = |id: &'static str, on: bool, head: String, sub: String| {
             div()
@@ -1582,6 +1596,14 @@ impl Launcher {
             };
             let version = tag.and_then(|tag| channel_build(tag).map(|(_, version)| version));
             let unavailable_row = is_pack || version.is_none();
+            // A Stable profile plays Nightly until Stable has a build; say so on the row it
+            // will move to, rather than marking a row that can't play.
+            let unavailable = if channel == Channel::Stable && waits_for_stable && pinned.is_none()
+            {
+                tr("No Stable build yet. Plays Nightly until there is one.")
+            } else {
+                unavailable
+            };
             list = list.child(
                 option(
                     id,
@@ -1855,6 +1877,43 @@ fn build_menu_error(error: String, details: impl FnOnce(String) -> Stateful<Div>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_build_menu_marks_nightly_while_a_stable_profile_waits_for_stable() {
+        use instances::Channel;
+        let release = |tag: &str, nightly: bool| backend::Release {
+            tag: tag.into(),
+            name: String::new(),
+            body: String::new(),
+            date: String::new(),
+            time: String::new(),
+            published_at: String::new(),
+            asset: Some(("sunrise.tar.gz".into(), 1)),
+            prerelease: false,
+            nightly: nightly.then(|| "nightly".into()),
+        };
+        let mut releases = vec![release("nightly-2026-11-20-aaaaaaa", true)];
+        let marked = |releases: &[backend::Release]| {
+            let waits = Channel::Stable.builds(releases).next().is_none();
+            following_now(Channel::Stable, waits)
+        };
+        // The marked row is the channel whose build Play starts.
+        let plays = Channel::Stable.play_target(&releases, &[], None, None);
+        assert_eq!(marked(&releases), Channel::Nightly);
+        assert_eq!(
+            plays.and_then(|tag| Channel::of_build(tag)),
+            Some(Channel::Nightly)
+        );
+        releases.push(release("26.3-0.1.0", false));
+        let plays = Channel::Stable.play_target(&releases, &[], None, None);
+        assert_eq!(marked(&releases), Channel::Stable);
+        assert_eq!(
+            plays.and_then(|tag| Channel::of_build(tag)),
+            Some(Channel::Stable)
+        );
+        // Other channels are marked as saved.
+        assert_eq!(following_now(Channel::Dev, false), Channel::Dev);
+    }
 
     #[test]
     fn every_build_menu_error_offers_details_with_the_full_message() {
