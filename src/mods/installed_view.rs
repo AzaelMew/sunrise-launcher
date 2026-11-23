@@ -921,10 +921,11 @@ impl Launcher {
             .when(
                 self.ui.mods.reveal == Some(search::Reveal::Mod(r.id.clone())),
                 |d| {
-                    d.bg(c(palette().hover)).child(super::ui::reveal(
+                    d.bg(c(palette().hover)).child(super::ui::reveal_in(
                         crate::frame::scrolls("installed"),
                         self.ui.mods.revealed.clone(),
                         None,
+                        Some(self.mods.installed_list.clone()),
                     ))
                 },
             )
@@ -1240,7 +1241,7 @@ mod tests {
                 let file = format!("sunrise-mods/{id}.smod");
                 std::fs::write(profile.home.join(&file), b"").unwrap();
                 serde_json::json!({
-                    "source": "sunrise", "project": id, "slug": id, "title": format!("Mod {n}"),
+                    "source": "sunrise", "project": id, "slug": id, "title": format!("Mod {n:03}"),
                     "kind": "mod", "version": "1.0.0", "number": "1.0.0", "file": file,
                     "checksum": format!("SHA-256:{}", "0".repeat(64)), "page": ""
                 })
@@ -1276,13 +1277,24 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(20));
             frame(cx);
         }
+        // Draw a few more frames so any remaining layout adjustments settle.
+        for _ in 0..4 {
+            frame(cx);
+        }
         let scroll = cx
             .update(|_, _| crate::frame::drawn_scroll("installed"))
             .unwrap();
-        let (view, offset) = (scroll.bounds(), f32::from(scroll.offset().y));
+        let view = scroll.bounds();
         assert!(view.size.height > px(0.));
-        // 250 rows of about 53 px sit above it: the list moved well down, to it.
-        assert!(offset < -5_000., "the list stayed near the top: {offset}");
+        let cull = launcher.read_with(cx, |l, _| l.mods.installed_list.clone());
+        assert!(cull.settled(), "the list did not settle after reveal");
+        let row = cull
+            .drawn_bounds(250)
+            .expect("mod-250 was not built after settling");
+        assert!(
+            row.top() >= view.top() && row.bottom() <= view.bottom(),
+            "mod-250 ({row:?}) is outside the viewport ({view:?})"
+        );
     }
 
     #[test]

@@ -26,9 +26,12 @@ struct Drawn {
     /// The row the keyboard's focus was in when last drawn: it stays built, so Tab goes on
     /// from it however far the list has scrolled.
     focused: Option<usize>,
-    /// Whether the last frame left anything to correct (tests).
+    /// Whether the last drawn frame left nothing to correct (no mismeasured row and no visible
+    /// spacer). Starts false until a frame has been measured.
+    settled: bool,
+    /// Actual drawn bounds of each built row in the last frame (tests).
     #[cfg(test)]
-    unsettled: bool,
+    drawn_bounds: std::collections::HashMap<usize, Bounds<Pixels>>,
 }
 
 #[derive(Debug)]
@@ -116,9 +119,15 @@ impl Cull {
                         })
                 });
                 let unsettled = drawn.record(&spans, &bounds, scroll.bounds(), scroll.offset().y);
+                drawn.settled = !unsettled;
                 #[cfg(test)]
                 {
-                    drawn.unsettled = unsettled;
+                    drawn.drawn_bounds.clear();
+                    for (span, b) in spans.iter().zip(&bounds) {
+                        if let Span::Row(index) = span {
+                            drawn.drawn_bounds.insert(*index, *b);
+                        }
+                    }
                 }
                 if unsettled {
                     // A frame being drawn can't ask for the next one itself: ask right after.
@@ -130,10 +139,16 @@ impl Cull {
             })
     }
 
-    /// Whether the last frame drew the list with nothing left to correct (tests).
-    #[cfg(test)]
+    /// Whether the last drawn frame left nothing to correct (no mismeasured row and no visible
+    /// spacer).
     pub(crate) fn settled(&self) -> bool {
-        !self.0.borrow().unsettled
+        self.0.borrow().settled
+    }
+
+    /// The bounds GPUI laid out for row `index` on the last frame, if it was built (tests).
+    #[cfg(test)]
+    pub(crate) fn drawn_bounds(&self, index: usize) -> Option<Bounds<Pixels>> {
+        self.0.borrow().drawn_bounds.get(&index).copied()
     }
 }
 
