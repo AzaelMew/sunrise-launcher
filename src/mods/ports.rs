@@ -159,13 +159,16 @@ fn build_switch_request(
 }
 
 /// Groups v2 projects sharing an in-game mod ID when two or more distinct non-revoked projects
-/// provide the same slot. Single-project mods stay ungrouped.
+/// provide the same slot. Single-project mods stay ungrouped. Without `show_all`, a group keeps
+/// only the ports that fit the build (and the installed one) and needs two of them; a lone
+/// fitting port shows as an ordinary card.
 pub(crate) fn group_ports(
     index: &index_v2::Index,
     build_id: Option<&str>,
     installed: &BTreeMap<String, InstalledPort>,
     query: &str,
     category: Option<&str>,
+    show_all: bool,
 ) -> Vec<PortGroup> {
     let mut by_mod: BTreeMap<&str, Vec<&index_v2::Project>> = BTreeMap::new();
     for project in &index.projects {
@@ -233,6 +236,12 @@ pub(crate) fn group_ports(
                 }
             })
             .collect();
+        if !show_all {
+            ports.retain(|p| p.fit == FitVerdict::Fits || p.action == PortAction::Installed);
+            if ports.len() < 2 {
+                continue;
+            }
+        }
 
         // Keep the currently installed port first, then fitting alternatives, then by publisher.
         ports.sort_by(|a, b| {
@@ -249,10 +258,12 @@ pub(crate) fn group_ports(
             })
         });
 
+        // The plainest name heads the group ("Simply Light", not "Simply Light (ports collection)").
         let display_name = ports
-            .first()
-            .map(|p| p.name.clone())
-            .unwrap_or_else(|| mod_id.to_owned());
+            .iter()
+            .map(|p| p.name.as_str())
+            .min_by_key(|name| name.chars().count())
+            .map_or_else(|| mod_id.to_owned(), str::to_owned);
         groups.push(PortGroup {
             mod_id: mod_id.to_owned(),
             display_name,
@@ -392,17 +403,26 @@ impl Launcher {
                 );
             }
         }
-        let build_id = self
-            .selected_instance()
-            .and_then(|instance| self.version_of(instance))
-            .map(String::as_str);
+        let build_id = self.ports_build();
         group_ports(
             index,
-            build_id,
+            build_id.as_deref(),
             &installed_map,
             &self.ui.mods.filters.text,
             self.ui.mods.filters.category.as_deref(),
+            self.ui.mods.filters.show_all,
         )
+    }
+
+    /// The selected profile's exact Sunrise build, as the index's `fits` lists name it: a native
+    /// profile's version carries a build suffix that its base build drops.
+    fn ports_build(&self) -> Option<String> {
+        let raw = self.profile_target(self.selected_instance()?)?;
+        if native_mods::is_native(&raw) {
+            crate::glass_instance::native_base(&raw).or(Some(raw))
+        } else {
+            Some(raw)
+        }
     }
 
     pub(super) fn with_port_groups(
@@ -426,7 +446,6 @@ impl Launcher {
 
     fn render_port_groups(&mut self, groups: &[PortGroup], cx: &mut Context<Self>) -> Div {
         let busy = self.mods_busy() || self.mods_locked().is_some();
-        let index_location = v2::location();
         let mut container = div().flex().flex_col().gap(px(12.));
         for (group_idx, group) in groups.iter().enumerate() {
             let header = div()
@@ -455,8 +474,7 @@ impl Launcher {
 
             let mut cards_row = div().flex().flex_wrap().gap(px(12.));
             for (port_idx, port) in group.ports.iter().enumerate() {
-                let icon_url = index_v2::image_url(&index_location, &port.icon);
-                let picture = icon_url.and_then(|url| self.mods_image(&url, images::ICON));
+                let picture = self.v2_mod_image(&port.project_id, &port.icon, images::ICON);
                 let is_installed = port.action == PortAction::Installed;
                 let success = c(palette().success);
                 let fit_badge = port.latest_version.as_ref().map(|ver| {
@@ -670,10 +688,7 @@ impl Launcher {
             .selected_instance()
             .map(|i| i.name.clone())
             .unwrap_or_else(|| tr("Sunrise").into());
-        let build_id = self
-            .selected_instance()
-            .and_then(|i| self.version_of(i))
-            .map(String::as_str);
+        let build_id = self.ports_build();
         let current_project = row
             .entry
             .as_ref()
@@ -684,7 +699,7 @@ impl Launcher {
             current_project,
             &row.id,
             &row.version,
-            build_id,
+            build_id.as_deref(),
         )?;
         let heading = if other.alternatives.len() == 1 {
             trf(
@@ -868,7 +883,7 @@ mod tests {
             ),
         ]);
 
-        let groups = group_ports(&index, Some("26.3-0.1.0"), &BTreeMap::new(), "", None);
+        let groups = group_ports(&index, Some("26.3-0.1.0"), &BTreeMap::new(), "", None, true);
         assert_eq!(groups.len(), 1);
         let jade = &groups[0];
         assert_eq!(jade.mod_id, "jade");
@@ -918,7 +933,7 @@ mod tests {
             },
         );
 
-        let groups = group_ports(&index, Some("26.3-0.1.0"), &installed, "", None);
+        let groups = group_ports(&index, Some("26.3-0.1.0"), &installed, "", None, true);
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].ports[0].action, PortAction::Installed);
         assert_eq!(groups[0].ports[1].action, PortAction::SwitchToPort);
@@ -949,11 +964,22 @@ mod tests {
             ),
         ]);
 
-        let groups = group_ports(&index, Some("26.3-0.1.0"), &BTreeMap::new(), "", None);
+        let groups = group_ports(&index, Some("26.3-0.1.0"), &BTreeMap::new(), "", None, true);
         assert_eq!(groups[0].ports[0].action, PortAction::Install);
         assert_eq!(groups[0].ports[1].fit, FitVerdict::DoesNotFit);
         assert_eq!(groups[0].ports[1].action, PortAction::Unavailable);
         assert!(groups[0].ports[1].switch_request.is_none());
+
+        // Without Show all, the port that doesn't fit leaves, and one fitting port is no group.
+        assert!(group_ports(
+            &index,
+            Some("26.3-0.1.0"),
+            &BTreeMap::new(),
+            "",
+            None,
+            false
+        )
+        .is_empty());
     }
 
     #[test]
