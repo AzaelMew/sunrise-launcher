@@ -159,13 +159,16 @@ fn build_switch_request(
 }
 
 /// Groups v2 projects sharing an in-game mod ID when two or more distinct non-revoked projects
-/// provide the same slot. Single-project mods stay ungrouped.
+/// provide the same slot. Single-project mods stay ungrouped. Without `show_all`, a group keeps
+/// only the ports that fit the build (and the installed one) and needs two of them; a lone
+/// fitting port shows as an ordinary card.
 pub(crate) fn group_ports(
     index: &index_v2::Index,
     build_id: Option<&str>,
     installed: &BTreeMap<String, InstalledPort>,
     query: &str,
     category: Option<&str>,
+    show_all: bool,
 ) -> Vec<PortGroup> {
     let mut by_mod: BTreeMap<&str, Vec<&index_v2::Project>> = BTreeMap::new();
     for project in &index.projects {
@@ -233,6 +236,12 @@ pub(crate) fn group_ports(
                 }
             })
             .collect();
+        if !show_all {
+            ports.retain(|p| p.fit == FitVerdict::Fits || p.action == PortAction::Installed);
+            if ports.len() < 2 {
+                continue;
+            }
+        }
 
         // Keep the currently installed port first, then fitting alternatives, then by publisher.
         ports.sort_by(|a, b| {
@@ -401,6 +410,7 @@ impl Launcher {
             &installed_map,
             &self.ui.mods.filters.text,
             self.ui.mods.filters.category.as_deref(),
+            self.ui.mods.filters.show_all,
         )
     }
 
@@ -873,7 +883,7 @@ mod tests {
             ),
         ]);
 
-        let groups = group_ports(&index, Some("26.3-0.1.0"), &BTreeMap::new(), "", None);
+        let groups = group_ports(&index, Some("26.3-0.1.0"), &BTreeMap::new(), "", None, true);
         assert_eq!(groups.len(), 1);
         let jade = &groups[0];
         assert_eq!(jade.mod_id, "jade");
@@ -923,7 +933,7 @@ mod tests {
             },
         );
 
-        let groups = group_ports(&index, Some("26.3-0.1.0"), &installed, "", None);
+        let groups = group_ports(&index, Some("26.3-0.1.0"), &installed, "", None, true);
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].ports[0].action, PortAction::Installed);
         assert_eq!(groups[0].ports[1].action, PortAction::SwitchToPort);
@@ -954,11 +964,22 @@ mod tests {
             ),
         ]);
 
-        let groups = group_ports(&index, Some("26.3-0.1.0"), &BTreeMap::new(), "", None);
+        let groups = group_ports(&index, Some("26.3-0.1.0"), &BTreeMap::new(), "", None, true);
         assert_eq!(groups[0].ports[0].action, PortAction::Install);
         assert_eq!(groups[0].ports[1].fit, FitVerdict::DoesNotFit);
         assert_eq!(groups[0].ports[1].action, PortAction::Unavailable);
         assert!(groups[0].ports[1].switch_request.is_none());
+
+        // Without Show all, the port that doesn't fit leaves, and one fitting port is no group.
+        assert!(group_ports(
+            &index,
+            Some("26.3-0.1.0"),
+            &BTreeMap::new(),
+            "",
+            None,
+            false
+        )
+        .is_empty());
     }
 
     #[test]
