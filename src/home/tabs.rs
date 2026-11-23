@@ -272,7 +272,8 @@ impl Launcher {
             Tab::Worlds => self.home_worlds(instance, window, cx),
             Tab::Packs | Tab::Mods => self.home_installed_tab(active == Tab::Packs, cx),
         };
-        let count = count.map(|count| {
+        // An empty tab says so in its body; "0 worlds" over it says nothing more.
+        let count = count.filter(|&count| count > 0).map(|count| {
             if turned_off > 0 {
                 trf("{count} enabled", &[("count", &count.to_string())])
             } else {
@@ -297,6 +298,7 @@ impl Launcher {
                     cx.notify();
                 }))
         });
+        let separator = count.is_some() && off_link.is_some();
         let view = &self.ui.home.tabs.views[active.index()];
         let scroll = view.scroll.clone();
         crate::frame::scrolls_with(&scroll);
@@ -348,9 +350,7 @@ impl Launcher {
                             .text_size(px(tokens::SMALL))
                             .text_color(rgb(palette().muted))
                             .children(count.map(|label| div().min_w_0().truncate().child(label)))
-                            .when(off_link.is_some(), |d| {
-                                d.child(div().flex_none().child("·"))
-                            })
+                            .when(separator, |d| d.child(div().flex_none().child("·")))
                             .children(off_link),
                     )
                     .children(manage.map(|button| button.flex_none())),

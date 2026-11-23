@@ -707,8 +707,9 @@ impl Launcher {
             .flex()
             .flex_col()
             .rounded(crate::tokens::r(crate::tokens::R_PANEL))
+            // The same faint edge as the menus and sheets, not the strong outline.
             .border_1()
-            .border_color(rgb(palette().line))
+            .border_color(palette().input_edge())
             .bg(rgb(palette().raised))
             .text_color(rgb(palette().text))
             .shadow_lg()

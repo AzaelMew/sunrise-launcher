@@ -1590,7 +1590,6 @@
   "Servers you join or add show up here.": "Servers you join or add show up here.",
   "Open Servers": "Open Servers",
   "No worlds here yet": "No worlds here yet",
-  "Press Play and make a world in the game. It shows up here, ready to continue.": "Press Play and make a world in the game. It shows up here, ready to continue.",
   "Manage resource packs": "Manage resource packs",
   "Manage mods": "Manage mods",
   "Resource packs you add to this profile show up here.": "Resource packs you add to this profile show up here.",
@@ -1915,5 +1914,16 @@
   "Amber": "Amber",
   "Red": "Red",
   "Pink": "Pink",
-  "Pick a colour, or type a colour name, a hue in degrees or #rrggbb. Play darkens a pale accent just enough for its white label.": "Pick a colour, or type a colour name, a hue in degrees or #rrggbb. Play darkens a pale accent just enough for its white label."
+  "Pick a colour, or type a colour name, a hue in degrees or #rrggbb. Play darkens a pale accent just enough for its white label.": "Pick a colour, or type a colour name, a hue in degrees or #rrggbb. Play darkens a pale accent just enough for its white label.",
+  "Worlds you make or copy in show up here.": "Worlds you make or copy in show up here.",
+  "Latest stable": "Latest stable",
+  "Latest nightly": "Latest nightly",
+  "Latest dev": "Latest dev",
+  "just now": "just now",
+  "1 minute ago": "1 minute ago",
+  "{count} minutes ago": "{count} minutes ago",
+  "1 hour ago": "1 hour ago",
+  "{count} hours ago": "{count} hours ago",
+  "1 day ago": "1 day ago",
+  "{version} · {when}": "{version} · {when}"
 }

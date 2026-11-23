@@ -53,7 +53,6 @@ pub struct Theme {
     pub accent: Hsla,
     pub danger: Hsla,
     /// The blocky parts (`sunrise_launcher_theme::Blocks`).
-    pub side: Hsla,
     pub raised: Hsla,
     pub button: Hsla,
     pub button_bevel: Hsla,
@@ -270,7 +269,6 @@ impl Theme {
             muted: c(p.muted),
             accent: c(p.accent),
             danger: c(p.danger),
-            side: c(p.side),
             raised: c(p.raised),
             button: c(p.button),
             button_bevel: c(p.button_bevel),
