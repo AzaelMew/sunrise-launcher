@@ -3985,16 +3985,19 @@ mod tests {
             |l, _| {
                 l.skins.show(UUID, |_| true);
                 // The writes queue is full: a job holds its thread, the rest fill it.
+                let (started, running) = std::sync::mpsc::channel::<()>();
                 let (release, held) = std::sync::mpsc::channel::<()>();
                 l.skins
                     .writes
                     .push(
                         "test",
                         Box::new(move || {
+                            let _ = started.send(());
                             let _ = held.recv();
                         }),
                     )
                     .unwrap();
+                running.recv().unwrap();
                 while l.skins.writes.push("test", Box::new(|| {})).is_ok() {}
                 l.skins.confirmed.cape = Some(None);
                 l.record_confirmed(UUID);
