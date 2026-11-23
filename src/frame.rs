@@ -145,6 +145,8 @@ struct Scrolls {
     /// The focused control that was last scrolled to. It is shown once, so the wheel can then
     /// move the page away from it.
     shown: Option<FocusHandle>,
+    /// Where the frame being drawn put the focused control, once it has been laid out.
+    focused: Option<Bounds<gpui::Pixels>>,
 }
 
 thread_local! {
@@ -155,6 +157,7 @@ thread_local! {
 fn scrolls_begin() {
     SCROLLS.with_borrow_mut(|s| {
         let live = std::mem::take(&mut s.live);
+        s.focused = None;
         s.kept = live
             .into_iter()
             .filter(|(key, _)| !key.is_empty())
@@ -186,6 +189,12 @@ pub(crate) fn drawn_scroll(key: &'static str) -> Option<gpui::ScrollHandle> {
     })
 }
 
+/// Where the frame being drawn has so far put the focused control, for a list that keeps the
+/// row it is in built (`cull`).
+pub(crate) fn focused_bounds() -> Option<Bounds<gpui::Pixels>> {
+    SCROLLS.with_borrow(|s| s.focused)
+}
+
 /// The same for a page that keeps its own handle.
 pub(crate) fn scrolls_with(handle: &gpui::ScrollHandle) {
     SCROLLS.with_borrow_mut(|s| s.live.push(("", handle.clone())));
@@ -195,9 +204,11 @@ pub(crate) fn scrolls_with(handle: &gpui::ScrollHandle) {
 /// the keyboard has just landed on it. `bounds` is where the control is.
 fn scroll_to_show(bounds: Bounds<gpui::Pixels>, window: &mut Window, cx: &mut App) {
     const ROOM: f32 = 24.;
-    if window.text_style().background_color != Some(focus_mark())
-        || !window.last_input_was_keyboard()
-    {
+    if window.text_style().background_color != Some(focus_mark()) {
+        return;
+    }
+    SCROLLS.with_borrow_mut(|s| s.focused = Some(bounds));
+    if !window.last_input_was_keyboard() {
         return;
     }
     let focused = window.focused(cx);

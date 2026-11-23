@@ -557,12 +557,25 @@ pub(crate) fn field_theme(mut t: crate::theme::Theme) -> crate::theme::Theme {
     t
 }
 
-/// For the row or control a page was opened at: once, the page `scroll` moves so it shows, and
-/// the keyboard is put on `focus` when it has one. Laid over the row, it takes no room.
+/// For the row or control a page was opened at: moves `scroll` until the row is in view, puts the
+/// keyboard on `focus` when it has one, and then marks `done`. Laid over the row, it takes no
+/// room.
 pub(crate) fn reveal(
     scroll: gpui::ScrollHandle,
     done: Rc<std::cell::Cell<bool>>,
     focus: Option<FocusHandle>,
+) -> impl IntoElement {
+    reveal_in(scroll, done, focus, None)
+}
+
+/// Like [`reveal`], for a row inside a culled list whose unmeasured heights can shrink or grow
+/// while scrolling to it: adjusts the scroll offset until the row is visible and `cull` has
+/// settled, and only then marks `done`.
+pub(super) fn reveal_in(
+    scroll: gpui::ScrollHandle,
+    done: Rc<std::cell::Cell<bool>>,
+    focus: Option<FocusHandle>,
+    cull: Option<crate::cull::Cull>,
 ) -> impl IntoElement {
     const ROOM: f32 = 24.;
     gpui::canvas(
@@ -582,20 +595,40 @@ pub(crate) fn reveal(
             if view.size.height <= px(0.) {
                 return again(window, cx);
             }
+            let settled = cull.as_ref().is_none_or(crate::cull::Cull::settled);
+            let lift = if row.top() < view.top() {
+                if row.bottom() > view.bottom() {
+                    px(0.)
+                } else {
+                    row.top() - view.top() - px(ROOM)
+                }
+            } else if row.bottom() > view.bottom() {
+                if row.size.height > view.size.height {
+                    row.top() - view.top()
+                } else {
+                    row.bottom() - view.bottom() + px(ROOM)
+                }
+            } else {
+                px(0.)
+            };
+            if lift != px(0.) {
+                let at = scroll.offset();
+                let max_y = scroll.max_offset().y;
+                let target_y = (at.y - lift).clamp(-max_y, px(0.));
+                if (target_y - at.y).abs() > px(0.5) {
+                    scroll.set_offset(gpui::point(at.x, target_y));
+                    return again(window, cx);
+                }
+                if !settled {
+                    return again(window, cx);
+                }
+            } else if !settled {
+                return again(window, cx);
+            }
             done.set(true);
             if let Some(focus) = &focus {
                 focus.focus(window, cx);
             }
-            let lift = if row.top() < view.top() {
-                row.top() - view.top() - px(ROOM)
-            } else if row.bottom() > view.bottom() {
-                row.bottom() - view.bottom() + px(ROOM)
-            } else {
-                return;
-            };
-            let at = scroll.offset();
-            scroll.set_offset(gpui::point(at.x, at.y - lift));
-            again(window, cx);
         },
         |_, _, _, _| {},
     )
