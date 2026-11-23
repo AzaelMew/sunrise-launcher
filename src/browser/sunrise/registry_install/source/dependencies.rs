@@ -147,7 +147,22 @@ pub(in crate::browser::sunrise::registry_install) fn complete_source_add(
     } else {
         (index::Index::default(), None)
     };
-    let fixed = manifests
+    let overrides =
+        sunrise_launcher_smod::dependencies::Overrides::read(&home.join(mod_list::MODS_DIR))?;
+    let solver_manifests: BTreeMap<String, sunrise_launcher_smod::Manifest> = manifests
+        .iter()
+        .map(|(id, manifest)| {
+            let mut effective = manifest.clone();
+            effective
+                .dependencies
+                .retain(|dep, _| overrides.get(id, dep).is_none());
+            effective
+                .incompatible
+                .retain(|target, _| overrides.get(id, target).is_none());
+            (id.clone(), effective)
+        })
+        .collect();
+    let fixed = solver_manifests
         .iter()
         .map(|(id, manifest)| {
             resolve::FixedMod::new(
@@ -241,8 +256,10 @@ pub(in crate::browser::sunrise::registry_install) fn complete_source_add(
                 &before,
                 project,
                 version,
-                Some(cancellation),
-                |fraction| progress(InstallProgress::Downloading(fraction)),
+                DownloadControls {
+                    cancellation: Some(cancellation),
+                    progress: |fraction| progress(InstallProgress::Downloading(fraction)),
+                },
             )?;
             entry.dependency = true;
             doc.replace(&entry)?;
@@ -318,7 +335,8 @@ fn client_graph_conflict(
         .filter(|(id, _)| mod_list::is_enabled(home, id))
         .map(|(id, p)| (id.as_str(), &p.package.manifest))
         .collect();
-    let overrides = dependencies::Overrides::read(&home.join(mod_list::MODS_DIR))?;
+    let overrides =
+        sunrise_launcher_smod::dependencies::Overrides::read(&home.join(mod_list::MODS_DIR))?;
     let file_for = |id: &str| {
         let package = &packages[id];
         resolve::InstalledMod {

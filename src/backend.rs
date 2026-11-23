@@ -1423,33 +1423,114 @@ pub(crate) fn download_cancellable(
     stop: Option<&crate::native_mods::Cancellation>,
     progress: &impl Fn(f32),
 ) -> Result<(), String> {
-    if let Some(stop) = stop {
-        stop.check()?;
-    }
-    let response = get(url)?;
-    let size = match size {
-        0 => response
-            .header("Content-Length")
-            .and_then(|n| n.parse().ok())
-            .unwrap_or(0),
-        n => n,
+    let Some(stop) = stop else {
+        let response = get(url)?;
+        let size = match size {
+            0 => response
+                .header("Content-Length")
+                .and_then(|n| n.parse().ok())
+                .unwrap_or(0),
+            n => n,
+        };
+        let name = url.rsplit('/').next().unwrap_or(url);
+        return save_checked(response.into_reader(), size, name, sha256, to, progress)
+            .map_err(Into::into);
     };
-    let name = url.rsplit('/').next().unwrap_or(url);
-    let result = match stop {
-        Some(stop) => save_checked(
-            stop.reader(response.into_reader()),
-            size,
-            name,
-            sha256,
-            to,
-            progress,
-        ),
-        None => save_checked(response.into_reader(), size, name, sha256, to, progress),
-    };
-    if let Err(error) = result {
-        if let Some(stop) = stop {
-            stop.check()?;
+    stop.check()?;
+    // Run the blocking HTTP request and body reads on a worker thread so `stop` interrupts a
+    // stalled header or body read without adding a transfer timeout.
+    let (head_tx, head_rx) = std::sync::mpsc::sync_channel::<Result<u64, String>>(1);
+    let (body_tx, body_rx) = std::sync::mpsc::sync_channel::<Result<Vec<u8>, String>>(4);
+    let worker_url = url.to_owned();
+    let worker_stop = stop.clone();
+    std::thread::spawn(move || {
+        let response = match get(&worker_url) {
+            Ok(response) => response,
+            Err(error) => {
+                let _ = head_tx.send(Err(error));
+                return;
+            }
+        };
+        let resolved_size = match size {
+            0 => response
+                .header("Content-Length")
+                .and_then(|n| n.parse().ok())
+                .unwrap_or(0),
+            n => n,
+        };
+        if head_tx.send(Ok(resolved_size)).is_err() {
+            return;
         }
+        let mut reader = response.into_reader();
+        let mut buf = vec![0u8; 1 << 16];
+        loop {
+            if worker_stop.is_stopped() {
+                return;
+            }
+            match reader.read(&mut buf) {
+                Ok(0) => return,
+                Ok(n) => {
+                    if body_tx.send(Ok(buf[..n].to_vec())).is_err() {
+                        return;
+                    }
+                }
+                Err(error) => {
+                    let _ = body_tx.send(Err(error.to_string()));
+                    return;
+                }
+            }
+        }
+    });
+    let size = loop {
+        stop.check()?;
+        match head_rx.recv_timeout(std::time::Duration::from_millis(50)) {
+            Ok(Ok(resolved_size)) => break resolved_size,
+            Ok(Err(error)) => {
+                stop.check()?;
+                return Err(error);
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                stop.check()?;
+                return Err("Download worker stopped unexpectedly".into());
+            }
+        }
+    };
+    struct InterruptibleReader<'a> {
+        rx: std::sync::mpsc::Receiver<Result<Vec<u8>, String>>,
+        stop: &'a crate::native_mods::Cancellation,
+        buf: Vec<u8>,
+        pos: usize,
+    }
+    impl Read for InterruptibleReader<'_> {
+        fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+            while self.pos >= self.buf.len() {
+                self.stop.check().map_err(std::io::Error::other)?;
+                match self.rx.recv_timeout(std::time::Duration::from_millis(50)) {
+                    Ok(Ok(chunk)) => {
+                        self.buf = chunk;
+                        self.pos = 0;
+                    }
+                    Ok(Err(error)) => return Err(std::io::Error::other(error)),
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return Ok(0),
+                }
+            }
+            let n = (self.buf.len() - self.pos).min(out.len());
+            out[..n].copy_from_slice(&self.buf[self.pos..self.pos + n]);
+            self.pos += n;
+            Ok(n)
+        }
+    }
+    let name = url.rsplit('/').next().unwrap_or(url);
+    let reader = InterruptibleReader {
+        rx: body_rx,
+        stop,
+        buf: Vec::new(),
+        pos: 0,
+    };
+    if let Err(error) = save_checked(reader, size, name, sha256, to, progress) {
+        stop.check()?;
         return Err(error.into());
     }
     Ok(())
@@ -8665,6 +8746,58 @@ esac"#
         );
         assert_eq!(result.unwrap_err(), crate::native_mods::CANCELLED);
         assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    fn cancelling_download_interrupts_stalled_read() {
+        use std::io::Write as _;
+        use std::time::{Duration, Instant};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (sent_tx, sent_rx) = std::sync::mpsc::channel();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut req = [0u8; 512];
+            let _ = stream.read(&mut req);
+            let _ = stream.write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Length: 100000\r\nConnection: close\r\n\r\npartial",
+            );
+            let _ = stream.flush();
+            let _ = sent_tx.send(());
+            // Keep the socket open without sending any more bytes until the test finishes.
+            let _ = done_rx.recv();
+        });
+
+        let stop = crate::native_mods::Cancellation::default();
+        let cancel = stop.clone();
+        let stopper = std::thread::spawn(move || {
+            sent_rx.recv().unwrap();
+            std::thread::sleep(Duration::from_millis(50));
+            cancel.stop();
+        });
+
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("archive.tar.gz");
+        let started = Instant::now();
+        let result = download_cancellable(
+            &format!("http://{addr}/archive.tar.gz"),
+            100_000,
+            &"0".repeat(64),
+            &dest,
+            Some(&stop),
+            &|_| {},
+        );
+        let elapsed = started.elapsed();
+        stopper.join().unwrap();
+        let _ = done_tx.send(());
+        let _ = server.join();
+        assert_eq!(result.unwrap_err(), crate::native_mods::CANCELLED);
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "stalled read should cancel promptly, took {elapsed:?}"
+        );
+        assert!(!dest.exists());
     }
 }
 

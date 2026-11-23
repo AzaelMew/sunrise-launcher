@@ -1908,6 +1908,7 @@
   "File: {file} · Built by {repo} ({workflow}) · Sunrise has not checked this code.": "File: {file} · Built by {repo} ({workflow}) · Sunrise has not checked this code.",
   "Attestation check failed, not reviewed": "Attestation check failed, not reviewed",
   "File: {file} · The bundled attestation could not be verified ({reason}).": "File: {file} · The bundled attestation could not be verified ({reason}).",
+  "The active server runtime uses Minecraft {active}, but Sunrise {tag} uses Minecraft {selected}. Choose a Sunrise build for Minecraft {active}.": "The active server runtime uses Minecraft {active}, but Sunrise {tag} uses Minecraft {selected}. Choose a Sunrise build for Minecraft {active}.",
   "Downloading the build {percent}%": "Downloading the build {percent}%",
   "Finding Minecraft's files…": "Finding Minecraft's files…",
   "Downloading Minecraft's files ({done} of {total})": "Downloading Minecraft's files ({done} of {total})",

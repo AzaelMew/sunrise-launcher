@@ -249,7 +249,7 @@ impl Launcher {
     /// The menu, as the layer the frame draws over the page; none while it is closed or the
     /// sign-in it started is in front.
     pub(crate) fn account_menu(&mut self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
-        if !shows(self.ui.sheet, self.owner_screen_open) {
+        if !shows(self.ui.sheet, self.sign_in_screen.open) {
             return None;
         }
         let rows = rows(&self.accounts, &self.auth_status);

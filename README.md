@@ -14,13 +14,12 @@ Licence: [PolyForm Shield 1.0.0](LICENSE); code from Horizon is also MIT ([LICEN
 **Sunrise Launcher** is Sunrise's own launcher. Its launcher and game data
 live under `sunrise/launcher` and `sunrise/game`, its relocation metadata under
 `sunrise/location`, and its accounts under the keychain service
-`net.playsunrise.launcher`. On its first start, when neither data folder exists, it
-copies the settings, accounts, instances and worlds of the launcher before it: the
-Sunrise launcher's (`sunrise-launcher`, `sunrise`, or where its `location.json` moved
-them), else the arismoko fork's (`horizon-fork-arismoko/…`). Their folders are only
-read, never changed or removed. A sign-in the Sunrise launcher saved in the keychain
-(`dev.playhorizon.launcher`) is copied under Sunrise's service the first time it is
-needed. Explicit home overrides still work for developers.
+`net.playsunrise.launcher`. Explicit home overrides still work for developers.
+
+*First-start migration:* when neither `sunrise/launcher` nor `sunrise/game` exists yet, the
+launcher copies settings, accounts, profiles and worlds from an earlier launcher install
+(`sunrise-launcher` / `sunrise`, or the legacy `horizon-fork-arismoko` folders) without modifying
+or removing them, and migrates any saved `dev.playhorizon.launcher` keychain sign-in on first use.
 
 Microsoft sign-in uses the application ID in the repository's
 `SUNRISE_MSA_CLIENT_ID` variable, which release builds read; it is not in the
@@ -57,12 +56,11 @@ The opening, then Play ([clip](docs/opening.webm)):
 
 ## What it does
 
-- **Versions**: lists the published builds of sunrise-org/sunrise (the current Nightly, the last
-  week's, then the releases from before), installs the build for this platform into its own
-  folder, and removes it again. **Import a game build…** takes a `sunrise-client` you have (one
-  built on your fork's Actions, or the zip holding it) and installs it as `imported-<date>-<sha>`:
-  a copy of the selected release or Nightly's folder, game files included, with that program as the
-  game. Imported builds are listed apart as unsigned, and no update replaces them.
+- **Channels & game builds**: each profile follows Stable, Nightly, or opt-in Dev builds of
+  `sunrise-org/sunrise`. Choose or switch a profile's build beside **Play**, and manage installed
+  builds in **Settings › Storage** (removing builds, cleaning up automatic downloads, and
+  **Import a game build…**, which installs a local `sunrise-client` or zip as
+  `imported-<date>-<sha>`, listed apart as unsigned so updates never replace it).
 - **Skins**: how the account that plays looks. A 3D preview of the player, turned by dragging,
   beside the choices: the skin (the one worn now, saved skins, the game's default skins, or a PNG
   added from a file or dropped on the page), wide or slim arms, and the cape (none, or one the
@@ -106,16 +104,17 @@ The opening, then Play ([clip](docs/opening.webm)):
   starts the game. With no install on the computer the Play page offers the download alone and the
   Minecraft folder row says none is needed. Without an owner,
   the Play page asks to sign in first. `sunrise-launcher prepare --download`.
-- **Mods**: tabs for Mods, Modpacks, Resource packs, Shader packs and Data packs. Mods and
-  Modpacks come from Sunrise's own registry, with its categories as filters, and say whether they
-  are signed and what they may do. Resource packs, data packs (into the world picked there) and
-  Iris-format shader packs are searched on Modrinth too; Sunrise's own shader packs are in its
-  registry. Modrinth is searched for those packs only: Java mods and Java modpacks are not
-  offered. Install puts a file in the game folder only after its checksum matches; installed
-  packs show their source and checksum, with Update, **Update all** and Remove
-  ([docs/mod-browser.md](https://github.com/sunrise-org/sunrise/blob/main/docs/mod-browser.md)). `sunrise-launcher modpack list` still shows
-  installed Sunrise modpacks. Installing, updating, playing and removing them is paused; their
-  files are unchanged.
+- **Mods**: Discover, Installed, Resource packs, Shader packs and Data packs. On Stable profiles,
+  Discover shows reviewed releases from Sunrise's registry; on Nightly and Dev profiles, it shows
+  source projects that can be built on your computer with explicit consent. **Installed** also
+  supports **Add from source…** (local `.smod` files/folders or public GitHub repositories),
+  per-profile updates, **Update all**, and Remove
+  ([docs/mod-browser.md](https://github.com/sunrise-org/sunrise/blob/main/docs/mod-browser.md)).
+  Resource packs, data packs (into the world picked there) and Iris-format shader packs are
+  searched on Modrinth too; Sunrise's own shader packs are in its registry. Modrinth is searched
+  for those packs only: Java mods and Java modpacks are not offered. `sunrise-launcher modpack list`
+  still shows installed Sunrise modpacks; installing, updating, playing and removing them is paused
+  while their files stay unchanged.
 - **Servers**: host a world for friends with buttons. **Create a server** asks for a name, a world
   (a new one, with an optional seed, or a copy of one of your single-player worlds), the game mode,
   difficulty, most players, who can join (friends only, the default, or anyone with the address)

@@ -460,45 +460,29 @@ impl Launcher {
         );
         // Collection headings, gaps and rows in one flat list, so only those near the
         // screen are built: a big pack has hundreds of rows, each with its own controls.
-        enum Item<'a> {
-            Head(&'a str, usize),
-            Gap,
-            /// Index into `rows`, and the row's place among the rows shown.
-            Row(usize, usize),
-        }
         let mut items = Vec::new();
         let mut n = 0;
         for (collection, group) in model::installed_groups(&rows, &visible) {
             if let Some(title) = collection {
-                items.push(Item::Head(title, group.len()));
+                items.push(InstalledItem::Head(title, group.len()));
             } else if n != 0 {
                 // A gap ends the previous collection without giving loose mods a heading.
-                items.push(Item::Gap);
+                items.push(InstalledItem::Gap);
             }
             for &i in group {
-                items.push(Item::Row(i, n));
+                items.push(InstalledItem::Row(i, n));
                 n += 1;
             }
         }
         let cull = self.mods.installed_list.clone();
-        // Measurements belong to the items they were taken of.
-        cull.items({
-            use std::hash::{Hash, Hasher};
-            let mut hash = std::collections::hash_map::DefaultHasher::new();
-            for item in &items {
-                match item {
-                    Item::Head(title, _) => (0u8, *title).hash(&mut hash),
-                    Item::Gap => 1u8.hash(&mut hash),
-                    Item::Row(i, _) => (2u8, rows[*i].id.as_str()).hash(&mut hash),
-                }
-            }
-            hash.finish()
-        });
+        // Measurements belong to the items they were taken of, including local archive paths
+        // when two archives share a mod ID.
+        cull.items(installed_items_key(&items, &rows));
         // The row another page opened Installed at stays built until it has been scrolled to.
         let reveal = match &self.ui.mods.reveal {
             Some(search::Reveal::Mod(id)) if !self.ui.mods.revealed.get() => items
                 .iter()
-                .position(|item| matches!(item, Item::Row(i, _) if rows[*i].id == *id)),
+                .position(|item| matches!(item, InstalledItem::Row(i, _) if rows[*i].id == *id)),
             _ => None,
         };
         let scroll = crate::frame::scrolls("installed");
@@ -509,7 +493,7 @@ impl Launcher {
             |k| Some(k) == reveal,
             |k| {
                 match items[k] {
-                    Item::Head(title, count) => div()
+                    InstalledItem::Head(title, count) => div()
                         .flex()
                         .items_center()
                         .justify_between()
@@ -526,11 +510,11 @@ impl Launcher {
                                 ))),
                         )
                         .into_any_element(),
-                    Item::Gap => div()
+                    InstalledItem::Gap => div()
                         .h(px(12.))
                         .bg(c(palette().background))
                         .into_any_element(),
-                    Item::Row(i, n) => self
+                    InstalledItem::Row(i, n) => self
                         .row(
                             n,
                             rows[i].clone(),
@@ -1208,6 +1192,28 @@ impl Launcher {
     }
 }
 
+enum InstalledItem<'a> {
+    Head(&'a str, usize),
+    Gap,
+    /// Index into `rows`, and the row's place among the rows shown.
+    Row(usize, usize),
+}
+
+fn installed_items_key(items: &[InstalledItem<'_>], rows: &[Row]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hash = std::collections::hash_map::DefaultHasher::new();
+    for item in items {
+        match item {
+            InstalledItem::Head(title, _) => (0u8, *title).hash(&mut hash),
+            InstalledItem::Gap => 1u8.hash(&mut hash),
+            InstalledItem::Row(i, _) => {
+                (2u8, rows[*i].id.as_str(), rows[*i].archive_file()).hash(&mut hash)
+            }
+        }
+    }
+    hash.finish()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1378,5 +1384,83 @@ mod tests {
         assert!(counts.shows.is_empty() && counts.kinds.is_empty());
         assert_eq!(mods.row_filter, model::RowFilter::default());
         assert!(mods.selection.is_empty() && mods.anchor.is_none());
+    }
+
+    #[test]
+    fn show_resource_pack_discover_re_searches_after_clearing_a_previous_resource_query() {
+        if scratch_child(
+            "show_resource_pack_discover_re_searches_after_clearing_a_previous_resource_query",
+        )
+        .is_none()
+        {
+            return;
+        }
+        let mut app = gpui::TestAppContext::single();
+        let (launcher, cx) = app.add_window_view(Launcher::new);
+        launcher.update(cx, |l, _| {
+            l.ui.page = Page::Home;
+            l.ui.mods.find.set("faithful".into());
+            l.ui.mods.packs.scope = pack_discover::Scope::Resource;
+            l.ui.mods.packs.status = pack_discover::Status::Done;
+            let seq_before = l.ui.mods.packs.seq;
+
+            l.show_resource_pack_discover();
+
+            assert_eq!(l.ui.page, Page::PackFind);
+            assert_eq!(l.ui.mods.shelf, Shelf::Resource);
+            assert!(l.ui.mods.find.text().is_empty());
+            assert!(
+                l.ui.mods.packs.seq > seq_before,
+                "entering through Find resource packs must trigger a fresh search for the cleared query"
+            );
+        });
+    }
+
+    #[test]
+    fn installed_items_key_distinguishes_local_archives_sharing_a_mod_id() {
+        let local = [
+            model::Local {
+                id: "lantern".into(),
+                file: "sunrise-mods/lantern-a.smod".into(),
+                name: "Lantern A".into(),
+                version: "1.0.0".into(),
+                github: None,
+                native: false,
+                served_by: None,
+                unreadable: false,
+            },
+            model::Local {
+                id: "lantern".into(),
+                file: "sunrise-mods/lantern-b.smod".into(),
+                name: "Lantern B".into(),
+                version: "1.0.0".into(),
+                github: None,
+                native: false,
+                served_by: None,
+                unreadable: false,
+            },
+        ];
+        let rows = model::rows(
+            &[],
+            &model::World {
+                index: None,
+                game: "26.3",
+                v2: None,
+                build: None,
+                unfit_updates: &BTreeSet::new(),
+                enabled: &HashSet::new(),
+                unbuilt: &HashSet::new(),
+                native_allowed: true,
+                chosen: &BTreeMap::new(),
+                local: &local,
+            },
+        );
+        assert_eq!(rows.len(), 2);
+        let key_a = installed_items_key(&[InstalledItem::Row(0, 0)], &rows);
+        let key_b = installed_items_key(&[InstalledItem::Row(1, 0)], &rows);
+        assert_ne!(
+            key_a, key_b,
+            "swapping local archives with the same mod ID must invalidate cached row heights"
+        );
     }
 }

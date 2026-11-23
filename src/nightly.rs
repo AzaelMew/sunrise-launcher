@@ -254,6 +254,24 @@ pub fn note_published(releases: &[Release]) {
     *full = merge_published(&full, releases, &installed_full);
 }
 
+/// A scoped table of full RFC 3339 publication timestamps seen for rolling Nightlies, preserving
+/// earlier builds' timestamps when the rolling `nightly` tag rotates.
+#[derive(Default)]
+pub struct PublishedTimestamps(Vec<(String, String)>);
+
+impl PublishedTimestamps {
+    pub fn note(&mut self, releases: &[Release]) {
+        self.0 = merge_published(&self.0, releases, &[]);
+    }
+
+    pub fn get(&self, version: &str) -> Option<String> {
+        self.0
+            .iter()
+            .find(|(tag, _)| tag == version)
+            .map(|(_, published)| published.clone())
+    }
+}
+
 fn merge_published(
     kept: &[(String, String)],
     releases: &[Release],
@@ -574,5 +592,24 @@ mod tests {
         let full = "b1ff51d9e0123456789abcdef0123456789abcde";
         assert_eq!(short_commit(full), "b1ff51d9e…");
         assert_eq!(short_commit("v0.2.97"), "v0.2.97");
+    }
+
+    #[test]
+    fn local_published_table_preserves_timestamps_across_nightly_rotation() {
+        let mut early = nightly_release("nightly-2035-08-09-aaaaaaa", "2035-08-09", "12:30");
+        early.published_at = "2035-08-09T12:30:10Z".into();
+        let mut late = nightly_release("nightly-2035-08-09-bbbbbbb", "2035-08-09", "12:30");
+        late.published_at = "2035-08-09T12:30:45Z".into();
+        let mut table = PublishedTimestamps::default();
+        table.note(&[early]);
+        table.note(&[late]);
+        assert_eq!(
+            table.get("nightly-2035-08-09-aaaaaaa").as_deref(),
+            Some("2035-08-09T12:30:10Z")
+        );
+        assert_eq!(
+            table.get("nightly-2035-08-09-bbbbbbb").as_deref(),
+            Some("2035-08-09T12:30:45Z")
+        );
     }
 }
