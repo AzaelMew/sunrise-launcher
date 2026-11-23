@@ -34,6 +34,10 @@ pub const FILES: &[(&str, &str)] = &[
         "MIT-Hugeicons.txt",
         include_str!("../crates/theme/icons/glass/LICENSE-hugeicons.txt"),
     ),
+    (
+        "Apache-Sigstore.txt",
+        include_str!("../crates/attestation/LICENSE-APACHE-SIGSTORE"),
+    ),
 ];
 
 /// Writes every notice into `dir/LICENSES`.
@@ -263,6 +267,7 @@ mod tests {
             "MIT-Pixelarticons.txt",
             "MIT-Hugeicons.txt",
             "MIT-Horizon.txt",
+            "Apache-Sigstore.txt",
         ] {
             assert!(names.contains(&needed), "{needed}");
         }
