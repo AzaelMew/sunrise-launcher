@@ -55,6 +55,22 @@ impl Fit {
     }
 }
 
+/// Badge shown on Home's Mods tab and Installed for unreviewed mods added outside the registry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ManualBadge {
+    FromSource,
+    Local,
+}
+
+impl ManualBadge {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::FromSource => tr("From source"),
+            Self::Local => tr("Local"),
+        }
+    }
+}
+
 /// One mod in Discover.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct Card {
@@ -789,9 +805,33 @@ impl Row {
             Some(AddedFrom::Collection { name, .. }) => name,
             Some(AddedFrom::Discover) => tr("Sunrise mods"),
             Some(AddedFrom::Github) => tr("From GitHub"),
+            Some(AddedFrom::LocalFolder { .. }) => tr("From source"),
             // Only the paste flow installed GitHub packages without a source tracker.
             None if origin.source.is_none() => tr("From GitHub"),
             None => tr("Source"),
+        }
+    }
+
+    /// Badge for mods added outside the Sunrise registry: "From source" (GitHub link or local
+    /// repository folder) or "Local" (a local `.smod` file).
+    pub(crate) fn manual_badge(&self) -> Option<ManualBadge> {
+        let local = self.local.as_ref()?;
+        if local.github.is_some() {
+            Some(ManualBadge::FromSource)
+        } else {
+            Some(ManualBadge::Local)
+        }
+    }
+
+    /// Whether this mod was added manually (via Add from source or as a local `.smod`) and must
+    /// not receive automatic or Update all updates.
+    pub(super) fn is_manual(&self) -> bool {
+        let Some(local) = &self.local else {
+            return false;
+        };
+        match &local.github {
+            None => true,
+            Some(origin) => origin.is_manual(),
         }
     }
 

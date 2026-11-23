@@ -584,6 +584,7 @@ fn tracked_origins(local: &[model::Local], only: Option<&Origin>) -> Vec<Origin>
     local
         .iter()
         .filter_map(|local| local.github.as_ref())
+        .filter(|origin| !origin.is_manual())
         .filter(|origin| only.is_none_or(|only| only == *origin))
         .filter(|origin| {
             origin

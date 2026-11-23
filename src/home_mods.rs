@@ -603,7 +603,7 @@ impl Launcher {
                 }
                 Picture::Pack(art) => tile(art.show(cx), &item.id, &item.name, PICTURE),
             };
-            let (detail, state) = if packs {
+            let (detail, badge, state) = if packs {
                 let status = if item.on {
                     priority += 1;
                     trf(
@@ -613,12 +613,21 @@ impl Launcher {
                 } else {
                     tr("Off").to_owned()
                 };
-                (None, Some(status))
+                (None, None, Some(status))
             } else {
                 let fact = mod_facts.as_ref().and_then(|facts| facts.get(&item.id));
                 let kind = fact.map(|fact| fact.kind).filter(|kind| !kind.is_empty());
+                let badge = fact.and_then(|fact| fact.badge).or_else(|| match &item.picture {
+                    Picture::Project(_) => None,
+                    Picture::Local { source: Some(_), .. } => {
+                        Some(crate::mods::ManualBadge::FromSource)
+                    }
+                    Picture::Local { source: None, .. } => Some(crate::mods::ManualBadge::Local),
+                    Picture::Pack(_) => None,
+                });
                 (
                     kind.map(str::to_owned),
+                    badge,
                     fact.and_then(|fact| fact.status.clone()),
                 )
             };
@@ -629,6 +638,7 @@ impl Launcher {
                     picture: picture.into_any_element(),
                     title: item.name.clone(),
                     detail,
+                    badge,
                     tail: state,
                 },
                 cx,

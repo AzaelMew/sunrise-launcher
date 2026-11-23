@@ -499,8 +499,13 @@ impl crate::instances_page::Instances {
 }
 
 /// The read-only Home view uses the same Installed classification as the full rows.
+pub(crate) use model::ManualBadge;
+pub(crate) use ui::manual_badge_pill;
+
+/// The small pieces of a mod's Installed row that Home shows without reading its archive again.
 pub(crate) struct HomeModFacts {
     pub(crate) kind: &'static str,
+    pub(crate) badge: Option<ManualBadge>,
     pub(crate) status: Option<String>,
 }
 
@@ -722,11 +727,13 @@ impl Launcher {
                 .filter(|row| row.on)
             {
                 let error = self.ui.mods.errors.get(&row.id).map(String::as_str);
+                let badge = row.manual_badge();
                 let cells = model::cells(&row, error, None, native_allowed);
                 labels.insert(
                     row.id,
                     HomeModFacts {
                         kind: cells.kind,
+                        badge,
                         status: cells.status.map(|state| state.label),
                     },
                 );
@@ -1429,7 +1436,7 @@ impl Launcher {
                     .items_center()
                     .gap(px(8.))
                     .child(field)
-                    .child(self.github_add_button(cx))
+                    .child(self.add_from_source_button(cx))
                     .into_any_element()
             } else {
                 field.into_any_element()

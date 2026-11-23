@@ -38,6 +38,23 @@ pub(super) fn badge(label: &'static str) -> Div {
         .child(label)
 }
 
+/// "From source" or "Local" pill badge for unreviewed mods added outside the registry.
+pub(crate) fn manual_badge_pill(badge: model::ManualBadge) -> Div {
+    let color = c(palette().warning);
+    div()
+        .flex_none()
+        .px(px(7.))
+        .py(px(1.5))
+        .rounded(crate::tokens::r(crate::tokens::R_SMALL))
+        .bg(color.opacity(0.14))
+        .border_1()
+        .border_color(color.opacity(0.42))
+        .text_size(px(tokens::CAPTION))
+        .font_weight(FontWeight::SEMIBOLD)
+        .text_color(color)
+        .child(badge.label())
+}
+
 pub(super) fn muted(text: impl Into<SharedString>) -> Div {
     div()
         .text_size(px(tokens::SMALL))

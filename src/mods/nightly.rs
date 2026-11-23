@@ -614,7 +614,7 @@ pub(super) fn installed_source(row: &Row) -> Option<&sunrise_launcher::github_mo
         .as_ref()?
         .github
         .as_ref()
-        .filter(|origin| origin.source.is_some())
+        .filter(|origin| origin.source.is_some() && !origin.is_manual())
 }
 
 pub(super) fn source_provenance(origin: &sunrise_launcher::github_mods::Origin) -> String {
