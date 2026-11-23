@@ -486,3 +486,16 @@ fn fetch_and_load_verifies_local_files_and_loopback_http() {
     assert_eq!(http_catalog.index.serial, 41);
     assert_eq!(http_catalog.index.projects.len(), 2);
 }
+
+#[test]
+fn the_production_key_verifies_the_first_published_index() {
+    let (bytes, sig) = load_fixture("first-published.json");
+    let index = sunrise_launcher_smod::index_v2::verify_and_parse(
+        &bytes,
+        std::str::from_utf8(&sig).unwrap(),
+        &[PRODUCTION_KEY],
+    )
+    .unwrap();
+    assert_eq!(index.serial, 1795408124);
+    assert!(index.build("dev-2026-11-22-7cfdf81").is_some());
+}
