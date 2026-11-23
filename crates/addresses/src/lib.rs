@@ -5,7 +5,7 @@ pub const MOD_INDEX: &str = "https://sunrise-org.github.io/sunrise-mods/index.js
 
 /// The signed v2 mod registry's index, published by sunrise-org/sunrise-mods
 /// (`SUNRISE_MOD_INDEX_V2` overrides it).
-pub const MOD_INDEX_V2: &str = "https://sunrise-org.github.io/sunrise-mods/v2/index.json";
+pub const MOD_INDEX_V2: &str = "https://sunrise-org.github.io/sunrise-mods/v2/index.signed";
 
 /// The registry's Nightly source listings. A listing does not vet the source or authorize code.
 pub const MOD_SOURCES: &str = "https://sunrise-org.github.io/sunrise-mods/sources.json";
