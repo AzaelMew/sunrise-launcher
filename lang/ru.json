@@ -1686,5 +1686,6 @@
   "The mod registry state file could not be read: {reason}": "The mod registry state file could not be read: {reason}",
   "No mods are listed for {target} yet": "No mods are listed for {target} yet",
   "The registry lists mods for recent Sunrise builds. Turn on Show all to see mods for other builds.": "The registry lists mods for recent Sunrise builds. Turn on Show all to see mods for other builds.",
-  "The publisher for this mod changed from {old_repo} (repository {old_id}, {old_workflow}) to {new_repo} (repository {new_id}, {new_workflow}).": "The publisher for this mod changed from {old_repo} (repository {old_id}, {old_workflow}) to {new_repo} (repository {new_id}, {new_workflow})."
+  "The publisher for this mod changed from {old_repo} (repository {old_id}, {old_workflow}) to {new_repo} (repository {new_id}, {new_workflow}).": "The publisher for this mod changed from {old_repo} (repository {old_id}, {old_workflow}) to {new_repo} (repository {new_id}, {new_workflow}).",
+  "Mods show up here once the registry lists releases for this build.": "Mods show up here once the registry lists releases for this build."
 }

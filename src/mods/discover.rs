@@ -422,6 +422,15 @@ impl Launcher {
             return empty_state("search-01", title, line, Some(show_all(cx))).into_any_element();
         }
         let has_filters = !f.text.trim().is_empty() || f.category.is_some();
+        if !has_any_cards && !has_filters {
+            return empty_state(
+                "search-01",
+                trf("No mods fit {target} yet", &[("target", profile_target)]),
+                tr("Mods show up here once the registry lists releases for this build."),
+                None,
+            )
+            .into_any_element();
+        }
         let action = has_filters.then(|| {
             button("alt-discover-clear", tr("Clear filters")).on_click(cx.listener(
                 |this, _: &ClickEvent, _, cx| {
