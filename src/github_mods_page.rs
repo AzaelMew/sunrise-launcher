@@ -1262,7 +1262,7 @@ impl Launcher {
                 .flex_col()
                 .child(sheets::title(tr("Add from source").into()))
                 .child(muted(tr("Reading mod files…")))
-                .child(widgets::progress_bar(None, &self.theme).flex_none())
+                .child(widgets::progress_bar(None, &self.theme))
                 .child(div().flex().justify_end().child(
                     button("github-add-cancel", tr("Cancel")).on_click(cx.listener(
                         |this, _: &ClickEvent, _, cx| {
@@ -1565,7 +1565,7 @@ impl Launcher {
                         .flex_col()
                         .gap(px(8.))
                         .child(muted(tr("Checking GitHub…")))
-                        .child(widgets::progress_bar(None, &self.theme).flex_none()),
+                        .child(widgets::progress_bar(None, &self.theme)),
                 );
             }
             let error = match &self.github.stage {
