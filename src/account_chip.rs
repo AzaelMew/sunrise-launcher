@@ -201,8 +201,9 @@ impl Launcher {
                     ),
                 )
             })
-            .child(crate::glass_ui::icon(
-                "arrow-down-01",
+            .child(crate::glass_ui::fold_chevron(
+                "account-chip",
+                open,
                 14.,
                 rgb(palette().chrome_muted).into(),
             ))

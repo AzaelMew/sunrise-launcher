@@ -58,7 +58,7 @@ pub(crate) use ui::{
 use crate::paint::palette;
 use model::{Card, Row};
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 enum Menu {
     Profile,
     Category,
