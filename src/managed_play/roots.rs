@@ -17,6 +17,11 @@ const FILE: &str = "profile-artifact-roots.json";
 /// device number of a btrfs subvolume (`volume`) is assigned at mount time, so it can change
 /// across a reboot while the directory stays the same. `volume` is still written, for the
 /// launchers that read this file before.
+///
+/// A btrfs subvolume's root directory always has inode 256, so a game folder that is itself a
+/// subvolume root can't be told from another subvolume put at its path. The path is still
+/// scanned for references either way; only a reference left in the moved-away original would
+/// go unseen.
 #[derive(Clone, Copy, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Identity {

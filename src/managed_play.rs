@@ -101,7 +101,9 @@ macro_rules! unsettled {
 pub(crate) use unsettled;
 
 pub(crate) fn unsettled_at(check: &str, error: Option<&dyn std::fmt::Display>) -> String {
-    let check = check.strip_prefix("src/").unwrap_or(check);
+    // `file!()` uses the host's separators: the same text on every platform.
+    let check = check.replace('\\', "/");
+    let check = check.strip_prefix("src/").unwrap_or(&check);
     let reason = match error {
         Some(error) => crate::i18n::trf(
             "Sunrise couldn't verify the profile's saved game build ({check}: {error}).",
