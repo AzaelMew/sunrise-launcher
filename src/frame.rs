@@ -330,6 +330,8 @@ pub(super) fn copy_face(id: &'static str, label: &str, shown: Option<usize>) -> 
         Some(n) => base
             .border_color(accent.opacity(0.5))
             .hover(move |s| s.border_color(accent.opacity(0.75)))
+            // Give keyboard focus its own ring so the Copied hover border cannot hide it.
+            .focus_visible(|s| s.shadow(focus_ring(palette().focus)))
             .child(crate::code_box::tick(
                 &SharedString::from(id),
                 n,
@@ -878,9 +880,9 @@ impl Launcher {
                     "escape" if this.viewer_close(cx) => {}
                     "left" if this.viewer_step(-1, cx) => {}
                     "right" if this.viewer_step(1, cx) => {}
-                    "escape" if this.owner_screen_open => {
+                    "escape" if this.sign_in_screen.open => {
                         this.cancel_sign_in();
-                        this.owner_screen_open = false;
+                        this.sign_in_screen.open = false;
                     }
                     "escape" if this.sheet_escape() => {}
                     "escape" if this.instances.dialog.is_some() => {
@@ -920,7 +922,7 @@ impl Launcher {
             .then(|| self.hosting_create(cx))
             .flatten();
         let sheet = self.live_sheet(window, cx);
-        let sign_in = self.owner_screen_open.then(|| self.owner_screen(cx));
+        let sign_in = self.sign_in_screen.open.then(|| self.owner_screen(cx));
         let profile = self.profile_dialog(window, cx);
         let mut layers: Vec<_> = [create, profile, sheet, sign_in]
             .into_iter()
