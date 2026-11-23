@@ -62,7 +62,6 @@ use model::{Card, Row};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Menu {
-    Profile,
     Category,
     Sort,
 }

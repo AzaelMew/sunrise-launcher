@@ -40,14 +40,12 @@ impl Launcher {
                 ),
                 V2Catalog::Idle | V2Catalog::Loading => {
                     return page
-                        .child(self.discover_profile_bar(cx))
                         .child(muted(tr("Loading the registry…")))
                         .into_any_element();
                 }
                 V2Catalog::Failed(error) => {
                     let error = error.clone();
                     return page
-                        .child(self.discover_profile_bar(cx))
                         .child(
                             card()
                                 .p(px(20.))
@@ -137,9 +135,7 @@ impl Launcher {
         };
         let category_menu = self.discover_menu(&category_now, Menu::Category, category_options, cx);
         let sort_menu = self.discover_menu(f.sort.label(), Menu::Sort, sort_options, cx);
-        let profile_menu = self.discover_profile_menu(cx);
         page = page.child(self.filter_bar(
-            Some(profile_menu),
             category_menu,
             f.show_all,
             |this| {
@@ -502,222 +498,10 @@ impl Launcher {
         .into_any_element()
     }
 
-    fn discover_profile_bar(&mut self, cx: &mut Context<Self>) -> Div {
-        div()
-            .flex()
-            .flex_none()
-            .flex_wrap()
-            .items_center()
-            .gap(px(10.))
-            .child(self.discover_profile_menu(cx))
-    }
-
-    fn discover_profile_menu(&mut self, cx: &mut Context<Self>) -> Div {
-        let p = palette();
-        let open = self.ui.mods.menu == Some(Menu::Profile);
-        let lock = self.profile_lock();
-        let selected = self.selected_instance().cloned();
-        let profile_name = selected
-            .as_ref()
-            .map(|i| i.name.clone())
-            .unwrap_or_else(|| tr("Default").to_owned());
-        let build_text = selected
-            .as_ref()
-            .and_then(|i| self.profile_exact_build(i))
-            .as_deref()
-            .map_or_else(
-                || tr("No game build selected").to_owned(),
-                crate::sheets::build_name,
-            );
-
-        let trigger_inner = div()
-            .id("alt-discover-profile-menu")
-            .h(px(tokens::CONTROL))
-            .px(px(12.))
-            .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
-            .border_1()
-            .border_color(if open {
-                c(p.accent_ink)
-            } else {
-                p.input_edge()
-            })
-            .bg(c(if open { p.selected } else { p.field }))
-            .flex()
-            .items_center()
-            .gap(px(8.))
-            .text_size(px(tokens::LABEL))
-            .child(div().text_color(c(p.muted)).child(tr("Showing mods for:")))
-            .child(
-                div()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(c(p.text))
-                    .child(profile_name),
-            )
-            .child(
-                div()
-                    .px(px(7.))
-                    .py(px(1.))
-                    .rounded(crate::tokens::r(crate::tokens::R_SMALL))
-                    .bg(c(p.accent).opacity(0.18))
-                    .text_size(px(tokens::CAPTION))
-                    .text_color(c(p.accent_ink))
-                    .child(build_text),
-            )
-            .child(crate::glass_ui::fold_chevron(
-                "discover-profile",
-                open,
-                12.,
-                c(p.muted),
-            ));
-
-        let trigger = if let Some(why) = lock {
-            dim(trigger_inner).tooltip(crate::glass_ui::tip(why))
-        } else {
-            trigger_inner
-                .cursor_pointer()
-                .hover(|s| s.border_color(c(p.muted)))
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                    this.ui.mods.menu = match this.ui.mods.menu {
-                        Some(Menu::Profile) => None,
-                        _ => Some(Menu::Profile),
-                    };
-                    cx.notify();
-                }))
-        };
-
-        let dropdown = open.then(|| deferred(self.discover_profile_popover(cx)));
-        div().relative().child(trigger).children(dropdown)
-    }
-
-    fn discover_profile_popover(&mut self, cx: &mut Context<Self>) -> Div {
-        let p = palette();
-        let selected_id = self.selected_instance().map(|i| i.id.clone());
-        let instances = self.instances.list.clone();
-
-        let mut rows = div().flex().flex_col().gap(px(2.));
-        for (idx, inst) in instances.into_iter().enumerate() {
-            let is_selected = selected_id.as_deref() == Some(inst.id.as_str());
-            let build_text = self.profile_exact_build(&inst).as_deref().map_or_else(
-                || tr("No game build selected").to_owned(),
-                crate::sheets::build_name,
-            );
-            let mark = self.profile_mark(&inst, 28.);
-            let radio = div()
-                .size(px(14.))
-                .rounded_full()
-                .border_1()
-                .border_color(c(if is_selected { p.accent_ink } else { p.line }))
-                .flex()
-                .items_center()
-                .justify_center()
-                .when(is_selected, |d| {
-                    d.child(div().size(px(7.)).rounded_full().bg(c(p.accent_ink)))
-                });
-            let row_inst = inst.clone();
-            rows = rows.child(
-                div()
-                    .id(("alt-discover-profile-opt", idx))
-                    .flex()
-                    .items_center()
-                    .gap(px(10.))
-                    .px(px(10.))
-                    .py(px(8.))
-                    .rounded(crate::tokens::r(crate::tokens::R_SMALL))
-                    .cursor_pointer()
-                    .when(is_selected, |d| d.bg(c(p.selected)))
-                    .hover(|s| s.bg(c(p.hover)))
-                    .child(radio)
-                    .child(mark)
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .flex()
-                            .flex_col()
-                            .child(
-                                div()
-                                    .text_size(px(tokens::LABEL))
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(c(p.text))
-                                    .truncate()
-                                    .child(inst.name),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(tokens::CAPTION))
-                                    .text_color(c(p.muted))
-                                    .truncate()
-                                    .child(build_text),
-                            ),
-                    )
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        this.select_discover_profile(&row_inst, cx);
-                    })),
-            );
-        }
-
-        div()
-            .absolute()
-            .top(px(tokens::CONTROL + 6.))
-            .left(px(0.))
-            .min_w(px(280.))
-            .max_w(px(340.))
-            .p(px(8.))
-            .rounded(crate::tokens::r(crate::tokens::R_CARD))
-            .bg(c(p.raised))
-            .border_1()
-            .border_color(c(p.line))
-            .shadow_md()
-            .occlude()
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .flex()
-            .flex_col()
-            .gap(px(6.))
-            .child(
-                div()
-                    .px(px(10.))
-                    .pt(px(4.))
-                    .text_size(px(tokens::CAPTION))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(c(p.muted))
-                    .child(tr("DISCOVER TARGET PROFILE")),
-            )
-            .child(rows)
-            .child(div().h(px(1.)).bg(c(p.divider)))
-            .child(
-                div()
-                    .px(px(10.))
-                    .py(px(2.))
-                    .text_size(px(tokens::CAPTION))
-                    .text_color(c(p.muted))
-                    .child(tr("Installs go straight to the selected profile.")),
-            )
-    }
-
-    /// Switches the selected profile inline from Mods › Discover without leaving Discover.
-    fn select_discover_profile(&mut self, instance: &instances::Instance, cx: &mut Context<Self>) {
-        if self.profile_lock().is_some() {
-            return;
-        }
-        if !self
-            .selected_instance()
-            .is_some_and(|i| i.id == instance.id)
-        {
-            self.select_instance(instance);
-            self.clear_profile_notices();
-            self.ui.mods.limit = 0;
-            self.mods_refresh();
-        }
-        self.ui.mods.menu = None;
-        cx.notify();
-    }
-
-    /// Discover's filter row, the same for mods and packs: `lead` (whose list it is) and the
-    /// category menu on the left, the Show all switch and the sort menu on the right.
+    /// Discover's filter row, the same for mods and packs: the category menu on the left, the
+    /// Show all switch and the sort menu on the right.
     pub(super) fn filter_bar(
         &self,
-        lead: Option<Div>,
         category_menu: Div,
         show_all: bool,
         flip_show_all: fn(&mut Launcher),
@@ -749,7 +533,6 @@ impl Launcher {
                     .flex_wrap()
                     .items_center()
                     .gap(px(10.))
-                    .children(lead)
                     .child(category_menu),
             )
             .child(
@@ -1010,7 +793,6 @@ impl Launcher {
                 )
             };
         let id = match which {
-            Menu::Profile => "alt-profile-menu",
             Menu::Category => "alt-category-menu",
             Menu::Sort => "alt-sort-menu",
         };
