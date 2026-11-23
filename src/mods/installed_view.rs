@@ -250,9 +250,10 @@ impl Launcher {
         let with_update = selected.iter().filter(|r| model::bulk_updatable(r)).count();
         let registry_updates = rows.iter().filter(|r| model::bulk_updatable(r)).count();
         let has_manual_mods = rows.iter().any(|r| r.manual_badge().is_some());
-        let source_update = rows
-            .iter()
-            .any(|row| nightly::installed_source(row).is_some() && row.update.is_some());
+        let source_update = self.nightly_catalogue_current()
+            && rows
+                .iter()
+                .any(|row| nightly::installed_source(row).is_some() && row.update.is_some());
         let has_tracked_sources = rows
             .iter()
             .filter_map(nightly::installed_source)
@@ -785,7 +786,10 @@ impl Launcher {
                 model::RowAction::Update => ("alt-row-update", tr("Update")),
             };
             let b = crate::frame::button((id, n), label);
-            if busy {
+            let stale_source = action == model::RowAction::Update
+                && nightly::installed_source(&r).is_some()
+                && !self.nightly_catalogue_current();
+            if busy || stale_source {
                 return dim(b).on_click(|_, _, cx| cx.stop_propagation());
             }
             let row = r.clone();
@@ -1108,17 +1112,21 @@ impl Launcher {
                         "alt-unfit-update",
                         trf("Update {mod}", &[("mod", &r.title)]),
                     );
-                    let row = r.clone();
-                    Some(b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        this.ui.mods.unfit_open = None;
-                        if nightly::installed_source(&row).is_some() {
-                            this.submit_source_update(&row.id);
-                        } else {
-                            this.update_one(&row);
-                        }
-                        cx.stop_propagation();
-                        cx.notify();
-                    })))
+                    if nightly::installed_source(r).is_some() && !self.nightly_catalogue_current() {
+                        Some(dim(b).on_click(|_, _, cx| cx.stop_propagation()))
+                    } else {
+                        let row = r.clone();
+                        Some(b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            this.ui.mods.unfit_open = None;
+                            if nightly::installed_source(&row).is_some() {
+                                this.submit_source_update(&row.id);
+                            } else {
+                                this.update_one(&row);
+                            }
+                            cx.stop_propagation();
+                            cx.notify();
+                        })))
+                    }
                 }
                 (false, None, Some((tag, made))) if self.installed.contains(tag) => {
                     let b = button(
