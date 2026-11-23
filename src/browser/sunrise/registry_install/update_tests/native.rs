@@ -54,7 +54,6 @@ pub(super) fn configure_tool(fixture: &Fixture) {
     )
     .unwrap();
     fs::set_permissions(tool, fs::Permissions::from_mode(0o755)).unwrap();
-    backend::Settings::default().allow_native_mods().unwrap();
 }
 
 fn configured(fixture: &mut Fixture) -> Vec<u8> {
@@ -88,7 +87,7 @@ fn disabled_pointer(fixture: &Fixture) -> PathBuf {
         .unwrap()
         .refresh(
             fixture.instance.native_profile,
-            (&native_mods::Cancellation::default(), None),
+            &native_mods::Cancellation::default(),
             |_| {},
             None,
             None,
@@ -413,7 +412,6 @@ fn bulk_update_refuses_no_list_without_excluding_that_offer() {
             }));
             fs::write(rows, serde_json::to_vec(&document).unwrap()).unwrap();
             mod_list::set_enabled(fixture.home(), ID, true).unwrap();
-            backend::Settings::default().allow_native_mods().unwrap();
             release(&mut fixture, "1.1.0", 'b', SOURCE);
             fixture.release("extra_mod", "1.2.0", "", &[]);
 
@@ -598,8 +596,6 @@ fn github_add_and_checked_update_share_the_candidate_proof() {
                     || FirstBuild::installed(BUILD),
                     InstallHooks {
                         progress: &|_| {},
-                        native: &|_| panic!("consent already recorded"),
-                        registry_crates: None,
                         continue_after_failure: &|_| false,
                         resolve: None,
                         cancellation: None,
@@ -650,8 +646,6 @@ fn github_add_and_checked_update_share_the_candidate_proof() {
                 || panic!("the update uses the committed base"),
                 InstallHooks {
                     progress: &|_| {},
-                    native: &|_| panic!("consent already recorded"),
-                    registry_crates: None,
                     continue_after_failure: &|_| false,
                     resolve: None,
                     cancellation: None,
@@ -804,8 +798,6 @@ fn pinned_source_preflight_refusal_cancel_and_failed_update_keep_the_profile() {
                     SourceHooks {
                         install: InstallHooks {
                             progress: &|_| {},
-                            native: &|_| panic!("source permission has its own gate"),
-                            registry_crates: None,
                             continue_after_failure: &|_| false,
                             resolve: None,
                             cancellation: None,
@@ -862,8 +854,6 @@ fn pinned_source_preflight_refusal_cancel_and_failed_update_keep_the_profile() {
                 SourceHooks {
                     install: InstallHooks {
                         progress: &|_| panic!("nothing to install"),
-                        native: &|_| panic!("nothing to install"),
-                        registry_crates: None,
                         continue_after_failure: &|_| false,
                         resolve: None,
                         cancellation: None,

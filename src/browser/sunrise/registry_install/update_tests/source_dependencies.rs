@@ -108,8 +108,6 @@ fn add_with(
         SourceHooks {
             install: InstallHooks {
                 progress: &progress,
-                native: &|_| panic!("one source and dependency approval"),
-                registry_crates: None,
                 continue_after_failure: &|_| panic!("Add must not compile"),
                 resolve: None,
                 cancellation: None,
@@ -172,9 +170,6 @@ fn source_install(fixture: Fixture, approve: Option<bool>) {
         );
         assert_eq!(managed_play::inputs(fixture.home(), None).unwrap(), before);
         let approve = approve.expect("unlisted dependency should never be offered");
-        if approve {
-            backend::Settings::default().allow_native_mods()?;
-        }
         Ok(approve)
     });
     assert_eq!(count.get(), usize::from(approve.is_some()));
@@ -294,7 +289,6 @@ fn stable_uses_the_registry_to_choose_and_publish_the_dependency_versions() {
                     [("Shared Library", "1.1.0"), ("Farmer Delight", "1.0.0")]
                 );
                 assert!(!fixture.home().join(installed::MANIFEST).exists());
-                backend::Settings::default().allow_native_mods()?;
                 Ok(true)
             })
             .unwrap();
@@ -414,7 +408,6 @@ fn stable_treats_disabled_and_held_transitive_mods_as_unavailable_during_solving
                         .collect::<Vec<_>>(),
                     [("Farmer Delight", "1.0.0")]
                 );
-                backend::Settings::default().allow_native_mods()?;
                 Ok(true)
             })
             .unwrap();
@@ -459,13 +452,7 @@ fn stable_treats_held_transitive_mod_as_unavailable_and_chooses_older_library() 
                 .unwrap();
             let cancellation = native_mods::Cancellation::default();
             let image = attempt
-                .exact_image(
-                    fixture.instance.native_profile,
-                    &cancellation,
-                    |_| {},
-                    None,
-                    None,
-                )
+                .exact_image(fixture.instance.native_profile, &cancellation, |_| {}, None)
                 .unwrap();
             let active = attempt.commit(&image, &cancellation).unwrap();
             assert_eq!(active.executable(), BUILD);
@@ -508,7 +495,6 @@ fn stable_treats_held_transitive_mod_as_unavailable_and_chooses_older_library() 
                         .collect::<Vec<_>>(),
                     [("Farmer Delight", "1.0.0")]
                 );
-                backend::Settings::default().allow_native_mods()?;
                 Ok(true)
             })
             .unwrap();
@@ -581,7 +567,6 @@ fn stable_applies_client_graph_rules_for_side_and_load_before_cycles() {
                         .collect::<Vec<_>>(),
                     [("Farmer Delight", "1.1.0")]
                 );
-                backend::Settings::default().allow_native_mods()?;
                 Ok(true)
             })
             .unwrap();

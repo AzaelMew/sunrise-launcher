@@ -473,9 +473,6 @@ enum ModsCmd {
         everything: bool,
         #[arg(long, value_enum, default_value_t = SourceArg::Modrinth)]
         source: SourceArg,
-        /// Allow registry native code and the named build dependencies to run
-        #[arg(long)]
-        trust_native_code: bool,
     },
     /// Update what the browser installed (or one pack)
     Update {
@@ -505,7 +502,7 @@ enum ModsCmd {
         /// The profile (default: the selected one)
         #[arg(long)]
         instance: Option<String>,
-        /// Allow native code for this install (remembered; revoke in Settings, Storage)
+        /// Run this unreviewed native code (asked again on every run)
         #[arg(long)]
         trust_native_code: bool,
         /// Allow a replacement that could remove saved-world content when adding an already installed mod
@@ -525,7 +522,7 @@ enum ModsCmd {
         /// The profile (default: the selected one)
         #[arg(long)]
         instance: Option<String>,
-        /// Allow native code for this install (remembered; revoke in Settings, Storage)
+        /// Run this unreviewed native code (asked again on every run)
         #[arg(long)]
         trust_native_code: bool,
         /// Allow proved loss of registered definitions (not needed for native mods)
@@ -753,7 +750,7 @@ enum Cmd {
         /// game build to use (defaults to the newest installed release or Nightly)
         #[arg(long)]
         version: Option<String>,
-        /// Allow native code for this install (remembered; revoke in Settings, Storage)
+        /// Build native code from a folder the registry did not review (asked again on every run)
         #[arg(long)]
         trust_native_code: bool,
         /// Native mods use the pinned SDK's optimized compilation settings.
@@ -1295,7 +1292,6 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
                     profile,
                     allow_jar_downloads,
                     steps,
-                    registry_consent,
                 )?;
                 let built = std::path::absolute(&built).unwrap_or(built);
                 let path = built.display().to_string();
@@ -1343,7 +1339,11 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
             if let Some(requested) = version.as_deref().filter(|tag| *tag != base) {
                 return Err(trf("This profile uses {build}, not {requested}. Use Switch to change its game build.", &[("build", &base), ("requested", requested)]));
             }
-            native_permission(trust_native_code)?;
+            // The profile's own mods were reviewed by the registry or confirmed when they were
+            // added; a folder of source is code nobody reviewed.
+            if folder.is_some() {
+                native_permission(trust_native_code)?;
+            }
             let target = match profile {
                 Some(profile) => {
                     instances::edit(&target.id, |meta| meta.native_profile = Some(profile))?
@@ -1357,7 +1357,7 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
             };
             let profile = explicit.then_some(target.native_profile);
             let built =
-                match native_mods::build(&base, &folder, &target, profile, false, &native_mods::Cancellation::default(), steps, registry_consent, || backend::releases().ok()) {
+                match native_mods::build(&base, &folder, &target, profile, false, &native_mods::Cancellation::default(), steps, || backend::releases().ok()) {
                     // A content mod needs no build: the instance stays as it is.
                     Err(nothing @ native_mods::Failed::Nothing) => {
                         println!("{nothing}");
@@ -1481,10 +1481,7 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
                         add_arguments(cmd)
                     },
                     |cmd| jars::prepare_for_command(cmd, jar_permission).map_err(|e| e.to_string()),
-                    (
-                        &native_mods::Cancellation::default(),
-                        Some(&registry_consent),
-                    ),
+                    &native_mods::Cancellation::default(),
                     |progress| match progress {
                         managed_play::Progress::Prepare => {
                             backend::play_step("preparing the game's files")
@@ -2235,13 +2232,6 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
     };
     let mutation_hooks = || sunrise::InstallHooks {
         progress: &mutation_progress,
-        native: &|q| {
-            Err(trf(
-                "Allow native code for {mods} in Settings before updating.",
-                &[("mods", &q.names.join(", "))],
-            ))
-        },
-        registry_crates: None,
         continue_after_failure: &|_| false,
         resolve: None,
         cancellation: None,
@@ -2356,7 +2346,6 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
             everything,
             source,
             world,
-            trust_native_code,
             ..
         } => {
             let source = source.get();
@@ -2415,33 +2404,6 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                                 progress_line(f);
                             }
                         },
-                        native: &|question| {
-                            if question.retry {
-                                return Err(trf(
-                                    "Checking a different version would also run native code from {mods}. No mods were installed. Run Install again only if you trust those mods.",
-                                    &[("mods", &question.names.join(", "))],
-                                ));
-                            }
-                            eprintln!(
-                                "{}",
-                                trf(
-                                    "These mods run native code: {mods}",
-                                    &[("mods", &question.names.join(", "))]
-                                )
-                            );
-                            if !trust_native_code {
-                                return Err(tr(
-                                    "Pass --trust-native-code only if you trust these mods.",
-                                )
-                                .into());
-                            }
-                            native_permission(true)?;
-                            Ok(true)
-                        },
-                        registry_crates: Some(&|inventory| {
-                            eprintln!("{}\n{}", inventory.label(), inventory.detail());
-                            trust_native_code
-                        }),
                         continue_after_failure: &|_| false,
                         resolve: None,
                         cancellation: None,
@@ -3816,7 +3778,7 @@ mod catalog_tests;
 
 #[path = "cli_native_permission.rs"]
 mod native_permission_impl;
-use native_permission_impl::{github_native, native_permission, registry_consent, GithubInstall};
+use native_permission_impl::{github_native, native_permission, GithubInstall};
 
 mod developer_builds;
 

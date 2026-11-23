@@ -58,26 +58,6 @@ pub fn state(enabled: &[Mod], built: Option<&[Mod]>) -> State {
     }
 }
 
-/// Check at acceptance and again after session and jar preparation, just before handing off
-/// the game command. An allowed Play is not permission cached for the duration of preparation.
-pub fn check_permission(version: &str) -> Result<(), String> {
-    check_permission_in(version, &backend::data_dir())
-}
-
-fn check_permission_in(version: &str, data: &Path) -> Result<(), String> {
-    if native_mods::is_native(version)
-        && backend::Settings::load_from(data)
-            .native_mods_allowed_at
-            .is_none()
-    {
-        return Err(crate::i18n::tr(
-            "This profile plays a build made with native mods, and native mods are turned off. Choose another game build for it in Versions.",
-        )
-        .into());
-    }
-    Ok(())
-}
-
 /// A `.smod`'s digest as a build records it: its files without the uses table, which the
 /// mod tool packs beside the source but the build's own digest of the copied source never holds
 /// (else every mod packed with a uses table read Needs rebuild after each build).
@@ -639,18 +619,6 @@ mod tests {
     }
 
     #[test]
-    fn permission_taken_back_while_preparing_blocks_native_spawn() {
-        let data = tempfile::tempdir().unwrap();
-        let settings = data.path().join("settings.json");
-        fs::write(&settings, r#"{"native_mods_allowed_at":123}"#).unwrap();
-        assert_eq!(check_permission_in("native-test", data.path()), Ok(()));
-
-        fs::write(&settings, "{}").unwrap();
-        assert!(check_permission_in("native-test", data.path()).is_err());
-        assert_eq!(check_permission_in("v1.2.3", data.path()), Ok(()));
-    }
-
-    #[test]
     fn the_uses_table_is_not_part_of_a_mods_digest() {
         let source = [("Cargo.toml", b"a".as_slice()), ("src/lib.rs", b"b")];
         let packed = [source[0], source[1], ("uses.json", b"{}".as_slice())];
@@ -1092,17 +1060,5 @@ mod tests {
         assert!(!is_native_file("sunrise-native-mods-old/x.smod"));
         assert!(!is_native_file("sunrise-mods/zoom.smod"));
         assert!(!is_native_file("resourcepacks/x.zip"));
-    }
-
-    /// Old switches and notices never count as native-code consent.
-    #[test]
-    fn old_settings_with_the_native_mods_switch_still_read() {
-        let s: backend::Settings =
-            serde_json::from_str(r#"{"native_mods": true, "native_mods_noticed": true}"#).unwrap();
-        assert!(s.native_mods_allowed_at.is_none());
-        let s: backend::Settings = serde_json::from_str(r#"{"native_mods": false}"#).unwrap();
-        assert!(s.native_mods_allowed_at.is_none());
-        let saved = serde_json::to_string(&s).unwrap();
-        assert!(!saved.contains("native_mods"), "{saved}");
     }
 }

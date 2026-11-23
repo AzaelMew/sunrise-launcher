@@ -1,6 +1,6 @@
 //! First Play freezes the candidate and its proof before downloading or preparing anything.
 use super::{
-    at, inputs, scan_packages, unsettled, Active, Artifact, Generation, HeldReason, NativeWork,
+    at, inputs, scan_packages, unsettled, Active, Artifact, Generation, HeldReason,
     ReferencePublication, Resources,
 };
 use crate::{
@@ -399,7 +399,7 @@ impl Profile {
     pub(crate) fn refresh(
         &mut self,
         mode: native_mods::Profile,
-        (cancellation, consent): NativeWork<'_>,
+        cancellation: &native_mods::Cancellation,
         progress: impl Fn(native_mods::Step),
         registry: Option<&sunrise_launcher_smod::index::Index>,
         log: Option<&dyn Fn(std::sync::Arc<str>)>,
@@ -417,9 +417,6 @@ impl Profile {
             let repair = super::inputs::browser_repair(&home, &scan_packages(&home)?, registry)?;
             if old.inputs == epoch && repair.is_none() && replacement.is_none() {
                 super::verify_included(old.base(), old.executable(), &home)?;
-                if native_mods::is_native(old.executable()) {
-                    cancellation.admit_native_work()?;
-                }
                 return Ok(Some(old));
             }
             let _references = ReferencePublication::begin(&home)?;
@@ -436,7 +433,6 @@ impl Profile {
             mode,
             cancellation,
             progress,
-            consent,
             log,
         )?;
         let _manifest = game_lock(&home)?;
@@ -482,10 +478,7 @@ impl Profile {
             .check_play_output(active.base())
             .map_err(|issue| issue.message(|| unsettled!()))?;
         super::verify_included(active.base(), active.executable(), home)?;
-        if native_mods::is_native(active.executable()) {
-            cancellation.admit_native_work().map_err(String::from)?;
-        }
-        let _permission = cancellation.publication_guard()?;
+        cancellation.check()?;
         spawn(self.handoff())
     }
 
@@ -619,7 +612,6 @@ impl FirstAttempt<'_> {
         mode: native_mods::Profile,
         cancellation: &native_mods::Cancellation,
         progress: impl Fn(native_mods::Step),
-        consent: Option<&dyn Fn(&native_mods::Consent) -> bool>,
         log: Option<&dyn Fn(std::sync::Arc<str>)>,
     ) -> Result<String, native_mods::Failed> {
         image_for_stage(
@@ -630,7 +622,6 @@ impl FirstAttempt<'_> {
             mode,
             cancellation,
             progress,
-            consent,
             log,
         )
     }
@@ -642,11 +633,7 @@ impl FirstAttempt<'_> {
         image: &str,
         cancellation: &native_mods::Cancellation,
     ) -> Result<Active, String> {
-        if native_mods::is_native(image) {
-            cancellation.admit_native_work().map_err(String::from)?;
-        } else {
-            cancellation.check()?;
-        }
+        cancellation.check()?;
         // The pending binding already reserves the base. Do not hold the cache-wide
         // publication fence while waiting on a preparer child for this one version.
         self.bound.verify_image()?;
@@ -710,7 +697,7 @@ fn publish_generation(
         if inputs(home, None)? != epoch {
             return Err(unsettled!());
         }
-        cancellation.publication_guard()
+        cancellation.check()
     })?;
     Ok(active)
 }
@@ -724,28 +711,15 @@ pub(super) fn image_for_stage(
     mode: native_mods::Profile,
     cancellation: &native_mods::Cancellation,
     progress: impl Fn(native_mods::Step),
-    consent: Option<&dyn Fn(&native_mods::Consent) -> bool>,
     log: Option<&dyn Fn(std::sync::Arc<str>)>,
 ) -> Result<String, native_mods::Failed> {
     if super::verify_included(base, preferred, home).is_ok() {
-        if native_mods::is_native(preferred) {
-            cancellation.admit_native_work()?;
-        }
         return Ok(preferred.to_owned());
     }
     if crate::native_status::enabled(home).is_empty() {
         return Ok(base.to_owned());
     }
-    native_mods::build_exact_client(
-        base,
-        home,
-        mode,
-        stage,
-        cancellation,
-        progress,
-        consent,
-        log,
-    )
+    native_mods::build_exact_client(base, home, mode, stage, cancellation, progress, log)
 }
 
 pub(super) fn game_lock(home: &Path) -> Result<HomeLockGuard, String> {

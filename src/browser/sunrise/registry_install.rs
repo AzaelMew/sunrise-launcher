@@ -144,14 +144,6 @@ impl From<String> for InstallError {
 }
 
 #[derive(Clone, Debug)]
-pub struct NativeQuestion {
-    pub names: Vec<String>,
-    pub reviewed: bool,
-    /// A proved no-fit changed the named closure after this install's first approval.
-    pub retry: bool,
-}
-
-#[derive(Clone, Debug)]
 pub struct BuildNotice {
     pub changes: Vec<BuildChange>,
     /// Raw compiler/proof error for the headless route, not the visible sheet.
@@ -186,8 +178,6 @@ pub struct InstalledBatch {
 #[derive(Clone, Copy)]
 pub struct InstallHooks<'a> {
     pub progress: &'a dyn Fn(InstallProgress),
-    pub native: &'a dyn Fn(&NativeQuestion) -> Result<bool, String>,
-    pub registry_crates: Option<&'a dyn Fn(&native_mods::Consent) -> bool>,
     pub continue_after_failure: &'a dyn Fn(&BuildNotice) -> bool,
     /// Interactive approval of a fully prepared same-base conflict plan; absent in automation.
     pub resolve: Option<&'a dyn Fn(&ResolveQuestion) -> bool>,
@@ -380,7 +370,6 @@ fn registry_edit<'a>(
     let mut unfit = BTreeSet::new();
     let mut conflicts = Vec::new();
     let mut last_sdk_refusal = None;
-    let mut named_native: Option<BTreeSet<String>> = None;
     'trials: for _ in 0..MAX_TRIALS {
         let options = resolve::WholeOptions {
             conflicts: &conflicts,
@@ -595,37 +584,7 @@ fn registry_edit<'a>(
             if let Some(error) = native_mods::known_host_block(Some(edit.base())) {
                 return Err(InstallError::Host(error));
             }
-            let retry = named_native.is_some();
-            if retry || backend::NativeGrant::read()?.is_none() {
-                let newly_named: Vec<_> = build_packages
-                    .iter()
-                    .copied()
-                    .filter(|p| {
-                        named_native
-                            .as_ref()
-                            .is_none_or(|ids| !ids.contains(&p.package.manifest.id))
-                    })
-                    .collect();
-                if !newly_named.is_empty() {
-                    if !(hooks.native)(&NativeQuestion {
-                        names: newly_named
-                            .iter()
-                            .map(|p| p.package.manifest.name.clone())
-                            .collect(),
-                        reviewed: newly_named.iter().all(|p| p.owned),
-                        retry,
-                    })? {
-                        return Err(InstallError::Cancelled);
-                    }
-                    named_native
-                        .get_or_insert_with(BTreeSet::new)
-                        .extend(newly_named.iter().map(|p| p.package.manifest.id.clone()));
-                }
-            }
-            // This comes from the strict saved grant, never from the dialog reply alone.
-            cancelled
-                .admit_native_work()
-                .map_err(|e| InstallError::Unproved(e.into()))?;
+            cancelled.check().map_err(InstallError::Unproved)?;
         }
         for id in &retired_off {
             // Prove a deliberately off replacement in the private candidate, without
@@ -981,7 +940,6 @@ fn prove_edit(
         instance.native_profile,
         cancellation,
         |step| build_progress(step, hooks.progress),
-        hooks.registry_crates,
         None,
     )
 }

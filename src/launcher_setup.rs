@@ -100,11 +100,6 @@ impl Launcher {
             storage_pending: false,
             storage_confirm: None,
             storage_error: None,
-            storage_revoke: None,
-            storage_counting: None,
-            storage_visit: 0,
-            storage_revoke_error: None,
-            native_consent_build: None,
             install_error: None,
             importing_build: false,
             native_step: None,
@@ -115,8 +110,6 @@ impl Launcher {
             native_error: None,
             native_failed_mods: Vec::new(),
             native_worlds: None,
-            pending_consent: None,
-            consent_error: None,
             native_for: None,
             native_built_mods: Vec::new(),
             native_builds: Default::default(),
@@ -207,7 +200,6 @@ impl Launcher {
             install_started: None,
             prepare_started: None,
             download_seen: None,
-            instance_mods: Default::default(),
             play_pressed: None,
             bench: perf::Bench::from_env(),
             starting_pack: None,
@@ -329,20 +321,12 @@ impl Launcher {
             self.load_auth_statuses(false);
         }
         self.load_profile_heads();
-        // A Turn off question left open isn't still asked the next time Settings opens.
-        self.storage_revoke = None;
-        // A Turn off error is read on the visit it shows in: leaving Settings settles it.
-        if self.page == Page::Settings && page != Page::Settings {
-            self.storage_revoke_error = None;
-        }
         // Settings opens on its first page, its list folded and its search empty.
         if page == Page::Settings && self.page != Page::Settings {
             self.settings_nav_open = false;
             self.settings_pane.scroll_to_item(0);
             self.settings_query.set(String::new());
         }
-        self.storage_counting = None;
-        self.storage_visit += 1;
         // The glass look's Settings is a dialog over the page: opening or closing it keeps the
         // page under it as it was (its scroll, no fade).
         let dialog = self.theme.glass

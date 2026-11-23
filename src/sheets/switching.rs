@@ -220,15 +220,6 @@ impl Launcher {
                 progress: &|stage| {
                     let _ = tx.send(Msg::SwitchProgress(stage));
                 },
-                registry_crates: Some(&|inventory| {
-                    if stop.is_stopped() {
-                        return false;
-                    }
-                    let (answer, reply) = std::sync::mpsc::channel();
-                    tx.send(Msg::NativeRegistryConsent(inventory.clone(), answer))
-                        .is_ok()
-                        && reply.recv().unwrap_or(false)
-                }),
                 at_cutoff: &|| Ok(()),
                 approve: &|question| {
                     if stop.is_stopped() {
@@ -863,15 +854,6 @@ impl Launcher {
                             progress: &|stage| {
                                 let _ = tx.send(Msg::ProviderSwitchProgress(stage));
                             },
-                            native: &|_| {
-                                Err(tr(
-                                    "Allow native mods in Settings before switching to this port.",
-                                )
-                                .into())
-                            },
-                            registry_crates: Some(&|consent| {
-                                ask(&|answer| Msg::NativeRegistryConsent(consent.clone(), answer))
-                            }),
                             continue_after_failure: &|_| false,
                             resolve: None,
                             cancellation: None,

@@ -3,10 +3,9 @@
 //! **Real:** the registry list, search, categories, fit, kind and sort (`browser::sunrise`'s index,
 //! read in a worker); a mod's page from the index (versions and their fit, size, licence,
 //! authors, source, mirrored screenshots, what it may do); Add and single Update through the
-//! existing install path (native code asks for permission first, `native_consent`); Installed
-//! from `mod-browser.json` and `sunrise-mods.txt` with on/off, selection, filters, bulk Turn on,
-//! Turn off, Remove and Update N mods (a reviewed plan, applied by a worker); Build… and Allow…
-//! hand over to the one native build path.
+//! existing install path; Installed from `mod-browser.json` and `sunrise-mods.txt` with on/off,
+//! selection, filters, bulk Turn on, Turn off, Remove and Update N mods (a reviewed plan, applied
+//! by a worker); Build… hands over to the one native build path.
 //!
 //! **Not here, said on screen or in the handoff:** Featured (the registry carries no editorial
 //! list), a version picker (the registry installs the newest that fits), dependency lists for
@@ -365,7 +364,6 @@ enum Event {
         PathBuf,
         actions::EnableNotice,
         Result<actions::EnabledMods, String>,
-        Option<u64>,
     ),
     /// The v1 index's cards for this game, or `None` when it couldn't be read.
     Catalog(String, Option<Vec<Card>>),
@@ -458,7 +456,7 @@ pub(crate) struct ModsState {
     unfit_details: bool,
     /// The build the build window shows: running, or ended and not yet closed.
     pub(crate) build: Option<build_run::Run>,
-    /// Build was pressed and the build has not started yet (it asks for permission first).
+    /// Build was pressed and the build has not started yet.
     pub(crate) build_wanted: bool,
     /// Whether a mod page's Details (who made it, how it is checked) is open.
     facts_open: bool,
@@ -594,7 +592,6 @@ pub(crate) struct HomeModFacts {
 struct HomeModLabels {
     inventory: u64,
     index: Option<Arc<Index>>,
-    native_allowed: bool,
     rows: Arc<HashMap<String, HomeModFacts>>,
 }
 
@@ -822,17 +819,13 @@ impl Launcher {
         inventory: u64,
         index: Option<Arc<Index>>,
     ) -> Arc<HashMap<String, HomeModFacts>> {
-        let native_allowed = self.settings.native_mods_allowed_at.is_some();
         if let Some(labels) = &self.ui.mods.home_mod_labels {
             let same_index = match (&labels.index, &index) {
                 (Some(a), Some(b)) => Arc::ptr_eq(a, b),
                 (None, None) => true,
                 _ => false,
             };
-            if labels.inventory == inventory
-                && labels.native_allowed == native_allowed
-                && same_index
-            {
+            if labels.inventory == inventory && same_index {
                 return labels.rows.clone();
             }
         }
@@ -846,7 +839,7 @@ impl Launcher {
             {
                 let error = self.ui.mods.errors.get(&row.id).map(String::as_str);
                 let badge = row.manual_badge();
-                let cells = model::cells(&row, error, None, native_allowed);
+                let cells = model::cells(&row, error, None);
                 labels.insert(
                     row.id,
                     HomeModFacts {
@@ -861,7 +854,6 @@ impl Launcher {
         self.ui.mods.home_mod_labels = Some(HomeModLabels {
             inventory,
             index,
-            native_allowed,
             rows: rows.clone(),
         });
         rows
@@ -1037,8 +1029,8 @@ impl Launcher {
                         }
                     }
                 }
-                Event::Enabled(home, notice, result, allowed_at) => {
-                    self.enabled_mods(&home, notice, result, allowed_at);
+                Event::Enabled(home, notice, result) => {
+                    self.enabled_mods(&home, notice, result);
                 }
                 Event::Page(request, page) => {
                     let scope = self.mods_page_scope();
@@ -1413,7 +1405,6 @@ impl Launcher {
                 unfit_updates: &unfit_updates,
                 enabled: &snap.rows.enabled,
                 unbuilt: &snap.rows.unbuilt,
-                native_allowed: self.settings.native_mods_allowed_at.is_some(),
                 chosen: &snap.rows.chosen,
                 local: &snap.rows.local,
             },
@@ -1480,15 +1471,9 @@ impl Launcher {
         self.ui.mods.busy.is_some() || self.registry_stage().is_some()
     }
 
-    /// Build… on a row: the one native build path, which asks for permission first. The player
-    /// stays where they are: the play bar shows how far it is.
+    /// Build… on a row: the one native build path. The player stays where they are: the play bar shows how far it is.
     fn build(&mut self) {
         self.build_native();
-    }
-
-    /// Allow… on a row: the native-code question, with what it builds.
-    fn allow(&mut self) {
-        self.request_native_build_consent();
     }
 
     pub(super) fn open_url(url: &str, cx: &mut Context<Self>) {

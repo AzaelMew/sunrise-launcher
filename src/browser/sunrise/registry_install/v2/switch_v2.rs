@@ -387,7 +387,6 @@ pub(crate) fn switch_build_v2_with(
             instance.native_profile,
             hooks.switch.cancellation,
             |step| build_progress(step, hooks.switch.progress),
-            hooks.switch.registry_crates,
             None,
         )
         .map_err(|e| e.to_string())?;
@@ -471,7 +470,6 @@ pub(crate) fn switch_build_v2_with(
                     instance.native_profile,
                     hooks.switch.cancellation,
                     |step| build_progress(step, hooks.switch.progress),
-                    hooks.switch.registry_crates,
                     None,
                 )
                 .map_err(|e| e.to_string())?;

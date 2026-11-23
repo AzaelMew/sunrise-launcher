@@ -161,7 +161,7 @@ fn recovery_refuses_a_saved_world_and_never_begins_play() {
             || FirstBuild::installed(BUILD),
             |_| unreachable!("recovery must not start a game"),
             |_| unreachable!(),
-            (&native_mods::Cancellation::default(), None),
+            &native_mods::Cancellation::default(),
             |_| unreachable!("recovery must stop before preparing or starting the game"),
         )
     };
@@ -313,7 +313,7 @@ fn recovery_binds_first_play_and_refuses_a_result_from_before_switch() {
             || FirstBuild::installed(tag),
             |_| unreachable!("stale result cannot start a game"),
             |_| unreachable!(),
-            (&cancelled, None),
+            &cancelled,
             |_| {},
         );
         assert!(
@@ -362,7 +362,6 @@ fn recovery_binds_first_play_and_refuses_a_result_from_before_switch() {
                 native_mods::Profile::Optimized,
                 &cancelled,
                 |_| {},
-                None,
                 None,
             )
             .unwrap();
@@ -460,7 +459,7 @@ fn play_checks_hash_only_takedowns_after_proving_the_actual_package() {
             &mut profile,
             || FirstBuild::installed(BUILD),
             |_, _| Ok(()),
-            (&cancellation, None),
+            &cancellation,
             |_| {},
             (
                 || {
@@ -483,7 +482,7 @@ fn play_checks_hash_only_takedowns_after_proving_the_actual_package() {
             &mut profile,
             || panic!("already bound"),
             |_, _| Ok(()),
-            (&cancellation, None),
+            &cancellation,
             |_| {},
             (|| revoked("lantern", replaced), || None),
         )
@@ -536,7 +535,7 @@ fn play_checks_hash_only_takedowns_after_proving_the_actual_package() {
             &mut profile,
             || panic!("already bound"),
             |_, _| Ok(()),
-            (&cancellation, None),
+            &cancellation,
             |step| assert!(!matches!(step, Progress::Native(_)), "started native work"),
             (
                 || {
@@ -683,7 +682,7 @@ fn a_failed_first_download_can_be_followed_by_a_mod_change_and_play() {
         || panic!("resuming a saved choice"),
         |_| Ok(()),
         |_| Ok(()),
-        (&stop, None),
+        &stop,
         |_| {},
     ) else {
         panic!("the unavailable download launched");
@@ -716,7 +715,7 @@ fn a_failed_first_download_can_be_followed_by_a_mod_change_and_play() {
             || FirstBuild::installed(BUILD),
             |_| Ok(()),
             |_| Ok(()),
-            (&stop, None),
+            &stop,
             |_| {},
         )
         .unwrap();
@@ -817,7 +816,7 @@ fn windows_bound_x64_fallback_survives_pending_retry_and_committed_replay() {
                 backend::check_game_architecture(tag, variant, Arm64)
                     .map_or(Ok(()), |e| Err(e.into()))
             },
-            (&cancellation, None),
+            &cancellation,
             |_| {},
             (|| None, || None),
         )

@@ -34,7 +34,6 @@ impl Storage {
         let report = self.evict_inventory(
             SystemTime::now(),
             (limit != 0).then(|| limit.saturating_mul(1 << 30)),
-            settings.native_mods_allowed_at.is_some(),
         )?;
         announce(&report);
         Ok(report)

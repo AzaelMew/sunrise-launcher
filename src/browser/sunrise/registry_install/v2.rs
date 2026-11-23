@@ -11,7 +11,7 @@
 use super::{
     at, guard_replacements, held_change_refusal, known_unfit_updates, manifest_conflict,
     missing_required, mutations, prove_edit, remember_unfit_sha256, ChangeImpact, Document,
-    InstallError, InstallHooks, InstallProgress, InstalledBatch, NativeQuestion, UpdateRequest,
+    InstallError, InstallHooks, InstallProgress, InstalledBatch, UpdateRequest,
 };
 use crate::{
     attestation::{self, ExpectedRelease, PublisherChange, PublisherPin, VerifiedRelease},
@@ -1629,7 +1629,7 @@ fn v2_edit_with(
     let mut doc = Document::read(next.path())?;
     let mut entries: BTreeMap<String, installed::Entry> = BTreeMap::new();
     let mut pending_pins: Vec<PendingPin> = Vec::new();
-    let mut native_names: Vec<String> = Vec::new();
+    let mut native = false;
     let mut replacements: Vec<(String, String)> = Vec::new();
     let mut retired_holds: BTreeSet<String> = BTreeSet::new();
 
@@ -1671,9 +1671,7 @@ fn v2_edit_with(
         }
         doc.replace(&entry)?;
         mod_list::set_enabled(next.path(), &step.mod_id, true)?;
-        if step.kind == V2Kind::NativeMod {
-            native_names.push(step.name.clone());
-        }
+        native |= step.kind == V2Kind::NativeMod;
         if let Some(prev) = before.get(&step.mod_id) {
             replacements.push((prev.package.manifest.name.clone(), step.mod_id.clone()));
         }
@@ -1685,26 +1683,13 @@ fn v2_edit_with(
     // Check enabled manifests and v2 revocations on the staged candidate before any build.
     check_staged_v2_candidate(next.path(), &index, |id| entries.contains_key(id))?;
 
-    if !native_names.is_empty() {
-        native_names.sort();
-        native_names.dedup();
+    // A reviewed registry release asks nothing before its build: its attestation and the
+    // signed index were verified while it was fetched and staged above.
+    if native {
         if let Some(error) = native_mods::known_host_block(Some(&base_build)) {
             return Err(InstallError::Host(error));
         }
-        if backend::NativeGrant::read()?.is_none() {
-            let approved = (hooks.install.native)(&NativeQuestion {
-                names: native_names,
-                reviewed: true,
-                retry: false,
-            })
-            .map_err(InstallError::Unproved)?;
-            if !approved {
-                return Err(InstallError::Cancelled);
-            }
-        }
-        cancelled
-            .admit_native_work()
-            .map_err(|e| InstallError::Unproved(e.into()))?;
+        cancelled.check().map_err(InstallError::Unproved)?;
     }
 
     (hooks.install.progress)(InstallProgress::Preparing);
@@ -2000,7 +1985,7 @@ pub(crate) fn switch_provider_v2_with(
     let mut doc = Document::read(next.path())?;
     let mut entries: BTreeMap<String, installed::Entry> = BTreeMap::new();
     let mut pending_pins: Vec<PendingPin> = Vec::new();
-    let mut native_names: Vec<String> = Vec::new();
+    let mut native = false;
 
     for planned_step in std::iter::once(&step).chain(dep_steps.iter()) {
         let (entry, pin) = stage_and_verify_v2_release(
@@ -2015,9 +2000,7 @@ pub(crate) fn switch_provider_v2_with(
         )?;
         doc.replace(&entry)?;
         mod_list::set_enabled(next.path(), &planned_step.mod_id, true)?;
-        if planned_step.kind == V2Kind::NativeMod {
-            native_names.push(planned_step.name.clone());
-        }
+        native |= planned_step.kind == V2Kind::NativeMod;
         entries.insert(planned_step.mod_id.clone(), entry);
         pending_pins.push(pin);
     }
@@ -2025,25 +2008,13 @@ pub(crate) fn switch_provider_v2_with(
 
     check_staged_v2_candidate(next.path(), &index, |id| entries.contains_key(id))?;
 
-    if !native_names.is_empty() {
-        native_names.sort();
-        native_names.dedup();
+    // A reviewed registry release asks nothing before its build: its attestation and the
+    // signed index were verified while it was fetched and staged above.
+    if native {
         if let Some(error) = native_mods::known_host_block(Some(&base_build)) {
             return Err(InstallError::Host(error));
         }
-        if backend::NativeGrant::read()?.is_none()
-            && !(hooks.install.install.native)(&NativeQuestion {
-                names: native_names,
-                reviewed: true,
-                retry: false,
-            })
-            .map_err(InstallError::Unproved)?
-        {
-            return Err(InstallError::Cancelled);
-        }
-        cancelled
-            .admit_native_work()
-            .map_err(|e| InstallError::Unproved(e.into()))?;
+        cancelled.check().map_err(InstallError::Unproved)?;
     }
 
     (hooks.install.install.progress)(InstallProgress::Preparing);

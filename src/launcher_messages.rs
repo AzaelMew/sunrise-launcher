@@ -266,9 +266,6 @@ impl Launcher {
                             self.client_error = Some(refused.in_window());
                         }
                         Err(_) if cancelled => (),
-                        Err(StartError::Native(native_mods::Failed::NoConsent, _)) => {
-                            self.request_native_build_consent();
-                        }
                         Err(StartError::Native(error, _)) => {
                             self.native_for = Some(instance.id);
                             if !active_play_build {
@@ -324,10 +321,10 @@ impl Launcher {
                     registry_notices,
                     prepared,
                 } => {
-                    let Some(tag) = self.starting_client.take() else {
+                    if self.starting_client.take().is_none() {
                         account::discard_launch_session(session_file);
                         continue;
-                    };
+                    }
                     for notice in &registry_notices {
                         console_page::keep_line(
                             &mut self.prepare_log,
@@ -342,7 +339,6 @@ impl Launcher {
                             account::check_launch_account(&self.accounts, uuid)
                                 .map_err(|refused| refused.in_window())?;
                         }
-                        native_status::check_permission(&tag)?;
                         self.client_home = cmd.get_current_dir().map(|d| d.to_path_buf());
                         backend::spawn(Job::Client, cmd, self.tx.clone())
                     });
@@ -462,14 +458,6 @@ impl Launcher {
                     self.launcher_checked_now = result.is_ok().then(Instant::now);
                     self.note_launcher_check(*result);
                 }
-                Msg::NativeConsentRead(read, inputs) => {
-                    if let Some(pending) = &mut self.pending_consent {
-                        pending.finish_read(&read, inputs);
-                    }
-                }
-                Msg::NativeRegistryConsent(inventory, reply) => {
-                    self.registry_consent(inventory, reply);
-                }
                 Msg::NativeProgress(step) => {
                     self.native_step = Some(step.shown());
                     self.native_progress = Some(step.progress());
@@ -493,12 +481,7 @@ impl Launcher {
                     }
                     self.refresh_installed();
                     self.reload_instances();
-                    // No permission: the question is the answer, not the refusal's words.
-                    let no_consent = matches!(result, Err(native_mods::Failed::NoConsent));
-                    if no_consent {
-                        self.request_native_build_consent();
-                    }
-                    if let (Err(e), false) = (&result, cancelled || no_consent) {
+                    if let (Err(e), false) = (&result, cancelled) {
                         if let native_mods::Failed::Worlds(stake) = e {
                             if let Some(run) = &mut self.ui.mods.build {
                                 run.at_stake(&stake.mods, &stake.unbuilt);
@@ -513,9 +496,7 @@ impl Launcher {
                     // The build window's build ends as the build did. With its window closed,
                     // the strip says how it went for a moment.
                     let shown = self.ui.sheet == Some(crate::sheets::Sheet::ModBuild);
-                    if no_consent {
-                        self.ui.mods.build = None;
-                    } else if let Some(run) = &mut self.ui.mods.build {
+                    if let Some(run) = &mut self.ui.mods.build {
                         match &result {
                             Ok(_) => run.done(),
                             Err(_) if cancelled => run.cancelled(),

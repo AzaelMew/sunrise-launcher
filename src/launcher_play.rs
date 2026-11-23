@@ -383,15 +383,7 @@ impl Launcher {
                     })
                     .map_err(|error| error.to_string())
                 },
-                (
-                    &cancellation,
-                    Some(&|inventory: &native_mods::Consent| {
-                        let (reply, answer) = std::sync::mpsc::channel();
-                        tx.send(Msg::NativeRegistryConsent(inventory.clone(), reply))
-                            .is_ok()
-                            && answer.recv().unwrap_or(false)
-                    }),
-                ),
+                &cancellation,
                 |progress| {
                     let msg = match progress {
                         Progress::Download(_) => Msg::PlayStep(backend::PlayStep::Download),
@@ -431,11 +423,8 @@ impl Launcher {
     fn start_client(&mut self, tag: String, intent: PlayIntent) {
         self.client_error = None;
         self.crash = None;
-        // Refuse revoked permission early as well as at spawn. The prepared command's
-        // compiled inventory is checked off-thread once its actual profile has been applied.
         let refusal =
-            backend::game_architecture_launch_error_with_catalogue(&tag, self.game_releases())
-                .or_else(|| native_status::check_permission(&tag).err());
+            backend::game_architecture_launch_error_with_catalogue(&tag, self.game_releases());
         if let Some(error) = refusal {
             self.client_error = Some(error);
             self.starting_pack = None;

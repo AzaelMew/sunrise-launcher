@@ -332,7 +332,6 @@ impl Edit<'_> {
         mode: native_mods::Profile,
         cancellation: &native_mods::Cancellation,
         progress: impl Fn(native_mods::Step),
-        consent: Option<&dyn Fn(&native_mods::Consent) -> bool>,
         log: Option<&dyn Fn(std::sync::Arc<str>)>,
     ) -> Result<CandidateImage, native_mods::Failed> {
         let before = inputs(candidate, None)?;
@@ -350,7 +349,6 @@ impl Edit<'_> {
             mode,
             cancellation,
             progress,
-            consent,
             log,
         )?;
         if inputs(candidate, None)? != before {
@@ -557,9 +555,8 @@ impl Edit<'_> {
                 {
                     return Err(unsettled!());
                 }
-                let permission = cancellation.begin_publication()?;
-                at_cutoff()?;
-                Ok(permission)
+                cancellation.begin_publication()?;
+                at_cutoff()
             },
             observe,
         );

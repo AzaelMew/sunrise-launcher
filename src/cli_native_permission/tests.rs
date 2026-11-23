@@ -53,11 +53,6 @@ fn developer_build(data: &std::path::Path) {
         json!({"instances":{"sunrise":{"version":TAG}}}).to_string(),
     )
     .unwrap();
-    fs::write(
-        data.join("settings.json"),
-        r#"{"native_mods_allowed_at":123,"native_consent_revision":1}"#,
-    )
-    .unwrap();
 }
 
 #[test]
@@ -162,7 +157,11 @@ fn github_update_cli_checks_origin_but_needs_no_world_loss_flag_for_native() {
         )
     };
     let pointer = home.join("mod-browser/active-build.json");
-    let denied = invoke(&["--confirm-world-loss"]).unwrap_err();
+    // Unreviewed code needs this run's word: nothing is remembered between runs.
+    let unasked = invoke(&[]).unwrap_err();
+    assert!(unasked.contains("--trust-native-code"), "{unasked}");
+    assert_eq!(fs::read(&target).unwrap(), old);
+    let denied = invoke(&["--trust-native-code", "--confirm-world-loss"]).unwrap_err();
     assert!(
         denied.contains("GitHub") && !denied.contains("Nothing was updated."),
         "{denied}"
@@ -173,7 +172,7 @@ fn github_update_cli_checks_origin_but_needs_no_world_loss_flag_for_native() {
 
     origin["sha256"] = json!(index::sha256(&old));
     fs::write(&sidecar, origin.to_string()).unwrap();
-    invoke(&[]).unwrap();
+    invoke(&["--trust-native-code"]).unwrap();
     assert_eq!(fs::read(&target).unwrap(), new);
     let published = github_mods::origin(&home, ID).unwrap();
     assert_eq!(published.asset.as_deref(), Some("lantern-1.1.0.smod"));
@@ -235,6 +234,7 @@ fn github_add_cli_refuses_the_entire_fresh_batch() {
         "add-github",
         "https://github.com/fixture/lantern",
         "--all",
+        "--trust-native-code",
     ])
     .unwrap();
     let Some(Cmd::Mods {

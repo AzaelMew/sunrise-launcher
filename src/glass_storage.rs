@@ -30,49 +30,6 @@ impl Launcher {
             Err(error) => self.storage_error = Some(error),
         }
     }
-
-    /// Counts the switched-on native mods and the instances holding them, on a worker, then
-    /// asks before Turn off.
-    pub(crate) fn storage_count_native(&mut self, cx: &mut Context<Self>) {
-        let visit = self.storage_visit;
-        self.storage_counting = Some(visit);
-        self.storage_revoke_error = None;
-        let task = cx.background_executor().spawn(async move {
-            let counts: Vec<usize> = instances::list()
-                .iter()
-                .map(|i| native_status::enabled(&i.home).len())
-                .filter(|n| *n > 0)
-                .collect();
-            (counts.iter().sum::<usize>(), counts.len())
-        });
-        cx.spawn(async move |this, cx| {
-            let counted = task.await;
-            let _ = this.update(cx, |this, cx| {
-                // A count from a visit the player has left asks nothing.
-                if this.storage_counting == Some(visit) {
-                    this.storage_counting = None;
-                    this.storage_revoke = Some(counted);
-                    cx.notify();
-                }
-            });
-        })
-        .detach();
-        cx.notify();
-    }
-
-    /// Revoke permission without changing what the player selected in any profile.
-    pub(crate) fn turn_off_native_mods(&mut self, cx: &mut Context<Self>) {
-        self.storage_revoke = None;
-        match self.settings.revoke_native_mods() {
-            Ok(()) => {
-                self.native_error = None;
-                self.native_worlds = None;
-                self.native_failed_mods.clear();
-            }
-            Err(error) => self.storage_revoke_error = Some(error),
-        }
-        cx.notify();
-    }
 }
 
 pub(crate) fn category_label(category: Category) -> &'static str {

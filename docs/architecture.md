@@ -12,7 +12,7 @@ Names in this table are relative to [`src/`](../src/). The binary and the shared
 | --- | --- | --- |
 | UI shell | `main.rs`, `startup.rs`, `window_root.rs`, `launcher_render.rs`, `frame.rs` | Define the launcher entity, dispatch startup, and assemble the desktop frame. |
 | UI shell | `rail.rs`, `shell.rs`, `titlebar.rs`, `status_strip.rs`, `command_search.rs` | Supply navigation, window chrome, Play status, and search shortcuts. |
-| UI pages | `home.rs`, `home_mods.rs`, `instances_page.rs`, `instance_mods.rs`, `instance_icons.rs`, `glass_instance.rs`, `profile_dialog.rs`, `launch_page.rs` | Show Home and the selected profile, manage profile dialogs and icons, and edit per-instance launch options. |
+| UI pages | `home.rs`, `home_mods.rs`, `instances_page.rs`, `instance_icons.rs`, `glass_instance.rs`, `profile_dialog.rs`, `launch_page.rs` | Show Home and the selected profile, manage profile dialogs and icons, and edit per-instance launch options. |
 | UI pages | `worlds_page.rs`, `datapacks_page.rs`, `packs_page.rs`, `screenshots_page.rs`, `console_page.rs` | Display an instance's worlds, packs, screenshots, and game output. |
 | UI pages | `settings.rs`, `blocks_settings.rs`, `location_page.rs`, `glass_storage.rs`, `themes_page.rs`, `language_page.rs`, `collection.rs` | Draw settings, storage and relocation controls, appearance, language, and data collection. |
 | UI pages | `glass_versions.rs`, `glass_sheet.rs`, `glass_toast.rs`, `sheets.rs`, `setup_page.rs` | Draw versions, instance settings, toasts, shared dialogs, and Windows setup. |
@@ -25,7 +25,7 @@ Names in this table are relative to [`src/`](../src/). The binary and the shared
 | Backend | `instances.rs`, `import.rs`, `export.rs`, `worlds.rs`, `datapacks.rs`, `packs.rs`, `screenshots.rs`, `shortcut.rs` | Manage instance files, sharing, worlds, packs, screenshots, and desktop launch shortcuts. |
 | Accounts | `account.rs`, `account_chip.rs`, `owner_page.rs`, `switch_page.rs`, `microsoft.rs`, `profile_heads.rs`, `private_window.rs` | Handle Microsoft sign-in, ownership, account selection and artwork, and browser handoff. |
 | Mods | `browser.rs`, `mods.rs`, `mods_page.rs`, `mods_project.rs`, `mod_icons.rs`, `github_mods.rs`, `github_mods_page.rs` | Provide registry and pack discovery, installation, project details and pictures, and the GitHub mod flow. |
-| Mods | `native_mods.rs`, `native_cache.rs`, `native_fit.rs`, `native_status.rs`, `rust_toolchain.rs`, `native_build.rs`, `native_log_page.rs`, `build.rs`, `build_mode.rs`, `native_consent.rs` | Build and track native mods, manage the toolchain and cache, and show compatibility, consent, and progress. |
+| Mods | `native_mods.rs`, `native_cache.rs`, `native_fit.rs`, `native_status.rs`, `rust_toolchain.rs`, `native_build.rs`, `native_log_page.rs`, `build.rs`, `build_mode.rs` | Build and track native mods, manage the toolchain and cache, and show compatibility and progress. |
 | Mods | `jars.rs`, `jar_launch.rs`, `jars_tests.rs` | Resolve mods' original Java asset and data jars, including the launch consent bridge and tests. |
 | Servers | `servers.rs`, `servers_page.rs`, `glass_servers.rs`, `glass_server_dialog.rs`, `servers_format.rs`, `heads.rs` | Drive the dedicated server and draw its hosting controls, status, and player heads. |
 | Servers | `join.rs`, `server_list.rs`, `multiplayer_page.rs`, `internet.rs`, `tailscale.rs` | Join and manage saved servers and show Tailscale sharing controls. |
@@ -143,7 +143,7 @@ For example, the startup release worker sends `Msg::Releases`. The setup code ru
 ## Testing
 
 - **Unit tests** live with their modules, either inline or in child test modules. The full CI matrix runs `cargo test --locked --workspace --lib --bins`.
-- **Integration tests** under `tests/` exercise library behavior or the built launcher. For example, `tests/owner_gate.rs` drives CLI and MCP subprocesses. The Windows CI matrix runs `developer_install` and `storage_consent` separately as non-process integration targets. [Integration tests](../tests/), [owner gate](../tests/owner_gate.rs).
+- **Integration tests** under `tests/` exercise library behavior or the built launcher. For example, `tests/owner_gate.rs` drives CLI and MCP subprocesses. The Windows CI matrix runs `developer_install` separately as a non-process integration target. [Integration tests](../tests/), [owner gate](../tests/owner_gate.rs).
 - **Ignored tests** include cases that need a desktop, network, keychain, or fixture subprocess. Check the inventory before running them. The daily workflow uses it to skip manual cases and runs a separate set of Windows process tests. [Manual-test inventory](../tools/ci/manual-tests.txt), [daily workflow](../.github/workflows/daily.yml).
 - **CI** runs formatting and the pinned game-copy comparison on every PR. Full checks run Clippy and unit tests on Linux, macOS, and Windows, with Linux doctests and Python tooling tests and release signing tests on Linux and macOS. Fork PRs get full checks through a maintainer dispatch. The workflow sets scratch roots and disables self-update and telemetry. [CI workflow](../.github/workflows/ci.yml), [Rust pin](../tools/ci/rust-version), [game-copy policy](../CONTRIBUTING.md#copies-of-game-files).
 

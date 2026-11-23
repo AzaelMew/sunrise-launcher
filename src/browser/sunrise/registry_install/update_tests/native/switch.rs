@@ -62,7 +62,7 @@ impl Pinned {
             .unwrap()
             .refresh(
                 fixture.instance.native_profile,
-                (&native_mods::Cancellation::default(), None),
+                &native_mods::Cancellation::default(),
                 |_| {},
                 None,
                 None,
@@ -145,7 +145,6 @@ fn run_switch(
         SwitchHooks {
             cancellation: &native_mods::Cancellation::default(),
             progress: &|_| {},
-            registry_crates: None,
             approve: &|q| {
                 assert_eq!(q.worlds.affected[0].world, "Uses Native Lantern");
                 Ok(if approve(q) {
