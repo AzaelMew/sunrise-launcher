@@ -748,9 +748,7 @@ impl Launcher {
                         )
                     }),
             );
-        crate::scrollbar::Scrollbar::page(scroll_key)
-            .wrap(results, &self.theme)
-            .flex_1()
+        crate::scrollbar::wrap_page(scroll_key, results, &self.theme)
     }
 
     fn discover_menu(

@@ -395,34 +395,31 @@ impl Launcher {
                     .font_weight(FontWeight::BOLD)
                     .child(tr("Settings")),
             )
-            .child(
-                crate::scrollbar::Scrollbar::page("settings")
-                    .wrap(
+            .child(crate::scrollbar::wrap_page(
+                "settings",
+                div()
+                    .id("alt-settings-scroll")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .px(px(32.))
+                    .pb(px(24.))
+                    .child(
                         div()
-                            .id("alt-settings-scroll")
-                            .flex_1()
-                            .min_h_0()
-                            .overflow_y_scroll()
-                            .px(px(32.))
-                            .pb(px(24.))
-                            .child(
-                                div()
-                                    .id("alt-settings-columns")
-                                    .track_scroll(self.settings_sticky.row())
-                                    // On a wide window the block keeps its width, in the middle.
-                                    .w_full()
-                                    .max_w(px(COLUMNS))
-                                    .mx_auto()
-                                    .flex()
-                                    .items_start()
-                                    .gap(px(COLUMN_GAP))
-                                    .child(nav)
-                                    .child(pane),
-                            ),
-                        &self.theme,
-                    )
-                    .flex_1(),
-            )
+                            .id("alt-settings-columns")
+                            .track_scroll(self.settings_sticky.row())
+                            // On a wide window the block keeps its width, in the middle.
+                            .w_full()
+                            .max_w(px(COLUMNS))
+                            .mx_auto()
+                            .flex()
+                            .items_start()
+                            .gap(px(COLUMN_GAP))
+                            .child(nav)
+                            .child(pane),
+                    ),
+                &self.theme,
+            ))
             // A press anywhere else closes the language menu; the menu and its button keep
             // their own presses.
             .on_mouse_down(

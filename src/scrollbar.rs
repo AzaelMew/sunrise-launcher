@@ -80,16 +80,39 @@ thread_local! {
 }
 
 impl Scrollbar {
-    /// The bar of the page called `key`, over the page's own handle ([`crate::frame::scrolls`]).
-    pub(crate) fn page(key: &'static str) -> Self {
+    /// The bar of a scroll area identified by `key` over `handle`, keeping its drag state across
+    /// frames.
+    pub(crate) fn with_handle(key: &'static str, handle: ScrollHandle) -> Self {
         let (grabbed, wheel_before) =
             KEPT.with_borrow_mut(|kept| kept.entry(key).or_default().clone());
         Self {
-            handle: crate::frame::scrolls(key),
+            handle,
             grabbed,
             wheel_before,
         }
     }
+
+    /// The bar of the page called `key`, over the page's own handle ([`crate::frame::scrolls`]).
+    pub(crate) fn page(key: &'static str) -> Self {
+        Self::with_handle(key, crate::frame::scrolls(key))
+    }
+}
+
+/// Wrap a page's main flex-1 scroll container with its draggable scrollbar.
+pub(crate) fn wrap_page(key: &'static str, content: Stateful<Div>, theme: &Theme) -> Div {
+    Scrollbar::page(key).wrap(content, theme).flex_1()
+}
+
+/// Wrap a flex-1 scroll container with a caller-owned `ScrollHandle` and a draggable scrollbar.
+pub(crate) fn wrap_handle(
+    key: &'static str,
+    handle: ScrollHandle,
+    content: Stateful<Div>,
+    theme: &Theme,
+) -> Div {
+    Scrollbar::with_handle(key, handle)
+        .wrap(content, theme)
+        .flex_1()
 }
 
 /// Geometry in logical pixels. A minimum thumb size keeps long lists easy to grab.

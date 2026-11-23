@@ -245,7 +245,6 @@ impl Launcher {
             .id("alt-collection-list")
             .min_h_0()
             .overflow_y_scroll()
-            .track_scroll(&crate::frame::scrolls("packs"))
             .flex()
             .flex_col();
         let mut shown = 0;
@@ -430,7 +429,7 @@ impl Launcher {
             .children(self.mods_locked().map(muted))
             .map(|d| match none {
                 Some(none) => d.child(none),
-                None => d.child(list),
+                None => d.child(crate::scrollbar::Scrollbar::page("packs").wrap(list, &self.theme)),
             })
     }
 }

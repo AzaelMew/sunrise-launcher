@@ -2000,15 +2000,11 @@ impl Launcher {
         }
     }
 
-    pub(crate) fn skins_page(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Stateful<Div> {
+    pub(crate) fn skins_page(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let page = self.skins_view(window, cx);
         // The files the page asked for while it was drawn.
         self.skins_read_files();
-        page
+        crate::scrollbar::wrap_page("skins-page", page, &self.theme)
     }
 
     fn skins_view(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Stateful<Div> {
@@ -2021,7 +2017,6 @@ impl Launcher {
             .p(px(24.))
             .gap(px(20.))
             .overflow_y_scroll()
-            .track_scroll(&crate::frame::scrolls("skins-page"))
             .child(
                 div()
                     .text_size(px(tokens::TITLE))

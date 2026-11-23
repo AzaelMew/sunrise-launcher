@@ -340,13 +340,13 @@ impl Launcher {
                     .child(tr("Mods")),
             )
             .child(rows);
-        page.child(
+        page.child(crate::scrollbar::wrap_page(
+            "project",
             div()
                 .id("alt-project-scroll")
                 .flex_1()
                 .min_h_0()
                 .overflow_y_scroll()
-                .track_scroll(&scroll)
                 .flex()
                 .flex_col()
                 .gap(px(14.))
@@ -361,7 +361,8 @@ impl Launcher {
                         .child(left)
                         .children(beside),
                 ),
-        )
+            &self.theme,
+        ))
         .into_any_element()
     }
 

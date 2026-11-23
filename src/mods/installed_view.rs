@@ -508,19 +508,16 @@ impl Launcher {
             .flex_col()
             .overflow_hidden()
             .child(toolbar)
-            .child(
-                crate::scrollbar::Scrollbar::page("installed")
-                    .wrap(
-                        div()
-                            .id("alt-installed-scroll")
-                            .flex_1()
-                            .min_h_0()
-                            .overflow_y_scroll()
-                            .child(list),
-                        &self.theme,
-                    )
-                    .flex_1(),
-            )
+            .child(crate::scrollbar::wrap_page(
+                "installed",
+                div()
+                    .id("alt-installed-scroll")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .child(list),
+                &self.theme,
+            ))
             .children((hidden > 0).then(|| {
                 div().px(px(14.)).py(px(8.)).border_t_1().border_color(c(palette().divider)).child(muted(trf(
                     "{count} other files the launcher installed (packs, or from other sources) aren't listed here.",
