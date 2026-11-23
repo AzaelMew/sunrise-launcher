@@ -6,6 +6,22 @@ use crate::{
 use std::{path::Path, sync::Arc};
 use sunrise_launcher_smod::index::{self, Index};
 
+/// Both registries' takedown checks before Play. A notice both give (neither index could be read)
+/// shows once.
+pub(super) fn inspect_both(
+    home: &Path,
+    load: impl FnOnce() -> Option<Arc<Index>>,
+    load_v2: impl FnOnce() -> Option<Arc<sunrise_launcher_smod::index_v2::Index>>,
+) -> Result<Vec<String>, String> {
+    let mut notices = inspect(home, load)?;
+    for notice in inspect_v2(home, load_v2)? {
+        if !notices.contains(&notice) {
+            notices.push(notice);
+        }
+    }
+    Ok(notices)
+}
+
 /// Check the actual package bytes before any compiler or cached image can be used.
 /// A source-wide takedown only applies to a proved registry archive; hash-specific
 /// takedowns can also identify a hand-copied archive by those exact bytes.
@@ -83,8 +99,7 @@ pub(super) fn inspect(
 /// Check installed package bytes against the signed schema-2 registry index before Play.
 /// Exact-digest takedowns apply even to unowned/local files; whole-project takedowns apply only
 /// when project ownership is proved.
-#[allow(dead_code)]
-pub(crate) fn inspect_v2(
+pub(super) fn inspect_v2(
     home: &Path,
     load: impl FnOnce() -> Option<Arc<sunrise_launcher_smod::index_v2::Index>>,
 ) -> Result<Vec<String>, String> {

@@ -6,9 +6,10 @@ use std::{
 };
 use sunrise_launcher::{
     browser::sunrise::{
-        install_target, switch_profile_build, switch_provider_v2, BuildChoice, InstallError,
-        InstallHooks, InstallProgress, ProviderSwitchPreview, SwitchDecision, SwitchHooks,
-        SwitchQuestion, Switched, V2Hooks, V2InstallOptions, V2ProviderSwitchHooks,
+        install_target, switch_profile_build, switch_profile_build_v2, switch_provider_v2,
+        BuildChoice, InstallError, InstallHooks, InstallProgress, ProviderSwitchPreview,
+        SwitchDecision, SwitchHooks, SwitchQuestion, Switched, V2Hooks, V2InstallOptions,
+        V2ProviderSwitchHooks, V2SwitchHooks,
     },
     managed_play::{self, Active, FirstBuild, Profile, ReceiptHint},
     profile_txn::Identity,
@@ -202,37 +203,58 @@ impl Launcher {
         let (tag, stop) = (running.tag.clone(), running.stop.clone());
         let tx = self.tx.clone();
         std::thread::spawn(move || {
-            let outcome = switch_profile_build(
-                &instance,
-                identity,
-                &tag,
-                choice,
-                SwitchHooks {
-                    cancellation: &stop,
-                    progress: &|stage| {
-                        let _ = tx.send(Msg::SwitchProgress(stage));
-                    },
-                    registry_crates: Some(&|inventory| {
-                        if stop.is_stopped() {
-                            return false;
-                        }
-                        let (answer, reply) = std::sync::mpsc::channel();
-                        tx.send(Msg::NativeRegistryConsent(inventory.clone(), answer))
-                            .is_ok()
-                            && reply.recv().unwrap_or(false)
-                    }),
-                    at_cutoff: &|| Ok(()),
-                    approve: &|question| {
-                        if stop.is_stopped() {
-                            return Ok(SwitchDecision::Cancel);
-                        }
-                        let (answer, reply) = std::sync::mpsc::channel();
-                        tx.send(Msg::SwitchQuestion(Box::new(question.clone()), answer))
-                            .map_err(|_| tr("Switch cancelled.").to_owned())?;
-                        Ok(reply.recv().unwrap_or(SwitchDecision::Cancel))
-                    },
+            let hooks = SwitchHooks {
+                cancellation: &stop,
+                progress: &|stage| {
+                    let _ = tx.send(Msg::SwitchProgress(stage));
                 },
-            );
+                registry_crates: Some(&|inventory| {
+                    if stop.is_stopped() {
+                        return false;
+                    }
+                    let (answer, reply) = std::sync::mpsc::channel();
+                    tx.send(Msg::NativeRegistryConsent(inventory.clone(), answer))
+                        .is_ok()
+                        && reply.recv().unwrap_or(false)
+                }),
+                at_cutoff: &|| Ok(()),
+                approve: &|question| {
+                    if stop.is_stopped() {
+                        return Ok(SwitchDecision::Cancel);
+                    }
+                    let (answer, reply) = std::sync::mpsc::channel();
+                    tx.send(Msg::SwitchQuestion(Box::new(question.clone()), answer))
+                        .map_err(|_| tr("Switch cancelled.").to_owned())?;
+                    Ok(reply.recv().unwrap_or(SwitchDecision::Cancel))
+                },
+            };
+            // A profile holding a mod from the signed v2 index switches through it, which keeps
+            // each mod's chosen project; v1 and local mods keep their exact bytes there.
+            let from_v2 = sunrise_launcher::browser::installed::Installed::read(&instance.home)
+                .is_ok_and(|rows| rows.entries.iter().any(|e| e.mod_id.is_some()));
+            let outcome = if from_v2 {
+                switch_profile_build_v2(
+                    &instance,
+                    identity,
+                    &tag,
+                    choice,
+                    V2SwitchHooks {
+                        switch: hooks,
+                        confirm_publisher_change: Some(&|question| {
+                            let (answer, reply) = std::sync::mpsc::channel();
+                            tx.send(Msg::PublisherChangeQuestion(
+                                Box::new(question.clone()),
+                                answer,
+                            ))
+                            .is_ok()
+                                && reply.recv().unwrap_or(false)
+                        }),
+                        pin_dir: None,
+                    },
+                )
+            } else {
+                switch_profile_build(&instance, identity, &tag, choice, hooks)
+            };
             let _ = tx.send(Msg::Switched(instance.home, Box::new(outcome)));
         });
     }
@@ -831,7 +853,12 @@ impl Launcher {
                             continue_after_failure: &|_| false,
                             resolve: None,
                         },
-                        choose_provider: None,
+                        choose_provider: Some(&|need| {
+                            let (answer, reply) = std::sync::mpsc::channel();
+                            tx.send(Msg::ProviderChoice(Box::new(need.clone()), answer))
+                                .ok()
+                                .and_then(|()| reply.recv().ok().flatten())
+                        }),
                         confirm_publisher_change: Some(&|question| {
                             ask(&|answer| {
                                 Msg::PublisherChangeQuestion(Box::new(question.clone()), answer)

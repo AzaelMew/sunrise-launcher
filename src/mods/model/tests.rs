@@ -236,6 +236,8 @@ fn world<'a>(
     World {
         index: Some(index),
         game: GAME,
+        v2: None,
+        build: None,
         unfit_updates: &NO_UNFIT_UPDATES,
         enabled,
         unbuilt,
@@ -738,6 +740,8 @@ fn turning_on_a_local_native_file_exposes_permission_then_build() {
             &World {
                 index: None,
                 game: GAME,
+                v2: None,
+                build: None,
                 unfit_updates: &NO_UNFIT_UPDATES,
                 enabled: &enabled,
                 unbuilt: &unbuilt,
@@ -1696,5 +1700,74 @@ fn benchmark_discover_search() {
         "discover over {} cards: {:.1} µs a call",
         cards.len(),
         t.elapsed().as_secs_f64() * 1e6 / runs as f64
+    );
+}
+
+#[test]
+fn a_v2_installed_row_offers_the_newest_release_listed_for_its_build_and_shows_a_takedown() {
+    let release = |version: &str, fits: &str, sha: char| {
+        serde_json::json!({
+            "version": version, "published": "2026-11-22", "sunrise": "26.3-0.1.0",
+            "workflow": "w", "fits": [fits], "does_not_fit": [],
+            "file": {"url": "u", "size": 1, "sha256": sha.to_string().repeat(64), "attestation": "a"},
+            "dependencies": []
+        })
+    };
+    let v2 = |revoked: serde_json::Value| -> index_v2::Index {
+        serde_json::from_value(serde_json::json!({
+            "schema": 2, "serial": 1, "generated": "2026-11-22T00:00:00Z", "builds": [], "categories": [],
+            "projects": [{
+                "id": "Ab3dE9xQ", "slug": "wayfinder", "mod": "wayfinder", "kind": "mod",
+                "name": "Wayfinder", "summary": "", "description": "", "authors": ["Kit"],
+                "owners": ["kit"], "license": "MIT", "icon": "i", "screenshots": [], "categories": [],
+                "repository": {"id": 1, "name": "kit/wayfinder", "path": "."}, "workflow": "w",
+                "releases": [
+                    release("1.3.0", "26.3-0.2.0", 'd'),
+                    release("1.2.0", "26.3-0.1.0", 'c'),
+                    release("1.1.0", "26.3-0.1.0", 'b'),
+                    release("1.0.0", "26.3-0.1.0", 'a'),
+                ]
+            }],
+            "revoked": revoked
+        }))
+        .unwrap()
+    };
+    let mut installed = entry("Ab3dE9xQ", "1.0.0", false, &"a".repeat(64));
+    installed.mod_id = Some("wayfinder".into());
+    let on: HashSet<String> = ["wayfinder".to_owned()].into();
+    let none = HashSet::new();
+    let world = |index: &index_v2::Index| -> Row {
+        rows(
+            std::slice::from_ref(&installed),
+            &World {
+                index: None,
+                game: GAME,
+                v2: Some(index),
+                build: Some("26.3-0.1.0"),
+                unfit_updates: &NO_UNFIT_UPDATES,
+                enabled: &on,
+                unbuilt: &none,
+                native_allowed: true,
+                chosen: &NO_PINS,
+                local: &[],
+            },
+        )
+        .remove(0)
+    };
+
+    let listed = v2(serde_json::json!([]));
+    let row = world(&listed);
+    assert_eq!(row.title, "Wayfinder");
+    assert!(row.v2_installed());
+    // 1.3.0 is newer but listed for another build only.
+    assert_eq!(row.update.as_deref(), Some("1.2.0"));
+    assert_eq!(row.need, None);
+
+    let taken_down = v2(serde_json::json!([{
+        "project": "Ab3dE9xQ", "sha256": "a".repeat(64), "reason": "malware", "date": "2026-11-23"
+    }]));
+    assert_eq!(
+        world(&taken_down).need,
+        Some(Need::TakenDown("malware".into()))
     );
 }

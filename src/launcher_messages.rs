@@ -310,6 +310,7 @@ impl Launcher {
                     self.provider_switch_question(question, reply)
                 }
                 Msg::ProviderSwitched(home, result) => self.provider_switch_finished(&home, result),
+                Msg::ProviderChoice(need, reply) => self.provider_choice_question(need, reply),
                 Msg::PublisherChangeQuestion(question, reply) => {
                     self.publisher_change_question(question, reply)
                 }

@@ -14,6 +14,7 @@ use native_consent::PendingConsent;
 use std::sync::mpsc::Sender;
 use sunrise_launcher::native_mods::Consent;
 
+mod provider_choice;
 mod publisher_change;
 mod switching;
 mod versions;
@@ -87,6 +88,7 @@ pub(crate) struct SheetsState {
     versions: versions::State,
     pub(super) switching: switching::State,
     publisher_change: Option<publisher_change::PendingPublisherChange>,
+    provider_choice: Option<provider_choice::PendingProviderChoice>,
     pub(super) profile_action: Option<crate::profile_delete::Action>,
 }
 
@@ -369,6 +371,7 @@ impl Launcher {
     pub(crate) fn blocking_dialog(&self) -> bool {
         self.ui.sheets.registry.is_some()
             || self.ui.sheets.publisher_change.is_some()
+            || self.ui.sheets.provider_choice.is_some()
             || self.pending_consent.is_some()
             || self.source_question().is_some()
             || self.mods.installs.question.is_some()
@@ -422,8 +425,8 @@ impl Launcher {
         if self.ui.sheet == Some(Sheet::SwitchProvider) {
             self.cancel_provider_switch();
         }
-        if self.dismiss_publisher_change() {
-            // Keep current version without modifying the remembered publisher pin.
+        if self.dismiss_publisher_change() || self.answer_provider_choice(None) {
+            // Keep the current version and remembered publisher; install no provider.
         } else if let Some((_, reply)) = self.ui.sheets.registry.take() {
             let _ = reply.send(false);
         } else if self.pending_consent.is_some() {
@@ -449,6 +452,7 @@ impl Launcher {
     pub(crate) fn sheet_escape(&mut self) -> bool {
         let prompt_open = self.ui.sheets.registry.is_some()
             || self.ui.sheets.publisher_change.is_some()
+            || self.ui.sheets.provider_choice.is_some()
             || self.pending_consent.is_some()
             || self.source_question().is_some()
             || self.mods.installs.question.is_some()
@@ -559,6 +563,9 @@ impl Launcher {
         }
         if let Some(pending) = &self.ui.sheets.publisher_change {
             return Some(self.publisher_change_sheet(&pending.question, cx));
+        }
+        if let Some(pending) = &self.ui.sheets.provider_choice {
+            return Some(self.provider_choice_sheet(&pending.need, cx));
         }
         if self.pending_consent.is_some() {
             return Some(self.consent_sheet(cx));

@@ -152,6 +152,8 @@ mod tests {
             &model::World {
                 index: None,
                 game: "26.3",
+                v2: None,
+                build: None,
                 unfit_updates: &Default::default(),
                 enabled: &on,
                 unbuilt: &HashSet::new(),

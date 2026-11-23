@@ -9,8 +9,9 @@ use std::{
 use sunrise_launcher::{
     browser::sunrise::{
         BuildNotice, ChangeImpact, CombinedUpdate, InstallError, InstallHooks, InstallProgress,
-        InstalledBatch, NativeQuestion, PreparedSource, ResolveQuestion, SourceDependency,
-        SourceError, SourceHooks, V2Hooks, V2InstallOptions,
+        InstalledBatch, NativeQuestion, PreparedSource, ProviderChoiceNeeded,
+        PublisherChangeQuestion, ResolveQuestion, SourceDependency, SourceError, SourceHooks,
+        V2Hooks, V2InstallOptions,
     },
     github_mods::{AddedFrom, Origin},
     managed_play::FirstBuild,
@@ -232,6 +233,9 @@ pub(crate) enum Kind {
     Mixed,
     Update,
     UpdateAll,
+    /// Update mods the signed v2 index installed: one asked for, or every one with an update.
+    UpdateV2,
+    UpdateAllV2,
     Remove,
 }
 
@@ -1493,6 +1497,28 @@ impl Launcher {
                 }
                 answer.recv().unwrap_or(Ok(false))
             };
+            let confirm_publisher_change = |question: &PublisherChangeQuestion| {
+                let (reply, answer) = std::sync::mpsc::channel();
+                launcher
+                    .send(Msg::PublisherChangeQuestion(
+                        Box::new(question.clone()),
+                        reply,
+                    ))
+                    .is_ok()
+                    && answer.recv().unwrap_or(false)
+            };
+            let choose_provider = |need: &ProviderChoiceNeeded| {
+                let (reply, answer) = std::sync::mpsc::channel();
+                launcher
+                    .send(Msg::ProviderChoice(Box::new(need.clone()), reply))
+                    .ok()
+                    .and_then(|()| answer.recv().ok().flatten())
+            };
+            let v2_hooks = V2Hooks {
+                install: hooks,
+                choose_provider: Some(&choose_provider),
+                confirm_publisher_change: Some(&confirm_publisher_change),
+            };
             let result = match kind {
                 Kind::Install => sunrise::install_registry(
                     &request.profile,
@@ -1513,20 +1539,20 @@ impl Launcher {
                     ids.clone(),
                     V2InstallOptions::default(),
                     choose,
-                    V2Hooks {
-                        install: hooks,
-                        choose_provider: None,
-                        confirm_publisher_change: Some(&|question| {
-                            let (reply, answer) = std::sync::mpsc::channel();
-                            launcher
-                                .send(Msg::PublisherChangeQuestion(
-                                    Box::new(question.clone()),
-                                    reply,
-                                ))
-                                .is_ok()
-                                && answer.recv().unwrap_or(false)
-                        }),
+                    v2_hooks,
+                ),
+                Kind::UpdateV2 | Kind::UpdateAllV2 => sunrise::update_registry_v2(
+                    &request.profile,
+                    request.identity,
+                    if kind == Kind::UpdateV2 {
+                        sunrise::UpdateRequest::Strict(ids)
+                    } else {
+                        sunrise::UpdateRequest::Bulk(ids)
                     },
+                    V2InstallOptions::default(),
+                    choose,
+                    v2_hooks,
+                    &approve,
                 ),
                 Kind::Github => {
                     let input = request.github.as_ref().expect("a checked GitHub request");
