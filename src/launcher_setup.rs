@@ -372,16 +372,18 @@ impl Launcher {
         std::thread::spawn(move || {
             let message = match check {
                 UpdateCheck::Startup => {
+                    let mut final_releases = None;
                     let updates = backend::releases_and_updates(|releases| {
                         if let Ok(list) = &releases {
-                            if let Err(error) = backend::note_play_catalogue(list) {
-                                eprintln!(
-                                    "Could not remember the current installed Nightly: {error}"
-                                );
-                            }
+                            final_releases = Some(list.clone());
                         }
                         let _ = tx.send(Msg::Releases(releases));
                     });
+                    if let Some(list) = &final_releases {
+                        if let Err(error) = backend::note_play_catalogue(list) {
+                            eprintln!("Could not remember the current installed Nightly: {error}");
+                        }
+                    }
                     Msg::Updates(Box::new(updates))
                 }
                 UpdateCheck::Scheduled => Msg::Updates(Box::new(backend::check_updates())),
