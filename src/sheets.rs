@@ -141,6 +141,70 @@ fn channel_name(channel: instances::Channel) -> &'static str {
     }
 }
 
+/// The channel name of a dated Nightly or Dev build, which Home's picker shows with its age.
+pub(crate) fn dated_channel(tag: &str) -> Option<&'static str> {
+    channel_build(tag)
+        .filter(|(channel, _)| *channel != instances::Channel::Stable)
+        .map(|(channel, _)| channel_name(channel))
+}
+
+/// What the build menu calls a channel: the newest build it publishes.
+fn latest_name(channel: instances::Channel) -> &'static str {
+    match channel {
+        instances::Channel::Stable => tr("Latest stable"),
+        instances::Channel::Nightly => tr("Latest nightly"),
+        instances::Channel::Dev => tr("Latest dev"),
+    }
+}
+
+/// When a build was published, from its `YYYY-MM-DD` date and `HH:MM` UTC time (empty when
+/// unknown): "13 minutes ago", "1 hour ago", "2 days ago" within a week, else "23/11/2026 16:42
+/// UTC". Without a time it counts whole days: "today", "yesterday", "2 days ago", else the date.
+fn built_when(date: &str, time: &str, now: chrono::DateTime<chrono::Utc>) -> Option<String> {
+    use chrono::{NaiveDate, NaiveTime};
+    let day = NaiveDate::parse_from_str(date, "%Y-%m-%d").ok()?;
+    let count = |n: i64| n.to_string();
+    let Ok(clock) = NaiveTime::parse_from_str(time, "%H:%M") else {
+        return Some(match (now.date_naive() - day).num_days() {
+            ..=0 => tr("today").into(),
+            1 => tr("yesterday").into(),
+            days @ 2..=6 => trf("{days} days ago", &[("days", &count(days))]),
+            _ => day.format("%d/%m/%Y").to_string(),
+        });
+    };
+    let at = day.and_time(clock).and_utc();
+    let ago = now - at;
+    Some(match ago.num_minutes() {
+        // A clock a little behind the publisher's reads as now, not as the future.
+        ..=0 => tr("just now").into(),
+        1 => tr("1 minute ago").into(),
+        minutes @ 2..=59 => trf("{count} minutes ago", &[("count", &count(minutes))]),
+        _ => match ago.num_hours() {
+            1 => tr("1 hour ago").into(),
+            hours @ 2..=23 => trf("{count} hours ago", &[("count", &count(hours))]),
+            _ => match ago.num_days() {
+                1 => tr("1 day ago").into(),
+                days @ 2..=6 => trf("{days} days ago", &[("days", &count(days))]),
+                _ => at.format("%d/%m/%Y %H:%M UTC").to_string(),
+            },
+        },
+    })
+}
+
+impl Launcher {
+    /// When `tag` was published: the catalogue's time when it lists the build, else the date
+    /// in a dated tag.
+    pub(crate) fn build_when(&self, tag: &str) -> Option<String> {
+        let now = chrono::Utc::now();
+        match self.game_releases().iter().find(|r| r.tag == tag) {
+            Some(release) => built_when(&release.date, &release.time, now),
+            None => backend::dev_date(tag)
+                .or_else(|| sunrise_launcher::nightly::date_of(tag))
+                .and_then(|date| built_when(date, "", now)),
+        }
+    }
+}
+
 /// The channel an unpinned profile plays now: a Stable profile plays Nightly until Stable has a
 /// build ([`instances::Channel::play_target`]), and the picker marks what plays.
 fn following_now(saved: instances::Channel, waits_for_stable: bool) -> instances::Channel {
@@ -1572,14 +1636,14 @@ impl Launcher {
         let mut list = div().flex().flex_col().gap(px(2.));
         for (id, channel, unavailable) in [
             (
-                "alt-build-nightly",
-                Channel::Nightly,
-                tr("No Nightly build yet."),
-            ),
-            (
                 "alt-build-stable",
                 Channel::Stable,
                 tr("No Stable build yet."),
+            ),
+            (
+                "alt-build-nightly",
+                Channel::Nightly,
+                tr("No Nightly build yet."),
             ),
             ("alt-build-dev", Channel::Dev, tr("No Dev build yet.")),
         ] {
@@ -1591,7 +1655,18 @@ impl Launcher {
             } else {
                 self.channel_switch_target(channel)
             };
-            let version = tag.and_then(|tag| channel_build(tag).map(|(_, version)| version));
+            // Stable says its version; every row says when its build came out.
+            let version = tag.and_then(|tag| {
+                let (_, version) = channel_build(tag)?;
+                Some(match (channel, self.build_when(tag)) {
+                    (Channel::Stable, Some(when)) => trf(
+                        "{version} · {when}",
+                        &[("version", &version), ("when", &when)],
+                    ),
+                    (Channel::Stable, None) => version,
+                    (_, when) => when.unwrap_or(version),
+                })
+            });
             let unavailable_row = is_pack || version.is_none();
             // A Stable profile plays Nightly until Stable has a build; say so on the row it
             // will move to, rather than marking a row that can't play.
@@ -1605,7 +1680,7 @@ impl Launcher {
                 option(
                     id,
                     selected,
-                    channel_name(channel).into(),
+                    latest_name(channel).into(),
                     version.unwrap_or_else(|| unavailable.into()),
                 )
                 .when(unavailable_row, |d| d.opacity(0.5))
@@ -1930,6 +2005,37 @@ mod tests {
             });
             assert_eq!(opened.as_deref(), Some(error.as_str()));
         }
+    }
+
+    #[test]
+    fn build_times_read_relative_for_a_week_then_as_the_date() {
+        use chrono::TimeZone as _;
+        let now = chrono::Utc
+            .with_ymd_and_hms(2026, 11, 23, 16, 42, 0)
+            .unwrap();
+        let when = |date, time| built_when(date, time, now);
+        assert_eq!(when("2026-11-23", "16:42").as_deref(), Some("just now"));
+        assert_eq!(when("2026-11-23", "16:45").as_deref(), Some("just now"));
+        assert_eq!(when("2026-11-23", "16:41").as_deref(), Some("1 minute ago"));
+        assert_eq!(
+            when("2026-11-23", "16:29").as_deref(),
+            Some("13 minutes ago")
+        );
+        assert_eq!(when("2026-11-23", "15:30").as_deref(), Some("1 hour ago"));
+        assert_eq!(when("2026-11-23", "01:00").as_deref(), Some("15 hours ago"));
+        assert_eq!(when("2026-11-22", "10:00").as_deref(), Some("1 day ago"));
+        assert_eq!(when("2026-11-21", "10:00").as_deref(), Some("2 days ago"));
+        assert_eq!(when("2026-11-16", "16:43").as_deref(), Some("6 days ago"));
+        assert_eq!(
+            when("2026-11-16", "16:42").as_deref(),
+            Some("16/11/2026 16:42 UTC")
+        );
+        // A tag's date alone counts whole days.
+        assert_eq!(when("2026-11-23", "").as_deref(), Some("today"));
+        assert_eq!(when("2026-11-22", "").as_deref(), Some("yesterday"));
+        assert_eq!(when("2026-11-17", "").as_deref(), Some("6 days ago"));
+        assert_eq!(when("2026-11-16", "").as_deref(), Some("16/11/2026"));
+        assert_eq!(when("not a date", "16:42"), None);
     }
 
     #[test]

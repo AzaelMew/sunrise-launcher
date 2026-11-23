@@ -30,11 +30,11 @@ const BRIGHT: [u32; 2] = [sunrise_launcher_theme::BRIGHT_BACKDROP, 0xffffff];
 const PLATE_BASE: f32 = 0.81;
 /// How far Play's colour is pulled toward the theme's own chrome (OKLab), so it sits in the theme
 /// instead of shouting over it. The white label's fit comes after, unchanged.
-pub(crate) const PLAY_TONE: f32 = 0.3;
+pub(crate) const PLAY_TONE: f32 = 0.15;
 /// Text reads at this contrast on its surface; edges, marks and the focus ring at the other.
 const TEXT: f32 = 4.5;
 const MARK: f32 = 3.;
-/// The fully shaded part of the Home backdrop, directly behind the unboxed profile.
+/// The least the Home backdrop is shaded directly behind the unboxed profile.
 pub(crate) const HERO_SHADE_ALPHA: f32 = 0.58;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -42,7 +42,11 @@ pub(crate) struct HeroInk {
     pub text: u32,
     pub warning: u32,
     pub link: u32,
+    /// The theme's chrome where it can hold the ink, so the shade reads as the panels' material
+    /// and not a black (or white) patch; else black or white.
     pub shade: u32,
+    /// How strongly `shade` lies behind the text, from [`HERO_SHADE_ALPHA`] up.
+    pub shade_alpha: f32,
 }
 
 /// What the info colour starts from (a blue), on dark and on light themes, before it is fitted.
@@ -385,8 +389,23 @@ impl Inputs {
         // visible than a dark shadow. Either way fit against the worst sRGB pixel, not the
         // photo's average (individual pixels may have any colour).
         let light_ink = photo_tone.map_or(lighter, |tone| luminance(tone) < 0.54);
-        let shade = if light_ink { 0 } else { 0xffffff };
-        let worst = luminance(over(shade, HERO_SHADE_ALPHA, 0xffffff - shade));
+        // The worst pixel is the ink's own end: white behind light text, black behind dark.
+        let end: u32 = if light_ink { 0xffffff } else { 0 };
+        let holds = |shade: u32| {
+            (0..=21)
+                .map(|step| (HERO_SHADE_ALPHA + step as f32 * 0.02).min(1.))
+                .find(|&a| {
+                    reads_over(
+                        luminance(end),
+                        luminance(over(shade, a, end)),
+                        light_ink,
+                        TEXT + 0.15,
+                    )
+                })
+                .map(|a| (shade, a))
+        };
+        let (shade, shade_alpha) = holds(chrome).unwrap_or((0xffffff - end, HERO_SHADE_ALPHA));
+        let worst = luminance(over(shade, shade_alpha, end));
         let hero_ink = |c| {
             fit(c, light_ink, |c| {
                 reads_over(luminance(c), worst, light_ink, TEXT)
@@ -397,6 +416,7 @@ impl Inputs {
             warning: hero_ink(warning),
             link: hero_ink(accent_ink),
             shade,
+            shade_alpha,
         };
 
         // Keep the legacy automatic path unchanged. An unsatisfiable local override stays solid.
@@ -1054,7 +1074,10 @@ accent = "#101010""##,
         assert_ne!(shown.chrome, scene.chrome);
         assert_eq!(shown.play_stops, scene.play_stops);
         assert_eq!(shown.card().a, 1.);
-        assert_eq!(shown.hero.shade, 0xffffff, "shade a pale photo lightly");
+        assert!(
+            luminance(shown.hero.shade) > 0.5,
+            "shade a pale photo lightly"
+        );
         for ink in [shown.text, shown.muted, shown.warning, shown.accent_ink] {
             assert!(contrast(ink, shown.card_color) >= TEXT, "{ink:06x}");
         }
@@ -1213,10 +1236,10 @@ accent = "#101010""##,
             .into_iter()
             .map(|(_, s, t)| Palette::of(&s, &t));
         let light = Palette::plain(theme::night::DAWN, 0x6a4910, glass::TINT, None);
-        assert_eq!(light.hero.shade, 0xffffff);
+        assert!(luminance(light.hero.shade) > 0.5);
         for p in themes.chain([light]) {
             for pixel in [0, 0xffffff] {
-                let behind = over(p.hero.shade, HERO_SHADE_ALPHA, pixel);
+                let behind = over(p.hero.shade, p.hero.shade_alpha, pixel);
                 for ink in [p.hero.text, p.hero.warning, p.hero.link] {
                     assert!(contrast(ink, behind) >= TEXT, "{ink:06x} on {behind:06x}");
                 }

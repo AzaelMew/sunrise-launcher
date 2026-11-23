@@ -71,7 +71,8 @@ pub(super) fn note(text: impl Into<SharedString>) -> Div {
 }
 
 /// An empty list's place, as big apps draw it: a large icon, a title, one short line and the
-/// way on, centred in the room the list would take.
+/// way on, centred in the room the list would take. The line ends with no full stop, in any
+/// language, like the title above it.
 pub(crate) fn empty_state(
     icon: &'static str,
     title: impl Into<SharedString>,
@@ -102,7 +103,9 @@ pub(crate) fn empty_state(
                 .text_center()
                 .text_size(px(tokens::LABEL))
                 .text_color(c(palette().muted))
-                .child(line.into()),
+                .child(SharedString::from(
+                    line.into().trim_end_matches(['.', '。', '।']).to_owned(),
+                )),
         )
         .children(action.map(|a| a.mt(px(8.))))
 }
