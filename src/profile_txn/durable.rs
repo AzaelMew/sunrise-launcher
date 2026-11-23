@@ -193,7 +193,7 @@ pub(crate) fn replace(home: &Path, record: &Path, bytes: &[u8]) -> io::Result<()
     replace_at(home, record, bytes, || {})
 }
 
-pub(super) fn replace_at(
+pub(crate) fn replace_at(
     home: &Path,
     record: &Path,
     bytes: &[u8],
@@ -210,17 +210,34 @@ pub(super) fn replace_at(
         let _ = home;
         move_through(&staged, record, true)?;
         renamed();
+        #[cfg(test)]
+        fail_replace_flush_if_injected(record)?;
         Ok(())
     }
     #[cfg(not(windows))]
     {
         fs::rename(next.path(), record)?;
         renamed();
+        #[cfg(test)]
+        fail_replace_flush_if_injected(record)?;
         sync_directory(dir)?;
         // `mod-browser` may have just been created, and its own name must survive too.
         sync_directory(home)?;
         #[cfg(target_os = "macos")]
         flush(next.as_file())?;
+        Ok(())
+    }
+}
+
+/// Flush a directory's entries on platforms that support unprivileged directory fsync.
+pub(crate) fn sync_dir(dir: &Path) -> io::Result<()> {
+    #[cfg(not(windows))]
+    {
+        sync_directory(dir)
+    }
+    #[cfg(windows)]
+    {
+        let _ = dir;
         Ok(())
     }
 }
@@ -300,11 +317,28 @@ pub(super) fn establish_retirement(home: &Path, retired: &Path) -> io::Result<()
 #[cfg(test)]
 thread_local! {
     static FAIL_RETIREMENT: std::cell::RefCell<Option<std::path::PathBuf>> = const { std::cell::RefCell::new(None) };
+    static FAIL_REPLACE_FLUSH: std::cell::RefCell<Option<std::path::PathBuf>> = const { std::cell::RefCell::new(None) };
 }
 
 #[cfg(test)]
 pub(super) fn fail_next_retirement_barrier(record: &Path) {
     FAIL_RETIREMENT.with(|fault| *fault.borrow_mut() = Some(record.to_owned()));
+}
+
+#[cfg(test)]
+pub(crate) fn fail_next_replace_flush(record: &Path) {
+    FAIL_REPLACE_FLUSH.with(|fault| *fault.borrow_mut() = Some(record.to_owned()));
+}
+
+#[cfg(test)]
+fn fail_replace_flush_if_injected(record: &Path) -> io::Result<()> {
+    FAIL_REPLACE_FLUSH.with(|fault| {
+        if fault.borrow().as_deref() == Some(record) {
+            fault.take();
+            return Err(io::Error::other("injected replace flush failure"));
+        }
+        Ok(())
+    })
 }
 
 #[cfg(test)]
