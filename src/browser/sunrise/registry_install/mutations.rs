@@ -348,6 +348,14 @@ pub(crate) fn check_activation(
                     &[("mod", &target.name), ("host", name)],
                 ));
             }
+            // The game's `side_covers`: the host runs everywhere the package it serves must.
+            if let Some(serving) = serving.filter(|h| h.side != Side::Both && h.side != target.side)
+            {
+                return Err(trf(
+                    "{host} can't serve {mod}: it doesn't run everywhere {mod} must.",
+                    &[("mod", &target.name), ("host", &serving.name)],
+                ));
+            }
             remaining.push(host);
         }
         for (name, dep) in &target.dependencies {
