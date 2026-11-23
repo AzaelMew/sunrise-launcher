@@ -1321,7 +1321,20 @@ impl Launcher {
         );
 
         // Right sticky side panel: action card + publisher provenance + pin callout + About card.
-        let working = self.registry_card_control(&vp.id, |label| {
+        // An update runs under the installed mod's id, which can differ from the project's.
+        let installed_id = installed_row
+            .map(|row| row.id.as_str())
+            .filter(|id| *id != vp.id);
+        let working_id = installed_id
+            .filter(|id| {
+                matches!(
+                    self.registry_card(id),
+                    Some(crate::mods_page::install::Card::Progress(_))
+                        | Some(crate::mods_page::install::Card::Waiting)
+                )
+            })
+            .unwrap_or(&vp.id);
+        let working = self.registry_card_control(working_id, |label| {
             dim(crate::frame::button("alt-project-add", label).w_full()).into_any_element()
         });
         let update = installed_row
@@ -1445,6 +1458,7 @@ impl Launcher {
             )
             .child(primary_control)
             .children(self.registry_card_outcome(&vp.id, cx))
+            .children(installed_id.and_then(|id| self.registry_card_outcome(id, cx)))
             .when(vp.will_install.is_none(), |d| {
                 d.children(vp.fit.reason().map(note))
             })
