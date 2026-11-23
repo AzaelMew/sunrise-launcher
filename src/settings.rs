@@ -395,13 +395,13 @@ impl Launcher {
                     .font_weight(FontWeight::BOLD)
                     .child(tr("Settings")),
             )
-            .child(
+            .child(crate::scrollbar::wrap_page(
+                "settings",
                 div()
                     .id("alt-settings-scroll")
                     .flex_1()
                     .min_h_0()
                     .overflow_y_scroll()
-                    .track_scroll(&scroll)
                     .px(px(32.))
                     .pb(px(24.))
                     .child(
@@ -418,7 +418,8 @@ impl Launcher {
                             .child(nav)
                             .child(pane),
                     ),
-            )
+                &self.theme,
+            ))
             // A press anywhere else closes the language menu; the menu and its button keep
             // their own presses.
             .on_mouse_down(

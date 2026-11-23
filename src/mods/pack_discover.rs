@@ -545,15 +545,17 @@ impl Launcher {
             }
         };
         crate::frame::scrolls_with(&self.ui.mods.packs.scroll);
-        page.child(
+        page.child(crate::scrollbar::wrap_handle(
+            "pack-discover",
+            self.ui.mods.packs.scroll.clone(),
             div()
                 .id("alt-pack-scroll")
                 .flex_1()
                 .min_h_0()
                 .overflow_y_scroll()
-                .track_scroll(&self.ui.mods.packs.scroll)
                 .child(body),
-        )
+            &self.theme,
+        ))
         .into_any_element()
     }
 }
