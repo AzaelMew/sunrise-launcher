@@ -297,17 +297,43 @@ impl Launcher {
                     let package = installed
                         .zip(entry)
                         .and_then(|(rows, entry)| rows.archives.get(&entry.file)?.icon.clone());
-                    let is_added = installed_version.is_some();
                     let fits = card_data.fit.fits();
                     let working = self.registry_card_control(&id, |label| {
                         dim(button(("alt-add", n), label)).into_any_element()
                     });
                     let issue = self.registry_card_note(&id);
 
+                    // An installed mod says so once, where Install would be: its version,
+                    // and Off when the mod is turned off (a build switch holds off a mod that
+                    // doesn't fit the new build).
+                    let off = entry
+                        .and_then(sunrise::mod_id)
+                        .zip(installed)
+                        .is_some_and(|(mod_id, rows)| !rows.enabled.contains(mod_id));
+                    // An install that just ended keeps saying so until the installed list it
+                    // changed has been read again, rather than offering Install for a moment.
+                    let rereading = installed_version.is_none()
+                        && self.ui.mods.snapshot.as_ref().is_some_and(|s| s.reading)
+                        && matches!(
+                            self.registry_card(&id),
+                            Some(crate::mods_page::install::Card::Done(outcome))
+                                if outcome.failure.is_none()
+                        );
                     let control = if working.is_some() {
                         working
-                    } else if is_added {
-                        Some(added_mark())
+                    } else if rereading {
+                        Some(dim(button(("alt-add", n), tr("Finishing…"))).into_any_element())
+                    } else if let (Some(rows), Some(version)) = (installed, installed_version) {
+                        Some(if off {
+                            status(
+                                "minus-sign",
+                                trf("Off · {version}", &[("version", version)]),
+                                palette().muted,
+                            )
+                            .into_any_element()
+                        } else {
+                            install_fact(version, rows.registry_pending(&id)).into_any_element()
+                        })
                     } else if !fits {
                         // Non-fitting cards in Show all display Install disabled.
                         Some(
@@ -337,9 +363,6 @@ impl Launcher {
                         facts.push(tag(card_data.make.label()));
                     } else if let Some(reason) = card_data.fit.reason() {
                         facts.push(unfit_pill(reason));
-                    }
-                    if let (Some(rows), Some(version)) = (installed, installed_version) {
-                        facts.push(install_fact(version, rows.registry_pending(&id)));
                     }
 
                     let mut card_el = browse_card(
@@ -889,7 +912,8 @@ impl Launcher {
             .mods
             .snapshot
             .as_ref()
-            .filter(|snap| snap.home == home && snap.ready())
+            // While a re-read runs, the profile's last confirmed rows stay shown.
+            .filter(|snap| snap.home == home && snap.error.is_none())
             .map(|snap| &snap.rows)
     }
 }
