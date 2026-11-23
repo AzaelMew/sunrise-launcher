@@ -233,6 +233,9 @@ impl Launcher {
             identity,
             choice,
         } = running.pending.take().expect("switch queued");
+        // Both switch routes start by checking the profile's mods; a v2 profile first
+        // refreshes its index, so don't leave the last download or preparation step showing.
+        running.progress = InstallProgress::PreparingBuild;
         let (tag, stop) = (running.tag.clone(), running.stop.clone());
         let tx = self.tx.clone();
         std::thread::spawn(move || {
