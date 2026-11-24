@@ -580,5 +580,6 @@
   "{file} doesn't match the registry's checksum.": "{file} doesn't match the registry's checksum.",
   "{mod} holds no native mod.": "{mod} holds no native mod.",
   "Registry not reachable: {error}": "Registry not reachable: {error}",
-  "Registry refused: {error}": "Registry refused: {error}"
+  "Registry refused: {error}": "Registry refused: {error}",
+  "The launcher's folder {folder} is too deep for Windows: a native build there needs paths of {length} characters, and Windows allows 259. Set SUNRISE_LAUNCHER_HOME to a shorter folder.": "The launcher's folder {folder} is too deep for Windows: a native build there needs paths of {length} characters, and Windows allows 259. Set SUNRISE_LAUNCHER_HOME to a shorter folder."
 }
