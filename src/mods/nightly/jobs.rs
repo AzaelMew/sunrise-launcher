@@ -594,6 +594,7 @@ fn source_for_update(predecessor: &Origin) -> Result<Option<Source>, sources::Fa
 
 #[cfg(test)]
 mod tests {
+    #![cfg_attr(not(debug_assertions), allow(dead_code, unused_imports))]
     use super::*;
     use std::fs;
     use std::process::Command;
@@ -818,6 +819,7 @@ mod tests {
         (target, origin, prepared, unpacked_data, client_path)
     }
 
+    #[cfg(debug_assertions)] // source fixtures are off in release builds
     #[test]
     fn a_check_keeps_only_findings_proved_against_the_same_mods() {
         run_in_scratch(
@@ -972,6 +974,7 @@ mod tests {
         );
     }
 
+    #[cfg(debug_assertions)] // source fixtures are off in release builds
     #[test]
     fn last_known_source_offer_stays_visible_while_offline_but_requires_fresh_catalogue_to_apply() {
         run_in_scratch(
