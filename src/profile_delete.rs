@@ -7,7 +7,7 @@ use crate::{
     settings::danger,
     sheets::{modal_frame, title},
 };
-use gpui::{rgb, Global, MouseButton};
+use gpui::{rgb, Global, MouseButton, MouseDownEvent};
 use instances::{DeleteError, Instance};
 
 /// A native close or Quit must not abandon a folder in the middle of the move.
@@ -265,6 +265,25 @@ impl Launcher {
                     cx.notify();
                 }),
             )
+            // This layer covers the profiles: a right-click on another one closes this menu
+            // and opens that profile's, and anywhere else it only closes this one.
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(|this, ev: &MouseDownEvent, _, cx| {
+                    let under = this
+                        .ui
+                        .profile_rows
+                        .borrow()
+                        .iter()
+                        .find(|(bounds, _)| bounds.contains(&ev.position))
+                        .map(|(_, profile)| profile.clone());
+                    this.close_profile_action();
+                    if let Some(profile) = under {
+                        this.open_profile_menu(&profile, f32::from(ev.position.y));
+                    }
+                    cx.notify();
+                }),
+            )
             .child(
                 div()
                     .absolute()
@@ -279,6 +298,7 @@ impl Launcher {
                     .text_color(rgb(p.text))
                     .shadow_lg()
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
                     .child(
                         div()
                             .h(px(26.))
@@ -329,6 +349,52 @@ mod tests {
             .unwrap();
         assert!(status.success());
         None
+    }
+
+    #[test]
+    fn a_right_click_on_another_profile_moves_the_open_menu_to_it() {
+        if scratch_child("a_right_click_on_another_profile_moves_the_open_menu_to_it").is_none() {
+            return;
+        }
+        let cabin = instances::create("Cabin", None).unwrap();
+        let tower = instances::create("Tower", None).unwrap();
+        let mut settings = Settings::load();
+        settings.instance = Some(cabin.id.clone());
+        settings.save().unwrap();
+        let mut app = gpui::TestAppContext::single();
+        let (shell, cx) = app.add_window_view(crate::window_root::Shell::new);
+        let launcher = shell.read_with(cx, |shell, _| shell.launcher());
+        cx.run_until_parked();
+        let row = |cx: &mut gpui::VisualTestContext, id: &str| {
+            launcher.read_with(cx, |l, _| {
+                l.ui.profile_rows
+                    .borrow()
+                    .iter()
+                    .find(|(_, profile)| profile.id == id)
+                    .map(|(bounds, _)| bounds.center())
+                    .unwrap_or_else(|| panic!("{id}'s row is drawn"))
+            })
+        };
+        let menu = |cx: &mut gpui::VisualTestContext| {
+            launcher.read_with(cx, |l, _| match &l.ui.sheets.profile_action {
+                Some(Action::Menu { target, .. }) => Some(target.id.clone()),
+                _ => None,
+            })
+        };
+        let right = |cx: &mut gpui::VisualTestContext, at| {
+            cx.simulate_mouse_down(at, MouseButton::Right, gpui::Modifiers::none());
+            cx.simulate_mouse_up(at, MouseButton::Right, gpui::Modifiers::none());
+            cx.run_until_parked();
+        };
+        let (cabin_row, tower_row) = (row(cx, &cabin.id), row(cx, &tower.id));
+        right(cx, cabin_row);
+        assert_eq!(menu(cx), Some(cabin.id.clone()));
+        // With Cabin's menu open over the profiles, one right-click moves it to Tower.
+        right(cx, tower_row);
+        assert_eq!(menu(cx), Some(tower.id.clone()));
+        // A right-click away from any profile only closes it.
+        right(cx, gpui::point(gpui::px(600.), gpui::px(400.)));
+        assert_eq!(menu(cx), None);
     }
 
     #[test]

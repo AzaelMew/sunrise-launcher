@@ -69,6 +69,9 @@ pub(super) struct State {
     /// Tests: draw the sidebar this far open, as if part way through an ease.
     #[cfg(test)]
     pub rail_pin: Option<f32>,
+    /// Where the last frame drew each profile that has a context menu: the open menu covers
+    /// them, so a right-click on one reaches it through here.
+    pub profile_rows: crate::rail::ProfileRows,
     /// When the status strip appeared, so each appearance eases in once without jumping the page.
     pub status_strip_since: Option<Instant>,
     /// When the status strip went away, so its space closes as smoothly as it opened.
