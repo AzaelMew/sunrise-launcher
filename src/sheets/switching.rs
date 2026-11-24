@@ -6,9 +6,10 @@ use std::{
 };
 use sunrise_launcher::{
     browser::sunrise::{
-        install_target, switch_profile_build_v2, switch_provider_v2, BuildChoice, InstallError,
-        InstallHooks, InstallProgress, ProviderSwitchPreview, SwitchDecision, SwitchHooks,
-        SwitchQuestion, Switched, V2Hooks, V2InstallOptions, V2ProviderSwitchHooks, V2SwitchHooks,
+        install_target, save_build_choice, switch_profile_build_v2, switch_provider_v2,
+        BuildChoice, InstallError, InstallHooks, InstallProgress, ProviderSwitchPreview,
+        SwitchDecision, SwitchHooks, SwitchQuestion, Switched, V2Hooks, V2InstallOptions,
+        V2ProviderSwitchHooks, V2SwitchHooks,
     },
     managed_play::{self, Active, FirstBuild, Profile, ReceiptHint},
     profile_txn::Identity,
@@ -138,6 +139,28 @@ impl Launcher {
                 return;
             }
         };
+        // Changing only the channel/pin preference when the profile is already on `tag` (and has
+        // no pending recovery or first-Play bootstrap) needs no switch modal, registry fetch, or
+        // mod rebuild. Keep artifact hashing off the UI thread.
+        let unplayed_target = self
+            .target_version(instance.version.as_ref(), instance.channel)
+            .map(String::as_str);
+        if can_fast_save_choice(
+            &instance,
+            &tag,
+            unplayed_target,
+            self.installed.contains(&tag),
+        ) {
+            if let Some(choice) = choice {
+                if let Err(error) = save_build_choice(&instance.id, &tag, choice) {
+                    self.open_notice(error, Some(WayOut::ProfileFolder(instance.home)));
+                    return;
+                }
+                self.reload_instances();
+            }
+            self.close_sheet();
+            return;
+        }
         let release = self.release_to_install(&tag);
         let stop = native_mods::Cancellation::default();
         let from = (instance.home.clone(), self.profile_target(&instance));
@@ -1180,6 +1203,31 @@ impl Launcher {
     }
 }
 
+/// Whether a picker selection can be saved directly to `instances.json` without running a build
+/// switch: the profile must be ordinary, have no pending transaction recovery or first-Play
+/// bootstrap, and already be on `tag`.
+fn can_fast_save_choice(
+    instance: &instances::Instance,
+    tag: &str,
+    unplayed_target: Option<&str>,
+    installed: bool,
+) -> bool {
+    if instance.kind == instances::Kind::Pack {
+        return false;
+    }
+    if !matches!(
+        sunrise_launcher::profile_txn::recovery_pending(&instance.home),
+        Ok(false)
+    ) {
+        return false;
+    }
+    match managed_play::display_active(&instance.home) {
+        Ok(Some(active)) => active.base() == tag,
+        Ok(None) => unplayed_target == Some(tag) && installed,
+        Err(_) => false,
+    }
+}
+
 /// A partial write or an interrupted writer must not reserve the final report name.
 fn publish_report(
     folder: &std::path::Path,
@@ -1197,8 +1245,50 @@ fn publish_report(
 
 #[cfg(test)]
 mod tests {
-    use super::publish_report;
+    use super::{can_fast_save_choice, publish_report};
     use std::io::{self, Write};
+    use sunrise_launcher::instances::{Channel, Instance, Kind as InstanceKind};
+
+    #[test]
+    fn can_fast_save_choice_checks_kind_recovery_and_target() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut instance = Instance {
+            id: "own-1".into(),
+            name: "Own".into(),
+            home: dir.path().to_path_buf(),
+            work: dir.path().to_path_buf(),
+            version: Some("dev-2026-11-24-abc".into()),
+            channel: Channel::Dev,
+            kind: InstanceKind::Own,
+            group: None,
+            icon: None,
+            native_profile: Default::default(),
+            last_played: None,
+            played: Default::default(),
+            launch: Default::default(),
+            incarnation: None,
+        };
+        let tag = "dev-2026-11-24-abc";
+        // Ordinary unplayed profile already targeting `tag` with `tag` installed -> fast path.
+        assert!(can_fast_save_choice(&instance, tag, Some(tag), true));
+        // Not installed yet or different target -> full switch.
+        assert!(!can_fast_save_choice(&instance, tag, Some(tag), false));
+        assert!(!can_fast_save_choice(
+            &instance,
+            tag,
+            Some("dev-2026-11-20-old"),
+            true
+        ));
+        // Pack profiles never take the fast path.
+        instance.kind = InstanceKind::Pack;
+        assert!(!can_fast_save_choice(&instance, tag, Some(tag), true));
+        instance.kind = InstanceKind::Own;
+        // Pending transaction/bootstrap record -> never take the fast path.
+        let txn = dir.path().join("mod-browser/install-txn.json");
+        std::fs::create_dir_all(txn.parent().unwrap()).unwrap();
+        std::fs::write(&txn, "{}").unwrap();
+        assert!(!can_fast_save_choice(&instance, tag, Some(tag), true));
+    }
 
     #[test]
     fn report_save_can_retry_after_a_partial_write_and_never_clobbers() {

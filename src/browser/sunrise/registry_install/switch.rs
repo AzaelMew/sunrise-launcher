@@ -162,11 +162,7 @@ pub enum BuildChoice {
 
 /// Persist the picker's channel/pin choice to `instances.json` when the active build itself does
 /// not need to change.
-pub(crate) fn save_build_choice(
-    instance_id: &str,
-    tag: &str,
-    choice: BuildChoice,
-) -> Result<(), String> {
+pub fn save_build_choice(instance_id: &str, tag: &str, choice: BuildChoice) -> Result<(), String> {
     crate::instances::edit(instance_id, |meta| match choice {
         BuildChoice::Follow(channel) => {
             meta.version = None;

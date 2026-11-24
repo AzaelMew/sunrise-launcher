@@ -28,7 +28,9 @@ pub use source::{
     read_pasted_sources, PastedSource, PreparedSource, SourceDependency, SourceError, SourceHooks,
     SourceProof, SourceRequest,
 };
-pub use switch::{BuildChoice, SwitchDecision, SwitchHooks, SwitchQuestion, Switched};
+pub use switch::{
+    save_build_choice, BuildChoice, SwitchDecision, SwitchHooks, SwitchQuestion, Switched,
+};
 pub use v2::{
     checked_switch_fit_v2, classify_v2_ownership, install_registry_v2, inventory_v2,
     plan_v2_install, plan_v2_update, revoked_for_package, switch_build_v2, switch_profile_build_v2,
