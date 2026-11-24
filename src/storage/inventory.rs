@@ -7,13 +7,14 @@ use crate::{backend, instances, native_mods};
 use serde::Serialize;
 use std::sync::Arc;
 
-const BUILD_CACHES: [BuildCache; 9] = [
+const BUILD_CACHES: [BuildCache; 10] = [
     BuildCache::Source,
     BuildCache::Tools,
     BuildCache::PrebuiltOutput,
     BuildCache::InternalsSync,
     BuildCache::Prebuilt,
     BuildCache::ServerBuilds,
+    BuildCache::KeptMods,
     BuildCache::Rust,
     BuildCache::Cargo,
     BuildCache::Scratch,
@@ -270,6 +271,10 @@ impl Entry {
     fn access(&self) -> Result<Access, Error> {
         match self.category {
             Category::RustCompiler => Ok(Access::BuildTools),
+            // No game runs from kept mod libraries: a build copies them into its workspace.
+            _ if self.relative.starts_with(BuildCache::KeptMods.relative()) => {
+                Ok(Access::BuildTools)
+            }
             _ => Access::for_unit(&self.path),
         }
     }
@@ -526,11 +531,10 @@ impl Storage {
         if checked(&native, true)?.is_some() {
             for entry in fs::read_dir(&native)? {
                 let entry = entry?;
-                if entry
-                    .file_name()
-                    .to_str()
-                    .is_some_and(|name| name.starts_with(native_mods::ATTEMPT_PREFIX))
-                {
+                if entry.file_name().to_str().is_some_and(|name| {
+                    name.starts_with(native_mods::ATTEMPT_PREFIX)
+                        || name.starts_with(native_mods::OLD_ATTEMPT_PREFIX)
+                }) {
                     // A changing or unreadable tree is still protected; zero means its size is unknown.
                     let size = Tree::build(&entry.path()).map_or(0, |tree| tree.size(counted));
                     bytes = Some(bytes.unwrap_or(0u64).saturating_add(size));
@@ -544,16 +548,14 @@ impl Storage {
         &self,
         now: std::time::SystemTime,
         max_bytes: Option<u64>,
-        native_allowed: bool,
     ) -> Result<Report, Error> {
-        self.evict_inventory_observed(now, max_bytes, native_allowed, |_| {})
+        self.evict_inventory_observed(now, max_bytes, |_| {})
     }
 
     pub(crate) fn evict_inventory_observed(
         &self,
         now: std::time::SystemTime,
         max_bytes: Option<u64>,
-        native_allowed: bool,
         mut before_clear: impl FnMut(&Path),
     ) -> Result<Report, Error> {
         use super::policy::{self, Tier, Unit};
@@ -601,10 +603,9 @@ impl Storage {
                         name.to_string_lossy()
                             .starts_with(crate::rust_toolchain::VERSION)
                     })
-                    && native_allowed
                     && native_enabled
                 {
-                    // Conservatively retain the whole toolchain set while consent is enabled.
+                    // Conservatively retain the whole toolchain set while a native mod is on.
                     Tier::Protected
                 } else if entry.leftover() {
                     Tier::Expiring
@@ -1198,11 +1199,12 @@ mod eviction_tests {
         let cache = home.seed("cargo/registry/download");
         let storage = Storage::at(&home.0).unwrap();
         let now = std::time::SystemTime::now();
-        let ordinary = storage.evict_inventory(now, None, false).unwrap();
+        let ordinary = storage.evict_inventory(now, None).unwrap();
         assert!(ordinary.total_bytes > 0 && cache.exists());
-        let old_worker = home.seed("native/.native-attempt-old/compiler/work");
+        let old_worker = home.seed("native/.nb-old/compiler/w");
+        let older_launchers = home.seed("native/.native-attempt-older/compiler/work");
         let report = storage
-            .evict_inventory(now, Some(ordinary.total_bytes), false)
+            .evict_inventory(now, Some(ordinary.total_bytes))
             .unwrap();
         assert!(
             !cache.exists(),
@@ -1211,6 +1213,10 @@ mod eviction_tests {
         assert!(
             old_worker.is_file(),
             "the old worker is never a deletion candidate"
+        );
+        assert!(
+            older_launchers.is_file(),
+            "nor is one an earlier launcher left"
         );
         let protected = &report.rows[0];
         assert_eq!(protected.category, Category::BuildFiles);
@@ -1250,9 +1256,7 @@ mod eviction_tests {
             .collect();
         let later = std::time::SystemTime::now() + std::time::Duration::from_secs(8 * 86400);
         let walks_before = crate::storage::walks();
-        let report = storage
-            .evict_inventory(later, Some(25 << 30), false)
-            .unwrap();
+        let report = storage.evict_inventory(later, Some(25 << 30)).unwrap();
         let walked = crate::storage::walks() - walks_before;
         let entries = storage.entries().unwrap();
         let cleared = before_entries
@@ -1370,11 +1374,9 @@ mod eviction_tests {
         assert!(matches!(Cache::acquire(&home.0), Err(Error::Busy)));
         let before = allocated_bytes(&home.0).unwrap();
         let now = std::time::SystemTime::now();
-        let first = storage.evict_inventory(now, Some(25 << 30), false).unwrap();
+        let first = storage.evict_inventory(now, Some(25 << 30)).unwrap();
         let later = now + std::time::Duration::from_secs(8 * 86400);
-        let second = storage
-            .evict_inventory(later, Some(25 << 30), false)
-            .unwrap();
+        let second = storage.evict_inventory(later, Some(25 << 30)).unwrap();
         let freed: u64 = first
             .rows
             .iter()

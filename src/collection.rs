@@ -40,7 +40,7 @@ impl Launcher {
                     Some(trf("Could not save your choice: {error}", &[("error", &e)]))
             }
         }
-        // The question and Settings say what the "I'm playing" ping holds, beside the switches.
+        // Settings says what the "I'm playing" ping holds, beside the switches.
         if !self.settings.ping_notice_seen {
             self.settings.ping_notice_seen = true;
             self.save_settings();

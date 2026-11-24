@@ -254,9 +254,6 @@ SAME_ITEMS = (
     ("crates/sunrise-native-build/src/package.rs", "src/native_mods/bundle/package.rs", (
         ("sunrise_mod_package::", "sunrise_launcher_smod::"), ("crate::host::trf", "trf"),
     ), ("fn checked_files", "pub fn files", "pub fn copy")),
-    ("crates/sunrise-native-build/src/registry_inventory.rs", "src/native_mods/tool.rs", (
-        ("crate::host::", ""),
-    ), ("pub fn label", "pub fn detail")),
     ("crates/sunrise-native-build/src/rust.rs", "src/rust_toolchain.rs", (), (
         "pub const WINDOWS_X64_TARGET", "pub const SCRUBBED", "const IOPRIO_WHO_PROCESS", "const LOW_IO",
     )),
@@ -276,10 +273,13 @@ def item(path: Path, head: str) -> str:
     depth, at = 0, found.end()
     while at < len(source):
         rest = source[at:]
+        char = re.match(r"'(\\.|[^\\'])'", rest)
         if rest.startswith("//"):
             at = source.find("\n", at)
         elif rest.startswith('"'):
             at = re.compile(r'"(\\.|[^"\\])*"', re.S).match(source, at).end() - 1
+        elif char:
+            at += len(char.group(0)) - 1
         elif rest[0] in "{[(":
             depth += 1
         elif rest[0] in "}])":

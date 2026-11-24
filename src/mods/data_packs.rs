@@ -371,7 +371,6 @@ impl Launcher {
             .flex_1()
             .min_h_0()
             .overflow_y_scroll()
-            .pr(px(14.))
             .flex()
             .flex_col()
             .gap(px(12.));
@@ -528,7 +527,7 @@ impl Launcher {
                 "The game turns a world's data packs on when the world opens, or on /reload.",
             )))
             .children(self.mods_locked().map(muted))
-            .child(crate::scrollbar::wrap_page(
+            .child(crate::scrollbar::wrap_page_in_margin(
                 "data-packs",
                 groups,
                 &self.theme,
@@ -682,9 +681,9 @@ fn add_to_worlds(
         let put = check_world(home, &world.path).and_then(|_| match (&file, what) {
             (Some(file), _) => datapacks::add(&world.path, file),
             (None, What::Project(project)) => {
-                let source = browser::source(project.source);
+                let source = browser::modrinth::Modrinth;
                 let done = browser::installed::install_datapack(
-                    &*source,
+                    &source,
                     project,
                     false,
                     &world.path,

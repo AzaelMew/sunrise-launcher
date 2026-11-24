@@ -15,6 +15,7 @@
 //! overrides. Without one, sign-in says it is not configured.
 pub mod capes;
 pub mod look;
+pub mod player_key;
 pub mod session;
 pub mod skins;
 

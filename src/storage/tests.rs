@@ -32,6 +32,7 @@ fn build_tools_remain_clearable_without_claiming_game_absence() {
     let home = Home::new();
     let storage = Storage::at(&home.0).unwrap();
     for (cache, directory) in [
+        (BuildCache::KeptMods, "native/kept-mods"),
         (BuildCache::Rust, "rust"),
         (BuildCache::Cargo, "cargo"),
         (BuildCache::Scratch, "tmp"),
@@ -40,6 +41,33 @@ fn build_tools_remain_clearable_without_claiming_game_absence() {
         assert!(storage.clear(cache).unwrap() > 0);
         assert!(!output.exists());
     }
+}
+
+#[test]
+fn kept_mod_libraries_are_build_files_that_clear_and_count_toward_the_limit() {
+    let home = Home::new();
+    let blob = home.seed("native/kept-mods/blobs/0123");
+    let index = home.seed("native/kept-mods/0123.json");
+    let storage = Storage::at(&home.0).unwrap();
+    assert_eq!(BuildCache::KeptMods.category(), Category::BuildFiles);
+    assert!(storage.bytes(BuildCache::KeptMods).unwrap() > 0);
+    let report = storage
+        .evict_inventory(std::time::SystemTime::now(), None)
+        .unwrap();
+    let row = report
+        .rows
+        .iter()
+        .find(|row| row.category == Category::BuildFiles)
+        .unwrap();
+    assert!(row.bytes > 0, "Storage reports the kept libraries");
+    // A cache limit of nothing removes them, as it does every other build file.
+    storage
+        .evict_inventory(std::time::SystemTime::now(), Some(0))
+        .unwrap();
+    assert!(!blob.exists() && !index.exists());
+    let blob = home.seed("native/kept-mods/blobs/0123");
+    assert!(storage.clear(BuildCache::KeptMods).unwrap() > 0);
+    assert!(!blob.exists());
 }
 
 #[test]
@@ -228,6 +256,7 @@ fn child_cargo_locks_prevent_clear_and_survive_idle_cleanup() {
         (BuildCache::InternalsSync, "native/internals-sync"),
         (BuildCache::Prebuilt, "native/prebuilt"),
         (BuildCache::ServerBuilds, "native/server-builds"),
+        (BuildCache::KeptMods, "native/kept-mods"),
         (BuildCache::Rust, "rust"),
         (BuildCache::Cargo, "cargo"),
         (BuildCache::Scratch, "tmp"),

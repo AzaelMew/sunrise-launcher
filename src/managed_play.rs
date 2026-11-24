@@ -10,7 +10,7 @@ mod resources;
 mod roots;
 pub use client::{headless_first, Client, FailedBuild, ModRecovery, Progress, StartError, Started};
 pub(crate) use first::{changed_files, copy_install_inputs};
-pub(crate) use first::{CandidateImage, Edit};
+pub(crate) use first::{CandidateImage, Edit, SwitchPublication};
 pub use first::{FirstAttempt, FirstBuild, Profile};
 pub(crate) use inputs::inputs;
 pub use inputs::{scan_packages, ScannedPackage};
@@ -71,10 +71,6 @@ impl ReferencePublication {
 
 use crate::{backend::installation::BoundVariant, native_mods, native_status};
 
-type NativeWork<'a> = (
-    &'a native_mods::Cancellation,
-    Option<&'a dyn Fn(&native_mods::Consent) -> bool>,
-);
 pub(crate) use artifact::Artifact;
 pub(crate) use resources::Resources;
 use serde::{Deserialize, Serialize};
@@ -386,6 +382,9 @@ pub enum HeldReason {
     },
     Unproved {
         build: String,
+        /// What the fit check said about these exact bytes, when it said anything.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        detail: Option<String>,
     },
     BuildFailed {
         build: String,
@@ -396,17 +395,16 @@ impl HeldReason {
     /// The build against which this hold was recorded.
     pub fn build(&self) -> &str {
         match self {
-            Self::NoFit { build, .. } | Self::Unproved { build } | Self::BuildFailed { build } => {
-                build
-            }
+            Self::NoFit { build, .. }
+            | Self::Unproved { build, .. }
+            | Self::BuildFailed { build } => build,
         }
     }
 
     pub fn detail(&self) -> Option<&str> {
         match self {
-            Self::NoFit { detail, .. } => detail.as_deref(),
+            Self::NoFit { detail, .. } | Self::Unproved { detail, .. } => detail.as_deref(),
             Self::BuildFailed { .. } => Some(crate::i18n::tr("Couldn't build on this computer.")),
-            Self::Unproved { .. } => None,
         }
     }
 
@@ -669,8 +667,9 @@ impl<'a> PendingChanges<'a> {
     }
 
     pub fn held_lines(&self) -> impl Iterator<Item = String> + 'a {
-        self.held().map(|(title, enabled, unknown)| {
-            crate::i18n::trf(
+        let holds = &self.receipt.waiting_for_update;
+        self.held().map(move |(title, enabled, unknown)| {
+            let line = crate::i18n::trf(
                 match (enabled, unknown) {
                     (true, false) => "{mod} was turned off. Needs an update from its author.",
                     (false, false) => "{mod} stays off. Needs an update from its author.",
@@ -678,7 +677,16 @@ impl<'a> PendingChanges<'a> {
                     (false, true) => "{mod} stays off. Fit could not be verified.",
                 },
                 &[("mod", title)],
-            )
+            );
+            // A hold still waiting says what the check found; a retired one has moved on.
+            match holds
+                .iter()
+                .find(|hold| hold.title() == title && hold.reason().unproved() == unknown)
+                .and_then(|hold| hold.reason().detail())
+            {
+                Some(reason) => format!("{line} {reason}"),
+                None => line,
+            }
         })
     }
 }
@@ -818,11 +826,6 @@ impl Active {
         Ok(())
     }
 
-    /// Hash the actual image, including runtime dependencies and the signed archive marker.
-    pub(crate) fn matches_inputs(&self, home: &Path) -> bool {
-        inputs(home, None).is_ok_and(|input| input == self.inputs)
-    }
-
     pub fn verify_artifacts(&self) -> Result<(), String> {
         let base = match &self.variant {
             Some(variant) => variant.verify(self.base())?,
@@ -849,7 +852,7 @@ impl Active {
     ) -> Result<Self, String> {
         scan_packages(home)?;
         verify_included(base, executable, home)?;
-        if inputs(home, None)? != epoch {
+        if inputs(home)? != epoch {
             return Err(unsettled!());
         }
         let base = Artifact::capture(base)?;

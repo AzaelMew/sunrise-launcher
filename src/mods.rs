@@ -3,10 +3,9 @@
 //! **Real:** the registry list, search, categories, fit, kind and sort (`browser::sunrise`'s index,
 //! read in a worker); a mod's page from the index (versions and their fit, size, licence,
 //! authors, source, mirrored screenshots, what it may do); Add and single Update through the
-//! existing install path (native code asks for permission first, `native_consent`); Installed
-//! from `mod-browser.json` and `sunrise-mods.txt` with on/off, selection, filters, bulk Turn on,
-//! Turn off, Remove and Update N mods (a reviewed plan, applied by a worker); Build… and Allow…
-//! hand over to the one native build path.
+//! existing install path; Installed from `mod-browser.json` and `sunrise-mods.txt` with on/off,
+//! selection, filters, bulk Turn on, Turn off, Remove and Update N mods (a reviewed plan, applied
+//! by a worker); Build… hands over to the one native build path.
 //!
 //! **Not here, said on screen or in the handoff:** Featured (the registry carries no editorial
 //! list), a version picker (the registry installs the newest that fits), dependency lists for
@@ -31,7 +30,7 @@ use sunrise_launcher::browser::{
 mod actions;
 mod build_modal;
 pub(crate) mod build_run;
-mod collection;
+mod collection_v2;
 mod data_packs;
 mod discover;
 mod installed_view;
@@ -43,6 +42,7 @@ mod packs;
 mod ports;
 pub(crate) use ports::PortSwitch;
 mod project;
+mod rating;
 pub(crate) mod refused;
 mod search;
 mod ui;
@@ -50,31 +50,23 @@ pub(crate) use data_packs::names;
 pub(crate) use search::Installed;
 mod viewer;
 use std::{rc::Rc, sync::Arc};
-use sunrise_launcher_smod::index::Index;
+use sunrise_launcher::native_mods::local_fit;
 pub(crate) use ui::{
     checkbox, choices, empty_state, field_theme, reveal, segmented, switch, Choose,
 };
 
 use crate::paint::palette;
-use model::{Card, Row};
+use model::Row;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Menu {
-    Profile,
     Category,
     Sort,
 }
 
-enum Catalog {
-    Idle,
-    Loading,
-    /// Shared, not owned: Discover draws from it every frame and clones only the handles.
-    Ready(Rc<[Card]>),
-    Failed,
-}
-
 struct V2CatalogPayload {
     cards: Vec<model::discover_v2::V2Card>,
+    collections: Vec<model::discover_v2::V2Collection>,
     categories: Vec<String>,
     /// The index lists the selected profile's build among its offered builds.
     build_listed: bool,
@@ -87,12 +79,23 @@ enum V2Catalog {
     Loading,
     Ready {
         cards: Rc<[model::discover_v2::V2Card]>,
+        collections: Rc<[model::discover_v2::V2Collection]>,
         categories: Rc<[String]>,
         build_listed: bool,
         stale_warning: Option<String>,
         from_cache: bool,
     },
     Failed(String),
+}
+
+/// This computer's fit check of the releases the index says nothing of on one build.
+#[derive(Default)]
+struct LocalFitRun {
+    /// The build checked last, or being checked.
+    build: Option<String>,
+    running: bool,
+    /// Why the last check of `build` stopped; it isn't started again until Try again.
+    failed: Option<String>,
 }
 
 #[derive(PartialEq, Eq)]
@@ -117,19 +120,15 @@ struct Open {
     scope: OpenScope,
     /// The screen Back returns to.
     from: Page,
-    page: Option<Result<Box<model::Page>, String>>,
     v2_page: Option<Result<Box<model::discover_v2::V2Page>, String>>,
     /// The collection's page this mod's was opened from: Back returns to it.
     parent: Option<String>,
+    /// The installed mods this page's Remove asked to remove, recorded while their rows are
+    /// still read: the page leaves once that Remove finishes.
+    removing: Vec<String>,
 }
 
 impl Open {
-    fn finish(&mut self, request: u64, scope: &OpenScope, page: Result<Box<model::Page>, String>) {
-        if self.request == request && &self.scope == scope && self.page.is_none() {
-            self.page = Some(page);
-        }
-    }
-
     fn finish_v2(
         &mut self,
         request: u64,
@@ -178,6 +177,8 @@ struct InstalledRows {
     managed: Option<Box<sunrise_launcher::managed_play::Active>>,
     unbuilt: HashSet<String>,
     switch_held: std::collections::HashMap<String, sunrise_launcher::managed_play::HeldReason>,
+    /// Held local or source mods: their switch checks their exact bytes again.
+    local_holds: HashSet<String>,
 }
 
 const ADDED_PENDING: &str = "Added · builds when you play";
@@ -237,6 +238,17 @@ impl InstalledRows {
             .flat_map(|active| active.holds())
             .map(|hold| (hold.id().to_owned(), hold.reason().clone()))
             .collect();
+        let local_holds = active
+            .iter()
+            .flat_map(|active| active.holds())
+            .filter(|hold| {
+                !matches!(
+                    hold.source(),
+                    sunrise_launcher::managed_play::HeldSource::Registry { .. }
+                )
+            })
+            .map(|hold| hold.id().to_owned())
+            .collect();
         let unbuilt = native_status::pending(home, active.as_ref())
             .into_iter()
             .collect();
@@ -250,6 +262,7 @@ impl InstalledRows {
                 managed: active.map(Box::new),
                 unbuilt,
                 switch_held,
+                local_holds,
             },
             backup_notice,
         )))
@@ -356,22 +369,27 @@ impl InstalledRefresh<'_> {
 
 enum Event {
     /// Installed rows read for the requested folder and fingerprint, off the window thread.
-    Local(String, InstalledRead),
+    Local(String, Box<InstalledRead>),
     Enabled(
         PathBuf,
         actions::EnableNotice,
         Result<actions::EnabledMods, String>,
-        Option<u64>,
     ),
-    /// The v1 index's cards for this game, or `None` when it couldn't be read.
-    Catalog(String, Option<Vec<Card>>),
-    V2Catalog(Option<String>, Result<V2CatalogPayload, String>),
-    Page(u64, Result<Box<model::Page>, String>),
+    V2Catalog(
+        Option<String>,
+        Result<V2CatalogPayload, sunrise::v2::LoadError>,
+    ),
+    /// The verified snapshot on disk was read, ahead of the network read: redraw from it.
+    V2Saved,
+    /// This computer's fit check of a build finished.
+    LocalFit(String, Result<(), String>),
     V2Page(u64, Result<Box<model::discover_v2::V2Page>, String>),
     Nightly(nightly::Event),
     Progress(String, f32),
     /// A pack search's answer, by the number of the search that asked.
     Packs(u64, Result<Vec<sunrise_launcher::browser::Project>, String>),
+    /// The categories Modrinth offers for a pack scope; empty when they could not be read.
+    PackCategories(pack_discover::Scope, Vec<String>),
     /// A pack's page, by its source and id.
     PackPage((SourceId, String), pack_project::PackPage),
     /// A resource or data pack install ended: what it said.
@@ -382,6 +400,8 @@ enum Event {
     Done(String, Vec<(String, String)>),
     /// "Check for update" asked the registry again: the mod's name, and the newer version found.
     Checked(String, Result<Option<String>, String>),
+    /// The registry answered about ratings.
+    Rating(rating::Answer),
 }
 
 /// The kinds of pack Packs › Installed lists, one at a time.
@@ -407,10 +427,11 @@ impl Shelf {
 pub(crate) struct ModsState {
     tx: Sender<Event>,
     rx: Receiver<Event>,
-    catalog: Catalog,
-    catalog_game: Option<String>,
     v2_catalog: V2Catalog,
     v2_catalog_build: Option<Option<String>>,
+    local_fit: LocalFitRun,
+    /// Why the last read of the v2 index failed, as Installed says it; none while one is out.
+    v2_failure: Option<String>,
     find: LineEdit,
     find_focus: Option<FocusHandle>,
     have: LineEdit,
@@ -429,13 +450,15 @@ pub(crate) struct ModsState {
     anchor: Option<String>,
     snapshot: Option<Snapshot>,
     home_mod_labels: Option<HomeModLabels>,
+    /// The mods folder's fingerprint, kept between frames (`native_status::Fingerprints`).
+    fingerprints: native_status::Fingerprints,
     /// What the last frame of Installed drew, for the benchmark (`installed_bench_target`).
     drawn: Option<InstalledDrawn>,
     open: Option<Open>,
     page_request: u64,
     nightly: nightly::State,
     /// The collection whose page is open and the members ticked on it.
-    picks: Option<collection::Picks>,
+    v2_picks: Option<collection_v2::V2Picks>,
     /// My own batch (update or remove): its line and fraction.
     busy: Option<(String, f32)>,
     notice: Option<Result<String, String>>,
@@ -449,10 +472,9 @@ pub(crate) struct ModsState {
     unfit_details: bool,
     /// The build the build window shows: running, or ended and not yet closed.
     pub(crate) build: Option<build_run::Run>,
-    /// Build was pressed and the build has not started yet (it asks for permission first).
+    /// Build was pressed and the build has not started yet.
     pub(crate) build_wanted: bool,
     /// Whether a mod page's Details (who made it, how it is checked) is open.
-    facts_open: bool,
     /// Discover or Installed, as the player last chose on Mods and on Packs this session.
     last_mods: Option<Page>,
     last_packs: Option<Page>,
@@ -463,6 +485,8 @@ pub(crate) struct ModsState {
     viewer: Option<viewer::Viewer>,
     /// What the refused-Add modal shows (`refused`).
     refused: Option<refused::Refused>,
+    /// Registry mods' ratings (`rating`).
+    ratings: rating::Ratings,
 }
 
 impl ModsState {
@@ -484,10 +508,10 @@ impl Default for ModsState {
         Self {
             tx,
             rx,
-            catalog: Catalog::Idle,
-            catalog_game: None,
             v2_catalog: V2Catalog::Idle,
             v2_catalog_build: None,
+            local_fit: LocalFitRun::default(),
+            v2_failure: None,
             find: LineEdit::default(),
             find_focus: None,
             have: LineEdit::default(),
@@ -502,11 +526,12 @@ impl Default for ModsState {
             anchor: None,
             snapshot: None,
             home_mod_labels: None,
+            fingerprints: Default::default(),
             drawn: None,
             open: None,
             page_request: 0,
             nightly: Default::default(),
-            picks: None,
+            v2_picks: None,
             busy: None,
             notice: None,
             errors: HashMap::new(),
@@ -515,13 +540,13 @@ impl Default for ModsState {
             unfit_details: false,
             build: None,
             build_wanted: false,
-            facts_open: false,
             last_mods: None,
             last_packs: None,
             reveal: None,
             revealed: Default::default(),
             viewer: None,
             refused: None,
+            ratings: Default::default(),
         }
     }
 }
@@ -580,9 +605,14 @@ pub(crate) struct HomeModFacts {
 
 struct HomeModLabels {
     inventory: u64,
-    index: Option<Arc<Index>>,
-    native_allowed: bool,
+    unfit_revision: u64,
     rows: Arc<HashMap<String, HomeModFacts>>,
+}
+
+impl HomeModLabels {
+    fn matches(&self, inventory: u64, unfit_revision: u64) -> bool {
+        self.inventory == inventory && self.unfit_revision == unfit_revision
+    }
 }
 
 impl Launcher {
@@ -620,7 +650,6 @@ impl Launcher {
                     .is_some_and(|open| open.scope != scope)
                 {
                     let open = self.ui.mods.open.take().expect("different open scope");
-                    self.ui.mods.picks = None;
                     if open.installed.is_some()
                         && (scope.profile != open.scope.profile || scope.home != open.scope.home)
                     {
@@ -702,41 +731,15 @@ impl Launcher {
 
     /// Opens a mod's page, from Home or anywhere else. Its details are read in a worker.
     pub(crate) fn mods_show_project(&mut self, id: String) {
-        if sunrise::v2::known_index().is_some_and(|c| c.index.project(&id).is_some()) {
-            self.mods_show_v2_project(id);
-            return;
-        }
-        self.ui.mods.nightly.open = None;
-        self.ui.mods.nightly.collection = None;
-        let from = match self.ui.page {
-            Page::Project => self
-                .ui
-                .mods
-                .open
-                .as_ref()
-                .map_or(Page::Discover, |o| o.from),
-            Page::Installed => Page::Installed,
-            _ => Page::Discover,
-        };
-        // A collection's page opened from a list starts from its defaults again.
-        if self.is_collection(&id) && self.ui.page != Page::Project {
-            self.ui.mods.picks = None;
-        }
-        let parent = self
-            .ui
-            .mods
-            .open
-            .as_ref()
-            .filter(|open| self.ui.page == Page::Project && open.collection)
-            .map(|open| open.id.clone());
-        self.ui.page = Page::Project;
-        self.mods_load_page(id, from, None);
-        if let Some(open) = self.ui.mods.open.as_mut() {
-            open.parent = parent;
-        }
+        self.mods_show_v2_project(id);
     }
 
     fn mods_show_installed_project(&mut self, row: &Row) {
+        // A signed registry mod has the same page as in Discover, with its installed controls.
+        if let Some(entry) = row.entry.as_ref().filter(|_| row.v2_installed()) {
+            self.mods_show_v2_project(entry.project.clone());
+            return;
+        }
         self.ui.mods.nightly.open = None;
         self.ui.mods.nightly.collection = None;
         let (id, installed) = match &row.local {
@@ -753,10 +756,18 @@ impl Launcher {
         self.mods_load_page(id, Page::Installed, Some(installed));
     }
 
-    fn is_collection(&self, id: &str) -> bool {
-        matches!(&self.ui.mods.catalog, Catalog::Ready(cards)
-            if cards.iter().any(|c| c.id == id && c.members.is_some()))
-            || sunrise::known_index().is_some_and(|index| index.collection(id).is_some())
+    /// The page of a mod just removed from `home` has nothing left to show: go back to where it
+    /// was opened from.
+    pub(crate) fn mods_leave_removed(&mut self, home: &Path, ids: &[String]) {
+        if self.ui.page != Page::Project || self.mods_home() != home {
+            return;
+        }
+        let gone = self.ui.mods.open.as_ref().is_some_and(|open| {
+            ids.contains(&open.id) || open.removing.iter().any(|id| ids.contains(id))
+        });
+        if let Some(open) = self.ui.mods.open.take_if(|_| gone) {
+            self.ui.page = open.from;
+        }
     }
 
     /// The installed mods `ids` as people read them: each one's name, and the newer version the
@@ -804,36 +815,20 @@ impl Launcher {
 
     /// Home's inventory can finish before Installed's worker. Leave the labels blank until the
     /// current setup has confirmed rows, and rebuild them on the worker's next publication.
-    pub(crate) fn home_mod_facts(
-        &mut self,
-        inventory: u64,
-        index: Option<Arc<Index>>,
-    ) -> Arc<HashMap<String, HomeModFacts>> {
-        let native_allowed = self.settings.native_mods_allowed_at.is_some();
+    pub(crate) fn home_mod_facts(&mut self, inventory: u64) -> Arc<HashMap<String, HomeModFacts>> {
+        let unfit_revision = sunrise::unfit_updates_revision();
         if let Some(labels) = &self.ui.mods.home_mod_labels {
-            let same_index = match (&labels.index, &index) {
-                (Some(a), Some(b)) => Arc::ptr_eq(a, b),
-                (None, None) => true,
-                _ => false,
-            };
-            if labels.inventory == inventory
-                && labels.native_allowed == native_allowed
-                && same_index
-            {
+            if labels.matches(inventory, unfit_revision) {
                 return labels.rows.clone();
             }
         }
         self.mods_refresh();
         let mut labels = HashMap::new();
         if self.ui.mods.snapshot.as_ref().is_some_and(Snapshot::ready) {
-            for row in self
-                .rows_with_index(index.as_deref())
-                .into_iter()
-                .filter(|row| row.on)
-            {
+            for row in self.rows().into_iter().filter(|row| row.on) {
                 let error = self.ui.mods.errors.get(&row.id).map(String::as_str);
                 let badge = row.manual_badge();
-                let cells = model::cells(&row, error, None, native_allowed);
+                let cells = model::cells(&row, error, None);
                 labels.insert(
                     row.id,
                     HomeModFacts {
@@ -847,8 +842,7 @@ impl Launcher {
         let rows = Arc::new(labels);
         self.ui.mods.home_mod_labels = Some(HomeModLabels {
             inventory,
-            index,
-            native_allowed,
+            unfit_revision,
             rows: rows.clone(),
         });
         rows
@@ -858,7 +852,30 @@ impl Launcher {
         self.leave_section(true);
         // Enter Discover with the requested kind, not the shelf we last left open.
         self.ui.mods.shelf = Shelf::Resource;
+        // Force one fresh search for the cleared query even when Resource was already selected.
+        self.ui.mods.packs.status = pack_discover::Status::Idle;
         self.choose_view(Page::PackFind);
+    }
+
+    /// The message pump's look at the mods folder while a Mods page is open: once the kept
+    /// fingerprint is due its full read, read it, so a mod rewritten where it lies shows without
+    /// waiting for input. True when the page has something new to read; an unchanged folder asks
+    /// for no frame.
+    pub(crate) fn mods_check_due(&mut self, now: std::time::Instant) -> bool {
+        if !matches!(
+            self.ui.page,
+            Page::Installed | Page::Discover | Page::Project
+        ) || !self.ui.mods.fingerprints.due(now)
+        {
+            return false;
+        }
+        let home = self.mods_home();
+        let key = self.ui.mods.fingerprints.read(&home, None, now);
+        self.ui
+            .mods
+            .snapshot
+            .as_ref()
+            .is_some_and(|snapshot| snapshot.home == home && snapshot.key != key)
     }
 
     /// The play bar's quiet line about them: Mods › Installed, where each says why.
@@ -986,35 +1003,52 @@ impl Launcher {
     /// What the workers said. Nothing here touches a file.
     pub(super) fn mods_drain(&mut self) -> bool {
         let mut changed = false;
+        let mut local_fit_due = false;
         while let Ok(event) = self.ui.mods.rx.try_recv() {
             changed = true;
             let m = &mut self.ui.mods;
             match event {
-                Event::Catalog(game, result) => {
-                    if m.catalog_game.as_ref() == Some(&game) {
-                        m.catalog = match result {
-                            Some(cards) => Catalog::Ready(cards.into()),
-                            None => Catalog::Failed,
-                        };
-                    }
-                }
                 Event::V2Catalog(build, result) => {
                     if m.v2_catalog_build.as_ref() == Some(&build) {
+                        m.v2_failure = result.as_ref().err().map(|error| match error {
+                            sunrise::v2::LoadError::Fetch(_) => trf(
+                                "Registry not reachable: {error}",
+                                &[("error", &error.to_string())],
+                            ),
+                            _ => trf(
+                                "Registry refused: {error}",
+                                &[("error", &error.to_string())],
+                            ),
+                        });
+                        if result.is_ok() {
+                            m.home_mod_labels = None;
+                        }
                         m.v2_catalog = match result {
                             Ok(payload) => V2Catalog::Ready {
                                 cards: payload.cards.into(),
+                                collections: payload.collections.into(),
                                 categories: payload.categories.into(),
                                 build_listed: payload.build_listed,
                                 stale_warning: payload.stale_warning,
                                 from_cache: payload.from_cache,
                             },
-                            Err(error) => V2Catalog::Failed(error),
+                            Err(error) => V2Catalog::Failed(error.to_string()),
                         };
+                        local_fit_due = true;
                     }
                 }
+                Event::LocalFit(build, result) => {
+                    if m.local_fit.build.as_ref() == Some(&build) {
+                        m.local_fit.running = false;
+                        m.local_fit.failed = result.err();
+                    }
+                    self.v2_cards_again();
+                    local_fit_due = true;
+                }
+                Event::V2Saved => m.home_mod_labels = None,
                 Event::Local(key, result) => {
                     if let Some(snap) = m.snapshot.as_mut().filter(|s| s.key == key) {
-                        let ready = snap.finish(result);
+                        let ready = snap.finish(*result);
                         m.home_mod_labels = None;
                         if ready {
                             let rows: HashSet<String> =
@@ -1023,16 +1057,13 @@ impl Launcher {
                         }
                     }
                 }
-                Event::Enabled(home, notice, result, allowed_at) => {
-                    self.enabled_mods(&home, notice, result, allowed_at);
-                }
-                Event::Page(request, page) => {
-                    let scope = self.mods_page_scope();
-                    if let Some(open) = self.ui.mods.open.as_mut() {
-                        open.finish(request, &scope, page);
-                    }
+                Event::Enabled(home, notice, result) => {
+                    self.enabled_mods(&home, notice, result);
                 }
                 Event::V2Page(request, page) => {
+                    if page.is_ok() {
+                        self.ui.mods.v2_failure = None;
+                    }
                     let scope = self.mods_page_scope();
                     if let Some(open) = self.ui.mods.open.as_mut() {
                         open.finish_v2(request, &scope, page);
@@ -1041,9 +1072,11 @@ impl Launcher {
                 Event::Nightly(event) => self.nightly_event(event),
                 Event::Progress(line, f) => m.busy = Some((line, f)),
                 Event::Packs(seq, result) => self.pack_answer(seq, result),
+                Event::PackCategories(scope, found) => self.pack_categories(scope, found),
                 Event::PackPage(key, page) => self.pack_page_answer(key, page),
                 Event::PackDone(result) => self.pack_installed(result),
                 Event::Checked(title, found) => self.checked(title, found),
+                Event::Rating(answer) => self.rating_answer(answer),
                 Event::Refused(why) => {
                     m.busy = None;
                     m.notice = Some(Err(why));
@@ -1073,7 +1106,112 @@ impl Launcher {
                 }
             }
         }
+        if local_fit_due {
+            // A catalog read while a check runs drew its cards without it: draw them again.
+            if self.ui.mods.local_fit.running {
+                self.v2_cards_again();
+            }
+            self.start_local_fit();
+        }
         changed
+    }
+
+    /// This computer's fit checks of `build`, as Discover shows them.
+    fn local_fits(
+        &self,
+        index: &sunrise_launcher_smod::index_v2::Index,
+        build: Option<&str>,
+    ) -> model::discover_v2::LocalFits {
+        let run = &self.ui.mods.local_fit;
+        let running = run.running && run.build.as_deref() == build;
+        model::discover_v2::LocalFits::read(index, build, running)
+    }
+
+    /// Starts this computer's fit check of the releases the index says nothing of on the
+    /// selected build, in the background: one at a time, and not again for a build whose last
+    /// check failed until Try again.
+    fn start_local_fit(&mut self) {
+        let run = &self.ui.mods.local_fit;
+        let Some(build) = self.selected_exact_build() else {
+            return;
+        };
+        if run.running || (run.build.as_ref() == Some(&build) && run.failed.is_some()) {
+            return;
+        }
+        let Some(catalog) = sunrise::v2::known_index() else {
+            return;
+        };
+        let Some(listed) = catalog.index.build(&build) else {
+            return;
+        };
+        let found = local_fit::kept(&listed.commit);
+        if local_fit::gaps(&catalog.index, &build)
+            .iter()
+            .all(|r| found.contains_key(&r.file.sha256.to_ascii_lowercase()))
+        {
+            return;
+        }
+        self.ui.mods.local_fit = LocalFitRun {
+            build: Some(build.clone()),
+            running: true,
+            failed: None,
+        };
+        let tx = self.ui.mods.tx.clone();
+        std::thread::spawn(move || {
+            let result = local_fit::check(&catalog.index, &build);
+            let _ = tx.send(Event::LocalFit(build, result));
+        });
+        self.v2_cards_again();
+    }
+
+    /// Try again after the selected build's fit check failed.
+    pub(super) fn retry_local_fit(&mut self) {
+        self.ui.mods.local_fit.failed = None;
+        self.start_local_fit();
+    }
+
+    /// Why the selected build's fit check failed, when it did.
+    pub(super) fn local_fit_failure(&self) -> Option<&str> {
+        let run = &self.ui.mods.local_fit;
+        (run.build == self.selected_exact_build())
+            .then_some(run.failed.as_deref())
+            .flatten()
+    }
+
+    /// Discover's cards and an open mod page drawn again from the index in memory, with what
+    /// this computer's checks have found so far.
+    fn v2_cards_again(&mut self) {
+        let Some(catalog) = sunrise::v2::known_index() else {
+            return;
+        };
+        let build = self.selected_exact_build();
+        let local = self.local_fits(&catalog.index, build.as_deref());
+        let name = &crate::sheets::build_name;
+        if self.ui.mods.v2_catalog_build.as_ref() == Some(&build) {
+            if let V2Catalog::Ready {
+                cards, collections, ..
+            } = &mut self.ui.mods.v2_catalog
+            {
+                let fresh =
+                    model::discover_v2::cards(&catalog.index, build.as_deref(), name, &local);
+                *collections = model::discover_v2::collections(&catalog.index, &fresh).into();
+                *cards = fresh.into();
+            }
+        }
+        if let Some(Ok(page)) = self
+            .ui
+            .mods
+            .open
+            .as_mut()
+            .and_then(|open| open.v2_page.as_mut())
+        {
+            let id = page.id.clone();
+            if let Some(fresh) =
+                model::discover_v2::page(&catalog.index, &id, build.as_deref(), name, &local)
+            {
+                **page = fresh;
+            }
+        }
     }
 
     /// Reads what is installed again when the files' fingerprint moved (an install, a toggle or a
@@ -1082,7 +1220,12 @@ impl Launcher {
         let home = self.mods_home();
         self.mods
             .follow_home(self.selected_instance().map(|i| i.home.clone()));
-        let key = native_status::fingerprint(&home, None);
+        // Asked on every frame of the Mods pages: read again only when something moved.
+        let key = self
+            .ui
+            .mods
+            .fingerprints
+            .read(&home, None, std::time::Instant::now());
         let moved = self
             .ui
             .mods
@@ -1117,7 +1260,7 @@ impl Launcher {
                     // Delay just the busy display retry, without holding any profile/cache lock.
                     std::thread::sleep(std::time::Duration::from_millis(100));
                 }
-                let _ = tx.send(Event::Local(worker_key, result));
+                let _ = tx.send(Event::Local(worker_key, Box::new(result)));
             });
             self.ui.mods.snapshot = Some(Snapshot {
                 key,
@@ -1141,16 +1284,13 @@ impl Launcher {
         {
             self.read_nightly_catalogue(false);
         }
-        let wants_v1_index = self
+        let has_registry_rows = self
             .ui
             .mods
             .snapshot
             .as_ref()
             .is_some_and(|s| !s.rows.entries.is_empty());
-        if wants_v1_index {
-            self.ensure_mod_catalog();
-        }
-        if matches!(self.ui.page, Page::Discover | Page::Project) {
+        if has_registry_rows || matches!(self.ui.page, Page::Discover | Page::Project) {
             self.ensure_v2_catalog(false);
         }
     }
@@ -1164,40 +1304,57 @@ impl Launcher {
             return;
         }
         if let Some(catalog) = (!force).then(sunrise::v2::known_index).flatten() {
+            let local = self.local_fits(&catalog.index, build.as_deref());
             let cards = model::discover_v2::cards(
                 &catalog.index,
                 build.as_deref(),
                 &crate::sheets::build_name,
+                &local,
             );
             let categories = model::discover_v2::categories(&cards);
+            let collections = model::discover_v2::collections(&catalog.index, &cards);
             let build_listed = model::discover_v2::build_listed(&catalog.index, build.as_deref());
+            self.ui.mods.v2_failure = None;
             self.ui.mods.v2_catalog_build = Some(build);
             self.ui.mods.v2_catalog = V2Catalog::Ready {
                 cards: cards.into(),
+                collections: collections.into(),
                 categories: categories.into(),
                 build_listed,
                 stale_warning: catalog.stale_warning,
                 from_cache: catalog.from_cache,
             };
+            self.start_local_fit();
             return;
         }
         self.ui.mods.v2_catalog_build = Some(build.clone());
         self.ui.mods.v2_catalog = V2Catalog::Loading;
+        self.ui.mods.v2_failure = None;
         let tx = self.ui.mods.tx.clone();
         std::thread::spawn(move || {
+            // Installed starts from the snapshot on disk while the network read is out.
+            if !force && sunrise::v2::read_saved_index().is_some() {
+                let _ = tx.send(Event::V2Saved);
+            }
             let loaded = if force {
                 sunrise::v2::refreshed_index()
             } else {
                 sunrise::v2::index()
             };
-            let result = loaded.map_err(|e| e.to_string()).map(|catalog| {
+            let result = loaded.map(|catalog| {
+                // What a running check finds shows once it answers.
+                let local =
+                    model::discover_v2::LocalFits::read(&catalog.index, build.as_deref(), false);
                 let cards = model::discover_v2::cards(
                     &catalog.index,
                     build.as_deref(),
                     &crate::sheets::build_name,
+                    &local,
                 );
                 let categories = model::discover_v2::categories(&cards);
+                let collections = model::discover_v2::collections(&catalog.index, &cards);
                 V2CatalogPayload {
+                    collections,
                     build_listed: model::discover_v2::build_listed(
                         &catalog.index,
                         build.as_deref(),
@@ -1212,24 +1369,6 @@ impl Launcher {
         });
     }
 
-    pub(crate) fn ensure_mod_catalog(&mut self) {
-        let game = self.mods_game();
-        if self.ui.mods.catalog_game.as_ref() == Some(&game)
-            && !matches!(self.ui.mods.catalog, Catalog::Idle)
-        {
-            return;
-        }
-        self.ui.mods.catalog_game = Some(game.clone());
-        self.ui.mods.catalog = Catalog::Loading;
-        let tx = self.ui.mods.tx.clone();
-        std::thread::spawn(move || {
-            let result = sunrise::index()
-                .ok()
-                .map(|index| model::cards(&index, &game));
-            let _ = tx.send(Event::Catalog(game, result));
-        });
-    }
-
     fn mods_page_scope(&self) -> OpenScope {
         let instance = self.selected_instance();
         OpenScope {
@@ -1240,60 +1379,41 @@ impl Launcher {
         }
     }
 
+    /// An installed mod's page that the signed registry doesn't list (a local archive, or one
+    /// from the old registry): drawn from its installed row, with nothing to fetch.
     fn mods_load_page(&mut self, id: String, from: Page, installed: Option<InstalledProject>) {
-        self.ui.mods.facts_open = false;
         crate::frame::scrolls("project").set_offset(gpui::point(px(0.), px(0.)));
-        let collection = installed.is_none() && self.is_collection(&id);
-        let load = !collection && !matches!(installed, Some(InstalledProject::Local(_)));
         let scope = self.mods_page_scope();
-        let game = scope.game.clone();
         self.ui.mods.page_request += 1;
         let request = self.ui.mods.page_request;
         self.ui.mods.open = Some(Open {
-            id: id.clone(),
+            id,
             installed,
-            collection,
+            collection: false,
             v2: false,
             request,
             scope,
             from,
-            page: None,
             v2_page: None,
             parent: None,
-        });
-        // Collections and local archives render from state already held by the launcher.
-        if !load {
-            return;
-        }
-        let tx = self.ui.mods.tx.clone();
-        let instance = self.selected_instance().cloned();
-        std::thread::spawn(move || {
-            let result = sunrise::index().and_then(|index| {
-                let trust = sunrise::trust_and_capabilities(&id, instance.as_ref(), &game);
-                let another = instance
-                    .as_ref()
-                    .is_some_and(|instance| sunrise::made_for_another_build(&id, instance, &game));
-                model::page(&index, &id, &game, trust, another)
-                    .map(Box::new)
-                    .ok_or_else(|| trf("{id} isn't a mod in Sunrise's registry.", &[("id", &id)]))
-            });
-            let _ = tx.send(Event::Page(request, result));
+            removing: Vec::new(),
         });
     }
 
     fn mods_load_v2_page(&mut self, id: String, from: Page) {
-        self.ui.mods.facts_open = false;
         crate::frame::scrolls("project").set_offset(gpui::point(px(0.), px(0.)));
         let scope = self.mods_page_scope();
         let exact_build = self.selected_exact_build();
         self.ui.mods.page_request += 1;
         let request = self.ui.mods.page_request;
         let immediate = sunrise::v2::known_index().map(|catalog| {
+            let local = self.local_fits(&catalog.index, exact_build.as_deref());
             model::discover_v2::page(
                 &catalog.index,
                 &id,
                 exact_build.as_deref(),
                 &crate::sheets::build_name,
+                &local,
             )
             .map(Box::new)
             .ok_or_else(|| trf("{id} isn't a mod in Sunrise's registry.", &[("id", &id)]))
@@ -1307,10 +1427,11 @@ impl Launcher {
             request,
             scope,
             from,
-            page: None,
             v2_page: immediate,
             parent: None,
+            removing: Vec::new(),
         });
+        self.ratings_for_page(&id);
         if !needs_fetch {
             return;
         }
@@ -1319,11 +1440,17 @@ impl Launcher {
             let result = sunrise::v2::index()
                 .map_err(|e| e.to_string())
                 .and_then(|catalog| {
+                    let local = model::discover_v2::LocalFits::read(
+                        &catalog.index,
+                        exact_build.as_deref(),
+                        false,
+                    );
                     model::discover_v2::page(
                         &catalog.index,
                         &id,
                         exact_build.as_deref(),
                         &crate::sheets::build_name,
+                        &local,
                     )
                     .map(Box::new)
                     .ok_or_else(|| trf("{id} isn't a mod in Sunrise's registry.", &[("id", &id)]))
@@ -1352,17 +1479,9 @@ impl Launcher {
     /// The installed mods as rows. Uses only the index served over HTTPS this run for registry
     /// names and statuses. Never asks the network or writes.
     fn rows(&self) -> Vec<Row> {
-        self.rows_with_index(sunrise::fetched_index().as_deref())
-    }
-
-    fn rows_with_index(&self, index: Option<&Index>) -> Vec<Row> {
         let Some(snap) = &self.ui.mods.snapshot else {
             return Vec::new();
         };
-        let game = snap.rows.managed.as_ref().map_or_else(
-            || self.mods_game(),
-            |managed| sunrise_launcher::backend::game_version(managed.base()),
-        );
         let unfit_updates = snap
             .rows
             .managed
@@ -1370,12 +1489,7 @@ impl Launcher {
             .map_or_else(BTreeSet::new, |managed| {
                 sunrise::known_unfit_updates(managed.base())
             });
-        let local_offers = if cfg!(debug_assertions) && sunrise::local() {
-            sunrise::known_index()
-        } else {
-            None
-        };
-        let v2 = sunrise::v2::known_index();
+        let v2 = sunrise::v2::shown_index();
         let build = snap
             .rows
             .managed
@@ -1385,14 +1499,12 @@ impl Launcher {
         let mut rows = model::rows(
             &snap.rows.entries,
             &model::World {
-                index,
-                game: &game,
                 v2: v2.as_ref().map(|catalog| &*catalog.index),
+                v2_failure: self.ui.mods.v2_failure.as_deref(),
                 build: build.as_deref(),
                 unfit_updates: &unfit_updates,
                 enabled: &snap.rows.enabled,
                 unbuilt: &snap.rows.unbuilt,
-                native_allowed: self.settings.native_mods_allowed_at.is_some(),
                 chosen: &snap.rows.chosen,
                 local: &snap.rows.local,
             },
@@ -1401,30 +1513,16 @@ impl Launcher {
         for row in &mut rows {
             let held = snap.rows.switch_held.get(&row.id);
             if let Some(reason) = held {
-                row.held_for = Some(crate::sheets::build_name(reason.build()));
+                row.held_for = Some(model::Hold {
+                    build: crate::sheets::build_name(reason.build()),
+                    reason: reason.clone(),
+                    retry: snap.rows.local_holds.contains(&row.id),
+                });
                 row.on = false;
                 if !matches!(row.need, Some(model::Need::TakenDown(_))) {
                     row.need = None;
                 }
                 regroup = true;
-            }
-            // An unsigned developer catalogue can offer an action, not vouch for an archive.
-            if let Some((offers, project)) = local_offers.as_deref().or(index).and_then(|offers| {
-                row.entry.as_ref().and_then(|entry| {
-                    offers
-                        .project(&entry.project)
-                        .map(|project| (offers, project))
-                })
-            }) {
-                if local_offers.is_some() {
-                    row.title.clone_from(&project.name);
-                    row.update = model::newer(offers, project, &row.version, &game, &unfit_updates);
-                    regroup = true;
-                }
-                if held.is_some() {
-                    row.update =
-                        model::newer_for_hold(offers, project, &row.version, &game, &unfit_updates);
-                }
             }
         }
         // A mod the game was made without isn't waiting for a build: it waits for its author.
@@ -1459,15 +1557,9 @@ impl Launcher {
         self.ui.mods.busy.is_some() || self.registry_stage().is_some()
     }
 
-    /// Build… on a row: the one native build path, which asks for permission first. The player
-    /// stays where they are: the play bar shows how far it is.
+    /// Build… on a row: the one native build path. The player stays where they are: the play bar shows how far it is.
     fn build(&mut self) {
         self.build_native();
-    }
-
-    /// Allow… on a row: the native-code question, with what it builds.
-    fn allow(&mut self) {
-        self.request_native_build_consent();
     }
 
     pub(super) fn open_url(url: &str, cx: &mut Context<Self>) {
@@ -1717,30 +1809,30 @@ mod enabled_tests {
             request: 2,
             scope: scope("current", "new-build", "26.3"),
             from: Page::Installed,
-            page: None,
             v2_page: None,
             parent: None,
+            removing: Vec::new(),
         };
-        open.finish(1, &current, Err("earlier request".into()));
-        open.finish(
+        open.finish_v2(1, &current, Err("earlier request".into()));
+        open.finish_v2(
             2,
             &scope("old", "new-build", "26.3"),
             Err("old profile".into()),
         );
-        open.finish(
+        open.finish_v2(
             2,
             &scope("current", "old-build", "26.3"),
             Err("old build".into()),
         );
-        open.finish(
+        open.finish_v2(
             2,
             &scope("current", "new-build", "26.2"),
             Err("old game".into()),
         );
-        assert!(open.page.is_none());
-        open.finish(2, &current, Err("current reply".into()));
-        open.finish(1, &current, Err("earlier request".into()));
-        assert!(matches!(open.page, Some(Err(why)) if why == "current reply"));
+        assert!(open.v2_page.is_none());
+        open.finish_v2(2, &current, Err("current reply".into()));
+        open.finish_v2(1, &current, Err("earlier request".into()));
+        assert!(matches!(open.v2_page, Some(Err(why)) if why == "current reply"));
     }
 
     #[test]
@@ -1921,5 +2013,19 @@ mod installed_refresh_tests {
         assert_eq!(mods.visible_notice(Some(&install)), Some(batch));
         mods.notice = None;
         assert_eq!(mods.visible_notice(None), Some(Ok(backup)));
+    }
+
+    #[test]
+    fn home_mod_labels_invalidate_when_unfit_updates_revision_changes() {
+        let cached = HomeModLabels {
+            inventory: 7,
+            unfit_revision: 3,
+            rows: Arc::new(HashMap::new()),
+        };
+        assert!(cached.matches(7, 3));
+        assert!(
+            !cached.matches(7, 4),
+            "a newly recorded unfit update must refresh Home's mod status even with unchanged inventory"
+        );
     }
 }

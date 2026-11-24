@@ -111,13 +111,7 @@ fn interrupted_prepare_retains_the_same_build_and_profile_exclusion() {
                 .unwrap();
             let cancellation = native_mods::Cancellation::default();
             let image = attempt
-                .exact_image(
-                    native_mods::Profile::Optimized,
-                    &cancellation,
-                    |_| {},
-                    None,
-                    None,
-                )
+                .exact_image(native_mods::Profile::Optimized, &cancellation, |_| {}, None)
                 .unwrap();
             let active = attempt.commit(&image, &cancellation).unwrap();
             assert_eq!(profile.active().unwrap(), Some(active.clone()));
@@ -132,10 +126,10 @@ fn interrupted_prepare_retains_the_same_build_and_profile_exclusion() {
 }
 
 #[test]
-fn game_replacements_repair_only_owned_row_fields_and_advance_the_same_base() {
+fn game_replacements_leave_registry_rows_alone_and_advance_the_same_base() {
     use serde_json::{json, Value};
     use sunrise_launcher_smod::{index, manifest, mod_list};
-    const CASE: &str = "managed_play::first::tests::game_replacements_repair_only_owned_row_fields_and_advance_the_same_base";
+    const CASE: &str = "managed_play::first::tests::game_replacements_leave_registry_rows_alone_and_advance_the_same_base";
     if std::env::var_os("PLAY_ADOPTION_FIXTURE").is_none() {
         let temp = tempfile::tempdir().unwrap();
         let root = backend::plain(temp.path().canonicalize().unwrap());
@@ -196,39 +190,13 @@ fn game_replacements_repair_only_owned_row_fields_and_advance_the_same_base() {
                 "stale game launched"
             ))
             .is_err());
-        // Play can adopt a local file as input, but an old matching path can't turn
-        // those new bytes into a registry archive. Only the proved release may restamp it.
-        let local = profile
-            .refresh(
-                native_mods::Profile::Optimized,
-                (&cancellation, None),
-                |_| {},
-                None,
-                None,
-                None,
-            )
-            .unwrap()
-            .unwrap();
-        assert_eq!(local.generation, previous.generation + 1);
-        assert_eq!(
-            serde_json::from_slice::<Value>(&fs::read(&path).unwrap()).unwrap(),
-            expected
-        );
-        previous = local;
-        let digest = index::sha256_file(&package).unwrap();
-        let registry: index::Index = serde_json::from_value(json!({"schema":1,"projects":[{
-            "id":"lantern", "kind":"mod", "name":"Lantern", "summary":"A test lamp",
-            "license":"MIT", "source":"https://example.invalid/lantern", "versions":[{
-                "version": version, "api": manifest::API, "game":"26.3",
-                "file":{"name":"lantern.smod", "url":"https://example.invalid/lantern.smod", "size":fs::metadata(&package).unwrap().len(),"sha256":digest}
-            }]
-        }]})).unwrap();
+        // Play adopts the new bytes as its input on the same base; the registry row stays as
+        // it was, since only a registry install or update restamps it.
         let current = profile
             .refresh(
                 native_mods::Profile::Optimized,
-                (&cancellation, None),
+                &cancellation,
                 |_| {},
-                Some(&registry),
                 None,
                 None,
             )
@@ -239,16 +207,14 @@ fn game_replacements_repair_only_owned_row_fields_and_advance_the_same_base() {
         assert_eq!(current.base, previous.base);
         assert_eq!(current.resources, previous.resources);
         assert_eq!(profile.active().unwrap(), Some(current.clone()));
-        assert_eq!(inputs(&home, None).unwrap(), current.inputs);
+        assert_eq!(inputs(&home).unwrap(), current.inputs);
+        assert_eq!(
+            serde_json::from_slice::<Value>(&fs::read(&path).unwrap()).unwrap(),
+            expected
+        );
         profile
             .verified_handoff(&current, &cancellation, |_| Ok::<_, String>(()))
             .unwrap();
-        expected["entries"][1]["version"] = version.into();
-        expected["entries"][1]["number"] = version.into();
-        expected["entries"][1]["checksum"] =
-            format!("SHA-256:{}", index::sha256_file(&package).unwrap()).into();
-        let actual: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
-        assert_eq!(actual, expected);
         previous = current;
     }
     write_package("1.3.0");
@@ -261,9 +227,8 @@ fn game_replacements_repair_only_owned_row_fields_and_advance_the_same_base() {
     assert!(profile
         .refresh(
             native_mods::Profile::Optimized,
-            (&cancellation, None),
+            &cancellation,
             |_| {},
-            None,
             None,
             None,
         )
@@ -552,7 +517,7 @@ fn home_read_recovers_the_first_switch_receipt_after_a_killed_commit() {
             BUILD,
             BUILD,
             &home,
-            inputs(&home, None).unwrap(),
+            inputs(&home).unwrap(),
             Generation::First {
                 profile: [4; 16],
                 resources: Resources::capture(BUILD, &stage).unwrap(),
@@ -649,7 +614,6 @@ fn home_read_recovers_the_first_switch_receipt_after_a_killed_commit() {
                 native_mods::Profile::Optimized,
                 &cancellation,
                 |_| {},
-                None,
                 None,
             )
             .unwrap();

@@ -186,7 +186,7 @@ pub(super) fn edit_github(
     let previous = {
         let _home = profile.lock_inputs()?;
         if let Some(source) = source {
-            if managed_play::inputs(&instance.home, None)? != source.before
+            if managed_play::inputs(&instance.home)? != source.before
                 || profile.active()?.as_ref() != source.active
             {
                 return Err(InstallError::Source(super::source::changed_source_target()));
@@ -211,7 +211,7 @@ pub(super) fn edit_github(
     if let Some(source) = source {
         if edit.base() != source.base
             || edit.current() != source.active
-            || managed_play::inputs(old.path(), None)? != source.before
+            || managed_play::inputs(old.path())? != source.before
         {
             return Err(InstallError::Source(super::source::changed_source_target()));
         }
@@ -229,18 +229,14 @@ pub(super) fn edit_github(
             packages,
             edit.current(),
             source.cancellation,
-            hooks.progress,
         )
         .map_err(InstallError::Source)?,
         _ => super::source::SourceAdd::default(),
     };
-    let home = additions.home(home);
-    let catalogue = super::super::fetched_index();
-    let check_graph =
-        || match manifest_conflict(home, catalogue.as_deref(), None, Side::Client, |_| false)? {
-            Some(conflict) => Err(InstallError::Refused(conflict.reason)),
-            None => Ok(()),
-        };
+    let check_graph = || match manifest_conflict(home, Side::Client, |_| false)? {
+        Some(conflict) => Err(InstallError::Refused(conflict.reason)),
+        None => Ok(()),
+    };
     match (source, previous.is_empty()) {
         (Some(_), true) => (), // Fresh source adds checked their whole catalogue plan above.
         (source, fresh) if source.is_some() || fresh => {
@@ -255,7 +251,7 @@ pub(super) fn edit_github(
         }
         _ => check_graph()?,
     }
-    let reviewed_inputs = managed_play::inputs(home, None)?;
+    let reviewed_inputs = managed_play::inputs(home)?;
     let review = if previous.is_empty() {
         None
     } else {
@@ -265,7 +261,7 @@ pub(super) fn edit_github(
         let (impact, suspect) = if source.is_some() || packages.len() != 1 || previous.len() != 1 {
             source_review(&instance.home, old.path(), home, &previous, packages)?
         } else {
-            let before = inventory(old.path(), None)?;
+            let before = inventory(old.path())?;
             let id = &packages[0].origin.id;
             let prior = before.get(id).ok_or_else(|| changed(id))?;
             let (suspect, unchecked) = mutations::update_worlds(home, [&prior.package])?;
@@ -291,7 +287,7 @@ pub(super) fn edit_github(
         Some((suspect, impact.into_evidence()))
     };
     let unchanged_candidate = || {
-        if managed_play::inputs(home, None)? != reviewed_inputs {
+        if managed_play::inputs(home)? != reviewed_inputs {
             return Err(
                 tr("The staged GitHub packages changed. Nothing was changed; try again.")
                     .to_owned(),
@@ -304,18 +300,7 @@ pub(super) fn edit_github(
         if !(source.authorize)(&additions.dependencies)? {
             return Err(InstallError::Cancelled);
         }
-    } else if backend::NativeGrant::read()?.is_none()
-        && !(hooks.native)(&NativeQuestion {
-            names: packages.iter().map(|p| p.package.name.clone()).collect(),
-            reviewed: false,
-            retry: false,
-        })?
-    {
-        return Err(InstallError::Cancelled);
     }
-    cancellation
-        .admit_native_work()
-        .map_err(|e| InstallError::Unproved(e.into()))?;
     if previous.is_empty() {
         return edit
             .publish_pending(home, reviewed_inputs, cancellation, || {
@@ -345,7 +330,6 @@ pub(super) fn edit_github(
             instance.native_profile,
             cancellation,
             |step| build_progress(step, proof_hooks.progress),
-            proof_hooks.registry_crates,
             None,
         );
         proof.map_err(|e| match &e {
@@ -425,7 +409,7 @@ pub(super) fn source_review(
     previous: &BTreeMap<String, github_mods::Origin>,
     entries: &[Entry<'_>],
 ) -> Result<(ChangeImpact, crate::worlds::SuspectMods), String> {
-    let before = inventory(original, None)?;
+    let before = inventory(original)?;
     let replaced = previous
         .keys()
         .map(|id| {
@@ -556,7 +540,7 @@ pub(super) fn stage_entries(
     active: Option<&managed_play::Active>,
     base: &str,
 ) -> Result<Staged, InstallError> {
-    let before = inventory(home, None)?;
+    let before = inventory(home)?;
     let mut result = Staged {
         off: Vec::new(),
         retired: BTreeSet::new(),
@@ -604,7 +588,7 @@ pub(super) fn stage_entries(
 
 fn check_fresh(home: &Path, id: &str) -> Result<(), InstallError> {
     let claims = browser_state::Installed::read(home).map_err(|e| e.details(trf))?;
-    let present = inventory(home, None)?;
+    let present = inventory(home)?;
     let collision = || {
         InstallError::Refused(trf(
             "{mod} is already installed from another source or location. Remove the existing mod first.",
@@ -651,7 +635,7 @@ pub(super) fn installed_origin(
             .check_other_claims(home, id, relative)
             .map_err(|e| e.render(trf))?;
     }
-    let packages = inventory(home, None)?;
+    let packages = inventory(home)?;
     let origin = packages
         .get(id)
         .and_then(|p| p.github_origin(home))

@@ -58,26 +58,6 @@ pub fn state(enabled: &[Mod], built: Option<&[Mod]>) -> State {
     }
 }
 
-/// Check at acceptance and again after session and jar preparation, just before handing off
-/// the game command. An allowed Play is not permission cached for the duration of preparation.
-pub fn check_permission(version: &str) -> Result<(), String> {
-    check_permission_in(version, &backend::data_dir())
-}
-
-fn check_permission_in(version: &str, data: &Path) -> Result<(), String> {
-    if native_mods::is_native(version)
-        && backend::Settings::load_from(data)
-            .native_mods_allowed_at
-            .is_none()
-    {
-        return Err(crate::i18n::tr(
-            "This profile plays a build made with native mods, and native mods are turned off. Choose another game build for it in Versions.",
-        )
-        .into());
-    }
-    Ok(())
-}
-
 /// A `.smod`'s digest as a build records it: its files without the uses table, which the
 /// mod tool packs beside the source but the build's own digest of the copied source never holds
 /// (else every mod packed with a uses table read Needs rebuild after each build).
@@ -185,69 +165,6 @@ fn enabled_files(home: &Path) -> Vec<(std::path::PathBuf, Mod)> {
         }
     }
     out
-}
-
-/// One package a build takes in, as the native-code question names it.
-#[derive(Clone, Debug, PartialEq)]
-pub struct BuildInput {
-    /// The manifest's id: the key of the on/off list.
-    pub id: String,
-    /// The package's file name in the game folder.
-    pub file: String,
-    pub registry: Registry,
-}
-
-/// What the registry says about a package's file.
-#[derive(Clone, Debug, PartialEq)]
-pub enum Registry {
-    /// This very file is listed for the package's id, under this name and artwork.
-    Listed { name: String, icon: Option<String> },
-    /// The registry lists no such file for that id.
-    NotListed,
-    /// The registry has taken this file or its project down, even if it still lists it.
-    Revoked,
-    /// The registry hasn't answered in this run, so nothing says whose file it is.
-    Unchecked,
-}
-
-/// What a build of game folder `home` takes in ([`enabled`]'s packages), each named from its own
-/// file: a package gets the registry's name only when its bytes are a file `index` lists for its
-/// id and has not taken down. A package someone put there under a registry mod's id stays an
-/// id and a file name.
-/// `index` is the registry's own answer (`sunrise::fetched_index`), never the copy kept in the
-/// game folder, which a package there could have written to list itself.
-pub fn build_inputs(
-    home: &Path,
-    index: Option<&sunrise_launcher_smod::index::Index>,
-) -> Vec<BuildInput> {
-    enabled_files(home)
-        .into_iter()
-        .map(|(path, (id, _, _))| {
-            let registry = match index {
-                None => Registry::Unchecked,
-                Some(index) => match sunrise_launcher_smod::index::sha256_file(&path) {
-                    Ok(hash) if index.revoked(&id, &hash).is_some() => Registry::Revoked,
-                    Ok(hash) => index
-                        .project(&id)
-                        .filter(|p| {
-                            p.versions
-                                .iter()
-                                .any(|v| v.file.sha256.eq_ignore_ascii_case(&hash))
-                        })
-                        .map_or(Registry::NotListed, |p| Registry::Listed {
-                            name: p.name.clone(),
-                            icon: p.icon.clone(),
-                        }),
-                    Err(_) => Registry::NotListed,
-                },
-            };
-            let file = path
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            BuildInput { id, file, registry }
-        })
-        .collect()
 }
 
 /// The native mods turned on in game folder `home` that pin Sunrise commit `revision`.
@@ -536,8 +453,9 @@ fn parse_built(about: &serde_json::Value) -> Vec<Mod> {
         .collect()
 }
 
-/// What [`state`] depends on, cheap to read on every frame: the folder, the version, the on/off
-/// list and each `.smod`'s size and time. The Mods page reads the mods again when it changes.
+/// What [`state`] depends on: the folder, the version, the on/off list and each `.smod`'s size
+/// and time. The Mods page reads the mods again when it changes. It reads every mod's file, so a
+/// page asking on every frame keeps it with [`Fingerprints`].
 pub fn fingerprint(home: &Path, version: Option<&str>) -> String {
     let mut out = format!("{}\n{version:?}\n", home.display());
     // The on/off list (`browser::mod_list::is_enabled`).
@@ -556,6 +474,90 @@ pub fn fingerprint(home: &Path, version: Option<&str>) -> String {
         let meta = fs::symlink_metadata(&path).ok();
         let time = meta.as_ref().and_then(|m| m.modified().ok());
         out += &format!("\n{} {:?} {time:?}", path.display(), meta.map(|m| m.len()));
+    }
+    out
+}
+
+/// How long [`Fingerprints`] trusts a glance before reading every mod again.
+pub const FULL_EVERY: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// [`fingerprint`] for a page that asks on every frame. A pack of a few hundred mods made the
+/// full read cost about 7 ms a frame (a `stat` of each archive and its origin, and a line for
+/// each), so it is kept, and read again only when a glance says something moved: the two mod
+/// folders, whose time changes when a mod is added, removed or renamed into place, the lists
+/// beside them, and the on/off list's text itself. A mod rewritten where it lies changes neither,
+/// so the full read is also redone every [`FULL_EVERY`], and the message pump asks for it when
+/// it is due ([`Fingerprints::due`]) so an idle page sees it too.
+#[derive(Default)]
+pub struct Fingerprints {
+    kept: Option<Kept>,
+}
+
+struct Kept {
+    home: std::path::PathBuf,
+    version: Option<String>,
+    glance: String,
+    full: String,
+    at: std::time::Instant,
+}
+
+impl Fingerprints {
+    /// [`fingerprint`]`(home, version)`, as of `now`.
+    pub fn read(&mut self, home: &Path, version: Option<&str>, now: std::time::Instant) -> String {
+        self.read_glanced(home, version, now, glance(home))
+    }
+
+    /// Whether the full read is due at `now`: a mod may have been rewritten where it lies.
+    pub fn due(&self, now: std::time::Instant) -> bool {
+        self.kept
+            .as_ref()
+            .is_some_and(|kept| now.saturating_duration_since(kept.at) >= FULL_EVERY)
+    }
+
+    fn read_glanced(
+        &mut self,
+        home: &Path,
+        version: Option<&str>,
+        now: std::time::Instant,
+        glance: String,
+    ) -> String {
+        if let Some(kept) = &self.kept {
+            if kept.home == home
+                && kept.version.as_deref() == version
+                && kept.glance == glance
+                && now.saturating_duration_since(kept.at) < FULL_EVERY
+            {
+                return kept.full.clone();
+            }
+        }
+        let full = fingerprint(home, version);
+        self.kept = Some(Kept {
+            home: home.to_owned(),
+            version: version.map(str::to_owned),
+            glance,
+            full: full.clone(),
+            at: now,
+        });
+        full
+    }
+}
+
+/// The few things whose time and size change whenever the mods do, but for a mod rewritten in
+/// place ([`Fingerprints`]). The on/off list is read whole, as [`fingerprint`] reads it: an edit
+/// of the same length within one tick of the file's time would change neither.
+fn glance(home: &Path) -> String {
+    let mut out = mod_list::selection_text(home);
+    for path in [
+        home.join(native_mods::INSTALLED),
+        home.join(sunrise_launcher_smod::mod_list::DIR),
+        home.join("mod-browser.json"),
+        home.join(sunrise_launcher_smod::index::browser_state::PENDING),
+        // The active build (`mod-browser/active-build.json`).
+        home.join(crate::profile_txn::POINTER),
+    ] {
+        let meta = fs::symlink_metadata(&path).ok();
+        let time = meta.as_ref().and_then(|m| m.modified().ok());
+        out += &format!("{:?} {time:?}\n", meta.map(|m| m.len()));
     }
     out
 }
@@ -613,7 +615,6 @@ mod tests {
         // Another mod called `ruby` is on, as its own file or its content says.
         mod_list::set_enabled(home.path(), "ruby", true).unwrap();
         assert!(enabled(home.path()).is_empty());
-        assert!(build_inputs(home.path(), None).is_empty());
     }
 
     #[test]
@@ -636,18 +637,6 @@ mod tests {
         assert_eq!(found.len(), 1);
         assert!(found[0].icon.is_err());
         assert!(enabled(home.path()).is_empty());
-    }
-
-    #[test]
-    fn permission_taken_back_while_preparing_blocks_native_spawn() {
-        let data = tempfile::tempdir().unwrap();
-        let settings = data.path().join("settings.json");
-        fs::write(&settings, r#"{"native_mods_allowed_at":123}"#).unwrap();
-        assert_eq!(check_permission_in("native-test", data.path()), Ok(()));
-
-        fs::write(&settings, "{}").unwrap();
-        assert!(check_permission_in("native-test", data.path()).is_err());
-        assert_eq!(check_permission_in("v1.2.3", data.path()), Ok(()));
     }
 
     #[test]
@@ -690,6 +679,89 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn a_kept_fingerprint_is_read_again_when_the_glance_moves_when_due_and_for_another_version() {
+        let home = tempfile::tempdir().unwrap();
+        let home = home.path();
+        let mods = home.join(sunrise_launcher_smod::mod_list::DIR);
+        fs::create_dir_all(&mods).unwrap();
+        fs::write(mods.join("a.smod"), b"one").unwrap();
+        let mut kept = Fingerprints::default();
+        let t0 = std::time::Instant::now();
+        let first = kept.read_glanced(home, None, t0, "a".into());
+        assert_eq!(first, fingerprint(home, None));
+
+        // A mod rewritten where it lies: the full fingerprint moves, the glance doesn't.
+        fs::write(mods.join("a.smod"), b"one, longer").unwrap();
+        assert_ne!(fingerprint(home, None), first);
+        assert_eq!(kept.read_glanced(home, None, t0, "a".into()), first, "kept");
+        assert!(!kept.due(t0));
+        // A glance that moved is read again at once.
+        let moved = kept.read_glanced(home, None, t0, "b".into());
+        assert_eq!(moved, fingerprint(home, None));
+
+        // Rewritten again: kept until the full read is due, then read.
+        fs::write(mods.join("a.smod"), b"one, longer still").unwrap();
+        let later = t0 + FULL_EVERY;
+        assert!(kept.due(later));
+        assert_eq!(
+            kept.read_glanced(home, None, later, "b".into()),
+            fingerprint(home, None)
+        );
+        assert!(!kept.due(later), "read again at its time");
+
+        // Only the version differs: the same folder, glance and clock are not enough.
+        let versioned = kept.read_glanced(home, Some("26.3"), later, "b".into());
+        assert_eq!(versioned, fingerprint(home, Some("26.3")));
+        assert_ne!(versioned, fingerprint(home, None));
+    }
+
+    #[test]
+    fn the_glance_sees_the_lists_text_and_times_it_watches() {
+        use std::time::{Duration, SystemTime};
+        let home = tempfile::tempdir().unwrap();
+        let home = home.path();
+        let at = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let set_time = |path: &Path, time: SystemTime| {
+            fs::File::options()
+                .write(true)
+                .open(path)
+                .unwrap()
+                .set_modified(time)
+                .unwrap();
+        };
+        // The on/off list edited to the same length, its time put back: still seen.
+        let list = home.join(mod_list::MODS_LIST);
+        fs::write(&list, "mod.a=true\n").unwrap();
+        set_time(&list, at);
+        let before = glance(home);
+        fs::write(&list, "mod.b=true\n").unwrap();
+        set_time(&list, at);
+        assert_ne!(glance(home), before, "which mods are on changed");
+
+        // The browser's list rewritten: its time moves.
+        let browser = home.join("mod-browser.json");
+        fs::write(&browser, b"{}").unwrap();
+        set_time(&browser, at);
+        let before = glance(home);
+        set_time(&browser, at + Duration::from_secs(1));
+        assert_ne!(glance(home), before);
+
+        // A mod added to a folder moves the folder's time (set here, not waited for).
+        #[cfg(unix)]
+        {
+            let mods = home.join(sunrise_launcher_smod::mod_list::DIR);
+            fs::create_dir_all(&mods).unwrap();
+            let set_dir = |time: SystemTime| {
+                fs::File::open(&mods).unwrap().set_modified(time).unwrap();
+            };
+            set_dir(at);
+            let before = glance(home);
+            set_dir(at + Duration::from_secs(1));
+            assert_ne!(glance(home), before);
+        }
+    }
 
     fn m(id: &str, version: &str) -> Mod {
         (id.into(), version.into(), None)
@@ -867,85 +939,6 @@ mod tests {
     }
 
     #[test]
-    fn a_local_package_never_takes_the_name_of_the_registry_mod_with_its_id() {
-        use std::io::Write;
-        let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/smod/tests/index");
-        let mut index = sunrise_launcher_smod::index::Index::parse(
-            &fs::read_to_string(fixtures.join("index-v1.json")).unwrap(),
-        )
-        .unwrap();
-        assert_eq!(index.project("coords_hud").unwrap().name, "Coordinates HUD");
-        let home = tempfile::tempdir().unwrap();
-        let folder = home.path().join(native_mods::INSTALLED);
-        fs::create_dir_all(&folder).unwrap();
-        // A package of someone's own under the registry mod's id, in a file named like its file.
-        let local = folder.join("coords_hud-0.1.0.smod");
-        let pin = "a".repeat(40);
-        let mut zip = zip::ZipWriter::new(fs::File::create(&local).unwrap());
-        let manifest = format!(
-            "id = 'coords_hud'\nname = 'Coordinates HUD'\nversion = '0.1.0'\napi = '0.2'\ncapabilities = ['registries']\n[native]\ngame = '26.3'\nsunrise = '{pin}'\nmixins = '{pin}'\n"
-        );
-        for (name, bytes) in [
-            ("sunrise-mod.toml", manifest.as_str()),
-            ("Cargo.toml", "[package]\nname = 'x'\nversion = '1'\n"),
-            ("src/lib.rs", "pub fn hooks() {}\n"),
-        ] {
-            zip.start_file(name, zip::write::SimpleFileOptions::default())
-                .unwrap();
-            zip.write_all(bytes.as_bytes()).unwrap();
-        }
-        zip.finish().unwrap();
-        mod_list::set_enabled(home.path(), "coords_hud", true).unwrap();
-        let input = |registry: Registry| BuildInput {
-            id: "coords_hud".into(),
-            file: "coords_hud-0.1.0.smod".into(),
-            registry,
-        };
-        let not_listed = [input(Registry::NotListed)];
-        let unchecked = [input(Registry::Unchecked)];
-        assert_eq!(build_inputs(home.path(), Some(&index)), not_listed);
-        assert_eq!(build_inputs(home.path(), None), unchecked);
-        // The same bytes as a file the registry lists for that id: the registry's name.
-        let listed = &mut index
-            .projects
-            .iter_mut()
-            .find(|p| p.id == "coords_hud")
-            .unwrap();
-        listed.versions[0].file.sha256 = sunrise_launcher_smod::index::sha256_file(&local).unwrap();
-        assert_eq!(
-            build_inputs(home.path(), Some(&index)),
-            [input(Registry::Listed {
-                name: "Coordinates HUD".into(),
-                icon: index.project("coords_hud").unwrap().icon.clone(),
-            })]
-        );
-        assert_eq!(build_inputs(home.path(), None), unchecked);
-        let hash = index.project("coords_hud").unwrap().versions[0]
-            .file
-            .sha256
-            .clone();
-        // The exact bytes still appear in the catalogue, but the takedown wins.
-        index.revoked.push(sunrise_launcher_smod::index::Revoked {
-            id: "coords_hud".into(),
-            sha256: Some(hash.clone()),
-            reason: "Test takedown".into(),
-            date: String::new(),
-        });
-        assert_eq!(
-            build_inputs(home.path(), Some(&index)),
-            [input(Registry::Revoked)]
-        );
-        assert_eq!(build_inputs(home.path(), None), unchecked);
-        index.revoked.clear();
-        // Listed under another project's id only: still not the registry's.
-        for p in &mut index.projects {
-            let own = p.id == "coords_hud";
-            p.versions[0].file.sha256 = if own { "0".repeat(64) } else { hash.clone() };
-        }
-        assert_eq!(build_inputs(home.path(), Some(&index)), not_listed);
-    }
-
-    #[test]
     fn a_build_made_in_another_mode_needs_a_build() {
         use native_mods::Profile::Optimized;
         assert_eq!(in_mode(State::UpToDate, None, Optimized), State::Outdated);
@@ -1092,17 +1085,5 @@ mod tests {
         assert!(!is_native_file("sunrise-native-mods-old/x.smod"));
         assert!(!is_native_file("sunrise-mods/zoom.smod"));
         assert!(!is_native_file("resourcepacks/x.zip"));
-    }
-
-    /// Old switches and notices never count as native-code consent.
-    #[test]
-    fn old_settings_with_the_native_mods_switch_still_read() {
-        let s: backend::Settings =
-            serde_json::from_str(r#"{"native_mods": true, "native_mods_noticed": true}"#).unwrap();
-        assert!(s.native_mods_allowed_at.is_none());
-        let s: backend::Settings = serde_json::from_str(r#"{"native_mods": false}"#).unwrap();
-        assert!(s.native_mods_allowed_at.is_none());
-        let saved = serde_json::to_string(&s).unwrap();
-        assert!(!saved.contains("native_mods"), "{saved}");
     }
 }

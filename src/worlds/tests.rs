@@ -691,3 +691,24 @@ fn reviewed_world_locks_refuse_an_aliased_session_file() {
         assert_eq!(fs::read(foreign).unwrap(), b"foreign");
     }
 }
+
+#[test]
+fn at_risk_catches_mods_recorded_only_in_level_dat_old() {
+    let home = tempfile::tempdir().unwrap();
+    let dir = home.path().join("saves/basin");
+    write_evidence(&dir.join("level.dat"), None);
+    write_evidence(
+        &dir.join("level.dat_old"),
+        Some((
+            "fml",
+            "LoadingModList",
+            Tag::List(vec![Tag::compound([("ModId", name("greeter"))])]),
+        )),
+    );
+
+    let flagged = at_risk(home.path(), &["greeter".into()]).unwrap();
+    assert_eq!(flagged.len(), 1);
+    assert_eq!(flagged[0].0.name, "Basin");
+    assert_eq!(flagged[0].1, ["greeter"]);
+    assert!(flagged[0].2);
+}

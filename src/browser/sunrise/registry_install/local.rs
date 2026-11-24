@@ -45,7 +45,7 @@ pub fn install_local(
         progress,
         approve,
     )?;
-    let checked_inputs = managed_play::inputs(next.path(), None)?;
+    let checked_inputs = managed_play::inputs(next.path())?;
     check_cancelled(cancellation)?;
     progress(InstallProgress::Publishing);
     let result = edit.publish_pending(next.path(), checked_inputs, cancellation, || {
@@ -84,7 +84,7 @@ pub fn install_local_at(
                 tr("Finish the profile's first Play before changing mods.").into(),
             ));
         }
-        let before = managed_play::inputs(home, None)?;
+        let before = managed_play::inputs(home)?;
         // Under Admission and the home lock: read the profile's own pointer, as Profile::active
         // does. display_active would refuse while any other profile publishes.
         let active = managed_play::Active::read_pointer(home)?;
@@ -105,9 +105,7 @@ pub fn install_local_at(
         let _lock =
             sunrise_launcher_smod::install_lock::lock_home(home).map_err(|e| at(home, e))?;
         managed_play::copy_install_inputs(home, next.path())?;
-        if managed_play::inputs(next.path(), None)? != before
-            || managed_play::inputs(home, None)? != before
-        {
+        if managed_play::inputs(next.path())? != before || managed_play::inputs(home)? != before {
             return Err(InstallError::Unproved(
                 tr(
                     "The profile changed while preparing this install. Nothing was changed; try again.",
@@ -125,15 +123,15 @@ pub fn install_local_at(
         progress,
         approve,
     )?;
-    let checked_inputs = managed_play::inputs(next.path(), None)?;
+    let checked_inputs = managed_play::inputs(next.path())?;
     check_cancelled(cancellation)?;
     progress(InstallProgress::Publishing);
     let result = (|| {
         let _lock =
             sunrise_launcher_smod::install_lock::lock_home(home).map_err(|e| at(home, e))?;
         crate::browser::installed::recover_game_install(home).map_err(String::from)?;
-        if managed_play::inputs(home, None)? != before
-            || managed_play::inputs(next.path(), None)? != checked_inputs
+        if managed_play::inputs(home)? != before
+            || managed_play::inputs(next.path())? != checked_inputs
         {
             return Err(tr(
                 "The profile changed while preparing this install. Nothing was changed; try again.",
@@ -152,8 +150,8 @@ pub fn install_local_at(
             } else {
                 None
             };
-            if managed_play::inputs(home, None)? != before
-                || managed_play::inputs(next.path(), None)? != checked_inputs
+            if managed_play::inputs(home)? != before
+                || managed_play::inputs(next.path())? != checked_inputs
             {
                 return Err(tr(
                     "The profile changed while preparing this install. Nothing was changed; try again.",
@@ -217,10 +215,10 @@ fn stage_and_review(
     check_regular_mod_dirs(live)?;
 
     let claims = browser_state::Installed::read(live).map_err(|e| e.details(trf))?;
-    let before = inventory(candidate, None)?;
+    let before = inventory(candidate)?;
     // The saved-world comparison reads the live profile, which staging never changes: the
     // candidate's copy of a replaced archive is overwritten or removed before the review.
-    let original = inventory(live, None)?;
+    let original = inventory(live)?;
     let enabled_before = mutations::enabled(candidate)?;
 
     let mut seen_ids = BTreeSet::new();
@@ -418,8 +416,8 @@ fn stage_and_review(
     // Verify the resulting candidate inventory has no corrupt archives, duplicate IDs, or
     // manifest conflicts before asking for world review or publishing.
     check_cancelled(cancellation)?;
-    let _ = inventory(candidate, None)?;
-    if let Some(conflict) = manifest_conflict(candidate, None, None, Side::Both, |_| false)? {
+    let _ = inventory(candidate)?;
+    if let Some(conflict) = manifest_conflict(candidate, Side::Both, |_| false)? {
         return Err(InstallError::Refused(conflict.reason));
     }
 
@@ -520,6 +518,92 @@ fn revalidate_claims(live: &Path, checks: &[(String, String)]) -> Result<(), Str
             .check_other_claims(live, id, rel)
             .map_err(|e| e.render(trf))?;
     }
+    Ok(())
+}
+
+/// Turn a held local or source mod back on in `instance`: its exact bytes go through the fit
+/// check and build for the profile's current build, and only a proved image is published,
+/// retiring the hold. A failed check returns what it found, and nothing changes.
+pub fn restore_held(
+    instance: &Instance,
+    identity: Identity,
+    id: &str,
+    cancellation: &native_mods::Cancellation,
+) -> Result<(), String> {
+    let mut profile =
+        Profile::open_for(&instance.home, None, Some(identity)).map_err(String::from)?;
+    let edit = profile.begin_pending_edit()?;
+    // A registry hold waits for its author's update; only local and source bytes are retried.
+    let (title, digest) = edit
+        .held(id)
+        .filter(|hold| {
+            !matches!(hold.source(), managed_play::HeldSource::Registry { .. })
+                && hold.matches_archive(&instance.home)
+        })
+        .map(|hold| {
+            let digest: String = hold.digest().iter().map(|b| format!("{b:02x}")).collect();
+            (hold.title().to_owned(), digest)
+        })
+        .ok_or_else(|| held_change_refusal(id).to_string())?;
+    let next = edit.candidate()?;
+    let packages = inventory(next.path())?;
+    let seen = packages
+        .get(id)
+        .ok_or_else(|| held_change_refusal(id).to_string())?;
+    let manifest = &seen.package.manifest;
+    // These exact bytes stay off once taken down: the signed index's digest takedowns reach local
+    // and source copies, so it is always asked, and an unreadable index refuses rather than
+    // skipping the check.
+    let catalog = crate::browser::sunrise::v2::change_index().map_err(|error| {
+        trf(
+            "Couldn't check {mod} against the registry's takedowns: {error}",
+            &[("mod", &title), ("error", &error.to_string())],
+        )
+    })?;
+    let takedown = catalog
+        .index
+        .revoked_by_sha256(&digest)
+        .map(|row| row.reason.clone());
+    if let Some(reason) = takedown {
+        return Err(trf(
+            "{mod} was taken down: {reason}",
+            &[("mod", &title), ("reason", &reason)],
+        ));
+    }
+    if manifest.side == Side::Server {
+        return Err(trf(
+            "{mod} runs only on servers, so it can't be turned on here.",
+            &[("mod", &manifest.name)],
+        ));
+    }
+    if manifest.api != sunrise_launcher_smod::manifest::API {
+        return Err(trf(
+            "{mod} needs mod API {api}, which this launcher doesn't run.",
+            &[("mod", &manifest.name), ("api", &manifest.api)],
+        ));
+    }
+    mutations::check_activation(next.path(), None, &[id])?;
+    mod_list::set_all_enabled(next.path(), &[id], true)?;
+    if let Some(conflict) =
+        manifest_conflict(next.path(), Side::Both, |_| false).map_err(|error| error.to_string())?
+    {
+        return Err(conflict.reason);
+    }
+    let proof = edit
+        .prove(
+            next.path(),
+            instance.native_profile,
+            cancellation,
+            |_| {},
+            None,
+        )
+        .map_err(String::from)?;
+    edit.publish_install(
+        proof,
+        cancellation,
+        &BTreeSet::from([id.to_owned()]),
+        || Ok(()),
+    )?;
     Ok(())
 }
 
@@ -787,12 +871,79 @@ mod tests {
         assert!(mods.join("camp_lanterns.smod").is_file());
         assert!(mods.join("camp_lanterns.origin.json").is_file());
 
-        let present = inventory(&home, None).unwrap();
+        let present = inventory(&home).unwrap();
         let staged =
             mutations::stage_removal(&home, &home, None, ["camp_lanterns"], &present).unwrap();
         assert_eq!(staged.archives.len(), 1);
         assert!(!mods.join("camp_lanterns.smod").exists());
         assert!(!mods.join("camp_lanterns.origin.json").exists());
+    }
+
+    #[test]
+    fn stage_removal_cleans_row_missing_display_field_and_catches_windows_competing_claim() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("profile");
+        let mods = home.join(smod_mod_list::DIR);
+        fs::create_dir_all(&mods).unwrap();
+        let bytes = Package::write_files(
+            "id = 'alpha'\nname = 'Alpha'\nversion = '1.0.0'\napi = '0.2'\nside = 'both'\n",
+            &[],
+        )
+        .unwrap();
+        fs::write(mods.join("alpha.smod"), &bytes).unwrap();
+        // Sunrise row missing display field `page`: cannot deserialize as installed::Entry, so
+        // `registry_claim` stays false, yet removal must still clean it up.
+        let file = format!("{}/alpha.smod", smod_mod_list::DIR);
+        let manifest_path = home.join(installed::MANIFEST);
+        fs::write(
+            &manifest_path,
+            serde_json::to_vec(&serde_json::json!({
+                "entries": [{
+                    "source": "sunrise",
+                    "kind": "mod",
+                    "project": "alpha",
+                    "file": file,
+                }]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let present = inventory(&home).unwrap();
+        assert!(
+            !present["alpha"].registry_claim,
+            "missing display field must not grant replacement permission"
+        );
+        mutations::stage_removal(&home, &home, None, ["alpha"], &present).unwrap();
+        assert!(!mods.join("alpha.smod").exists());
+        let after: serde_json::Value =
+            serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+        assert_eq!(after["entries"].as_array().unwrap().len(), 0);
+
+        // Now add a competing row with Windows-style `\` separators claiming alpha's receipt.
+        fs::write(mods.join("alpha.smod"), &bytes).unwrap();
+        let win_file = format!("{}\\alpha.smod", smod_mod_list::DIR);
+        fs::write(
+            &manifest_path,
+            serde_json::to_vec(&serde_json::json!({
+                "entries": [{
+                    "source": "other-source",
+                    "kind": "mod",
+                    "project": "other_owner",
+                    "file": win_file,
+                }]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let present = inventory(&home).unwrap();
+        let err = mutations::stage_removal(&home, &home, None, ["alpha"], &present)
+            .err()
+            .expect("competing Windows-style claim must block removal");
+        assert!(
+            err.to_string().contains("other_owner"),
+            "unexpected error: {err}"
+        );
     }
 
     // Reuses the saved-world helpers of `update_tests`, which build only there.

@@ -15,11 +15,8 @@ use std::{
 };
 use sunrise_launcher_smod::{manifest, mod_list};
 
-// These install from a local registry, which a release build refuses (registry_install.rs);
-// release.yml runs `cargo test --release`, so they run in debug only, like #204's fixture.
-#[cfg(debug_assertions)]
-#[path = "ordinary_play/install.rs"]
-mod install;
+#[path = "ordinary_play/remove.rs"]
+mod remove;
 
 const BUILD: &str = "developer-local";
 
@@ -102,7 +99,9 @@ exit 7
             .env("XDG_DATA_HOME", self.root.join("xdg"))
             .env("SUNRISE_LAUNCHER_DEVELOPER_OFFLINE", "1")
             .env("SUNRISE_NO_KEYCHAIN", "1")
-            .env("SUNRISE_TELEMETRY_URL", "off");
+            .env("SUNRISE_TELEMETRY_URL", "off")
+            // No registry index: Play's takedown check is skipped rather than fetched.
+            .env("SUNRISE_MOD_INDEX_V2", self.root.join("no-index"));
         cmd
     }
 
@@ -445,7 +444,7 @@ fn cli_persists_its_first_build_before_the_registry_replies() {
     let mut interrupted = Running(
         fixture
             .launcher(&["play"])
-            .env("SUNRISE_MOD_INDEX", &pipe)
+            .env("SUNRISE_MOD_INDEX_V2", &pipe)
             .spawn()
             .unwrap(),
     );
@@ -478,7 +477,8 @@ fn cli_persists_its_first_build_before_the_registry_replies() {
     assert!(!interrupted.0.wait().unwrap().success());
     drop(writer);
     fs::remove_file(&pipe).unwrap();
-    fs::write(&pipe, r#"{"schema":1,"projects":[]}"#).unwrap();
+    // An index that can't be verified only skips the takedown check: Play goes on.
+    fs::write(&pipe, "not a signed index").unwrap();
     fs::write(
         fixture.data.join("instances.json"),
         r#"{"instances":{"sunrise":{"version":"developer-other"}}}"#,
@@ -487,7 +487,7 @@ fn cli_persists_its_first_build_before_the_registry_replies() {
     fs::write(fixture.home.join("finish"), []).unwrap();
     let retried = fixture
         .launcher(&["play"])
-        .env("SUNRISE_MOD_INDEX", &pipe)
+        .env("SUNRISE_MOD_INDEX_V2", &pipe)
         .output()
         .unwrap();
     assert_eq!(

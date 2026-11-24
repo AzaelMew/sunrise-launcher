@@ -14,12 +14,11 @@ pub fn options() -> TitlebarOptions {
     }
 }
 
-/// Draw the macOS title bar under the native traffic lights: glass, or the side colour without
-/// it. The native title bar is transparent either way, so the bar is always drawn: without it the
+/// Draw the macOS title bar under the native traffic lights, in the sidebar's and the top bar's
+/// material. The native title bar is transparent, so the bar is always drawn: without it the
 /// page would start under the traffic lights. AppKit keeps its controls and window interactions.
 #[cfg(target_os = "macos")]
 pub fn render(theme: &Theme, _window: &mut Window, _cx: &mut App) -> Option<Div> {
-    use crate::glass;
     use gpui::{div, prelude::*, px};
 
     Some(
@@ -27,8 +26,7 @@ pub fn render(theme: &Theme, _window: &mut Window, _cx: &mut App) -> Option<Div>
             .relative()
             .flex_none()
             .h(px(32.))
-            .when(theme.glass, |bar| bar.child(glass::backdrop(0.)))
-            .when(!theme.glass, |bar| bar.bg(theme.side))
+            .bg(crate::paint::palette().chrome_plate())
             .text_color(theme.muted),
     )
 }
@@ -58,7 +56,7 @@ fn label() -> Div {
 /// Draw the launcher's Linux title bar when the platform uses client-side decorations.
 #[cfg(target_os = "linux")]
 pub fn render(theme: &Theme, window: &mut Window, cx: &mut App) -> Option<Div> {
-    use crate::{blocks, glass, mark};
+    use crate::{blocks, mark};
     use gpui::{
         div, prelude::*, px, Decorations, DispatchPhase, MouseButton, MouseMoveEvent, MouseUpEvent,
         Pixels, Point,
@@ -136,11 +134,10 @@ pub fn render(theme: &Theme, window: &mut Window, cx: &mut App) -> Option<Div> {
         .items_center()
         .h(px(32.))
         .font_family(sunrise_launcher_theme::glass::FONT)
-        .when(theme.glass, |bar| bar.child(glass::backdrop(0.)))
-        .when(!theme.glass, |bar| bar.bg(theme.side))
+        .bg(crate::paint::palette().chrome_plate())
         .text_color(theme.muted)
         .border_b_1()
-        .border_color(theme.outline)
+        .border_color(gpui::rgb(crate::paint::palette().divider))
         .child(drag);
 
     if controls.minimize {
@@ -367,7 +364,6 @@ pub fn apply_appearance(_: &Window, _: Appearance) {}
 #[cfg(target_os = "windows")]
 mod windows {
     use super::*;
-    use crate::glass;
     use crate::glass_ui::{color, hover_edge, white};
     use crate::{blocks, mark};
     use gpui::{div, prelude::*, px, Hsla, MouseButton, SharedString, Stateful, WindowControlArea};
@@ -527,11 +523,10 @@ mod windows {
                 .when(!window.is_maximized(), |bar| {
                     bar.pt(px(RESIZE_INSET)).px(px(RESIZE_INSET))
                 })
-                .when(theme.glass, |bar| bar.child(glass::backdrop(0.)))
-                .when(!theme.glass, |bar| bar.bg(theme.side))
+                .bg(crate::paint::palette().chrome_plate())
                 .text_color(theme.muted)
                 .border_b_1()
-                .border_color(theme.outline)
+                .border_color(gpui::rgb(crate::paint::palette().divider))
                 .child(drag)
                 .child(
                     div()

@@ -1,9 +1,8 @@
-//! Packs › Discover: resource and data packs from Modrinth, shader packs from Sunrise's registry
-//! and Modrinth, installed through the browser's checked path (`browser::installed`: checksum
-//! before anything is put in place). Each card names its source.
+//! Packs › Discover: resource, shader and data packs from Modrinth, installed through the
+//! browser's checked path (`browser::installed`: checksum before anything is put in place).
 //!
 //! **Scope.** Only packs of the chosen kind: no mods or modpacks come from here, and a hit of
-//! any other kind or source is dropped ([`keep`]).
+//! any other kind is dropped ([`keep`]).
 //!
 //! **Where a pack goes.** A resource or shader pack goes into the selected setup's folder. A
 //! data pack goes into the worlds the player ticks in the world picker (`data_packs`): there is
@@ -13,12 +12,14 @@
 //! **Nothing else changes.** Installing never turns a pack on, starts the game or edits options;
 //! it stays blocked while the game or another change runs, and holds Play and setup changes
 //! through the shared busy flag (`mutating`).
+use super::discover::MenuOption;
 use super::ui::{added_mark, browse_card, c, card, columns, dim, muted, tag};
 use super::*;
 use crate::frame::button;
 use crate::paint::palette;
 use std::path::Path;
-use sunrise_launcher::browser::{self, images, installed, Kind, Project, Query};
+use sunrise_launcher::browser::details::{category_label, Sort};
+use sunrise_launcher::browser::{self, images, installed, Kind, Project, Query, Source as _};
 use sunrise_launcher::worlds;
 
 /// How many hits one search asks for.
@@ -30,7 +31,7 @@ const TEXT_MAX: usize = 100;
 pub(super) enum Scope {
     #[default]
     Resource,
-    /// Iris-format zips from Modrinth and Sunrise's own `.sshader` packs from its registry.
+    /// Iris-format zips from Modrinth.
     Shader,
     Data,
 }
@@ -56,6 +57,18 @@ impl Scope {
     }
 }
 
+/// The filter row's choices, the same three Mods › Discover has.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) struct PackFilters {
+    /// One of the scope's categories, or all.
+    pub(super) category: Option<String>,
+    /// Off: only packs made for the game Sunrise plays. On: every pack of the kind, each marked
+    /// with how well it runs.
+    pub(super) show_all: bool,
+    /// None: by relevance with search text, else by downloads.
+    pub(super) sort: Option<Sort>,
+}
+
 pub(super) enum Status {
     Idle,
     Searching,
@@ -65,6 +78,9 @@ pub(super) enum Status {
 
 pub(super) struct PackState {
     pub(super) scope: Scope,
+    pub(super) filters: PackFilters,
+    /// The categories Modrinth offers for the scope, once they have been read.
+    pub(super) categories: Option<(Scope, Vec<String>)>,
     pub(super) results: Vec<Project>,
     pub(super) status: Status,
     /// The number of the latest search: only its answer is taken.
@@ -83,6 +99,8 @@ impl Default for PackState {
     fn default() -> Self {
         Self {
             scope: Scope::Resource,
+            filters: PackFilters::default(),
+            categories: None,
             results: Vec::new(),
             status: Status::Idle,
             seq: 0,
@@ -94,29 +112,26 @@ impl Default for PackState {
     }
 }
 
-/// The restricted Modrinth query for `scope`: its one kind, what runs on `game`, a bounded text
-/// and page.
-pub(super) fn query(scope: Scope, text: &str, game: &str) -> Query {
+/// The restricted Modrinth query for `scope`: its one kind, what runs on `game` unless Show all
+/// is on, the chosen category and sort, a bounded text and page.
+pub(super) fn query(scope: Scope, text: &str, game: &str, filters: &PackFilters) -> Query {
     let mut q = Query::new(text, scope.kind());
     q.text = q.text.chars().take(TEXT_MAX).collect();
     q.game = game.to_owned();
-    q.everything = false;
+    q.everything = filters.show_all;
+    q.filters.categories = filters.category.iter().cloned().collect();
+    q.filters.sort = filters.sort;
     q.limit = LIMIT;
     q
 }
 
 /// The hits a scope shows: Modrinth's, of the scope's kind only (a mod, modpack or other kind
-/// that a source answered anyway is dropped), each project once. Shader packs also come from
-/// Sunrise's registry (its own `.sshader` packs), and from there only.
+/// that a source answered anyway is dropped), each project once.
 pub(super) fn keep(scope: Scope, hits: Vec<Project>) -> Vec<Project> {
     let kind = scope.kind();
     let mut seen = std::collections::HashSet::new();
     hits.into_iter()
-        .filter(|p| p.kind == kind)
-        .filter(|p| {
-            p.source == SourceId::Modrinth
-                || (p.source == SourceId::Sunrise && kind == Kind::Shader)
-        })
+        .filter(|p| p.kind == kind && p.source == SourceId::Modrinth)
         .filter(|p| seen.insert((p.source, p.id.clone())))
         .collect()
 }
@@ -162,6 +177,8 @@ impl Launcher {
             return;
         }
         p.scope = scope;
+        // Each kind has its own categories.
+        p.filters.category = None;
         p.hint = None;
         p.results.clear();
         p.status = Status::Idle;
@@ -193,28 +210,95 @@ impl Launcher {
         let text = self.ui.mods.find.text().to_owned();
         let game = self.mods_game();
         let p = &mut self.ui.mods.packs;
-        let q = query(p.scope, &text, &game);
+        let q = query(p.scope, &text, &game, &p.filters);
         p.seq += 1;
         p.status = Status::Searching;
+        let read_categories = p.categories.as_ref().is_none_or(|(s, _)| *s != p.scope);
         let (seq, scope, tx) = (p.seq, p.scope, self.ui.mods.tx.clone());
         std::thread::spawn(move || {
-            let ask = |id| browser::source(id).search(&q);
-            let modrinth = ask(SourceId::Modrinth);
-            // Sunrise's own shader packs lead; the registry failing leaves Modrinth's.
-            let mut hits = match scope {
-                Scope::Shader => ask(SourceId::Sunrise).unwrap_or_default(),
-                _ => Vec::new(),
-            };
-            let result = match modrinth {
-                Ok(found) => {
-                    hits.extend(found);
-                    Ok(keep(scope, hits))
-                }
-                Err(_) if !hits.is_empty() => Ok(keep(scope, hits)),
-                Err(e) => Err(e),
-            };
+            let result = browser::modrinth::Modrinth
+                .search(&q)
+                .map(|hits| keep(scope, hits));
             let _ = tx.send(Event::Packs(seq, result));
+            if read_categories {
+                // Without them the menu offers only "All categories".
+                let found = browser::modrinth::categories(scope.kind()).unwrap_or_default();
+                let _ = tx.send(Event::PackCategories(scope, found));
+            }
         });
+    }
+
+    pub(super) fn pack_categories(&mut self, scope: Scope, found: Vec<String>) {
+        self.ui.mods.packs.categories = Some((scope, found));
+    }
+
+    /// The filter row, the one Mods › Discover draws: a category of the scope, Show all, sort.
+    /// Each choice searches again.
+    fn pack_filter_bar(&self, cx: &mut Context<Self>) -> Div {
+        let p = &self.ui.mods.packs;
+        let f = p.filters.clone();
+        let categories = match &p.categories {
+            Some((scope, found)) if *scope == p.scope => found.clone(),
+            _ => Vec::new(),
+        };
+        let category_now = f
+            .category
+            .as_deref()
+            .map_or_else(|| tr("All categories").to_owned(), category_label);
+        let category_options = || -> Vec<MenuOption> {
+            let pick = |category: Option<String>| -> Box<dyn Fn(&mut Launcher)> {
+                Box::new(move |this: &mut Launcher| {
+                    this.ui.mods.packs.filters.category = category.clone();
+                    this.pack_search();
+                })
+            };
+            std::iter::once((
+                tr("All categories").into(),
+                f.category.is_none(),
+                pick(None),
+            ))
+            .chain(categories.iter().map(|k| {
+                (
+                    category_label(k).into(),
+                    f.category.as_ref() == Some(k),
+                    pick(Some(k.clone())),
+                )
+            }))
+            .collect()
+        };
+        let sort_now = browser::details::Filters {
+            sort: f.sort,
+            ..Default::default()
+        }
+        .sort(self.ui.mods.find.text());
+        let sort_options = || -> Vec<MenuOption> {
+            Sort::ALL
+                .into_iter()
+                .map(|s| {
+                    (
+                        tr(s.label()).into(),
+                        sort_now == s,
+                        Box::new(move |this: &mut Launcher| {
+                            this.ui.mods.packs.filters.sort = Some(s);
+                            this.pack_search();
+                        }) as Box<dyn Fn(&mut Launcher)>,
+                    )
+                })
+                .collect()
+        };
+        let category_menu = self.discover_menu(&category_now, Menu::Category, category_options, cx);
+        let sort_menu = self.discover_menu(tr(sort_now.label()), Menu::Sort, sort_options, cx);
+        self.filter_bar(
+            category_menu,
+            f.show_all,
+            |this| {
+                let filters = &mut this.ui.mods.packs.filters;
+                filters.show_all = !filters.show_all;
+                this.pack_search();
+            },
+            sort_menu,
+            cx,
+        )
     }
 
     pub(super) fn pack_answer(&mut self, seq: u64, result: Result<Vec<Project>, String>) {
@@ -369,7 +453,6 @@ impl Launcher {
         if matches!(self.ui.mods.packs.status, Status::Idle) {
             self.pack_search();
         }
-        let header = self.mods_header(false, focus, window, cx);
         let scope = self.ui.mods.packs.scope;
         let kinds = Scope::ALL
             .into_iter()
@@ -392,17 +475,12 @@ impl Launcher {
         if scope == Scope::Data {
             self.data_list(cx);
         }
-        let page = div()
-            .size_full()
-            .flex()
-            .flex_col()
-            .gap(px(14.))
-            .p(px(24.))
-            .text_color(c(palette().text))
-            .child(header)
-            .children(self.strip(cx))
+        let filters = self.pack_filter_bar(cx);
+        let page = self
+            .discover_shell(window, focus, cx)
             .child(kinds)
-            .child(from);
+            .child(from)
+            .child(filters);
         let added: HashSet<(SourceId, String)> = self
             .ui
             .mods
@@ -553,7 +631,6 @@ impl Launcher {
                 .flex_1()
                 .min_h_0()
                 .overflow_y_scroll()
-                .pr(px(14.))
                 .child(body),
             &self.theme,
         ))
@@ -577,13 +654,13 @@ fn install(
     game: &str,
     progress: &dyn Fn(&str, f32),
 ) -> Result<String, String> {
-    let source = browser::source(project.source);
+    let source = browser::modrinth::Modrinth;
     let _lock = browser::try_lock_home(home).ok_or_else(|| {
         tr("This profile is busy. Try again when the operation finishes.").to_string()
     })?;
     match project.kind {
         Kind::ResourcePack | Kind::Shader => {
-            let done = installed::install(&*source, project, false, home, game, progress)?;
+            let done = installed::install(&source, project, false, home, game, progress)?;
             let names: Vec<String> = done
                 .iter()
                 .map(|e| format!("{} {}", e.title, e.number))

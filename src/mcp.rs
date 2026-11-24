@@ -135,7 +135,7 @@ impl Session {
                             jars::prepare_for_command(cmd, jar_permission)
                                 .map_err(|e| e.to_string())
                         },
-                        (&native_mods::Cancellation::default(), None),
+                        &native_mods::Cancellation::default(),
                         |event| {
                             if let managed_play::Progress::HookLine(line) = event {
                                 let mut tail = hook_tail.borrow_mut();

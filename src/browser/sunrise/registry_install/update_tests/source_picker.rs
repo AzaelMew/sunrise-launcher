@@ -134,7 +134,6 @@ fn pasted_sources_prove_only_the_selected_packages_together() {
                 ["helper_mod", "main_mod"]
             );
             // The paste goes through real deferred publication and leaves a readable receipt.
-            backend::Settings::default().allow_native_mods().unwrap();
             apply_sources(
                 &fixture.instance,
                 identity,
@@ -143,10 +142,7 @@ fn pasted_sources_prove_only_the_selected_packages_together() {
                 SourceHooks {
                     install: InstallHooks {
                         progress: &|_| {},
-                        native: &|_| panic!("source permission has its own gate"),
-                        registry_crates: None,
                         continue_after_failure: &|_| false,
-                        resolve: None,
                         cancellation: None,
                     },
                     cancellation: &cancel,
@@ -285,10 +281,7 @@ fn pasted_source_same_repo_refreshes_and_other_repo_stays_refused() {
                 SourceHooks {
                     install: InstallHooks {
                         progress: &|_| {},
-                        native: &|_| Ok(true),
-                        registry_crates: None,
                         continue_after_failure: &|_| false,
-                        resolve: None,
                         cancellation: None,
                     },
                     cancellation: &cancel,
@@ -336,10 +329,7 @@ fn pasted_source_same_repo_refreshes_and_other_repo_stays_refused() {
                 SourceHooks {
                     install: InstallHooks {
                         progress: &|_| {},
-                        native: &|_| Ok(true),
-                        registry_crates: None,
                         continue_after_failure: &|_| false,
-                        resolve: None,
                         cancellation: None,
                     },
                     cancellation: &cancel,

@@ -214,11 +214,13 @@ fn read(path: &Path) -> Option<World> {
     scanned_world(path).ok().flatten().map(|s| s.world)
 }
 
-/// A folder with either level file is a world. Use the same recovery order as the game;
-/// if neither is readable it is still a world, of unknown mods.
+/// A folder with either level file is a world. Display metadata follows the game's recovery order
+/// (`level.dat`, then `level.dat_old`), while mod lists are unioned across both readable files so
+/// a mod recorded only in `level.dat_old` is never missed. If neither is readable, the world's
+/// mod list is unknown.
 fn scanned_world(path: &Path) -> std::io::Result<Option<Scanned>> {
     let mut changed = None;
-    let mut root = None;
+    let mut roots: Vec<Tag> = Vec::new();
     for file in ["level.dat", "level.dat_old"] {
         let dat = path.join(file);
         let meta = match fs::symlink_metadata(&dat) {
@@ -228,22 +230,24 @@ fn scanned_world(path: &Path) -> std::io::Result<Option<Scanned>> {
         };
         changed.get_or_insert_with(|| meta.modified().unwrap_or(UNIX_EPOCH));
         if dat.is_file() {
-            root = level_dat(&dat).filter(|r| matches!(r.get("Data"), Some(Tag::Compound(_))));
-            if root.is_some() {
-                break;
+            if let Some(parsed) =
+                level_dat(&dat).filter(|r| matches!(r.get("Data"), Some(Tag::Compound(_))))
+            {
+                roots.push(parsed);
             }
         }
     }
     let Some(changed) = changed else {
         return Ok(None);
     };
+    let root = roots.first();
     let folder = path
         .file_name()
         .unwrap_or_default()
         .to_string_lossy()
         .into_owned();
     let known = root.is_some();
-    let data = root.as_ref().and_then(|r| r.get("Data"));
+    let data = root.and_then(|r| r.get("Data"));
     let field = |key: &str| data.and_then(|d| d.get(key));
     let number = |tag: Option<&Tag>| match tag {
         Some(Tag::Byte(v)) => i64::from(*v),
@@ -292,16 +296,21 @@ fn scanned_world(path: &Path) -> std::io::Result<Option<Scanned>> {
             .filter(|id| !id.is_empty())
             .collect()
     };
-    let mut mods = listed(
-        root.as_ref()
-            .and_then(|r| r.get("fml"))
-            .and_then(|fml| fml.get("LoadingModList")),
-    );
-    mods.extend(listed(
-        root.as_ref()
-            .and_then(|r| r.get("sunrise"))
-            .and_then(|sunrise| sunrise.get("ContentModList")),
-    ));
+    let mut mods = Vec::new();
+    for level in &roots {
+        for id in listed(level.get("fml").and_then(|fml| fml.get("LoadingModList")))
+            .into_iter()
+            .chain(listed(
+                level
+                    .get("sunrise")
+                    .and_then(|sunrise| sunrise.get("ContentModList")),
+            ))
+        {
+            if !mods.contains(&id) {
+                mods.push(id);
+            }
+        }
+    }
     let world = World {
         name: text(field("LevelName"))
             .filter(|n| !n.trim().is_empty())

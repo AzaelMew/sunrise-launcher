@@ -2,7 +2,7 @@
 use super::*;
 use crate::mods_page::install::{SourcePicks, SourceTarget};
 use std::collections::BTreeMap;
-use sunrise_launcher::browser::sunrise::{PreparedSource, SourceError, SourceRequest};
+use sunrise_launcher::browser::sunrise::{PreparedSource, SourceError, SourceProof, SourceRequest};
 use sunrise_launcher::github_mods::{Origin, SourceTrack};
 use sunrise_launcher::native_mods::Cancellation;
 
@@ -32,6 +32,9 @@ pub(in crate::mods) struct CheckedUpdates {
     /// The installed mods' fingerprint the check ran against (`native_status::fingerprint`):
     /// a finding holds only while the mods are as they were.
     inputs: String,
+    /// The installer's own proof (profile identity, base, active state, exact mod inputs hash
+    /// and cached base build). Only offers proved against the exact same state carry over.
+    proof: Option<SourceProof>,
     only: Option<String>,
     target: Option<SourceTarget>,
     candidates: BTreeMap<String, (Origin, PreparedSource)>,
@@ -283,9 +286,12 @@ impl Launcher {
         let refresh_catalogue = !self.nightly_catalogue_current();
         let tx = self.ui.mods.tx.clone();
         std::thread::spawn(move || {
+            let proof =
+                SourceProof::capture(target.instance(), target.identity(), target.base()).ok();
             let mut checked = CheckedUpdates {
                 scope,
                 inputs,
+                proof,
                 only,
                 target: None,
                 candidates: BTreeMap::new(),
@@ -334,9 +340,19 @@ impl Launcher {
                         &cancellation,
                     ) {
                         Ok(prepared) => {
-                            checked
-                                .candidates
-                                .insert(origin.id.clone(), (origin, prepared));
+                            if checked.proof.as_ref() == Some(prepared.proof()) {
+                                checked
+                                    .candidates
+                                    .insert(origin.id.clone(), (origin, prepared));
+                            } else {
+                                checked.issues.insert(
+                                    origin.id,
+                                    SourceError::Changed(
+                                        tr("The profile or game build changed. Check the source again; nothing was changed.")
+                                            .into(),
+                                    ),
+                                );
+                            }
                         }
                         Err(error) => {
                             checked.issues.insert(origin.id, error);
@@ -367,9 +383,6 @@ impl Launcher {
     }
 
     pub(in crate::mods) fn source_update_version(&self, origin: &Origin) -> Option<&str> {
-        if !self.nightly_catalogue_current() {
-            return None;
-        }
         let (predecessor, prepared) = self.source_updates_here()?.candidates.get(&origin.id)?;
         (predecessor == origin).then_some(prepared.origin().version.as_str())
     }
@@ -384,9 +397,20 @@ impl Launcher {
             return None;
         }
         let checked = self.source_updates_here()?;
-        (checked.only.as_deref() == only)
-            .then_some(checked.notice.as_deref())
-            .flatten()
+        if checked.only.as_deref() == only {
+            if let Some(notice) = checked.notice.as_deref() {
+                return Some(notice);
+            }
+        }
+        // Last-known offers stay visible while the catalogue is stale; say so beside them.
+        if !self.nightly_catalogue_current()
+            && only.map_or(!checked.candidates.is_empty(), |id| {
+                checked.candidates.contains_key(id)
+            })
+        {
+            return Some(tr("No source updates were checked while offline."));
+        }
+        None
     }
 
     /// The last findings, while the installed mods are still the ones they were proved against.
@@ -425,22 +449,21 @@ impl Launcher {
             .filter(model::bulk_updatable)
             .map(|row| row.id)
             .collect();
-        let Some((target, sources)) = self.take_source_updates(None) else {
-            if !registry.is_empty() {
-                self.ask_update(false);
+        // Source mods and registry mods update as two jobs, sources first.
+        if let Some((target, sources)) = self.take_source_updates(None) {
+            self.ui.mods.notice = None;
+            self.mods.message = None;
+            if let Err(error) = self.queue_sources(target, sources) {
+                self.ui.mods.notice = Some(Err(error));
+                return;
             }
-            return;
-        };
-        self.ui.mods.notice = None;
-        self.mods.message = None;
-        let result = if registry.is_empty() {
-            self.queue_sources(target, sources)
-        } else {
-            self.queue_all_mod_updates(target, registry, displayed_names, sources)
-        };
-        if let Err(error) = result {
-            self.ui.mods.notice = Some(Err(error));
         }
+        self.submit_registry_change(
+            crate::mods_page::install::Kind::UpdateAllV2,
+            "update-all",
+            registry,
+            displayed_names,
+        );
     }
 
     fn take_source_updates(
@@ -491,10 +514,10 @@ impl Launcher {
     }
 }
 
-/// What a check found, laid over the last one. Only findings proved against the same profile,
-/// build and installed mods carry over. A profile-wide check replaces them; one project's check
-/// replaces only that project's offer or issue. A check that couldn't run (offline) keeps them
-/// and only says so.
+/// What a check found, laid over the last one. Only findings proved against the exact same
+/// profile identity, active state, mod inputs and cached base build carry over. A profile-wide
+/// check replaces them; one project's check replaces only that project's offer or issue. A check
+/// that couldn't run (offline) keeps them and only says so.
 fn merge_checked(previous: Option<CheckedUpdates>, checked: CheckedUpdates) -> CheckedUpdates {
     let same_target = |earlier: &Option<SourceTarget>| match (earlier, &checked.target) {
         (Some(earlier), Some(now)) => {
@@ -503,13 +526,20 @@ fn merge_checked(previous: Option<CheckedUpdates>, checked: CheckedUpdates) -> C
         (_, None) => true,
         (None, Some(_)) => false,
     };
+    let Some(now_proof) = checked.proof.as_ref() else {
+        return checked;
+    };
     let Some(mut merged) = previous.filter(|earlier| {
         earlier.scope == checked.scope
             && earlier.inputs == checked.inputs
+            && earlier.proof.as_ref() == Some(now_proof)
             && same_target(&earlier.target)
     }) else {
         return checked;
     };
+    merged
+        .candidates
+        .retain(|_, (_, prepared)| prepared.proof() == now_proof);
     if checked.target.is_some() {
         let Some(id) = checked.only.clone() else {
             return checked;
@@ -517,6 +547,7 @@ fn merge_checked(previous: Option<CheckedUpdates>, checked: CheckedUpdates) -> C
         merged.candidates.remove(&id);
         merged.issues.remove(&id);
         merged.target = checked.target;
+        merged.proof = checked.proof;
         merged.candidates.extend(checked.candidates);
         merged.issues.extend(checked.issues);
     }
@@ -562,52 +593,471 @@ fn source_for_update(predecessor: &Origin) -> Result<Option<Source>, sources::Fa
 
 #[cfg(test)]
 mod tests {
+    #![cfg_attr(not(debug_assertions), allow(dead_code, unused_imports))]
     use super::*;
+    use std::fs;
+    use std::process::Command;
+    use std::time::SystemTime;
+    use sunrise_launcher::browser::mod_list;
+    use sunrise_launcher::github_mods::{self, AddedFrom, SourceOrigin};
 
+    const CLIENT_BIN: &str = if cfg!(windows) {
+        "sunrise-client.exe"
+    } else {
+        "sunrise-client"
+    };
+
+    fn run_in_scratch(test_name: &str, body: impl FnOnce(&Path)) {
+        const CHILD: &str = "SUNRISE_NIGHTLY_OFFER_TEST";
+        if std::env::var_os(CHILD).is_none() {
+            let root = tempfile::tempdir().unwrap();
+            let nowhere = "http://127.0.0.1:9";
+            let status = Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", test_name])
+                .env(CHILD, "1")
+                .env("SUNRISE_LAUNCHER_HOME", root.path().join("launcher"))
+                .env("SUNRISE_HOME", root.path().join("home"))
+                .env(
+                    "SUNRISE_LAUNCHER_LOCATION_FILE",
+                    root.path().join("location.json"),
+                )
+                .env("SUNRISE_NO_KEYCHAIN", "1")
+                .env("SUNRISE_TELEMETRY_URL", "off")
+                .env("SUNRISE_LAUNCHER_NO_SELF_UPDATE", "1")
+                .env("XDG_DATA_HOME", root.path().join("data"))
+                .env("XDG_CONFIG_HOME", root.path().join("config"))
+                .env("HTTPS_PROXY", nowhere)
+                .env("HTTP_PROXY", nowhere)
+                .env("ALL_PROXY", nowhere)
+                .env_remove("NO_PROXY")
+                .env_remove("SUNRISE_GITHUB_MIRROR")
+                .env("SUNRISE_SOURCE_FIXTURES", root.path().join("github"))
+                .status()
+                .unwrap();
+            assert!(status.success());
+            return;
+        }
+        body(&backend::game_home());
+    }
+
+    fn setup_prepared_offer(
+        home: &Path,
+        base: &str,
+    ) -> (SourceTarget, Origin, PreparedSource, PathBuf, PathBuf) {
+        let base_dir = backend::version_dir(base);
+        fs::create_dir_all(&base_dir).unwrap();
+        fs::write(base_dir.join(".installed"), b"").unwrap();
+        let client_path = base_dir.join(CLIENT_BIN);
+        fs::write(&client_path, b"base-x64-binary").unwrap();
+        let pin_rev = "a".repeat(40);
+        fs::write(
+            base_dir.join("developer.json"),
+            format!(r#"{{"revision":"{pin_rev}"}}"#),
+        )
+        .unwrap();
+        fs::write(
+            base_dir.join("research-lock.json"),
+            format!(
+                r#"{{"minecraft":{{"version":"{}"}}}}"#,
+                backend::PINNED_GAME
+            ),
+        )
+        .unwrap();
+
+        fs::create_dir_all(home.join("mods")).unwrap();
+        let target = SourceTarget::fixture(home, base);
+
+        let fixtures = PathBuf::from(std::env::var_os("SUNRISE_SOURCE_FIXTURES").unwrap());
+        let repo = fixtures.join("repos/Fixture/OfferMod");
+        fs::create_dir_all(&repo).unwrap();
+        let git = |args: &[&str]| {
+            let output = Command::new("git")
+                .current_dir(&repo)
+                .args([
+                    "-c",
+                    "user.name=Fixture",
+                    "-c",
+                    "user.email=fixture@example.invalid",
+                    "-c",
+                    "commit.gpgSign=false",
+                    "-c",
+                    "core.hooksPath=/dev/null",
+                ])
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            String::from_utf8(output.stdout).unwrap().trim().to_owned()
+        };
+        git(&["init", "-q", "--initial-branch=main", "--template="]);
+        let write_mod = |version: &str| {
+            let manifest = format!(
+                "id = 'offer_mod'\nname = 'Offer Mod'\nversion = '{version}'\napi = '0.2'\nside = 'both'\ncapabilities = ['registries']\n[native]\nsunrise = '{pin_rev}'\nmixins = '{}'\ngame = '{}'\n",
+                "c".repeat(40),
+                backend::PINNED_GAME,
+            );
+            fs::create_dir_all(repo.join("src")).unwrap();
+            fs::write(repo.join("sunrise-mod.toml"), &manifest).unwrap();
+            fs::write(
+                repo.join("Cargo.toml"),
+                format!("[package]\nname = 'offer_mod'\nversion = '{version}'\n"),
+            )
+            .unwrap();
+            fs::write(repo.join("src/lib.rs"), b"pub fn fixture() {}\n").unwrap();
+            manifest
+        };
+        let manifest1 = write_mod("1.0.0");
+        git(&["add", "."]);
+        git(&["commit", "-qm", "v1"]);
+        let sha1 = git(&["rev-parse", "HEAD"]);
+
+        let api = fixtures.join("api/repos/Fixture");
+        let heads = api.join("OfferMod/git/ref/heads");
+        let commits = api.join("OfferMod/git/commits");
+        fs::create_dir_all(&heads).unwrap();
+        fs::create_dir_all(&commits).unwrap();
+        fs::write(
+            api.join("OfferMod.json"),
+            r#"{"id":77,"full_name":"Fixture/OfferMod","default_branch":"main","private":false}"#,
+        )
+        .unwrap();
+        let write_ref = |sha: &str, manifest: &str| {
+            let raw = fixtures.join("raw/Fixture/OfferMod").join(sha);
+            fs::create_dir_all(&raw).unwrap();
+            fs::write(raw.join("sunrise-mod.toml"), manifest).unwrap();
+            fs::write(
+                heads.join("main.json"),
+                format!(
+                    r#"{{"ref":"refs/heads/main","object":{{"type":"commit","sha":"{sha}"}}}}"#
+                ),
+            )
+            .unwrap();
+            fs::write(
+                commits.join(format!("{sha}.json")),
+                format!(r#"{{"sha":"{sha}"}}"#),
+            )
+            .unwrap();
+        };
+        write_ref(&sha1, &manifest1);
+
+        // Install v1.0.0 through the real source installer so receipt, archive and mod list match.
+        let source = Source::for_origin(
+            "offer_mod",
+            "Fixture/OfferMod",
+            77,
+            "sunrise-mod.toml",
+            sources::Tracker::Branch("main".into()),
+        )
+        .unwrap();
+        let pin1 = sources::resolve(&source, true).unwrap();
+        let cancel = Cancellation::default();
+        let packed = sunrise::pack_sources(&[pin1], AddedFrom::Discover, &cancel)
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        sunrise::add_sources(
+            target.instance(),
+            target.identity(),
+            target.base(),
+            packed,
+            sunrise::SourceHooks {
+                install: sunrise::InstallHooks {
+                    progress: &|_| {},
+                    continue_after_failure: &|_| false,
+                    cancellation: Some(&cancel),
+                },
+                cancellation: &cancel,
+                authorize: &|_, _| Ok(true),
+                approve_worlds: &|_| true,
+            },
+        )
+        .unwrap();
+        let origin = github_mods::origin(home, "offer_mod").unwrap();
+        assert_eq!(origin.version, "1.0.0");
+        assert!(matches!(
+            origin.source.as_ref().map(|s: &SourceOrigin| &s.track),
+            Some(SourceTrack::Branch(b)) if b == "main"
+        ));
+
+        // Add an unpacked content mod whose internal file edits don't change native_status::fingerprint.
+        let unpacked = home.join("sunrise-mods/unpacked_content");
+        fs::create_dir_all(unpacked.join("assets")).unwrap();
+        fs::write(
+            unpacked.join("sunrise-mod.toml"),
+            "id = 'unpacked_content'\nname = 'Unpacked Content'\nversion = '1.0.0'\napi = '0.2'\nside = 'both'\ncapabilities = ['registries']\n",
+        )
+        .unwrap();
+        let unpacked_data = unpacked.join("assets/data.txt");
+        fs::write(&unpacked_data, b"before").unwrap();
+        mod_list::set_enabled(home, "unpacked_content", true).unwrap();
+
+        // Advance the fixture repo to v1.1.0 and prepare a real update offer.
+        let manifest2 = write_mod("1.1.0");
+        git(&["add", "."]);
+        git(&["commit", "-qm", "v2"]);
+        let sha2 = git(&["rev-parse", "HEAD"]);
+        write_ref(&sha2, &manifest2);
+
+        let pin2 = sources::resolve(&source, true).unwrap();
+        let prepared = sunrise::prepare_source(
+            target.instance(),
+            target.identity(),
+            target.base(),
+            SourceRequest::Update {
+                pin: pin2,
+                predecessor: Box::new(origin.clone()),
+            },
+            &cancel,
+        )
+        .unwrap();
+        (target, origin, prepared, unpacked_data, client_path)
+    }
+
+    #[cfg(debug_assertions)] // source fixtures are off in release builds
     #[test]
     fn a_check_keeps_only_findings_proved_against_the_same_mods() {
-        let home = tempfile::tempdir().unwrap();
-        let scope = || OpenScope {
-            profile: Some("p".into()),
-            home: PathBuf::from("home"),
-            target: None,
-            game: "nightly".into(),
-        };
-        let issue = |why: &str| SourceError::Unproved(why.into());
-        let checked = |only: Option<&str>, inputs: &str, online: bool, issues: &[(&str, &str)]| {
-            CheckedUpdates {
-                scope: scope(),
-                inputs: inputs.into(),
-                only: only.map(str::to_owned),
-                target: online.then(|| SourceTarget::fixture(home.path(), "nightly-1")),
-                candidates: BTreeMap::new(),
-                issues: issues
-                    .iter()
-                    .map(|(id, why)| ((*id).to_owned(), issue(why)))
-                    .collect(),
-                notice: None,
-            }
-        };
-        let all = || checked(None, "mods-1", true, &[("a", "old a"), ("b", "b")]);
+        run_in_scratch(
+            "mods::nightly::jobs::tests::a_check_keeps_only_findings_proved_against_the_same_mods",
+            |home| {
+                const BASE: &str = "developer-local";
+                let (target, origin, prepared, unpacked_data, client_path) =
+                    setup_prepared_offer(home, BASE);
+                let proof1 =
+                    SourceProof::capture(target.instance(), target.identity(), BASE).unwrap();
+                assert_eq!(prepared.proof(), &proof1);
+                let fingerprint1 = native_status::fingerprint(home, Some(BASE));
 
-        // One project's check on the same mods replaces only that project's finding.
-        let merged = merge_checked(Some(all()), checked(Some("a"), "mods-1", true, &[]));
-        assert_eq!(merged.issues.get("b"), Some(&issue("b")));
-        assert_eq!(merged.issues.get("a"), None);
+                let scope = || OpenScope {
+                    profile: Some("p".into()),
+                    home: home.to_path_buf(),
+                    target: None,
+                    game: BASE.into(),
+                };
+                let issue = |why: &str| SourceError::Unproved(why.into());
+                let make_checked = |only: Option<&str>,
+                                    inputs: &str,
+                                    proof: Option<SourceProof>,
+                                    online: bool,
+                                    issues: &[(&str, &str)]| {
+                    CheckedUpdates {
+                        scope: scope(),
+                        inputs: inputs.into(),
+                        proof,
+                        only: only.map(str::to_owned),
+                        target: online.then(|| target.clone()),
+                        candidates: BTreeMap::new(),
+                        issues: issues
+                            .iter()
+                            .map(|(id, why)| ((*id).to_owned(), issue(why)))
+                            .collect(),
+                        notice: (!online)
+                            .then(|| tr("No source updates were checked while offline.").into()),
+                    }
+                };
+                let with_offer = |prepared: PreparedSource| {
+                    let mut c = make_checked(
+                        None,
+                        &fingerprint1,
+                        Some(proof1.clone()),
+                        true,
+                        &[("a", "old a"), ("b", "b")],
+                    );
+                    c.candidates
+                        .insert(origin.id.clone(), (origin.clone(), prepared));
+                    c
+                };
 
-        // After a mod changed, nothing proved before carries over.
-        let merged = merge_checked(Some(all()), checked(Some("a"), "mods-2", true, &[]));
-        assert!(merged.issues.is_empty());
+                // Re-prepare helper since PreparedSource isn't Clone.
+                let re_prepare = || {
+                    let source = source_for_update(&origin).unwrap().unwrap();
+                    let pin = sources::resolve(&source, true).unwrap();
+                    sunrise::prepare_source(
+                        target.instance(),
+                        target.identity(),
+                        BASE,
+                        SourceRequest::Update {
+                            pin,
+                            predecessor: Box::new(origin.clone()),
+                        },
+                        &Cancellation::default(),
+                    )
+                    .unwrap()
+                };
 
-        // Offline, nothing was checked: every earlier finding stays, for either kind of check.
-        for only in [None, Some("a")] {
-            let merged = merge_checked(Some(all()), checked(only, "mods-1", false, &[]));
-            assert_eq!(merged.issues.len(), 2);
-        }
+                // 1. An unchanged single-project check keeps the other mod's real offer and issue.
+                let merged = merge_checked(
+                    Some(with_offer(prepared)),
+                    make_checked(Some("a"), &fingerprint1, Some(proof1.clone()), true, &[]),
+                );
+                assert!(merged.candidates.contains_key(&origin.id));
+                assert_eq!(merged.issues.get("b"), Some(&issue("b")));
+                assert_eq!(merged.issues.get("a"), None);
 
-        // A profile-wide check that ran replaces everything.
-        let merged = merge_checked(Some(all()), checked(None, "mods-1", true, &[]));
-        assert!(merged.issues.is_empty());
+                // 2. Offline, nothing was checked: the real offer survives both offline paths.
+                let mut carried = merged;
+                for only in [None, Some(origin.id.as_str())] {
+                    carried = merge_checked(
+                        Some(carried),
+                        make_checked(only, &fingerprint1, Some(proof1.clone()), false, &[]),
+                    );
+                    assert!(carried.candidates.contains_key(&origin.id));
+                    assert_eq!(
+                        carried.notice.as_deref(),
+                        Some(tr("No source updates were checked while offline."))
+                    );
+                }
+
+                // 3. A successful check for that project that finds no update drops the offer.
+                let merged = merge_checked(
+                    Some(carried),
+                    make_checked(
+                        Some(&origin.id),
+                        &fingerprint1,
+                        Some(proof1.clone()),
+                        true,
+                        &[],
+                    ),
+                );
+                assert!(!merged.candidates.contains_key(&origin.id));
+
+                // 4. A profile-wide online check that finds no update drops the offer.
+                let merged = merge_checked(
+                    Some(with_offer(re_prepare())),
+                    make_checked(None, &fingerprint1, Some(proof1.clone()), true, &[]),
+                );
+                assert!(merged.candidates.is_empty());
+                assert!(merged.issues.is_empty());
+
+                // 5. Editing a file inside an unpacked content mod doesn't change the Installed
+                //    fingerprint, but changes the installer's proof and drops the stale offer.
+                let before_edit = with_offer(re_prepare());
+                fs::write(&unpacked_data, b"edited-content").unwrap();
+                assert_eq!(native_status::fingerprint(home, Some(BASE)), fingerprint1);
+                let proof_after_edit =
+                    SourceProof::capture(target.instance(), target.identity(), BASE).unwrap();
+                assert_ne!(proof_after_edit, proof1);
+                let merged = merge_checked(
+                    Some(before_edit),
+                    make_checked(Some("a"), &fingerprint1, Some(proof_after_edit), true, &[]),
+                );
+                assert!(merged.candidates.is_empty());
+                assert!(merged.issues.is_empty());
+
+                // 6. Reinstalling the same game tag for another architecture doesn't change the
+                //    Installed fingerprint, but changes the cached base build and drops the offer.
+                fs::write(&unpacked_data, b"before").unwrap();
+                let before_reinstall = with_offer(re_prepare());
+                fs::write(&client_path, b"base-arm64-binary").unwrap();
+                assert_eq!(native_status::fingerprint(home, Some(BASE)), fingerprint1);
+                let proof_after_reinstall =
+                    SourceProof::capture(target.instance(), target.identity(), BASE).unwrap();
+                assert_ne!(proof_after_reinstall, proof1);
+                let merged = merge_checked(
+                    Some(before_reinstall),
+                    make_checked(
+                        Some("a"),
+                        &fingerprint1,
+                        Some(proof_after_reinstall),
+                        true,
+                        &[],
+                    ),
+                );
+                assert!(merged.candidates.is_empty());
+                assert!(merged.issues.is_empty());
+            },
+        );
+    }
+
+    #[cfg(debug_assertions)] // source fixtures are off in release builds
+    #[test]
+    fn last_known_source_offer_stays_visible_while_offline_but_requires_fresh_catalogue_to_apply() {
+        run_in_scratch(
+            "mods::nightly::jobs::tests::last_known_source_offer_stays_visible_while_offline_but_requires_fresh_catalogue_to_apply",
+            |home| {
+                const BASE: &str = "developer-local";
+                let (target, origin, prepared, _, _) = setup_prepared_offer(home, BASE);
+                let proof =
+                    SourceProof::capture(target.instance(), target.identity(), BASE).unwrap();
+                let key = native_status::fingerprint(home, Some(BASE));
+
+                let mut app = gpui::TestAppContext::single();
+                let (shell, cx) = app.add_window_view(crate::window_root::Shell::new);
+                let launcher = shell.read_with(cx, |shell, _| shell.launcher());
+                launcher.update(cx, |launcher, _| {
+                    let scope = launcher.mods_page_scope();
+                    let local = model::Local {
+                        id: origin.id.clone(),
+                        version: origin.version.clone(),
+                        name: "Offer Mod".into(),
+                        file: "mods/offer_mod.smod".into(),
+                        github: Some(origin.clone()),
+                        native: false,
+                        served_by: None,
+                        unreadable: false,
+                    };
+                    let mut rows = InstalledRows::default();
+                    rows.local.push(local);
+                    launcher.ui.mods.snapshot = Some(Snapshot {
+                        home: home.to_path_buf(),
+                        key: key.clone(),
+                        rows,
+                        reading: false,
+                        error: None,
+                        backup_notice: None,
+                    });
+                    let mut candidates = BTreeMap::new();
+                    candidates.insert(origin.id.clone(), (origin.clone(), prepared));
+                    launcher.ui.mods.nightly.work.updates = Some(CheckedUpdates {
+                        scope,
+                        inputs: key.clone(),
+                        proof: Some(proof),
+                        only: None,
+                        target: Some(target.clone()),
+                        candidates,
+                        issues: BTreeMap::new(),
+                        notice: Some(
+                            tr("No source updates were checked while offline.").into(),
+                        ),
+                    });
+                    // Catalogue failed / offline: nightly_catalogue_current() is false.
+                    launcher.ui.mods.nightly.catalogue = Some(Catalogue {
+                        sources: Vec::new().into(),
+                        collections: Vec::new().into(),
+                        saved_at: None,
+                        checked_at: SystemTime::now(),
+                        error: Some("offline".into()),
+                    });
+                    assert!(!launcher.nightly_catalogue_current());
+
+                    // Last-known offer is still visible beside the offline notice.
+                    assert_eq!(launcher.source_update_version(&origin), Some("1.1.0"));
+                    assert_eq!(
+                        launcher.source_update_notice(None),
+                        Some(tr("No source updates were checked while offline."))
+                    );
+                    // Applying still requires a fresh catalogue.
+                    assert!(launcher.take_source_updates(Some(&origin.id)).is_none());
+                    assert!(launcher.take_source_updates(None).is_none());
+
+                    // Once the catalogue is current again, applying takes the prepared offer.
+                    launcher.ui.mods.nightly.catalogue = Some(Catalogue {
+                        sources: Vec::new().into(),
+                        collections: Vec::new().into(),
+                        saved_at: Some(SystemTime::now()),
+                        checked_at: SystemTime::now(),
+                        error: None,
+                    });
+                    assert!(launcher.nightly_catalogue_current());
+                    let taken = launcher.take_source_updates(Some(&origin.id));
+                    assert!(taken.is_some());
+                    assert_eq!(taken.unwrap().1.len(), 1);
+                });
+            },
+        );
     }
 
     #[test]

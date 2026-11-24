@@ -1,6 +1,6 @@
 //! First Play freezes the candidate and its proof before downloading or preparing anything.
 use super::{
-    at, inputs, scan_packages, unsettled, Active, Artifact, Generation, HeldReason, NativeWork,
+    at, inputs, scan_packages, unsettled, Active, Artifact, Generation, HeldReason,
     ReferencePublication, Resources,
 };
 use crate::{
@@ -288,9 +288,7 @@ impl Profile {
         destination: &Path,
     ) -> Result<Active, String> {
         active.verify_artifacts()?;
-        if inputs(self.home(), None)? != active.inputs
-            || inputs(destination, None)? != active.inputs
-        {
+        if inputs(self.home())? != active.inputs || inputs(destination)? != active.inputs {
             return Err(unsettled!());
         }
         getrandom::fill(&mut active.profile).map_err(|e| e.to_string())?;
@@ -399,34 +397,30 @@ impl Profile {
     pub(crate) fn refresh(
         &mut self,
         mode: native_mods::Profile,
-        (cancellation, consent): NativeWork<'_>,
+        cancellation: &native_mods::Cancellation,
         progress: impl Fn(native_mods::Step),
-        registry: Option<&sunrise_launcher_smod::index::Index>,
         log: Option<&dyn Fn(std::sync::Arc<str>)>,
         replacement: Option<Resources>,
     ) -> Result<Option<Active>, native_mods::Failed> {
         let home = self.home().to_owned();
-        let (old, epoch, repair, stage) = {
+        let (old, epoch, stage) = {
             let _manifest = game_lock(&home)?;
             crate::browser::installed::recover_game_install(&home).map_err(String::from)?;
             let Some(old) = self.active()? else {
                 return Ok(None);
             };
             old.verify_artifacts()?;
-            let epoch = inputs(&home, None)?;
-            let repair = super::inputs::browser_repair(&home, &scan_packages(&home)?, registry)?;
-            if old.inputs == epoch && repair.is_none() && replacement.is_none() {
+            let epoch = inputs(&home)?;
+            super::inputs::check_browser_rows(&home, &scan_packages(&home)?)?;
+            if old.inputs == epoch && replacement.is_none() {
                 super::verify_included(old.base(), old.executable(), &home)?;
-                if native_mods::is_native(old.executable()) {
-                    cancellation.admit_native_work()?;
-                }
                 return Ok(Some(old));
             }
             let _references = ReferencePublication::begin(&home)?;
             let tags = [old.base().to_owned(), old.executable().to_owned()]
                 .into_iter()
                 .collect();
-            (old, epoch, repair, self.0.reserve(Intent::Install, tags)?)
+            (old, epoch, self.0.reserve(Intent::Install, tags)?)
         };
         let image = image_for_stage(
             old.base(),
@@ -436,7 +430,6 @@ impl Profile {
             mode,
             cancellation,
             progress,
-            consent,
             log,
         )?;
         let _manifest = game_lock(&home)?;
@@ -457,7 +450,6 @@ impl Profile {
             active,
             &home,
             epoch,
-            repair,
             cancellation,
         )?))
     }
@@ -473,7 +465,7 @@ impl Profile {
         let home = self.home();
         let _manifest = game_lock(home)?;
         crate::browser::installed::recover_game_install(home).map_err(String::from)?;
-        if self.active()?.as_ref() != Some(active) || inputs(home, None)? != active.inputs {
+        if self.active()?.as_ref() != Some(active) || inputs(home)? != active.inputs {
             return Err(unsettled!().into());
         }
         active.verify_artifacts()?;
@@ -482,10 +474,7 @@ impl Profile {
             .check_play_output(active.base())
             .map_err(|issue| issue.message(|| unsettled!()))?;
         super::verify_included(active.base(), active.executable(), home)?;
-        if native_mods::is_native(active.executable()) {
-            cancellation.admit_native_work().map_err(String::from)?;
-        }
-        let _permission = cancellation.publication_guard()?;
+        cancellation.check()?;
         spawn(self.handoff())
     }
 
@@ -506,7 +495,7 @@ impl Profile {
         let initial = {
             let _manifest = game_lock(&home)?;
             scan_packages(&home)?;
-            let epoch = inputs(&home, None)?;
+            let epoch = inputs(&home)?;
             let initial = self.0.bind_bootstrap(
                 || {
                     let choice = choose()?;
@@ -554,7 +543,7 @@ impl Profile {
         let stage = {
             let _manifest = game_lock(&home)?;
             let _references = ReferencePublication::begin(&home)?;
-            if inputs(&home, None)? != bound.inputs {
+            if inputs(&home)? != bound.inputs {
                 return Err(unsettled!());
             }
             bound.verify_image()?;
@@ -604,7 +593,7 @@ impl FirstAttempt<'_> {
 
     /// Verify under the game-manifest lock before checking or compiling this first set.
     pub(super) fn verify_inputs(&self) -> Result<(), String> {
-        if inputs(&self.home, None)? != self.bound.inputs {
+        if inputs(&self.home)? != self.bound.inputs {
             return Err(unsettled!());
         }
         Ok(())
@@ -619,7 +608,6 @@ impl FirstAttempt<'_> {
         mode: native_mods::Profile,
         cancellation: &native_mods::Cancellation,
         progress: impl Fn(native_mods::Step),
-        consent: Option<&dyn Fn(&native_mods::Consent) -> bool>,
         log: Option<&dyn Fn(std::sync::Arc<str>)>,
     ) -> Result<String, native_mods::Failed> {
         image_for_stage(
@@ -630,7 +618,6 @@ impl FirstAttempt<'_> {
             mode,
             cancellation,
             progress,
-            consent,
             log,
         )
     }
@@ -642,11 +629,7 @@ impl FirstAttempt<'_> {
         image: &str,
         cancellation: &native_mods::Cancellation,
     ) -> Result<Active, String> {
-        if native_mods::is_native(image) {
-            cancellation.admit_native_work().map_err(String::from)?;
-        } else {
-            cancellation.check()?;
-        }
+        cancellation.check()?;
         // The pending binding already reserves the base. Do not hold the cache-wide
         // publication fence while waiting on a preparer child for this one version.
         self.bound.verify_image()?;
@@ -666,51 +649,32 @@ impl FirstAttempt<'_> {
                 variant: self.variant().map(Box::new),
             },
         )?;
-        let registry = crate::browser::sunrise::fetched_index();
-        let repair = super::inputs::browser_repair(
-            &self.home,
-            &scan_packages(&self.home)?,
-            registry.as_deref(),
-        )?;
+        super::inputs::check_browser_rows(&self.home, &scan_packages(&self.home)?)?;
         publish_generation(
             self.stage,
             active,
             &self.home,
             self.bound.inputs,
-            repair,
             cancellation,
         )
     }
 }
 
-/// The caller holds the profile, game manifest and reference fence. A stale row is a postimage
-/// of this transaction, not a standalone restore. Its published bytes are what the pointer hashes.
+/// The caller holds the profile, game manifest and reference fence.
 fn publish_generation(
     stage: Staging<'_>,
-    mut active: Active,
+    active: Active,
     home: &Path,
     epoch: [u8; 32],
-    repair: Option<Vec<u8>>,
     cancellation: &native_mods::Cancellation,
 ) -> Result<Active, String> {
-    let mut files = Vec::new();
-    if let Some(bytes) = repair {
-        active.inputs = inputs(home, Some(&bytes))?;
-        let candidate = stage.path().join("browser-repair");
-        profile_txn::durable::replace(stage.path(), &candidate, &bytes)
-            .map_err(|error| at(&candidate, error))?;
-        files.push((
-            PathBuf::from(crate::browser::installed::MANIFEST),
-            Some(candidate),
-        ));
-    }
     let pointer = serde_json::to_vec(&active).map_err(|e| e.to_string())?;
-    stage.seal(pointer, &files)?.publish(|| {
+    stage.seal(pointer, &[])?.publish(|| {
         active.verify_artifacts()?;
-        if inputs(home, None)? != epoch {
+        if inputs(home)? != epoch {
             return Err(unsettled!());
         }
-        cancellation.publication_guard()
+        cancellation.check()
     })?;
     Ok(active)
 }
@@ -724,28 +688,15 @@ pub(super) fn image_for_stage(
     mode: native_mods::Profile,
     cancellation: &native_mods::Cancellation,
     progress: impl Fn(native_mods::Step),
-    consent: Option<&dyn Fn(&native_mods::Consent) -> bool>,
     log: Option<&dyn Fn(std::sync::Arc<str>)>,
 ) -> Result<String, native_mods::Failed> {
     if super::verify_included(base, preferred, home).is_ok() {
-        if native_mods::is_native(preferred) {
-            cancellation.admit_native_work()?;
-        }
         return Ok(preferred.to_owned());
     }
     if crate::native_status::enabled(home).is_empty() {
         return Ok(base.to_owned());
     }
-    native_mods::build_exact_client(
-        base,
-        home,
-        mode,
-        stage,
-        cancellation,
-        progress,
-        consent,
-        log,
-    )
+    native_mods::build_exact_client(base, home, mode, stage, cancellation, progress, log)
 }
 
 pub(super) fn game_lock(home: &Path) -> Result<HomeLockGuard, String> {
@@ -753,7 +704,9 @@ pub(super) fn game_lock(home: &Path) -> Result<HomeLockGuard, String> {
 }
 
 mod edits;
-pub(crate) use edits::{changed_files, copy_install_inputs, CandidateImage, Edit};
+pub(crate) use edits::{
+    changed_files, copy_install_inputs, CandidateImage, Edit, SwitchPublication,
+};
 
 #[cfg(test)]
 mod tests;

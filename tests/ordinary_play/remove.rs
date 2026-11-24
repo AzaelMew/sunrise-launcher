@@ -1,7 +1,20 @@
-//! Real CLI/MCP Update and Remove, the exact enabled graph, and world evidence at cutoff.
+//! Real CLI/MCP Remove, the exact enabled graph, and world evidence at cutoff.
 use super::*;
+use std::collections::BTreeMap;
 use sunrise_launcher::browser::mod_list as selection;
 use sunrise_launcher_nbt::{self as nbt, Limits, NamedTag, Tag};
+use sunrise_launcher_smod::{index, Package};
+
+impl Fixture {
+    /// Runs Play once, so the installed mods become the profile's committed inputs.
+    fn commit_play(&self) {
+        fs::write(self.home.join("finish"), []).unwrap();
+        let out = self.launcher(&["play"]).output().unwrap();
+        assert_eq!(out.status.code(), Some(7), "{out:?}");
+        fs::remove_file(self.home.join("finish")).unwrap();
+        fs::remove_file(self.home.join("args")).unwrap();
+    }
+}
 
 fn world(home: &Path, folder: &str, ids: &[&str]) {
     let tags = ids
@@ -44,38 +57,9 @@ fn world_with_evidence(home: &Path, folder: &str, sunrise: Tag) {
     .unwrap();
 }
 
-fn release(
-    fixture: &Fixture,
-    registry: &mut index::Index,
-    id: &str,
-    version: &str,
-    files: &[(&str, &[u8])],
-) -> Vec<u8> {
-    let project = registry.projects.iter_mut().find(|p| p.id == id).unwrap();
-    let mut row = project.versions[0].clone();
-    row.version = version.into();
-    let deps = match id {
-        "root_mod" => "[dependencies]\nrequired_mod='^1'\n",
-        _ => "",
-    };
-    let package = Package::write_files(&format!("id='{id}'\nname='{}'\nversion='{version}'\napi='0.2'\nside='both'\ncapabilities=['registries']\n{deps}", project.name), files).unwrap();
-    let path = fixture.root.join(format!("{id}-{version}.smod"));
-    fs::write(&path, &package).unwrap();
-    row.file = index::File {
-        name: path.file_name().unwrap().to_string_lossy().into_owned(),
-        url: format!("file://{}", path.display()),
-        size: package.len() as u64,
-        sha256: index::sha256(&package),
-        signature: None,
-    };
-    project.versions.retain(|v| v.version != version);
-    project.versions.insert(0, row);
-    package
-}
-
 fn run(fixture: &Fixture, args: &[&str]) -> (bool, String) {
     let out = fixture
-        .registry_client(args)
+        .launcher(args)
         .stdin(Stdio::null())
         .output()
         .unwrap();
@@ -89,14 +73,80 @@ fn run(fixture: &Fixture, args: &[&str]) -> (bool, String) {
     )
 }
 
-fn install_root(fixture: &Fixture, registry: &index::Index) {
-    fixture.publish_registry(registry);
-    let (ok, text) = run(
-        fixture,
-        &["mods", "install", "root_mod", "--source", "sunrise"],
-    );
-    assert!(ok, "{text}");
+/// Writes content mod `id` (titled `name`, with `definitions`) into the profile's mods folder.
+fn content_mod(
+    fixture: &Fixture,
+    id: &str,
+    name: &str,
+    dependencies: &str,
+    definitions: &[(&str, &[u8])],
+) -> Vec<u8> {
+    let archive = Package::write_files(
+        &format!("id='{id}'\nname='{name}'\nversion='1.0.0'\napi='0.2'\nside='both'\ncapabilities=['registries']\n{dependencies}"),
+        definitions,
+    )
+    .unwrap();
+    let directory = fixture.home.join(mod_list::DIR);
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(directory.join(format!("{id}.smod")), &archive).unwrap();
+    archive
+}
+
+/// Lanterns (root_mod) and the Lantern Core it requires, turned on and committed by Play.
+fn install_root(
+    fixture: &Fixture,
+    root_definitions: &[(&str, &[u8])],
+) -> BTreeMap<String, Vec<u8>> {
+    let archives = BTreeMap::from([
+        (
+            "root_mod".to_owned(),
+            content_mod(
+                fixture,
+                "root_mod",
+                "Lanterns",
+                "[dependencies]\nrequired_mod = '^1'",
+                root_definitions,
+            ),
+        ),
+        (
+            "required_mod".to_owned(),
+            content_mod(
+                fixture,
+                "required_mod",
+                "Lantern Core",
+                "",
+                &[(
+                    "data/required_mod/sunrise/block/core.json",
+                    br#"{"properties":{"lit":[false,true]}}"#,
+                )],
+            ),
+        ),
+    ]);
+    // Registry rows, as an install from Sunrise's registry records them.
+    let entries: Vec<Value> = [("root_mod", "Lanterns"), ("required_mod", "Lantern Core")]
+        .into_iter()
+        .map(|(id, title)| {
+            json!({
+                "source": "sunrise",
+                "project": id,
+                "slug": id,
+                "title": title,
+                "kind": "mod",
+                "version": "1.0.0",
+                "number": "1.0.0",
+                "file": format!("{}/{id}.smod", mod_list::DIR),
+                "checksum": format!("SHA-256:{}", index::sha256(&archives[id])),
+                "page": "",
+                "dependency": id == "required_mod",
+            })
+        })
+        .collect();
+    let rows = fixture.home.join(index::browser_state::MANIFEST);
+    fs::create_dir_all(rows.parent().unwrap()).unwrap();
+    fs::write(rows, json!({ "entries": entries }).to_string()).unwrap();
+    selection::set_all_enabled(&fixture.home, &["root_mod", "required_mod"], true).unwrap();
     fixture.commit_play();
+    archives
 }
 
 fn live_state(fixture: &Fixture) -> [Vec<u8>; 4] {
@@ -109,144 +159,10 @@ fn live_state(fixture: &Fixture) -> [Vec<u8>; 4] {
 }
 
 #[test]
-fn a_pack_row_cannot_update_or_remove_an_installed_mod_archive() {
-    let fixture = Fixture::new();
-    let (mut registry, archives) = fixture.content_index();
-    let mut shader = fixture.registry().project("glow").unwrap().clone();
-    let shader_name = &shader.versions[0].file.name;
-    let download = fixture.root.join(shader_name);
-    let shader_bytes = include_bytes!("../../../crates/smod/tests/index/glow-1.0.0.sshader");
-    fs::write(&download, shader_bytes).unwrap();
-    let shader_file = fixture.home.join("shaderpacks").join(shader_name);
-    shader.versions[0].file.url = format!("file://{}", download.display());
-    registry.projects.push(shader);
-    fixture.publish_registry(&registry);
-
-    let archive = format!("{}/root_mod.smod", mod_list::DIR);
-    fs::create_dir_all(fixture.home.join(mod_list::DIR)).unwrap();
-    fs::write(fixture.home.join(&archive), &archives["root_mod"]).unwrap();
-    let manifest = fixture.home.join(index::browser_state::MANIFEST);
-    let mut rows = json!({"entries": [{
-        "source": "sunrise", "project": "glow", "slug": "glow", "title": "Soft Glow",
-        "kind": "shader", "version": "0.9.0", "number": "0.9.0", "file": archive,
-        "checksum": format!("SHA-256:{}", index::sha256(&archives["root_mod"])), "page": ""
-    }]});
-    let before = serde_json::to_vec(&rows).unwrap();
-    fs::write(&manifest, &before).unwrap();
-    for args in [
-        &["mods", "update", "glow", "--check"][..],
-        &["mods", "update", "glow"],
-        &["mods", "remove", "glow"],
-    ] {
-        let (ok, text) = run(&fixture, args);
-        assert!(
-            !ok && text.contains("isn't a pack file"),
-            "{args:?}: {text}"
-        );
-        assert_eq!(
-            fs::read(fixture.home.join(&archive)).unwrap(),
-            archives["root_mod"]
-        );
-        assert_eq!(fs::read(&manifest).unwrap(), before);
-        assert!(!shader_file.exists());
-    }
-
-    // The same commands still work on an actual shader pack, including replacing its older file.
-    let old_shader = fixture.home.join("shaderpacks/glow-0.9.0.sshader");
-    fs::create_dir_all(old_shader.parent().unwrap()).unwrap();
-    fs::write(&old_shader, shader_bytes).unwrap();
-    rows["entries"][0]["file"] = json!("shaderpacks/glow-0.9.0.sshader");
-    rows["entries"][0]["checksum"] = json!(format!("SHA-256:{}", index::sha256(shader_bytes)));
-    fs::write(&manifest, serde_json::to_vec(&rows).unwrap()).unwrap();
-    let (ok, text) = run(&fixture, &["mods", "update", "glow", "--check"]);
-    assert!(ok && text.contains("1.0.0 is available"), "{text}");
-    let (ok, text) = run(&fixture, &["mods", "update", "glow"]);
-    assert!(ok, "{text}");
-    assert!(!old_shader.exists());
-    assert_eq!(fs::read(&shader_file).unwrap(), shader_bytes);
-    let (ok, text) = run(&fixture, &["mods", "remove", "glow"]);
-    assert!(ok, "{text}");
-    assert!(!shader_file.exists());
-    assert_eq!(
-        fs::read(fixture.home.join(archive)).unwrap(),
-        archives["root_mod"]
-    );
-}
-
-#[test]
-fn a_self_consistent_local_index_cannot_update_but_explicit_remove_can_remove_its_bytes() {
-    let fixture = Fixture::new();
-    let (mut registry, _) = fixture.content_index();
-    install_root(&fixture, &registry);
-    let foreign = release(
-        &fixture,
-        &mut registry,
-        "root_mod",
-        "1.0.0",
-        &[("data/root_mod/sunrise/block/local_lamp.json", b"{}")],
-    );
-    release(&fixture, &mut registry, "root_mod", "1.1.0", &[]);
-    fixture.publish_registry(&registry);
-    let archive = fixture.home.join(mod_list::DIR).join("root_mod.smod");
-    fs::write(&archive, &foreign).unwrap();
-    let digest = index::sha256(&foreign);
-    let rows = fixture.home.join(index::browser_state::MANIFEST);
-    let mut forged: serde_json::Value = serde_json::from_slice(&fs::read(&rows).unwrap()).unwrap();
-    let row = forged["entries"]
-        .as_array_mut()
-        .unwrap()
-        .iter_mut()
-        .find(|row| row["project"] == "root_mod")
-        .unwrap();
-    row["checksum"] = json!(format!("SHA-256:{digest}"));
-    fs::write(rows, serde_json::to_vec(&forged).unwrap()).unwrap();
-    let old = live_state(&fixture);
-    let (ok, text) = run(
-        &fixture,
-        &["mods", "update", "root_mod", "--confirm-world-loss"],
-    );
-    let not_owned =
-        "Sunrise couldn't confirm that Lanterns came from the Sunrise registry, so it can't be updated here.";
-    assert!(!ok && text.contains(not_owned), "{text}");
-    assert_eq!(live_state(&fixture), old);
-
-    let mut mcp = Running(
-        fixture
-            .registry_client(&["mcp"])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .spawn()
-            .unwrap(),
-    );
-    let mut input = mcp.0.stdin.take().unwrap();
-    let mut output = BufReader::new(mcp.0.stdout.take().unwrap());
-    mcp_request(&mut input, &mut output, 1, "initialize", json!({}));
-    let denied = mcp_request(
-        &mut input,
-        &mut output,
-        2,
-        "tools/call",
-        json!({"name":"mods_update", "arguments":{"project":"root_mod","confirm_world_loss":true}}),
-    );
-    assert_eq!(denied["isError"], true, "{denied}");
-    assert!(denied.to_string().contains(not_owned), "{denied}");
-    assert_eq!(live_state(&fixture), old);
-
-    let (ok, text) = run(&fixture, &["mods", "remove", "root_mod"]);
-    assert!(
-        ok && text.contains("sunrise-mods/root_mod.smod") && text.contains(&digest),
-        "{text}"
-    );
-    assert!(!archive.exists());
-}
-
-#[test]
 fn namespace_only_and_malformed_worlds_cannot_bypass_the_decision() {
     let fixture = Fixture::new();
-    let (mut registry, _) = fixture.content_index();
     let defs = [("data/root_mod/sunrise/block/amber.json", b"{}".as_slice())];
-    release(&fixture, &mut registry, "root_mod", "1.0.0", &defs);
-    install_root(&fixture, &registry);
+    install_root(&fixture, &defs);
     let old = live_state(&fixture);
     for evidence in [
         Tag::compound([(
@@ -275,17 +191,16 @@ fn namespace_only_and_malformed_worlds_cannot_bypass_the_decision() {
 fn explicit_remove_refuses_changed_worlds_or_archive_bytes_at_cutoff() {
     for mode in ["add-world", "replace-world", "replace-archive"] {
         let fixture = Fixture::new();
-        let (registry, archives) = fixture.content_index();
-        install_root(&fixture, &registry);
+        let archives = install_root(&fixture, &[]);
         world(&fixture.home, "First world", &["root_mod"]);
         let old = live_state(&fixture);
         let required = fixture.home.join(mod_list::DIR).join("required_mod.smod");
         let mut worker = Command::new(std::env::current_exe().unwrap());
-        for (key, value) in fixture.registry_client(&[]).get_envs() {
+        for (key, value) in fixture.launcher(&[]).get_envs() {
             worker.env(key, value.unwrap());
         }
         let output = worker
-            .args(["--exact", "install::mutations::remove_cutoff_worker"])
+            .args(["--exact", "remove::remove_cutoff_worker"])
             .env("FIXTURE_REMOVE_CUTOFF", mode)
             .output()
             .unwrap();
@@ -349,10 +264,7 @@ fn remove_cutoff_worker() {
     };
     let hooks = InstallHooks {
         progress: &|_| {},
-        native: &|_| panic!("content-only"),
-        registry_crates: None,
         continue_after_failure: &|_| panic!("content-only"),
-        resolve: None,
         cancellation: None,
     };
     let error = remove_mods(
@@ -375,8 +287,7 @@ fn remove_cutoff_worker() {
 #[test]
 fn remove_names_dependents_even_without_worlds_and_requires_compatible_activation() {
     let fixture = Fixture::new();
-    let (registry, _) = fixture.content_index();
-    install_root(&fixture, &registry);
+    install_root(&fixture, &[]);
     let (ok, text) = run(&fixture, &["mods", "remove", "required_mod"]);
     assert!(ok && text.contains("Lanterns (root_mod)"), "{text}");
     assert!(!text.contains("saved world"), "{text}");
@@ -384,11 +295,8 @@ fn remove_names_dependents_even_without_worlds_and_requires_compatible_activatio
     assert!(!selection::is_enabled(&fixture.home, "root_mod"));
     let (ok, text) = run(&fixture, &["mods", "enable", "root_mod"]);
     assert!(!ok && text.contains("needs required_mod"), "{text}");
-    let (ok, text) = run(
-        &fixture,
-        &["mods", "install", "required_mod", "--source", "sunrise"],
-    );
-    assert!(ok, "{text}");
+    content_mod(&fixture, "required_mod", "Lantern Core", "", &[]);
+    selection::set_enabled(&fixture.home, "required_mod", true).unwrap();
     assert!(!selection::is_enabled(&fixture.home, "root_mod"));
     let (ok, text) = run(&fixture, &["mods", "enable", "root_mod"]);
     assert!(ok && !text.contains("saved world"), "{text}");
@@ -419,8 +327,7 @@ fn local(fixture: &Fixture, id: &str, required: &str, native: bool) -> (PathBuf,
 #[test]
 fn remove_accepts_local_and_github_archives_but_not_unpacked_folders() {
     let fixture = Fixture::new();
-    let (registry, _) = fixture.content_index();
-    install_root(&fixture, &registry);
+    install_root(&fixture, &[]);
     let loose = local(&fixture, "local_lamp", "", false);
     let github = local(&fixture, "github_lamp", "", true);
     let sidecar = github.0.with_extension("origin.json");
@@ -451,8 +358,7 @@ fn remove_accepts_local_and_github_archives_but_not_unpacked_folders() {
 #[test]
 fn remove_cleans_renamed_legacy_github_receipts_and_windows_browser_rows() {
     let fixture = Fixture::new();
-    let (registry, _) = fixture.content_index();
-    install_root(&fixture, &registry);
+    install_root(&fixture, &[]);
 
     // A legacy GitHub receipt sits at <id>.origin.json even when the .smod was renamed.
     let (canonical, github_bytes) = local(&fixture, "renamed_lamp", "", true);
@@ -537,9 +443,8 @@ fn remove_cleans_renamed_legacy_github_receipts_and_windows_browser_rows() {
 #[test]
 fn remove_refuses_running_game_and_disables_exact_dependents_in_place_in_one_commit() {
     let fixture = Fixture::new();
-    let (registry, archives) = fixture.content_index();
-    install_root(&fixture, &registry);
-    let mut play = Running(fixture.registry_client(&["play"]).spawn().unwrap());
+    let archives = install_root(&fixture, &[]);
+    let mut play = Running(fixture.launcher(&["play"]).spawn().unwrap());
     assert_resource_args(&fixture, &fixture.game_arguments());
     let old = live_state(&fixture);
     let (ok, text) = run(
@@ -597,7 +502,7 @@ fn remove_refuses_running_game_and_disables_exact_dependents_in_place_in_one_com
 
     let mut mcp = Running(
         fixture
-            .registry_client(&["mcp"])
+            .launcher(&["mcp"])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .spawn()
@@ -646,7 +551,7 @@ fn remove_refuses_running_game_and_disables_exact_dependents_in_place_in_one_com
     let (ok, text) = run(&fixture, &["mods", "enable", "root_mod"]);
     assert!(!ok && text.contains("needs required_mod"), "{text}");
     assert_eq!(fixture.pointer(), reduced);
-    let mut play = Running(fixture.registry_client(&["play"]).spawn().unwrap());
+    let mut play = Running(fixture.launcher(&["play"]).spawn().unwrap());
     assert_resource_args(&fixture, &fixture.game_arguments());
     assert_eq!(play.0.wait().unwrap().code(), Some(7));
     assert_eq!(fixture.pointer(), reduced);

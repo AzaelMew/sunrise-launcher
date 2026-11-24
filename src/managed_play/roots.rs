@@ -322,7 +322,7 @@ mod tests {
             let home = backend::game_home();
             fs::create_dir_all(&home).unwrap();
             let mut admission = Admission::open(&home, None).unwrap();
-            let epoch = crate::managed_play::inputs(&home, None).unwrap();
+            let epoch = crate::managed_play::inputs(&home).unwrap();
             let _fence = crate::managed_play::ReferencePublication::begin(&home).unwrap();
             let stage = admission
                 .reserve(
@@ -437,7 +437,6 @@ mod tests {
             .evict_inventory_observed(
                 SystemTime::now() + Duration::from_secs(14 * 24 * 60 * 60),
                 Some(0),
-                false,
                 |path| {
                     if path == derived {
                         assert!(!std::mem::replace(&mut selected, true));

@@ -4,7 +4,6 @@ use crate::managed_play::{Active, Held, HeldReason, HeldRoot, HeldSource};
 use sha2::{Digest, Sha256};
 use std::os::unix::fs::PermissionsExt;
 
-mod mixed;
 mod pending_play;
 mod switch;
 
@@ -54,12 +53,11 @@ pub(super) fn configure_tool(fixture: &Fixture) {
     )
     .unwrap();
     fs::set_permissions(tool, fs::Permissions::from_mode(0o755)).unwrap();
-    backend::Settings::default().allow_native_mods().unwrap();
 }
 
 fn configured(fixture: &mut Fixture) -> Vec<u8> {
     configure_tool(fixture);
-    fixture.project(ID, "Native Lantern", index::Kind::NativeMod);
+    fixture.project(ID, "Native Lantern", V2Kind::NativeMod);
     let bytes = release(fixture, "1.0.0", 'a', SOURCE);
     fixture.install(&[ID]);
     assert!(mod_list::is_enabled(fixture.home(), ID));
@@ -88,9 +86,8 @@ fn disabled_pointer(fixture: &Fixture) -> PathBuf {
         .unwrap()
         .refresh(
             fixture.instance.native_profile,
-            (&native_mods::Cancellation::default(), None),
+            &native_mods::Cancellation::default(),
             |_| {},
-            None,
             None,
             None,
         )
@@ -393,13 +390,13 @@ fn bulk_update_refuses_no_list_without_excluding_that_offer() {
                 backend::version_dir(SIGNED_BUILD),
             )
             .unwrap();
-            fixture.project("extra_mod", "Fireflies", index::Kind::Mod);
+            fixture.project("extra_mod", "Fireflies", V2Kind::Mod);
             fixture.release("extra_mod", "1.0.0", "", &[]);
             fixture
                 .apply_on(SIGNED_BUILD, Action::Install(projects(&["extra_mod"])))
                 .unwrap();
             fixture.play_on(SIGNED_BUILD);
-            fixture.project(ID, "Native Lantern", index::Kind::NativeMod);
+            fixture.project(ID, "Native Lantern", V2Kind::NativeMod);
             let original = release(&mut fixture, "1.0.0", 'a', SOURCE);
             let archive = fixture.home().join(ARCHIVE);
             fs::create_dir_all(archive.parent().unwrap()).unwrap();
@@ -413,7 +410,6 @@ fn bulk_update_refuses_no_list_without_excluding_that_offer() {
             }));
             fs::write(rows, serde_json::to_vec(&document).unwrap()).unwrap();
             mod_list::set_enabled(fixture.home(), ID, true).unwrap();
-            backend::Settings::default().allow_native_mods().unwrap();
             release(&mut fixture, "1.1.0", 'b', SOURCE);
             fixture.release("extra_mod", "1.2.0", "", &[]);
 
@@ -460,7 +456,7 @@ fn bulk_update_can_keep_a_proved_unfit_root_and_advance_an_independent_sibling()
         ),
         |mut fixture| {
             let predecessor = configured(&mut fixture);
-            fixture.project("extra_mod", "Fireflies", index::Kind::Mod);
+            fixture.project("extra_mod", "Fireflies", V2Kind::Mod);
             fixture.release("extra_mod", "1.0.0", "", &[]);
             fixture.install(&["extra_mod"]);
             let before = fixture.snapshot(&[ARCHIVE, EXTRA]);
@@ -574,7 +570,7 @@ fn github_add_and_checked_update_share_the_candidate_proof() {
         |mut fixture| {
             use crate::github_mods::{self, Asset, Resolved};
             configure_tool(&fixture);
-            fixture.project(ID, "Native Lantern", index::Kind::NativeMod);
+            fixture.project(ID, "Native Lantern", V2Kind::NativeMod);
             let make_release = |version: &str, bytes: &[u8]| {
                 Resolved {
             owner: "fixture".into(),
@@ -598,10 +594,7 @@ fn github_add_and_checked_update_share_the_candidate_proof() {
                     || FirstBuild::installed(BUILD),
                     InstallHooks {
                         progress: &|_| {},
-                        native: &|_| panic!("consent already recorded"),
-                        registry_crates: None,
                         continue_after_failure: &|_| false,
-                        resolve: None,
                         cancellation: None,
                     },
                 )
@@ -650,10 +643,7 @@ fn github_add_and_checked_update_share_the_candidate_proof() {
                 || panic!("the update uses the committed base"),
                 InstallHooks {
                     progress: &|_| {},
-                    native: &|_| panic!("consent already recorded"),
-                    registry_crates: None,
                     continue_after_failure: &|_| false,
-                    resolve: None,
                     cancellation: None,
                 },
                 &|impact| {
@@ -804,10 +794,7 @@ fn pinned_source_preflight_refusal_cancel_and_failed_update_keep_the_profile() {
                     SourceHooks {
                         install: InstallHooks {
                             progress: &|_| {},
-                            native: &|_| panic!("source permission has its own gate"),
-                            registry_crates: None,
                             continue_after_failure: &|_| false,
-                            resolve: None,
                             cancellation: None,
                         },
                         cancellation,
@@ -862,10 +849,7 @@ fn pinned_source_preflight_refusal_cancel_and_failed_update_keep_the_profile() {
                 SourceHooks {
                     install: InstallHooks {
                         progress: &|_| panic!("nothing to install"),
-                        native: &|_| panic!("nothing to install"),
-                        registry_crates: None,
                         continue_after_failure: &|_| false,
-                        resolve: None,
                         cancellation: None,
                     },
                     cancellation: &cancellation,

@@ -5,11 +5,8 @@ use std::collections::{BTreeSet, HashSet};
 use sunrise_launcher::browser::installed::Entry;
 use sunrise_launcher::i18n::{tr, trf};
 use sunrise_launcher::native_mods;
-use sunrise_launcher_smod::index::{self, Index};
 use sunrise_launcher_smod::index_v2;
-use sunrise_launcher_smod::manifest::Side;
 
-pub(super) mod collection;
 pub(super) mod discover_v2;
 
 /// What a mod is made of: a native source bundle or a content-only `.smod`.
@@ -30,33 +27,6 @@ impl Make {
     }
 }
 
-/// Whether the version the player would get runs on the build they play.
-#[derive(Clone, Debug, PartialEq)]
-pub(super) enum Fit {
-    Fits,
-    /// Versions exist, none for this build: the newest build one was made for.
-    OtherBuild(String),
-    /// Taken down, or asks for something this Sunrise doesn't have.
-    Refused(String),
-    /// No registry fit evidence, as for a local archive's details.
-    Unknown,
-}
-
-impl Fit {
-    pub(super) fn fits(&self) -> bool {
-        matches!(self, Fit::Fits)
-    }
-
-    pub(super) fn reason(&self) -> Option<String> {
-        match self {
-            Fit::Fits => None,
-            Fit::OtherBuild(game) => Some(trf("Made for {game}", &[("game", game)])),
-            Fit::Refused(why) => Some(why.clone()),
-            Fit::Unknown => Some(tr("Fit could not be verified").to_owned()),
-        }
-    }
-}
-
 /// Badge shown on Home's Mods tab and Installed for unreviewed mods added outside the registry.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ManualBadge {
@@ -71,172 +41,6 @@ impl ManualBadge {
             Self::Local => tr("Local"),
         }
     }
-}
-
-/// One mod in Discover.
-#[derive(Clone, Debug, PartialEq)]
-pub(super) struct Card {
-    pub(super) id: String,
-    pub(super) name: String,
-    pub(super) authors: String,
-    pub(super) summary: String,
-    pub(super) downloads: u64,
-    pub(super) make: Make,
-    pub(super) categories: Vec<String>,
-    pub(super) icon: Option<String>,
-    /// The newest version's day, for sorting.
-    pub(super) updated: String,
-    pub(super) first: String,
-    pub(super) fit: Fit,
-    /// A collection's card: how many mods it lists.
-    pub(super) members: Option<usize>,
-    /// The collection that lists this mod, by name: it shows in Discover only as that card.
-    pub(super) part_of: Option<String>,
-    /// A library (`collection::libraries`): found by
-    /// searching, never in the browse list.
-    pub(super) library: bool,
-    /// Id, name, summary and authors in lower case, what the search box matches. Made once
-    /// in [`cards`]: Discover filters on every frame it draws.
-    haystack: String,
-}
-
-#[cfg(test)]
-impl Card {
-    /// Every fitting native mod is built on this computer (collections list their own members).
-    pub(super) fn builds_locally(&self) -> bool {
-        self.members.is_none() && self.make == Make::Native && self.fit.fits()
-    }
-}
-
-pub(super) fn make_of(p: &index::Project) -> Option<Make> {
-    match p.kind {
-        index::Kind::NativeMod => Some(Make::Native),
-        index::Kind::Mod => Some(Make::Content),
-        _ => None,
-    }
-}
-
-pub(super) fn fit_of(index: &Index, p: &index::Project, game: &str) -> Fit {
-    if index.installable(p, game).is_some() {
-        return Fit::Fits;
-    }
-    let for_game: Vec<&index::Version> = p.versions.iter().filter(|v| v.game == game).collect();
-    if for_game.is_empty() {
-        return Fit::OtherBuild(
-            p.versions
-                .first()
-                .map(|v| v.game.clone())
-                .unwrap_or_default(),
-        );
-    }
-    if let Some(r) = for_game
-        .iter()
-        .find_map(|v| index.revoked(&p.id, &v.file.sha256))
-    {
-        return Fit::Refused(trf("Taken down: {reason}", &[("reason", &r.reason)]));
-    }
-    Fit::Refused(tr("Made for Sunrise's earlier mod system").to_string())
-}
-
-/// Every mod and native mod of the registry, for the build `game`. Packs are left out.
-pub(super) fn cards(index: &Index, game: &str) -> Vec<Card> {
-    let part_of = collection::part_of(index);
-    let libraries = collection::libraries(index);
-    let mut cards: Vec<Card> = index
-        .projects
-        .iter()
-        .filter_map(|p| {
-            let make = make_of(p)?;
-            Some(Card {
-                id: p.id.clone(),
-                name: p.name.clone(),
-                authors: p.authors.join(", "),
-                summary: p.summary.clone(),
-                downloads: p.downloads,
-                make,
-                categories: p.categories.clone(),
-                icon: p.icon.clone(),
-                updated: p
-                    .versions
-                    .iter()
-                    .map(|v| v.published.as_str())
-                    .max()
-                    .unwrap_or("")
-                    .into(),
-                first: p
-                    .versions
-                    .iter()
-                    .map(|v| v.published.as_str())
-                    .min()
-                    .unwrap_or("")
-                    .into(),
-                fit: fit_of(index, p, game),
-                members: None,
-                part_of: part_of.get(p.id.as_str()).map(|c| c.name.clone()),
-                library: libraries.contains(&p.id),
-                haystack: String::new(),
-            })
-        })
-        .collect();
-    let collections = collection::cards(index, &cards);
-    cards.extend(collections);
-    for c in &mut cards {
-        c.haystack = format!("{} {} {} {}", c.id, c.name, c.summary, c.authors).to_lowercase();
-    }
-    cards
-}
-
-#[cfg(test)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Sort {
-    Downloads,
-    Name,
-}
-
-#[cfg(test)]
-#[derive(Clone, Debug, PartialEq)]
-pub(super) struct Filters {
-    pub(super) text: String,
-    pub(super) category: Option<String>,
-    pub(super) fits_only: bool,
-    pub(super) make: Option<Make>,
-    pub(super) sort: Sort,
-}
-
-#[cfg(test)]
-impl Default for Filters {
-    fn default() -> Self {
-        Self {
-            text: String::new(),
-            category: None,
-            fits_only: true,
-            make: None,
-            sort: Sort::Downloads,
-        }
-    }
-}
-
-/// Indexes into `cards` that pass `f`, in the order asked for.
-#[cfg(test)]
-pub(super) fn discover(cards: &[Card], f: &Filters) -> Vec<usize> {
-    let words: Vec<String> = f.text.split_whitespace().map(str::to_lowercase).collect();
-    let mut shown: Vec<usize> = (0..cards.len())
-        .filter(|&i| {
-            let c = &cards[i];
-            words.iter().all(|w| c.haystack.contains(w.as_str()))
-                && f.category.as_ref().is_none_or(|k| c.categories.contains(k))
-                && f.make.is_none_or(|m| c.make == m)
-                && (!f.fits_only || c.fit.fits())
-                // Browsing shows a collection's card for its mods and no libraries; a search
-                // finds each of them.
-                && (!f.text.is_empty() || (c.part_of.is_none() && !c.library))
-        })
-        .collect();
-    match f.sort {
-        Sort::Downloads => shown.sort_by_key(|&i| std::cmp::Reverse(cards[i].downloads)),
-        Sort::Name => shown.sort_by_cached_key(|&i| cards[i].name.to_lowercase()),
-    }
-    shown
 }
 
 /// `6814` → `6.8k downloads`.
@@ -257,25 +61,7 @@ pub(super) fn size(bytes: u64) -> String {
     }
 }
 
-pub(super) fn side_label(side: Option<&Side>) -> &'static str {
-    match side {
-        None | Some(Side::Client) => tr("Not needed on servers"),
-        Some(Side::Both) => tr("Servers need it too"),
-        Some(Side::Server) => tr("Server only"),
-        Some(_) => tr("Server only"),
-    }
-}
-
 // ---------------------------------------------------------------- the project page
-
-#[derive(Clone, Debug, PartialEq)]
-pub(super) struct VersionLine {
-    pub(super) number: String,
-    pub(super) published: String,
-    pub(super) game: String,
-    pub(super) fit: Fit,
-    pub(super) size: u64,
-}
 
 /// A browser destination checked at the registry or installed-origin boundary.
 #[derive(Clone, Debug, PartialEq)]
@@ -320,115 +106,6 @@ impl SourceLink {
     }
 }
 
-/// Facts only the registry can provide.
-#[derive(Clone, Debug, PartialEq)]
-pub(super) struct About {
-    pub(super) license: String,
-    pub(super) downloads: u64,
-    pub(super) updated: String,
-    pub(super) side: &'static str,
-    pub(super) signed: bool,
-}
-
-/// Everything the shared details screen shows, from the registry or a local archive.
-#[derive(Clone, Debug, PartialEq)]
-pub(super) struct Page {
-    pub(super) id: String,
-    pub(super) name: String,
-    pub(super) authors: Vec<String>,
-    pub(super) description: String,
-    pub(super) source: Option<SourceLink>,
-    pub(super) about: Option<About>,
-    pub(super) categories: Vec<String>,
-    pub(super) screenshots: Vec<String>,
-    pub(super) icon: Option<String>,
-    pub(super) make: Option<Make>,
-    pub(super) versions: Vec<VersionLine>,
-    pub(super) fit: Fit,
-    /// The newest version that fits: what Add installs.
-    pub(super) will_install: Option<VersionLine>,
-    /// What the registry says about who made it and what it may do (`trust_and_capabilities`).
-    pub(super) trust: Vec<String>,
-    /// Native code made for another game build than the one played: checked before it runs.
-    pub(super) another_build: bool,
-    /// Mods the newest version lists as part of itself (a registry modpack's rule; a mod rarely has any).
-    pub(super) requires: Vec<(String, String)>,
-}
-
-pub(super) fn page(
-    index: &Index,
-    id: &str,
-    game: &str,
-    trust: Vec<String>,
-    another_build: bool,
-) -> Option<Page> {
-    let p = index.project(id)?;
-    let make = make_of(p)?;
-    let lines: Vec<VersionLine> = p
-        .versions
-        .iter()
-        .map(|v| VersionLine {
-            number: v.version.clone(),
-            published: v.published.clone(),
-            game: v.game.clone(),
-            fit: match (v.game == game, index.revoked(&p.id, &v.file.sha256)) {
-                (_, Some(r)) => Fit::Refused(trf("Taken down: {reason}", &[("reason", &r.reason)])),
-                _ if !v.capabilities.unknown().is_empty() => {
-                    Fit::Refused(tr("Made for Sunrise's earlier mod system").to_string())
-                }
-                (true, None) => Fit::Fits,
-                (false, None) => Fit::OtherBuild(v.game.clone()),
-            },
-            size: v.file.size,
-        })
-        .collect();
-    let will_install = index
-        .installable(p, game)
-        .and_then(|v| lines.iter().find(|l| l.number == v.version).cloned());
-    Some(Page {
-        id: p.id.clone(),
-        name: p.name.clone(),
-        authors: p.authors.clone(),
-        description: p.description.clone(),
-        source: SourceLink::read(&p.source),
-        about: Some(About {
-            license: p.license.clone(),
-            downloads: p.downloads,
-            updated: lines
-                .iter()
-                .map(|l| l.published.clone())
-                .max()
-                .unwrap_or_default(),
-            side: side_label(p.versions.first().and_then(|v| v.side.as_ref())),
-            signed: p.key.is_some(),
-        }),
-        categories: p.categories.clone(),
-        screenshots: p.screenshots.clone(),
-        icon: p.icon.clone(),
-        make: Some(make),
-        fit: fit_of(index, p, game),
-        will_install,
-        versions: lines,
-        trust,
-        another_build,
-        requires: p
-            .versions
-            .first()
-            .map(|v| {
-                v.requires
-                    .iter()
-                    .map(|r| {
-                        let name = index
-                            .project(&r.id)
-                            .map_or(r.id.clone(), |m| m.name.clone());
-                        (name, r.version.clone())
-                    })
-                    .collect()
-            })
-            .unwrap_or_default(),
-    })
-}
-
 // ---------------------------------------------------------------- installed
 
 /// What stands between an installed mod and working, shown on its row.
@@ -438,8 +115,6 @@ pub(super) enum Need {
     TakenDown(String),
     /// A native mod, on, whose build for this computer isn't made yet.
     Build,
-    /// A native mod that can't run until the player allows native code.
-    Permission,
     /// On, but served by this native mod (its name, or its id when not installed), which is off:
     /// the game leaves it out.
     Host(String),
@@ -451,13 +126,23 @@ pub(super) struct CollectionGroup {
     pub(super) name: String,
 }
 
-impl From<&index::Collection> for CollectionGroup {
-    fn from(collection: &index::Collection) -> Self {
+impl From<&sunrise_launcher_smod::index::Collection> for CollectionGroup {
+    fn from(collection: &sunrise_launcher_smod::index::Collection) -> Self {
         Self {
             id: collection.id.clone(),
             name: collection.name.clone(),
         }
     }
+}
+
+/// A switch's hold on a mod's exact archive.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct Hold {
+    /// The build it was held for, by the name players read.
+    pub(super) build: String,
+    pub(super) reason: sunrise_launcher::managed_play::HeldReason,
+    /// Local or source bytes: turning it on checks them against the build again.
+    pub(super) retry: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -469,8 +154,9 @@ pub(super) struct Row {
     pub(super) version: String,
     pub(super) on: bool,
     pub(super) need: Option<Need>,
-    /// A browser-installed mod whose registry status couldn't be checked this run.
-    pub(super) registry_unchecked: bool,
+    /// Why a registry-installed mod's status couldn't be checked: the registry was unreachable
+    /// or refused. None while the first read is out.
+    pub(super) registry_issue: Option<String>,
     /// The version an update would install.
     pub(super) update: Option<String>,
     /// Installed because another mod needed it.
@@ -486,7 +172,7 @@ pub(super) struct Row {
     /// It can't run on the game this setup plays: the build left it out.
     pub(super) unfit: Option<Unfit>,
     /// The exact Switch receipt keeps the native archive off until a proved update.
-    pub(super) held_for: Option<String>,
+    pub(super) held_for: Option<Hold>,
     /// The build left it out for another reason (it didn't build, it needs a mod that was left
     /// out, it clashes with another): what the player reads, in a sentence.
     pub(super) left_out: Option<Omission>,
@@ -567,7 +253,6 @@ pub(super) struct Status {
 /// The one button a row may hold.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum RowAction {
-    Allow,
     Update,
 }
 
@@ -600,12 +285,7 @@ pub(super) mod column {
 
 /// `row`'s cells. `error` is why its last update failed. The status is the first thing that
 /// applies, most pressing first; whatever else applies is in its tooltip.
-pub(super) fn cells(
-    row: &Row,
-    error: Option<&str>,
-    building: Option<&BuildState>,
-    native_allowed: bool,
-) -> Cells {
+pub(super) fn cells(row: &Row, error: Option<&str>, building: Option<&BuildState>) -> Cells {
     let mut said: Vec<Status> = Vec::new();
     let mut say = |icon, label: String, tone, tip: String| {
         said.push(Status {
@@ -630,12 +310,6 @@ pub(super) fn cells(
             Tone::Warning,
             trf("Taken down: {reason}", &[("reason", why)]),
         ),
-        Some(Need::Permission) => say(
-            "shield",
-            tr("Needs permission").into(),
-            Tone::Warning,
-            tr("Needs your permission to run native code").into(),
-        ),
         Some(Need::Host(host)) => say(
             "information-circle",
             trf("Needs {host}", &[("host", host)]),
@@ -647,15 +321,19 @@ pub(super) fn cells(
         ),
         Some(Need::Build) | None => {}
     }
-    if let Some(build) = &row.held_for {
+    if let Some(hold) = &row.held_for {
+        let vars = [("mod", row.title.as_str()), ("build", hold.build.as_str())];
         say(
             "information-circle",
-            tr("Needs an update from its author").into(),
+            hold.reason.label().into(),
             Tone::Warning,
-            trf(
-                "{mod} needs an update from its author for {build}.",
-                &[("mod", &row.title), ("build", build)],
-            ),
+            match hold.reason.detail() {
+                Some(detail) => detail.to_owned(),
+                None if hold.reason.unproved() => {
+                    trf("{mod}'s fit with {build} could not be verified.", &vars)
+                }
+                None => trf("{mod} needs an update from its author for {build}.", &vars),
+            },
         );
     } else if let Some(unfit) = &row.unfit {
         say(
@@ -727,11 +405,6 @@ pub(super) fn cells(
                     "Version {version} is out. You chose its version: update it on its own.",
                     &[("version", to)],
                 )
-            } else if row.native() && !native_allowed {
-                trf(
-                    "Version {version} is out. Updating may ask you to allow native code.",
-                    &[("version", to)],
-                )
             } else {
                 trf("Version {version} is out", &[("version", to)])
             },
@@ -751,15 +424,12 @@ pub(super) fn cells(
         version: row.version.clone(),
         status: said.into_iter().next().map(|first| Status { tip, ..first }),
         popover,
-        action: match (&row.need, &row.update) {
-            (Some(Need::Permission), _) => Some(RowAction::Allow),
-            (_, Some(_)) => Some(RowAction::Update),
-            _ => None,
-        },
-        switch: row.held_for.is_none()
+        action: row.update.as_ref().map(|_| RowAction::Update),
+        switch: row.held_for.as_ref().is_none_or(|hold| hold.retry)
             && !matches!(row.need, Some(Need::TakenDown(_)))
             && !row.local.as_ref().is_some_and(|l| l.unreadable),
-        unavailable: row.held_for.is_some()
+        // A retryable hold is a switch the player may try, not a mod the build dropped.
+        unavailable: row.held_for.as_ref().is_some_and(|hold| !hold.retry)
             || row.unfit.is_some()
             || row.left_out.is_some()
             || matches!(
@@ -818,39 +488,6 @@ impl Row {
         self.manual_badge().is_some()
     }
 
-    pub(super) fn installed_details(&self) -> Page {
-        Page {
-            id: self.id.clone(),
-            name: self.title.clone(),
-            authors: if self.authors.is_empty() {
-                Vec::new()
-            } else {
-                vec![self.authors.clone()]
-            },
-            description: String::new(),
-            source: self
-                .local
-                .as_ref()
-                .and_then(|local| local.github.as_ref())
-                .and_then(|origin| SourceLink::github(&origin.owner, &origin.repo)),
-            about: None,
-            categories: Vec::new(),
-            screenshots: Vec::new(),
-            icon: self.icon.clone(),
-            make: self.make,
-            versions: Vec::new(),
-            fit: Fit::Unknown,
-            will_install: None,
-            trust: Vec::new(),
-            another_build: false,
-            requires: Vec::new(),
-        }
-    }
-
-    pub(super) fn native(&self) -> bool {
-        self.make == Some(Make::Native)
-    }
-
     /// The native mod that serves this content package's code, when it names one.
     pub(super) fn served_by(&self) -> Option<&str> {
         self.local.as_ref().and_then(|l| l.served_by.as_deref())
@@ -882,10 +519,10 @@ impl Row {
 
 /// What `rows` needs to know about the computer, read by the caller.
 pub(super) struct World<'a> {
-    pub(super) index: Option<&'a Index>,
-    pub(super) game: &'a str,
     /// The signed v2 index, which owns entries keyed by a v2 project ID.
     pub(super) v2: Option<&'a index_v2::Index>,
+    /// Why the last read of the v2 index failed; none while it reads or once it has read.
+    pub(super) v2_failure: Option<&'a str>,
     /// The exact build the profile plays, which v2 `fits` lists name.
     pub(super) build: Option<&'a str>,
     /// Verified archive hashes already rejected by the SDK for this base build.
@@ -893,7 +530,6 @@ pub(super) struct World<'a> {
     pub(super) enabled: &'a HashSet<String>,
     /// Native mods whose build isn't made.
     pub(super) unbuilt: &'a HashSet<String>,
-    pub(super) native_allowed: bool,
     /// The versions the player picked, by project id.
     pub(super) chosen: &'a std::collections::BTreeMap<String, String>,
     /// Native files the browser didn't install.
@@ -910,7 +546,7 @@ pub(super) struct Local {
     pub(super) name: String,
     pub(super) version: String,
     pub(super) github: Option<sunrise_launcher::github_mods::Origin>,
-    /// Native code, which needs permission and a build, rather than content only.
+    /// Native code, which needs a build, rather than content only.
     pub(super) native: bool,
     /// The native mod whose code serves this content package (`served_by`).
     pub(super) served_by: Option<String>,
@@ -928,47 +564,40 @@ pub(super) fn rows(entries: &[Entry], w: &World) -> Vec<Row> {
         .filter(|e| e.source == SourceId::Sunrise && e.kind == Kind::Mod)
         .filter_map(|e| {
             let id = mod_id(e)?.to_owned();
-            if e.mod_id.is_some() {
-                return Some(v2_row(e, id, w));
+            let project =
+                w.v2.and_then(|i| sunrise_launcher::browser::sunrise::v2::installed_project(i, e));
+            if e.mod_id.is_some() || project.is_some() {
+                return Some(v2_row(e, id, project, w));
             }
-            let p = w.index.and_then(|i| i.project(&e.project));
+            // Installed from the old registry, which has closed, and no v2 release has its
+            // archive: the v2 index can still take it down by its hash, and it gets no updates.
             let native = sunrise_launcher::native_status::is_native_file(&e.file);
-            let make = match (p.and_then(make_of), native) {
-                (_, true) => Some(Make::Native),
-                (m, false) => m,
-            };
             let on = w.enabled.contains(&id);
-            let taken_down = w.index.and_then(|i| {
+            let taken_down = w.v2.and_then(|i| {
                 let hash = e.checksum.strip_prefix("SHA-256:").unwrap_or_default();
-                i.revoked(&e.project, hash).map(|r| r.reason.clone())
+                i.revoked_by_sha256(hash).map(|r| r.reason.clone())
             });
             let need = if let Some(reason) = taken_down {
                 Some(Need::TakenDown(reason))
-            } else if native && on && !w.native_allowed {
-                Some(Need::Permission)
             } else if native && on && w.unbuilt.contains(&id) {
                 Some(Need::Build)
             } else {
                 None
             };
-            let update = w
-                .index
-                .zip(p)
-                .and_then(|(i, p)| newer(i, p, &e.version, w.game, w.unfit_updates));
             Some(Row {
-                title: p.map_or_else(|| id.clone(), |p| p.name.clone()),
+                title: e.title.clone(),
                 id,
-                authors: p.map(|p| p.authors.join(", ")).unwrap_or_default(),
-                make,
+                authors: String::new(),
+                make: Some(if native { Make::Native } else { Make::Content }),
                 version: e.number.clone(),
                 on,
                 need,
-                registry_unchecked: w.index.is_none(),
-                update,
+                registry_issue: None,
+                update: None,
                 dependency: e.dependency,
                 pinned: w.chosen.contains_key(&e.project),
                 local: None,
-                icon: p.and_then(|p| p.icon.clone()),
+                icon: None,
                 source_listing: None,
                 collection: None,
                 entry: Some(e.clone()),
@@ -981,7 +610,6 @@ pub(super) fn rows(entries: &[Entry], w: &World) -> Vec<Row> {
     out.extend(w.local.iter().map(|l| {
         let on = !l.unreadable && w.enabled.contains(&l.id);
         let need = match on && l.native {
-            true if !w.native_allowed => Some(Need::Permission),
             true if w.unbuilt.contains(&l.id) => Some(Need::Build),
             _ => l
                 .served_by
@@ -1004,7 +632,7 @@ pub(super) fn rows(entries: &[Entry], w: &World) -> Vec<Row> {
             version: l.version.clone(),
             on,
             need,
-            registry_unchecked: false,
+            registry_issue: None,
             update: None,
             dependency: false,
             pinned: false,
@@ -1025,39 +653,31 @@ pub(super) fn rows(entries: &[Entry], w: &World) -> Vec<Row> {
 /// A row for an entry the signed v2 index installed: its project names it, a takedown of the
 /// installed archive needs action, and an update is the newest release listed as fitting the
 /// profile's exact build.
-fn v2_row(e: &Entry, id: String, w: &World) -> Row {
-    use sunrise_launcher_smod::dependencies::parse_version;
-    let p = w.v2.and_then(|i| i.project(&e.project));
+/// `p` is the row's v2 project, when the index lists it.
+fn v2_row(e: &Entry, id: String, p: Option<&index_v2::Project>, w: &World) -> Row {
     let native = sunrise_launcher::native_status::is_native_file(&e.file);
     let on = w.enabled.contains(&id);
     let hash = e.checksum.strip_prefix("SHA-256:").unwrap_or_default();
+    let project_id = p.map_or(e.project.as_str(), |p| p.id.as_str());
     let taken_down =
-        w.v2.and_then(|i| i.revoked(&e.project, Some(hash)))
+        w.v2.and_then(|i| i.revoked(project_id, Some(hash)))
             .map(|r| r.reason.clone());
     let need = if let Some(reason) = taken_down {
         Some(Need::TakenDown(reason))
-    } else if native && on && !w.native_allowed {
-        Some(Need::Permission)
     } else if native && on && w.unbuilt.contains(&id) {
         Some(Need::Build)
     } else {
         None
     };
     let update = w.v2.zip(p).zip(w.build).and_then(|((i, p), build)| {
-        let installed = parse_version(&e.version).ok()?;
-        p.releases
-            .iter()
-            .filter(|r| {
-                r.fits_build(build)
-                    && i.revoked(&p.id, Some(&r.file.sha256)).is_none()
-                    && !w
-                        .unfit_updates
-                        .contains(&r.file.sha256.to_ascii_lowercase())
-            })
-            .filter_map(|r| Some((parse_version(&r.version).ok()?, r)))
-            .filter(|(v, _)| *v > installed)
-            .max_by(|a, b| a.0.cmp(&b.0))
-            .map(|(_, r)| r.version.clone())
+        sunrise_launcher::browser::sunrise::v2::newer_release(
+            i,
+            p,
+            &e.version,
+            build,
+            w.unfit_updates,
+        )
+        .map(|r| r.version.clone())
     });
     Row {
         title: p.map_or_else(|| e.title.clone(), |p| p.name.clone()),
@@ -1071,7 +691,7 @@ fn v2_row(e: &Entry, id: String, w: &World) -> Row {
         version: e.number.clone(),
         on,
         need,
-        registry_unchecked: w.v2.is_none(),
+        registry_issue: w.v2_failure.map(str::to_owned),
         update,
         dependency: e.dependency,
         pinned: w.chosen.contains_key(&e.project),
@@ -1102,49 +722,6 @@ impl Ord for Group {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         (*self as u8).cmp(&(*other as u8))
     }
-}
-
-/// A catalogue offer, not native fit proof. Exclude releases already proved not to fit.
-pub(super) fn newer(
-    index: &Index,
-    p: &index::Project,
-    installed: &str,
-    game: &str,
-    unfit_updates: &BTreeSet<String>,
-) -> Option<String> {
-    p.versions.iter().find(|v| v.version == installed)?;
-    newer_for_hold(index, p, installed, game, unfit_updates)
-}
-
-/// A Switch hold may name a version older than the catalogue retains. The Update worker
-/// still checks the old archive against the receipt and proves the selected replacement.
-pub(super) fn newer_for_hold(
-    index: &Index,
-    p: &index::Project,
-    installed: &str,
-    game: &str,
-    unfit_updates: &BTreeSet<String>,
-) -> Option<String> {
-    use sunrise_launcher_smod::dependencies::parse_version;
-    let old = parse_version(installed).ok()?;
-    p.versions
-        .iter()
-        .rev()
-        .filter_map(|v| {
-            if !sunrise_launcher::browser::sunrise::fits_game(v, game)
-                || index.revoked(&p.id, &v.file.sha256).is_some()
-                || unfit_updates.contains(&v.file.sha256.to_ascii_lowercase())
-            {
-                return None;
-            }
-            let version = parse_version(&v.version).ok()?;
-            version
-                .cmp_precedence(&old)
-                .is_gt()
-                .then_some((version, &v.version))
-        })
-        .max_by(|(a, _), (b, _)| a.cmp_precedence(b))
-        .map(|(_, version)| version.clone())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1262,20 +839,13 @@ pub(super) fn bulk_updatable(r: &Row) -> bool {
 }
 
 /// Which of the chosen mods can be turned on now, and which can't (and why).
-pub(super) fn turn_on_plan<'a>(
-    chosen: &[&'a Row],
-    native_allowed: bool,
-) -> (Vec<&'a Row>, Vec<(&'a Row, String)>) {
+pub(super) fn turn_on_plan<'a>(chosen: &[&'a Row]) -> (Vec<&'a Row>, Vec<(&'a Row, String)>) {
     let (mut ok, mut no) = (Vec::new(), Vec::new());
     for r in chosen {
         match &r.need {
             Some(Need::TakenDown(why)) => {
                 no.push((*r, trf("taken down: {reason}", &[("reason", why)])))
             }
-            _ if r.native() && !native_allowed => no.push((
-                *r,
-                tr("native code needs your permission first").to_string(),
-            )),
             _ => ok.push(*r),
         }
     }

@@ -10,7 +10,8 @@ pub(crate) struct GameSlices {
     slices: BTreeMap<String, String>,
 }
 
-/// The game release must sign an index listing both client slices for this target.
+/// The game release must sign both `sdk.json` (listing both client slices for this target) and
+/// `sunrise-release.json`, matching the exact proof required by `GameDownload::prove_with`.
 pub(crate) fn offers_game(
     version: &str,
     source: &str,
@@ -18,19 +19,65 @@ pub(crate) fn offers_game(
     base: &Base,
     keys: &[PublicKey],
 ) -> bool {
+    check_game_offer(version, source, triple, base, keys).unwrap_or(false)
+}
+
+/// Checks whether the game release signs an index listing both client slices for this target.
+/// Returns `Ok(true)` when both slices are listed, `Ok(false)` when the verified index omits a
+/// slice (or the build tag does not match its channel), and `Err(Refusal)` when fetching or
+/// verifying the index fails so explicit installs can report the actual failure.
+pub(crate) fn check_game_offer(
+    version: &str,
+    source: &str,
+    triple: &str,
+    base: &Base,
+    keys: &[PublicKey],
+) -> Result<bool, Refusal> {
     let channel = sunrise_launcher_release_verify::Channel::of(source);
     if channel.is_some_and(|channel| !sunrise_launcher_release_verify::is_build(channel, version)) {
-        return false;
+        return Ok(false);
     }
-    let index = signed_game_index(base, source, version, channel, keys).and_then(|bytes| {
-        let commit = game_commit(version, channel, &bytes)?;
-        checked_game_index(version, &bytes, &commit)
-    });
-    index.is_ok_and(|index| {
-        game_slices(triple)
-            .iter()
-            .all(|(_, name)| index.asset(name).is_ok())
-    })
+    let fetch_error = std::cell::RefCell::new(None);
+    let proof = crate::backend::installation::prove_release_files(
+        source,
+        version,
+        INDEX,
+        true,
+        keys,
+        |name| match base.release_file(source, version, name) {
+            Ok(bytes) => Ok(bytes),
+            Err(error) => {
+                let text = error.to_string();
+                let mut slot = fetch_error.borrow_mut();
+                if slot.is_none() {
+                    *slot = Some(error);
+                }
+                Err(text)
+            }
+        },
+    )
+    .map_err(|why| {
+        fetch_error
+            .into_inner()
+            .unwrap_or_else(|| Refusal::Refused {
+                build: version.to_owned(),
+                why,
+            })
+    })?;
+    let Some(bytes) = base.release_file(source, version, INDEX)? else {
+        return Err(Refusal::Host);
+    };
+    sunrise_launcher_release_verify::check(INDEX, proof.archive(), &sha256(&bytes)).map_err(
+        |why| Refusal::Refused {
+            build: version.to_owned(),
+            why,
+        },
+    )?;
+    let commit = game_commit(version, channel, &bytes)?;
+    let index = checked_game_index(version, &bytes, &commit)?;
+    Ok(game_slices(triple)
+        .iter()
+        .all(|(_, name)| index.asset(name).is_ok()))
 }
 
 fn checked_game_index(version: &str, bytes: &[u8], commit: &str) -> Result<Index, Refusal> {
@@ -45,16 +92,13 @@ fn game_slices(triple: &str) -> [(Kind, String); 2] {
 }
 
 /// `game_index` and its digest come from the signed game release, not from the SDK host.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn stage_game(
     stage: &Path,
     version: &str,
     triple: &str,
     (game_index, digest): (&[u8], &str),
-    base: &Base,
-    keys: &[PublicKey],
-    stop: Option<&crate::native_mods::Cancellation>,
-    progress: &dyn Fn(f32),
+    (base, keys): (&Base, &[PublicKey]),
+    (stop, progress): (Option<&crate::native_mods::Cancellation>, &dyn Fn(f32)),
 ) -> Result<(PathBuf, GameSlices), Refusal> {
     if let Some(stop) = stop {
         stop.check().map_err(|why| Refusal::Refused {

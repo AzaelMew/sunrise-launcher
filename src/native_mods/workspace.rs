@@ -7,7 +7,24 @@ use std::{
 };
 use sunrise_launcher_smod::{index::sha256_file, manifest::Manifest};
 
-pub(crate) const ATTEMPT_PREFIX: &str = ".native-attempt-";
+/// An attempt's folder: this prefix and 6 random characters. Short, because Windows' path limit
+/// counts every folder above the deepest file the SDK's build writes (#396).
+pub(crate) const ATTEMPT_PREFIX: &str = ".nb-";
+/// The folder launchers before 1.3.1 named attempts with, still found and counted on disk.
+pub(crate) const OLD_ATTEMPT_PREFIX: &str = ".native-attempt-";
+/// The SDK's work folder inside an attempt.
+const WORK: &str = "w";
+/// The deepest file a Windows build writes under the work folder, as #396 found it: rustc's
+/// import definition for a raw-dylib DLL, in Cargo's target folder under the SDK's build key.
+const DEEPEST: &str = r"prebuilt-build\94256510f74e-f618d2e4182eb19e\target\x86_64-pc-windows-gnu\release\deps\rustcgsxNAs\api-ms-win-core-backgroundtask-l1-1-0.dll_imports_indirect.def";
+/// Windows' `MAX_PATH`, its terminating NUL included, which mingw's `dlltool` doesn't get around.
+const MAX_PATH: usize = 260;
+
+/// How long the deepest path of a build in `attempt` would be, when it would pass Windows' limit.
+pub(super) fn too_deep(attempt: &Path) -> Option<usize> {
+    let length = attempt.as_os_str().len() + 1 + WORK.len() + 1 + DEEPEST.len();
+    (length >= MAX_PATH).then_some(length)
+}
 
 pub(super) struct Workspace(tempfile::TempDir);
 
@@ -15,9 +32,9 @@ pub(super) struct Workspace(tempfile::TempDir);
 /// bytes. A registry symlink alias is copied as a regular file under its original name.
 #[derive(Debug)]
 pub(super) struct Library {
-    name: String,
-    source: std::path::PathBuf,
-    sha256: String,
+    pub(super) name: String,
+    pub(super) source: std::path::PathBuf,
+    pub(super) sha256: String,
 }
 
 impl Library {
@@ -37,13 +54,18 @@ impl Workspace {
         let parent = crate::backend::plain(parent.canonicalize()?);
         tempfile::Builder::new()
             .prefix(ATTEMPT_PREFIX)
-            .rand_bytes(24)
+            .rand_bytes(6)
             .tempdir_in(parent)
             .map(Self)
     }
 
     pub(super) fn path(&self) -> &Path {
         self.0.path()
+    }
+
+    /// The folder the SDK builds in.
+    pub(super) fn work(&self) -> std::path::PathBuf {
+        self.path().join(WORK)
     }
 
     pub(super) fn isolate(&self, command: &mut std::process::Command) -> io::Result<()> {
@@ -95,7 +117,7 @@ impl Workspace {
     }
 
     pub(super) fn import_log(&self) -> io::Result<String> {
-        let work = self.path().join("work");
+        let work = self.work();
         let log = work.join("build.log");
         match regular_under(self.path(), &log) {
             Ok(()) => Ok(tool::tail(fs::File::open(log)?)),
@@ -115,7 +137,7 @@ impl Workspace {
         revision: &str,
         mods: impl Iterator<Item = &'a Manifest>,
     ) -> io::Result<Vec<Library>> {
-        let work = self.path().join("work");
+        let work = self.work();
         if expected_route.is_some_and(|route| route != built.route) {
             return Err(invalid());
         }
@@ -302,11 +324,30 @@ fn copy_slice(from: &Path, to: &Path) -> io::Result<()> {
             copy_slice(&entry.path(), &to)?;
         } else if meta.is_file() {
             crate::preparer::clone_or_copy(&entry.path(), &to)?;
+            // The tool names its build folder from each slice file's path, length and modified
+            // time (`kept_build`). A copy stamped now (Linux's copy and clone) would name another
+            // folder every attempt, and no kept library would ever be found there.
+            times_handle(&to)?.set_modified(meta.modified()?)?;
         } else {
             return Err(invalid());
         }
     }
     Ok(())
+}
+
+/// A handle that may set `file`'s times even when the file is read-only: on Windows it asks
+/// for attribute writes only, elsewhere setting times needs ownership, not write permission.
+fn times_handle(file: &Path) -> io::Result<fs::File> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        // FILE_WRITE_ATTRIBUTES
+        fs::File::options().access_mode(0x100).open(file)
+    }
+    #[cfg(not(windows))]
+    {
+        fs::File::open(file)
+    }
 }
 
 fn invalid() -> io::Error {

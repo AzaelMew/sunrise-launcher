@@ -9,6 +9,9 @@ use std::{cell::Cell, rc::Rc};
 /// Space reserved beside scroll content for the track and its padding.
 pub const GUTTER: f32 = 16.;
 
+/// The padding of a Mods page around its scroll area, whose bar lies in it.
+pub const PAGE_MARGIN: f32 = 24.;
+
 /// Smallest move, in pixels, that counts as the list having moved.
 const MOVED: f32 = 0.01;
 
@@ -68,6 +71,9 @@ pub(crate) struct Scrollbar {
     grabbed: Rc<Cell<Option<f32>>>,
     /// The vertical offset the last wheel event found, before any handler moved it (`take_wheel`).
     wheel_before: Rc<Cell<f32>>,
+    /// The page's padding beside the scroll area, which the bar is centred in; 0 draws it at
+    /// the area's own edge.
+    margin: f32,
 }
 
 /// What a page's bar remembers between frames, by the page's name: a drag goes on across the
@@ -89,7 +95,15 @@ impl Scrollbar {
             handle,
             grabbed,
             wheel_before,
+            margin: 0.,
         }
+    }
+
+    /// Centre the bar in the page's padding of `margin` beside the scroll area, so the content
+    /// keeps the page's own edge and the bar sits where the redesign puts it.
+    pub(crate) fn in_margin(mut self, margin: f32) -> Self {
+        self.margin = margin;
+        self
     }
 
     /// The bar of the page called `key`, over the page's own handle ([`crate::frame::scrolls`]).
@@ -103,7 +117,16 @@ pub(crate) fn wrap_page(key: &'static str, content: Stateful<Div>, theme: &Theme
     Scrollbar::page(key).wrap(content, theme).flex_1()
 }
 
-/// Wrap a flex-1 scroll container with a caller-owned `ScrollHandle` and a draggable scrollbar.
+/// [`wrap_page`] for a Mods page, whose bar lies in the page's padding ([`PAGE_MARGIN`]).
+pub(crate) fn wrap_page_in_margin(key: &'static str, content: Stateful<Div>, theme: &Theme) -> Div {
+    Scrollbar::page(key)
+        .in_margin(PAGE_MARGIN)
+        .wrap(content, theme)
+        .flex_1()
+}
+
+/// Wrap a Mods page's flex-1 scroll container with a caller-owned `ScrollHandle` and a draggable
+/// scrollbar in the page's padding.
 pub(crate) fn wrap_handle(
     key: &'static str,
     handle: ScrollHandle,
@@ -111,6 +134,7 @@ pub(crate) fn wrap_handle(
     theme: &Theme,
 ) -> Div {
     Scrollbar::with_handle(key, handle)
+        .in_margin(PAGE_MARGIN)
         .wrap(content, theme)
         .flex_1()
 }
@@ -151,6 +175,12 @@ impl Scrollbar {
     /// Wrap the scroll container, reserving a narrow gutter so the bar never covers controls.
     pub fn wrap(&self, content: Stateful<Div>, theme: &Theme) -> Div {
         let state = self.clone();
+        // The 12 px grab area, centred in the margin when there is one.
+        let right = if self.margin > 0. {
+            6. - self.margin
+        } else {
+            2.
+        };
         // The glass look's bar is Home's lists' thumb (`home::tabs::scrollbar`): the muted ink
         // at 72 % on no track, 4 px wide in a 12 px grab area.
         let (track_color, thumb_color) = if theme.glass {
@@ -265,7 +295,7 @@ impl Scrollbar {
                     },
                 )
                 .absolute()
-                .right(px(2.))
+                .right(px(right))
                 .top_0()
                 .bottom_0()
                 .w(px(12.)),

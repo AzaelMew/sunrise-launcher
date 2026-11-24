@@ -56,19 +56,11 @@ fn main() {
             scenario("different-status");
             scenario("early-wrapper");
             scenario("failed");
-            // A release build refuses a local registry (registry_install.rs), and release.yml
-            // runs `cargo test --release`; the fixture only has a local one.
-            #[cfg(debug_assertions)]
-            registry::ordinary_install();
             #[cfg(windows)]
             ordinary_cli();
         }
     }
 }
-
-#[cfg(debug_assertions)]
-#[path = "managed_play_process/registry.rs"]
-mod registry;
 
 fn scenario(mode: &str) {
     let root = tempfile::tempdir().unwrap();
@@ -257,7 +249,7 @@ fn owner() {
         .unwrap();
     phase("proving bound image");
     let image = first
-        .exact_image(BuildMode::Optimized, &cancellation, |_| {}, None, None)
+        .exact_image(BuildMode::Optimized, &cancellation, |_| {}, None)
         .unwrap();
     phase("committing profile");
     let active = first.commit(&image, &cancellation).unwrap();
@@ -632,7 +624,7 @@ fn game() {
     await_event(|| home.join("game-stop").is_file());
     if matches!(
         std::env::var(MODE).as_deref(),
-        Ok("different-status" | "early-wrapper" | "ordinary-cli" | "registry-install")
+        Ok("different-status" | "early-wrapper" | "ordinary-cli")
     ) {
         use std::io::Write as _;
         println!("{FINAL_STDOUT}");

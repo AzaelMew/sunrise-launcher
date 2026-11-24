@@ -165,7 +165,7 @@ Native mods (docs/modding/src/how-to/native-mods.md): compile flat Rust mod proj
 - `--allow-jar-downloads`: Allow exact-hash jar downloads into the local cache for the server export; jar bytes are never included in the exported folder
 - `--instance`: The profile whose installed native mods to build, and which then plays the build (default: the selected one)
 - `--version`: For a profile, assert its current base. In server-export mode, select the installed game build to use (defaults to the newest installed release or Nightly)
-- `--trust-native-code`: Allow native code for this install (remembered; revoke in Settings, Storage)
+- `--trust-native-code`: Build native code the registry did not review: a folder, or a profile's mods that were copied in by hand (asked again on every run)
 - `--profile` (optimized): Native mods use the pinned SDK's optimized compilation settings. The game is never rebuilt by a mod build
 
 MCP: none: the player's switch.
@@ -811,7 +811,6 @@ Install a pack or a Sunrise mod and what it needs into a profile, by its id or s
 - `--instance`: The profile (default: the selected one)
 - `--everything`: Allow a version made for another Minecraft version
 - `--source` (modrinth, sunrise)
-- `--trust-native-code`: Allow registry native code and the named build dependencies to run
 
 MCP: `mods_install`.
 
@@ -838,7 +837,7 @@ Install a native mod from a GitHub link (docs/modding/src/how-to/native-mods.md,
 - `--mod`: The mod to install when the link holds several
 - `--all`: Install every mod the link holds
 - `--instance`: The profile (default: the selected one)
-- `--trust-native-code`: Allow native code for this install (remembered; revoke in Settings, Storage)
+- `--trust-native-code`: Run this unreviewed native code (asked again on every run)
 - `--confirm-world-loss`: Allow a replacement that could remove saved-world content when adding an already installed mod
 
 MCP: none: the player's switch.
@@ -852,7 +851,7 @@ Check native mods from GitHub, and update those installed from a release with a 
 - `ID`: One mod (default: all of them)
 - `--check`: Only say what is newer
 - `--instance`: The profile (default: the selected one)
-- `--trust-native-code`: Allow native code for this install (remembered; revoke in Settings, Storage)
+- `--trust-native-code`: Run this unreviewed native code (asked again on every run)
 - `--confirm-world-loss`: Allow proved loss of registered definitions (not needed for native mods)
 
 Before replacement, Sunrise verifies the installed archive against its recorded GitHub asset and shows its path and SHA-256. A commit install can still be checked with --check; to replace it, remove it explicitly and add the new version.

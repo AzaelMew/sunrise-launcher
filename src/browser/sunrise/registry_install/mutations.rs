@@ -5,49 +5,6 @@ use sunrise_launcher_smod::{dependencies::parse_version, mod_list::ModList};
 
 mod gui;
 
-pub(super) fn update_floors(
-    catalogue: &index::Index,
-    before: &Inventory,
-    game: &str,
-    requested: &[String],
-) -> Result<BTreeMap<String, semver::Version>, InstallError> {
-    let ids = requested
-        .iter()
-        .map(String::as_str)
-        .collect::<BTreeSet<_>>();
-    let mut above = BTreeMap::new();
-    for id in ids {
-        let installed_package = before.get(id);
-        let Some(old) = installed_package.filter(|p| p.owned) else {
-            let name = installed_package.map_or_else(
-                || {
-                    catalogue
-                        .project(id)
-                        .map_or(tr("This mod"), |p| p.name.as_str())
-                },
-                |p| p.package.manifest.name.as_str(),
-            );
-            return Err(InstallError::Refused(trf(
-                "Sunrise couldn't confirm that {name} came from the Sunrise registry, so it can't be updated here.",
-                &[("name", name)],
-            )));
-        };
-        let installed =
-            parse_version(&old.package.manifest.version).map_err(|_| unproved_mods())?;
-        if catalogue.project(id).is_some_and(|p| {
-            p.versions.iter().any(|v| {
-                fits_game(v, game)
-                    && catalogue.revoked(id, &v.file.sha256).is_none()
-                    && parse_version(&v.version)
-                        .is_ok_and(|new| new.cmp_precedence(&installed).is_gt())
-            })
-        }) {
-            above.insert(id.to_owned(), installed);
-        }
-    }
-    Ok(above)
-}
-
 pub(super) fn enabled(home: &Path) -> Result<BTreeSet<String>, String> {
     let path = home.join(sunrise_launcher_smod::mod_list::FILE);
     match fs::read_to_string(&path) {
@@ -208,10 +165,6 @@ impl ChangeImpact {
         self.evidence
     }
 
-    pub(super) fn matches_world_review(&self, reviewed: &[worlds::WorldRisk]) -> bool {
-        self.evidence == reviewed
-    }
-
     fn affected(&self) -> impl Iterator<Item = &worlds::WorldRisk> {
         self.evidence.iter().filter(|world| !world.mods.is_empty())
     }
@@ -318,7 +271,7 @@ pub(crate) fn check_activation(
     active: Option<&managed_play::Active>,
     activate: &[&str],
 ) -> Result<(), String> {
-    let packages = inventory(home, None)?;
+    let packages = inventory(home)?;
     let mut enabled = enabled(home)?;
     enabled.extend(activate.iter().map(|&id| id.to_owned()));
     let manifests = packages
@@ -477,7 +430,7 @@ pub(super) fn stage_removal<'a>(
             }
             retired.insert(id.to_owned());
         }
-        if item.registry_claim {
+        if item.registry_claim || raw_row_matches_archive(home, &rows, id, &item.package.path)? {
             rows.remove(id)?;
             changed_rows = true;
         }
@@ -516,6 +469,27 @@ pub(super) fn stage_removal<'a>(
     })
 }
 
+/// Match a Sunrise browser row by source, kind and portable archive path directly on the raw JSON
+/// row so removal cleans up rows missing display fields (such as `page`) without loosening
+/// `registry_claim` for replacements.
+fn raw_row_matches_archive(
+    home: &Path,
+    rows: &Document,
+    id: &str,
+    archive_path: &Path,
+) -> Result<bool, String> {
+    let Some(row) = rows.row(id)? else {
+        return Ok(false);
+    };
+    let source = serde_json::from_value::<SourceId>(row["source"].clone()).ok();
+    let kind = serde_json::from_value::<Kind>(row["kind"].clone()).ok();
+    let path_matches = row["file"]
+        .as_str()
+        .and_then(|file| portable_row_path(home, file))
+        .is_some_and(|(_, path)| path == archive_path);
+    Ok(source == Some(SourceId::Sunrise) && kind == Some(Kind::Mod) && path_matches)
+}
+
 /// Explicit Remove approves the displayed path and digest, independent of archive origin.
 /// The required dependent closure is turned off, not deleted.
 pub fn remove_mods(
@@ -539,7 +513,7 @@ pub fn remove_mods(
     let old = edit.candidate()?;
     let next = edit.candidate()?;
     let home = next.path();
-    let present = inventory(home, None)?;
+    let present = inventory(home)?;
     let ids = ids.iter().cloned().collect::<BTreeSet<_>>();
     let enabled = enabled(home)?;
     let mut staged = stage_removal(
@@ -554,7 +528,7 @@ pub fn remove_mods(
     let disabled: BTreeSet<String> = unavailable.difference(&ids).cloned().collect();
     let disabled_ids = unavailable.iter().map(String::as_str).collect::<Vec<_>>();
     mod_list::set_all_enabled(home, &disabled_ids, false)?;
-    if let Some(conflict) = manifest_conflict(home, None, None, Side::Both, |_| false)? {
+    if let Some(conflict) = manifest_conflict(home, Side::Both, |_| false)? {
         return Err(InstallError::Refused(conflict.reason));
     }
     let removed = staged
@@ -583,18 +557,25 @@ pub fn remove_mods(
         },
         &suspect,
     )?;
-    let reviewed_image = managed_play::inputs(home, None)?;
+    let reviewed_image = managed_play::inputs(home)?;
     (hooks.progress)(InstallProgress::Reviewing);
     if !approve(&impact) {
         return Err(InstallError::Cancelled);
     }
-    let cancellation = native_mods::Cancellation::default();
-    let proof = prove_edit(&edit, home, instance, &cancellation, &hooks)
-        .map_err(|e| InstallError::Unproved(e.into()))?;
+    // Stop reaches a Remove that waits for another build to finish.
+    let unstoppable = native_mods::Cancellation::default();
+    let cancellation = hooks.cancellation.unwrap_or(&unstoppable);
+    let proof = prove_edit(&edit, home, instance, cancellation, &hooks).map_err(|e| {
+        if cancellation.is_stopped() {
+            InstallError::Cancelled
+        } else {
+            InstallError::Unproved(e.into())
+        }
+    })?;
     (hooks.progress)(InstallProgress::Publishing);
     let reviewed = impact.into_evidence();
-    edit.publish_install(proof, &cancellation, &staged.retired, || {
-        if managed_play::inputs(home, None)? != reviewed_image {
+    edit.publish_install(proof, cancellation, &staged.retired, || {
+        if managed_play::inputs(home)? != reviewed_image {
             return Err(tr(
                 "The files prepared for removal changed. Nothing was removed; try again.",
             )

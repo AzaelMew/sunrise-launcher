@@ -250,9 +250,10 @@ impl Launcher {
         let with_update = selected.iter().filter(|r| model::bulk_updatable(r)).count();
         let registry_updates = rows.iter().filter(|r| model::bulk_updatable(r)).count();
         let has_manual_mods = rows.iter().any(|r| r.manual_badge().is_some());
-        let source_update = rows
-            .iter()
-            .any(|row| nightly::installed_source(row).is_some() && row.update.is_some());
+        let source_update = self.nightly_catalogue_current()
+            && rows
+                .iter()
+                .any(|row| nightly::installed_source(row).is_some() && row.update.is_some());
         let has_tracked_sources = rows
             .iter()
             .filter_map(nightly::installed_source)
@@ -459,45 +460,29 @@ impl Launcher {
         );
         // Collection headings, gaps and rows in one flat list, so only those near the
         // screen are built: a big pack has hundreds of rows, each with its own controls.
-        enum Item<'a> {
-            Head(&'a str, usize),
-            Gap,
-            /// Index into `rows`, and the row's place among the rows shown.
-            Row(usize, usize),
-        }
         let mut items = Vec::new();
         let mut n = 0;
         for (collection, group) in model::installed_groups(&rows, &visible) {
             if let Some(title) = collection {
-                items.push(Item::Head(title, group.len()));
+                items.push(InstalledItem::Head(title, group.len()));
             } else if n != 0 {
                 // A gap ends the previous collection without giving loose mods a heading.
-                items.push(Item::Gap);
+                items.push(InstalledItem::Gap);
             }
             for &i in group {
-                items.push(Item::Row(i, n));
+                items.push(InstalledItem::Row(i, n));
                 n += 1;
             }
         }
         let cull = self.mods.installed_list.clone();
-        // Measurements belong to the items they were taken of.
-        cull.items({
-            use std::hash::{Hash, Hasher};
-            let mut hash = std::collections::hash_map::DefaultHasher::new();
-            for item in &items {
-                match item {
-                    Item::Head(title, _) => (0u8, *title).hash(&mut hash),
-                    Item::Gap => 1u8.hash(&mut hash),
-                    Item::Row(i, _) => (2u8, rows[*i].id.as_str()).hash(&mut hash),
-                }
-            }
-            hash.finish()
-        });
+        // Measurements belong to the items they were taken of, including local archive paths
+        // when two archives share a mod ID.
+        cull.items(installed_items_key(&items, &rows));
         // The row another page opened Installed at stays built until it has been scrolled to.
         let reveal = match &self.ui.mods.reveal {
             Some(search::Reveal::Mod(id)) if !self.ui.mods.revealed.get() => items
                 .iter()
-                .position(|item| matches!(item, Item::Row(i, _) if rows[*i].id == *id)),
+                .position(|item| matches!(item, InstalledItem::Row(i, _) if rows[*i].id == *id)),
             _ => None,
         };
         let scroll = crate::frame::scrolls("installed");
@@ -508,7 +493,7 @@ impl Launcher {
             |k| Some(k) == reveal,
             |k| {
                 match items[k] {
-                    Item::Head(title, count) => div()
+                    InstalledItem::Head(title, count) => div()
                         .flex()
                         .items_center()
                         .justify_between()
@@ -525,11 +510,11 @@ impl Launcher {
                                 ))),
                         )
                         .into_any_element(),
-                    Item::Gap => div()
+                    InstalledItem::Gap => div()
                         .h(px(12.))
                         .bg(c(palette().background))
                         .into_any_element(),
-                    Item::Row(i, n) => self
+                    InstalledItem::Row(i, n) => self
                         .row(
                             n,
                             rows[i].clone(),
@@ -563,14 +548,13 @@ impl Launcher {
             .flex_col()
             .overflow_hidden()
             .child(toolbar)
-            .child(crate::scrollbar::wrap_page(
+            .child(crate::scrollbar::wrap_page_in_margin(
                 "installed",
                 div()
                     .id("alt-installed-scroll")
                     .flex_1()
                     .min_h_0()
                     .overflow_y_scroll()
-                    .pr(px(14.))
                     .child(list),
                 &self.theme,
             ))
@@ -586,28 +570,9 @@ impl Launcher {
 
     pub(super) fn labeled_installed_rows(&self) -> (Vec<Row>, Vec<Option<String>>) {
         let mut rows = self.rows();
-        // The same catalogue Discover displays, including a saved copy. This is display-only;
-        // `rows` uses a fetched index for registry status and update offers.
-        let registry = sunrise::known_index();
-        let registry_collections = registry
-            .as_deref()
-            .map(model::collection::part_of)
-            .unwrap_or_default();
         // Use the exact installed package's display name here, as in the Remove review.
         // Compute collisions before filtering so a row keeps its label when peers are hidden.
         for row in &mut rows {
-            if let Some(entry) = &row.entry {
-                if let Some(project) = registry
-                    .as_ref()
-                    .and_then(|index| index.project(&entry.project))
-                {
-                    row.icon.clone_from(&project.icon);
-                    row.authors = project.authors.join(", ");
-                }
-                row.collection = registry_collections
-                    .get(entry.project.as_str())
-                    .map(|collection| (*collection).into());
-            }
             if let Some(archive) = self.archive_display(row) {
                 row.title.clone_from(&archive.name);
                 if row.authors.is_empty() {
@@ -708,12 +673,7 @@ impl Launcher {
             .filter(|_| r.on)
             .and_then(|run| run.state_of(&r.id, &r.version));
         let failed = matches!(building, Some(State::Failed(_)));
-        let cells = model::cells(
-            &r,
-            error.as_deref(),
-            building,
-            self.settings.native_mods_allowed_at.is_some(),
-        );
+        let cells = model::cells(&r, error.as_deref(), building);
         let tone = |tone: model::Tone| match tone {
             model::Tone::Warning => palette().warning,
             model::Tone::Info => palette().info,
@@ -726,13 +686,13 @@ impl Launcher {
             .as_ref()
             .and_then(|entry| entry.install_hold.as_ref())
             .filter(|_| !r.on);
-        let hold_label = self
+        let hold = self
             .ui
             .mods
             .snapshot
             .as_ref()
-            .and_then(|snapshot| snapshot.rows.switch_held.get(&r.id))
-            .map(|hold| hold.label());
+            .and_then(|snapshot| snapshot.rows.switch_held.get(&r.id));
+        let hold_label = hold.map(|hold| (hold.label(), hold.detail().map(str::to_owned)));
         let switch_held = hold_label.is_some();
         let status_cell: AnyElement = if switch_held {
             div().into_any_element()
@@ -782,18 +742,19 @@ impl Launcher {
         };
         let action = cells.action.map(|action| {
             let (id, label) = match action {
-                model::RowAction::Allow => ("alt-row-allow", tr("Allow…")),
                 model::RowAction::Update => ("alt-row-update", tr("Update")),
             };
             let b = crate::frame::button((id, n), label);
-            if busy {
+            let stale_source = action == model::RowAction::Update
+                && nightly::installed_source(&r).is_some()
+                && !self.nightly_catalogue_current();
+            if busy || stale_source {
                 return dim(b).on_click(|_, _, cx| cx.stop_propagation());
             }
             let row = r.clone();
             b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                 cx.stop_propagation();
                 match action {
-                    model::RowAction::Allow => this.allow(),
                     model::RowAction::Update if nightly::installed_source(&row).is_some() => {
                         this.submit_source_update(&row.id);
                     }
@@ -808,7 +769,7 @@ impl Launcher {
                     "Enabled for this profile, but not included in the build.",
                 )))
             });
-            if cells.switch && !switch_held && !busy {
+            if cells.switch && !busy {
                 let row = r.clone();
                 s.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     cx.stop_propagation();
@@ -867,10 +828,15 @@ impl Launcher {
                         muted(trf("Update available: {version}", &[("version", version)]))
                     }),
             )
-            .children(hold_label.map(|label| {
+            .children(hold_label.map(|(label, detail)| {
                 div()
+                    .id(("alt-row-hold", n))
                     .text_size(px(tokens::SMALL))
                     .text_color(c(palette().warning))
+                    .truncate()
+                    .when_some(detail, |hold, detail| {
+                        hold.tooltip(crate::glass_ui::tip(detail))
+                    })
                     .child(label)
             }))
             .children(
@@ -891,12 +857,15 @@ impl Launcher {
                             .child(line)
                     }),
             )
-            .when(r.registry_unchecked, |d| {
+            .when_some(r.registry_issue.clone(), |d, issue| {
                 d.child(
                     div()
+                        .id(("installed-registry-issue", n))
                         .text_size(px(tokens::SMALL))
                         .text_color(c(palette().muted))
-                        .child(tr("Registry not checked")),
+                        .truncate()
+                        .tooltip(crate::glass_ui::tip(issue.clone()))
+                        .child(issue),
                 )
             });
         use model::column;
@@ -1109,17 +1078,21 @@ impl Launcher {
                         "alt-unfit-update",
                         trf("Update {mod}", &[("mod", &r.title)]),
                     );
-                    let row = r.clone();
-                    Some(b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        this.ui.mods.unfit_open = None;
-                        if nightly::installed_source(&row).is_some() {
-                            this.submit_source_update(&row.id);
-                        } else {
-                            this.update_one(&row);
-                        }
-                        cx.stop_propagation();
-                        cx.notify();
-                    })))
+                    if nightly::installed_source(r).is_some() && !self.nightly_catalogue_current() {
+                        Some(dim(b).on_click(|_, _, cx| cx.stop_propagation()))
+                    } else {
+                        let row = r.clone();
+                        Some(b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            this.ui.mods.unfit_open = None;
+                            if nightly::installed_source(&row).is_some() {
+                                this.submit_source_update(&row.id);
+                            } else {
+                                this.update_one(&row);
+                            }
+                            cx.stop_propagation();
+                            cx.notify();
+                        })))
+                    }
                 }
                 (false, None, Some((tag, made))) if self.installed.contains(tag) => {
                     let b = button(
@@ -1201,6 +1174,28 @@ impl Launcher {
     }
 }
 
+enum InstalledItem<'a> {
+    Head(&'a str, usize),
+    Gap,
+    /// Index into `rows`, and the row's place among the rows shown.
+    Row(usize, usize),
+}
+
+fn installed_items_key(items: &[InstalledItem<'_>], rows: &[Row]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hash = std::collections::hash_map::DefaultHasher::new();
+    for item in items {
+        match item {
+            InstalledItem::Head(title, _) => (0u8, *title).hash(&mut hash),
+            InstalledItem::Gap => 1u8.hash(&mut hash),
+            InstalledItem::Row(i, _) => {
+                (2u8, rows[*i].id.as_str(), rows[*i].archive_file()).hash(&mut hash)
+            }
+        }
+    }
+    hash.finish()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1236,6 +1231,85 @@ mod tests {
             .unwrap();
         assert!(status.success(), "{test} failed in its child process");
         None
+    }
+
+    #[test]
+    fn a_mod_rewritten_in_place_shows_on_an_idle_page_once_due() {
+        if scratch_child("a_mod_rewritten_in_place_shows_on_an_idle_page_once_due").is_none() {
+            return;
+        }
+        let profile = sunrise_launcher::instances::create("Pack", None).unwrap();
+        std::fs::create_dir_all(profile.home.join("sunrise-mods")).unwrap();
+        let entries: Vec<_> = (0..3)
+            .map(|n| {
+                let id = format!("mod-{n}");
+                let file = format!("sunrise-mods/{id}.smod");
+                std::fs::write(profile.home.join(&file), b"one").unwrap();
+                serde_json::json!({
+                    "source": "sunrise", "project": id, "slug": id, "title": format!("Mod {n}"),
+                    "kind": "mod", "version": "1.0.0", "number": "1.0.0", "file": file,
+                    "checksum": format!("SHA-256:{}", "0".repeat(64)), "page": ""
+                })
+            })
+            .collect();
+        std::fs::write(
+            profile.home.join("mod-browser.json"),
+            serde_json::json!({ "entries": entries }).to_string(),
+        )
+        .unwrap();
+        let mut settings = sunrise_launcher::backend::Settings::load();
+        settings.instance = Some(profile.id.clone());
+        settings.save().unwrap();
+
+        let mut app = gpui::TestAppContext::single();
+        let (shell, cx) = app.add_window_view(crate::window_root::Shell::new);
+        let launcher = shell.read_with(cx, |shell, _| shell.launcher());
+        launcher.update(cx, |l, cx| {
+            l.show_installed_mods();
+            cx.notify();
+        });
+        let frame = |cx: &mut gpui::VisualTestContext| {
+            launcher.update(cx, |_, cx| cx.notify());
+            cx.run_until_parked();
+        };
+        let read = |cx: &mut gpui::VisualTestContext| {
+            launcher.read_with(cx, |l, _| {
+                l.ui.mods
+                    .snapshot
+                    .as_ref()
+                    .filter(|s| !s.reading)
+                    .map(|s| s.key.clone())
+            })
+        };
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        let wait = |cx: &mut gpui::VisualTestContext, not: Option<&str>| loop {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the mods were never read"
+            );
+            frame(cx);
+            if let Some(key) = read(cx).filter(|key| Some(key.as_str()) != not) {
+                return key;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        };
+        let first = wait(cx, None);
+
+        // Rewritten where it lies: the next frame keeps the fingerprint it has.
+        std::fs::write(profile.home.join("sunrise-mods/mod-1.smod"), b"one, longer").unwrap();
+        frame(cx);
+        assert_eq!(read(cx).as_deref(), Some(first.as_str()));
+        // Before it is due the pump sees nothing to do; once due it sees the change, with no
+        // input in between, and the next frame reads the mods again.
+        let now = std::time::Instant::now();
+        assert!(!launcher.update(cx, |l, _| l.mods_check_due(now)));
+        let due = now + sunrise_launcher::native_status::FULL_EVERY;
+        assert!(launcher.update(cx, |l, _| l.mods_check_due(due)));
+        let second = wait(cx, Some(&first));
+        assert_ne!(second, first);
+        // An unchanged folder asks for nothing, even when due.
+        let again = due + sunrise_launcher::native_status::FULL_EVERY;
+        assert!(!launcher.update(cx, |l, _| l.mods_check_due(again)));
     }
 
     #[test]
@@ -1324,14 +1398,12 @@ mod tests {
         let mut rows = model::rows(
             &[],
             &model::World {
-                index: None,
-                game: "26.3",
                 v2: None,
+                v2_failure: None,
                 build: None,
                 unfit_updates: &BTreeSet::new(),
                 enabled: &HashSet::new(),
                 unbuilt: &HashSet::new(),
-                native_allowed: true,
                 chosen: &BTreeMap::new(),
                 local: &local,
             },
@@ -1371,5 +1443,81 @@ mod tests {
         assert!(counts.shows.is_empty() && counts.kinds.is_empty());
         assert_eq!(mods.row_filter, model::RowFilter::default());
         assert!(mods.selection.is_empty() && mods.anchor.is_none());
+    }
+
+    #[test]
+    fn show_resource_pack_discover_re_searches_after_clearing_a_previous_resource_query() {
+        if scratch_child(
+            "show_resource_pack_discover_re_searches_after_clearing_a_previous_resource_query",
+        )
+        .is_none()
+        {
+            return;
+        }
+        let mut app = gpui::TestAppContext::single();
+        let (launcher, cx) = app.add_window_view(Launcher::new);
+        launcher.update(cx, |l, _| {
+            l.ui.page = Page::Home;
+            l.ui.mods.find.set("faithful".into());
+            l.ui.mods.packs.scope = pack_discover::Scope::Resource;
+            l.ui.mods.packs.status = pack_discover::Status::Done;
+            let seq_before = l.ui.mods.packs.seq;
+
+            l.show_resource_pack_discover();
+
+            assert_eq!(l.ui.page, Page::PackFind);
+            assert_eq!(l.ui.mods.shelf, Shelf::Resource);
+            assert!(l.ui.mods.find.text().is_empty());
+            assert!(
+                l.ui.mods.packs.seq > seq_before,
+                "entering through Find resource packs must trigger a fresh search for the cleared query"
+            );
+        });
+    }
+
+    #[test]
+    fn installed_items_key_distinguishes_local_archives_sharing_a_mod_id() {
+        let local = [
+            model::Local {
+                id: "lantern".into(),
+                file: "sunrise-mods/lantern-a.smod".into(),
+                name: "Lantern A".into(),
+                version: "1.0.0".into(),
+                github: None,
+                native: false,
+                served_by: None,
+                unreadable: false,
+            },
+            model::Local {
+                id: "lantern".into(),
+                file: "sunrise-mods/lantern-b.smod".into(),
+                name: "Lantern B".into(),
+                version: "1.0.0".into(),
+                github: None,
+                native: false,
+                served_by: None,
+                unreadable: false,
+            },
+        ];
+        let rows = model::rows(
+            &[],
+            &model::World {
+                v2: None,
+                v2_failure: None,
+                build: None,
+                unfit_updates: &BTreeSet::new(),
+                enabled: &HashSet::new(),
+                unbuilt: &HashSet::new(),
+                chosen: &BTreeMap::new(),
+                local: &local,
+            },
+        );
+        assert_eq!(rows.len(), 2);
+        let key_a = installed_items_key(&[InstalledItem::Row(0, 0)], &rows);
+        let key_b = installed_items_key(&[InstalledItem::Row(1, 0)], &rows);
+        assert_ne!(
+            key_a, key_b,
+            "swapping local archives with the same mod ID must invalidate cached row heights"
+        );
     }
 }

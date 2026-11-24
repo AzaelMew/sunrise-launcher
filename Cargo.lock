@@ -6388,6 +6388,7 @@ dependencies = [
  "pulldown-cmark",
  "raw-window-handle",
  "reqwest",
+ "ring",
  "security-framework 3.7.0",
  "semver",
  "serde",

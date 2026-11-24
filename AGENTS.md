@@ -27,8 +27,8 @@ A local checklist (the Rust version is in `tools/ci/rust-version`):
     cargo test --locked --workspace --lib --bins
 
 `.github/workflows/ci.yml` is the full, platform-specific list. It also runs the Play, game
-relay, lifecycle and modpack fence fixtures everywhere, `developer_install` and
-`storage_consent` only on Windows, doc tests only on Linux, and the release signing tests on
+relay, lifecycle and modpack fence fixtures everywhere, `developer_install` only
+on Windows, doc tests only on Linux, and the release signing tests on
 Linux and macOS. Run the ones your change touches.
 
 - The full `cargo test` takes a while, and the `storage` tests alone take about 90 s. A slow test

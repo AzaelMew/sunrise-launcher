@@ -473,9 +473,6 @@ enum ModsCmd {
         everything: bool,
         #[arg(long, value_enum, default_value_t = SourceArg::Modrinth)]
         source: SourceArg,
-        /// Allow registry native code and the named build dependencies to run
-        #[arg(long)]
-        trust_native_code: bool,
     },
     /// Update what the browser installed (or one pack)
     Update {
@@ -505,7 +502,7 @@ enum ModsCmd {
         /// The profile (default: the selected one)
         #[arg(long)]
         instance: Option<String>,
-        /// Allow native code for this install (remembered; revoke in Settings, Storage)
+        /// Run this unreviewed native code (asked again on every run)
         #[arg(long)]
         trust_native_code: bool,
         /// Allow a replacement that could remove saved-world content when adding an already installed mod
@@ -525,7 +522,7 @@ enum ModsCmd {
         /// The profile (default: the selected one)
         #[arg(long)]
         instance: Option<String>,
-        /// Allow native code for this install (remembered; revoke in Settings, Storage)
+        /// Run this unreviewed native code (asked again on every run)
         #[arg(long)]
         trust_native_code: bool,
         /// Allow proved loss of registered definitions (not needed for native mods)
@@ -577,18 +574,8 @@ enum KindArg {
 #[derive(Clone, Copy, clap::ValueEnum)]
 enum SourceArg {
     Modrinth,
-    /// Sunrise's own registry: mods, modpacks and resource packs made for Sunrise, reviewed
+    /// Sunrise's own registry of reviewed mods
     Sunrise,
-}
-
-impl SourceArg {
-    fn get(self) -> Box<dyn sunrise_launcher::browser::Source> {
-        use sunrise_launcher::browser::{self, SourceId};
-        browser::source(match self {
-            SourceArg::Modrinth => SourceId::Modrinth,
-            SourceArg::Sunrise => SourceId::Sunrise,
-        })
-    }
 }
 
 #[derive(Subcommand)]
@@ -753,7 +740,8 @@ enum Cmd {
         /// game build to use (defaults to the newest installed release or Nightly)
         #[arg(long)]
         version: Option<String>,
-        /// Allow native code for this install (remembered; revoke in Settings, Storage)
+        /// Build native code the registry did not review: a folder, or a profile's mods that were
+        /// copied in by hand (asked again on every run)
         #[arg(long)]
         trust_native_code: bool,
         /// Native mods use the pinned SDK's optimized compilation settings.
@@ -1295,7 +1283,6 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
                     profile,
                     allow_jar_downloads,
                     steps,
-                    registry_consent,
                 )?;
                 let built = std::path::absolute(&built).unwrap_or(built);
                 let path = built.display().to_string();
@@ -1343,7 +1330,15 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
             if let Some(requested) = version.as_deref().filter(|tag| *tag != base) {
                 return Err(trf("This profile uses {build}, not {requested}. Use Switch to change its game build.", &[("build", &base), ("requested", requested)]));
             }
-            native_permission(trust_native_code)?;
+            // A folder of source is code nobody reviewed. A profile's own mods build when the
+            // registry verified them or the player confirmed them; the rest, such as files
+            // copied in by hand, only when this run trusts them.
+            if folder.is_some() {
+                native_permission(trust_native_code)?;
+            }
+            if trust_native_code {
+                trust_unreviewed_builds();
+            }
             let target = match profile {
                 Some(profile) => {
                     instances::edit(&target.id, |meta| meta.native_profile = Some(profile))?
@@ -1357,7 +1352,7 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
             };
             let profile = explicit.then_some(target.native_profile);
             let built =
-                match native_mods::build(&base, &folder, &target, profile, false, &native_mods::Cancellation::default(), steps, registry_consent, || backend::releases().ok()) {
+                match native_mods::build(&base, &folder, &target, profile, false, &native_mods::Cancellation::default(), steps, || backend::releases().ok()) {
                     // A content mod needs no build: the instance stays as it is.
                     Err(nothing @ native_mods::Failed::Nothing) => {
                         println!("{nothing}");
@@ -1481,10 +1476,7 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
                         add_arguments(cmd)
                     },
                     |cmd| jars::prepare_for_command(cmd, jar_permission).map_err(|e| e.to_string()),
-                    (
-                        &native_mods::Cancellation::default(),
-                        Some(&registry_consent),
-                    ),
+                    &native_mods::Cancellation::default(),
                     |progress| match progress {
                         managed_play::Progress::Prepare => {
                             backend::play_step("preparing the game's files")
@@ -2195,16 +2187,8 @@ fn approve_mod_change(
 
 /// Commands for browser-installed content and registry mods in a selected profile.
 fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
-    use sunrise_launcher::browser::{installed, sunrise, Kind, Query, SourceId};
-    // The pause is about the registry project, regardless of the requested destination.
-    let registry_project = match &action {
-        ModsCmd::Install {
-            project,
-            source: SourceArg::Sunrise,
-            ..
-        } => Some(sunrise::install_project(project)?),
-        _ => None,
-    };
+    use sunrise_launcher::browser::SourceId;
+    use sunrise_launcher::browser::{installed, modrinth::Modrinth, sunrise, Kind, Query, Source};
     // What the browser installs goes into an instance's game folder.
     let instance = match &action {
         ModsCmd::List { instance }
@@ -2235,15 +2219,7 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
     };
     let mutation_hooks = || sunrise::InstallHooks {
         progress: &mutation_progress,
-        native: &|q| {
-            Err(trf(
-                "Allow native code for {mods} in Settings before updating.",
-                &[("mods", &q.names.join(", "))],
-            ))
-        },
-        registry_crates: None,
         continue_after_failure: &|_| false,
-        resolve: None,
         cancellation: None,
     };
     let on = matches!(action, ModsCmd::Enable { .. });
@@ -2296,18 +2272,46 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                 KindArg::Shader => Kind::Shader,
                 KindArg::Datapack => Kind::DataPack,
             };
-            let source = source.get();
-            // A registry modpack becomes a profile of its own, on the launcher's build, as its import does.
-            let game = match (kind, source.id()) {
-                (Kind::Modpack, SourceId::Sunrise) => sunrise_launcher::browser::game(),
-                _ => game.clone(),
-            };
+            if let SourceArg::Sunrise = source {
+                if kind != Kind::Mod {
+                    return Err(tr("Sunrise's registry lists only mods: use --kind mod.").into());
+                }
+                let catalog = sunrise::v2::index().map_err(|error| error.to_string())?;
+                let text = text.join(" ").to_lowercase();
+                let found: Vec<_> = catalog
+                    .index
+                    .projects
+                    .iter()
+                    .filter(|p| {
+                        [&p.name, &p.slug, &p.summary]
+                            .iter()
+                            .any(|field| field.to_lowercase().contains(&text))
+                    })
+                    .collect();
+                if as_json {
+                    json(found.iter().map(|p| serde_json::json!({
+                        "id": p.id, "slug": p.slug, "title": p.name, "summary": p.summary,
+                        "authors": p.authors,
+                    })).collect());
+                } else {
+                    for p in found {
+                        println!(
+                            "{}  ({})  {}\n  {}",
+                            p.name,
+                            p.slug,
+                            p.authors.join(", "),
+                            p.summary
+                        );
+                    }
+                }
+                return Ok(());
+            }
             let query = Query {
                 everything,
-                game,
+                game: game.clone(),
                 ..Query::new(&text.join(" "), kind)
             };
-            let found = source.search(&query)?;
+            let found = Modrinth.search(&query)?;
             let datapack = kind == Kind::DataPack;
             if as_json {
                 json(found.iter().map(|p| {
@@ -2316,7 +2320,6 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                         "id": p.id, "slug": p.slug, "title": p.title, "summary": p.summary,
                         "author": p.author, "downloads": p.downloads, "page": p.page,
                         "license": p.license, "support": support.label(), "reason": support.reason(),
-                        "about": if p.source == SourceId::Sunrise { sunrise::trust_and_capabilities(&p.id, Some(&instance), &query.game) } else { Vec::new() },
                     })
                 }).collect());
             } else {
@@ -2325,15 +2328,6 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                 }
                 for p in &found {
                     let support = p.support(&query.game);
-                    if p.source == SourceId::Sunrise {
-                        println!("{}  ({})  {}\n  {}", p.title, p.slug, p.author, p.summary);
-                        for line in
-                            sunrise::trust_and_capabilities(&p.id, Some(&instance), &query.game)
-                        {
-                            println!("  {line}");
-                        }
-                        continue;
-                    }
                     println!(
                         "{}  ({})  {} · {} downloads
   {}",
@@ -2356,19 +2350,65 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
             everything,
             source,
             world,
-            trust_native_code,
             ..
         } => {
-            let source = source.get();
-            let p = match registry_project {
-                Some(found) => found,
-                None => source.project(&project)?,
-            };
+            if let SourceArg::Sunrise = source {
+                if world.is_some() {
+                    return Err(tr("Sunrise's registry lists only mods.").into());
+                }
+                if everything {
+                    return Err(tr("Registry mods must fit the profile's game build.").into());
+                }
+                let catalog = sunrise::v2::index().map_err(|error| error.to_string())?;
+                let p = catalog
+                    .index
+                    .project(&project)
+                    .or_else(|| catalog.index.project_by_slug(&project))
+                    .ok_or_else(|| {
+                        trf("{mod} isn't in Sunrise's registry.", &[("mod", &project)])
+                    })?;
+                let progress_line = progress(p.name.clone());
+                let installed = sunrise::install_registry_v2(
+                    &instance,
+                    sunrise::install_target(&instance)?,
+                    vec![p.id.clone()],
+                    sunrise::V2InstallOptions::default(),
+                    || sunrise_launcher::managed_play::headless_first(&instance),
+                    sunrise::V2Hooks {
+                        install: sunrise::InstallHooks {
+                            progress: &|step| {
+                                if let sunrise::InstallProgress::Downloading(f) = step {
+                                    progress_line(f);
+                                }
+                            },
+                            continue_after_failure: &|_| false,
+                            cancellation: None,
+                        },
+                        choose_provider: None,
+                        confirm_publisher_change: None,
+                    },
+                )
+                .map_err(|error| error.to_string())?;
+                let done = installed
+                    .added
+                    .iter()
+                    .chain(installed.updated.iter().map(|(_, entry)| entry));
+                if as_json {
+                    json(done.map(entry_json).collect());
+                } else {
+                    for e in done {
+                        println!("{} {}: {} ({})", e.title, e.number, e.file, e.checksum);
+                    }
+                }
+                return Ok(());
+            }
+            let source = Modrinth;
+            let p = source.project(&project)?;
             if let Some(world) = world {
                 let profile = sunrise_launcher::managed_play::Profile::open_selected(&instance)?;
                 let world = sunrise_launcher::worlds::find(profile.home(), &world)?;
                 let done = installed::install_datapack(
-                    &*source,
+                    &source,
                     &p,
                     everything,
                     &world.path,
@@ -2399,74 +2439,12 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                     p.title
                 ));
             }
-            if p.source == SourceId::Sunrise && p.kind == Kind::Mod {
-                if everything {
-                    return Err(tr("Registry mods must fit the profile's game build.").into());
-                }
-                let progress_line = progress(p.title.clone());
-                let installed = sunrise::install_registry(
-                    &instance,
-                    sunrise::install_target(&instance)?,
-                    || vec![p.id],
-                    || sunrise_launcher::managed_play::headless_first(&instance),
-                    sunrise::InstallHooks {
-                        progress: &|step| {
-                            if let sunrise::InstallProgress::Downloading(f) = step {
-                                progress_line(f);
-                            }
-                        },
-                        native: &|question| {
-                            if question.retry {
-                                return Err(trf(
-                                    "Checking a different version would also run native code from {mods}. No mods were installed. Run Install again only if you trust those mods.",
-                                    &[("mods", &question.names.join(", "))],
-                                ));
-                            }
-                            eprintln!(
-                                "{}",
-                                trf(
-                                    "These mods run native code: {mods}",
-                                    &[("mods", &question.names.join(", "))]
-                                )
-                            );
-                            if !trust_native_code {
-                                return Err(tr(
-                                    "Pass --trust-native-code only if you trust these mods.",
-                                )
-                                .into());
-                            }
-                            native_permission(true)?;
-                            Ok(true)
-                        },
-                        registry_crates: Some(&|inventory| {
-                            eprintln!("{}\n{}", inventory.label(), inventory.detail());
-                            trust_native_code
-                        }),
-                        continue_after_failure: &|_| false,
-                        resolve: None,
-                        cancellation: None,
-                    },
-                )
-                .map_err(|error| error.to_string())?;
-                let done = installed
-                    .added
-                    .iter()
-                    .chain(installed.updated.iter().map(|(_, entry)| entry));
-                if as_json {
-                    json(done.map(entry_json).collect());
-                } else {
-                    for e in done {
-                        println!("{} {}: {} ({})", e.title, e.number, e.file, e.checksum);
-                    }
-                }
-                return Ok(());
-            }
             if p.kind == Kind::Mod {
                 return Err(
                     tr("Only Sunrise registry mods can be installed by the browser.").into(),
                 );
             }
-            let done = installed::install(&*source, &p, everything, &home, &game, &line)?;
+            let done = installed::install(&source, &p, everything, &home, &game, &line)?;
             if as_json {
                 json(done.iter().map(entry_json).collect());
             }
@@ -2523,12 +2501,17 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                     } else {
                         sunrise::UpdateRequest::Bulk(ids)
                     };
-                    let result = sunrise::update_registry(
+                    let result = sunrise::update_registry_v2(
                         &instance,
                         identity?,
                         requested,
+                        sunrise::V2InstallOptions::default(),
                         || sunrise_launcher::managed_play::headless_first(&instance),
-                        mutation_hooks(),
+                        sunrise::V2Hooks {
+                            install: mutation_hooks(),
+                            choose_provider: None,
+                            confirm_publisher_change: None,
+                        },
                         &|impact| approve_mod_change(impact, confirm_world_loss),
                     )
                     .map_err(|e| match e {
@@ -2546,14 +2529,49 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                     }
                 }
             }
+            // What `--check` compares a mod against: the v2 index on the profile's build.
+            let checked = if check && chosen.iter().any(|e| e.kind == Kind::Mod) {
+                let catalog = sunrise::v2::index().map_err(|error| error.to_string())?;
+                let build = sunrise_launcher::managed_play::display_active(&home)?
+                    .map(|active| active.base().to_owned());
+                Some((catalog, build))
+            } else {
+                None
+            };
             for e in chosen {
                 use installed::PackUpdate;
                 let status = if e.kind != Kind::Mod {
                     installed::update_pack(&home, e, &game, check, &line)?
-                } else if check {
-                    let source = sunrise_launcher::browser::source(e.source);
-                    installed::update_for(&*source, e, &game)?
-                        .map_or(PackUpdate::Current, |v| PackUpdate::Available(v.number))
+                } else if let Some((catalog, build)) = &checked {
+                    let Some(project) = sunrise::v2::installed_project(&catalog.index, e) else {
+                        if e.mod_id.is_none() {
+                            println!("{}", installed::old_registry_pack(&e.title));
+                        } else {
+                            println!(
+                                "{}",
+                                trf("{mod} isn't in Sunrise's registry.", &[("mod", &e.title)])
+                            );
+                        }
+                        continue;
+                    };
+                    let unfit = build
+                        .as_deref()
+                        .map(sunrise::known_unfit_updates)
+                        .unwrap_or_default();
+                    build
+                        .as_deref()
+                        .and_then(|build| {
+                            sunrise::v2::newer_release(
+                                &catalog.index,
+                                project,
+                                &e.version,
+                                build,
+                                &unfit,
+                            )
+                        })
+                        .map_or(PackUpdate::Current, |r| {
+                            PackUpdate::Available(r.version.clone())
+                        })
                 } else {
                     continue;
                 };
@@ -2580,6 +2598,9 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
         } => {
             let link = github_mods::parse(&url)?;
             let found = github_mods::resolve(&link, &github_mods::api)?;
+            if trust_native_code {
+                trust_unreviewed_builds();
+            }
             github_native(GithubInstall {
                 instance: &instance,
                 found: &found,
@@ -2599,6 +2620,9 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
         } => {
             let mut origins = github_mods::origins(&home);
             origins.retain(|o| id.as_deref().is_none_or(|i| o.id == i));
+            if trust_native_code {
+                trust_unreviewed_builds();
+            }
             if origins.is_empty() {
                 return Err(match id {
                     Some(i) => format!("{i} wasn't installed from GitHub."),
@@ -2685,11 +2709,23 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                 .filter(|_| e.kind == Kind::Mod)
                 .ok_or_else(|| format!("{} isn't a mod: only mods turn on and off.", e.title))?;
             if on {
-                if let Some(r) = sunrise::index()
+                let hash = e.checksum.trim_start_matches("SHA-256:");
+                if let Some(r) = sunrise::v2::index()
                     .ok()
                     .filter(|_| e.source == SourceId::Sunrise)
-                    .and_then(|i| {
-                        i.revoked(&e.project, e.checksum.trim_start_matches("SHA-256:"))
+                    .and_then(|catalog| {
+                        // A whole-project takedown reaches a v2 row's project, delisted or not,
+                        // and an old-registry row only when the index proves its project; any row
+                        // is taken down by its archive's hash.
+                        let project = if e.mod_id.is_some() {
+                            Some(e.project.as_str())
+                        } else {
+                            sunrise::v2::installed_project(&catalog.index, &e)
+                                .map(|p| p.id.as_str())
+                        };
+                        project
+                            .and_then(|p| catalog.index.revoked(p, Some(hash)))
+                            .or_else(|| catalog.index.revoked_by_sha256(hash))
                             .cloned()
                     })
                 {
@@ -3816,7 +3852,9 @@ mod catalog_tests;
 
 #[path = "cli_native_permission.rs"]
 mod native_permission_impl;
-use native_permission_impl::{github_native, native_permission, registry_consent, GithubInstall};
+use native_permission_impl::{
+    github_native, native_permission, trust_unreviewed_builds, GithubInstall,
+};
 
 mod developer_builds;
 

@@ -69,8 +69,13 @@ pub(super) struct State {
     /// Tests: draw the sidebar this far open, as if part way through an ease.
     #[cfg(test)]
     pub rail_pin: Option<f32>,
+    /// Where the last frame drew each profile that has a context menu: the open menu covers
+    /// them, so a right-click on one reaches it through here.
+    pub profile_rows: crate::rail::ProfileRows,
     /// When the status strip appeared, so each appearance eases in once without jumping the page.
     pub status_strip_since: Option<Instant>,
+    /// When the status strip went away, so its space closes as smoothly as it opened.
+    pub status_strip_gone: Option<Instant>,
     /// The last drawn page and when we switched to it (None on first draw or once settled).
     pub page_switched: Option<(Page, Option<Instant>)>,
 }
@@ -328,6 +333,8 @@ pub(super) fn copy_face(id: &'static str, label: &str, shown: Option<usize>) -> 
         Some(n) => base
             .border_color(accent.opacity(0.5))
             .hover(move |s| s.border_color(accent.opacity(0.75)))
+            // Give keyboard focus its own ring so the Copied hover border cannot hide it.
+            .focus_visible(|s| s.shadow(focus_ring(palette().focus)))
             .child(crate::code_box::tick(
                 &SharedString::from(id),
                 n,
@@ -801,8 +808,23 @@ impl Launcher {
                     .child(strip),
             )
         } else {
-            self.ui.status_strip_since = None;
-            None
+            if self.ui.status_strip_since.take().is_some() {
+                self.ui.status_strip_gone = Some(Instant::now());
+            }
+            let quick = sunrise_launcher_theme::QUICK;
+            self.ui
+                .status_strip_gone
+                .filter(|gone| gone.elapsed() < quick.duration())
+                .map(|gone| {
+                    static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+                    let start = *START.get_or_init(Instant::now);
+                    let id = gone.saturating_duration_since(start).as_micros() as usize;
+                    div().id("status-strip-closing").flex_none().with_animation(
+                        ElementId::named_usize("status-strip-exit", id),
+                        crate::motion::eased(quick),
+                        |d, p| d.h(px((tokens::ACTION + 2.) * (1. - p))),
+                    )
+                })
         };
         let pane = div()
             .relative()
@@ -861,9 +883,9 @@ impl Launcher {
                     "escape" if this.viewer_close(cx) => {}
                     "left" if this.viewer_step(-1, cx) => {}
                     "right" if this.viewer_step(1, cx) => {}
-                    "escape" if this.owner_screen_open => {
+                    "escape" if this.sign_in_screen.open => {
                         this.cancel_sign_in();
-                        this.owner_screen_open = false;
+                        this.sign_in_screen.open = false;
                     }
                     "escape" if this.sheet_escape() => {}
                     "escape" if this.instances.dialog.is_some() => {
@@ -903,7 +925,7 @@ impl Launcher {
             .then(|| self.hosting_create(cx))
             .flatten();
         let sheet = self.live_sheet(window, cx);
-        let sign_in = self.owner_screen_open.then(|| self.owner_screen(cx));
+        let sign_in = self.sign_in_screen.open.then(|| self.owner_screen(cx));
         let profile = self.profile_dialog(window, cx);
         let mut layers: Vec<_> = [create, profile, sheet, sign_in]
             .into_iter()

@@ -62,9 +62,11 @@ fn run_launcher() {
     }
     // Do not copy earlier launchers' data into fallback roots for a broken configured location.
     let location_error = sunrise_launcher::data_location::startup_error();
-    if location_error.is_none() {
-        sunrise_launcher::carry_over::at_start();
-    }
+    let carry_over_error = if location_error.is_none() {
+        sunrise_launcher::carry_over::at_start().err()
+    } else {
+        None
+    };
     perf::process_started();
     backend::exe_path();
     if let Some(code) = sunrise_launcher::update_handoff::run() {
@@ -88,7 +90,9 @@ fn run_launcher() {
         let _ = sunrise_launcher::installer::ensure_notices();
     }
     if setup_window.is_none() {
-        if location_error.is_none() {
+        // When carry-over failed on a fresh install, skip creating the default profile root so
+        // fixing the earlier location or reconnecting its drive lets the next start import it.
+        if location_error.is_none() && carry_over_error.is_none() {
             backend::recover_game_installations();
             if let Err(error) = sunrise_launcher::instances::initialize_default() {
                 eprintln!("{error}");

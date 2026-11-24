@@ -71,7 +71,8 @@ pub(super) fn note(text: impl Into<SharedString>) -> Div {
 }
 
 /// An empty list's place, as big apps draw it: a large icon, a title, one short line and the
-/// way on, centred in the room the list would take.
+/// way on, centred in the room the list would take. The line ends with no full stop, in any
+/// language, like the title above it.
 pub(crate) fn empty_state(
     icon: &'static str,
     title: impl Into<SharedString>,
@@ -102,7 +103,9 @@ pub(crate) fn empty_state(
                 .text_center()
                 .text_size(px(tokens::LABEL))
                 .text_color(c(palette().muted))
-                .child(line.into()),
+                .child(SharedString::from(
+                    line.into().trim_end_matches(['.', '。', '।']).to_owned(),
+                )),
         )
         .children(action.map(|a| a.mt(px(8.))))
 }
@@ -422,12 +425,24 @@ pub(crate) fn checkbox(id: impl Into<ElementId>, on: bool) -> Stateful<Div> {
     checkbox_of(id, on, false)
 }
 
+/// How much of a set is ticked, as the header's box draws it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Ticks {
+    None,
+    Some,
+    All,
+}
+
+pub(super) fn ticks(ticked: usize, total: usize) -> Ticks {
+    match ticked {
+        0 => Ticks::None,
+        n if n >= total => Ticks::All,
+        _ => Ticks::Some,
+    }
+}
+
 /// A box over a set: ticked when all of it is, a dash when only some is, empty when none is.
-pub(super) fn checkbox_of_set(
-    id: impl Into<ElementId>,
-    ticks: model::collection::Ticks,
-) -> Stateful<Div> {
-    use model::collection::Ticks;
+pub(super) fn checkbox_of_set(id: impl Into<ElementId>, ticks: Ticks) -> Stateful<Div> {
     checkbox_of(id, ticks != Ticks::None, ticks == Ticks::Some)
 }
 

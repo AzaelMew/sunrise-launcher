@@ -6,7 +6,7 @@ use super::*;
 use std::path::PathBuf;
 use std::sync::Arc;
 use sunrise_launcher::browser::{installed, sunrise};
-use sunrise_launcher::{native_status, profile_txn::Identity};
+use sunrise_launcher::native_status;
 
 pub(crate) mod install;
 
@@ -52,11 +52,6 @@ impl ModsHome {
     fn current(&self) -> PathBuf {
         self.0.clone().unwrap_or_else(backend::game_home)
     }
-
-    fn begin_build_consent(&mut self, selected: PathBuf) -> Arc<PathBuf> {
-        self.follow_home(Some(selected));
-        Arc::new(self.current())
-    }
 }
 
 impl Mods {
@@ -69,10 +64,6 @@ impl Mods {
 
     pub(super) fn home(&self) -> PathBuf {
         self.home.current()
-    }
-
-    pub(super) fn begin_build_consent(&mut self, selected: PathBuf) -> Arc<PathBuf> {
-        self.home.begin_build_consent(selected)
     }
 
     pub(super) fn new() -> Self {
@@ -100,15 +91,13 @@ impl Launcher {
         let mut loaded = Vec::new();
         let mut github_feedback = None;
         let mut refused_here = None;
+        let mut failed_here = None;
+        let mut removed_here = None;
         let mut done = false;
         while let Ok(event) = self.mods.rx.try_recv() {
             changed = true;
             let m = &mut self.mods;
             match event {
-                Event::Registry(install::Worker::Native(question, reply)) => {
-                    self.reset_install_question_sheet();
-                    self.pending_consent = Some(PendingConsent::Registry(question, reply));
-                }
                 Event::Registry(install::Worker::Source(question, reply)) => {
                     self.receive_source_question(question, reply);
                 }
@@ -121,6 +110,12 @@ impl Launcher {
                     }
                     if let Some(error) = m.installs.mutation_failure(&event) {
                         m.message = Some(Err(error));
+                    }
+                    if let Some(failed) = m.installs.install_failure(&event) {
+                        failed_here = Some(failed);
+                    }
+                    if let Some((home, ids)) = m.installs.removed(&event) {
+                        removed_here = Some((home.to_owned(), ids.to_vec()));
                     }
                     if m.installs.handle(event) {
                         done = true;
@@ -154,8 +149,29 @@ impl Launcher {
                 }
             }
         }
+        if let Some((home, ids)) = removed_here {
+            self.mods_leave_removed(&home, &ids);
+        }
         if let Some(feedback) = github_feedback {
             self.show_github_result(feedback);
+        }
+        // A failed install says why in a dialog, naming its profile when another one is shown.
+        if let Some((profile, why)) = failed_here {
+            let here = self.selected_instance().is_some_and(|i| {
+                i.home == profile.home && i.id == profile.id && i.incarnation == profile.incarnation
+            });
+            let why = if here {
+                why
+            } else {
+                format!(
+                    "{}\n\n{why}",
+                    trf(
+                        "Installing to {profile} failed.",
+                        &[("profile", &profile.name)]
+                    )
+                )
+            };
+            self.open_notice(why, None);
         }
         // The profile that asked hears why at once; another one finds it on the mod's page.
         if let Some((profile, refused)) = refused_here {
@@ -168,50 +184,26 @@ impl Launcher {
         self.start_registry_queue() || changed
     }
 
-    /// Turns a Sunrise mod on after the worker admits its profile. A consent answer
-    /// can only act on the profile (and incarnation) that asked the question.
-    pub(super) fn enable_registry_mod(
-        &mut self,
-        e: &installed::Entry,
-        home: PathBuf,
-        approved: Option<Identity>,
-    ) {
+    /// Turns a Sunrise mod on after the worker admits its profile.
+    pub(super) fn enable_registry_mod(&mut self, e: &installed::Entry, home: PathBuf) {
         let Some(id) = sunrise::mod_id(e) else {
             return;
         };
-        let index = sunrise::fetched_index();
-        let title = index
-            .as_ref()
-            .and_then(|index| index.project(&e.project))
-            .map_or(id, |project| &project.name);
-        if let Some(revoked) = index
-            .as_ref()
-            .and_then(|index| index.revoked(&e.project, e.checksum.trim_start_matches("SHA-256:")))
-        {
-            self.mods.message = Some(Err(format!("{title} was taken down: {}", revoked.reason)));
+        let hash = e.checksum.trim_start_matches("SHA-256:");
+        let catalog = sunrise::v2::known_index();
+        let revoked = catalog.as_ref().and_then(|catalog| {
+            catalog
+                .index
+                .revoked(&e.project, Some(hash))
+                .or_else(|| catalog.index.revoked_by_sha256(hash))
+        });
+        if let Some(revoked) = revoked {
+            self.mods.message = Some(Err(trf(
+                "{mod} was taken down: {reason}",
+                &[("mod", &e.title), ("reason", &revoked.reason)],
+            )));
             return;
         }
-        if let Some(identity) = approved {
-            self.enable_native_in(home, identity, id.into(), title.into());
-        } else if native_status::is_native_file(&e.file)
-            && self.settings.native_mods_allowed_at.is_none()
-        {
-            match Identity::of(&home) {
-                Ok(identity) => {
-                    self.pending_consent =
-                        Some(PendingConsent::Toggle(Box::new(native_consent::Toggle {
-                            entry: e.clone(),
-                            home,
-                            identity,
-                        })));
-                }
-                Err(error) => self.mods.message = Some(Err(error)),
-            }
-        } else {
-            self.enable_one_in(home, id.into(), title.into());
-        }
+        self.enable_one_in(home, id.into(), e.title.clone());
     }
 }
-
-#[cfg(test)]
-mod tests;

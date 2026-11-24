@@ -1146,7 +1146,6 @@ fn a_kill_after_copy_visibility_keeps_the_exact_copy_and_recovers_its_choices() 
                     &cancellation,
                     |_| {},
                     None,
-                    None,
                 )
                 .unwrap();
             let active = first.commit(&image, &cancellation).unwrap();

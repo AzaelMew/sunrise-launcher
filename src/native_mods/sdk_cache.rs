@@ -29,7 +29,7 @@ use sunrise_launcher_release_verify::{PublicKey, SIGNATURE, SIGNATURE_V2, SUMS};
 use sunrise_launcher_sdk::{self as sdk, Asset, Index, Kind, Side, INDEX};
 
 mod game;
-pub(crate) use game::{offers_game, stage_game, GameSlices};
+pub(crate) use game::{check_game_offer, offers_game, stage_game, GameSlices};
 
 /// The SDK's three compiled slices of one build, each in its own folder (`runtime`, `api`, `engine`).
 #[derive(Clone, Debug, PartialEq)]
@@ -367,8 +367,13 @@ fn root() -> PathBuf {
     super::root().join("sdk")
 }
 
+/// Where the launcher keeps what it reads of build `commit`'s SDK.
+pub(super) fn build_folder(commit: &str) -> PathBuf {
+    root().join(commit)
+}
+
 /// Write `bytes` to `path` whole or not at all: beside it first, then renamed into place.
-fn write_whole(path: &Path, bytes: &[u8]) -> Result<(), Refusal> {
+pub(super) fn write_whole(path: &Path, bytes: &[u8]) -> Result<(), Refusal> {
     let cache = |error: std::io::Error| Refusal::Cache(format!("{}: {error}", path.display()));
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(cache)?;
@@ -400,6 +405,11 @@ pub(super) struct Sdk {
 impl Sdk {
     pub(super) fn commit(&self) -> &str {
         &self.index.build.commit
+    }
+
+    /// The SHA-256 of `sdk.json` as signed, which names every slice's digest.
+    pub(super) fn signed(&self) -> &str {
+        &self.sha256
     }
 
     /// The build as people read it.
@@ -520,7 +530,7 @@ fn compare_versions(a: &str, b: &str) -> Option<std::cmp::Ordering> {
     Some(parts(a)?.cmp(&parts(b)?))
 }
 
-/// The kept `surface.json` of `sdk`'s build, else fetched from `base`, checked against the index and kept. Small (under 1.5 MB), so a fit is told offline once a build was seen.
+/// The kept `surface.json` of `sdk`'s build, else fetched from `base`, checked against the index and kept. Kept, so a fit is told offline once a build was seen.
 pub(super) fn surface_file(sdk: &Sdk, base: &Base) -> Result<PathBuf, Refusal> {
     const NAME: &str = "surface.json";
     let build = sdk.shown();
