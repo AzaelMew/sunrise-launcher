@@ -264,6 +264,76 @@ pub(in crate::mods) struct V2VersionLine {
     pub(in crate::mods) published: String,
     pub(in crate::mods) size: u64,
     pub(in crate::mods) verdict: ReleaseVerdict,
+    /// The build the release was made for.
+    pub(in crate::mods) made_for: String,
+}
+
+/// What one release is known to do on one game build.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::mods) enum BuildFit {
+    /// The index says it fits.
+    Fits,
+    /// The index says it doesn't.
+    DoesNotFit,
+    /// The index says nothing; this computer found that it fits.
+    FitsHere,
+    /// The index says nothing; this computer found that it doesn't.
+    DoesNotFitHere,
+    /// Nobody has checked it yet.
+    NotChecked,
+}
+
+/// Every build one release is known to work on, or not, for the release's builds window.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(in crate::mods) struct ReleaseBuilds {
+    pub(in crate::mods) name: String,
+    pub(in crate::mods) version: String,
+    pub(in crate::mods) made_for: String,
+    /// Each build the index lists, in its order, then each other build the release names.
+    pub(in crate::mods) builds: Vec<(String, BuildFit)>,
+}
+
+/// What release `version` of project `id` does on each build: the index's verdict, else the
+/// answer this computer kept for the build's id (read by `kept`).
+pub(in crate::mods) fn release_builds(
+    index: &Index,
+    id: &str,
+    version: &str,
+    kept: &dyn Fn(&str) -> local_fit::Found,
+) -> Option<ReleaseBuilds> {
+    let project = index.project(id)?;
+    let release = project.releases.iter().find(|r| r.version == version)?;
+    let sha256 = release.file.sha256.to_ascii_lowercase();
+    let mut builds: Vec<(String, BuildFit)> = index
+        .builds
+        .iter()
+        .map(|build| {
+            let fit = match release.fit_verdict(&build.id) {
+                FitVerdict::Fits => BuildFit::Fits,
+                FitVerdict::DoesNotFit => BuildFit::DoesNotFit,
+                FitVerdict::Unknown => match kept(&build.commit).get(&sha256) {
+                    Some(local_fit::Local::Fits) => BuildFit::FitsHere,
+                    Some(local_fit::Local::DoesNotFit) => BuildFit::DoesNotFitHere,
+                    Some(local_fit::Local::Unknown) | None => BuildFit::NotChecked,
+                },
+            };
+            (build.id.clone(), fit)
+        })
+        .collect();
+    let named = |list: &[String], fit| {
+        list.iter()
+            .filter(|b| index.build(b).is_none())
+            .map(move |b| (b.clone(), fit))
+            .collect::<Vec<_>>()
+    };
+    builds.extend(named(&release.fits, BuildFit::Fits));
+    builds.extend(named(&release.does_not_fit, BuildFit::DoesNotFit));
+    Some(ReleaseBuilds {
+        name: project.name.clone(),
+        version: release.version.clone(),
+        made_for: release.sunrise.clone(),
+        builds,
+    })
 }
 
 /// Full mod page rendered from a v2 index project.
@@ -810,6 +880,7 @@ pub(in crate::mods) fn page(
             published: release.published.clone(),
             size: release.file.size,
             verdict,
+            made_for: release.sunrise.clone(),
         };
         if line.verdict.fits() {
             picked.get_or_insert(release);
@@ -1075,6 +1146,64 @@ mod tests {
         };
         let shown_all = discover(&list, &all_filters);
         assert_eq!(shown_all.len(), 3);
+    }
+
+    #[test]
+    fn a_release_lists_every_build_with_the_index_verdict_first_and_local_answers_in_gaps() {
+        let night = "nightly-2026-11-20-abcdef0";
+        let stable = "26.3-0.1.0";
+        let gone = "dev-2026-11-01-1111111";
+        let project = make_project(
+            "Ab3dE9xQ",
+            "enchanting",
+            "Dis-Enchanting Table",
+            "Takes enchantments off",
+            &["utility"],
+            vec![
+                make_release("5.1.1", "2026-11-24", night, &[night, gone], &[], '1'),
+                make_release("5.1.0", "2026-11-22", night, &[], &[], '2'),
+            ],
+        );
+        let mut index = sample_index(vec![project], Vec::new());
+        let stable_commit = index.build(stable).unwrap().commit.clone();
+        let night_commit = index.build(night).unwrap().commit.clone();
+        // This computer found both releases not to fit either build.
+        let kept = |commit: &str| {
+            if commit != stable_commit && commit != night_commit {
+                return local_fit::Found::new();
+            }
+            local_fit::Found::from([
+                (hex64('1'), local_fit::Local::DoesNotFit),
+                (hex64('2'), local_fit::Local::DoesNotFit),
+            ])
+        };
+
+        let newest = release_builds(&index, "Ab3dE9xQ", "5.1.1", &kept).unwrap();
+        assert_eq!(newest.made_for, night);
+        assert_eq!(
+            newest.builds,
+            [
+                (stable.to_owned(), BuildFit::DoesNotFitHere),
+                (night.to_owned(), BuildFit::Fits),
+                (gone.to_owned(), BuildFit::Fits),
+            ],
+            "the index's own verdict wins over this computer's"
+        );
+        let older = release_builds(&index, "Ab3dE9xQ", "5.1.0", &|_| local_fit::Found::new());
+        assert_eq!(
+            older.unwrap().builds,
+            [
+                (stable.to_owned(), BuildFit::NotChecked),
+                (night.to_owned(), BuildFit::NotChecked),
+            ]
+        );
+
+        index.projects[0].releases[1]
+            .does_not_fit
+            .push(stable.into());
+        let judged = release_builds(&index, "Ab3dE9xQ", "5.1.0", &kept).unwrap();
+        assert_eq!(judged.builds[0], (stable.to_owned(), BuildFit::DoesNotFit));
+        assert!(release_builds(&index, "Ab3dE9xQ", "9.9.9", &kept).is_none());
     }
 
     #[test]
