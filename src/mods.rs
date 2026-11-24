@@ -472,6 +472,8 @@ pub(crate) struct ModsState {
     anchor: Option<String>,
     snapshot: Option<Snapshot>,
     home_mod_labels: Option<HomeModLabels>,
+    /// The mods folder's fingerprint, kept between frames (`native_status::Fingerprints`).
+    fingerprints: native_status::Fingerprints,
     /// What the last frame of Installed drew, for the benchmark (`installed_bench_target`).
     drawn: Option<InstalledDrawn>,
     open: Option<Open>,
@@ -550,6 +552,7 @@ impl Default for ModsState {
             anchor: None,
             snapshot: None,
             home_mod_labels: None,
+            fingerprints: Default::default(),
             drawn: None,
             open: None,
             page_request: 0,
@@ -935,6 +938,27 @@ impl Launcher {
         self.choose_view(Page::PackFind);
     }
 
+    /// The message pump's look at the mods folder while a Mods page is open: once the kept
+    /// fingerprint is due its full read, read it, so a mod rewritten where it lies shows without
+    /// waiting for input. True when the page has something new to read; an unchanged folder asks
+    /// for no frame.
+    pub(crate) fn mods_check_due(&mut self, now: std::time::Instant) -> bool {
+        if !matches!(
+            self.ui.page,
+            Page::Installed | Page::Discover | Page::Project
+        ) || !self.ui.mods.fingerprints.due(now)
+        {
+            return false;
+        }
+        let home = self.mods_home();
+        let key = self.ui.mods.fingerprints.read(&home, None, now);
+        self.ui
+            .mods
+            .snapshot
+            .as_ref()
+            .is_some_and(|snapshot| snapshot.home == home && snapshot.key != key)
+    }
+
     /// The play bar's quiet line about them: Mods › Installed, where each says why.
     pub(crate) fn show_installed_mods(&mut self) {
         self.ui.mods.drawn = None;
@@ -1291,7 +1315,12 @@ impl Launcher {
         let home = self.mods_home();
         self.mods
             .follow_home(self.selected_instance().map(|i| i.home.clone()));
-        let key = native_status::fingerprint(&home, None);
+        // Asked on every frame of the Mods pages: read again only when something moved.
+        let key = self
+            .ui
+            .mods
+            .fingerprints
+            .read(&home, None, std::time::Instant::now());
         let moved = self
             .ui
             .mods

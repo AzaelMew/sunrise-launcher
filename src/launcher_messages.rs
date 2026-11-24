@@ -752,6 +752,8 @@ impl Launcher {
             changed = true;
         }
         self.restart_launcher_if_ready(cx);
+        // A mod rewritten where it lies, seen while the page sits still.
+        changed |= self.mods_check_due(std::time::Instant::now());
         // Repaint once a second while a loading sheet or status-strip stage is active so ETAs
         // tick down and stall/expiry hides take effect even if the worker goes quiet.
         if !changed && (self.switch_busy() || self.registry_stage().is_some()) {

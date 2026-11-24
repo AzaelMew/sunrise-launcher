@@ -5,7 +5,7 @@ use std::path::Path;
 
 /// The game's mod folder and on-list, beside `options.txt`.
 pub const MODS_DIR: &str = "sunrise-mods";
-const MODS_LIST: &str = "sunrise-mods.txt";
+pub(crate) const MODS_LIST: &str = "sunrise-mods.txt";
 
 /// The saved on/off list, which can only be read from a regular file.
 pub(crate) fn selection_text(home: &Path) -> String {
