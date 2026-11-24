@@ -368,3 +368,137 @@ fn pasted_source_same_repo_refreshes_and_other_repo_stays_refused() {
         },
     );
 }
+
+#[test]
+#[ignore = "daily; build the launcher binary first"]
+fn manual_release_refresh_publishes_on_approval_and_keeps_old_files_on_decline() {
+    Fixture::run(
+        concat!(
+            module_path!(),
+            "::manual_release_refresh_publishes_on_approval_and_keeps_old_files_on_decline"
+        ),
+        |fixture| {
+            use crate::github_mods::{self, Asset, Resolved};
+
+            const ID: &str = "native_lantern";
+            const ARCHIVE: &str = "sunrise-native-mods/native_lantern.smod";
+            super::native::configure_tool(&fixture);
+            let make_smod = |version: &str, source: &[u8]| {
+                let manifest = format!(
+                    "id='{ID}'\nname='Native Lantern'\nversion='{version}'\napi='{}'\nside='both'\ncapabilities=['registries']\n[native]\nsunrise='{}'\nmixins='{}'\ngame='{}'\n",
+                    sunrise_launcher_smod::manifest::API,
+                    "a".repeat(40),
+                    "c".repeat(40),
+                    backend::PINNED_GAME,
+                );
+                let cargo = format!("[package]\nname='{ID}'\nversion='{version}'\n");
+                Package::write_files(
+                    &manifest,
+                    &[("Cargo.toml", cargo.as_bytes()), ("src/lib.rs", source)],
+                )
+                .unwrap()
+            };
+            let make_release = |tag: &str, bytes: &[u8]| Resolved {
+                owner: "fixture".into(),
+                repo: "lantern".into(),
+                tag: Some(tag.into()),
+                commit: "c".repeat(40),
+                assets: vec![Asset {
+                    name: "lantern.smod".into(),
+                    url: format!(
+                        "https://github.com/fixture/lantern/releases/download/{tag}/lantern.smod"
+                    ),
+                    sha256: Some(index::sha256(bytes)),
+                }],
+            };
+
+            let identity = install_target(&fixture.instance).unwrap();
+            let home = fixture.home().to_owned();
+            let archive = home.join(ARCHIVE);
+            let sidecar = github_mods::origin_path(&home, ID);
+
+            // A GitHub release is unreviewed code, so its build asks, as the window's
+            // warning does; this answers yes for the fixture only. The answer is
+            // process-wide, and each of these tests runs in its own worker process.
+            crate::native_mods::ask_unreviewed_with(|found| {
+                found.iter().all(|package| package.name == "Native Lantern")
+            });
+            let hooks = || InstallHooks {
+                progress: &|_| {},
+                continue_after_failure: &|_| false,
+                cancellation: None,
+            };
+
+            // 1. Fresh manual release install publishes archive and origin receipt.
+            let v1 = make_smod("1.0.0", b"// v1\n");
+            let found_v1 = make_release("v1.0.0", &v1);
+            let checked_v1 = github_mods::fetch_with(&found_v1, |_| Ok(v1.clone())).unwrap();
+            let installed_v1 = install_github_manual(
+                &fixture.instance,
+                identity,
+                ManualRelease {
+                    found: &found_v1,
+                    selected: &checked_v1,
+                    base: None,
+                },
+                || FirstBuild::installed(BUILD),
+                hooks(),
+                &|_| true,
+            )
+            .unwrap();
+            assert_eq!(installed_v1.len(), 1);
+            assert_eq!(fs::read(&archive).unwrap(), v1);
+            let old_sidecar = fs::read(&sidecar).unwrap();
+            assert_eq!(
+                github_mods::origin(&home, ID),
+                Some(installed_v1[0].clone())
+            );
+
+            // 2. A newer release from the same repository: declining leaves archive and receipt untouched.
+            let v2 = make_smod("1.1.0", b"// v2\n");
+            let found_v2 = make_release("v1.1.0", &v2);
+            let checked_v2 = github_mods::fetch_with(&found_v2, |_| Ok(v2.clone())).unwrap();
+            let asked = std::sync::atomic::AtomicBool::new(false);
+            let declined = install_github_manual(
+                &fixture.instance,
+                identity,
+                ManualRelease {
+                    found: &found_v2,
+                    selected: &checked_v2,
+                    base: None,
+                },
+                || FirstBuild::installed(BUILD),
+                hooks(),
+                &|_| {
+                    asked.store(true, std::sync::atomic::Ordering::SeqCst);
+                    false
+                },
+            );
+            assert!(declined.is_err(), "declining refresh must not publish");
+            assert!(asked.load(std::sync::atomic::Ordering::SeqCst));
+            assert_eq!(fs::read(&archive).unwrap(), v1);
+            assert_eq!(fs::read(&sidecar).unwrap(), old_sidecar);
+
+            // 3. Approving the refresh publishes both the replacement archive and its new origin receipt.
+            let approved = install_github_manual(
+                &fixture.instance,
+                identity,
+                ManualRelease {
+                    found: &found_v2,
+                    selected: &checked_v2,
+                    base: None,
+                },
+                || FirstBuild::installed(BUILD),
+                hooks(),
+                &|_| true,
+            )
+            .unwrap();
+            assert_eq!(approved.len(), 1);
+            assert_eq!(approved[0].version, "1.1.0");
+            assert_eq!(approved[0].tag.as_deref(), Some("v1.1.0"));
+            assert_eq!(fs::read(&archive).unwrap(), v2);
+            assert_eq!(github_mods::origin(&home, ID), Some(approved[0].clone()));
+            assert_ne!(fs::read(&sidecar).unwrap(), old_sidecar);
+        },
+    );
+}
