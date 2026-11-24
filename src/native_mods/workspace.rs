@@ -32,9 +32,9 @@ pub(super) struct Workspace(tempfile::TempDir);
 /// bytes. A registry symlink alias is copied as a regular file under its original name.
 #[derive(Debug)]
 pub(super) struct Library {
-    name: String,
-    source: std::path::PathBuf,
-    sha256: String,
+    pub(super) name: String,
+    pub(super) source: std::path::PathBuf,
+    pub(super) sha256: String,
 }
 
 impl Library {
@@ -324,11 +324,30 @@ fn copy_slice(from: &Path, to: &Path) -> io::Result<()> {
             copy_slice(&entry.path(), &to)?;
         } else if meta.is_file() {
             crate::preparer::clone_or_copy(&entry.path(), &to)?;
+            // The tool names its build folder from each slice file's path, length and modified
+            // time (`kept_build`). A copy stamped now (Linux's copy and clone) would name another
+            // folder every attempt, and no kept library would ever be found there.
+            times_handle(&to)?.set_modified(meta.modified()?)?;
         } else {
             return Err(invalid());
         }
     }
     Ok(())
+}
+
+/// A handle that may set `file`'s times even when the file is read-only: on Windows it asks
+/// for attribute writes only, elsewhere setting times needs ownership, not write permission.
+fn times_handle(file: &Path) -> io::Result<fs::File> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        // FILE_WRITE_ATTRIBUTES
+        fs::File::options().access_mode(0x100).open(file)
+    }
+    #[cfg(not(windows))]
+    {
+        fs::File::open(file)
+    }
 }
 
 fn invalid() -> io::Error {

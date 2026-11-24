@@ -28,6 +28,7 @@ mod planning;
 pub use planning::{routes, update_check, UpdateCheck};
 pub(crate) use planning::{source_routes, SourceCheckError};
 mod internals_sync;
+mod kept;
 mod registry_failure;
 mod tool;
 pub use internals_sync::catalog;
@@ -1803,6 +1804,8 @@ fn pipeline(
                     sdk_cache::developer(&program, &revision, target, &local, cancellation)?,
                     program,
                     None,
+                    // A local SDK has no signed index to key kept libraries on (`kept`).
+                    None,
                 )
             }
             (None, sdk) => {
@@ -1858,7 +1861,7 @@ fn pipeline(
                 })?;
                 let slices =
                     sdk_cache::slices(lease, sdk, &sdk_base, route.name(), target, &fetched)?;
-                (slices, program, Some(route))
+                (slices, program, Some(route), Some(sdk.signed().to_owned()))
             }
         };
         Some(package)
@@ -1923,7 +1926,7 @@ fn pipeline(
         Target::Client => rust_toolchain::linker(),
         Target::Server => rust_toolchain::linker_server(),
     };
-    if let Some((game, program, expected_route)) = &prebuilt {
+    if let Some((game, program, expected_route, signed_sdk)) = &prebuilt {
         let checking = std::time::Instant::now();
         linker()?;
         let rust = rust_toolchain::install_cancellable(|f| progress(Step::Rust(f)), cancellation)
@@ -1944,6 +1947,47 @@ fn pipeline(
         }
         let game = workspace.package(game).map_err(|e| e.to_string())?;
         let work = workspace.work();
+        // The libraries an earlier build of these mods kept (`kept`), copied in so the tool
+        // compiles only the mods whose own inputs changed. Without them, every mod compiles.
+        let seeding = std::time::Instant::now();
+        let mixins_from_source = MIXINS_FROM_SOURCE.load(std::sync::atomic::Ordering::Relaxed);
+        let kept_store = kept::Kept::new(&root());
+        let kept_plan = match (signed_sdk, expected_route) {
+            (Some(sdk), Some(route)) => plan_kept(
+                &kept::Build {
+                    sdk,
+                    tool: &sunrise_launcher_smod::index::sha256_file(program)
+                        .map_err(Failed::Other)?,
+                    route: route.name(),
+                    revision: &revision,
+                    mixins: &mixins,
+                    staging: STAGING,
+                    profile: profile.cargo().0,
+                    rust: rust_toolchain::VERSION,
+                    rust_target: rust.host.target,
+                    platform: platform.cache_key().unwrap_or_default(),
+                    target: target.name(),
+                    mixins_from_source,
+                },
+                &ordered,
+                &mods,
+                &declared,
+                &digests,
+            ),
+            _ => None,
+        };
+        if let Some(plan) = &kept_plan {
+            let reused = kept_store.seed(&work, &plan.mods, &plan.keys);
+            if !reused.is_empty() {
+                timed(
+                    &trf(
+                        "Reusing the libraries kept from an earlier build: {mods}",
+                        &[("mods", &reused.join(", "))],
+                    ),
+                    seeding,
+                )?;
+            }
+        }
         let built = tool::build(
             &rust,
             program,
@@ -1957,7 +2001,7 @@ fn pipeline(
                 },
                 mods: &compiled,
                 server: target == Target::Server,
-                mixins_from_source: MIXINS_FROM_SOURCE.load(std::sync::atomic::Ordering::Relaxed),
+                mixins_from_source,
             },
             &|id, done, total| {
                 progress(Step::Mod {
@@ -2014,12 +2058,85 @@ fn pipeline(
             cancellation,
         )?;
         timed("Installing the build", installing)?;
+        // Kept only once the build they verified is installed, and only while the attempt
+        // hasn't been stopped: a stopped build keeps nothing. A failure here costs only the
+        // next build's time.
+        if let (Some(plan), Ok(())) = (&kept_plan, cancellation.check()) {
+            let keeping = std::time::Instant::now();
+            match kept_store.save(&work, &built, &libraries, &plan.mods, &plan.keys) {
+                Ok(0) => {}
+                Ok(_) => timed("Keeping the mods' libraries for the next build", keeping)?,
+                Err(error) => log_warning(&trf(
+                    "The mods' libraries couldn't be kept for the next build: {error}",
+                    &[("error", &error.to_string())],
+                )),
+            }
+        }
     } else {
         // Used again: it counts as the newest of the builds kept (`prune`).
         let _ = fs::write(target.directory(&version).join(".installed"), "");
     }
     built.secs = started.elapsed().as_secs();
     Ok(built)
+}
+
+/// The build's mods as kept libraries see them, and each one's key.
+struct KeptPlan<'a> {
+    mods: Vec<kept::Mod<'a>>,
+    keys: std::collections::BTreeMap<String, String>,
+}
+
+/// The kept-library plan (`kept::keys`) for `ordered`, the build's mods in dependency order, from
+/// each mod's own files (`digests`, of the copies as found, and its uses table) and the mods in
+/// the build it links to. None when a mod's files couldn't be read: nothing is kept or reused.
+fn plan_kept<'a>(
+    build: &kept::Build<'_>,
+    ordered: &'a [Bundle],
+    mods: &'a [Bundle],
+    declared: &'a [Vec<dependencies::Dependency>],
+    digests: &std::collections::HashMap<String, Option<String>>,
+) -> Option<KeptPlan<'a>> {
+    let present: std::collections::HashSet<&str> = mods
+        .iter()
+        .map(|bundle| bundle.manifest.id.as_str())
+        .collect();
+    let mut files = Vec::new();
+    for bundle in ordered {
+        let id = bundle.manifest.id.as_str();
+        let digest = digests.get(id)?.as_deref()?;
+        // The uses table isn't a source file but is staged with the mod (`copy_bundle`).
+        let uses = match fs::read(bundle.dir.join(sunrise_launcher_smod::manifest::USES_FILE)) {
+            Ok(table) => digest_bytes(&table),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(_) => return None,
+        };
+        files.push(format!("{digest} {uses}"));
+    }
+    let list: Vec<kept::Mod<'a>> = ordered
+        .iter()
+        .zip(&files)
+        .map(|(bundle, files)| {
+            let index = mods
+                .iter()
+                .position(|m| m.manifest.id == bundle.manifest.id)?;
+            Some(kept::Mod {
+                id: bundle.manifest.id.as_str(),
+                files: files.clone(),
+                links: declared
+                    .get(index)?
+                    .iter()
+                    .map(|dependency| dependency.id.as_str())
+                    .filter(|id| present.contains(id))
+                    .collect(),
+            })
+        })
+        .collect::<Option<_>>()?;
+    let keys = kept::keys(build, &list);
+    Some(KeptPlan { mods: list, keys })
+}
+
+fn digest_bytes(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
 }
 
 /// The fitted mod identified by the compiler diagnostic, and every required dependent that

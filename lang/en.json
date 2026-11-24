@@ -557,6 +557,8 @@
   "{files} · These files are in this profile's mods folder, but did not come from the Sunrise registry. Sunrise cannot verify who built them or where they came from.": "{files} · These files are in this profile's mods folder, but did not come from the Sunrise registry. Sunrise cannot verify who built them or where they came from.",
   "Default": "Default",
   "Waiting for another build to finish…": "Waiting for another build to finish…",
+  "The mods' libraries couldn't be kept for the next build: {error}": "The mods' libraries couldn't be kept for the next build: {error}",
+  "Reusing the libraries kept from an earlier build: {mods}": "Reusing the libraries kept from an earlier build: {mods}",
   "Checking {mod} for this build…": "Checking {mod} for this build…",
   "Couldn't check {mod} against the registry's takedowns: {error}": "Couldn't check {mod} against the registry's takedowns: {error}",
   "The selected profile changed. Try again.": "The selected profile changed. Try again.",
