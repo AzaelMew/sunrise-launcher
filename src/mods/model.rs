@@ -477,8 +477,9 @@ pub(super) struct Row {
     pub(super) version: String,
     pub(super) on: bool,
     pub(super) need: Option<Need>,
-    /// A browser-installed mod whose registry status couldn't be checked this run.
-    pub(super) registry_unchecked: bool,
+    /// Why a registry-installed mod's status couldn't be checked: the registry was unreachable
+    /// or refused. None while the first read is out.
+    pub(super) registry_issue: Option<String>,
     /// The version an update would install.
     pub(super) update: Option<String>,
     /// Installed because another mod needed it.
@@ -874,6 +875,8 @@ pub(super) struct World<'a> {
     pub(super) game: &'a str,
     /// The signed v2 index, which owns entries keyed by a v2 project ID.
     pub(super) v2: Option<&'a index_v2::Index>,
+    /// Why the last read of the v2 index failed; none while it reads or once it has read.
+    pub(super) v2_failure: Option<&'a str>,
     /// The exact build the profile plays, which v2 `fits` lists name.
     pub(super) build: Option<&'a str>,
     /// Verified archive hashes already rejected by the SDK for this base build.
@@ -948,7 +951,10 @@ pub(super) fn rows(entries: &[Entry], w: &World) -> Vec<Row> {
                 version: e.number.clone(),
                 on,
                 need,
-                registry_unchecked: w.index.is_none(),
+                registry_issue: w
+                    .index
+                    .is_none()
+                    .then(|| tr("Registry not checked").to_owned()),
                 update,
                 dependency: e.dependency,
                 pinned: w.chosen.contains_key(&e.project),
@@ -988,7 +994,7 @@ pub(super) fn rows(entries: &[Entry], w: &World) -> Vec<Row> {
             version: l.version.clone(),
             on,
             need,
-            registry_unchecked: false,
+            registry_issue: None,
             update: None,
             dependency: false,
             pinned: false,
@@ -1053,7 +1059,7 @@ fn v2_row(e: &Entry, id: String, w: &World) -> Row {
         version: e.number.clone(),
         on,
         need,
-        registry_unchecked: w.v2.is_none(),
+        registry_issue: w.v2_failure.map(str::to_owned),
         update,
         dependency: e.dependency,
         pinned: w.chosen.contains_key(&e.project),
