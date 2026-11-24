@@ -18,7 +18,7 @@ use sha2::Digest;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-pub(crate) const API: &str = "https://api.github.com";
+pub(crate) const API: &str = sunrise_launcher_addresses::GITHUB_API;
 /// The built-in read-only mirror of Sunrise's release reads: none. `SUNRISE_GITHUB_MIRROR` names one.
 pub const MIRROR: &str = "";
 

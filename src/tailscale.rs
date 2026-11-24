@@ -12,22 +12,22 @@ use std::process::Command;
 use std::time::Duration;
 
 /// The admin console: sign-in, keys, machines, the access controls.
-pub const ADMIN: &str = "https://login.tailscale.com/admin";
+pub const ADMIN: &str = sunrise_launcher_addresses::TAILSCALE_ADMIN;
 /// Where an API access token is made.
-pub const KEYS: &str = "https://login.tailscale.com/admin/settings/keys";
+pub const KEYS: &str = sunrise_launcher_addresses::TAILSCALE_KEYS;
 /// The access controls page.
-pub const ACCESS: &str = "https://login.tailscale.com/admin/acls/file";
+pub const ACCESS: &str = sunrise_launcher_addresses::TAILSCALE_ACCESS;
 /// The keychain entry of the player's API access token.
 pub const TOKEN_KEY: &str = "tailscale-api-token";
 
 /// Where to download Tailscale for this system.
 pub fn install_url() -> &'static str {
     if cfg!(target_os = "macos") {
-        "https://tailscale.com/download/mac"
+        sunrise_launcher_addresses::TAILSCALE_DOWNLOAD_MAC
     } else if cfg!(windows) {
-        "https://tailscale.com/download/windows"
+        sunrise_launcher_addresses::TAILSCALE_DOWNLOAD_WINDOWS
     } else {
-        "https://tailscale.com/download/linux"
+        sunrise_launcher_addresses::TAILSCALE_DOWNLOAD_LINUX
     }
 }
 
@@ -241,7 +241,7 @@ pub struct Api {
 impl Api {
     pub fn new(token: &str) -> Self {
         let base = std::env::var("SUNRISE_TAILSCALE_API")
-            .unwrap_or_else(|_| "https://api.tailscale.com".into());
+            .unwrap_or_else(|_| sunrise_launcher_addresses::TAILSCALE_API.into());
         Self::at(&base, token)
     }
 

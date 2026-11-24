@@ -10,7 +10,7 @@ use std::io::Read;
 use std::time::Duration;
 
 /// Mojang's texture server: the only place a skin's or cape's picture is fetched from.
-const TEXTURES: &str = "textures.minecraft.net/texture/";
+const TEXTURES: &str = sunrise_launcher_addresses::MINECRAFT_TEXTURE_PATH;
 /// The most a picture may weigh: real ones are a few kilobytes.
 const MAX_PICTURE: u64 = 256 * 1024;
 
@@ -131,17 +131,24 @@ fn texture_id(url: &str) -> Option<&str> {
 
 /// The HTTPS address of a texture: the one a picture is fetched from.
 pub fn https(url: &str) -> Option<String> {
-    let id = texture_id(url)?;
     // Development builds only: `SUNRISE_MINECRAFT_TEXTURES_ENDPOINT` (an address ending in `/`)
     // serves the pictures from a local mock, as `SUNRISE_MINECRAFT_SERVICES_ENDPOINT` does the
     // profile, to see and screenshot the Skins tab.
-    if let Some(base) = std::env::var("SUNRISE_MINECRAFT_TEXTURES_ENDPOINT")
+    let endpoint = std::env::var("SUNRISE_MINECRAFT_TEXTURES_ENDPOINT")
         .ok()
-        .filter(|_| cfg!(debug_assertions))
-    {
-        return Some(format!("{base}{id}"));
-    }
-    Some(format!("https://{TEXTURES}{id}"))
+        .filter(|_| cfg!(debug_assertions));
+    texture_url(url, endpoint.as_deref())
+}
+
+/// The address a texture is fetched from: Mojang's host, or `endpoint` where a development build
+/// points it at a local mock. Taking the override as a parameter keeps the decision out of the
+/// process environment, which tests share.
+fn texture_url(url: &str, endpoint: Option<&str>) -> Option<String> {
+    let id = texture_id(url)?;
+    Some(match endpoint {
+        Some(base) => format!("{base}{id}"),
+        None => format!("https://{TEXTURES}{id}"),
+    })
 }
 
 /// What the account with `token` wears now.
@@ -246,7 +253,7 @@ mod tests {
     #[test]
     fn textures_are_fetched_over_https_only_from_mojang() {
         assert_eq!(
-            https("http://textures.minecraft.net/texture/abc123").as_deref(),
+            texture_url("http://textures.minecraft.net/texture/abc123", None).as_deref(),
             Some("https://textures.minecraft.net/texture/abc123")
         );
         for elsewhere in [
@@ -256,8 +263,24 @@ mod tests {
             "http://textures.minecraft.net/texture/",
             "ftp://textures.minecraft.net/texture/abc",
         ] {
-            assert_eq!(https(elsewhere), None, "{elsewhere}");
+            assert_eq!(texture_url(elsewhere, None), None, "{elsewhere}");
         }
+    }
+
+    #[test]
+    fn development_texture_endpoint_overrides_the_built_in_host() {
+        assert_eq!(
+            texture_url(
+                "http://textures.minecraft.net/texture/abc",
+                Some("http://127.0.0.1:9/tex/")
+            )
+            .as_deref(),
+            Some("http://127.0.0.1:9/tex/abc")
+        );
+        assert_eq!(
+            texture_url("http://textures.minecraft.net/texture/abc", None).as_deref(),
+            Some("https://textures.minecraft.net/texture/abc")
+        );
     }
 
     #[test]

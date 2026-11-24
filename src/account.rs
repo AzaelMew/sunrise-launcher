@@ -69,19 +69,27 @@ impl Endpoints {
         // token requests at a local mock, to see and screenshot the sign-in panel.
         let microsoft = std::env::var("SUNRISE_MSA_MICROSOFT_ENDPOINT")
             .ok()
-            .filter(|_| cfg!(debug_assertions))
-            .unwrap_or_else(|| "https://login.microsoftonline.com/consumers/oauth2/v2.0".into());
+            .filter(|_| cfg!(debug_assertions));
         // The same for the Minecraft services (the profile, its skin and capes), to see and
         // screenshot the Skins tab against a local mock.
         let minecraft = std::env::var("SUNRISE_MINECRAFT_SERVICES_ENDPOINT")
             .ok()
-            .filter(|_| cfg!(debug_assertions))
-            .unwrap_or_else(|| "https://api.minecraftservices.com".into());
+            .filter(|_| cfg!(debug_assertions));
+        Self::at(microsoft.as_deref(), minecraft.as_deref())
+    }
+
+    /// The live endpoints, taking the development mocks as parameters so the decision does not
+    /// depend on the process environment tests share.
+    fn at(microsoft: Option<&str>, minecraft: Option<&str>) -> Self {
         Self {
-            microsoft,
-            xbox_user: "https://user.auth.xboxlive.com/user/authenticate".into(),
-            xsts: "https://xsts.auth.xboxlive.com/xsts/authorize".into(),
-            minecraft,
+            microsoft: microsoft
+                .unwrap_or(sunrise_launcher_addresses::MICROSOFT_LOGIN)
+                .into(),
+            xbox_user: sunrise_launcher_addresses::XBOX_USER_AUTH.into(),
+            xsts: sunrise_launcher_addresses::XSTS_AUTH.into(),
+            minecraft: minecraft
+                .unwrap_or(sunrise_launcher_addresses::MINECRAFT_SERVICES)
+                .into(),
         }
     }
 }
@@ -228,7 +236,7 @@ pub fn device_code(ep: &Endpoints, client_id: &str) -> Result<DeviceCode, String
         (200, Some(user_code), Some(device_code)) => Ok(DeviceCode {
             user_code,
             verification_uri: str_field(&v, "verification_uri")
-                .unwrap_or_else(|| "https://www.microsoft.com/link".into()),
+                .unwrap_or_else(|| sunrise_launcher_addresses::MICROSOFT_LINK.into()),
             interval: v
                 .get("interval")
                 .and_then(Value::as_u64)
@@ -341,7 +349,7 @@ fn refresh_ms(ep: &Endpoints, client_id: &str, refresh: &str) -> Result<MsTokens
 
 // ----- Xbox Live, XSTS, Minecraft ----------------------------------------------------------------
 
-const FAMILY_URL: &str = "https://account.microsoft.com/family";
+const FAMILY_URL: &str = sunrise_launcher_addresses::MICROSOFT_FAMILY;
 const CHILD_ACCOUNT: &str = "Microsoft says this is a child account (error {code}). An adult has to add it to a Microsoft family at {url}. If it is an adult account, check its family settings there.";
 
 /// The XSTS `XErr` codes, as the official launcher explains them.

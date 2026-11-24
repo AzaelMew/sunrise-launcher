@@ -1218,6 +1218,22 @@ fn client_id_is_configuration() {
     std::env::remove_var("SUNRISE_MSA_CLIENT_ID");
 }
 
+#[test]
+fn development_endpoint_overrides_win_over_the_built_in_hosts() {
+    let ep = Endpoints::at(
+        Some("http://127.0.0.1:9/msa"),
+        Some("http://127.0.0.1:9/minecraft"),
+    );
+    assert_eq!(ep.microsoft, "http://127.0.0.1:9/msa");
+    assert_eq!(ep.minecraft, "http://127.0.0.1:9/minecraft");
+    // Without an override the built-in hosts are used, on release builds too.
+    let ep = Endpoints::at(None, None);
+    assert_eq!(ep.microsoft, sunrise_launcher_addresses::MICROSOFT_LOGIN);
+    assert_eq!(ep.minecraft, sunrise_launcher_addresses::MINECRAFT_SERVICES);
+    assert_eq!(ep.xbox_user, sunrise_launcher_addresses::XBOX_USER_AUTH);
+    assert_eq!(ep.xsts, sunrise_launcher_addresses::XSTS_AUTH);
+}
+
 /// The account switcher's one click: who plays is on disk at once, and is still who plays
 /// after a restart; an account that isn't signed in changes nothing.
 #[test]
