@@ -21,7 +21,7 @@ pub fn startup_error() -> Option<String> {
 /// of a computer without a keychain), the instances' names and icons, the servers made in the
 /// launcher. Game builds, downloads, caches and logs are made again.
 const LAUNCHER_STATE: [&str; 7] = [
-    "settings.json",
+    crate::paths::SETTINGS,
     "accounts.json",
     crate::account::SECRETS_FILE,
     "account-secrets.key",
@@ -354,7 +354,7 @@ fn earlier_roots(
     game: &str,
     location: &str,
 ) -> Result<Option<Roots>, String> {
-    let moved = data_location::resolve_at(&config.join(location).join("location.json"))?;
+    let moved = data_location::resolve_at(&config.join(location).join(crate::paths::LOCATION))?;
     let roots = moved.unwrap_or_else(|| Roots {
         launcher: data.join(launcher),
         game: data.join(game),

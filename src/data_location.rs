@@ -38,14 +38,16 @@ pub fn bootstrap_path() -> Result<PathBuf> {
         return pointer_path(Path::new(&path));
     }
     if cfg!(test) {
-        return Ok(test_home().join("location.json"));
+        return Ok(test_home().join(crate::paths::LOCATION));
     }
     dirs::config_dir()
         .map(|p| {
             p.join(crate::identity::LOCATION_FOLDER)
-                .join("location.json")
+                .join(crate::paths::LOCATION)
         })
-        .ok_or_else(|| "Cannot locate the platform configuration folder for location.json".into())
+        .ok_or_else(|| {
+            "Cannot locate the platform configuration folder for the launcher location file".into()
+        })
 }
 
 /// Where the library's own tests keep the launcher's and the game's data (`launcher`, `game`,

@@ -44,6 +44,7 @@ pub mod nightly;
 pub mod no_ai;
 pub mod notices;
 pub mod packs;
+pub mod paths;
 pub mod pictures;
 pub mod player_model;
 pub mod preparer;
