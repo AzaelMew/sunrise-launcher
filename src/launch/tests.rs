@@ -152,12 +152,13 @@ fn child_writes_its_words() {
 fn windows_game_gets_its_words_as_they_are_after_its_pre_launch_command() {
     let exe = std::env::current_exe().unwrap();
     // A program path cmd.exe would expand, with a space and brackets (same volume: a hard link).
-    let dir = exe
-        .parent()
-        .unwrap()
-        .join(format!("sunrise %USERNAME% {}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
+    // Removing the folder is the guard's, which ignores a file Windows still holds open after
+    // the game exits (a scanner reading the new executable), rather than failing the test.
+    let scratch = tempfile::Builder::new()
+        .prefix("sunrise %USERNAME% ")
+        .tempdir_in(exe.parent().unwrap())
+        .unwrap();
+    let dir = scratch.path();
     let game_exe = dir.join("game (x86).exe");
     std::fs::hard_link(&exe, &game_exe).unwrap();
     let words = [
@@ -176,7 +177,7 @@ fn windows_game_gets_its_words_as_they_are_after_its_pre_launch_command() {
         let mut cmd = Command::new(&game_exe);
         cmd.args(["--exact", "launch::tests::child_writes_its_words", "--"])
             .args(words)
-            .current_dir(&dir)
+            .current_dir(dir)
             .env("SUNRISE_TEST_WORDS", dir.join("words.json"));
         cmd
     };
@@ -209,7 +210,6 @@ fn windows_game_gets_its_words_as_they_are_after_its_pre_launch_command() {
         "The pre-launch command failed (exit 3), so the game did not start.\nnot ready"
     );
     assert!(!dir.join("words.json").exists());
-    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 #[cfg(unix)]
