@@ -201,6 +201,9 @@ jobs:
     if: needs.route.outputs.full == 'true'
     runs-on: windows-latest
     timeout-minutes: 90
+    # The Nightly moves on its own: a later one that changes the mod's mixin target fails this leg
+    # without failing `build`, which the pinned Dev build answers for.
+    continue-on-error: ${{ matrix.channel == 'nightly' }}
     strategy:
       fail-fast: false
       matrix:
@@ -258,7 +261,8 @@ jobs:
           COMMIT=$(grep -o '"commit": *"[0-9a-f]\{40\}"' "$version/sunrise-release.json" | grep -o '[0-9a-f]\{40\}')
           [[ -n "$COMMIT" ]] || { echo "::error::no commit in $version/sunrise-release.json"; exit 1; }
           echo "pinned $COMMIT"
-          sed -i "s/^sunrise = \".*\"$/sunrise = \"$COMMIT\"/" "$mods/wpm/sunrise-mod.toml"
+          sed -i "s/^sunrise = \"[^\"]*\"/sunrise = \"$COMMIT\"/" "$mods/wpm/sunrise-mod.toml"
+          grep -q "^sunrise = \"$COMMIT\"" "$mods/wpm/sunrise-mod.toml" || { echo "::error::sunrise-mod.toml does not pin $COMMIT"; exit 1; }
           # Its crates.io dependency takes the build through Cargo's target folder, the deepest route.
           target/debug/sunrise-launcher native-lock "$mods/wpm"
           target/debug/sunrise-launcher native-build "$mods" --trust-native-code

@@ -7,6 +7,6 @@ edition = "2024"
 # The pinned SDK's API crate, fetched into .sunrise/sdk/ by any `cargo sunrise-mod` command. Any other
 # registry dependency is pinned in Cargo.lock by `cargo sunrise-mod build`.
 sunrise-mod-api = { path = ".sunrise/sdk/api/crates/sunrise-mod-api" }
-# A registry crate, exact, so the SDK builds the mod through Cargo's target folder, the route
-# whose paths are deepest (#396).
-itoa = "=1.0.15"
+# A registry crate, so the SDK builds the mod through Cargo's target folder, the route whose
+# paths are deepest (#396). The version is whichever the build's own lockfile holds.
+itoa = "1"
