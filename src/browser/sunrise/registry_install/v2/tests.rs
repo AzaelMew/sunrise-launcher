@@ -1523,6 +1523,133 @@ fn v2_plan_picks_the_newest_library_release_in_the_range_the_dependent_asks_for(
     assert!(refused.contains(">=3"), "{refused}");
 }
 
+/// Core Lib 2.0.0 and 1.3.0 fit 26.3-0.1.0, 1.4.0 is not judged for it yet, and 1.2.0 does
+/// not fit it. Compass needs `core_lib` in `range`, naming the Core Lib project or not.
+fn library_and_dependent(range: &str, named: bool) -> Vec<Project> {
+    let lib = |version: &str, fits: &[&str], does_not_fit: &[&str]| {
+        let bytes = smod_bytes("core_lib", "Core Lib", version, "");
+        make_release(
+            "alice/core-lib",
+            version,
+            "26.3-0.1.0",
+            WORKFLOW_V1,
+            fits,
+            does_not_fit,
+            &bytes,
+            Vec::new(),
+        )
+    };
+    let library = make_project(
+        "Core1234",
+        "core-lib",
+        "core_lib",
+        "Core Lib",
+        2001,
+        "alice/core-lib",
+        vec![
+            lib("2.0.0", &["26.3-0.1.0"], &[]),
+            lib("1.4.0", &["26.3-0.1.1"], &[]),
+            lib("1.3.0", &["26.3-0.1.0"], &[]),
+            lib("1.2.0", &["26.3-0.1.1"], &["26.3-0.1.0"]),
+        ],
+    );
+    let bytes = smod_bytes(
+        "compass",
+        "Compass",
+        "1.0.0",
+        &format!("[dependencies]\ncore_lib = '{range}'\n"),
+    );
+    let app = make_project(
+        "App90123",
+        "compass",
+        "compass",
+        "Compass",
+        2003,
+        "alice/compass",
+        vec![make_release(
+            "alice/compass",
+            "1.0.0",
+            "26.3-0.1.0",
+            WORKFLOW_V1,
+            &["26.3-0.1.0"],
+            &[],
+            &bytes,
+            vec![Dependency {
+                mod_id: "core_lib".into(),
+                version: VersionReq::parse(range).unwrap(),
+                project: named.then(|| "Core1234".into()),
+                required: true,
+            }],
+        )],
+    );
+    vec![library, app]
+}
+
+fn plan_together(projects: Vec<Project>, requested: &[&str]) -> Result<V2Plan, InstallError> {
+    plan_v2_install(
+        &make_index(projects, Vec::new()),
+        "26.3-0.1.0",
+        &requested
+            .iter()
+            .map(|id| (*id).to_owned())
+            .collect::<Vec<_>>(),
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+        &V2InstallOptions::default(),
+        None,
+    )
+}
+
+#[test]
+fn v2_plan_says_why_no_release_of_a_dependency_can_be_used() {
+    let refused = |range: &str| {
+        plan_together(library_and_dependent(range, false), &["App90123"])
+            .unwrap_err()
+            .to_string()
+    };
+    // 1.2.0 is the only release in range, and it does not fit this build.
+    assert_eq!(
+        refused("~1.2"),
+        "Compass needs core_lib ~1.2, which has no release fitting Sunrise 26.3-0.1.0."
+    );
+    // 1.4.0 is in range but not judged for this build yet.
+    assert_eq!(
+        refused("^1.4"),
+        "Compass needs core_lib, whose fit on Sunrise 26.3-0.1.0 is not known yet."
+    );
+}
+
+#[test]
+fn v2_plan_checks_the_range_of_a_dependency_planned_in_the_same_install() {
+    // Installing the library with its dependent plans the library's newest fitting release,
+    // 2.0.0, which Compass's `^1` does not allow, whichever is asked for first and whether
+    // Compass names the library's project or only its mod id.
+    for named in [true, false] {
+        for requested in [["Core1234", "App90123"], ["App90123", "Core1234"]] {
+            let refused = plan_together(library_and_dependent("^1", named), &requested)
+                .unwrap_err()
+                .to_string();
+            assert_eq!(
+                refused, "Compass needs Core Lib ^1, but 2.0.0 is planned for another mod.",
+                "named {named}, requested {requested:?}"
+            );
+        }
+    }
+
+    // A range the planned release is in installs it once.
+    let steps = plan_together(
+        library_and_dependent(">=2", false),
+        &["Core1234", "App90123"],
+    )
+    .unwrap()
+    .steps;
+    let versions: Vec<_> = steps
+        .iter()
+        .map(|s| (s.project_id.as_str(), s.version.as_str()))
+        .collect();
+    assert_eq!(versions, [("Core1234", "2.0.0"), ("App90123", "1.0.0")]);
+}
+
 #[test]
 fn a_verified_native_release_is_allowed_to_build_without_the_warning() {
     use std::io::Write;
