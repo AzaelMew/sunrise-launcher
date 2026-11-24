@@ -99,7 +99,11 @@ pub fn carry_over(data: &Path, config: &Path) -> Result<bool, String> {
                 settle(&stage);
             }
         }
-        return Ok(false);
+        // A start whose carry-over failed still makes the launcher folder for its locks and
+        // caches. That alone is no reason to stop copying: only the player's own files are.
+        if game.exists() || launcher_in_use(&launcher)? {
+            return Ok(false);
+        }
     }
     let mut source = None;
     for &(old_launcher, old_game, location) in crate::identity::EARLIER {
@@ -142,10 +146,43 @@ pub fn carry_over(data: &Path, config: &Path) -> Result<bool, String> {
         .and_then(|file| file.sync_all())
         .map_err(|e| format!("{}: {e}", marker.display()))?;
     data_location::sync_dir(&stage)?;
+    // What a failed start left in the launcher folder is made again; it goes aside so the copy
+    // can take its place.
+    let leftover = launcher.with_file_name(".carry-over-leftover");
+    if refuse_link(&launcher)?.is_some() {
+        if refuse_link(&leftover)?.is_some() {
+            fs::remove_dir_all(&leftover).map_err(|e| format!("{}: {e}", leftover.display()))?;
+        }
+        fs::rename(&launcher, &leftover).map_err(|e| format!("{}: {e}", launcher.display()))?;
+    }
     fs::rename(&staged.launcher, &launcher).map_err(|e| format!("{}: {e}", launcher.display()))?;
     fs::rename(&staged.game, &game).map_err(|e| format!("{}: {e}", game.display()))?;
     discard(&stage);
+    if leftover.exists() {
+        if let Err(error) = fs::remove_dir_all(&leftover) {
+            eprintln!("Could not remove {}: {error}", leftover.display());
+        }
+    }
     Ok(true)
+}
+
+/// Whether `launcher` holds any of the player's own files ([`LAUNCHER_STATE`]), so a copy must
+/// not replace it. A linked launcher folder is the player's doing and counts as theirs.
+fn launcher_in_use(launcher: &Path) -> Result<bool, String> {
+    match fs::symlink_metadata(launcher) {
+        Ok(meta) if crate::native_cache::linked(&meta) || !meta.is_dir() => return Ok(true),
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => return Err(format!("{}: {e}", launcher.display())),
+    }
+    for name in LAUNCHER_STATE {
+        match fs::symlink_metadata(launcher.join(name)) {
+            Ok(_) => return Ok(true),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(format!("{}: {e}", launcher.join(name).display())),
+        }
+    }
+    Ok(false)
 }
 
 /// Whether an unmarked stage (one a launcher before the marker, 1.0.0 or 1.0.1, left) is provably
@@ -774,6 +811,74 @@ mod tests {
         .unwrap();
         assert_eq!(copied, serde_json::json!({ "ok": true }));
         unlink_dir(&linked_launcher);
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn a_failed_starts_locks_and_caches_do_not_stop_the_retry() {
+        let Some(&(_, _, location)) = crate::identity::EARLIER.first() else {
+            return;
+        };
+        let (data, config, base) = scratch("leftover-retry");
+        let real_launcher = base.join("real-launcher");
+        let real_game = base.join("real-game");
+        fs::create_dir_all(&real_launcher).unwrap();
+        fs::create_dir_all(real_game.join("saves/World")).unwrap();
+        fs::write(real_launcher.join("settings.json"), r#"{"ok":true}"#).unwrap();
+        fs::write(real_game.join("saves/World/level.dat"), [1, 2, 3]).unwrap();
+        let linked_launcher = base.join("linked-launcher");
+        link_dir(&real_launcher, &linked_launcher);
+        let loc_dir = config.join(location);
+        fs::create_dir_all(&loc_dir).unwrap();
+        let pointer = |launcher: &Path| {
+            serde_json::json!({
+                "version": 1,
+                "roots": { "launcher": launcher, "game": real_game, "build": launcher }
+            })
+            .to_string()
+        };
+        fs::write(loc_dir.join("location.json"), pointer(&linked_launcher)).unwrap();
+        assert!(carry_over(&data, &config).is_err());
+
+        // What the window of that failed start made: the instances lock and a GitHub cache.
+        let launcher = crate::identity::launcher_folder_in(&data);
+        fs::create_dir_all(launcher.join("cache/github")).unwrap();
+        fs::write(launcher.join(".instances.lock"), b"").unwrap();
+        fs::write(launcher.join("cache/github/answer.json"), b"{}").unwrap();
+
+        fs::write(loc_dir.join("location.json"), pointer(&real_launcher)).unwrap();
+        assert_eq!(carry_over(&data, &config), Ok(true));
+        let copied: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(launcher.join("settings.json")).unwrap())
+                .unwrap();
+        assert_eq!(copied, serde_json::json!({ "ok": true }));
+        assert!(!launcher.join(".instances.lock").exists());
+        assert!(!launcher.join("cache").exists());
+        assert!(!launcher.with_file_name(".carry-over-leftover").exists());
+        assert_eq!(
+            fs::read(crate::identity::game_folder_in(&data).join("saves/World/level.dat")).unwrap(),
+            [1, 2, 3]
+        );
+        // The earlier launcher's own folders are only read.
+        assert!(real_launcher.join("settings.json").is_file());
+        unlink_dir(&linked_launcher);
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn a_launcher_folder_with_the_players_files_is_never_replaced() {
+        let Some(&(old_launcher, _, _)) = crate::identity::EARLIER.first() else {
+            return;
+        };
+        let (data, config, base) = scratch("in-use");
+        fs::create_dir_all(data.join(old_launcher)).unwrap();
+        fs::write(data.join(old_launcher).join("settings.json"), b"{}").unwrap();
+        let launcher = crate::identity::launcher_folder_in(&data);
+        fs::create_dir_all(&launcher).unwrap();
+        fs::write(launcher.join("accounts.json"), b"[]").unwrap();
+        assert_eq!(carry_over(&data, &config), Ok(false));
+        assert_eq!(fs::read(launcher.join("accounts.json")).unwrap(), b"[]");
+        assert!(!launcher.join("settings.json").exists());
         let _ = fs::remove_dir_all(&base);
     }
 
