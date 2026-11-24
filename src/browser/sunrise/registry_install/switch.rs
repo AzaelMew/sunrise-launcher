@@ -10,7 +10,6 @@ use sunrise_launcher_smod::dependencies::parse_version;
 pub struct SwitchHooks<'a> {
     pub cancellation: &'a native_mods::Cancellation,
     pub progress: &'a dyn Fn(InstallProgress),
-    pub registry_crates: Option<&'a dyn Fn(&native_mods::Consent) -> bool>,
     pub approve: &'a dyn Fn(&SwitchQuestion) -> Result<SwitchDecision, String>,
     pub at_cutoff: &'a dyn Fn() -> Result<(), String>,
 }
@@ -22,6 +21,8 @@ pub struct SwitchQuestion {
     pub worlds: Question,
     pub held: Vec<String>,
     pub unproved: Vec<String>,
+    /// What the fit check or build said, by the name shown in `held` or `unproved`.
+    pub reasons: BTreeMap<String, String>,
     pub removed: Vec<(String, String)>,
 }
 
@@ -54,14 +55,26 @@ impl SwitchQuestion {
     }
 
     pub fn hold_lines(&self) -> impl Iterator<Item = String> + '_ {
+        let line = |name: &String, said: &str, with_reason: &str| match self.reasons.get(name) {
+            Some(reason) => trf(with_reason, &[("mod", name), ("reason", reason)]),
+            None => trf(said, &[("mod", name)]),
+        };
         self.held
             .iter()
-            .map(|name| trf("{mod} — Not compatible with this build.", &[("mod", name)]))
-            .chain(
-                self.unproved
-                    .iter()
-                    .map(|name| trf("{mod} — Fit could not be verified.", &[("mod", name)])),
-            )
+            .map(move |name| {
+                line(
+                    name,
+                    "{mod} — Not compatible with this build.",
+                    "{mod} — Not compatible with this build. {reason}",
+                )
+            })
+            .chain(self.unproved.iter().map(move |name| {
+                line(
+                    name,
+                    "{mod} — Fit could not be verified.",
+                    "{mod} — Fit could not be verified. {reason}",
+                )
+            }))
     }
 
     pub fn world_lines(&self) -> Vec<String> {
@@ -300,17 +313,14 @@ fn switch_in(
         download.path(),
         hooks.progress,
     )?;
-    let mut omissions = Omissions {
-        unproved: prune_missing_uses(&mut choices, &original, tag)?,
-        ..Omissions::default()
-    };
+    let mut omissions = Omissions::default();
+    omissions.unproved = prune_missing_uses(&mut choices, &original, tag, &mut omissions.why)?;
     let prove = |home: &Path| {
         edit.prove(
             home,
             instance.native_profile,
             hooks.cancellation,
             |step| super::build_progress(step, hooks.progress),
-            hooks.registry_crates,
             None,
         )
     };
@@ -371,9 +381,17 @@ fn switch_in(
     })?;
     let (next, mut proof, kept, replaced) = selected.ok_or_else(unproved_switch)?;
     let mut holds = Vec::new();
+    // Every held local or source mod was offered again with its exact bytes. Its old hold is
+    // retired, and the ones that still don't fit are held again below with today's reason.
+    let rechecked: BTreeSet<String> = original
+        .mods
+        .iter()
+        .filter(|(_, old)| old.recheck.is_some())
+        .map(|(id, _)| id.clone())
+        .collect();
     for (id, old) in &original.mods {
         let manifest = &old.seen.package.manifest;
-        if !kept.contains(id) && !original.removed.contains_key(id) && !old.held {
+        if !kept.contains(id) && !original.removed.contains_key(id) && old.reoffered() {
             let path = &old.seen.package.path;
             let directory = path
                 .parent()
@@ -393,18 +411,20 @@ fn switch_in(
                     &[("mod", &manifest.name)],
                 )
             })?;
+            let detail = omissions.why.remove(id);
             let reason = match omissions.known.remove(id) {
                 Some(KnownFailure::NoFit(detail)) => HeldReason::NoFit {
                     build: tag.into(),
                     detail: Some(detail),
                 },
                 Some(KnownFailure::BuildFailed) => HeldReason::BuildFailed { build: tag.into() },
-                None if omissions.unproved.contains(id) => {
-                    HeldReason::Unproved { build: tag.into() }
-                }
+                None if omissions.unproved.contains(id) => HeldReason::Unproved {
+                    build: tag.into(),
+                    detail,
+                },
                 None => HeldReason::NoFit {
                     build: tag.into(),
-                    detail: None,
+                    detail,
                 },
             };
             holds.push(Held::new(
@@ -413,12 +433,17 @@ fn switch_in(
                 sha256_bytes(digest)?,
                 (root, leaf.into()),
                 old.source.clone(),
-                old.on,
+                old.wanted(),
                 reason,
             )?);
         }
     }
-    let (held, unknown, hold_labels) = omission_labels(&holds);
+    let OmissionLabels {
+        held,
+        unproved: unknown,
+        by_id: hold_labels,
+        reasons,
+    } = omission_labels(&holds);
     let affected = crate::worlds::unproved_mod_effects(
         old.path(),
         edit.current(),
@@ -431,7 +456,13 @@ fn switch_in(
             .keys()
             .chain(&replaced)
             .map(String::as_str)
-            .chain(holds.iter().map(Held::id)),
+            // A re-held mod was already off on the old build: its worlds lose nothing new.
+            .chain(
+                holds
+                    .iter()
+                    .map(Held::id)
+                    .filter(|id| !rechecked.contains(*id)),
+            ),
     )?;
     let resources = edit.switch_resources()?;
     let mut order = None;
@@ -459,6 +490,7 @@ fn switch_in(
         worlds,
         held,
         unproved: unknown,
+        reasons,
         removed: original.removed.values().cloned().collect(),
     };
     let mut removed = original.removed;
@@ -502,7 +534,16 @@ fn switch_in(
             crate::managed_play::CommittedBuildChoice::new(channel, version)
         })
         .transpose()?;
-    let active = edit.publish_switch(proof, hooks.cancellation, holds, removed, build_choice, || {
+    let active = edit.publish_switch(
+        proof,
+        hooks.cancellation,
+        managed_play::SwitchPublication {
+            holds,
+            removed,
+            retired: rechecked,
+            build_choice,
+        },
+        || {
         let (_, current, proof) = super::super::complete_index(&source, local)?;
         if current != evidence || proof.is_some() != official.is_some() {
             return Err(tr("The mod registry changed while the switch was being prepared. Nothing was switched.").into());
@@ -525,7 +566,22 @@ struct Original {
     built_from_source: bool,
     on: bool,
     held: bool,
+    /// Held local or source bytes, with whether they were on before the hold: offered again
+    /// on each switch, so they turn back on once the target build proves them.
+    recheck: Option<bool>,
     withheld: bool,
+}
+
+impl Original {
+    /// Whether the player wants it on: on now, or on before a recheckable hold turned it off.
+    fn wanted(&self) -> bool {
+        self.on || self.recheck == Some(true)
+    }
+
+    /// Whether this switch decides it afresh: anything not already held, and recheckable holds.
+    fn reoffered(&self) -> bool {
+        !self.held || self.recheck.is_some()
+    }
 }
 
 struct Originals<'a> {
@@ -577,6 +633,7 @@ impl<'a> Originals<'a> {
                 HeldSource::Registry {
                     project: id.clone(),
                     version: manifest.version.clone(),
+                    repository: None,
                 }
             } else {
                 HeldSource::Local {
@@ -628,6 +685,9 @@ impl<'a> Originals<'a> {
                     built_from_source,
                     on,
                     held: held.is_some(),
+                    recheck: held
+                        .filter(|hold| !matches!(hold.source(), HeldSource::Registry { .. }))
+                        .map(Held::enabled_before),
                     withheld: revoked.is_some_and(|(_, authorized)| !authorized),
                 },
             );
@@ -647,8 +707,10 @@ struct Package {
     manifest: Manifest,
     digest: Option<String>,
     replacement: Option<(PathBuf, installed::Entry)>,
-    unlisted: bool,
     built_from_source: bool,
+    /// The installed bytes are the slot's only candidate (a local or source mod): what the
+    /// fit check says about them is the reason the player reads.
+    installed: bool,
 }
 
 type Choices = BTreeMap<String, Vec<Package>>;
@@ -675,14 +737,15 @@ fn choices(
         }
         let old = original.mods.get(&id);
         let mut available = Vec::new();
-        if original.removed.contains_key(&id) || old.is_some_and(|old| old.held || old.withheld) {
+        if original.removed.contains_key(&id)
+            || old.is_some_and(|old| !old.reoffered() || old.withheld)
+        {
             // Preserve unproved takedown bytes, off. Only an explicit Update on the
-            // current base can restore a prior hold.
+            // current base can restore a prior registry hold.
         } else if let Some(old) = old.filter(|old| !old.seen.owned) {
             let manifest = &old.seen.package.manifest;
             // A complete index can prove fit for unchanged listed content. Absence of these
             // exact bytes from a present project instead means they're a pinned local input.
-            let mut pinned = true;
             if old.seen.registry_claim {
                 let project = catalogue.project(&id).ok_or_else(unproved_switch)?;
                 let mut exact = project
@@ -690,8 +753,7 @@ fn choices(
                     .iter()
                     .filter(|version| old.seen.digest.as_deref() == Some(&version.file.sha256))
                     .peekable();
-                pinned = exact.peek().is_none();
-                if !pinned {
+                if exact.peek().is_some() {
                     let release = exact.find(|version| {
                         version.side != Some(Side::Server)
                             && (manifest.native.is_some() || version.game == game)
@@ -714,8 +776,8 @@ fn choices(
                     manifest: manifest.clone(),
                     digest: old.seen.digest.clone(),
                     replacement: None,
-                    unlisted: pinned,
                     built_from_source: old.built_from_source,
+                    installed: true,
                 });
             }
         } else if let Some(project) = catalogue.project(&id) {
@@ -771,6 +833,7 @@ fn choices(
                     let entry = installed::Entry {
                         source: SourceId::Sunrise,
                         project: id.clone(),
+                        mod_id: None,
                         slug: id.clone(),
                         title: project.name.clone(),
                         kind: Kind::Mod,
@@ -785,6 +848,7 @@ fn choices(
                                 .is_some_and(|row| row["dependency"].as_bool() == Some(true)),
                         verdict: None,
                         install_hold: None,
+                        repository: None,
                     };
                     (file.clone(), Some((file, entry)))
                 };
@@ -809,8 +873,8 @@ fn choices(
                     manifest,
                     digest: Some(version.file.sha256.clone()),
                     replacement,
-                    unlisted: false,
                     built_from_source: false,
+                    installed: false,
                 });
             }
         } else if old.is_some() {
@@ -854,7 +918,19 @@ pub(super) fn sha256_bytes(hex: &str) -> Result<[u8; 32], String> {
     Ok(bytes)
 }
 
-fn omission_labels(holds: &[Held]) -> (Vec<String>, Vec<String>, BTreeMap<String, String>) {
+/// The names a switch's question shows for its holds: titles, with ids where two read alike.
+struct OmissionLabels {
+    /// Held because they don't fit the build.
+    held: Vec<String>,
+    /// Held because their fit couldn't be verified.
+    unproved: Vec<String>,
+    /// Each hold's name, by mod id.
+    by_id: BTreeMap<String, String>,
+    /// Each hold's reason, by name.
+    reasons: BTreeMap<String, String>,
+}
+
+fn omission_labels(holds: &[Held]) -> OmissionLabels {
     let mut counts: BTreeMap<String, usize> = BTreeMap::new();
     for hold in holds {
         *counts.entry(hold.title().to_lowercase()).or_default() += 1;
@@ -862,6 +938,7 @@ fn omission_labels(holds: &[Held]) -> (Vec<String>, Vec<String>, BTreeMap<String
     let mut held = Vec::new();
     let mut unproved = Vec::new();
     let mut labels = BTreeMap::new();
+    let mut reasons = BTreeMap::new();
     for hold in holds {
         let label = if counts[&hold.title().to_lowercase()] > 1 {
             format!("{} ({})", hold.title(), hold.id())
@@ -869,13 +946,21 @@ fn omission_labels(holds: &[Held]) -> (Vec<String>, Vec<String>, BTreeMap<String
             hold.title().to_owned()
         };
         labels.insert(hold.id().to_owned(), label.clone());
+        if let Some(reason) = hold.reason().detail() {
+            reasons.insert(label.clone(), reason.to_owned());
+        }
         if hold.reason().unproved() {
             unproved.push(label);
         } else {
             held.push(label);
         }
     }
-    (held, unproved, labels)
+    OmissionLabels {
+        held,
+        unproved,
+        by_id: labels,
+        reasons,
+    }
 }
 
 // A bare native archive pinned to a different build has no cross-build proof to try.
@@ -886,6 +971,7 @@ fn prune_missing_uses(
     slots: &mut Choices,
     original: &Originals<'_>,
     tag: &str,
+    why: &mut BTreeMap<String, String>,
 ) -> Result<BTreeSet<String>, String> {
     let developer = crate::developer_install::uses_developer(tag);
     let mut revision = None;
@@ -910,6 +996,21 @@ fn prune_missing_uses(
                         .index_for_name(sunrise_launcher_smod::manifest::USES_FILE)
                         .is_none()
                     {
+                        // Only the installed bytes' reason belongs on a hold: a pruned
+                        // candidate from the index never became one.
+                        if choice.installed {
+                            why.insert(
+                                id.clone(),
+                                native_mods::fit::line(
+                                    &choice.manifest.name,
+                                    &native_mods::fit::Verdict::NoList {
+                                        made_for: native.sunrise.clone(),
+                                        why: None,
+                                    },
+                                    tag,
+                                ),
+                            );
+                        }
                         continue;
                     }
                 }
@@ -935,20 +1036,14 @@ fn prune_dependents(slots: &mut Choices, unproved: &BTreeSet<String>) -> BTreeSe
         .filter(|(id, choices)| choices.is_empty() && !unproved.contains(*id))
         .map(|(id, _)| id.as_str())
         .collect();
-    spread_to_dependents(variants(), &mut unfit);
     let mut unknown: BTreeSet<_> = unproved.iter().map(String::as_str).collect();
-    spread_to_dependents(variants(), &mut unknown);
-    let unknown = unknown
-        .difference(&unfit)
+    spread_fit_reasons(variants(), &mut unfit, &mut unknown);
+    let unavailable: BTreeSet<String> = unfit
+        .iter()
+        .chain(unknown.iter())
         .map(|&id| id.to_owned())
         .collect();
-    let mut unavailable: BTreeSet<_> = slots
-        .iter()
-        .filter(|(_, choices)| choices.is_empty())
-        .map(|(id, _)| id.as_str())
-        .collect();
-    spread_to_dependents(variants(), &mut unavailable);
-    let unavailable: BTreeSet<_> = unavailable.into_iter().map(str::to_owned).collect();
+    let unknown: BTreeSet<String> = unknown.into_iter().map(str::to_owned).collect();
     slots.retain(|id, choices| {
         if unavailable.contains(id) {
             return false;
@@ -962,6 +1057,59 @@ fn prune_dependents(slots: &mut Choices, unproved: &BTreeSet<String>) -> BTreeSe
         true
     });
     unknown
+}
+
+/// Propagate per-version fit reasons to fixed point: a version with any known-incompatible
+/// required dependency is unfit, a version with no unfit dependency but an unverified one is
+/// unknown, and a mod with no remaining available version stays unknown whenever at least one of
+/// its versions is unknown (since proving that dependency could make it fit).
+fn spread_fit_reasons<'a>(
+    variants: impl Iterator<Item = (&'a str, impl Iterator<Item = &'a Package>)> + Clone,
+    unfit: &mut BTreeSet<&'a str>,
+    unknown: &mut BTreeSet<&'a str>,
+) {
+    loop {
+        let before = (unfit.len(), unknown.len());
+        for (id, choices) in variants.clone() {
+            if unfit.contains(id) || unknown.contains(id) {
+                continue;
+            }
+            let mut any_available = false;
+            let mut any_unknown = false;
+            for package in choices {
+                let mut ver_unfit = false;
+                let mut ver_unknown = false;
+                for (dep, _) in package.manifest.required_client_dependencies() {
+                    if unfit.contains(dep.as_str()) {
+                        ver_unfit = true;
+                        break;
+                    }
+                    if unknown.contains(dep.as_str()) {
+                        ver_unknown = true;
+                    }
+                }
+                if ver_unfit {
+                    continue;
+                }
+                if ver_unknown {
+                    any_unknown = true;
+                } else {
+                    any_available = true;
+                    break;
+                }
+            }
+            if !any_available {
+                if any_unknown {
+                    unknown.insert(id);
+                } else {
+                    unfit.insert(id);
+                }
+            }
+        }
+        if before == (unfit.len(), unknown.len()) {
+            return;
+        }
+    }
 }
 
 type Rejected = BTreeSet<(String, String)>;
@@ -1100,13 +1248,13 @@ fn enabled_set<'a>(
 ) -> Option<BTreeSet<&'a str>> {
     let mut enabled = BTreeSet::new();
     for &id in set.keys() {
-        if original.get(id).is_some_and(|old| old.on) && !activate(id, set, &mut enabled) {
+        if original.get(id).is_some_and(Original::wanted) && !activate(id, set, &mut enabled) {
             return None;
         }
     }
     (enabled
         .iter()
-        .all(|id| original.get(*id).is_none_or(|old| old.on))
+        .all(|id| original.get(*id).is_none_or(Original::wanted))
         && fits(set, &enabled))
     .then_some(enabled)
 }
@@ -1186,6 +1334,8 @@ fn apply(
 struct Omissions {
     known: BTreeMap<String, KnownFailure>,
     unproved: BTreeSet<String>,
+    /// What the fit check said about installed bytes it couldn't prove, by mod.
+    why: BTreeMap<String, String>,
 }
 
 enum KnownFailure {
@@ -1230,10 +1380,15 @@ fn exact_image(
                             omissions
                                 .known
                                 .insert(id.into(), KnownFailure::NoFit(detail));
+                        } else if package.installed {
+                            omissions.why.insert(id.into(), detail);
                         }
                     }
-                    Why::Unproved(_) if !compiling => {
+                    Why::Unproved(detail) if !compiling => {
                         unknown.insert(id);
+                        if package.installed {
+                            omissions.why.insert(id.into(), detail);
+                        }
                     }
                     Why::DidNotBuild if compiling && package.built_from_source => {
                         unfit.insert(id);
@@ -1279,21 +1434,15 @@ fn exact_image(
                 .extend(unknown.into_iter().map(str::to_owned));
             Ok(None)
         }
-        Err(error @ (Failed::NoConsent | Failed::Sdk { mod_id: None, .. })) => {
+        Err(error @ Failed::Sdk { mod_id: None, .. }) => {
             cancellation.check()?;
-            // A global refusal proves no native input. As with lost native consent,
-            // do not omit a listed mod without trying its exact build. Only source
-            // receipts get the SDK fallback; other native paths keep their old rules.
-            let no_consent = matches!(error, Failed::NoConsent);
+            // A global refusal proves no native input: do not omit a listed mod without
+            // trying its exact build. Only source receipts get the SDK fallback; other
+            // native paths keep their old rules.
             let mut unknown = BTreeSet::new();
             for (&id, p) in set {
                 if enabled.contains(id) && p.manifest.native.is_some() {
-                    let may_hold = if no_consent {
-                        p.unlisted
-                    } else {
-                        p.built_from_source
-                    };
-                    if !may_hold {
+                    if !p.built_from_source {
                         return Err(error.into());
                     }
                     unknown.insert(id);
@@ -1547,6 +1696,7 @@ mod tests {
             installed::Entry {
                 source: SourceId::Sunrise,
                 project: id.into(),
+                mod_id: None,
                 slug: id.into(),
                 title: name.into(),
                 kind: Kind::Mod,
@@ -1558,6 +1708,7 @@ mod tests {
                 dependency: false,
                 verdict: None,
                 install_hold: None,
+                repository: None,
             }
         };
         let core_row = install_entry(
@@ -1655,6 +1806,7 @@ mod tests {
                 if unproved {
                     HeldReason::Unproved {
                         build: "dev-2026-11-22".into(),
+                        detail: None,
                     }
                 } else {
                     HeldReason::NoFit {
@@ -1670,7 +1822,12 @@ mod tests {
             hold("beetles", "Beetles", true),
             hold("beta_lantern", "lanterns", true),
         ];
-        let (held, unproved, _) = omission_labels(&holds);
+        let OmissionLabels {
+            held,
+            unproved,
+            reasons,
+            ..
+        } = omission_labels(&holds);
         assert_eq!(held, ["Lanterns (alpha_lantern)"]);
         assert_eq!(unproved, ["Beetles", "lanterns (beta_lantern)"]);
         let question = SwitchQuestion {
@@ -1678,6 +1835,7 @@ mod tests {
             worlds: Question::default(),
             held,
             unproved,
+            reasons,
             removed: Vec::new(),
         };
         let lines: Vec<_> = question.hold_lines().collect();
@@ -1718,6 +1876,7 @@ mod tests {
             },
             held: vec!["Creature Library".into()],
             unproved: vec!["Beetles".into()],
+            reasons: BTreeMap::new(),
             removed: Vec::new(),
         };
         assert_eq!(
@@ -1778,5 +1937,63 @@ mod tests {
         )
         .unwrap();
         assert_eq!(held.id(), "camp_native");
+    }
+
+    #[test]
+    fn prune_dependents_tracks_fit_reason_per_version() {
+        let pkg = |id: &str, version: &str, deps: &[&str]| {
+            let mut text = format!(
+                "id = '{id}'\nname = '{id}'\nversion = '{version}'\napi = '0.2'\nside = 'both'\n"
+            );
+            if !deps.is_empty() {
+                text.push_str("[dependencies]\n");
+                for dep in deps {
+                    text.push_str(&format!("{dep} = '>=0.1.0'\n"));
+                }
+            }
+            Package {
+                manifest: sunrise_launcher_smod::Manifest::parse(&text).unwrap(),
+                digest: None,
+                replacement: None,
+                built_from_source: false,
+                installed: false,
+            }
+        };
+        let mut slots: Choices = BTreeMap::from([
+            ("dep_unfit".into(), Vec::new()),
+            ("dep_unknown".into(), Vec::new()),
+            (
+                "mixed".into(),
+                vec![
+                    pkg("mixed", "1.0.0", &["dep_unfit"]),
+                    pkg("mixed", "2.0.0", &["dep_unknown"]),
+                ],
+            ),
+            (
+                "both_on_one".into(),
+                vec![pkg("both_on_one", "1.0.0", &["dep_unfit", "dep_unknown"])],
+            ),
+            (
+                "still_fits".into(),
+                vec![
+                    pkg("still_fits", "1.0.0", &["dep_unknown"]),
+                    pkg("still_fits", "2.0.0", &[]),
+                ],
+            ),
+        ]);
+        let unproved = BTreeSet::from(["dep_unknown".to_owned()]);
+        let unknown = prune_dependents(&mut slots, &unproved);
+        assert!(
+            unknown.contains("mixed"),
+            "a mod with one unfit version and one unverified version stays unverified: {unknown:?}"
+        );
+        assert!(
+            !unknown.contains("both_on_one"),
+            "a version needing an unfit dep cannot be saved by proving another dep: {unknown:?}"
+        );
+        assert!(!slots.contains_key("mixed"));
+        assert!(!slots.contains_key("both_on_one"));
+        assert_eq!(slots["still_fits"].len(), 1);
+        assert_eq!(slots["still_fits"][0].manifest.version, "2.0.0");
     }
 }

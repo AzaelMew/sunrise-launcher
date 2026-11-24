@@ -5,8 +5,8 @@
 use super::*;
 use crate::paint::palette;
 use gpui::{
-    black, canvas, rgb, Bounds, Font, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, Point,
-    TextRun,
+    black, canvas, rgb, Animation, AnimationExt, Bounds, ElementId, Font, MouseButton,
+    MouseDownEvent, MouseMoveEvent, Pixels, Point, TextRun,
 };
 use std::{cell::RefCell, rc::Rc};
 
@@ -536,6 +536,9 @@ pub(super) fn content_with(
         .top(px(1.))
 }
 
+/// How long the caret shows, then hides: Windows's default blink.
+const CARET_BLINK_MS: u64 = 530;
+
 fn content_at(
     edit: &LineEdit,
     t: &theme::Theme,
@@ -548,13 +551,31 @@ fn content_at(
         // The glass look's placeholders are white at 40 % (`.hzl input::placeholder`).
         return div().text_color(rgb(palette().muted)).child(placeholder);
     }
+    // The caret blinks as a system field's does, solid again from each move or edit (a new id
+    // starts the blink over), and holds still under reduced motion. It needs a frame only when
+    // it turns, so the blink draws a few times a second, not at the display's rate.
+    let turned = edit.caret ^ edit.anchor.rotate_left(16) ^ edit.text.len().rotate_left(32);
+    let caret = || {
+        div()
+            .flex_none()
+            .w(px(1.))
+            .h(px(14.))
+            .bg(t.ink)
+            .with_animation(
+                ElementId::named_usize("line-caret", turned),
+                Animation::new(Duration::from_millis(2 * CARET_BLINK_MS))
+                    .repeat()
+                    .with_max_fps(16.),
+                |caret, t| caret.opacity(if t < 0.5 { 1. } else { 0. }),
+            )
+    };
     // A focused empty glass field keeps its placeholder after the caret, as a browser's does.
     if edit.text.is_empty() && t.glass {
         let color = rgb(palette().muted);
         return div()
             .flex()
             .items_center()
-            .child(div().flex_none().w(px(1.)).h(px(14.)).bg(t.ink))
+            .child(caret())
             .child(div().text_color(color).child(placeholder));
     }
     let (before, selected, after, caret_first) = edit.view(whole);
@@ -566,7 +587,6 @@ fn content_at(
         };
         div().flex_none().whitespace_nowrap().child(s)
     };
-    let caret = || div().flex_none().w(px(1.)).h(px(14.)).bg(t.ink);
     let area = edit.area.clone();
     div()
         .relative()

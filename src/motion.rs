@@ -11,7 +11,6 @@ use std::time::Instant;
 use sunrise_launcher_theme as tokens;
 
 /// A new page: as [`POP`], a little longer and from further down, so the switch reads.
-#[cfg(test)]
 pub const PAGE: tokens::Motion = tokens::Motion {
     name: "page",
     ms: 260,

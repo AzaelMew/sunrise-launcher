@@ -73,3 +73,5 @@ pub(crate) const HEADER: f32 = 54.;
 pub(crate) const FRAME_INSET: f32 = 12.;
 /// Play, and the build picker beside it.
 pub(crate) const PLAY: f32 = 50.;
+/// How far a new page rises as it arrives.
+pub(crate) const RISE: f32 = sunrise_launcher_theme::RISE;

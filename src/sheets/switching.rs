@@ -1,14 +1,17 @@
 use super::*;
+use crate::mods::PortSwitch;
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
 use sunrise_launcher::{
     browser::sunrise::{
-        install_target, switch_profile_build, BuildChoice, InstallProgress, SwitchDecision,
-        SwitchHooks, SwitchQuestion, Switched,
+        install_target, switch_profile_build, switch_profile_build_v2, switch_provider_v2,
+        BuildChoice, InstallError, InstallHooks, InstallProgress, ProviderSwitchPreview,
+        SwitchDecision, SwitchHooks, SwitchQuestion, Switched, V2Hooks, V2InstallOptions,
+        V2ProviderSwitchHooks, V2SwitchHooks,
     },
-    managed_play::{self, Active, Profile, ReceiptHint},
+    managed_play::{self, Active, FirstBuild, Profile, ReceiptHint},
     profile_txn::Identity,
 };
 
@@ -16,8 +19,19 @@ use sunrise_launcher::{
 pub(crate) struct State {
     pub(super) cache_download: Option<String>,
     running: Option<Running>,
+    provider: Option<ProviderRunning>,
     ack: bool,
     receipt: Option<ReceiptRead>,
+}
+
+struct ProviderRunning {
+    switch: PortSwitch,
+    profile_name: String,
+    build_label: String,
+    progress: InstallProgress,
+    eta: crate::eta::StageEta,
+    stop: native_mods::Cancellation,
+    question: Option<(Box<ProviderSwitchPreview>, Sender<bool>)>,
 }
 
 struct ReceiptRead {
@@ -29,9 +43,12 @@ struct ReceiptRead {
 
 struct Running {
     tag: String,
+    /// The profile and the build it played when the switch began, shown until the switch ends.
+    from: (PathBuf, Option<String>),
     back: Option<Sheet>,
     pending: Option<Pending>,
     progress: InstallProgress,
+    eta: crate::eta::StageEta,
     stop: native_mods::Cancellation,
     question: Option<(Box<SwitchQuestion>, Sender<SwitchDecision>)>,
 }
@@ -90,12 +107,22 @@ impl Launcher {
 
     pub(crate) fn switch_download_progress(&mut self, tag: &str, fraction: f32) {
         if self.ui.sheets.switching.cache_download.as_deref() == Some(tag) {
-            self.switch_progress(InstallProgress::Downloading(fraction));
+            self.switch_progress(InstallProgress::DownloadingBuild(fraction));
         }
     }
 
+    /// The build `home` played when a switch running on it began.
+    pub(crate) fn switch_base(&self, home: &Path) -> Option<&str> {
+        let running = self.ui.sheets.switching.running.as_ref()?;
+        (running.from.0 == home)
+            .then_some(running.from.1.as_deref())
+            .flatten()
+    }
+
     pub(crate) fn switch_busy(&self) -> bool {
-        self.ui.sheets.switching.running.is_some() || self.ui.sheets.switching.ack
+        self.ui.sheets.switching.running.is_some()
+            || self.ui.sheets.switching.provider.is_some()
+            || self.ui.sheets.switching.ack
     }
 
     pub(super) fn begin_switch(&mut self, tag: String, choice: Option<BuildChoice>) {
@@ -114,8 +141,10 @@ impl Launcher {
         };
         let release = self.release_to_install(&tag);
         let stop = native_mods::Cancellation::default();
+        let from = (instance.home.clone(), self.profile_target(&instance));
         self.ui.sheets.switching.running = Some(Running {
             tag: tag.clone(),
+            from,
             back: self.ui.sheet,
             pending: Some(Pending {
                 instance,
@@ -123,13 +152,14 @@ impl Launcher {
                 choice,
             }),
             progress: InstallProgress::PreparingBuild,
+            eta: crate::eta::StageEta::default(),
             stop: stop.clone(),
             question: None,
         });
         self.open_sheet(Sheet::Switching);
         if let Some(release) = release {
             self.ui.sheets.switching.cache_download = Some(tag);
-            self.switch_progress(InstallProgress::Downloading(0.));
+            self.switch_progress(InstallProgress::DownloadingBuild(0.));
             self.install_cancellable(&release, Some(stop));
         } else {
             self.prepare_switch();
@@ -148,8 +178,35 @@ impl Launcher {
             self.start_switch_worker();
         } else {
             let (tag, stop) = (running.tag.clone(), running.stop.clone());
-            self.switch_progress(InstallProgress::PreparingBuild);
+            self.switch_progress(InstallProgress::Minecraft(
+                backend::PrepareStep::Files,
+                None,
+            ));
             self.prepare_version_cancellable(tag, backend::MinecraftFrom::Install, Some(stop));
+        }
+    }
+
+    /// A line from the preparation a switch waits on: the dialog follows its step, and the
+    /// files done while Mojang's download runs.
+    pub(crate) fn follow_switch_preparation(&mut self) {
+        if let Some(running) = self
+            .ui
+            .sheets
+            .switching
+            .running
+            .as_mut()
+            .filter(|run| matches!(run.progress, InstallProgress::Minecraft(..)))
+        {
+            let stage = InstallProgress::Minecraft(
+                backend::prepare_step(),
+                sunrise_launcher::mojang::progress(),
+            );
+            running.progress = stage;
+            running.eta.update(
+                crate::eta::install_stage_key(stage),
+                crate::mods_page::install::stage_fraction(stage),
+                Instant::now(),
+            );
         }
     }
 
@@ -185,40 +242,59 @@ impl Launcher {
             identity,
             choice,
         } = running.pending.take().expect("switch queued");
+        // Both switch routes start by checking the profile's mods; a v2 profile first
+        // refreshes its index, so don't leave the last download or preparation step showing.
+        running.progress = InstallProgress::PreparingBuild;
+        running.eta.update(
+            crate::eta::install_stage_key(InstallProgress::PreparingBuild),
+            None,
+            Instant::now(),
+        );
         let (tag, stop) = (running.tag.clone(), running.stop.clone());
         let tx = self.tx.clone();
         std::thread::spawn(move || {
-            let outcome = switch_profile_build(
-                &instance,
-                identity,
-                &tag,
-                choice,
-                SwitchHooks {
-                    cancellation: &stop,
-                    progress: &|stage| {
-                        let _ = tx.send(Msg::SwitchProgress(stage));
-                    },
-                    registry_crates: Some(&|inventory| {
-                        if stop.is_stopped() {
-                            return false;
-                        }
-                        let (answer, reply) = std::sync::mpsc::channel();
-                        tx.send(Msg::NativeRegistryConsent(inventory.clone(), answer))
-                            .is_ok()
-                            && reply.recv().unwrap_or(false)
-                    }),
-                    at_cutoff: &|| Ok(()),
-                    approve: &|question| {
-                        if stop.is_stopped() {
-                            return Ok(SwitchDecision::Cancel);
-                        }
-                        let (answer, reply) = std::sync::mpsc::channel();
-                        tx.send(Msg::SwitchQuestion(Box::new(question.clone()), answer))
-                            .map_err(|_| tr("Switch cancelled.").to_owned())?;
-                        Ok(reply.recv().unwrap_or(SwitchDecision::Cancel))
-                    },
+            let hooks = SwitchHooks {
+                cancellation: &stop,
+                progress: &|stage| {
+                    let _ = tx.send(Msg::SwitchProgress(stage));
                 },
-            );
+                at_cutoff: &|| Ok(()),
+                approve: &|question| {
+                    if stop.is_stopped() {
+                        return Ok(SwitchDecision::Cancel);
+                    }
+                    let (answer, reply) = std::sync::mpsc::channel();
+                    tx.send(Msg::SwitchQuestion(Box::new(question.clone()), answer))
+                        .map_err(|_| tr("Switch cancelled.").to_owned())?;
+                    Ok(reply.recv().unwrap_or(SwitchDecision::Cancel))
+                },
+            };
+            // A profile holding a mod from the signed v2 index switches through it, which keeps
+            // each mod's chosen project; v1 and local mods keep their exact bytes there. A read
+            // failure must not silently drop back to the v1 switch.
+            let outcome = match uses_v2_switch(&instance.home) {
+                Ok(true) => switch_profile_build_v2(
+                    &instance,
+                    identity,
+                    &tag,
+                    choice,
+                    V2SwitchHooks {
+                        switch: hooks,
+                        confirm_publisher_change: Some(&|question| {
+                            let (answer, reply) = std::sync::mpsc::channel();
+                            tx.send(Msg::PublisherChangeQuestion(
+                                Box::new(question.clone()),
+                                answer,
+                            ))
+                            .is_ok()
+                                && reply.recv().unwrap_or(false)
+                        }),
+                        pin_dir: None,
+                    },
+                ),
+                Ok(false) => switch_profile_build(&instance, identity, &tag, choice, hooks),
+                Err(error) => Err(error),
+            };
             let _ = tx.send(Msg::Switched(instance.home, Box::new(outcome)));
         });
     }
@@ -238,6 +314,11 @@ impl Launcher {
     pub(crate) fn switch_progress(&mut self, stage: InstallProgress) {
         if let Some(running) = &mut self.ui.sheets.switching.running {
             running.progress = stage;
+            running.eta.update(
+                crate::eta::install_stage_key(stage),
+                crate::mods_page::install::stage_fraction(stage),
+                Instant::now(),
+            );
         }
     }
 
@@ -333,6 +414,7 @@ impl Launcher {
         let body = if let Some((question, _)) = &running.question {
             let show = self.ui.sheets.details;
             let omissions = question.has_omissions();
+            let one = question.held.len() + question.unproved.len() == 1;
             let answer = |decision| {
                 cx.listener(move |this, _: &ClickEvent, _, cx| {
                     if let Some((_, reply)) = this
@@ -452,14 +534,23 @@ impl Launcher {
                                 .on_click(answer(SwitchDecision::Cancel)),
                         )
                         .children(omissions.then(|| {
-                            button("switch-remove", tr("Switch and remove them"))
-                                .text_color(rgb(palette().danger))
-                                .on_click(answer(SwitchDecision::Remove))
+                            button(
+                                "switch-remove",
+                                if one {
+                                    tr("Switch and remove it")
+                                } else {
+                                    tr("Switch and remove them")
+                                },
+                            )
+                            .text_color(rgb(palette().danger))
+                            .on_click(answer(SwitchDecision::Remove))
                         }))
                         .child(
                             crate::frame::primary(
                                 "switch-anyway",
-                                if omissions {
+                                if omissions && one {
+                                    tr("Switch and turn it off")
+                                } else if omissions {
                                     tr("Switch and turn them off")
                                 } else {
                                     tr("Switch anyway")
@@ -470,35 +561,57 @@ impl Launcher {
                 )
         } else {
             let stopping = running.stop.is_stopped();
+            let publishing = running.progress == InstallProgress::Publishing;
+            let cancel = button("cancel-switch", tr("Cancel"));
+            // The step's line, the bar and Cancel keep their places while the steps change, so
+            // the dialog never jumps: one line of text, a bar that shuttles while a step has no
+            // known length, and Cancel dimmed once it can no longer stop the switch.
             div()
                 .flex()
                 .flex_col()
                 .child(title(trf("Switch to {build}", &[("build", &build)])))
-                .child(muted(if stopping {
-                    tr("Cancelling…").into()
-                } else if running.progress == InstallProgress::Publishing {
-                    tr("Applying the switch.").into()
+                .child(
+                    muted(if stopping {
+                        tr("Cancelling…").into()
+                    } else if publishing {
+                        tr("Applying the switch.").into()
+                    } else {
+                        let now = Instant::now();
+                        let remaining = match running.progress {
+                            InstallProgress::Minecraft(backend::PrepareStep::Prepare, _) => {
+                                match backend::prepare_step_state() {
+                                    (backend::PrepareStep::Prepare, Some(started)) => {
+                                        crate::eta::expected_prepare_duration().and_then(
+                                            |expected| {
+                                                crate::eta::remaining_from_expected(
+                                                    started, expected, now,
+                                                )
+                                            },
+                                        )
+                                    }
+                                    _ => None,
+                                }
+                            }
+                            _ => running.eta.remaining(now),
+                        };
+                        crate::eta::with_eta(stage_label(running.progress), remaining)
+                    })
+                    .truncate(),
+                )
+                .child(crate::widgets::progress_bar(
+                    stage_fraction(running.progress)
+                        .filter(|_| !stopping)
+                        .map(|f| (f, f)),
+                    &self.theme,
+                ))
+                .child(div().flex().justify_end().child(if stopping || publishing {
+                    crate::widgets::disabled(cancel)
                 } else {
-                    stage_label(running.progress)
+                    cancel.on_click(cx.listener(|this, _, _, cx| {
+                        this.cancel_switch();
+                        cx.notify();
+                    }))
                 }))
-                .children(
-                    (!stopping)
-                        .then(|| stage_fraction(running.progress))
-                        .flatten()
-                        .map(|f| crate::widgets::progress_bar(Some((f, f)), &self.theme)),
-                )
-                .children(
-                    (!stopping && running.progress != InstallProgress::Publishing).then(|| {
-                        div().flex().justify_end().child(
-                            button("cancel-switch", tr("Cancel")).on_click(cx.listener(
-                                |this, _, _, cx| {
-                                    this.cancel_switch();
-                                    cx.notify();
-                                },
-                            )),
-                        )
-                    }),
-                )
         };
         frame("switch-game", 610., body, cx)
     }
@@ -742,6 +855,317 @@ impl Launcher {
         Some(frame("switch-receipt", 600., body, cx))
     }
 
+    pub(crate) fn begin_provider_switch(&mut self, switch: PortSwitch) {
+        if self.launch_busy() || self.client.is_some() || self.switch_busy() {
+            return;
+        }
+        let Some(instance) = self.selected_instance().cloned() else {
+            return;
+        };
+        let identity = match install_target(&instance) {
+            Ok(identity) => identity,
+            Err(error) => {
+                self.open_notice(error, Some(WayOut::ProfileFolder(instance.home)));
+                return;
+            }
+        };
+        let target = self.version_of(&instance).cloned();
+        let release = target
+            .as_deref()
+            .and_then(|tag| self.release_to_install(tag));
+        let stop = native_mods::Cancellation::default();
+        self.ui.sheets.switching.provider = Some(ProviderRunning {
+            switch: switch.clone(),
+            profile_name: instance.name.clone(),
+            build_label: target.as_deref().map(build_name).unwrap_or_default(),
+            progress: InstallProgress::Checking,
+            eta: crate::eta::StageEta::default(),
+            stop: stop.clone(),
+            question: None,
+        });
+        self.open_sheet(Sheet::SwitchProvider);
+        let tx = self.tx.clone();
+        std::thread::spawn(move || {
+            let choose = || {
+                if let Some(tag) = target
+                    .as_deref()
+                    .filter(|tag| backend::installed().iter().any(|local| local == tag))
+                {
+                    FirstBuild::installed(tag)
+                } else if let Some(release) = &release {
+                    FirstBuild::download(release)
+                } else {
+                    Err(backend::no_version_installed())
+                }
+            };
+            // Each question is a fresh round trip to the window; a stopped switch asks nothing.
+            let ask = |send: &dyn Fn(Sender<bool>) -> Msg| {
+                if stop.is_stopped() {
+                    return false;
+                }
+                let (answer, reply) = std::sync::mpsc::channel();
+                tx.send(send(answer)).is_ok() && reply.recv().unwrap_or(false)
+            };
+            let outcome = switch_provider_v2(
+                &instance,
+                identity,
+                &switch.mod_id,
+                &switch.to_project_id,
+                V2InstallOptions::default(),
+                choose,
+                V2ProviderSwitchHooks {
+                    install: V2Hooks {
+                        install: InstallHooks {
+                            progress: &|stage| {
+                                let _ = tx.send(Msg::ProviderSwitchProgress(stage));
+                            },
+                            continue_after_failure: &|_| false,
+                            resolve: None,
+                            cancellation: None,
+                        },
+                        choose_provider: Some(&|need| {
+                            let (answer, reply) = std::sync::mpsc::channel();
+                            tx.send(Msg::ProviderChoice(Box::new(need.clone()), answer))
+                                .ok()
+                                .and_then(|()| reply.recv().ok().flatten())
+                        }),
+                        confirm_publisher_change: Some(&|question| {
+                            ask(&|answer| {
+                                Msg::PublisherChangeQuestion(Box::new(question.clone()), answer)
+                            })
+                        }),
+                    },
+                    approve_switch: &|preview| {
+                        ask(&|answer| {
+                            Msg::ProviderSwitchQuestion(Box::new(preview.clone()), answer)
+                        })
+                    },
+                },
+            );
+            let outcome = match outcome {
+                Ok(_) => Ok(true),
+                Err(InstallError::Cancelled) => Ok(false),
+                Err(error) => Err(error.to_string()),
+            };
+            let _ = tx.send(Msg::ProviderSwitched(instance.home, outcome));
+        });
+    }
+
+    pub(super) fn cancel_provider_switch(&mut self) {
+        let Some(running) = &mut self.ui.sheets.switching.provider else {
+            return;
+        };
+        if running.progress != InstallProgress::Publishing {
+            running.stop.stop();
+            if let Some((_, reply)) = running.question.take() {
+                let _ = reply.send(false);
+            }
+        }
+    }
+
+    pub(crate) fn provider_switch_progress(&mut self, stage: InstallProgress) {
+        if let Some(running) = &mut self.ui.sheets.switching.provider {
+            running.progress = stage;
+            running.eta.update(
+                crate::eta::install_stage_key(stage),
+                crate::mods_page::install::stage_fraction(stage),
+                Instant::now(),
+            );
+        }
+    }
+
+    pub(crate) fn provider_switch_question(
+        &mut self,
+        preview: Box<ProviderSwitchPreview>,
+        reply: Sender<bool>,
+    ) {
+        if let Some(running) =
+            self.ui.sheets.switching.provider.as_mut().filter(|run| {
+                self.ui.sheet == Some(Sheet::SwitchProvider) && !run.stop.is_stopped()
+            })
+        {
+            running.question = Some((preview, reply));
+        } else {
+            let _ = reply.send(false);
+        }
+    }
+
+    pub(crate) fn provider_switch_finished(&mut self, home: &Path, result: Result<bool, String>) {
+        let running = self.ui.sheets.switching.provider.take();
+        let stopped = running.as_ref().is_some_and(|run| run.stop.is_stopped());
+        let result = if result.is_err() && stopped {
+            Ok(false)
+        } else {
+            result
+        };
+        self.refresh_installed();
+        if self.selected_instance().is_none_or(|i| i.home != home) {
+            return;
+        }
+        let visible = self.ui.sheet == Some(Sheet::SwitchProvider);
+        match (result, running) {
+            (Ok(true), Some(run)) => {
+                let notice = trf(
+                    "Switched to {repo} ({version}).",
+                    &[
+                        ("repo", &run.switch.to_repo),
+                        ("version", &run.switch.to_version),
+                    ],
+                );
+                self.refresh_mods_after_port_switch(Ok(notice), Some(run.switch.to_project_id));
+                if visible {
+                    self.close_sheet();
+                }
+            }
+            (Ok(_), _) => {
+                if visible {
+                    self.close_sheet();
+                }
+            }
+            (Err(error), _) if visible => {
+                self.open_notice(error, Some(WayOut::ProfileFolder(home.into())))
+            }
+            (Err(error), _) => {
+                self.refresh_mods_after_port_switch(Err(error), None);
+            }
+        }
+    }
+
+    pub(super) fn provider_switch_sheet(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+        use crate::mods_page::install::{stage_fraction, stage_label};
+        let running = self.ui.sheets.switching.provider.as_ref()?;
+        let switch = &running.switch;
+        let body = if let Some((preview, _)) = &running.question {
+            let answer = |switch: bool| {
+                cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    if let Some((_, reply)) = this
+                        .ui
+                        .sheets
+                        .switching
+                        .provider
+                        .as_mut()
+                        .and_then(|run| run.question.take())
+                    {
+                        let _ = reply.send(switch);
+                    }
+                    cx.notify();
+                })
+            };
+            let profile_line = if running.build_label.is_empty() {
+                trf("Profile: {profile}", &[("profile", &running.profile_name)])
+            } else {
+                trf(
+                    "Profile: {profile} ({build})",
+                    &[
+                        ("profile", &running.profile_name),
+                        ("build", &running.build_label),
+                    ],
+                )
+            };
+            let summary = trf(
+                "This replaces {from_repo} ({from_version}) with {to_repo} ({to_version}). Both provide the {id} in-game ID; only one can be installed at a time.",
+                &[
+                    ("from_repo", &switch.from_repo),
+                    ("from_version", &switch.from_version),
+                    ("to_repo", &switch.to_repo),
+                    ("to_version", &preview.to_version),
+                    ("id", &preview.mod_id),
+                ],
+            );
+            let world_lines: Vec<String> = preview
+                .worlds
+                .iter()
+                .filter(|risk| !risk.mods.is_empty())
+                .map(|risk| {
+                    trf(
+                        "{world}: content from {mod} may be affected.",
+                        &[("world", &risk.name), ("mod", &switch.mod_name)],
+                    )
+                })
+                .collect();
+            let world_box = (!world_lines.is_empty()).then(|| {
+                card()
+                    .p(px(14.))
+                    .gap(px(6.))
+                    .children(world_lines.into_iter().map(muted))
+            });
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(14.))
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(4.))
+                        .child(title(trf(
+                            "Switch {mod} to {repo}?",
+                            &[("mod", &switch.mod_name), ("repo", &switch.to_repo)],
+                        )))
+                        .child(muted(profile_line)),
+                )
+                .child(
+                    div()
+                        .text_size(px(tokens::BODY))
+                        .text_color(rgb(palette().text))
+                        .child(crate::selectable::selectable(summary)),
+                )
+                .children(world_box)
+                .child(muted(trf(
+                    "Your current port stays intact if you cancel. Future updates on this profile will follow {repo}.",
+                    &[("repo", &switch.to_repo)],
+                )))
+                .child(
+                    div()
+                        .flex()
+                        .justify_end()
+                        .gap(px(8.))
+                        .child(
+                            button("provider-switch-cancel", tr("Cancel"))
+                                .on_click(answer(false)),
+                        )
+                        .child(
+                            crate::frame::primary("provider-switch-confirm", tr("Switch"))
+                                .on_click(answer(true)),
+                        ),
+                )
+        } else {
+            let publishing = running.progress == InstallProgress::Publishing;
+            let cancel = button("provider-switch-cancel", tr("Cancel"));
+            let cancel = if publishing {
+                cancel.opacity(0.45).cursor_default().tab_stop(false)
+            } else {
+                cancel.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                    this.cancel_provider_switch();
+                    cx.notify();
+                }))
+            };
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(14.))
+                .child(title(trf(
+                    "Switching {mod} to {repo}",
+                    &[("mod", &switch.mod_name), ("repo", &switch.to_repo)],
+                )))
+                .child(muted(if publishing {
+                    stage_label(running.progress)
+                } else {
+                    crate::eta::with_eta(
+                        stage_label(running.progress),
+                        running.eta.remaining(Instant::now()),
+                    )
+                }))
+                .children(
+                    stage_fraction(running.progress)
+                        .map(|f| crate::widgets::progress_bar(Some((f, f)), &self.theme)),
+                )
+                .child(muted(tr("Your current port stays intact if you cancel.")))
+                .child(div().flex().justify_end().child(cancel))
+        };
+        Some(frame("provider-switch-sheet", 560., body, cx))
+    }
+
     pub(crate) fn receipt_acknowledged(
         &mut self,
         home: &std::path::Path,
@@ -764,6 +1188,17 @@ impl Launcher {
     }
 }
 
+/// Whether a profile holds any mod installed from the signed v2 index.
+///
+/// Propagates `installed.json` read errors so a corrupt or unreadable manifest never falls back
+/// to the v1 build switch.
+fn uses_v2_switch(home: &std::path::Path) -> Result<bool, String> {
+    Ok(sunrise_launcher::browser::installed::Installed::read(home)?
+        .entries
+        .iter()
+        .any(|e| e.mod_id.is_some()))
+}
+
 /// A partial write or an interrupted writer must not reserve the final report name.
 fn publish_report(
     folder: &std::path::Path,
@@ -781,8 +1216,55 @@ fn publish_report(
 
 #[cfg(test)]
 mod tests {
-    use super::publish_report;
+    use super::{publish_report, uses_v2_switch};
     use std::io::{self, Write};
+    use sunrise_launcher::browser::{
+        installed::{Entry, Installed},
+        Kind, SourceId,
+    };
+
+    #[test]
+    fn uses_v2_switch_refuses_unreadable_installed_manifest_instead_of_falling_back() {
+        let home = tempfile::tempdir().unwrap();
+        assert_eq!(uses_v2_switch(home.path()), Ok(false));
+
+        let mut list = Installed::default();
+        list.entries.push(Entry {
+            source: SourceId::Sunrise,
+            project: "demo".into(),
+            mod_id: None,
+            slug: "demo".into(),
+            title: "Demo".into(),
+            kind: Kind::Mod,
+            version: "1.0.0".into(),
+            number: "1.0.0".into(),
+            file: "mods/demo.smod".into(),
+            checksum: format!("SHA-256:{}", "00".repeat(32)),
+            page: "https://example.test/demo".into(),
+            dependency: false,
+            verdict: None,
+            install_hold: None,
+            repository: None,
+        });
+        list.save(home.path()).unwrap();
+        assert_eq!(uses_v2_switch(home.path()), Ok(false));
+
+        list.entries[0].mod_id = Some("demo".into());
+        list.save(home.path()).unwrap();
+        assert_eq!(uses_v2_switch(home.path()), Ok(true));
+
+        std::fs::write(
+            home.path()
+                .join(sunrise_launcher_smod::index::browser_state::MANIFEST),
+            "{not valid json",
+        )
+        .unwrap();
+        let error = uses_v2_switch(home.path()).unwrap_err();
+        assert!(
+            error.contains(sunrise_launcher_smod::index::browser_state::MANIFEST),
+            "unexpected error: {error}"
+        );
+    }
 
     #[test]
     fn report_save_can_retry_after_a_partial_write_and_never_clobbers() {

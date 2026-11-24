@@ -728,3 +728,39 @@ fn an_interrupted_game_install_has_a_plain_message_and_exact_profile_folder() {
         "another profile has no repair action"
     );
 }
+
+#[test]
+fn registry_install_shows_build_percent_and_offers_stop_until_publishing() {
+    use sunrise_launcher::browser::sunrise::InstallProgress;
+    let building = Facts {
+        registry: Some(InstallProgress::Building(Some(0.42))),
+        ..idle()
+    }
+    .view();
+    assert_eq!(building.main.label(), "Building 42%");
+    assert_eq!(
+        building.strip(),
+        Some(("Building 42%".into(), StripAct::StopInstall))
+    );
+    assert_eq!(StripAct::StopInstall.label(), "Stop");
+
+    let tools = Facts {
+        registry: Some(InstallProgress::Rust(0.3)),
+        ..idle()
+    }
+    .view();
+    assert_eq!(
+        tools.strip(),
+        Some(("Downloading build tools 30%".into(), StripAct::StopInstall))
+    );
+
+    let publishing = Facts {
+        registry: Some(InstallProgress::Publishing),
+        ..idle()
+    }
+    .view();
+    assert_eq!(
+        publishing.strip(),
+        Some(("Finishing…".into(), StripAct::Home))
+    );
+}

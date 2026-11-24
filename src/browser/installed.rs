@@ -76,10 +76,36 @@ const FOLDERS: [&str; 5] = [
 /// How deep required dependencies are followed.
 pub(super) const MAX_DEPTH: usize = 4;
 
+/// Verified GitHub repository and release workflow identity recorded from a Sigstore attestation
+/// for a schema-2 Sunrise registry install.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VerifiedRepository {
+    pub id: u64,
+    pub name: String,
+    pub path: String,
+    pub workflow: String,
+}
+
+impl VerifiedRepository {
+    pub fn valid(&self) -> bool {
+        self.id > 0
+            && !self.name.trim().is_empty()
+            && !self.name.chars().any(char::is_control)
+            && !self.path.trim().is_empty()
+            && !self.path.chars().any(char::is_control)
+            && !self.workflow.trim().is_empty()
+            && !self.workflow.chars().any(char::is_control)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Entry {
     pub source: SourceId,
     pub project: String,
+    /// In-game mod ID for a schema-2 Sunrise registry entry where `project` is the permanent
+    /// 8-character project ID. `None` on legacy v1 entries and non-mod entries.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mod_id: Option<String>,
     pub slug: String,
     pub title: String,
     pub kind: Kind,
@@ -87,7 +113,7 @@ pub struct Entry {
     pub number: String,
     /// Relative to the game folder: `resourcepacks/<name>`.
     pub file: String,
-    /// The checksum the download was checked against: `SHA-512:<hex>`.
+    /// The checksum the download was checked against: `SHA-512:<hex>` or `SHA-256:<hex>`.
     pub checksum: String,
     pub page: String,
     /// Installed because another pack needs it.
@@ -103,6 +129,9 @@ pub struct Entry {
         rename = "launcher_install_hold"
     )]
     pub install_hold: Option<InstallHold>,
+    /// Verified publisher repository and workflow recorded for a signed schema-2 Sunrise install.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository: Option<VerifiedRepository>,
 }
 
 /// Why verified bytes are intentionally installed but off after a partial native install.
@@ -155,6 +184,33 @@ impl Entry {
     /// installs into ([`in_folders`]).
     pub fn path(&self, home: &Path) -> Option<PathBuf> {
         in_folders(&self.file).then(|| home.join(&self.file))
+    }
+
+    /// In-game mod ID when this is a Sunrise mod entry (`mod_id` on v2 rows, `project` on v1 rows).
+    pub fn in_game_mod_id(&self) -> Option<&str> {
+        if self.source != SourceId::Sunrise || self.kind != Kind::Mod {
+            return None;
+        }
+        Some(self.mod_id.as_deref().unwrap_or(self.project.as_str()))
+    }
+
+    /// Lowercase SHA-256 hex digest recorded in `checksum`, if present and well-formed.
+    pub fn sha256(&self) -> Option<&str> {
+        let hash = self.checksum.strip_prefix("SHA-256:")?;
+        (hash.len() == 64 && hash.bytes().all(|b| b.is_ascii_hexdigit())).then_some(hash)
+    }
+
+    /// True when this entry carries a schema-2 Sunrise project ID, in-game mod ID, and verified
+    /// repository identity.
+    pub fn is_v2_registry(&self) -> bool {
+        self.source == SourceId::Sunrise
+            && self.kind == Kind::Mod
+            && sunrise_launcher_smod::index_v2::valid_project_id(&self.project)
+            && self.mod_id.is_some()
+            && self
+                .repository
+                .as_ref()
+                .is_some_and(VerifiedRepository::valid)
     }
 }
 
@@ -591,6 +647,7 @@ fn put_packs(
         let entry = Entry {
             source: p.source,
             project: p.id.clone(),
+            mod_id: None,
             slug: p.slug.clone(),
             title: p.title.clone(),
             kind: p.kind,
@@ -603,6 +660,7 @@ fn put_packs(
             dependency: step.dependency && old.as_ref().is_none_or(|o| o.dependency),
             verdict: None,
             install_hold: None,
+            repository: None,
         };
         installed
             .entries

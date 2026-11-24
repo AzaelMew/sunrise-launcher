@@ -111,13 +111,7 @@ fn interrupted_prepare_retains_the_same_build_and_profile_exclusion() {
                 .unwrap();
             let cancellation = native_mods::Cancellation::default();
             let image = attempt
-                .exact_image(
-                    native_mods::Profile::Optimized,
-                    &cancellation,
-                    |_| {},
-                    None,
-                    None,
-                )
+                .exact_image(native_mods::Profile::Optimized, &cancellation, |_| {}, None)
                 .unwrap();
             let active = attempt.commit(&image, &cancellation).unwrap();
             assert_eq!(profile.active().unwrap(), Some(active.clone()));
@@ -201,7 +195,7 @@ fn game_replacements_repair_only_owned_row_fields_and_advance_the_same_base() {
         let local = profile
             .refresh(
                 native_mods::Profile::Optimized,
-                (&cancellation, None),
+                &cancellation,
                 |_| {},
                 None,
                 None,
@@ -226,7 +220,7 @@ fn game_replacements_repair_only_owned_row_fields_and_advance_the_same_base() {
         let current = profile
             .refresh(
                 native_mods::Profile::Optimized,
-                (&cancellation, None),
+                &cancellation,
                 |_| {},
                 Some(&registry),
                 None,
@@ -261,7 +255,7 @@ fn game_replacements_repair_only_owned_row_fields_and_advance_the_same_base() {
     assert!(profile
         .refresh(
             native_mods::Profile::Optimized,
-            (&cancellation, None),
+            &cancellation,
             |_| {},
             None,
             None,
@@ -568,6 +562,7 @@ fn home_read_recovers_the_first_switch_receipt_after_a_killed_commit() {
             HeldSource::Registry {
                 project: "fireflies".into(),
                 version: "1.0".into(),
+                repository: None,
             },
             true,
             HeldReason::NoFit {
@@ -648,7 +643,6 @@ fn home_read_recovers_the_first_switch_receipt_after_a_killed_commit() {
                 native_mods::Profile::Optimized,
                 &cancellation,
                 |_| {},
-                None,
                 None,
             )
             .unwrap();
@@ -890,4 +884,24 @@ fn await_fixture(mut ready: impl FnMut() -> bool) {
         assert!(Instant::now() < deadline, "first-Play test stage timed out");
         std::thread::sleep(Duration::from_millis(10));
     }
+}
+
+/// The pointer the released v1.2.0 launcher wrote on its first Play of a Dev profile, byte for
+/// byte: no receipts, no build choice, no mod locks.
+#[test]
+fn a_pointer_written_by_the_released_launcher_is_read_and_kept() {
+    let bytes = include_bytes!("../../../tests/fixtures/active-build-v1.2.0.json");
+    let active = Active::parse(bytes).unwrap();
+    assert_eq!(active.base(), "dev-2026-11-22-7cfdf81");
+    assert_eq!(active.executable(), "dev-2026-11-22-7cfdf81");
+    assert_eq!(active.generation(), 1);
+    assert!(active.build_choice().is_none() && active.mod_locks().is_empty());
+    // Written back, it stays the released shape, so that launcher can still read it.
+    assert_eq!(serde_json::to_vec(&active).unwrap(), bytes);
+
+    // A refusal names the check that made it.
+    let mut zero = serde_json::from_slice::<serde_json::Value>(bytes).unwrap();
+    zero["generation"] = 0.into();
+    let refused = Active::parse(&serde_json::to_vec(&zero).unwrap()).unwrap_err();
+    assert!(refused.contains("managed_play.rs:"), "{refused}");
 }

@@ -339,6 +339,25 @@ pub(crate) fn check_activation(
             ));
         }
         let target = manifests.get(id).ok_or_else(unproved_mods)?;
+        if let Some(host) = target.served_by.as_deref() {
+            let serving = manifests.get(host);
+            if !serving.is_some_and(|host| host.native.as_ref().is_some_and(|n| n.serves_content)) {
+                let name = serving.map_or(host, |h| h.name.as_str());
+                return Err(trf(
+                    "{mod} is served by {host}. Install and turn on {host} before trying again.",
+                    &[("mod", &target.name), ("host", name)],
+                ));
+            }
+            // The game's `side_covers`: the host runs everywhere the package it serves must.
+            if let Some(serving) = serving.filter(|h| h.side != Side::Both && h.side != target.side)
+            {
+                return Err(trf(
+                    "{host} can't serve {mod}: it doesn't run everywhere {mod} must.",
+                    &[("mod", &target.name), ("host", &serving.name)],
+                ));
+            }
+            remaining.push(host);
+        }
         for (name, dep) in &target.dependencies {
             let requirement = dep.details();
             if requirement.optional {
@@ -356,6 +375,39 @@ pub(crate) fn check_activation(
         }
     }
     Ok(())
+}
+
+/// `removed` and every enabled package that needs one of them: through a required dependency, or
+/// as the content a removed native host serves. Only actual, enabled edges propagate; the
+/// effective enabled graph is validated separately after its list changes.
+pub(super) fn unavailable_with(
+    present: &Inventory,
+    enabled: &BTreeSet<String>,
+    removed: &BTreeSet<String>,
+) -> BTreeSet<String> {
+    let mut unavailable = removed.clone();
+    loop {
+        let before = unavailable.len();
+        for (id, item) in present {
+            let manifest = &item.package.manifest;
+            if !unavailable.contains(id)
+                && enabled.contains(id)
+                && (manifest
+                    .dependencies
+                    .iter()
+                    .any(|(dep, rule)| !rule.details().optional && unavailable.contains(dep))
+                    || manifest
+                        .served_by
+                        .as_ref()
+                        .is_some_and(|host| unavailable.contains(host)))
+            {
+                unavailable.insert(id.clone());
+            }
+        }
+        if before == unavailable.len() {
+            return unavailable;
+        }
+    }
 }
 
 /// Exact archive leaves selected for removal in a private profile edit.
@@ -425,7 +477,7 @@ pub(super) fn stage_removal<'a>(
             }
             retired.insert(id.to_owned());
         }
-        if item.registry_claim {
+        if item.registry_claim || raw_row_matches_archive(home, &rows, id, &item.package.path)? {
             rows.remove(id)?;
             changed_rows = true;
         }
@@ -464,6 +516,27 @@ pub(super) fn stage_removal<'a>(
     })
 }
 
+/// Match a Sunrise browser row by source, kind and portable archive path directly on the raw JSON
+/// row so removal cleans up rows missing display fields (such as `page`) without loosening
+/// `registry_claim` for replacements.
+fn raw_row_matches_archive(
+    home: &Path,
+    rows: &Document,
+    id: &str,
+    archive_path: &Path,
+) -> Result<bool, String> {
+    let Some(row) = rows.row(id)? else {
+        return Ok(false);
+    };
+    let source = serde_json::from_value::<SourceId>(row["source"].clone()).ok();
+    let kind = serde_json::from_value::<Kind>(row["kind"].clone()).ok();
+    let path_matches = row["file"]
+        .as_str()
+        .and_then(|file| portable_row_path(home, file))
+        .is_some_and(|(_, path)| path == archive_path);
+    Ok(source == Some(SourceId::Sunrise) && kind == Some(Kind::Mod) && path_matches)
+}
+
 /// Explicit Remove approves the displayed path and digest, independent of archive origin.
 /// The required dependent closure is turned off, not deleted.
 pub fn remove_mods(
@@ -498,30 +571,8 @@ pub fn remove_mods(
         &present,
     )?;
 
-    // Only propagate along actual, enabled, required edges. Keep every dependent path and
-    // provenance byte; validate the effective enabled graph separately after changing its list.
-    let mut disabled = BTreeSet::new();
-    let mut unavailable = ids.clone();
-    loop {
-        let before = unavailable.len();
-        for (id, item) in &present {
-            if !unavailable.contains(id)
-                && enabled.contains(id)
-                && item
-                    .package
-                    .manifest
-                    .dependencies
-                    .iter()
-                    .any(|(dep, rule)| !rule.details().optional && unavailable.contains(dep))
-            {
-                disabled.insert(id.clone());
-                unavailable.insert(id.clone());
-            }
-        }
-        if before == unavailable.len() {
-            break;
-        }
-    }
+    let unavailable = unavailable_with(&present, &enabled, &ids);
+    let disabled: BTreeSet<String> = unavailable.difference(&ids).cloned().collect();
     let disabled_ids = unavailable.iter().map(String::as_str).collect::<Vec<_>>();
     mod_list::set_all_enabled(home, &disabled_ids, false)?;
     if let Some(conflict) = manifest_conflict(home, None, None, Side::Both, |_| false)? {
@@ -558,12 +609,19 @@ pub fn remove_mods(
     if !approve(&impact) {
         return Err(InstallError::Cancelled);
     }
-    let cancellation = native_mods::Cancellation::default();
-    let proof = prove_edit(&edit, home, instance, &cancellation, &hooks)
-        .map_err(|e| InstallError::Unproved(e.into()))?;
+    // Stop reaches a Remove that waits for another build to finish.
+    let unstoppable = native_mods::Cancellation::default();
+    let cancellation = hooks.cancellation.unwrap_or(&unstoppable);
+    let proof = prove_edit(&edit, home, instance, cancellation, &hooks).map_err(|e| {
+        if cancellation.is_stopped() {
+            InstallError::Cancelled
+        } else {
+            InstallError::Unproved(e.into())
+        }
+    })?;
     (hooks.progress)(InstallProgress::Publishing);
     let reviewed = impact.into_evidence();
-    edit.publish_install(proof, &cancellation, &staged.retired, || {
+    edit.publish_install(proof, cancellation, &staged.retired, || {
         if managed_play::inputs(home, None)? != reviewed_image {
             return Err(tr(
                 "The files prepared for removal changed. Nothing was removed; try again.",

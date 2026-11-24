@@ -186,7 +186,82 @@ thread_local! {
 thread_local! {
     /// Each fold chevron's last state (open or not) and how often it has changed, so it turns
     /// only when its menu opens or closes, never as a page is first drawn.
-    static FOLDS: RefCell<HashMap<&'static str, (bool, usize)>> = RefCell::new(HashMap::new());
+    static FOLDS: RefCell<HashMap<SharedString, (bool, usize)>> = RefCell::new(HashMap::new());
+}
+
+/// How often the chevron `id` has turned, drawn now with its menu `open`: the first time it is
+/// drawn it hasn't turned, whatever the state; each change after that is one more turn.
+fn fold_turns(
+    folds: &mut HashMap<SharedString, (bool, usize)>,
+    id: SharedString,
+    open: bool,
+) -> usize {
+    let (was, turns) = folds.entry(id).or_insert((open, 0));
+    if *was != open {
+        *was = open;
+        *turns += 1;
+    }
+    *turns
+}
+
+/// A menu's chevron: pointing down while it is closed and up while it is open, turning between
+/// the two as the menu opens and closes. Never on a page's first frame, and under reduced
+/// motion it is at its end at once (`motion::eased`). `id` names it among the others.
+pub fn fold_chevron(id: impl Into<SharedString>, open: bool, size: f32, ink: Hsla) -> AnyElement {
+    turning(
+        id.into(),
+        open,
+        "arrow-down-01",
+        std::f32::consts::PI,
+        size,
+        ink,
+    )
+}
+
+/// A section's chevron: pointing right while it is folded and down while it is open, turning
+/// a quarter between the two, as [`fold_chevron`] turns.
+pub fn disclosure_chevron(
+    id: impl Into<SharedString>,
+    open: bool,
+    size: f32,
+    ink: Hsla,
+) -> AnyElement {
+    turning(
+        id.into(),
+        open,
+        "arrow-right-01",
+        std::f32::consts::FRAC_PI_2,
+        size,
+        ink,
+    )
+}
+
+/// `glyph` turned by `turn` (radians, clockwise) while open, easing between closed and open
+/// each time `open` changes after its first frame.
+fn turning(
+    id: SharedString,
+    open: bool,
+    glyph: &'static str,
+    turn: f32,
+    size: f32,
+    ink: Hsla,
+) -> AnyElement {
+    use gpui::AnimationExt as _;
+    let turns = FOLDS.with_borrow_mut(|folds| fold_turns(folds, id.clone(), open));
+    let at = move |t: f32| gpui::Transformation::rotate(gpui::radians(turn * t));
+    let chevron = icon(glyph, size, ink);
+    if turns == 0 {
+        return chevron
+            .with_transformation(at(if open { 1. } else { 0. }))
+            .into_any_element();
+    }
+    chevron
+        .with_animation(
+            gpui::ElementId::Name(format!("{id}-fold-{turns}").into()),
+            crate::motion::eased(sunrise_launcher_theme::MOVE),
+            move |d, t| d.with_transformation(at(if open { t } else { 1. - t })),
+        )
+        .into_any_element()
 }
 
 /// The texture's three shades of `c`, `step` of lightness off it.
@@ -508,18 +583,21 @@ pub struct Tip(SharedString);
 
 impl Render for Tip {
     fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
-        div()
-            .max_w(px(360.))
-            .px(px(10.))
-            .py(px(6.))
-            .rounded(px(rad(radius::CONTROL)))
-            .bg(rgb(palette().raised))
-            .border_1()
-            .border_color(rgb(palette().line))
-            .font_family(sunrise_launcher_theme::glass::FONT)
-            .text_size(px(13.))
-            .text_color(rgb(palette().text))
-            .child(self.0.clone())
+        // Offset below the pointer so tooltips never sit directly on top of the hovered button.
+        div().pt(px(20.)).pl(px(4.)).child(
+            div()
+                .max_w(px(360.))
+                .px(px(10.))
+                .py(px(6.))
+                .rounded(px(rad(radius::CONTROL)))
+                .bg(rgb(palette().raised))
+                .border_1()
+                .border_color(rgb(palette().line))
+                .font_family(sunrise_launcher_theme::glass::FONT)
+                .text_size(px(13.))
+                .text_color(rgb(palette().text))
+                .child(self.0.clone()),
+        )
     }
 }
 
@@ -527,4 +605,25 @@ impl Render for Tip {
 pub fn tip(label: impl Into<SharedString>) -> impl Fn(&mut Window, &mut App) -> gpui::AnyView {
     let label: SharedString = label.into();
     move |_, cx| cx.new(|_| Tip(label.clone())).into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_fold_chevron_turns_only_when_its_menu_opens_or_closes() {
+        let mut folds = HashMap::new();
+        // First drawn, closed or open, it is where it belongs, without turning.
+        assert_eq!(fold_turns(&mut folds, "a".into(), false), 0);
+        assert_eq!(fold_turns(&mut folds, "b".into(), true), 0);
+        // Drawn again the same: still no turn.
+        assert_eq!(fold_turns(&mut folds, "a".into(), false), 0);
+        // Each opening and closing is one turn, and each chevron counts its own.
+        assert_eq!(fold_turns(&mut folds, "a".into(), true), 1);
+        assert_eq!(fold_turns(&mut folds, "a".into(), true), 1);
+        assert_eq!(fold_turns(&mut folds, "a".into(), false), 2);
+        assert_eq!(fold_turns(&mut folds, "b".into(), true), 0);
+        assert_eq!(fold_turns(&mut folds, "b".into(), false), 1);
+    }
 }

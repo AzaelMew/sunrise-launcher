@@ -15,6 +15,7 @@
 //! overrides. Without one, sign-in says it is not configured.
 pub mod capes;
 pub mod look;
+pub mod player_key;
 pub mod session;
 pub mod skins;
 
@@ -1959,6 +1960,37 @@ impl Accounts {
         let mut accounts = Self::load_from(path);
         accounts.play_as(uuid)?;
         accounts.save_to(path)?;
+        Ok(accounts)
+    }
+
+    /// Moves `uuid` by `delta` (`-1` up, `+1` down) in the account list. Returns whether the order
+    /// changed.
+    pub fn move_account(&mut self, uuid: &str, delta: isize) -> bool {
+        let Some(from) = self.accounts.iter().position(|a| a.uuid == uuid) else {
+            return false;
+        };
+        let Some(to) = from
+            .checked_add_signed(delta)
+            .filter(|&i| i < self.accounts.len())
+        else {
+            return false;
+        };
+        if from == to {
+            return false;
+        }
+        self.accounts.swap(from, to);
+        true
+    }
+
+    /// Reorders `uuid` by `delta` on disk and returns the saved list.
+    pub fn reorder(uuid: &str, delta: isize) -> Result<Self, String> {
+        Self::reorder_in(&Self::path(), uuid, delta)
+    }
+    pub(crate) fn reorder_in(path: &Path, uuid: &str, delta: isize) -> Result<Self, String> {
+        let mut accounts = Self::load_from(path);
+        if accounts.move_account(uuid, delta) {
+            accounts.save_to(path)?;
+        }
         Ok(accounts)
     }
 

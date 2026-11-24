@@ -98,10 +98,9 @@ fn exercise(test: &str, case: Case) {
         .unwrap();
         let hooks = InstallHooks {
             progress: &|_| {},
-            native: &|_| panic!("the fixture has native permission"),
-            registry_crates: None,
             continue_after_failure: &|_| false,
             resolve: None,
+            cancellation: None,
         };
         let cancellation = Cancellation::default();
         let prepare = |request| {

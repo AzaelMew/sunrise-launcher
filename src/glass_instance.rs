@@ -78,6 +78,20 @@ fn home_update<'a>(
     releases: &'a [Release],
     read_active: impl FnOnce(&Path) -> Result<Option<Active>, String>,
 ) -> Option<&'a Release> {
+    home_update_with(
+        profile,
+        releases,
+        read_active,
+        sunrise_launcher::nightly::published_at,
+    )
+}
+
+fn home_update_with<'a>(
+    profile: &instances::Instance,
+    releases: &'a [Release],
+    read_active: impl FnOnce(&Path) -> Result<Option<Active>, String>,
+    remembered_published: impl FnOnce(&str) -> Option<String>,
+) -> Option<&'a Release> {
     if profile.kind == instances::Kind::Pack {
         return None;
     }
@@ -100,7 +114,7 @@ fn home_update<'a>(
                 .iter()
                 .find(|row| row.tag == base && !row.published_at.is_empty())
                 .map(|row| row.published_at.clone())
-                .or_else(|| sunrise_launcher::nightly::published_at(base));
+                .or_else(|| remembered_published(base));
             if let (Some(new_ts), Some(old_ts)) = (
                 parse_published_at(&release.published_at),
                 old_published.as_deref().and_then(parse_published_at),
@@ -372,11 +386,17 @@ mod tests {
         };
         let first = nightly(old, "2035-08-09T12:30:10Z");
         let second = nightly(newer, "2035-08-09T12:30:45Z");
-        sunrise_launcher::nightly::note_published(&[first]);
-        sunrise_launcher::nightly::note_published(std::slice::from_ref(&second));
+        let mut table = sunrise_launcher::nightly::PublishedTimestamps::default();
+        table.note(&[first]);
+        table.note(std::slice::from_ref(&second));
         assert_eq!(
-            home_update(&profile, &[second], |_| Ok(Some(active(old, old))))
-                .map(|release| release.tag.as_str()),
+            home_update_with(
+                &profile,
+                &[second],
+                |_| Ok(Some(active(old, old))),
+                |tag| table.get(tag),
+            )
+            .map(|release| release.tag.as_str()),
             Some(newer)
         );
     }

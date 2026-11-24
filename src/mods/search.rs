@@ -144,6 +144,7 @@ mod tests {
             version: "1.0".into(),
             github: None,
             native: id != "rain",
+            served_by: None,
             unreadable: false,
         });
         let on: HashSet<String> = ["lantern", "rain"].map(String::from).into();
@@ -152,10 +153,12 @@ mod tests {
             &model::World {
                 index: None,
                 game: "26.3",
+                v2: None,
+                v2_failure: None,
+                build: None,
                 unfit_updates: &Default::default(),
                 enabled: &on,
                 unbuilt: &HashSet::new(),
-                native_allowed: true,
                 chosen: &Default::default(),
                 local: &local,
             },

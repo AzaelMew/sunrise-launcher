@@ -45,6 +45,7 @@ fn seed_installed_hud(index: &Index, home: &Path) -> installed::Entry {
     let entry = installed::Entry {
         source: SourceId::Sunrise,
         project: p.id.clone(),
+        mod_id: None,
         slug: p.id.clone(),
         title: p.name.clone(),
         kind: Kind::Mod,
@@ -56,6 +57,7 @@ fn seed_installed_hud(index: &Index, home: &Path) -> installed::Entry {
         dependency: false,
         verdict: Some("Verified".into()),
         install_hold: None,
+        repository: None,
     };
     let mut list = installed::Installed::load(home);
     list.entries
@@ -539,26 +541,8 @@ fn combined_native_content_smod_checks_registry_listing_from_live_index_only() {
     let bundle = index::native::Bundle::read(&own).unwrap();
     assert_eq!(bundle.files["assets/coords_hud/sounds.json"], b"{}");
     assert_eq!(crate::native_status::enabled(&home).len(), 1);
-    // The installed file is the downloaded one, byte for byte, so the native-code question names
-    // it as the registry does: also once the registry lists a newer version before it.
-    let named = |index: &Index| crate::native_status::build_inputs(&home, Some(index));
-    let as_registry = [crate::native_status::BuildInput {
-        id: "coords_hud".into(),
-        file: "coords_hud.smod".into(),
-        registry: crate::native_status::Registry::Listed {
-            name: index.projects[0].name.clone(),
-            icon: index.projects[0].icon.clone(),
-        },
-    }];
-    assert_eq!(named(&index), as_registry);
-    let mut later = index.clone();
-    let mut newer = later.projects[0].versions[0].clone();
-    newer.version = "0.2.0".into();
-    newer.file.sha256 = "0".repeat(64);
-    later.projects[0].versions.insert(0, newer);
-    assert_eq!(named(&later), as_registry);
-    // The copy of the index kept in the game folder is not the registry's word. A copy that
-    // lists a file put there by hand would name it as the registry's mod; it is never asked.
+    // The copy of the index kept in the game folder is not the registry's word: offline, a
+    // copy that lists a file put there by hand is kept, but never taken as fetched.
     let mut bytes = fs::read(&own).unwrap();
     bytes.extend_from_slice(b"\0");
     fs::write(&own, &bytes).unwrap();
@@ -572,26 +556,12 @@ fn combined_native_content_smod_checks_registry_listing_from_live_index_only() {
     fs::write(&cache, serde_json::to_string(&forged).unwrap()).unwrap();
     let (kept, fetched) = load(Err("offline".into()), &cache, false).unwrap();
     assert!(fetched.is_none());
-    assert_eq!(
-        named(&kept.index),
-        as_registry,
-        "the forgery, were it asked"
-    );
     assert!(kept.fetched().is_none());
-    let unchecked = crate::native_status::build_inputs(&home, kept.fetched().as_deref());
-    assert_eq!(
-        unchecked[0].registry,
-        crate::native_status::Registry::Unchecked
-    );
-    // The registry's own answer is asked, and does not list that file.
+    // The registry's own answer is.
     let text = serde_json::to_string(&index).unwrap();
     let (answered, fetched) = load(Ok((index, text.clone())), &cache, false).unwrap();
     assert_eq!(fetched.as_deref(), Some(text.as_str()));
-    let checked = crate::native_status::build_inputs(&home, answered.fetched().as_deref());
-    assert_eq!(
-        checked[0].registry,
-        crate::native_status::Registry::NotListed
-    );
+    assert!(answered.fetched().is_some());
     fs::remove_dir_all(home).unwrap();
 }
 

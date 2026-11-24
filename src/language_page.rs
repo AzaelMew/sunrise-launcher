@@ -18,6 +18,15 @@ fn choice_name(choice: Option<Language>) -> &'static str {
 /// How many languages' own names [`warm_language_name`] has shaped.
 static WARMED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
+/// Shapes every remaining language name up front so one-time fallback font loading finishes
+/// before a benchmark begins its idle CPU sample.
+pub(super) fn warm_all_language_names(window: &mut Window) {
+    use std::sync::atomic::Ordering;
+    while WARMED.load(Ordering::Relaxed) < Language::ALL.len() {
+        warm_language_name(window);
+    }
+}
+
 /// Shapes the next language's own name as the language menu draws it. Its script's fallback
 /// font (Chinese, Arabic, Devanagari...) is loaded then, while the window rests, instead of all
 /// of them on the frame the menu first opens: 42 ms that frame took, 10 once they were loaded.

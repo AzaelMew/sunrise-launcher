@@ -120,7 +120,7 @@ impl Entry {
 }
 
 /// The rows of Settings found by name, as their sections title them.
-const SETTINGS_ROWS: [(&str, Section); 18] = [
+const SETTINGS_ROWS: [(&str, Section); 17] = [
     ("While you play", Section::Game),
     ("Minecraft folder", Section::Game),
     ("Profiles", Section::Game),
@@ -130,7 +130,6 @@ const SETTINGS_ROWS: [(&str, Section); 18] = [
     ("Worlds on Home", Section::Appearance),
     ("Your themes", Section::Appearance),
     ("Show the cat", Section::Appearance),
-    ("Native code", Section::Mods),
     ("Installed game builds", Section::Storage),
     ("Import a game build", Section::Storage),
     ("Remove old game builds automatically", Section::Storage),
@@ -707,8 +706,9 @@ impl Launcher {
             .flex()
             .flex_col()
             .rounded(crate::tokens::r(crate::tokens::R_PANEL))
+            // The same faint edge as the menus and sheets, not the strong outline.
             .border_1()
-            .border_color(rgb(palette().line))
+            .border_color(palette().input_edge())
             .bg(rgb(palette().raised))
             .text_color(rgb(palette().text))
             .shadow_lg()
@@ -904,7 +904,7 @@ mod tests {
         // The mod called exactly that leads, ahead of the pages that start with the word.
         let found = listed(&entries, "mod menu");
         assert_eq!(found[0], (Group::Mods, "Mod Menu".to_string()));
-        // "Mods" is a whole label: its group leads, and holds the Settings section too.
+        // "Mods" is a whole label: its group leads.
         let found = listed(&entries, "mods");
         assert_eq!(found[0], (Group::Navigate, "Mods".to_string()));
         let groups: Vec<Group> = found.iter().map(|(g, _)| *g).collect();
@@ -918,7 +918,6 @@ mod tests {
             once.len(),
             "each group is listed once: {groups:?}"
         );
-        assert!(found.contains(&(Group::Navigate, "Settings › Mods".to_string())));
         // A row of Settings is found by its own title, in its own group.
         assert!(listed(&entries, "profiles").contains(&(Group::Settings, "Profiles".to_string())));
     }

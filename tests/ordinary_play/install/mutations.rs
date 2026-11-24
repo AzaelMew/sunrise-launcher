@@ -349,10 +349,9 @@ fn remove_cutoff_worker() {
     };
     let hooks = InstallHooks {
         progress: &|_| {},
-        native: &|_| panic!("content-only"),
-        registry_crates: None,
         continue_after_failure: &|_| panic!("content-only"),
         resolve: None,
+        cancellation: None,
     };
     let error = remove_mods(
         &instance,
@@ -364,7 +363,7 @@ fn remove_cutoff_worker() {
     )
     .unwrap_err();
     let expected = if mode == "replace-archive" {
-        "Sunrise couldn't verify the profile's saved game build."
+        "Sunrise couldn't verify the profile's saved game build (managed_play/first/edits.rs:"
     } else {
         "The affected worlds changed after review. Nothing was changed; try again."
     };

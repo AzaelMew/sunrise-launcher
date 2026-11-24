@@ -5,7 +5,7 @@ pub const MOD_INDEX: &str = "https://sunrise-org.github.io/sunrise-mods/index.js
 
 /// The signed v2 mod registry's index, published by sunrise-org/sunrise-mods
 /// (`SUNRISE_MOD_INDEX_V2` overrides it).
-pub const MOD_INDEX_V2: &str = "https://sunrise-org.github.io/sunrise-mods/v2/index.json";
+pub const MOD_INDEX_V2: &str = "https://sunrise-org.github.io/sunrise-mods/v2/index.signed";
 
 /// The registry's Nightly source listings. A listing does not vet the source or authorize code.
 pub const MOD_SOURCES: &str = "https://sunrise-org.github.io/sunrise-mods/sources.json";
@@ -15,6 +15,9 @@ pub const MOD_IMAGES: &str = "https://sunrise-org.github.io/sunrise-mods/";
 
 /// A registry project's page on the website is `<this>/<id>`.
 pub const MOD_PAGES: &str = "https://playsunrise.net/mods";
+
+/// The registry service's API, through the website: ratings (`/ratings`, `/<id>/rating`).
+pub const MOD_API: &str = "https://playsunrise.net/api/mods";
 
 /// The registry's form for reporting a project.
 pub const MOD_REPORT: &str =

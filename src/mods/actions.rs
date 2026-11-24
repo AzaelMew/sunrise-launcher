@@ -28,18 +28,11 @@ fn dispatch_enable(
     home: PathBuf,
     identity: Identity,
     ids: Vec<String>,
-    grant_native: bool,
-    reply: impl FnOnce(Result<EnabledMods, String>, Option<u64>) + Send + 'static,
+    reply: impl FnOnce(Result<EnabledMods, String>) + Send + 'static,
 ) {
     std::thread::spawn(move || {
-        let mut allowed_at = None;
         let result = (|| {
             let profile = Profile::open_for(&home, None, Some(identity)).map_err(String::from)?;
-            if grant_native {
-                let mut settings = backend::Settings::default();
-                settings.allow_native_mods()?;
-                allowed_at = settings.native_mods_allowed_at;
-            }
             let ids: Vec<_> = ids.iter().map(String::as_str).collect();
             let skipped = profile.enable_unheld(&ids)?;
             Ok(EnabledMods {
@@ -50,7 +43,7 @@ fn dispatch_enable(
                     .collect(),
             })
         })();
-        reply(result, allowed_at);
+        reply(result);
     });
 }
 
@@ -126,6 +119,17 @@ impl Launcher {
         }
     }
 
+    /// Install a project from the signed v2 index (Discover, its pages and port rows).
+    pub(crate) fn add_v2(&mut self, project_id: String) {
+        let ids = vec![project_id.clone()];
+        self.submit_registry_change(Kind::InstallV2, &project_id, ids, BTreeMap::new());
+    }
+
+    /// Install a collection's picked projects from the signed v2 index, planned together.
+    pub(super) fn add_v2_collection(&mut self, collection: &str, project_ids: Vec<String>) {
+        self.submit_registry_change(Kind::InstallV2, collection, project_ids, BTreeMap::new());
+    }
+
     /// A direct switch has no world-loss question. Enabling still requires the dependencies;
     /// the native consent and build gates decide whether the game can use native code.
     pub(super) fn toggle(&mut self, row: &Row) {
@@ -134,9 +138,11 @@ impl Launcher {
         }
         if row.on {
             self.turn_off(vec![row.id.clone()]);
+        } else if row.held_for.as_ref().is_some_and(|hold| hold.retry) {
+            self.restore_held(row);
         } else if let Some(entry) = &row.entry {
             self.mods.message = None;
-            self.enable_registry_mod(entry, self.mods_home(), None);
+            self.enable_registry_mod(entry, self.mods_home());
             if let Some(Err(e)) = self.mods.message.take() {
                 self.ui.mods.notice = Some(Err(e));
             }
@@ -145,18 +151,50 @@ impl Launcher {
         }
     }
 
-    pub(crate) fn enable_one_in(&mut self, home: PathBuf, id: String, title: String) {
-        self.queue_enable(home, vec![id], EnableNotice::One(title), None);
+    /// A held local or source mod turns on only once its exact bytes pass the fit check and
+    /// build for this profile's build; otherwise the notice says what the check found.
+    fn restore_held(&mut self, row: &Row) {
+        let home = self.mods_home();
+        let Some(instance) = self
+            .selected_instance()
+            .filter(|instance| instance.home == home)
+            .cloned()
+        else {
+            self.ui.mods.notice = Some(Err(tr("The selected profile changed. Try again.").into()));
+            return;
+        };
+        let identity = match Identity::of(&home) {
+            Ok(identity) => identity,
+            Err(error) => {
+                self.ui.mods.notice = Some(Err(error));
+                return;
+            }
+        };
+        self.ui.mods.errors.clear();
+        self.ui.mods.notice = None;
+        self.ui.mods.busy = Some((
+            trf("Checking {mod} for this build…", &[("mod", &row.title)]),
+            0.,
+        ));
+        let tx = self.ui.mods.tx.clone();
+        let (id, title) = (row.id.clone(), row.title.clone());
+        std::thread::spawn(move || {
+            let result = sunrise_launcher::browser::sunrise::restore_held(
+                &instance,
+                identity,
+                &id,
+                &sunrise_launcher::native_mods::Cancellation::default(),
+            )
+            .map(|()| EnabledMods {
+                count: 1,
+                skipped: Vec::new(),
+            });
+            let _ = tx.send(Event::Enabled(home, EnableNotice::One(title), result));
+        });
     }
 
-    pub(crate) fn enable_native_in(
-        &mut self,
-        home: PathBuf,
-        identity: Identity,
-        id: String,
-        title: String,
-    ) {
-        self.queue_enable(home, vec![id], EnableNotice::One(title), Some(identity));
+    pub(crate) fn enable_one_in(&mut self, home: PathBuf, id: String, title: String) {
+        self.queue_enable(home, vec![id], EnableNotice::One(title));
     }
 
     /// Turn the chosen registry mods on in one admitted rewrite. An already-known hold
@@ -181,8 +219,7 @@ impl Launcher {
                 candidates.push(row);
             }
         }
-        let (go, blocked) =
-            model::turn_on_plan(&candidates, self.settings.native_mods_allowed_at.is_some());
+        let (go, blocked) = model::turn_on_plan(&candidates);
         let blocked = blocked
             .into_iter()
             .map(|(row, reason)| (row.id.clone(), reason))
@@ -192,17 +229,10 @@ impl Launcher {
             snapshot.home.clone(),
             ids,
             EnableNotice::Bulk { held, blocked },
-            None,
         );
     }
 
-    fn queue_enable(
-        &mut self,
-        home: PathBuf,
-        ids: Vec<String>,
-        notice: EnableNotice,
-        approved: Option<Identity>,
-    ) {
+    fn queue_enable(&mut self, home: PathBuf, ids: Vec<String>, notice: EnableNotice) {
         if !self.guard() {
             return;
         }
@@ -220,11 +250,10 @@ impl Launcher {
                     count: 0,
                     skipped: Vec::new(),
                 }),
-                None,
             );
             return;
         }
-        let identity = match approved.map_or_else(|| Identity::of(&home), Ok) {
+        let identity = match Identity::of(&home) {
             Ok(identity) => identity,
             Err(error) => {
                 self.ui.mods.notice = Some(Err(error));
@@ -233,15 +262,9 @@ impl Launcher {
         };
         self.ui.mods.busy = Some((tr("Turning on mods…").into(), 0.));
         let tx = self.ui.mods.tx.clone();
-        dispatch_enable(
-            home.clone(),
-            identity,
-            ids,
-            approved.is_some(),
-            move |result, allowed_at| {
-                let _ = tx.send(Event::Enabled(home, notice, result, allowed_at));
-            },
-        );
+        dispatch_enable(home.clone(), identity, ids, move |result| {
+            let _ = tx.send(Event::Enabled(home, notice, result));
+        });
     }
 
     pub(super) fn enabled_mods(
@@ -249,11 +272,7 @@ impl Launcher {
         home: &Path,
         notice: EnableNotice,
         result: Result<EnabledMods, String>,
-        allowed_at: Option<u64>,
     ) {
-        if allowed_at.is_some() {
-            self.settings.native_mods_allowed_at = allowed_at;
-        }
         self.ui.mods.busy = None;
         if self.mods_home() != home {
             return;
@@ -345,6 +364,9 @@ impl Launcher {
             button.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                 let (rows, labels) = this.labeled_installed_rows();
                 let names = super::installed_view::remove_names(&rows, &labels);
+                if let Some(open) = this.ui.mods.open.as_mut() {
+                    open.removing = vec![id.clone()];
+                }
                 this.ask_remove(&home, vec![id.clone()], names);
                 cx.notify();
             }))
@@ -373,26 +395,27 @@ impl Launcher {
         if !self.guard() {
             return;
         }
-        let ids = self
+        let (v2, v1): (Vec<Row>, Vec<Row>) = self
             .rows()
             .into_iter()
             .filter(|row| {
                 model::bulk_updatable(row)
                     && (!only_selected || self.ui.mods.selection.contains(&row.id))
             })
-            .map(|row| row.id)
-            .collect();
-        self.submit_registry_change(Kind::UpdateAll, "update-all", ids, BTreeMap::new());
+            .partition(Row::v2_installed);
+        let ids = |rows: Vec<Row>| rows.into_iter().map(|row| row.id).collect::<Vec<_>>();
+        self.submit_registry_change(Kind::UpdateAll, "update-all", ids(v1), BTreeMap::new());
+        self.submit_registry_change(Kind::UpdateAllV2, "update-all", ids(v2), BTreeMap::new());
     }
 
     pub(super) fn update_one(&mut self, row: &Row) {
         if row.local.is_none() && row.update.is_some() && self.guard() {
-            self.submit_registry_change(
-                Kind::Update,
-                &row.id,
-                vec![row.id.clone()],
-                BTreeMap::new(),
-            );
+            let kind = if row.v2_installed() {
+                Kind::UpdateV2
+            } else {
+                Kind::Update
+            };
+            self.submit_registry_change(kind, &row.id, vec![row.id.clone()], BTreeMap::new());
         }
     }
 
@@ -486,13 +509,9 @@ mod tests {
         let (done, wait_done) = channel();
         let selected = home.clone();
         std::thread::spawn(move || {
-            dispatch_enable(
-                selected,
-                identity,
-                vec!["light".into()],
-                false,
-                move |result, _| done.send(result).unwrap(),
-            );
+            dispatch_enable(selected, identity, vec!["light".into()], move |result| {
+                done.send(result).unwrap()
+            });
             returned.send(()).unwrap();
         });
         wait_return
@@ -511,141 +530,6 @@ mod tests {
         assert_eq!(enabled.count, 1);
         assert!(enabled.skipped.is_empty());
         assert!(mod_list::is_enabled(&home, "light"));
-    }
-
-    #[test]
-    fn toggle_consent_returns_while_manifest_and_settings_are_locked() {
-        use crate::native_consent::{self, PendingConsent, Toggle};
-        use std::{fs, time::Duration};
-        use sunrise_launcher::browser::{installed::Entry, sunrise, Kind, SourceId};
-
-        const ACTOR: &str = "NATIVE_TOGGLE_LOCK_ACTOR";
-        let Some(root) = std::env::var_os(ACTOR).map(PathBuf::from) else {
-            let root = tempfile::tempdir().unwrap();
-            assert!(std::process::Command::new(std::env::current_exe().unwrap())
-                .args(["--exact", "mods::actions::tests::toggle_consent_returns_while_manifest_and_settings_are_locked"])
-                .env(ACTOR, root.path())
-                .env("SUNRISE_HOME", root.path().join("game"))
-                .env("SUNRISE_LAUNCHER_HOME", root.path().join("launcher"))
-                .status().unwrap().success());
-            return;
-        };
-        let home = root.join("game");
-        let packages = home.join(sunrise_launcher_smod::mod_list::NATIVE_DIR);
-        fs::create_dir_all(&packages).unwrap();
-        let archive = sunrise_launcher_smod::Package::write_files(
-            &format!(
-                "id='light'\nname='Light'\nversion='1.0.0'\napi='0.2'\ncapabilities=['registries']\n[native]\nsunrise='{}'\nmixins='{}'\ngame='26.3'\n",
-                "a".repeat(40),
-                "c".repeat(40),
-            ),
-            &[
-                ("Cargo.toml", b"[package]\nname='light'\nversion='1.0.0'\n"),
-                ("src/lib.rs", b""),
-            ],
-        )
-        .unwrap();
-        fs::write(packages.join("light.smod"), archive).unwrap();
-        let manifest = sunrise_launcher::browser::lock_home(&home).unwrap();
-        let identity = Identity::of(&home).unwrap();
-        let data = root.join("launcher");
-        fs::create_dir_all(&data).unwrap();
-        let settings_path = data.join("settings.json");
-        let settings_before = br#"{"native_consent_revision":0,"unrelated":1}"#;
-        fs::write(&settings_path, settings_before).unwrap();
-        let settings_gate = fs::File::options()
-            .write(true)
-            .read(true)
-            .create_new(true)
-            .open(data.join(".settings.json.lock"))
-            .unwrap();
-        settings_gate.lock().unwrap();
-        let list = home.join("sunrise-mods.txt");
-        let list_before = b"mod.light:false\nmod.other:true\n";
-        fs::write(&list, list_before).unwrap();
-        let (returned, wait_return) = channel();
-        let (done, wait_done) = channel();
-        let selected = home.clone();
-        let caller = std::thread::spawn(move || {
-            let question = || {
-                Some(PendingConsent::Toggle(Box::new(Toggle {
-                    entry: Entry {
-                        source: SourceId::Sunrise,
-                        project: "light".into(),
-                        slug: "light".into(),
-                        title: "Light".into(),
-                        kind: Kind::Mod,
-                        version: "1".into(),
-                        number: "1".into(),
-                        file: "sunrise-native-mods/light.smod".into(),
-                        checksum: String::new(),
-                        page: String::new(),
-                        dependency: false,
-                        verdict: None,
-                        install_hold: None,
-                    },
-                    home: selected.clone(),
-                    identity,
-                })))
-            };
-            let mut settings = backend::Settings::load();
-            for _ in ["Cancel", "Escape"] {
-                let mut pending = question();
-                assert!(native_consent::resolve(
-                    &mut pending,
-                    false,
-                    true,
-                    &mut settings,
-                    &selected
-                )
-                .unwrap()
-                .is_none());
-                assert!(pending.is_none());
-            }
-            let mut pending = question();
-            let action =
-                native_consent::resolve(&mut pending, true, true, &mut settings, &selected)
-                    .unwrap();
-            assert!(pending.is_none());
-            assert!(settings.native_mods_allowed_at.is_none());
-            let Some(PendingConsent::Toggle(toggle)) = action else {
-                panic!("Allow must dispatch this Toggle to the On worker");
-            };
-            let id = sunrise::mod_id(&toggle.entry).unwrap().to_owned();
-            dispatch_enable(
-                toggle.home,
-                toggle.identity,
-                vec![id],
-                true,
-                move |result, allowed_at| {
-                    done.send((result, allowed_at)).unwrap();
-                },
-            );
-            returned.send(()).unwrap();
-        });
-        wait_return
-            .recv_timeout(Duration::from_secs(5))
-            .expect("the consent handler must not wait on either lock");
-        caller.join().unwrap();
-        assert_eq!(fs::read(&list).unwrap(), list_before);
-        assert_eq!(fs::read(&settings_path).unwrap(), settings_before);
-        drop(manifest);
-        assert!(matches!(
-            wait_done.try_recv(),
-            Err(std::sync::mpsc::TryRecvError::Empty)
-        ));
-        assert!(!mod_list::is_enabled(&home, "light"));
-        drop(settings_gate);
-        let (result, allowed_at) = wait_done.recv_timeout(Duration::from_secs(5)).unwrap();
-        assert_eq!(result.unwrap().count, 1);
-        assert!(allowed_at.is_some());
-        let written: serde_json::Value =
-            serde_json::from_slice(&fs::read(settings_path).unwrap()).unwrap();
-        assert_eq!(written["native_mods_allowed_at"].as_u64(), allowed_at);
-        assert_eq!(written["native_consent_revision"], 1);
-        assert_eq!(written["unrelated"], 1);
-        assert!(mod_list::is_enabled(&home, "light"));
-        assert!(mod_list::is_enabled(&home, "other"));
     }
 
     fn home_with_world(mod_id: &str) -> PathBuf {

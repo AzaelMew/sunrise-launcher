@@ -1,5 +1,5 @@
 //! Ordinary client Play keeps one admission on its worker through the actual spawn.
-use super::{catalogue, first::game_lock, unsettled, Active, FirstBuild, NativeWork, Profile};
+use super::{catalogue, first::game_lock, unsettled, Active, FirstBuild, Profile};
 use crate::{
     account::{self, Accounts, NoOwner},
     backend::{self, installation::BoundVariant, RuntimeGuard},
@@ -60,9 +60,12 @@ impl From<StartError> for String {
     }
 }
 
-/// The exact base of the Play attempt that reported a registry conflict.
+/// The exact base and native-archive digests of the Play attempt that reported a registry conflict.
 #[derive(Debug, PartialEq, Eq)]
-pub struct FailedBuild(Build);
+pub struct FailedBuild {
+    build: Build,
+    digests: std::collections::BTreeMap<String, String>,
+}
 
 #[derive(Debug, PartialEq, Eq)]
 enum Build {
@@ -76,9 +79,32 @@ pub struct ModRecovery {
     pub mods: Vec<(String, String)>,
 }
 
-fn native_failure(error: native_mods::Failed, build: impl FnOnce() -> Option<Build>) -> StartError {
+fn capture_native_digests(home: &Path) -> std::collections::BTreeMap<String, String> {
+    let Ok(packages) = super::scan_packages(home) else {
+        return std::collections::BTreeMap::new();
+    };
+    packages
+        .into_iter()
+        .filter(|pkg| pkg.manifest.native.is_some() && !pkg.directory)
+        .filter_map(|pkg| {
+            let digest = sunrise_launcher_smod::index::sha256_file(&pkg.path).ok()?;
+            Some((pkg.manifest.id, digest))
+        })
+        .collect()
+}
+
+fn native_failure(
+    home: &Path,
+    error: native_mods::Failed,
+    build: impl FnOnce() -> Option<Build>,
+) -> StartError {
     let proof = if matches!(error, native_mods::Failed::RegistryConflict { .. }) {
-        build().map(|build| Arc::new(FailedBuild(build)))
+        build().map(|build| {
+            Arc::new(FailedBuild {
+                build,
+                digests: capture_native_digests(home),
+            })
+        })
     } else {
         None
     };
@@ -109,10 +135,17 @@ impl Client<'_> {
         choose: impl FnOnce() -> Result<FirstBuild, String>,
         arguments: impl FnOnce(&mut Command) -> Result<(), String>,
         prepare_jars: impl FnOnce(&Command) -> Result<(), String>,
-        native: NativeWork<'_>,
+        cancellation: &native_mods::Cancellation,
         progress: impl Fn(Progress),
     ) -> Result<Started, StartError> {
-        self.start_with_recovery(None, choose, arguments, prepare_jars, native, progress)
+        self.start_with_recovery(
+            None,
+            choose,
+            arguments,
+            prepare_jars,
+            cancellation,
+            progress,
+        )
     }
 
     /// The player accepted turning off these exact versions before resuming Play. Apply the
@@ -123,13 +156,13 @@ impl Client<'_> {
         choose: impl FnOnce() -> Result<FirstBuild, String>,
         arguments: impl FnOnce(&mut Command) -> Result<(), String>,
         prepare_jars: impl FnOnce(&Command) -> Result<(), String>,
-        (cancellation, native_consent): NativeWork<'_>,
+        cancellation: &native_mods::Cancellation,
         progress: impl Fn(Progress),
     ) -> Result<Started, StartError> {
         // A fresh default profile may not have a game directory yet. Do not recreate
         // a named profile that disappeared while its Play awaited this worker.
         if self.instance.kind == instances::Kind::Pack {
-            return Err(unsettled().into());
+            return Err(unsettled!().into());
         }
         if self.accepted_account.is_none() && !developer_offline::requested() {
             return Err(StartError::Account(NoOwner::default()));
@@ -146,10 +179,15 @@ impl Client<'_> {
             let _manifest = profile.lock_inputs()?;
             cancellation.check()?;
             let selected = recovery.verify(&profile, &mut choose)?;
-            turn_off_mods(profile.home(), &recovery.mods, |mut file, bytes| {
-                file.write_all(bytes)?;
-                file.sync_all()
-            })?;
+            turn_off_mods(
+                profile.home(),
+                &recovery.mods,
+                &recovery.build.digests,
+                |mut file, bytes| {
+                    file.write_all(bytes)?;
+                    file.sync_all()
+                },
+            )?;
             selected
         } else {
             None
@@ -165,13 +203,20 @@ impl Client<'_> {
             &mut profile,
             || selected.map_or_else(|| choose.expect("a first Play needs a selection")(), Ok),
             check_build,
-            (cancellation, native_consent),
+            cancellation,
             &progress,
-            || {
-                use crate::browser::sunrise;
-                sunrise::index().ok()?;
-                sunrise::fetched_index()
-            },
+            (
+                || {
+                    use crate::browser::sunrise;
+                    sunrise::index().ok()?;
+                    sunrise::fetched_index()
+                },
+                || {
+                    crate::browser::sunrise::v2::index()
+                        .ok()
+                        .map(|catalog| catalog.index)
+                },
+            ),
         )?;
         let tag = active.executable();
         let offline = !self.explicit_account && developer_offline::enabled(tag);
@@ -251,9 +296,12 @@ impl Client<'_> {
         profile: &mut Profile,
         choose: impl FnOnce() -> Result<FirstBuild, String>,
         check_build: impl FnOnce(&str, Option<&BoundVariant>) -> Result<(), StartError>,
-        (cancellation, native_consent): NativeWork<'_>,
+        cancellation: &native_mods::Cancellation,
         progress: impl Fn(Progress),
-        load_catalogue: impl FnOnce() -> Option<std::sync::Arc<sunrise_launcher_smod::index::Index>>,
+        (load_catalogue, load_v2): (
+            impl FnOnce() -> Option<std::sync::Arc<sunrise_launcher_smod::index::Index>>,
+            impl FnOnce() -> Option<std::sync::Arc<sunrise_launcher_smod::index_v2::Index>>,
+        ),
     ) -> Result<(Active, Vec<String>), StartError> {
         let home = profile.home().to_owned();
         let mode = self.instance.native_profile;
@@ -284,25 +332,25 @@ impl Client<'_> {
                         &|line| progress(Progress::Line(line)),
                     )?)
                 }
-                Err(issue) => return Err(issue.message(unsettled).into()),
+                Err(issue) => return Err(issue.message(|| unsettled!()).into()),
             };
             // Legacy writers still use the game lock, not profile admission. Keep
             // them out until refresh has staged the exact set we checked.
             let _manifest = game_lock(&home)?;
             crate::browser::installed::recover_game_install(&home).map_err(StartError::Journal)?;
-            let notices = catalogue::inspect(&home, load_catalogue)?;
+            let notices = catalogue::inspect_both(&home, load_catalogue, load_v2)?;
             let registry = crate::browser::sunrise::fetched_index();
             let active = profile
                 .refresh(
                     mode,
-                    (cancellation, native_consent),
+                    cancellation,
                     |step| native(old.base(), step),
                     registry.as_deref(),
                     Some(&log),
                     replacement,
                 )
-                .map_err(|error| native_failure(error, || Some(Build::Active(old))))?
-                .ok_or_else(unsettled)?;
+                .map_err(|error| native_failure(&home, error, || Some(Build::Active(old))))?
+                .ok_or_else(|| unsettled!())?;
             return Ok((active, notices));
         }
 
@@ -318,17 +366,18 @@ impl Client<'_> {
                 crate::browser::installed::recover_game_install(&home)
                     .map_err(StartError::Journal)?;
                 first.verify_inputs()?;
-                let notices = catalogue::inspect(&home, load_catalogue)?;
+                let notices = catalogue::inspect_both(&home, load_catalogue, load_v2)?;
                 let image = first
                     .exact_image(
                         mode,
                         cancellation,
                         |step| native(first.base(), step),
-                        native_consent,
                         Some(&log),
                     )
                     .map_err(|error| {
-                        native_failure(error, || first.recovery_selection().ok().map(Build::First))
+                        native_failure(&home, error, || {
+                            first.recovery_selection().ok().map(Build::First)
+                        })
                     })?;
                 (image, notices)
             };
@@ -352,7 +401,7 @@ impl ModRecovery {
         let changed = || {
             crate::i18n::tr("The profile's game build changed. No mods were turned off.").to_owned()
         };
-        match (&self.build.0, profile.active()?) {
+        match (&self.build.build, profile.active()?) {
             (Build::Active(failed), Some(now))
                 if now.profile == failed.profile
                     && now.generation() == failed.generation()
@@ -379,6 +428,7 @@ impl ModRecovery {
 fn turn_off_mods(
     home: &Path,
     mods: &[(String, String)],
+    digests: &std::collections::BTreeMap<String, String>,
     stage: impl FnOnce(&File, &[u8]) -> io::Result<()>,
 ) -> Result<(), String> {
     use sunrise_launcher_smod::mod_list::{ModList, FILE};
@@ -390,11 +440,17 @@ fn turn_off_mods(
     let turns_off = |id: &str| mods.iter().any(|(off, _)| off == id);
     if mods.is_empty()
         || !mods.iter().all(|(id, version)| {
+            let Some(expected_digest) = digests.get(id) else {
+                return false;
+            };
             enabled.contains(id)
                 && packages.iter().any(|pkg| {
                     pkg.manifest.native.is_some()
+                        && !pkg.directory
                         && pkg.manifest.id == *id
                         && pkg.manifest.version == *version
+                        && sunrise_launcher_smod::index::sha256_file(&pkg.path)
+                            .is_ok_and(|actual| actual == *expected_digest)
                 })
         })
     {

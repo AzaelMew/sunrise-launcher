@@ -2,7 +2,7 @@
 //! instance creation/copy transaction as the launcher; the dialog doesn't write game files.
 use super::*;
 use crate::{
-    frame::{button, primary},
+    frame::{button, primary, Reach},
     instances_page::InstanceDialog,
     paint::palette,
     servers_page::Field,
@@ -116,16 +116,34 @@ impl Launcher {
                     )
             } else {
                 match icon.as_ref() {
-                    Some(Icon::Colour(c)) => div()
-                        .size(px(64.))
-                        .rounded(crate::tokens::r(14.))
-                        .bg(rgb(
-                            u32::from_str_radix(c.trim_start_matches('#'), 16).unwrap_or(p.accent)
-                        ))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .child(blocks::icon("package", 34., rgb(p.accent_on).into())),
+                    Some(Icon::Colour(c)) => {
+                        let colour =
+                            u32::from_str_radix(c.trim_start_matches('#'), 16).unwrap_or(p.accent);
+                        let ink = if sunrise_launcher_theme::contrast(colour, p.text)
+                            > sunrise_launcher_theme::contrast(colour, p.background)
+                        {
+                            p.text
+                        } else {
+                            p.background
+                        };
+                        div()
+                            .size(px(64.))
+                            .rounded(crate::tokens::r(14.))
+                            .bg(rgb(colour))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .text_color(rgb(ink))
+                            .font_weight(FontWeight::BOLD)
+                            .text_size(px(64. * 0.54))
+                            .child(
+                                name.chars()
+                                    .next()
+                                    .unwrap_or('S')
+                                    .to_uppercase()
+                                    .to_string(),
+                            )
+                    }
                     _ => crate::mark(64.),
                 }
             })
@@ -326,18 +344,21 @@ impl Launcher {
         for (idx, a) in sunrise_launcher::themes::Accent::ALL.iter().enumerate() {
             let colour = a.rgb();
             let choice = Icon::Colour(format!("#{colour:06x}"));
+            let selected = icon.as_ref() == Some(&choice);
             icons = icons.child(
-                button(ElementId::named_usize("new-colour", idx), "")
+                div()
+                    .id(ElementId::named_usize("new-colour", idx))
+                    .reach_edge()
                     // Round, and as tall as the Sunrise and Picture buttons on either side: one row, one
                     // height.
-                    .px_0()
-                    .w(px(tokens::CONTROL))
-                    .h(px(tokens::CONTROL))
+                    .size(px(tokens::CONTROL))
                     .rounded_full()
+                    .cursor_pointer()
                     .bg(rgb(colour))
-                    .when(icon.as_ref() == Some(&choice), |d| {
-                        d.border_2().border_color(rgb(p.text))
-                    })
+                    .border_1()
+                    .border_color(p.input_edge())
+                    .hover(|s| s.border_color(rgb(p.text)))
+                    .when(selected, |d| d.border_2().border_color(rgb(p.text)))
                     .tooltip(crate::glass_ui::tip(a.name()))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         if let Some(d) = this.instances.dialog.as_mut().filter(|d| !d.busy) {

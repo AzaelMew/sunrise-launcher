@@ -1,4 +1,6 @@
-//! Signed v2 mod registry catalogue reader (`v2/index.json` + `v2/index.json.minisig`).
+//! Signed v2 mod registry catalogue reader (`v2/index.signed`: the minisign signature's four lines,
+//! then `index.json` exactly, published as one file so the two can never come from different
+//! publishes).
 //!
 //! Verifies the minisign signature over the exact fetched (or cached) bytes against the built-in
 //! registry key list before parsing, persists the last verified copy in its own cache namespace
@@ -40,7 +42,7 @@ pub const REGISTRY_KEYS: &[&str] = &[PRODUCTION_KEY];
 
 /// Disposable test-only minisign public key; never compiled into non-test builds.
 #[cfg(test)]
-pub const REGISTRY_KEYS: &[&str] = &["RWSwC2FU6jlWFepUk56a61uccuXxBaMuB35XctszNB8XOUNzfUDxPror"];
+pub const REGISTRY_KEYS: &[&str] = &["RWSM0IpnOTNhKGM+MxjUjuctYPUzgBRDpKUFyXXIpJH6gHwgkpEL3mN8"];
 
 /// A verified v2 registry catalogue loaded from the network or from the verified disk cache.
 #[derive(Clone, Debug)]
@@ -57,7 +59,7 @@ pub struct Catalog {
 pub enum LoadError {
     /// No registry public key is configured in this build.
     KeyNotConfigured,
-    /// Fetching `index.json` or `index.json.minisig` failed and no valid cached copy could be used.
+    /// Fetching `index.signed` failed and no valid cached copy could be used.
     Fetch(String),
     /// The minisign signature over `index.json` failed verification.
     BadSignature(String),
@@ -176,6 +178,8 @@ struct RefreshContext<'a> {
 }
 
 static LOADED: Mutex<Option<LoadedState>> = Mutex::new(None);
+/// The verified snapshot on disk, read by [`read_saved_index`] while nothing is loaded yet.
+static SAVED: Mutex<Option<Catalog>> = Mutex::new(None);
 /// Serializes on-disk serial-floor checks and cache publication across stores.
 /// Lock order is always `LOADED` (when held) before `COMMIT_LOCK`.
 static COMMIT_LOCK: Mutex<()> = Mutex::new(());
@@ -189,17 +193,17 @@ pub fn location() -> String {
         .unwrap_or_else(|| INDEX_URL.to_owned())
 }
 
-/// Derives the `.minisig` address or file path beside `index_location`.
-pub fn signature_location(index_location: &str) -> String {
-    if let Some(mut parsed) = url::Url::parse(index_location)
-        .ok()
-        .filter(|parsed| matches!(parsed.scheme(), "https" | "http"))
-    {
-        let next_path = format!("{}.minisig", parsed.path());
-        parsed.set_path(&next_path);
-        return parsed.to_string();
-    }
-    format!("{index_location}.minisig")
+/// Splits `index.signed` after its fourth line: the minisign signature file, then the index bytes.
+fn split_signed(mut bytes: Vec<u8>) -> Result<(Vec<u8>, Vec<u8>), String> {
+    let end = bytes
+        .iter()
+        .enumerate()
+        .filter(|&(_, &b)| b == b'\n')
+        .nth(3)
+        .map(|(i, _)| i + 1)
+        .ok_or_else(|| tr("The mod registry file has no signature.").to_owned())?;
+    let index = bytes.split_off(end);
+    Ok((index, bytes))
 }
 
 /// The v2 catalogue cache folder under the game home.
@@ -216,6 +220,25 @@ pub fn known_index() -> Option<Catalog> {
         .map(|state| state.catalog.clone())
 }
 
+/// Reads the last verified catalogue on disk, when none is loaded this run, so views can show it
+/// before the network read lands. Disk I/O: call it off the window thread.
+pub fn read_saved_index() -> Option<Catalog> {
+    if let Some(catalog) = known_index() {
+        return Some(catalog);
+    }
+    let saved = Store::new(cache_dir(), REGISTRY_KEYS)
+        .load_cached(now_unix_seconds())
+        .ok()?;
+    *SAVED.lock().unwrap_or_else(|e| e.into_inner()) = Some(saved.clone());
+    Some(saved)
+}
+
+/// The catalogue to show without I/O: the one loaded this run, else the snapshot
+/// [`read_saved_index`] read from disk.
+pub fn shown_index() -> Option<Catalog> {
+    known_index().or_else(|| SAVED.lock().unwrap_or_else(|e| e.into_inner()).clone())
+}
+
 /// Returns the verified v2 catalogue, reusing an in-memory copy from the last ten minutes for the
 /// same endpoint, otherwise fetching and verifying against [`REGISTRY_KEYS`].
 pub fn index() -> Result<Catalog, LoadError> {
@@ -225,6 +248,50 @@ pub fn index() -> Result<Catalog, LoadError> {
 /// Forces a fresh fetch and verification of the v2 catalogue against [`REGISTRY_KEYS`].
 pub fn refreshed_index() -> Result<Catalog, LoadError> {
     load_process_index(true)
+}
+
+/// The verified catalogue an install, update or provider switch plans against: the in-memory copy
+/// while it is fresh, else a new fetch. When that fetch fails for any reason, the last verified
+/// copy (in memory, then on disk) serves instead, so a passing registry or network fault never
+/// blocks a change Discover already showed.
+pub fn change_index() -> Result<Catalog, LoadError> {
+    let source = location();
+    let cache = cache_dir();
+    let ctx = RefreshContext {
+        cache_dir: &cache,
+        keys: REGISTRY_KEYS,
+        source: &source,
+        force_refresh: false,
+        now_unix: now_unix_seconds(),
+    };
+    change_index_in(&LOADED, &ctx, fetch_raw)
+}
+
+fn change_index_in<F>(
+    loaded: &Mutex<Option<LoadedState>>,
+    ctx: &RefreshContext<'_>,
+    fetch: F,
+) -> Result<Catalog, LoadError>
+where
+    F: FnOnce(&str) -> Result<(Vec<u8>, Vec<u8>), String>,
+{
+    refresh_in(loaded, ctx, fetch).or_else(|error| {
+        let known = loaded
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .filter(|state| state.source == ctx.source)
+            .map(|state| state.catalog.clone());
+        match known {
+            Some(catalog) => Ok(Catalog {
+                from_cache: true,
+                ..catalog
+            }),
+            None => Store::new(ctx.cache_dir.to_path_buf(), ctx.keys)
+                .load_cached(ctx.now_unix)
+                .map_err(|_| error),
+        }
+    })
 }
 
 fn load_process_index(force_refresh: bool) -> Result<Catalog, LoadError> {
@@ -316,7 +383,7 @@ impl Store {
         Ok(combine_serial(self.highest_serial, disk_serial))
     }
 
-    /// Fetches `index.json` and `index.json.minisig` from `source`, verifies the signature and
+    /// Fetches `index.signed` from `source`, verifies the signature and
     /// serial, caches the verified copy, and falls back to the verified cache only on fetch error.
     pub fn fetch_and_load(&mut self, source: &str, now_unix: i64) -> Result<Catalog, LoadError> {
         self.require_keys()?;
@@ -621,40 +688,18 @@ fn now_unix_seconds() -> i64 {
 }
 
 fn fetch_raw(source: &str) -> Result<(Vec<u8>, Vec<u8>), String> {
-    let sig_source = signature_location(source);
     let loopback = is_debug_loopback(source);
     if source.starts_with("http://") && !loopback {
         return Err(tr("The mod registry requires HTTPS.").into());
     }
-    if source.starts_with("https://") || loopback {
-        let index_bytes = fetch_http_bytes(
-            source,
-            loopback,
-            source == INDEX_URL,
-            index_v2::MAX_INDEX,
-            tr("The mod registry index is too large.").into(),
-        )?;
-        let sig_bytes = fetch_http_bytes(
-            &sig_source,
-            loopback,
-            source == INDEX_URL,
-            index_v2::MAX_SIGNATURE,
-            tr("The mod registry signature is too large.").into(),
-        )?;
-        return Ok((index_bytes, sig_bytes));
-    }
-
-    let index_bytes = read_bounded_file(
-        Path::new(source),
-        index_v2::MAX_INDEX,
-        tr("The mod registry index is too large.").into(),
-    )?;
-    let sig_bytes = read_bounded_file(
-        Path::new(&sig_source),
-        index_v2::MAX_SIGNATURE,
-        tr("The mod registry signature is too large.").into(),
-    )?;
-    Ok((index_bytes, sig_bytes))
+    let max = index_v2::MAX_SIGNATURE + index_v2::MAX_INDEX;
+    let too_large = || tr("The mod registry index is too large.").to_owned();
+    let bytes = if source.starts_with("https://") || loopback {
+        fetch_http_bytes(source, loopback, source == INDEX_URL, max, too_large())?
+    } else {
+        read_bounded_file(Path::new(source), max, too_large())?
+    };
+    split_signed(bytes)
 }
 
 fn is_debug_loopback(source: &str) -> bool {

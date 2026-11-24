@@ -257,7 +257,7 @@ fn owner() {
         .unwrap();
     phase("proving bound image");
     let image = first
-        .exact_image(BuildMode::Optimized, &cancellation, |_| {}, None, None)
+        .exact_image(BuildMode::Optimized, &cancellation, |_| {}, None)
         .unwrap();
     phase("committing profile");
     let active = first.commit(&image, &cancellation).unwrap();

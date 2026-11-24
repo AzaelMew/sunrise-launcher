@@ -9,6 +9,7 @@ use sunrise_launcher_smod::{index, manifest, mod_list};
 
 /// One candidate the game discovers by extension or unpacked manifest. A directory is
 /// game content, not a managed archive destination implied by its name or manifest ID.
+#[derive(Clone, Debug)]
 pub struct ScannedPackage {
     pub manifest: manifest::Manifest,
     pub path: PathBuf,
@@ -27,13 +28,13 @@ pub fn scan_packages(home: &Path) -> Result<Vec<ScannedPackage>, String> {
             }
             Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
             Err(e) => return Err(at(&root, e)),
-            Ok(_) => return Err(at(&root, unsettled())),
+            Ok(_) => return Err(at(&root, unsettled!())),
         };
         for entry in entries {
             let path = entry.map_err(|e| at(&root, e))?.path();
             let meta = fs::symlink_metadata(&path).map_err(|e| at(&path, e))?;
             if !plain_file(&meta) {
-                return Err(at(&path, unsettled()));
+                return Err(at(&path, unsettled!()));
             }
             if path.extension().is_none_or(|ext| ext != "smod") {
                 if !meta.is_dir() {
@@ -42,7 +43,7 @@ pub fn scan_packages(home: &Path) -> Result<Vec<ScannedPackage>, String> {
                 let path = path.join(manifest::MANIFEST);
                 match fs::symlink_metadata(&path) {
                     Ok(meta) if meta.is_file() && plain_file(&meta) => (),
-                    Ok(_) => return Err(at(&path, unsettled())),
+                    Ok(_) => return Err(at(&path, unsettled!())),
                     Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
                     Err(e) => return Err(at(&path, e)),
                 }
@@ -80,7 +81,7 @@ pub(crate) fn inputs(home: &Path, repaired: Option<&[u8]>) -> Result<[u8; 32], S
         Ok(meta) if meta.is_dir() && plain_file(&meta) => (),
         Err(e) if e.kind() == io::ErrorKind::NotFound => (),
         Err(e) => return Err(at(&browser, e)),
-        Ok(_) => return Err(at(&browser, unsettled())),
+        Ok(_) => return Err(at(&browser, unsettled!())),
     }
     for rel in [
         mod_list::DIR,
@@ -128,7 +129,7 @@ pub(super) fn browser_repair(
     let rows = document
         .get_mut("entries")
         .and_then(Value::as_array_mut)
-        .ok_or_else(unsettled)?;
+        .ok_or_else(|| unsettled!())?;
     let mut claims = index::browser_state::Installed {
         entries: std::mem::take(rows),
     };
@@ -156,17 +157,22 @@ pub(super) fn browser_repair(
         }
         let row: installed::Entry =
             serde_json::from_value(raw.clone()).map_err(|e| at(&path, e))?;
-        let package = by_file.get(relative).ok_or_else(unsettled)?;
+        let package = by_file.get(relative).ok_or_else(|| unsettled!())?;
         let id = &package.manifest.id;
+        let id_ok = if row.mod_id.is_some() {
+            row.mod_id.as_deref() == Some(id.as_str()) && row.is_v2_registry()
+        } else {
+            &row.project == id
+        };
         if package.directory
             || !installed::in_folders(file)
             || row.kind != Kind::Mod
             || row.source != SourceId::Sunrise
-            || &row.project != id
+            || !id_ok
             || sunrise::mod_id(&row) != Some(id.as_str())
             || claims.single(id).map_err(|e| e.render(crate::i18n::trf))? != Some(position)
         {
-            return Err(unsettled());
+            return Err(unsettled!());
         }
         claims
             .check_other_claims(home, id, file)
@@ -177,6 +183,9 @@ pub(super) fn browser_repair(
                 .checksum
                 .eq_ignore_ascii_case(&format!("SHA-256:{digest}"))
         {
+            continue;
+        }
+        if row.mod_id.is_some() {
             continue;
         }
         let kind = if package.manifest.native.is_some() {

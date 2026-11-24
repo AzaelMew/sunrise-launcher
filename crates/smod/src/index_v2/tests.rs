@@ -491,3 +491,68 @@ fn content_addressed_image_bytes_verify_against_filename_sha256() {
         );
     }
 }
+
+#[test]
+fn a_collection_lists_only_its_publishers_listed_projects() {
+    let collection = |members: Value| {
+        let mut index = golden_json();
+        index["collections"] = json!([{
+            "id": "Qm4tZ81c",
+            "name": "Ways",
+            "summary": "Ways to find your way.",
+            "publisher": "example",
+            "icon": format!("pages/Qm4tZ81c/{}.png", "a".repeat(64)),
+            "members": members,
+        }]);
+        index
+    };
+    let both = json!([
+        { "project": "Ab3dE9xQ", "default": true },
+        { "project": "Zz91kLmN", "default": false },
+    ]);
+    // The owner's rule: Zz91kLmN's repository belongs to another account.
+    let err = parse_value(&collection(both.clone())).unwrap_err();
+    assert!(err.contains("not published by"), "{err}");
+
+    let mut owned = collection(both);
+    owned["projects"][1]["repository"]["name"] = json!("example/port-collection");
+    let index = parse_value(&owned).unwrap();
+    let parsed = index.collection("Qm4tZ81c").unwrap();
+    assert_eq!(parsed.description, "");
+    assert_eq!(parsed.members.len(), 2);
+
+    for (members, why) in [
+        (
+            json!([{ "project": "Ab3dE9xQ", "default": true }]),
+            "two members",
+        ),
+        (
+            json!([
+                { "project": "Ab3dE9xQ", "default": false },
+                { "project": "Zz91kLmN", "default": false },
+            ]),
+            "picked by default",
+        ),
+        (
+            json!([
+                { "project": "Ab3dE9xQ", "default": true },
+                { "project": "Nope1234", "default": true },
+            ]),
+            "not a listed project",
+        ),
+    ] {
+        let mut bad = collection(members);
+        bad["projects"][1]["repository"]["name"] = json!("example/port-collection");
+        let err = parse_value(&bad).unwrap_err();
+        assert!(err.contains(why), "{why}: {err}");
+    }
+    // A collection's ID is never a project's.
+    let mut clash = owned.clone();
+    clash["collections"][0]["id"] = json!("Ab3dE9xQ");
+    clash["collections"][0]["icon"] = json!(format!("pages/Ab3dE9xQ/{}.png", "a".repeat(64)));
+    assert!(
+        parse_value(&clash)
+            .unwrap_err()
+            .contains("invalid collection id")
+    );
+}

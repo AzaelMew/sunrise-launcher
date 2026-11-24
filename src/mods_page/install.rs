@@ -9,8 +9,8 @@ use std::{
 use sunrise_launcher::{
     browser::sunrise::{
         BuildNotice, ChangeImpact, CombinedUpdate, InstallError, InstallHooks, InstallProgress,
-        InstalledBatch, NativeQuestion, PreparedSource, ResolveQuestion, SourceDependency,
-        SourceError, SourceHooks,
+        InstalledBatch, PreparedSource, ProviderChoiceNeeded, PublisherChangeQuestion,
+        ResolveQuestion, SourceDependency, SourceError, SourceHooks, V2Hooks, V2InstallOptions,
     },
     github_mods::{AddedFrom, Origin},
     managed_play::FirstBuild,
@@ -68,6 +68,7 @@ struct Running {
     batch: Arc<Mutex<Option<Vec<String>>>>,
     requests: Vec<RequestView>,
     stage: InstallProgress,
+    eta: crate::eta::StageEta,
     cancellation: Cancellation,
     github: Option<Arc<GithubInput>>,
     local: Option<Arc<LocalInput>>,
@@ -224,12 +225,17 @@ struct RunningSource {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Kind {
     Install,
+    /// Projects from the signed v2 index, by project ID.
+    InstallV2,
     Github,
     Local,
     Source,
     Mixed,
     Update,
     UpdateAll,
+    /// Update mods the signed v2 index installed: one asked for, or every one with an update.
+    UpdateV2,
+    UpdateAllV2,
     Remove,
 }
 
@@ -269,7 +275,6 @@ pub(crate) enum Worker {
     SourceRejected(String, SourceError),
     Mixed(Box<CombinedUpdate>),
     Progress(InstallProgress),
-    Native(NativeQuestion, Sender<Result<bool, String>>),
     Source(SourceQuestion, Sender<Result<bool, String>>),
     Decide(Decision, Sender<bool>),
     World(WorldQuestion, Sender<bool>),
@@ -289,7 +294,38 @@ pub(crate) struct Outcome {
     pub(crate) failure: Option<(String, String)>,
 }
 
+impl Outcome {
+    /// The sentence under a card. A failure says why on the line under it, so a card explains
+    /// itself without opening the mod's page.
+    fn note(self) -> Option<String> {
+        if self.failure.is_some() {
+            return None;
+        }
+        if !self.added.is_empty() {
+            return Some(trf(
+                "Also installed: {mods}",
+                &[("mods", &crate::mods::names(&self.added))],
+            ));
+        }
+        self.updated.first().map(|(name, from, to)| {
+            trf(
+                "Also updated: {mod} {from} → {to}",
+                &[("mod", name), ("from", from), ("to", to)],
+            )
+        })
+    }
+}
+
 impl Installs {
+    /// The build an install running on `profile` captured when it was queued, whatever its
+    /// source: the profile keeps showing it while the install holds the profile.
+    fn base(&self, profile: &instances::Instance) -> Option<&str> {
+        let run = self.running.as_ref()?;
+        (run.profile.id == profile.id && run.profile.home == profile.home)
+            .then_some(run.target.as_deref())
+            .flatten()
+    }
+
     pub(super) fn stage(&self) -> Option<InstallProgress> {
         self.running.as_ref().map(|run| run.stage)
     }
@@ -363,6 +399,13 @@ impl Installs {
         }) {
             self.waiting.push_back(request);
         }
+    }
+
+    /// The mods a Remove that just finished took out of its profile.
+    pub(super) fn removed(&self, event: &Worker) -> Option<(&Path, &[String])> {
+        let run = self.running.as_ref()?;
+        let request = run.requests.first().filter(|r| r.kind == Kind::Remove)?;
+        matches!(event, Worker::Done(Ok(_))).then_some((&run.profile.home, &request.ids))
     }
 
     pub(super) fn github_feedback(&self, event: &Worker) -> Option<Feedback> {
@@ -517,6 +560,30 @@ impl Installs {
         ))
     }
 
+    /// Why a registry install that just ended failed, for a dialog: the card keeps no error.
+    pub(super) fn install_failure(&self, event: &Worker) -> Option<(instances::Instance, String)> {
+        let run = self.running.as_ref()?;
+        if run.source.is_some() || !matches!(run.requests[0].kind, Kind::Install | Kind::InstallV2)
+        {
+            return None;
+        }
+        let (line, detail) = match event {
+            Worker::Done(Ok(done)) => notice_failure(done.failure.as_ref()?, &run.requests[0].card),
+            Worker::Done(Err(InstallError::Cancelled)) => return None,
+            Worker::Done(Err(error @ InstallError::Compile(_))) => {
+                (tr("Stayed. No mods changed.").into(), error.to_string())
+            }
+            Worker::Done(Err(error)) => (failure_line(error).into(), error.to_string()),
+            _ => return None,
+        };
+        let text = if detail.trim().is_empty() || detail == line {
+            line
+        } else {
+            format!("{line}\n\n{detail}")
+        };
+        Some((run.profile.clone(), text))
+    }
+
     pub(super) fn mutation_failure(&self, event: &Worker) -> Option<String> {
         let run = self.running.as_ref()?;
         if let Worker::Mixed(done) = event {
@@ -540,7 +607,12 @@ impl Installs {
         }
         if matches!(
             run.requests[0].kind,
-            Kind::Install | Kind::Github | Kind::Local | Kind::Source | Kind::Mixed
+            Kind::Install
+                | Kind::InstallV2
+                | Kind::Github
+                | Kind::Local
+                | Kind::Source
+                | Kind::Mixed
         ) {
             return None;
         }
@@ -560,6 +632,11 @@ impl Installs {
                         source.visible = true;
                     }
                     run.stage = InstallProgress::Checking;
+                    run.eta.update(
+                        crate::eta::install_stage_key(InstallProgress::Checking),
+                        None,
+                        Instant::now(),
+                    );
                 }
             }
             Worker::Mixed(done) => {
@@ -599,6 +676,11 @@ impl Installs {
             Worker::Progress(step) => {
                 if let Some(run) = &mut self.running {
                     run.stage = step;
+                    run.eta.update(
+                        crate::eta::install_stage_key(step),
+                        stage_fraction(step),
+                        Instant::now(),
+                    );
                 }
             }
             Worker::SourceRejected(id, error) => {
@@ -624,7 +706,7 @@ impl Installs {
                     let _ = old.send(false);
                 }
             }
-            Worker::Native(..) | Worker::Source(..) => {
+            Worker::Source(..) => {
                 unreachable!("handled at the launcher consent boundary")
             }
             Worker::Done(result) => {
@@ -682,38 +764,10 @@ impl Installs {
                                         (entry.title.clone(), old.clone(), entry.version.clone())
                                     })
                                     .collect(),
-                                failure: done.failure.as_ref().map(|notice| {
-                                    let this = notice
-                                        .changes
-                                        .iter()
-                                        .find(|change| change.project == request.card);
-                                    let label = match this {
-                                        Some(change) if change.predecessor.is_some() => {
-                                            tr("Kept the working version").into()
-                                        }
-                                        Some(change) => change.reason.label(),
-                                        None => {
-                                            tr("Some mods stayed off or kept their old version")
-                                                .into()
-                                        }
-                                    };
-                                    let detail = notice
-                                        .changes
-                                        .iter()
-                                        .map(|change| {
-                                            trf(
-                                                "{mod}: {disposition}. {reason}",
-                                                &[
-                                                    ("mod", &change.title),
-                                                    ("disposition", &change.disposition()),
-                                                    ("reason", &change.reason.detail()),
-                                                ],
-                                            )
-                                        })
-                                        .collect::<Vec<_>>()
-                                        .join("\n\n");
-                                    (label, detail)
-                                }),
+                                failure: done
+                                    .failure
+                                    .as_ref()
+                                    .map(|notice| notice_failure(notice, &request.card)),
                             },
                             Err(InstallError::Compile(notice)) => Outcome {
                                 failure: Some((
@@ -741,6 +795,9 @@ impl Installs {
                                 ..Outcome::default()
                             },
                         };
+                        if let Some((line, detail)) = &outcome.failure {
+                            eprintln!("installing {}: {line}: {detail}", request.card);
+                        }
                         self.outcomes
                             .insert((run.profile.home.clone(), request.card), outcome.clone());
                         for id in request.ids {
@@ -912,6 +969,36 @@ impl Launcher {
         }
     }
 
+    pub(crate) fn stop_registry_install(&mut self) {
+        let Some(cancellation) = self
+            .mods
+            .installs
+            .running
+            .as_ref()
+            .map(|run| run.cancellation.clone())
+        else {
+            return;
+        };
+        cancellation.stop();
+        if cancellation.is_stopped() {
+            self.answer_source_question(Ok(false));
+            if let Some((_, reply)) = self.mods.installs.world.take() {
+                let _ = reply.send(false);
+            }
+            if let Some((_, reply)) = self.mods.installs.question.take() {
+                let _ = reply.send(false);
+            }
+        }
+    }
+
+    pub(crate) fn registry_install_stopping(&self) -> bool {
+        self.mods
+            .installs
+            .running
+            .as_ref()
+            .is_some_and(|run| run.cancellation.is_stopped())
+    }
+
     pub(crate) fn source_outcome(&self, id: &str) -> Option<&Result<(), SourceError>> {
         let home = &self.selected_instance()?.home;
         self.mods
@@ -990,22 +1077,7 @@ impl Launcher {
     }
 
     pub(crate) fn registry_card_note(&self, id: &str) -> Option<String> {
-        let outcome = self.registry_outcome(id)?;
-        if let Some((label, _)) = outcome.failure {
-            return Some(label);
-        }
-        if !outcome.added.is_empty() {
-            return Some(trf(
-                "Also installed: {mods}",
-                &[("mods", &crate::mods::names(&outcome.added))],
-            ));
-        }
-        outcome.updated.first().map(|(name, from, to)| {
-            trf(
-                "Also updated: {mod} {from} → {to}",
-                &[("mod", name), ("from", from), ("to", to)],
-            )
-        })
+        self.registry_outcome(id)?.note()
     }
 
     fn registry_outcome(&self, id: &str) -> Option<Outcome> {
@@ -1041,10 +1113,16 @@ impl Launcher {
                 &[("mod", name), ("from", from), ("to", to)],
             ));
         }
-        if lines.is_empty() && done.failure.is_none() {
+        // A failed install says why in a dialog as it ends (`install_failure`); only a hold,
+        // which lasts, stays on the page.
+        let failure = done
+            .failure
+            .clone()
+            .filter(|_| self.registry_install_hold(id).is_some());
+        if lines.is_empty() && failure.is_none() {
             return None;
         }
-        let failure = done.failure.clone().map(|(label, detail)| {
+        let failure = failure.map(|(label, detail)| {
             div()
                 .flex()
                 .items_center()
@@ -1088,6 +1166,14 @@ impl Launcher {
 
     pub(crate) fn registry_stage(&self) -> Option<InstallProgress> {
         self.mods.installs.stage()
+    }
+
+    pub(crate) fn registry_eta(&self) -> Option<Duration> {
+        self.mods
+            .installs
+            .running
+            .as_ref()
+            .and_then(|run| run.eta.remaining(Instant::now()))
     }
 
     /// The clicked profile and initial build selection travel together into the worker, even
@@ -1168,11 +1254,8 @@ impl Launcher {
         self.start_registry_queue();
     }
 
-    pub(crate) fn source_install_base(&self, profile: &instances::Instance) -> Option<&str> {
-        let run = self.mods.installs.running.as_ref()?;
-        (run.source.is_some() && run.profile.id == profile.id && run.profile.home == profile.home)
-            .then_some(run.target.as_deref())
-            .flatten()
+    pub(crate) fn install_base(&self, profile: &instances::Instance) -> Option<&str> {
+        self.mods.installs.base(profile)
     }
 
     pub(crate) fn queue_github(&mut self, input: Arc<GithubInput>) -> Result<(), String> {
@@ -1262,7 +1345,7 @@ impl Launcher {
         if ids.is_empty() {
             return Ok(());
         }
-        if kind == Kind::Install
+        if matches!(kind, Kind::Install | Kind::InstallV2)
             && self.accounts.selected().is_none()
             && !sunrise_launcher::developer_offline::selected()
         {
@@ -1302,7 +1385,6 @@ impl Launcher {
     pub(super) fn start_registry_queue(&mut self) -> bool {
         if self.mods_locked().is_some()
             || self.mutating()
-            || self.pending_consent.is_some()
             || self.mods.installs.question.is_some()
             || self.mods.installs.world.is_some()
         {
@@ -1395,6 +1477,7 @@ impl Launcher {
             requests: views,
             mixed,
             stage: InstallProgress::Checking,
+            eta: crate::eta::StageEta::default(),
             cancellation: cancellation.clone(),
             source,
             github: request.github.clone(),
@@ -1428,20 +1511,6 @@ impl Launcher {
                 progress: &|step| {
                     let _ = post(Worker::Progress(step));
                 },
-                native: &|question| {
-                    let (reply, answer) = std::sync::mpsc::channel();
-                    if !post(Worker::Native(question.clone(), reply)) {
-                        return Ok(false);
-                    }
-                    answer.recv().unwrap_or(Ok(false))
-                },
-                registry_crates: Some(&|consent| {
-                    let (reply, answer) = std::sync::mpsc::channel();
-                    launcher
-                        .send(Msg::NativeRegistryConsent(consent.clone(), reply))
-                        .is_ok()
-                        && answer.recv().unwrap_or(false)
-                }),
                 continue_after_failure: &|notice| {
                     let (reply, answer) = std::sync::mpsc::channel();
                     post(Worker::Decide(Decision::Build(notice.clone()), reply))
@@ -1449,6 +1518,7 @@ impl Launcher {
                 },
                 resolve: (kind == Kind::Install)
                     .then_some(&resolve as &dyn Fn(&ResolveQuestion) -> bool),
+                cancellation: Some(&cancellation),
             };
             let review = |impact: &ChangeImpact, sources: Option<&ChangeImpact>| {
                 if cancellation.is_stopped() {
@@ -1486,6 +1556,28 @@ impl Launcher {
                 }
                 answer.recv().unwrap_or(Ok(false))
             };
+            let confirm_publisher_change = |question: &PublisherChangeQuestion| {
+                let (reply, answer) = std::sync::mpsc::channel();
+                launcher
+                    .send(Msg::PublisherChangeQuestion(
+                        Box::new(question.clone()),
+                        reply,
+                    ))
+                    .is_ok()
+                    && answer.recv().unwrap_or(false)
+            };
+            let choose_provider = |need: &ProviderChoiceNeeded| {
+                let (reply, answer) = std::sync::mpsc::channel();
+                launcher
+                    .send(Msg::ProviderChoice(Box::new(need.clone()), reply))
+                    .ok()
+                    .and_then(|()| answer.recv().ok().flatten())
+            };
+            let v2_hooks = V2Hooks {
+                install: hooks,
+                choose_provider: Some(&choose_provider),
+                confirm_publisher_change: Some(&confirm_publisher_change),
+            };
             let result = match kind {
                 Kind::Install => sunrise::install_registry(
                     &request.profile,
@@ -1499,6 +1591,27 @@ impl Launcher {
                     },
                     choose,
                     hooks,
+                ),
+                Kind::InstallV2 => sunrise::install_registry_v2(
+                    &request.profile,
+                    request.identity,
+                    ids.clone(),
+                    V2InstallOptions::default(),
+                    choose,
+                    v2_hooks,
+                ),
+                Kind::UpdateV2 | Kind::UpdateAllV2 => sunrise::update_registry_v2(
+                    &request.profile,
+                    request.identity,
+                    if kind == Kind::UpdateV2 {
+                        sunrise::UpdateRequest::Strict(ids)
+                    } else {
+                        sunrise::UpdateRequest::Bulk(ids)
+                    },
+                    V2InstallOptions::default(),
+                    choose,
+                    v2_hooks,
+                    &approve,
                 ),
                 Kind::Github => {
                     let input = request.github.as_ref().expect("a checked GitHub request");
@@ -1680,10 +1793,33 @@ pub(crate) fn stage_label(step: InstallProgress) -> String {
     match step {
         InstallProgress::PreparingBuild => tr("Getting the build ready…").into(),
         InstallProgress::Checking => tr("Checking the mod set…").into(),
+        InstallProgress::Waiting => tr("Waiting for another build to finish…").into(),
         InstallProgress::Downloading(f) => trf(
             "Downloading {percent}%",
             &[("percent", &format!("{:.0}", f * 100.))],
         ),
+        InstallProgress::DownloadingBuild(f) => trf(
+            "Downloading the build {percent}%",
+            &[("percent", &format!("{:.0}", f * 100.))],
+        ),
+        InstallProgress::Minecraft(step, files) => {
+            use sunrise_launcher::backend::PrepareStep;
+            let count = files.map(|(done, total)| (done.to_string(), total.to_string()));
+            match (step, count) {
+                (PrepareStep::Files, None) => tr("Finding Minecraft's files…").into(),
+                (PrepareStep::Files, Some((done, total))) => trf(
+                    "Downloading Minecraft's files ({done} of {total})",
+                    &[("done", &done), ("total", &total)],
+                ),
+                (PrepareStep::Java, None) => tr("Finding Java…").into(),
+                (PrepareStep::Java, Some((done, total))) => trf(
+                    "Downloading Java ({done} of {total} files)",
+                    &[("done", &done), ("total", &total)],
+                ),
+                (PrepareStep::Sounds, _) => tr("Adding the sounds…").into(),
+                (PrepareStep::Prepare, _) => tr("Preparing Minecraft's files…").into(),
+            }
+        }
         InstallProgress::Preparing => tr("Getting ready…").into(),
         InstallProgress::Rust(fraction) => trf(
             "Downloading build tools {percent}%",
@@ -1693,7 +1829,14 @@ pub(crate) fn stage_label(step: InstallProgress) -> String {
             "Getting build tools ({size})",
             &[("size", &sunrise_launcher::storage::format_bytes(total))],
         ),
-        InstallProgress::Building(_) => tr("Building").into(),
+        InstallProgress::Building(Some(fraction)) => trf(
+            "Building {percent}%",
+            &[(
+                "percent",
+                &format!("{:.0}", (fraction * 100.0).clamp(0.0, 100.0)),
+            )],
+        ),
+        InstallProgress::Building(None) => tr("Building").into(),
         InstallProgress::Publishing => tr("Finishing…").into(),
         InstallProgress::Reviewing => tr("Review changes…").into(),
     }
@@ -1701,11 +1844,43 @@ pub(crate) fn stage_label(step: InstallProgress) -> String {
 
 pub(crate) fn stage_fraction(step: InstallProgress) -> Option<f32> {
     match step {
-        InstallProgress::Downloading(f) | InstallProgress::Rust(f) => Some(f),
+        InstallProgress::Downloading(f)
+        | InstallProgress::DownloadingBuild(f)
+        | InstallProgress::Rust(f) => Some(f),
+        InstallProgress::Minecraft(_, Some((done, total))) if total > 0 => {
+            Some(done as f32 / total as f32)
+        }
         InstallProgress::Building(f) => f,
         InstallProgress::Tools { done, total } if total > 0 => Some(done as f32 / total as f32),
         _ => None,
     }
+}
+
+/// What a registry install that finished but left mods off or on their old version says:
+/// a line about `card`'s own mod, or the batch, and each change's reason.
+fn notice_failure(notice: &BuildNotice, card: &str) -> (String, String) {
+    let this = notice.changes.iter().find(|change| change.project == card);
+    let label = match this {
+        Some(change) if change.predecessor.is_some() => tr("Kept the working version").into(),
+        Some(change) => change.reason.label(),
+        None => tr("Some mods stayed off or kept their old version").into(),
+    };
+    let detail = notice
+        .changes
+        .iter()
+        .map(|change| {
+            trf(
+                "{mod}: {disposition}. {reason}",
+                &[
+                    ("mod", &change.title),
+                    ("disposition", &change.disposition()),
+                    ("reason", &change.reason.detail()),
+                ],
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    (label, detail)
 }
 
 fn failure_line(error: &InstallError) -> &'static str {
@@ -1730,13 +1905,19 @@ fn failure_line(error: &InstallError) -> &'static str {
             tr("The profile or game build changed. Check the source again; nothing was changed.")
         }
         InstallError::Source(SourceError::Cancelled) => tr("Install cancelled."),
-        InstallError::Source(SourceError::Busy) => {
-            tr("Sunrise is building mods right now. Try again when that finishes.")
-        }
         InstallError::Source(SourceError::Build { .. }) => tr("Couldn't build on this computer."),
         InstallError::GithubBuild(_) => tr("Could not build the selected mods."),
         InstallError::Download(_) => tr("Download failed. Try again"),
         InstallError::Compile(_) => tr("Couldn't build on your computer"),
+        InstallError::PublisherChanged(_) => {
+            tr("This mod's publisher changed. Confirm before installing.")
+        }
+        InstallError::AmbiguousProvider(_) => {
+            tr("Several mods provide a required dependency. Choose one.")
+        }
+        InstallError::ProviderConflict(_) => {
+            tr("Another mod is already installed for that slot. Switch provider instead.")
+        }
         InstallError::Cancelled => tr("Install cancelled."),
     }
 }
@@ -1744,6 +1925,73 @@ fn failure_line(error: &InstallError) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_build_preparation_names_its_step_and_counts_mojangs_files() {
+        use sunrise_launcher::backend::PrepareStep;
+        let downloading = InstallProgress::Minecraft(PrepareStep::Files, Some((30, 120)));
+        assert_eq!(
+            stage_label(downloading),
+            "Downloading Minecraft's files (30 of 120)"
+        );
+        assert_eq!(stage_fraction(downloading), Some(0.25));
+        let preparing = InstallProgress::Minecraft(PrepareStep::Prepare, None);
+        assert_eq!(stage_label(preparing), "Preparing Minecraft's files…");
+        assert_eq!(stage_fraction(preparing), None);
+    }
+
+    #[test]
+    fn a_failed_install_says_why_in_a_dialog_not_on_the_card() {
+        let root = homes();
+        let installs = with_running(root.path());
+        let error = || {
+            InstallError::Unproved("The mod registry index signature could not be verified.".into())
+        };
+        let (profile, why) = installs
+            .install_failure(&Worker::Done(Err(error())))
+            .unwrap();
+        assert_eq!(profile.id, "A");
+        assert_eq!(
+            why,
+            "Couldn't check that the mods fit\n\nThe mod registry index signature could not be verified."
+        );
+        assert!(installs
+            .install_failure(&Worker::Done(Err(InstallError::Cancelled)))
+            .is_none());
+        // Installed, but a dependency was left off: the dialog says so too.
+        let left_off = InstalledBatch {
+            added: Vec::new(),
+            updated: Vec::new(),
+            failure: Some(BuildNotice {
+                changes: vec![sunrise_launcher::browser::sunrise::BuildChange {
+                    project: "lib".into(),
+                    title: "Lib".into(),
+                    reason: sunrise_launcher::browser::installed::InstallHold::Compile,
+                    predecessor: None,
+                }],
+                detail: String::new(),
+                log: None,
+            }),
+        };
+        let (_, why) = installs
+            .install_failure(&Worker::Done(Ok(left_off)))
+            .unwrap();
+        assert_eq!(
+            why,
+            "Some mods stayed off or kept their old version\n\nLib: Keep installed, but off. Its code couldn't build on your computer."
+        );
+        let clean = InstalledBatch {
+            added: Vec::new(),
+            updated: Vec::new(),
+            failure: None,
+        };
+        assert!(installs.install_failure(&Worker::Done(Ok(clean))).is_none());
+        let failed = Outcome {
+            failure: Some((failure_line(&error()).into(), error().to_string())),
+            ..Outcome::default()
+        };
+        assert_eq!(failed.note(), None);
+    }
 
     pub(super) fn request(home: &Path, id: &str, target: &str) -> Request {
         let slug = home.file_name().unwrap().to_str().unwrap();
@@ -1791,6 +2039,7 @@ mod tests {
                 batch: Arc::new(Mutex::new(Some(first.view.ids.clone()))),
                 requests: vec![first.view],
                 stage: InstallProgress::Checking,
+                eta: crate::eta::StageEta::default(),
                 cancellation: Cancellation::default(),
                 github: None,
                 local: None,
@@ -1799,6 +2048,17 @@ mod tests {
             }),
             ..Installs::default()
         }
+    }
+
+    #[test]
+    fn a_registry_install_keeps_its_profile_build_while_it_runs() {
+        let root = homes();
+        let installs = with_running(root.path());
+        let run = installs.running.as_ref().unwrap();
+        assert!(run.source.is_none(), "a registry install, not a source one");
+        assert_eq!(installs.base(&run.profile), Some("nightly"));
+        let other = request(&root.path().join("B"), "two", "dev").profile;
+        assert_eq!(installs.base(&other), None);
     }
 
     #[test]
@@ -1869,7 +2129,9 @@ mod tests {
         source.ids = vec!["jade".into(), "minimap".into()];
         source.names = vec!["Jade".into(), "Minimap".into()];
         source.members = vec![member("jade", "Jade"), member("minimap", "Minimap")];
-        source.rejected.insert("minimap".into(), SourceError::Busy);
+        source
+            .rejected
+            .insert("minimap".into(), SourceError::Changed(String::new()));
         let (_, modal) = installs
             .refused(&Worker::Done(Ok(InstalledBatch::default())))
             .unwrap();

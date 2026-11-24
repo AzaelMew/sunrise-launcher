@@ -3,9 +3,9 @@
 use super::*;
 use crate::paint::palette;
 use crate::sheets::Sheet;
-use gpui::rgb;
+use gpui::{rgb, AnimationExt};
 
-#[derive(Clone, Copy, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(super) enum Page {
     #[default]
     Home,
@@ -69,6 +69,51 @@ pub(super) struct State {
     /// Tests: draw the sidebar this far open, as if part way through an ease.
     #[cfg(test)]
     pub rail_pin: Option<f32>,
+    /// Where the last frame drew each profile that has a context menu: the open menu covers
+    /// them, so a right-click on one reaches it through here.
+    pub profile_rows: crate::rail::ProfileRows,
+    /// When the status strip appeared, so each appearance eases in once without jumping the page.
+    pub status_strip_since: Option<Instant>,
+    /// When the status strip went away, so its space closes as smoothly as it opened.
+    pub status_strip_gone: Option<Instant>,
+    /// The last drawn page and when we switched to it (None on first draw or once settled).
+    pub page_switched: Option<(Page, Option<Instant>)>,
+}
+
+impl State {
+    /// Returns the instant the current page entrance started while its transition is still active,
+    /// or `None` on initial render, under reduced motion, or after [`crate::motion::PAGE`] ends.
+    pub(super) fn page_transition(
+        &mut self,
+        page: Page,
+        now: Instant,
+        still: bool,
+    ) -> Option<Instant> {
+        match self.page_switched {
+            Some((last_page, switched_at)) => {
+                if last_page.active_tab() != page.active_tab() {
+                    let started = (!still).then_some(now);
+                    self.page_switched = Some((page, started));
+                    started
+                } else {
+                    if last_page != page {
+                        self.page_switched = Some((page, switched_at));
+                    }
+                    if still {
+                        None
+                    } else {
+                        switched_at.filter(|&at| {
+                            now.saturating_duration_since(at) < crate::motion::PAGE.duration()
+                        })
+                    }
+                }
+            }
+            None => {
+                self.page_switched = Some((page, None));
+                None
+            }
+        }
+    }
 }
 
 /// The keyboard's ring, in `color`, around a filled control that has no edge of its own to turn
@@ -288,6 +333,8 @@ pub(super) fn copy_face(id: &'static str, label: &str, shown: Option<usize>) -> 
         Some(n) => base
             .border_color(accent.opacity(0.5))
             .hover(move |s| s.border_color(accent.opacity(0.75)))
+            // Give keyboard focus its own ring so the Copied hover border cannot hide it.
+            .focus_visible(|s| s.shadow(focus_ring(palette().focus)))
             .child(crate::code_box::tick(
                 &SharedString::from(id),
                 n,
@@ -560,7 +607,6 @@ impl Launcher {
                     .text_color(rgb(colour))
                     .cursor_pointer()
                     .hover(|s| s.bg(rgb(p.chrome_raised)))
-                    .tooltip(crate::glass_ui::tip(label))
                     .when(!compact, |d| {
                         d.child(blocks::icon(icon, 16., rgb(colour).into()))
                     })
@@ -677,40 +723,33 @@ impl Launcher {
                 } else {
                     self.join(cx)
                 };
-                // The page's header, as Mods has it: its name, then Join and Host as one
-                // control, the chosen one filled.
-                let tabs = div()
-                    .flex()
-                    .items_center()
-                    .gap(px(20.))
-                    .px(px(24.))
-                    .pt(px(24.))
-                    .child(
-                        div()
-                            .flex_none()
-                            .text_size(px(tokens::TITLE))
-                            .font_weight(FontWeight::BOLD)
-                            .child(tr("Servers")),
-                    )
-                    .child(crate::mods::segmented(
-                        "servers-tabs",
-                        [
-                            (
-                                "servers-join",
-                                tr("Join").into(),
-                                page == Page::Join,
-                                Page::Join,
-                            ),
-                            (
-                                "servers-host",
-                                tr("Host").into(),
-                                page == Page::Hosting,
-                                Page::Hosting,
-                            ),
-                        ],
-                        Launcher::navigate,
-                        cx,
-                    ));
+                // Join and Host as underline sub-tabs, matching Mods and Packs.
+                let tabs = div().px(px(24.)).pt(px(20.)).child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .border_b_1()
+                        .border_color(rgb(palette().divider))
+                        .child(crate::mods::segmented(
+                            "servers-tabs",
+                            [
+                                (
+                                    "servers-join",
+                                    tr("Join").into(),
+                                    page == Page::Join,
+                                    Page::Join,
+                                ),
+                                (
+                                    "servers-host",
+                                    tr("Host").into(),
+                                    page == Page::Hosting,
+                                    Page::Hosting,
+                                ),
+                            ],
+                            Launcher::navigate,
+                            cx,
+                        )),
+                );
                 div()
                     .flex()
                     .flex_col()
@@ -723,7 +762,70 @@ impl Launcher {
             }
             _ => self.mods(window, cx),
         };
+        let content = if let Some(at) = self.ui.page_transition(page, now, crate::motion::still()) {
+            static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+            let start = *START.get_or_init(Instant::now);
+            let id = at.saturating_duration_since(start).as_micros() as usize;
+            div()
+                .relative()
+                .flex_1()
+                .min_w_0()
+                .min_h_0()
+                .flex()
+                .flex_col()
+                .child(content)
+                .with_animation(
+                    ElementId::named_usize("page-turn", id),
+                    crate::motion::eased(crate::motion::PAGE),
+                    |d, p| d.opacity(p).top(px(tokens::RISE * (1. - p))),
+                )
+                .into_any_element()
+        } else {
+            content
+        };
         let status = self.status_strip(cx);
+        let status = if let Some(strip) = status {
+            let since = *self.ui.status_strip_since.get_or_insert_with(Instant::now);
+            static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+            let start = *START.get_or_init(Instant::now);
+            let id = since.saturating_duration_since(start).as_micros() as usize;
+            Some(
+                div()
+                    .id("status-strip-wrapper")
+                    .flex_none()
+                    .overflow_hidden()
+                    .with_animation(
+                        ElementId::named_usize("status-strip-enter", id),
+                        crate::motion::eased(sunrise_launcher_theme::QUICK),
+                        |d, p| {
+                            if p < 1. {
+                                d.max_h(px(64. * p)).opacity(p)
+                            } else {
+                                d.opacity(1.)
+                            }
+                        },
+                    )
+                    .child(strip),
+            )
+        } else {
+            if self.ui.status_strip_since.take().is_some() {
+                self.ui.status_strip_gone = Some(Instant::now());
+            }
+            let quick = sunrise_launcher_theme::QUICK;
+            self.ui
+                .status_strip_gone
+                .filter(|gone| gone.elapsed() < quick.duration())
+                .map(|gone| {
+                    static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+                    let start = *START.get_or_init(Instant::now);
+                    let id = gone.saturating_duration_since(start).as_micros() as usize;
+                    div().id("status-strip-closing").flex_none().with_animation(
+                        ElementId::named_usize("status-strip-exit", id),
+                        crate::motion::eased(quick),
+                        |d, p| d.h(px((tokens::ACTION + 2.) * (1. - p))),
+                    )
+                })
+        };
         let pane = div()
             .relative()
             .flex_1()
@@ -781,9 +883,9 @@ impl Launcher {
                     "escape" if this.viewer_close(cx) => {}
                     "left" if this.viewer_step(-1, cx) => {}
                     "right" if this.viewer_step(1, cx) => {}
-                    "escape" if this.owner_screen_open => {
+                    "escape" if this.sign_in_screen.open => {
                         this.cancel_sign_in();
-                        this.owner_screen_open = false;
+                        this.sign_in_screen.open = false;
                     }
                     "escape" if this.sheet_escape() => {}
                     "escape" if this.instances.dialog.is_some() => {
@@ -823,7 +925,7 @@ impl Launcher {
             .then(|| self.hosting_create(cx))
             .flatten();
         let sheet = self.live_sheet(window, cx);
-        let sign_in = self.owner_screen_open.then(|| self.owner_screen(cx));
+        let sign_in = self.sign_in_screen.open.then(|| self.owner_screen(cx));
         let profile = self.profile_dialog(window, cx);
         let mut layers: Vec<_> = [create, profile, sheet, sign_in]
             .into_iter()
@@ -875,5 +977,38 @@ mod tests {
         for page in [Page::Discover, Page::Installed, Page::Project] {
             assert!(page.active_tab() == Page::Discover);
         }
+    }
+
+    #[test]
+    fn page_switch_transitions_only_when_destination_changes_and_rests_after_duration() {
+        let mut state = super::State::default();
+        let t0 = std::time::Instant::now();
+        assert!(state.page_transition(Page::Home, t0, false).is_none());
+        assert_eq!(state.page_switched.unwrap().0, Page::Home);
+        let t1 = t0 + std::time::Duration::from_millis(50);
+        assert_eq!(state.page_transition(Page::Settings, t1, false), Some(t1));
+        assert_eq!(
+            state.page_transition(
+                Page::Settings,
+                t1 + std::time::Duration::from_millis(100),
+                false
+            ),
+            Some(t1)
+        );
+        assert!(state
+            .page_transition(
+                Page::Settings,
+                t1 + std::time::Duration::from_millis(300),
+                false
+            )
+            .is_none());
+        // Reduced motion snaps without starting a transition.
+        let t2 = t1 + std::time::Duration::from_millis(400);
+        assert!(state.page_transition(Page::Home, t2, true).is_none());
+        // Sub-tabs within the same top-level section do not replay the whole-page entrance.
+        let t3 = t2 + std::time::Duration::from_millis(50);
+        assert_eq!(state.page_transition(Page::Installed, t3, false), Some(t3));
+        let t4 = t3 + std::time::Duration::from_millis(300);
+        assert!(state.page_transition(Page::Discover, t4, false).is_none());
     }
 }

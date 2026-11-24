@@ -1,5 +1,5 @@
 //! Exact identity of an installed executable and the files it reads beside itself.
-use super::{digest_file, plain_file, require_dir, validate_tag};
+use super::{digest_file, plain_file, require_dir, unsettled, validate_tag};
 use crate::{backend, native_mods::sdk_cache::GameSlices};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -73,7 +73,7 @@ impl Artifact {
         let archive: Option<ArchiveReceipt> = receipt(&path)?;
         let sdk: Option<SdkReceipt> = receipt(&dir.join(Self::SDK_RECEIPT))?;
         let (source, saved) = match (&archive, &sdk) {
-            (Some(_), Some(_)) => return Err(super::unsettled()),
+            (Some(_), Some(_)) => return Err(unsettled!()),
             (Some(receipt), None) => (
                 Some(Source::Archive(&receipt.archive)),
                 Some(&receipt.image),
@@ -87,7 +87,7 @@ impl Artifact {
                 !backend::installation::valid_archive_digest(digest)
             })
         {
-            return Err(super::unsettled());
+            return Err(unsettled!());
         }
         let image = Self::image(
             dir,
@@ -96,7 +96,7 @@ impl Artifact {
             sdk.as_ref().map(|receipt| &receipt.sdk),
         )?;
         if saved.is_some_and(|saved| *saved != image) {
-            return Err(super::unsettled());
+            return Err(unsettled!());
         }
         Ok(image)
     }
@@ -170,7 +170,7 @@ impl Artifact {
 
     pub(super) fn verify_program(&self, path: &Path) -> Result<(), String> {
         if digest_file(path)? != Some(self.executable) {
-            return Err(super::unsettled());
+            return Err(unsettled!());
         }
         Ok(())
     }

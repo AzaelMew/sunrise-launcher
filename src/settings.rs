@@ -20,7 +20,6 @@ pub(super) enum Section {
     Account,
     Game,
     Appearance,
-    Mods,
     Storage,
     Privacy,
     Launcher,
@@ -40,11 +39,10 @@ pub(super) fn startup_section(location_error: bool, location_note: bool) -> Opti
 }
 
 impl Section {
-    pub(super) const ALL: [Section; 7] = [
+    pub(super) const ALL: [Section; 6] = [
         Section::Account,
         Section::Game,
         Section::Appearance,
-        Section::Mods,
         Section::Storage,
         Section::Privacy,
         Section::Launcher,
@@ -55,7 +53,6 @@ impl Section {
             Section::Account => "Account",
             Section::Game => "Game",
             Section::Appearance => "Appearance",
-            Section::Mods => "Mods",
             Section::Storage => "Storage",
             Section::Privacy => "Privacy",
             Section::Launcher => "Launcher",
@@ -68,7 +65,6 @@ impl Section {
             Section::Account => "user",
             Section::Game => "game-controller-01",
             Section::Appearance => "color-picker",
-            Section::Mods => "puzzle",
             Section::Storage => "folder-01",
             Section::Privacy => "shield",
             // Language and network: no launcher or app icon in the set.
@@ -81,7 +77,6 @@ impl Section {
             Section::Account => "Who plays, and the Microsoft accounts signed in here.",
             Section::Game => "How the game starts. Its build is chosen beside Play on Home.",
             Section::Appearance => "The theme, its accent and what is behind Home.",
-            Section::Mods => "What mods with native code may do on this computer.",
             Section::Storage => "Manage game builds, downloads and where your files are kept.",
             Section::Privacy => "What Sunrise sends, and what it never does.",
             Section::Launcher => "Language, network and this version.",
@@ -93,6 +88,8 @@ impl Section {
 pub(super) struct SettingsView {
     pub(super) section: Section,
     languages: bool,
+    /// UUID of the account whose 3-dots menu is open in Settings › Account.
+    account_menu: Option<String>,
     setup: bool,
     note: Option<String>,
     pub(crate) appearance: appearance::State,
@@ -108,9 +105,14 @@ pub(crate) fn group(rows: Vec<Div>) -> Div {
         .border_color(rgb(palette().divider))
         .bg(palette().card());
     for (i, row) in rows.into_iter().enumerate() {
-        card = card.child(row.px(px(16.)).py(px(14.)).when(i > 0, |d| {
-            d.border_t_1().border_color(rgb(palette().divider))
-        }));
+        card = card.child(
+            row.id(("settings-row", i))
+                .px(px(16.))
+                .py(px(14.))
+                .when(i > 0, |d| {
+                    d.border_t_1().border_color(rgb(palette().divider))
+                }),
+        );
     }
     card
 }
@@ -348,7 +350,6 @@ impl Launcher {
             Section::Account => self.settings_account(cx),
             Section::Game => self.settings_game(cx),
             Section::Appearance => self.settings_appearance(window, cx),
-            Section::Mods => self.settings_mods(cx),
             Section::Storage => self.settings_storage(cx),
             Section::Privacy => self.settings_privacy(cx),
             Section::Launcher => self.settings_launcher(cx),
@@ -395,13 +396,13 @@ impl Launcher {
                     .font_weight(FontWeight::BOLD)
                     .child(tr("Settings")),
             )
-            .child(
+            .child(crate::scrollbar::wrap_page(
+                "settings",
                 div()
                     .id("alt-settings-scroll")
                     .flex_1()
                     .min_h_0()
                     .overflow_y_scroll()
-                    .track_scroll(&scroll)
                     .px(px(32.))
                     .pb(px(24.))
                     .child(
@@ -418,13 +419,16 @@ impl Launcher {
                             .child(nav)
                             .child(pane),
                     ),
-            )
-            // A press anywhere else closes the language menu; the menu and its button keep
+                &self.theme,
+            ))
+            // A press anywhere else closes open dropdown menus; the menus and their buttons keep
             // their own presses.
             .on_mouse_down(
                 gpui::MouseButton::Left,
                 cx.listener(|this, _, _, cx| {
-                    if std::mem::take(&mut this.ui.settings.languages) {
+                    let closed_lang = std::mem::take(&mut this.ui.settings.languages);
+                    let closed_account = this.ui.settings.account_menu.take().is_some();
+                    if closed_lang || closed_account {
                         cx.notify();
                     }
                 }),
@@ -444,9 +448,9 @@ impl Launcher {
         let view = &mut self.ui.settings;
         view.section = section;
         view.languages = false;
+        view.account_menu = None;
         view.setup = false;
         view.note = None;
-        self.storage_revoke = None;
         self.storage_confirm = None;
         self.storage_builds.confirm = None;
         self.collection.confirm_delete = false;
@@ -456,9 +460,42 @@ impl Launcher {
         }
     }
 
+    fn remove_account(&mut self, uuid: &str) {
+        if self.account_locked() {
+            self.say_account_locked();
+            return;
+        }
+        let Some(generation) = self.begin_auth_job(uuid) else {
+            return;
+        };
+        let (tx, uuid) = (self.tx.clone(), uuid.to_owned());
+        std::thread::spawn(move || {
+            let mut accounts = Accounts::load();
+            let _ = tx.send(Msg::AccountProgress(
+                uuid.clone(),
+                generation,
+                account::session::Phase::SigningOut,
+            ));
+            let result = accounts
+                .remove(account::store(), &uuid)
+                .and_then(|()| accounts.save())
+                .map(|()| accounts.has_owner(account::store()));
+            let _ = tx.send(Msg::AccountRemoved(uuid, generation, result));
+        });
+    }
+
+    fn move_account(&mut self, uuid: &str, delta: isize) {
+        match Accounts::reorder(uuid, delta) {
+            Ok(accounts) => self.accounts = accounts,
+            Err(error) => self.ui.settings.note = Some(error),
+        }
+    }
+
     fn settings_account(&mut self, cx: &mut Context<Self>) -> Div {
         let theme = self.theme;
         let selected = self.accounts.selected.clone();
+        let total = self.accounts.accounts.len();
+        let open_menu = self.ui.settings.account_menu.clone();
         let mut rows = Vec::new();
         for (i, a) in self.accounts.accounts.clone().into_iter().enumerate() {
             let plays = selected.as_ref() == Some(&a.uuid);
@@ -488,47 +525,166 @@ impl Launcher {
                         cx.notify();
                     }))
                 });
-            } else if !plays {
+            } else {
+                if !plays {
+                    let uuid = a.uuid.clone();
+                    actions = actions.child(
+                        button(ElementId::named_usize("alt-account-play", i), tr("Play as"))
+                            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                this.play_as(&uuid);
+                                cx.notify();
+                            })),
+                    );
+                }
                 let uuid = a.uuid.clone();
-                actions = actions.child(
-                    button(ElementId::named_usize("alt-account-play", i), tr("Play as")).on_click(
+                let out = button(ElementId::named_usize("alt-account-out", i), tr("Sign out"));
+                actions = actions.child(if busy {
+                    off(out)
+                } else {
+                    out.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        this.remove_account(&uuid);
+                        cx.notify();
+                    }))
+                });
+            }
+            let menu_open = open_menu.as_deref() == Some(a.uuid.as_str());
+            let toggle_uuid = a.uuid.clone();
+            let dots = div()
+                .id(ElementId::named_usize("alt-account-menu", i))
+                .reach()
+                .size(px(tokens::CONTROL))
+                .rounded(tokens::r(tokens::R_CONTROL))
+                .when(menu_open, |d| d.bg(rgb(palette().hover)))
+                .hover(|s| s.bg(rgb(palette().hover)))
+                .cursor_pointer()
+                .flex()
+                .items_center()
+                .justify_center()
+                .tooltip(crate::glass_ui::tip(tr("Account options")))
+                .child(crate::glass_ui::icon(
+                    "more-vertical",
+                    16.,
+                    rgb(palette().muted).into(),
+                ))
+                .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    if this.ui.settings.account_menu.as_deref() == Some(toggle_uuid.as_str()) {
+                        this.ui.settings.account_menu = None;
+                    } else {
+                        this.ui.settings.account_menu = Some(toggle_uuid.clone());
+                    }
+                    cx.notify();
+                }));
+            let menu = menu_open.then(|| {
+                let item = |id: (&'static str, usize), label: &'static str, danger: bool| {
+                    div()
+                        .id(id)
+                        .reach()
+                        .flex()
+                        .items_center()
+                        .px(px(10.))
+                        .py(px(7.))
+                        .rounded(tokens::r(tokens::R_SMALL))
+                        .text_size(px(tokens::LABEL))
+                        .text_color(rgb(if danger {
+                            palette().danger
+                        } else {
+                            palette().text
+                        }))
+                        .cursor_pointer()
+                        .hover(|s| s.bg(rgb(palette().hover)))
+                        .child(label)
+                };
+                let mut list = div()
+                    .id(ElementId::named_usize("alt-account-menu-list", i))
+                    .w(px(180.))
+                    .p(px(6.))
+                    .rounded(tokens::r(tokens::R_CONTROL))
+                    .border_1()
+                    .border_color(palette().input_edge())
+                    .bg(rgb(palette().raised))
+                    .shadow_lg()
+                    .occlude()
+                    .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .flex()
+                    .flex_col();
+                if !plays {
+                    let uuid = a.uuid.clone();
+                    list = list.child(
+                        item(("alt-account-default", i), tr("Set default"), false).on_click(
+                            cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                this.ui.settings.account_menu = None;
+                                this.play_as(&uuid);
+                                cx.notify();
+                            }),
+                        ),
+                    );
+                }
+                if i > 0 {
+                    let uuid = a.uuid.clone();
+                    list = list.child(item(("alt-account-up", i), tr("Move up"), false).on_click(
                         cx.listener(move |this, _: &ClickEvent, _, cx| {
-                            this.play_as(&uuid);
+                            this.ui.settings.account_menu = None;
+                            this.move_account(&uuid, -1);
                             cx.notify();
                         }),
-                    ),
-                );
-            }
-            let uuid = a.uuid.clone();
-            let out = button(ElementId::named_usize("alt-account-out", i), tr("Sign out"));
-            actions = actions.child(if busy {
-                off(out)
-            } else {
-                out.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    if this.account_locked() {
-                        this.say_account_locked();
-                        return;
-                    }
-                    let Some(generation) = this.begin_auth_job(&uuid) else {
-                        return;
-                    };
-                    let (tx, uuid) = (this.tx.clone(), uuid.clone());
-                    std::thread::spawn(move || {
-                        let mut accounts = Accounts::load();
-                        let _ = tx.send(Msg::AccountProgress(
-                            uuid.clone(),
-                            generation,
-                            account::session::Phase::SigningOut,
-                        ));
-                        let result = accounts
-                            .remove(account::store(), &uuid)
-                            .and_then(|()| accounts.save())
-                            .map(|()| accounts.has_owner(account::store()));
-                        let _ = tx.send(Msg::AccountRemoved(uuid, generation, result));
+                    ));
+                }
+                if i + 1 < total {
+                    let uuid = a.uuid.clone();
+                    list = list.child(
+                        item(("alt-account-down", i), tr("Move down"), false).on_click(
+                            cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                this.ui.settings.account_menu = None;
+                                this.move_account(&uuid, 1);
+                                cx.notify();
+                            }),
+                        ),
+                    );
+                }
+                {
+                    let uuid = a.uuid.clone();
+                    list = list.child(
+                        item(("alt-account-skins", i), tr("Manage skins"), false).on_click(
+                            cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                this.ui.settings.account_menu = None;
+                                if this.accounts.selected.as_deref() != Some(uuid.as_str()) {
+                                    if this.account_locked() {
+                                        this.say_account_locked();
+                                        cx.notify();
+                                        return;
+                                    }
+                                    this.play_as(&uuid);
+                                }
+                                this.navigate(crate::frame::Page::Skins);
+                                cx.notify();
+                            }),
+                        ),
+                    );
+                }
+                {
+                    let uuid = a.uuid.clone();
+                    let remove = item(("alt-account-remove", i), tr("Remove"), true);
+                    list = list.child(if busy {
+                        off(remove)
+                    } else {
+                        remove.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            this.ui.settings.account_menu = None;
+                            this.remove_account(&uuid);
+                            cx.notify();
+                        }))
                     });
-                    cx.notify();
-                }))
+                }
+                gpui::deferred(
+                    div()
+                        .absolute()
+                        .top(px(tokens::CONTROL + 6.))
+                        .right_0()
+                        .child(list),
+                )
+                .with_priority(1)
             });
+            actions = actions.child(div().relative().child(dots).children(menu));
             // As in `row`: when the head and name would get narrower than a short line, the
             // buttons go under them instead of squeezing the name to a letter a line.
             let who = div()
@@ -678,7 +834,12 @@ impl Launcher {
             ),
         );
         if asking {
-            let input = self.field(servers_page::Field::InstanceName, "Profile name", 250., cx);
+            let input = self.field(
+                servers_page::Field::InstanceName,
+                tr("Profile name"),
+                250.,
+                cx,
+            );
             setup = div().flex().flex_col().gap(px(12.)).child(setup).child(
                 div().flex().items_center().gap(px(8.)).child(input).child(
                     button("alt-create-empty", tr("Create profile")).on_click(cx.listener(
@@ -739,60 +900,6 @@ impl Launcher {
             .child(group(profiles))
     }
 
-    fn settings_mods(&mut self, cx: &mut Context<Self>) -> Div {
-        let allowed = self.settings.native_mods_allowed_at.is_some();
-        let (about, actions) = match (allowed, self.storage_revoke) {
-            (false, _) => (
-                tr("Not allowed. Sunrise asks the first time a mod needs it, and builds or runs nothing before you answer.").to_string(),
-                div(),
-            ),
-            (true, None) => (
-                tr("Allowed. Mods with native code run inside the game with the same access to your computer as the game has.").to_string(),
-                div().child(match self.storage_counting {
-                    Some(_) => off(button("alt-native-revoke", tr("Counting your mods…"))),
-                    None => button("alt-native-revoke", tr("Take back…"))
-                        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.storage_count_native(cx))),
-                }),
-            ),
-            (true, Some((mods, setups))) => (
-                match (mods, setups) {
-                    (0, _) => tr("No mod with native code is turned on. Sunrise will ask again before the next one.").to_string(),
-                    (1, _) => tr("Sunrise will ask again before running your one mod with native code. Your mod selection won't change.").to_string(),
-                    (_, 1) => trf(
-                        "Sunrise will ask again before running your {mods} mods with native code. Your mod selection won't change.",
-                        &[("mods", &mods.to_string())],
-                    ),
-                    _ => trf(
-                        "Sunrise will ask again before running {mods} mods with native code in {profiles} profiles. Your mod selection won't change.",
-                        &[("mods", &mods.to_string()), ("profiles", &setups.to_string())],
-                    ),
-                },
-                div()
-                    .child(
-                        button("alt-native-keep", tr("Keep it")).on_click(cx.listener(
-                            |this, _: &ClickEvent, _, cx| {
-                                this.storage_revoke = None;
-                                cx.notify();
-                            },
-                        )),
-                    )
-                    .child(danger(button("alt-native-revoke-yes", tr("Take it back"))).on_click(
-                        cx.listener(|this, _: &ClickEvent, _, cx| this.turn_off_native_mods(cx)),
-                    )),
-            ),
-        };
-        let mut native = row(tr("Native code"), about, actions);
-        if let Some(error) = self.storage_revoke_error.clone() {
-            native = div()
-                .flex()
-                .flex_col()
-                .gap(px(8.))
-                .child(native)
-                .child(hint(error));
-        }
-        group(vec![native])
-    }
-
     fn settings_storage(&mut self, cx: &mut Context<Self>) -> Div {
         let game = backend::game_home();
         let files = row(
@@ -822,15 +929,19 @@ impl Launcher {
             tr("Counting…")
         };
         let clear_all = button("alt-storage-clear-all", tr("Clear all…"));
+        let size = total.map_or_else(|| uncounted.to_string(), storage::format_bytes);
+        let detail = trf(
+            "{size}. Files Sunrise can fetch or make again; your worlds, mods and settings are never part of it.",
+            &[("size", &size)],
+        );
+        let detail = if size.ends_with('…') {
+            detail.replacen("….", "…", 1)
+        } else {
+            detail
+        };
         let mut cache = vec![row(
             tr("Downloads kept for reuse"),
-            trf(
-                "{size}. Files Sunrise can fetch or make again; your worlds, mods and settings are never part of it.",
-                &[(
-                    "size",
-                    &total.map_or_else(|| uncounted.to_string(), storage::format_bytes),
-                )],
-            ),
+            detail,
             div()
                 .child(
                     button("alt-storage-recount", tr("Recount")).on_click(cx.listener(
@@ -1358,8 +1469,9 @@ impl Launcher {
         // menus do. 87 languages don't fit on a page as buttons.
         let opener = button("alt-language", now)
             .gap(px(8.))
-            .child(crate::blocks::icon(
-                "chevron-down",
+            .child(crate::glass_ui::fold_chevron(
+                "settings-language",
+                picking,
                 13.,
                 rgb(palette().muted).into(),
             ))

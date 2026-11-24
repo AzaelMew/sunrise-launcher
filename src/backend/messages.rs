@@ -104,6 +104,24 @@ pub enum Msg {
         PathBuf,
         Box<Result<crate::browser::sunrise::Switched, String>>,
     ),
+    ProviderSwitchProgress(crate::browser::sunrise::InstallProgress),
+    /// The staged switch is proved; `true` publishes it.
+    ProviderSwitchQuestion(
+        Box<crate::browser::sunrise::ProviderSwitchPreview>,
+        std::sync::mpsc::Sender<bool>,
+    ),
+    /// `Ok(true)` when the profile now uses the new port, `Ok(false)` when it stayed.
+    ProviderSwitched(PathBuf, Result<bool, String>),
+    /// Several reviewed projects provide a required dependency; the reply names the chosen one.
+    ProviderChoice(
+        Box<crate::browser::sunrise::ProviderChoiceNeeded>,
+        std::sync::mpsc::Sender<Option<String>>,
+    ),
+    /// A release's verified publisher changed; `true` accepts the new one.
+    PublisherChangeQuestion(
+        Box<crate::browser::sunrise::PublisherChangeQuestion>,
+        std::sync::mpsc::Sender<bool>,
+    ),
     ReceiptAcknowledged(PathBuf, Result<bool, String>),
     JarConsent {
         jars: Vec<sunrise_launcher_smod::manifest::JarRef>,
@@ -116,11 +134,14 @@ pub enum Msg {
         registry_notices: Vec<String>,
         prepared: Box<Result<Command, String>>,
     },
-    /// The native packages read for the consent request identified by this folder Arc.
-    NativeConsentRead(Arc<PathBuf>, Vec<crate::native_status::BuildInput>),
     /// Where the native-mods build is.
     NativeProgress(crate::native_mods::Step),
-    NativeRegistryConsent(crate::native_mods::Consent, std::sync::mpsc::Sender<bool>),
+    /// A build reached native mods that neither came verified from the registry nor were
+    /// confirmed: the unreviewed-code warning answers `reply` (true builds them).
+    ConfirmUnreviewed(
+        Vec<crate::native_mods::Unreviewed>,
+        std::sync::mpsc::Sender<bool>,
+    ),
     /// The native-mods build ended: the version built, or why not.
     Native(Result<String, crate::native_mods::Failed>),
     /// An imported game build is installed (`build_import::install`): its version, or why not.

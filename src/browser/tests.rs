@@ -378,6 +378,29 @@ fn a_download_is_kept_only_when_its_checksum_matches() {
 }
 
 #[test]
+fn a_release_tag_may_hold_slashes_but_never_dot_segments() {
+    // Asset URLs from the live registry index. GitHub allows `/` in a tag, and the registry's
+    // release workflow tags a package of a multi-mod repository `<id>/v<version>`, unescaped.
+    for live in [
+        "https://github.com/arismoko/horizon-ports/releases/download/fallingtrees/v0.5.1/fallingtrees-0.5.1.smod",
+        "https://github.com/arismoko/horizon-ports/releases/download/fallingtrees/v0.5.1/fallingtrees-0.5.1.smod.sigstore.json",
+        "https://github.com/arismoko/additional_lights/releases/download/v3.1.6/additional_lights-3.1.6.smod",
+        "https://github.com/arismoko/macaws_paths_and_pavings/releases/download/v0.2.5/mcwpaths-0.2.5.smod.sigstore.json",
+        "https://github.com/arismoko/yungs_extras/releases/download/v0.3.1/yungsextras-0.3.1.smod",
+    ] {
+        assert!(download::github_release_asset(live), "{live}");
+    }
+    for bad in [
+        "https://github.com/acme/zoom/releases/download/fallingtrees/../v0.5.1/z.smod",
+        "https://github.com/acme/zoom/releases/download/v1/%2E%2e/z.smod",
+        "https://github.com/acme/zoom/releases/download/v1//z.smod",
+        "https://github.com/acme/zoom/releases/download/z.smod",
+    ] {
+        assert!(!download::github_release_asset(bad), "{bad}");
+    }
+}
+
+#[test]
 fn downloads_refused_before_any_byte() {
     let body = b"x";
     let mut file = file_for(body, true);
@@ -393,7 +416,6 @@ fn downloads_refused_before_any_byte() {
         "https://github.com/acme/zoom/releases/download/v1/../z.smod",
         "https://github.com/acme/zoom/releases/download/v1/z.smod?x=1",
         "https://github.com.evil.example/a/b/releases/download/v1/z.smod",
-        "https://github.com/acme/zoom/releases/download/v1/a/z.smod",
     ] {
         let mut file = file_for(body, true);
         file.url = bad.into();
@@ -453,4 +475,22 @@ fn a_projects_own_licence_reads_as_words() {
     // An SPDX id is what people search licences by: it stays as it is.
     assert_eq!(license_label("LGPL-3.0-only"), "LGPL-3.0-only");
     assert_eq!(license_label("LicenseRef-"), "LicenseRef-");
+}
+
+#[test]
+fn pack_categories_are_modrinths_category_and_feature_tags_for_the_type() {
+    let tags = json!([
+        {"name": "vanilla-like", "project_type": "resourcepack", "header": "categories"},
+        {"name": "16x", "project_type": "resourcepack", "header": "resolutions"},
+        {"name": "audio", "project_type": "resourcepack", "header": "features"},
+        {"name": "combat", "project_type": "resourcepack", "header": "categories"},
+        {"name": "magic", "project_type": "mod", "header": "categories"},
+        {"name": "low", "project_type": "shader", "header": "performance impact"}
+    ]);
+    assert_eq!(
+        modrinth::pack_categories(&tags, "resourcepack"),
+        ["combat", "vanilla-like", "audio"]
+    );
+    assert_eq!(modrinth::pack_categories(&tags, "mod"), ["magic"]);
+    assert!(modrinth::pack_categories(&tags, "shader").is_empty());
 }

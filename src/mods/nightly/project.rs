@@ -117,7 +117,7 @@ impl Launcher {
                         tr("Check for update").into()
                     };
                     let b = primary("nightly-update-source", label).w_full();
-                    if locked || checking {
+                    if locked || checking || (offline && candidate.is_some()) {
                         dim(b)
                     } else if candidate.is_some() {
                         let id = origin.id.clone();
@@ -133,6 +133,25 @@ impl Launcher {
                         }))
                     }
                 });
+            let recheck = origin
+                .source
+                .as_ref()
+                .filter(|source| !matches!(source.track, SourceTrack::Pinned))
+                .filter(|_| {
+                    offline
+                        && self.source_update_version(origin).is_some()
+                        && !locked
+                        && !self.source_updates_checking()
+                })
+                .map(|_| {
+                    let origin = origin.clone();
+                    button("nightly-recheck-source", tr("Check for update"))
+                        .w_full()
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.check_source_updates(Some(&origin));
+                            cx.notify();
+                        }))
+                });
             let controls = installed_row.as_ref().map(|row| {
                 let cells = model::cells(
                     row,
@@ -140,7 +159,6 @@ impl Launcher {
                     self.build_here()
                         .filter(|_| row.on)
                         .and_then(|run| run.state_of(&row.id, &row.version)),
-                    self.settings.native_mods_allowed_at.is_some(),
                 );
                 self.installed_project_controls(row, &cells, locked, cx)
             });
@@ -150,6 +168,7 @@ impl Launcher {
                 .gap(px(8.))
                 .child(install_fact(short_sha(&origin.commit), pending))
                 .children(update)
+                .children(recheck)
                 .children(controls)
                 .children(
                     self.source_update_notice(Some(&origin.id))
@@ -392,11 +411,10 @@ impl Launcher {
     }
 
     pub(crate) fn source_already_allowed(&self, question: &SourceQuestion) -> bool {
-        self.settings.native_mods_allowed_at.is_some()
-            && question.sources().all(|(_, origin)| {
-                source_grant(origin)
-                    .is_some_and(|grant| self.settings.source_mod_grants.contains(&grant))
-            })
+        question.sources().all(|(_, origin)| {
+            source_grant(origin)
+                .is_some_and(|grant| self.settings.source_mod_grants.contains(&grant))
+        })
     }
 
     pub(crate) fn source_consent_body(&self, cx: &mut Context<Self>) -> Option<Div> {
@@ -607,9 +625,6 @@ pub(in crate::mods) fn source_error(
         }
         SourceError::Catalogue(why) => why.clone(),
         SourceError::Unproved(_) => tr("Couldn't add this mod").into(),
-        SourceError::Busy => {
-            tr("Sunrise is building mods right now. Try again when that finishes.").into()
-        }
         SourceError::Changed(_) => {
             tr("The profile or game build changed. Check the source again; nothing was changed.")
                 .into()

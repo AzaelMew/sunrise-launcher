@@ -19,22 +19,24 @@ const HOSTS: [&str; 3] = [
 ];
 /// `https://github.com/<owner>/<repo>/releases/download/<tag>/<name>`: a release asset of a mod's
 /// own repository, which the registry's index lists once its release passed the registry's checks
-/// (docs/modding/src/reference/registry-index.md). Only the address is vouched for here; the index's SHA-256 is what
-/// pins the bytes, and [`save`] refuses any other.
+/// (docs/modding/src/reference/registry-index.md). GitHub allows `/` in a tag, so `<tag>` is every
+/// segment between `download` and the asset's name, as the registry reads it. Only the address is
+/// vouched for here; the index's SHA-256 is what pins the bytes, and [`save`] refuses any other.
 pub fn github_release_asset(url: &str) -> bool {
     let Some(rest) = url.strip_prefix("https://github.com/") else {
         return false;
     };
     let parts: Vec<&str> = rest.split('/').collect();
-    let plain = |p: &str| {
+    // A URL parser reads `%2e` as `.`, so `%2e%2e` would climb out of the release like `..`.
+    let plain = |p: &&str| {
+        let dots = p.to_ascii_lowercase().replace("%2e", ".");
         !p.is_empty()
-            && p != "."
-            && p != ".."
+            && dots != "."
+            && dots != ".."
             && p.bytes()
                 .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'+' | b'%'))
     };
-    matches!(parts[..], [owner, repo, "releases", "download", tag, name]
-        if [owner, repo, tag, name].iter().all(|p| plain(p)))
+    matches!(parts[..], [_, _, "releases", "download", _, .., _]) && parts.iter().all(plain)
 }
 
 /// Bigger than any pack these sources serve (Modrinth caps uploads at 500 MiB).

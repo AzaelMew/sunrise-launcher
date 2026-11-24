@@ -177,7 +177,14 @@ impl SettingsBatch {
 #[derive(Default)]
 struct SettingsOutcome {
     restart: BTreeSet<String>,
+    /// True when a restart-requiring save succeeded while `running: true` against a stale
+    /// non-running cached status, so the next `"running"` poll is catch-up rather than a restart.
+    restart_needs_stop: bool,
     problem: Option<Problem>,
+    /// Setting keys from the batch that produced `problem`; an unrelated later save keeps it.
+    failed_keys: BTreeSet<String>,
+    /// Recently saved values kept visible until a fresh settings read replaces them.
+    saved: HashMap<String, String>,
 }
 
 impl Servers {
@@ -483,7 +490,8 @@ impl Servers {
         true
     }
 
-    /// A setting as shown: what was just asked for, else what server.toml holds.
+    /// A setting as shown: what was just asked for, else what was recently saved awaiting a fresh
+    /// read, else what server.toml holds.
     fn shown(&self, section: &str, key: &str) -> String {
         let full = format!("{section}.{key}");
         if let Some((_, value)) = self
@@ -492,6 +500,14 @@ impl Servers {
             .chain(self.applying.iter())
             .filter(|batch| self.open.as_ref() == Some(&batch.dir))
             .find_map(|batch| batch.changes.iter().find(|(key, _)| *key == full))
+        {
+            return value.clone();
+        }
+        if let Some(value) = self
+            .open
+            .as_ref()
+            .and_then(|dir| self.settings_outcomes.get(dir))
+            .and_then(|outcome| outcome.saved.get(&full))
         {
             return value.clone();
         }
@@ -526,17 +542,37 @@ impl Servers {
 
     /// Whether the displayed settings need re-reading now that this write has finished.
     fn finish_settings(&mut self, dir: &Path, result: Result<Applied, Problem>) -> bool {
-        self.applying = None;
+        let finished = self.applying.take();
         self.modes.remove(dir);
+        let cached_running = self
+            .statuses
+            .get(dir)
+            .is_some_and(|status| status.phase == "running");
         let outcome = self.settings_outcomes.entry(dir.to_path_buf()).or_default();
         match result {
             Ok(applied) => {
-                outcome.problem = None;
-                if applied.running {
+                if let Some(batch) = finished {
+                    for (key, value) in batch.changes {
+                        outcome.failed_keys.remove(&key);
+                        outcome.saved.insert(key, value);
+                    }
+                }
+                if outcome.failed_keys.is_empty() {
+                    outcome.problem = None;
+                }
+                if applied.running && !applied.restart.is_empty() {
                     outcome.restart.extend(applied.restart);
+                    if !cached_running {
+                        outcome.restart_needs_stop = true;
+                    }
                 }
             }
-            Err(problem) => outcome.problem = Some(problem),
+            Err(problem) => {
+                outcome.problem = Some(problem);
+                outcome.failed_keys = finished
+                    .map(|batch| batch.changes.into_iter().map(|(key, _)| key).collect())
+                    .unwrap_or_default();
+            }
         }
         self.open.as_deref() == Some(dir) && !self.queued.iter().any(|batch| batch.dir == dir)
     }
@@ -545,19 +581,26 @@ impl Servers {
         if self.statuses.get(&dir) == Some(&status) {
             return false;
         }
-        if status.phase == "running"
-            && self
+        if status.phase == "running" {
+            let was_stopped = self
                 .statuses
                 .get(&dir)
-                .is_some_and(|old| old.phase != "running")
-        {
-            // A fresh start took that server's saved settings, not another server's.
+                .is_some_and(|old| old.phase != "running");
             if let Some(outcome) = self.settings_outcomes.get_mut(&dir) {
-                outcome.restart.clear();
+                if outcome.restart_needs_stop {
+                    // The status poll just caught up to the server that was already running
+                    // when the save happened; keep the restart notice until a real restart.
+                    outcome.restart_needs_stop = false;
+                } else if was_stopped {
+                    // A fresh start took that server's saved settings, not another server's.
+                    outcome.restart.clear();
+                }
             }
-            if self.open.as_ref() == Some(&dir) {
+            if was_stopped && self.open.as_ref() == Some(&dir) {
                 self.pvp = None;
             }
+        } else if let Some(outcome) = self.settings_outcomes.get_mut(&dir) {
+            outcome.restart_needs_stop = false;
         }
         self.statuses.insert(dir, status);
         true
@@ -567,6 +610,7 @@ impl Servers {
         if let Some(dir) = settings_for {
             if let Some(outcome) = self.settings_outcomes.get_mut(dir) {
                 outcome.problem = None;
+                outcome.failed_keys.clear();
             }
         } else {
             self.problem = None;
@@ -813,6 +857,13 @@ impl Launcher {
             } => {
                 if s.open.as_ref() == Some(&dir) && s.details_request == request {
                     s.config = config;
+                    let pending_for_dir = s.applying.as_ref().is_some_and(|b| b.dir == dir)
+                        || s.queued.iter().any(|b| b.dir == dir);
+                    if !pending_for_dir {
+                        if let Some(outcome) = s.settings_outcomes.get_mut(&dir) {
+                            outcome.saved.clear();
+                        }
+                    }
                     s.backups = backups;
                     s.service = Some(service);
                     true
@@ -1204,8 +1255,18 @@ impl Launcher {
         // Home's Add server line is in the glass look already; the other fields follow with
         // their pages.
         // The dark appearance draws every field in the glass look.
+        let profile_field = matches!(f, Field::InstanceName | Field::InstanceGroup);
         let glass = t.glass;
-        let base = if glass {
+        let base = if profile_field {
+            crate::frame::input(focused)
+                .when(invalid, |d| {
+                    d.border_color(gpui::rgb(crate::paint::palette().danger))
+                })
+                .h(px(crate::tokens::FIELD))
+                .px(px(12.))
+                .text_size(px(crate::tokens::BODY))
+                .text_color(gpui::rgb(crate::paint::palette().text))
+        } else if glass {
             // The mods filter and the log search sit by buttons: the mockup's small `FIELD`, as
             // tall as they are.
             crate::glass_ui::field(focused, invalid)
@@ -1224,20 +1285,13 @@ impl Launcher {
                             .rounded(px(crate::glass_ui::rad(radius::CONTROL)))
                     },
                 )
-                // The instance dialog's are the large `FIELD_LG`: 48 px, 15 px text, white at 6 %,
-                // 10 % while typed in.
-                .when(
-                    !invalid
-                        && matches!(
-                            f,
-                            Field::InstanceName | Field::InstanceGroup | Field::Name | Field::Seed
-                        ),
-                    |d| {
-                        d.h(px(48.))
-                            .text_size(px(15.))
-                            .bg(crate::glass_ui::white(if focused { 0.1 } else { 0.06 }))
-                    },
-                )
+                // The server creation dialog's are the large `FIELD_LG`: 48 px, 15 px text, white
+                // at 6 %, 10 % while typed in.
+                .when(!invalid && matches!(f, Field::Name | Field::Seed), |d| {
+                    d.h(px(48.))
+                        .text_size(px(15.))
+                        .bg(crate::glass_ui::white(if focused { 0.1 } else { 0.06 }))
+                })
                 // The accent's hex: `h-9 w-[96px] rounded-[10px] px-3 text-[13px] font-medium`.
                 .when(f == Field::AccentHex, |d| {
                     d.h(px(36.))
@@ -1278,6 +1332,11 @@ impl Launcher {
                 .bg(t.surface)
                 .text_size(px(theme::UI.px))
         };
+        let line_theme = if profile_field {
+            crate::mods::field_theme(t)
+        } else {
+            t
+        };
         let field = base
             .id(SharedString::from(format!("field-{f:?}")))
             .track_focus(&handle)
@@ -1286,7 +1345,7 @@ impl Launcher {
             .cursor_text()
             .child(line_edit::content(
                 self.servers.text(f),
-                &t,
+                &line_theme,
                 focused,
                 selected,
                 f == Field::Token,
@@ -1778,6 +1837,131 @@ mod tests {
         assert!(matches!(problem.fix.as_ref(), Some(Fix::UsePort(25578))));
         servers.dismiss_problem(Some(&one));
         assert!(servers.settings_outcomes[&one].problem.is_none());
+    }
+
+    #[test]
+    fn saved_value_stays_visible_while_another_batch_is_queued_without_mutating_snapshot() {
+        let dir = PathBuf::from("one");
+        let mut servers = Servers::new();
+        let snapshot = serde_json::json!({"world": {"view_distance": 8, "difficulty": "normal"}});
+        servers.open = Some(dir.clone());
+        servers.config = Some(snapshot.clone());
+
+        // Start saving view_distance 8 -> 9, then queue an unrelated difficulty edit.
+        servers.queue_setting(dir.clone(), "world.view_distance", "9".into());
+        let first = servers.next_settings_batch().unwrap();
+        servers.queue_setting(dir.clone(), "world.difficulty", "hard".into());
+
+        // First batch finishes while the second is still queued: snapshot stays untouched,
+        // yet view_distance still shows 9 so a follow-up `+` submits 10 rather than 9.
+        assert!(!servers.finish_settings(
+            &first.dir,
+            Ok(Applied {
+                applied: vec!["world.view_distance".into()],
+                restart: vec![],
+                running: false,
+            })
+        ));
+        assert_eq!(servers.config.as_ref(), Some(&snapshot));
+        assert_eq!(servers.shown("world", "view_distance"), "9");
+        assert_eq!(servers.shown("world", "difficulty"), "hard");
+
+        // A newer queued edit to view_distance sits on top of the saved value.
+        servers.queue_setting(dir.clone(), "world.view_distance", "10".into());
+        assert_eq!(servers.shown("world", "view_distance"), "10");
+    }
+
+    #[test]
+    fn unrelated_successful_save_keeps_earlier_failed_save_error_until_fixed_or_dismissed() {
+        let one = PathBuf::from("one");
+        let two = PathBuf::from("two");
+        let mut servers = Servers::new();
+        servers.open = Some(one.clone());
+
+        // Port save fails while difficulty save is queued on the same server.
+        servers.queue_setting(one.clone(), "server.port", "25577".into());
+        let port_batch = servers.next_settings_batch().unwrap();
+        servers.queue_setting(one.clone(), "world.difficulty", "hard".into());
+        servers.open = Some(two);
+        assert!(
+            !servers.finish_settings(&port_batch.dir, Err(Problem::plain("port is unavailable")))
+        );
+
+        // Unrelated difficulty save succeeds: the port error stays visible.
+        let diff_batch = servers.next_settings_batch().unwrap();
+        assert!(!servers.finish_settings(
+            &diff_batch.dir,
+            Ok(Applied {
+                applied: vec!["world.difficulty".into()],
+                restart: vec![],
+                running: false,
+            })
+        ));
+        servers.open = Some(one.clone());
+        assert_eq!(
+            servers.settings_outcomes[&one]
+                .problem
+                .as_ref()
+                .map(|p| p.message.as_str()),
+            Some("port is unavailable")
+        );
+
+        // Saving server.port successfully clears the port error.
+        servers.queue_setting(one.clone(), "server.port", "25578".into());
+        let retry_port = servers.next_settings_batch().unwrap();
+        assert!(servers.finish_settings(
+            &retry_port.dir,
+            Ok(Applied {
+                applied: vec!["server.port".into()],
+                restart: vec![],
+                running: false,
+            })
+        ));
+        assert!(servers.settings_outcomes[&one].problem.is_none());
+    }
+
+    #[test]
+    fn late_running_poll_after_stale_stopped_status_keeps_restart_notice_until_real_restart() {
+        let dir = PathBuf::from("one");
+        let mut servers = Servers::new();
+        servers.open = Some(dir.clone());
+        let status_with = |phase: &str| Status {
+            phase: phase.into(),
+            ..Status::unknown()
+        };
+
+        // Cached status is still stale "stopped" when a port save reports running=true.
+        servers.note_status(dir.clone(), status_with("stopped"));
+        servers.queue_setting(dir.clone(), "server.port", "25577".into());
+        let batch = servers.next_settings_batch().unwrap();
+        assert!(servers.finish_settings(
+            &batch.dir,
+            Ok(Applied {
+                applied: vec![],
+                restart: vec!["server.port".into()],
+                running: true,
+            })
+        ));
+        assert!(servers.settings_outcomes[&dir]
+            .restart
+            .contains("server.port"));
+
+        // The next poll catches up to "running" for the same game: restart notice must stay.
+        assert!(servers.note_status(dir.clone(), status_with("running")));
+        assert!(
+            servers.settings_outcomes[&dir]
+                .restart
+                .contains("server.port"),
+            "catch-up running poll must not clear restart notice"
+        );
+
+        // Once the server actually stops and starts again, the notice clears.
+        assert!(servers.note_status(dir.clone(), status_with("stopped")));
+        assert!(servers.settings_outcomes[&dir]
+            .restart
+            .contains("server.port"));
+        assert!(servers.note_status(dir.clone(), status_with("running")));
+        assert!(servers.settings_outcomes[&dir].restart.is_empty());
     }
 
     #[cfg(unix)]

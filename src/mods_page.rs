@@ -6,7 +6,7 @@ use super::*;
 use std::path::PathBuf;
 use std::sync::Arc;
 use sunrise_launcher::browser::{installed, sunrise};
-use sunrise_launcher::{native_status, profile_txn::Identity};
+use sunrise_launcher::native_status;
 
 pub(crate) mod install;
 
@@ -20,6 +20,8 @@ pub(super) enum Event {
 
 pub(super) struct Mods {
     pub(super) installed_list: cull::Cull,
+    pub(super) discover_list: cull::Cull,
+    pub(super) pack_discover_list: cull::Cull,
     /// The game folder the browser installs into and lists: the selected instance's.
     home: ModsHome,
     pub(crate) installs: install::Installs,
@@ -50,11 +52,6 @@ impl ModsHome {
     fn current(&self) -> PathBuf {
         self.0.clone().unwrap_or_else(backend::game_home)
     }
-
-    fn begin_build_consent(&mut self, selected: PathBuf) -> Arc<PathBuf> {
-        self.follow_home(Some(selected));
-        Arc::new(self.current())
-    }
 }
 
 impl Mods {
@@ -69,14 +66,12 @@ impl Mods {
         self.home.current()
     }
 
-    pub(super) fn begin_build_consent(&mut self, selected: PathBuf) -> Arc<PathBuf> {
-        self.home.begin_build_consent(selected)
-    }
-
     pub(super) fn new() -> Self {
         let (tx, rx) = crate::wake::channel();
         Self {
             installed_list: cull::Cull::default(),
+            discover_list: cull::Cull::default(),
+            pack_discover_list: cull::Cull::default(),
             home: ModsHome::default(),
             installs: install::Installs::default(),
             message: None,
@@ -96,15 +91,13 @@ impl Launcher {
         let mut loaded = Vec::new();
         let mut github_feedback = None;
         let mut refused_here = None;
+        let mut failed_here = None;
+        let mut removed_here = None;
         let mut done = false;
         while let Ok(event) = self.mods.rx.try_recv() {
             changed = true;
             let m = &mut self.mods;
             match event {
-                Event::Registry(install::Worker::Native(question, reply)) => {
-                    self.reset_install_question_sheet();
-                    self.pending_consent = Some(PendingConsent::Registry(question, reply));
-                }
                 Event::Registry(install::Worker::Source(question, reply)) => {
                     self.receive_source_question(question, reply);
                 }
@@ -117,6 +110,12 @@ impl Launcher {
                     }
                     if let Some(error) = m.installs.mutation_failure(&event) {
                         m.message = Some(Err(error));
+                    }
+                    if let Some(failed) = m.installs.install_failure(&event) {
+                        failed_here = Some(failed);
+                    }
+                    if let Some((home, ids)) = m.installs.removed(&event) {
+                        removed_here = Some((home.to_owned(), ids.to_vec()));
                     }
                     if m.installs.handle(event) {
                         done = true;
@@ -150,8 +149,29 @@ impl Launcher {
                 }
             }
         }
+        if let Some((home, ids)) = removed_here {
+            self.mods_leave_removed(&home, &ids);
+        }
         if let Some(feedback) = github_feedback {
             self.show_github_result(feedback);
+        }
+        // A failed install says why in a dialog, naming its profile when another one is shown.
+        if let Some((profile, why)) = failed_here {
+            let here = self.selected_instance().is_some_and(|i| {
+                i.home == profile.home && i.id == profile.id && i.incarnation == profile.incarnation
+            });
+            let why = if here {
+                why
+            } else {
+                format!(
+                    "{}\n\n{why}",
+                    trf(
+                        "Installing to {profile} failed.",
+                        &[("profile", &profile.name)]
+                    )
+                )
+            };
+            self.open_notice(why, None);
         }
         // The profile that asked hears why at once; another one finds it on the mod's page.
         if let Some((profile, refused)) = refused_here {
@@ -164,14 +184,8 @@ impl Launcher {
         self.start_registry_queue() || changed
     }
 
-    /// Turns a Sunrise mod on after the worker admits its profile. A consent answer
-    /// can only act on the profile (and incarnation) that asked the question.
-    pub(super) fn enable_registry_mod(
-        &mut self,
-        e: &installed::Entry,
-        home: PathBuf,
-        approved: Option<Identity>,
-    ) {
+    /// Turns a Sunrise mod on after the worker admits its profile.
+    pub(super) fn enable_registry_mod(&mut self, e: &installed::Entry, home: PathBuf) {
         let Some(id) = sunrise::mod_id(e) else {
             return;
         };
@@ -187,27 +201,6 @@ impl Launcher {
             self.mods.message = Some(Err(format!("{title} was taken down: {}", revoked.reason)));
             return;
         }
-        if let Some(identity) = approved {
-            self.enable_native_in(home, identity, id.into(), title.into());
-        } else if native_status::is_native_file(&e.file)
-            && self.settings.native_mods_allowed_at.is_none()
-        {
-            match Identity::of(&home) {
-                Ok(identity) => {
-                    self.pending_consent =
-                        Some(PendingConsent::Toggle(Box::new(native_consent::Toggle {
-                            entry: e.clone(),
-                            home,
-                            identity,
-                        })));
-                }
-                Err(error) => self.mods.message = Some(Err(error)),
-            }
-        } else {
-            self.enable_one_in(home, id.into(), title.into());
-        }
+        self.enable_one_in(home, id.into(), title.into());
     }
 }
-
-#[cfg(test)]
-mod tests;

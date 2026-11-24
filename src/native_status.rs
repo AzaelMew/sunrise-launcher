@@ -58,26 +58,6 @@ pub fn state(enabled: &[Mod], built: Option<&[Mod]>) -> State {
     }
 }
 
-/// Check at acceptance and again after session and jar preparation, just before handing off
-/// the game command. An allowed Play is not permission cached for the duration of preparation.
-pub fn check_permission(version: &str) -> Result<(), String> {
-    check_permission_in(version, &backend::data_dir())
-}
-
-fn check_permission_in(version: &str, data: &Path) -> Result<(), String> {
-    if native_mods::is_native(version)
-        && backend::Settings::load_from(data)
-            .native_mods_allowed_at
-            .is_none()
-    {
-        return Err(crate::i18n::tr(
-            "This profile plays a build made with native mods, and native mods are turned off. Choose another game build for it in Versions.",
-        )
-        .into());
-    }
-    Ok(())
-}
-
 /// A `.smod`'s digest as a build records it: its files without the uses table, which the
 /// mod tool packs beside the source but the build's own digest of the copied source never holds
 /// (else every mod packed with a uses table read Needs rebuild after each build).
@@ -187,69 +167,6 @@ fn enabled_files(home: &Path) -> Vec<(std::path::PathBuf, Mod)> {
     out
 }
 
-/// One package a build takes in, as the native-code question names it.
-#[derive(Clone, Debug, PartialEq)]
-pub struct BuildInput {
-    /// The manifest's id: the key of the on/off list.
-    pub id: String,
-    /// The package's file name in the game folder.
-    pub file: String,
-    pub registry: Registry,
-}
-
-/// What the registry says about a package's file.
-#[derive(Clone, Debug, PartialEq)]
-pub enum Registry {
-    /// This very file is listed for the package's id, under this name and artwork.
-    Listed { name: String, icon: Option<String> },
-    /// The registry lists no such file for that id.
-    NotListed,
-    /// The registry has taken this file or its project down, even if it still lists it.
-    Revoked,
-    /// The registry hasn't answered in this run, so nothing says whose file it is.
-    Unchecked,
-}
-
-/// What a build of game folder `home` takes in ([`enabled`]'s packages), each named from its own
-/// file: a package gets the registry's name only when its bytes are a file `index` lists for its
-/// id and has not taken down. A package someone put there under a registry mod's id stays an
-/// id and a file name.
-/// `index` is the registry's own answer (`sunrise::fetched_index`), never the copy kept in the
-/// game folder, which a package there could have written to list itself.
-pub fn build_inputs(
-    home: &Path,
-    index: Option<&sunrise_launcher_smod::index::Index>,
-) -> Vec<BuildInput> {
-    enabled_files(home)
-        .into_iter()
-        .map(|(path, (id, _, _))| {
-            let registry = match index {
-                None => Registry::Unchecked,
-                Some(index) => match sunrise_launcher_smod::index::sha256_file(&path) {
-                    Ok(hash) if index.revoked(&id, &hash).is_some() => Registry::Revoked,
-                    Ok(hash) => index
-                        .project(&id)
-                        .filter(|p| {
-                            p.versions
-                                .iter()
-                                .any(|v| v.file.sha256.eq_ignore_ascii_case(&hash))
-                        })
-                        .map_or(Registry::NotListed, |p| Registry::Listed {
-                            name: p.name.clone(),
-                            icon: p.icon.clone(),
-                        }),
-                    Err(_) => Registry::NotListed,
-                },
-            };
-            let file = path
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            BuildInput { id, file, registry }
-        })
-        .collect()
-}
-
 /// The native mods turned on in game folder `home` that pin Sunrise commit `revision`.
 pub fn pinning(home: &Path, revision: &str) -> Vec<String> {
     bundles_on(home)
@@ -307,6 +224,8 @@ pub struct Installed {
     pub version: String,
     pub internals: Vec<String>,
     pub origin: Option<crate::github_mods::Origin>,
+    /// The native mod that serves this content package (`served_by`), when it names one.
+    pub served_by: Option<String>,
     /// The validated package icon, or the package error (the file remains removable).
     pub icon: Result<Option<Arc<sunrise_launcher_smod::icon::Icon>>, String>,
 }
@@ -388,6 +307,10 @@ fn untracked_in(
                 version,
                 internals,
                 origin,
+                served_by: package
+                    .as_ref()
+                    .ok()
+                    .and_then(|p| p.manifest.served_by.clone()),
                 icon: package.map(|p| p.icon.map(Arc::new)),
             })
         })
@@ -692,7 +615,6 @@ mod tests {
         // Another mod called `ruby` is on, as its own file or its content says.
         mod_list::set_enabled(home.path(), "ruby", true).unwrap();
         assert!(enabled(home.path()).is_empty());
-        assert!(build_inputs(home.path(), None).is_empty());
     }
 
     #[test]
@@ -715,18 +637,6 @@ mod tests {
         assert_eq!(found.len(), 1);
         assert!(found[0].icon.is_err());
         assert!(enabled(home.path()).is_empty());
-    }
-
-    #[test]
-    fn permission_taken_back_while_preparing_blocks_native_spawn() {
-        let data = tempfile::tempdir().unwrap();
-        let settings = data.path().join("settings.json");
-        fs::write(&settings, r#"{"native_mods_allowed_at":123}"#).unwrap();
-        assert_eq!(check_permission_in("native-test", data.path()), Ok(()));
-
-        fs::write(&settings, "{}").unwrap();
-        assert!(check_permission_in("native-test", data.path()).is_err());
-        assert_eq!(check_permission_in("v1.2.3", data.path()), Ok(()));
     }
 
     #[test]
@@ -871,6 +781,23 @@ mod tests {
     }
 
     #[test]
+    fn a_content_package_served_by_a_native_mod_is_listed_with_its_host() {
+        let home = tempfile::tempdir().unwrap();
+        let folder = home.path().join(sunrise_launcher_smod::mod_list::DIR);
+        fs::create_dir_all(&folder).unwrap();
+        let bytes = sunrise_launcher_smod::manifest::Package::write_files(
+            "id='runes'\nname='Runes'\nversion='1.0.0'\napi='0.2'\nserved_by='java_host'\n",
+            &[],
+        )
+        .unwrap();
+        fs::write(folder.join("runes.smod"), bytes).unwrap();
+        let listed = untracked_content(home.path());
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].id, "runes");
+        assert_eq!(listed[0].served_by.as_deref(), Some("java_host"));
+    }
+
+    #[test]
     fn content_package_changes_invalidate_the_local_mods_view() {
         let home = tempfile::tempdir().unwrap();
         let folder = home.path().join(sunrise_launcher_smod::mod_list::DIR);
@@ -940,6 +867,7 @@ mod tests {
             entries: vec![installed::Entry {
                 source: SourceId::Sunrise,
                 project: "registry".into(),
+                mod_id: None,
                 slug: "registry".into(),
                 title: "Registry mod".into(),
                 kind: Kind::Mod,
@@ -951,6 +879,7 @@ mod tests {
                 dependency: false,
                 verdict: None,
                 install_hold: None,
+                repository: None,
             }],
         }
         .save(&home)
@@ -1007,85 +936,6 @@ mod tests {
         );
         assert!(files[0].icon.is_err(), "a refusal is not an absent icon");
         fs::remove_dir_all(home).unwrap();
-    }
-
-    #[test]
-    fn a_local_package_never_takes_the_name_of_the_registry_mod_with_its_id() {
-        use std::io::Write;
-        let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/smod/tests/index");
-        let mut index = sunrise_launcher_smod::index::Index::parse(
-            &fs::read_to_string(fixtures.join("index-v1.json")).unwrap(),
-        )
-        .unwrap();
-        assert_eq!(index.project("coords_hud").unwrap().name, "Coordinates HUD");
-        let home = tempfile::tempdir().unwrap();
-        let folder = home.path().join(native_mods::INSTALLED);
-        fs::create_dir_all(&folder).unwrap();
-        // A package of someone's own under the registry mod's id, in a file named like its file.
-        let local = folder.join("coords_hud-0.1.0.smod");
-        let pin = "a".repeat(40);
-        let mut zip = zip::ZipWriter::new(fs::File::create(&local).unwrap());
-        let manifest = format!(
-            "id = 'coords_hud'\nname = 'Coordinates HUD'\nversion = '0.1.0'\napi = '0.2'\ncapabilities = ['registries']\n[native]\ngame = '26.3'\nsunrise = '{pin}'\nmixins = '{pin}'\n"
-        );
-        for (name, bytes) in [
-            ("sunrise-mod.toml", manifest.as_str()),
-            ("Cargo.toml", "[package]\nname = 'x'\nversion = '1'\n"),
-            ("src/lib.rs", "pub fn hooks() {}\n"),
-        ] {
-            zip.start_file(name, zip::write::SimpleFileOptions::default())
-                .unwrap();
-            zip.write_all(bytes.as_bytes()).unwrap();
-        }
-        zip.finish().unwrap();
-        mod_list::set_enabled(home.path(), "coords_hud", true).unwrap();
-        let input = |registry: Registry| BuildInput {
-            id: "coords_hud".into(),
-            file: "coords_hud-0.1.0.smod".into(),
-            registry,
-        };
-        let not_listed = [input(Registry::NotListed)];
-        let unchecked = [input(Registry::Unchecked)];
-        assert_eq!(build_inputs(home.path(), Some(&index)), not_listed);
-        assert_eq!(build_inputs(home.path(), None), unchecked);
-        // The same bytes as a file the registry lists for that id: the registry's name.
-        let listed = &mut index
-            .projects
-            .iter_mut()
-            .find(|p| p.id == "coords_hud")
-            .unwrap();
-        listed.versions[0].file.sha256 = sunrise_launcher_smod::index::sha256_file(&local).unwrap();
-        assert_eq!(
-            build_inputs(home.path(), Some(&index)),
-            [input(Registry::Listed {
-                name: "Coordinates HUD".into(),
-                icon: index.project("coords_hud").unwrap().icon.clone(),
-            })]
-        );
-        assert_eq!(build_inputs(home.path(), None), unchecked);
-        let hash = index.project("coords_hud").unwrap().versions[0]
-            .file
-            .sha256
-            .clone();
-        // The exact bytes still appear in the catalogue, but the takedown wins.
-        index.revoked.push(sunrise_launcher_smod::index::Revoked {
-            id: "coords_hud".into(),
-            sha256: Some(hash.clone()),
-            reason: "Test takedown".into(),
-            date: String::new(),
-        });
-        assert_eq!(
-            build_inputs(home.path(), Some(&index)),
-            [input(Registry::Revoked)]
-        );
-        assert_eq!(build_inputs(home.path(), None), unchecked);
-        index.revoked.clear();
-        // Listed under another project's id only: still not the registry's.
-        for p in &mut index.projects {
-            let own = p.id == "coords_hud";
-            p.versions[0].file.sha256 = if own { "0".repeat(64) } else { hash.clone() };
-        }
-        assert_eq!(build_inputs(home.path(), Some(&index)), not_listed);
     }
 
     #[test]
@@ -1235,17 +1085,5 @@ mod tests {
         assert!(!is_native_file("sunrise-native-mods-old/x.smod"));
         assert!(!is_native_file("sunrise-mods/zoom.smod"));
         assert!(!is_native_file("resourcepacks/x.zip"));
-    }
-
-    /// Old switches and notices never count as native-code consent.
-    #[test]
-    fn old_settings_with_the_native_mods_switch_still_read() {
-        let s: backend::Settings =
-            serde_json::from_str(r#"{"native_mods": true, "native_mods_noticed": true}"#).unwrap();
-        assert!(s.native_mods_allowed_at.is_none());
-        let s: backend::Settings = serde_json::from_str(r#"{"native_mods": false}"#).unwrap();
-        assert!(s.native_mods_allowed_at.is_none());
-        let saved = serde_json::to_string(&s).unwrap();
-        assert!(!saved.contains("native_mods"), "{saved}");
     }
 }

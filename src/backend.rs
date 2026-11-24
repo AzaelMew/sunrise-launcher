@@ -56,13 +56,15 @@ pub struct Release {
 }
 
 mod look_settings;
-mod native_permission;
-pub(crate) use native_permission::{NativeGrant, PermissionFence};
 mod play_log;
 mod release_assets;
 mod release_notes;
+mod settings_file;
 pub use release_assets::PLATFORMS;
 pub use release_notes::{markdown_to_text, notes_summary};
+pub use settings_file::{
+    allow_native_files, allow_native_files_in, allowed_native_files, allowed_native_files_in,
+};
 
 /// `a == b`, in a const context.
 const fn same(a: &str, b: &str) -> bool {
@@ -799,6 +801,17 @@ fn game_releases_from(
     base: &crate::native_mods::sdk_cache::Base,
     keys: &[sunrise_launcher_release_verify::PublicKey],
 ) -> Vec<Release> {
+    let (mut releases, target) = game_releases_candidates(list, settings);
+    if let Some(target) = target {
+        check_sdk_offers(&mut releases, target, base, keys);
+    }
+    releases
+}
+
+fn game_releases_candidates(
+    list: &[serde_json::Value],
+    settings: &Settings,
+) -> (Vec<Release>, Option<&'static str>) {
     let assets = game_assets_for(
         std::env::consts::OS,
         native_windows_architecture(),
@@ -809,16 +822,56 @@ fn game_releases_from(
         (Some(asset), fallback)
     });
     let target = installation::sdk_target(selected_game_architecture(settings));
-    let mut releases = game_releases_with(
+    let releases = game_releases_with(
         list,
         &[asset, fallback, target.map(|_| sunrise_launcher_sdk::INDEX)],
     );
-    if let Some(target) = target {
-        for release in &mut releases {
-            check_sdk_offer(release, target, base, keys);
-        }
+    (releases, target)
+}
+
+fn is_sdk_candidate(release: &Release) -> bool {
+    asset_installed(release, Some(sunrise_launcher_sdk::INDEX), None).is_some()
+}
+
+/// Strip unverified SDK-only candidates so known static builds can be published immediately.
+fn static_only_offers(candidates: &[Release]) -> Vec<Release> {
+    candidates
+        .iter()
+        .cloned()
+        .map(|mut release| {
+            if is_sdk_candidate(&release) {
+                release.asset = None;
+            }
+            release
+        })
+        .collect()
+}
+
+/// Verify all SDK-only candidates in `releases` (in parallel when there are multiple) and return
+/// whether at least one candidate remained offered.
+fn check_sdk_offers(
+    releases: &mut [Release],
+    target: &str,
+    base: &crate::native_mods::sdk_cache::Base,
+    keys: &[sunrise_launcher_release_verify::PublicKey],
+) -> bool {
+    let mut sdk_releases: Vec<&mut Release> = releases
+        .iter_mut()
+        .filter(|release| is_sdk_candidate(release))
+        .collect();
+    if sdk_releases.is_empty() {
+        return false;
     }
-    releases
+    if sdk_releases.len() == 1 {
+        check_sdk_offer(sdk_releases[0], target, base, keys);
+    } else {
+        std::thread::scope(|scope| {
+            for release in &mut sdk_releases {
+                scope.spawn(|| check_sdk_offer(release, target, base, keys));
+            }
+        });
+    }
+    sdk_releases.iter().any(|release| release.asset.is_some())
 }
 
 /// Only SDK candidates need an index lookup; static archives take precedence without one.
@@ -828,7 +881,7 @@ fn check_sdk_offer(
     base: &crate::native_mods::sdk_cache::Base,
     keys: &[sunrise_launcher_release_verify::PublicKey],
 ) {
-    if asset_installed(release, Some(sunrise_launcher_sdk::INDEX), None).is_some()
+    if is_sdk_candidate(release)
         && !crate::native_mods::sdk_cache::offers_game(
             &release.tag,
             release.nightly.as_deref().unwrap_or(&release.tag),
@@ -839,6 +892,30 @@ fn check_sdk_offer(
     {
         release.asset = None;
     }
+}
+
+/// Like [`check_sdk_offer`], but preserves lookup/verification errors for explicit installs instead
+/// of turning them into a missing-build message.
+fn check_sdk_offer_strict(
+    release: &mut Release,
+    target: &str,
+    base: &crate::native_mods::sdk_cache::Base,
+    keys: &[sunrise_launcher_release_verify::PublicKey],
+) -> Result<(), String> {
+    if is_sdk_candidate(release) {
+        match crate::native_mods::sdk_cache::check_game_offer(
+            &release.tag,
+            release.nightly.as_deref().unwrap_or(&release.tag),
+            target,
+            base,
+            keys,
+        ) {
+            Ok(true) => {}
+            Ok(false) => release.asset = None,
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+    Ok(())
 }
 
 /// Parse game releases with explicit asset preferences; SDK candidates are checked after parsing.
@@ -1348,33 +1425,114 @@ pub(crate) fn download_cancellable(
     stop: Option<&crate::native_mods::Cancellation>,
     progress: &impl Fn(f32),
 ) -> Result<(), String> {
-    if let Some(stop) = stop {
-        stop.check()?;
-    }
-    let response = get(url)?;
-    let size = match size {
-        0 => response
-            .header("Content-Length")
-            .and_then(|n| n.parse().ok())
-            .unwrap_or(0),
-        n => n,
+    let Some(stop) = stop else {
+        let response = get(url)?;
+        let size = match size {
+            0 => response
+                .header("Content-Length")
+                .and_then(|n| n.parse().ok())
+                .unwrap_or(0),
+            n => n,
+        };
+        let name = url.rsplit('/').next().unwrap_or(url);
+        return save_checked(response.into_reader(), size, name, sha256, to, progress)
+            .map_err(Into::into);
     };
-    let name = url.rsplit('/').next().unwrap_or(url);
-    let result = match stop {
-        Some(stop) => save_checked(
-            stop.reader(response.into_reader()),
-            size,
-            name,
-            sha256,
-            to,
-            progress,
-        ),
-        None => save_checked(response.into_reader(), size, name, sha256, to, progress),
-    };
-    if let Err(error) = result {
-        if let Some(stop) = stop {
-            stop.check()?;
+    stop.check()?;
+    // Run the blocking HTTP request and body reads on a worker thread so `stop` interrupts a
+    // stalled header or body read without adding a transfer timeout.
+    let (head_tx, head_rx) = std::sync::mpsc::sync_channel::<Result<u64, String>>(1);
+    let (body_tx, body_rx) = std::sync::mpsc::sync_channel::<Result<Vec<u8>, String>>(4);
+    let worker_url = url.to_owned();
+    let worker_stop = stop.clone();
+    std::thread::spawn(move || {
+        let response = match get(&worker_url) {
+            Ok(response) => response,
+            Err(error) => {
+                let _ = head_tx.send(Err(error));
+                return;
+            }
+        };
+        let resolved_size = match size {
+            0 => response
+                .header("Content-Length")
+                .and_then(|n| n.parse().ok())
+                .unwrap_or(0),
+            n => n,
+        };
+        if head_tx.send(Ok(resolved_size)).is_err() {
+            return;
         }
+        let mut reader = response.into_reader();
+        let mut buf = vec![0u8; 1 << 16];
+        loop {
+            if worker_stop.is_stopped() {
+                return;
+            }
+            match reader.read(&mut buf) {
+                Ok(0) => return,
+                Ok(n) => {
+                    if body_tx.send(Ok(buf[..n].to_vec())).is_err() {
+                        return;
+                    }
+                }
+                Err(error) => {
+                    let _ = body_tx.send(Err(error.to_string()));
+                    return;
+                }
+            }
+        }
+    });
+    let size = loop {
+        stop.check()?;
+        match head_rx.recv_timeout(std::time::Duration::from_millis(50)) {
+            Ok(Ok(resolved_size)) => break resolved_size,
+            Ok(Err(error)) => {
+                stop.check()?;
+                return Err(error);
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                stop.check()?;
+                return Err("Download worker stopped unexpectedly".into());
+            }
+        }
+    };
+    struct InterruptibleReader<'a> {
+        rx: std::sync::mpsc::Receiver<Result<Vec<u8>, String>>,
+        stop: &'a crate::native_mods::Cancellation,
+        buf: Vec<u8>,
+        pos: usize,
+    }
+    impl Read for InterruptibleReader<'_> {
+        fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+            while self.pos >= self.buf.len() {
+                self.stop.check().map_err(std::io::Error::other)?;
+                match self.rx.recv_timeout(std::time::Duration::from_millis(50)) {
+                    Ok(Ok(chunk)) => {
+                        self.buf = chunk;
+                        self.pos = 0;
+                    }
+                    Ok(Err(error)) => return Err(std::io::Error::other(error)),
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return Ok(0),
+                }
+            }
+            let n = (self.buf.len() - self.pos).min(out.len());
+            out[..n].copy_from_slice(&self.buf[self.pos..self.pos + n]);
+            self.pos += n;
+            Ok(n)
+        }
+    }
+    let name = url.rsplit('/').next().unwrap_or(url);
+    let reader = InterruptibleReader {
+        rx: body_rx,
+        stop,
+        buf: Vec::new(),
+        pos: 0,
+    };
+    if let Err(error) = save_checked(reader, size, name, sha256, to, progress) {
+        stop.check()?;
         return Err(error.into());
     }
     Ok(())
@@ -2845,15 +3003,25 @@ impl PrepareStep {
     }
 }
 
-/// The step the preparation under way is at (`PrepareStep::ALL`'s index).
-static PREPARE_STEP: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+/// The step the preparation under way is at and when it began, kept together so readers never
+/// pair a new step with the previous step's start time.
+static PREPARE_STATE: std::sync::Mutex<(PrepareStep, Option<std::time::Instant>)> =
+    std::sync::Mutex::new((PrepareStep::Files, None));
 
 pub fn prepare_step() -> PrepareStep {
-    PrepareStep::ALL[PREPARE_STEP.load(std::sync::atomic::Ordering::Relaxed)]
+    prepare_step_state().0
+}
+
+pub fn prepare_step_state() -> (PrepareStep, Option<std::time::Instant>) {
+    *PREPARE_STATE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 pub fn set_prepare_step(step: PrepareStep) {
-    PREPARE_STEP.store(step as usize, std::sync::atomic::Ordering::Relaxed);
+    *PREPARE_STATE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = (step, Some(std::time::Instant::now()));
 }
 
 /// Checks what the preparation needs and picks how to run it. PLAY.txt describes the same
@@ -3870,8 +4038,9 @@ fn launcher_update_from(releases: &[Release], own: &str) -> Option<Release> {
         .cloned()
 }
 
-/// Both release lists and both update kinds: the game's releases published first, and neither feed's failure stopping the other's check.
-pub fn releases_and_updates(on_releases: impl FnOnce(Result<Vec<Release>, String>)) -> Updates {
+/// Both release lists and both update kinds: static game releases published before launcher
+/// updates and SDK lookups, and neither feed's failure stopping the other's check.
+pub fn releases_and_updates(on_releases: impl FnMut(Result<Vec<Release>, String>)) -> Updates {
     releases_and_updates_with(
         release_list,
         installed,
@@ -3888,17 +4057,52 @@ fn releases_and_updates_with(
     installed: impl FnOnce() -> Vec<String>,
     channel: Option<crate::instances::Channel>,
     launcher: impl FnOnce() -> Result<Option<Release>, LauncherCheckError>,
-    on_releases: impl FnOnce(Result<Vec<Release>, String>),
+    on_releases: impl FnMut(Result<Vec<Release>, String>),
+) -> Updates {
+    releases_and_updates_with_sdk(
+        load,
+        installed,
+        channel,
+        launcher,
+        on_releases,
+        |candidates, target| {
+            let base = crate::native_mods::sdk_cache::Base::from_env();
+            let keys = sunrise_launcher_release_verify::trusted_keys_for(GAME_REPO);
+            check_sdk_offers(candidates, target, &base, &keys)
+        },
+    )
+}
+
+fn releases_and_updates_with_sdk(
+    load: impl FnOnce() -> Result<Vec<serde_json::Value>, String>,
+    installed: impl FnOnce() -> Vec<String>,
+    channel: Option<crate::instances::Channel>,
+    launcher: impl FnOnce() -> Result<Option<Release>, LauncherCheckError>,
+    mut on_releases: impl FnMut(Result<Vec<Release>, String>),
+    resolve_sdk: impl FnOnce(&mut [Release], &str) -> bool,
 ) -> Updates {
     let mut updates = Updates::default();
+    let mut pending_sdk = None;
+    let mut installed_versions = None;
     match load() {
         Ok(list) => {
-            let releases = game_releases(&list);
-            let installed_versions = installed();
+            let settings = Settings::load();
+            let (candidates, target) = game_releases_candidates(&list, &settings);
+            let has_sdk = target.is_some() && candidates.iter().any(is_sdk_candidate);
+            let static_offers = if has_sdk {
+                static_only_offers(&candidates)
+            } else {
+                candidates.clone()
+            };
+            let versions = installed();
             updates.sunrise = channel
-                .and_then(|c| sunrise_update(&releases, &installed_versions, c))
+                .and_then(|c| sunrise_update(&static_offers, &versions, c))
                 .cloned();
-            on_releases(Ok(releases));
+            on_releases(Ok(static_offers));
+            if let Some(target) = target.filter(|_| has_sdk) {
+                pending_sdk = Some((candidates, target));
+                installed_versions = Some(versions);
+            }
         }
         Err(e) => {
             on_releases(Err(e.clone()));
@@ -3908,6 +4112,14 @@ fn releases_and_updates_with(
     match launcher() {
         Ok(release) => updates.launcher = release,
         Err(e) => updates.launcher_error = Some(e),
+    }
+    if let (Some((mut candidates, target)), Some(versions)) = (pending_sdk, installed_versions) {
+        if resolve_sdk(&mut candidates, target) {
+            updates.sunrise = channel
+                .and_then(|c| sunrise_update(&candidates, &versions, c))
+                .cloned();
+            on_releases(Ok(candidates));
+        }
     }
     updates
 }
@@ -3928,7 +4140,43 @@ pub fn install_tag(tag: &str, as_update: bool, progress: impl Fn(f32)) -> Result
         // The exact tag is sufficient to install, but not to decide which builds other profiles use.
         return install_selected_release(&dev, None, as_update, download);
     }
-    install_offered_tag(&releases()?, tag, as_update, download)
+    if tag == "latest" {
+        return install_offered_tag(&releases()?, tag, as_update, download);
+    }
+    let list = release_list()?;
+    install_explicit_tag_from(
+        &list,
+        tag,
+        as_update,
+        &Settings::load(),
+        &crate::native_mods::sdk_cache::Base::from_env(),
+        &sunrise_launcher_release_verify::trusted_keys_for(GAME_REPO),
+        download,
+    )
+}
+
+fn install_explicit_tag_from(
+    list: &[serde_json::Value],
+    tag: &str,
+    as_update: bool,
+    settings: &Settings,
+    base: &crate::native_mods::sdk_cache::Base,
+    keys: &[sunrise_launcher_release_verify::PublicKey],
+    install: impl FnOnce(&Release) -> Result<InstallOutcome, String>,
+) -> Result<String, String> {
+    let (candidates, target) = game_releases_candidates(list, settings);
+    let mut release = release_selection::by_tag(&candidates, tag)
+        .cloned()
+        .ok_or_else(|| format!("No Sunrise release is tagged {tag}."))?;
+    if let Some(target) = target {
+        check_sdk_offer_strict(&mut release, target, base, keys)?;
+    }
+    let has_unresolved_sdk = target.is_some()
+        && candidates
+            .iter()
+            .any(|r| r.tag != release.tag && is_sdk_candidate(r));
+    let catalog = (!has_unresolved_sdk).then_some(candidates.as_slice());
+    install_selected_release(&release, catalog, as_update, install)
 }
 
 fn install_offered_tag(
@@ -5079,8 +5327,8 @@ pub struct Settings {
     /// a theme being one look.
     #[serde(default)]
     pub appearance: Appearance,
-    /// The player has read what the "I'm playing" ping holds (`telemetry::PING`): on the
-    /// first-run question, or on the Play page once if they answered that before it existed.
+    /// The player has answered the data switches in Settings, where the "I'm playing" ping's
+    /// text (`telemetry::PING`) stands beside them.
     #[serde(default)]
     pub ping_notice_seen: bool,
     /// The player turned the anonymous "I'm playing" ping off (`telemetry::PING`): the game is
@@ -5135,9 +5383,6 @@ pub struct Settings {
     /// The window's language. Unset follows the system's (`i18n::Language::system`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<crate::i18n::Language>,
-    /// First-use native code permission for this launcher install, Unix seconds.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub native_mods_allowed_at: Option<u64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub source_mod_grants: Vec<SourceModGrant>,
     /// Managed cache limit in GiB (unset: 25; zero: no automatic cleanup). Player data isn't cache.
@@ -5201,15 +5446,6 @@ impl Settings {
 }
 
 impl Settings {
-    /// Remember an explicit approval; merely finding an installed toolchain never grants it.
-    pub fn allow_native_mods(&mut self) -> Result<(), String> {
-        let time = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|error| error.to_string())?
-            .as_secs();
-        self.set_native_permission(&data_dir(), Some(time))
-    }
-
     pub fn load() -> Self {
         Self::load_from(&data_dir())
     }
@@ -8510,6 +8746,58 @@ esac"#
         );
         assert_eq!(result.unwrap_err(), crate::native_mods::CANCELLED);
         assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    fn cancelling_download_interrupts_stalled_read() {
+        use std::io::Write as _;
+        use std::time::{Duration, Instant};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (sent_tx, sent_rx) = std::sync::mpsc::channel();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut req = [0u8; 512];
+            let _ = stream.read(&mut req);
+            let _ = stream.write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Length: 100000\r\nConnection: close\r\n\r\npartial",
+            );
+            let _ = stream.flush();
+            let _ = sent_tx.send(());
+            // Keep the socket open without sending any more bytes until the test finishes.
+            let _ = done_rx.recv();
+        });
+
+        let stop = crate::native_mods::Cancellation::default();
+        let cancel = stop.clone();
+        let stopper = std::thread::spawn(move || {
+            sent_rx.recv().unwrap();
+            std::thread::sleep(Duration::from_millis(50));
+            cancel.stop();
+        });
+
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("archive.tar.gz");
+        let started = Instant::now();
+        let result = download_cancellable(
+            &format!("http://{addr}/archive.tar.gz"),
+            100_000,
+            &"0".repeat(64),
+            &dest,
+            Some(&stop),
+            &|_| {},
+        );
+        let elapsed = started.elapsed();
+        stopper.join().unwrap();
+        let _ = done_tx.send(());
+        let _ = server.join();
+        assert_eq!(result.unwrap_err(), crate::native_mods::CANCELLED);
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "stalled read should cancel promptly, took {elapsed:?}"
+        );
+        assert!(!dest.exists());
     }
 }
 

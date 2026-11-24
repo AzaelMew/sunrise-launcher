@@ -44,7 +44,13 @@ fn recovery_refuses_a_required_dependent_but_keeps_an_optional_one() {
     let list = home.join(mod_list::FILE);
     let original = b"mod.blur:true\r\nmod.map:true\r\nkey.blur.toggle:key.keyboard.x";
     fs::write(&list, original).unwrap();
-    let error = turn_off_mods(home, &off(), |_, _| unreachable!()).unwrap_err();
+    let error = turn_off_mods(
+        home,
+        &off(),
+        &capture_native_digests(home),
+        |_, _| unreachable!(),
+    )
+    .unwrap_err();
     assert_eq!(error, "Map needs Motion Blur. No mods were turned off.");
     assert_eq!(fs::read(&list).unwrap(), original);
 
@@ -59,7 +65,13 @@ fn recovery_refuses_a_required_dependent_but_keeps_an_optional_one() {
             false,
             &format!("[dependencies]\nblur={declaration}\n"),
         );
-        turn_off_mods(home, &off(), |mut file, bytes| file.write_all(bytes)).unwrap();
+        turn_off_mods(
+            home,
+            &off(),
+            &capture_native_digests(home),
+            |mut file, bytes| file.write_all(bytes),
+        )
+        .unwrap();
         assert_eq!(
             fs::read(&list).unwrap(),
             b"mod.map:true\r\nkey.blur.toggle:key.keyboard.x"
@@ -69,10 +81,22 @@ fn recovery_refuses_a_required_dependent_but_keeps_an_optional_one() {
     assert!(turn_off_mods(
         home,
         &[("blur".into(), "1.0.0".into())],
+        &capture_native_digests(home),
         |_, _| unreachable!()
     )
     .unwrap_err()
     .contains("No mods were turned off"));
+    assert_eq!(fs::read(&list).unwrap(), original);
+
+    // Replacing a local archive with different bytes at the same version must be refused.
+    let digests_before = capture_native_digests(home);
+    recovery_mod(home, "blur", "Motion Blur (replaced)", true, "");
+    let replaced_err =
+        turn_off_mods(home, &off(), &digests_before, |_, _| unreachable!()).unwrap_err();
+    assert_eq!(
+        replaced_err,
+        "The enabled mods changed. No mods were turned off."
+    );
     assert_eq!(fs::read(&list).unwrap(), original);
 }
 
@@ -153,15 +177,16 @@ fn recovery_refuses_a_saved_world_and_never_begins_play() {
         }
         .start_with_recovery(
             Some(ModRecovery {
-                build: Arc::new(FailedBuild(Build::First(
-                    FirstBuild::installed(BUILD).unwrap(),
-                ))),
+                build: Arc::new(FailedBuild {
+                    build: Build::First(FirstBuild::installed(BUILD).unwrap()),
+                    digests: capture_native_digests(&home),
+                }),
                 mods: off(),
             }),
             || FirstBuild::installed(BUILD),
             |_| unreachable!("recovery must not start a game"),
             |_| unreachable!(),
-            (&native_mods::Cancellation::default(), None),
+            &native_mods::Cancellation::default(),
             |_| unreachable!("recovery must stop before preparing or starting the game"),
         )
     };
@@ -187,7 +212,13 @@ fn recovery_proceeds_in_a_profile_with_no_saved_worlds() {
     let list = home.join(mod_list::FILE);
     recovery_mod(home, "blur", "Motion Blur", true, "");
     fs::write(&list, b"mod.blur:true\nmod.map:true\n").unwrap();
-    turn_off_mods(home, &off(), |mut file, bytes| file.write_all(bytes)).unwrap();
+    turn_off_mods(
+        home,
+        &off(),
+        &capture_native_digests(home),
+        |mut file, bytes| file.write_all(bytes),
+    )
+    .unwrap();
     assert_eq!(fs::read(&list).unwrap(), b"mod.map:true\n");
 }
 
@@ -205,7 +236,10 @@ fn recovery_refuses_a_save_whose_last_load_did_not_list_the_mod() {
     recovery_mod(home, "blur", "Motion Blur", true, "");
     let original = b"mod.blur:true\nmod.map:true\n";
     fs::write(&list, original).unwrap();
-    let error = turn_off_mods(home, &off(), |_, _| unreachable!("nothing is written")).unwrap_err();
+    let error = turn_off_mods(home, &off(), &capture_native_digests(home), |_, _| {
+        unreachable!("nothing is written")
+    })
+    .unwrap_err();
     assert_eq!(
         error,
         "Turning off these mods could remove content from: Lantern Lake. No mods were turned off."
@@ -221,13 +255,18 @@ fn a_failed_enable_list_write_does_not_replace_the_original() {
     let original = b"mod.blur:true\r\nkey.blur.toggle:key.keyboard.x\r\n";
     recovery_mod(home, "blur", "Motion Blur", true, "");
     fs::write(&list, original).unwrap();
-    let error = turn_off_mods(home, &off(), |mut file, bytes| {
-        file.write_all(&bytes[..10])?;
-        Err(io::Error::new(
-            io::ErrorKind::StorageFull,
-            "fixture disk full",
-        ))
-    })
+    let error = turn_off_mods(
+        home,
+        &off(),
+        &capture_native_digests(home),
+        |mut file, bytes| {
+            file.write_all(&bytes[..10])?;
+            Err(io::Error::new(
+                io::ErrorKind::StorageFull,
+                "fixture disk full",
+            ))
+        },
+    )
     .unwrap_err();
     assert!(error.contains("fixture disk full"));
     assert_eq!(fs::read(&list).unwrap(), original);
@@ -249,7 +288,13 @@ fn recovery_does_not_follow_or_replace_a_linked_enable_list() {
     recovery_mod(home, "blur", "Motion Blur", true, "");
     fs::write(&target, original).unwrap();
     std::os::unix::fs::symlink(&target, &list).unwrap();
-    assert!(turn_off_mods(home, &off(), |_, _| unreachable!()).is_err());
+    assert!(turn_off_mods(
+        home,
+        &off(),
+        &capture_native_digests(home),
+        |_, _| unreachable!()
+    )
+    .is_err());
     assert_eq!(fs::read_link(&list).unwrap(), target);
     assert_eq!(fs::read(&target).unwrap(), original);
 }
@@ -298,7 +343,10 @@ fn recovery_binds_first_play_and_refuses_a_result_from_before_switch() {
     let instance = instances::selection().unwrap();
     let cancelled = native_mods::Cancellation::default();
     let recover = |selection: Build| ModRecovery {
-        build: Arc::new(FailedBuild(selection)),
+        build: Arc::new(FailedBuild {
+            build: selection,
+            digests: capture_native_digests(&home),
+        }),
         mods: off(),
     };
     let refuses = |recovery, tag| {
@@ -313,7 +361,7 @@ fn recovery_binds_first_play_and_refuses_a_result_from_before_switch() {
             || FirstBuild::installed(tag),
             |_| unreachable!("stale result cannot start a game"),
             |_| unreachable!(),
-            (&cancelled, None),
+            &cancelled,
             |_| {},
         );
         assert!(
@@ -342,9 +390,12 @@ fn recovery_binds_first_play_and_refuses_a_result_from_before_switch() {
                 .verify(&profile, &mut Some(|| FirstBuild::installed(BEFORE)))
                 .unwrap()
                 .unwrap();
-            turn_off_mods(&home, &recovery.mods, |mut file, bytes| {
-                file.write_all(bytes)
-            })
+            turn_off_mods(
+                &home,
+                &recovery.mods,
+                &recovery.build.digests,
+                |mut file, bytes| file.write_all(bytes),
+            )
             .unwrap();
             selected
         };
@@ -363,16 +414,13 @@ fn recovery_binds_first_play_and_refuses_a_result_from_before_switch() {
                 &cancelled,
                 |_| {},
                 None,
-                None,
             )
             .unwrap();
         let switched = switch
             .publish_switch(
                 proof,
                 &cancelled,
-                vec![],
-                Default::default(),
-                None,
+                crate::managed_play::SwitchPublication::default(),
                 || Ok(()),
                 || Ok(()),
             )
@@ -460,14 +508,17 @@ fn play_checks_hash_only_takedowns_after_proving_the_actual_package() {
             &mut profile,
             || FirstBuild::installed(BUILD),
             |_, _| Ok(()),
-            (&cancellation, None),
+            &cancellation,
             |_| {},
-            || {
-                let binding = crate::profile_txn::references(&home).unwrap();
-                assert!(binding.targets.contains(BUILD));
-                assert!(binding.pointer.is_none());
-                revoked("lantern", old)
-            },
+            (
+                || {
+                    let binding = crate::profile_txn::references(&home).unwrap();
+                    assert!(binding.targets.contains(BUILD));
+                    assert!(binding.pointer.is_none());
+                    revoked("lantern", old)
+                },
+                || None,
+            ),
         )
         .unwrap();
     // The old hash-only takedown does not deny the current input. Neither it nor
@@ -480,9 +531,9 @@ fn play_checks_hash_only_takedowns_after_proving_the_actual_package() {
             &mut profile,
             || panic!("already bound"),
             |_, _| Ok(()),
-            (&cancellation, None),
+            &cancellation,
             |_| {},
-            || revoked("lantern", replaced),
+            (|| revoked("lantern", replaced), || None),
         )
         .expect_err("actual archive was taken down");
     assert!(String::from(error).contains("hash-only takedown fixture"));
@@ -533,18 +584,21 @@ fn play_checks_hash_only_takedowns_after_proving_the_actual_package() {
             &mut profile,
             || panic!("already bound"),
             |_, _| Ok(()),
-            (&cancellation, None),
+            &cancellation,
             |step| assert!(!matches!(step, Progress::Native(_)), "started native work"),
-            || {
-                let hash = index::sha256_file(&native).unwrap().to_ascii_uppercase();
-                listed.revoked.push(index::Revoked {
-                    id: "native_lantern".into(),
-                    sha256: Some(hash),
-                    reason: "exact native digest was taken down".into(),
-                    date: String::new(),
-                });
-                Some(Arc::new(listed))
-            },
+            (
+                || {
+                    let hash = index::sha256_file(&native).unwrap().to_ascii_uppercase();
+                    listed.revoked.push(index::Revoked {
+                        id: "native_lantern".into(),
+                        sha256: Some(hash),
+                        reason: "exact native digest was taken down".into(),
+                        date: String::new(),
+                    });
+                    Some(Arc::new(listed))
+                },
+                || None,
+            ),
         )
         .expect_err("native input was taken down");
     let error = String::from(error);
@@ -677,7 +731,7 @@ fn a_failed_first_download_can_be_followed_by_a_mod_change_and_play() {
         || panic!("resuming a saved choice"),
         |_| Ok(()),
         |_| Ok(()),
-        (&stop, None),
+        &stop,
         |_| {},
     ) else {
         panic!("the unavailable download launched");
@@ -710,7 +764,7 @@ fn a_failed_first_download_can_be_followed_by_a_mod_change_and_play() {
             || FirstBuild::installed(BUILD),
             |_| Ok(()),
             |_| Ok(()),
-            (&stop, None),
+            &stop,
             |_| {},
         )
         .unwrap();
@@ -811,9 +865,9 @@ fn windows_bound_x64_fallback_survives_pending_retry_and_committed_replay() {
                 backend::check_game_architecture(tag, variant, Arm64)
                     .map_or(Ok(()), |e| Err(e.into()))
             },
-            (&cancellation, None),
+            &cancellation,
             |_| {},
-            || None,
+            (|| None, || None),
         )
     };
     let mut profile = Profile::open(&home, None).unwrap();

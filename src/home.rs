@@ -153,12 +153,14 @@ impl HomeState {
     }
 
     /// Feather the scene just behind the text. There is no fill or outline on the header;
-    /// the picture stays unshaded away from the text and fades at all four edges.
+    /// the picture stays unshaded away from the text, and the shade is a wide, soft oval with
+    /// no edge to read as a box.
     pub(crate) fn profile_scrim(&self) -> impl IntoElement {
-        const BLUR: f32 = 24.;
+        const BLUR: f32 = 40.;
         let hero = self.hero.clone();
         let shade = gpui::BoxShadow {
-            color: Hsla::from(rgb(palette().hero.shade)).opacity(0.63),
+            color: Hsla::from(rgb(palette().hero.shade))
+                .opacity((palette().hero.shade_alpha + 0.05).min(1.)),
             offset: gpui::point(px(0.), px(0.)),
             blur_radius: px(BLUR),
             spread_radius: px(0.),
@@ -170,11 +172,10 @@ impl HomeState {
                 if let Some(hero) = hero.get() {
                     // At three blur radii in from each edge, the text is in the shadow's
                     // full-strength centre, above the opacity Paint uses to fit the ink.
-                    window.paint_drop_shadows(
-                        hero.dilate(px(3. * BLUR)),
-                        Default::default(),
-                        &[shade],
-                    );
+                    // Rounded to an oval: the text's corners still sit well inside it.
+                    let area = hero.dilate(px(3. * BLUR));
+                    let round = area.size.width.min(area.size.height) / 2.;
+                    window.paint_drop_shadows(area, gpui::Corners::all(round), &[shade]);
                 }
             },
         )
@@ -295,10 +296,12 @@ impl Launcher {
         let p = palette();
         let scenery = self.settings.scenery();
         let text = rgb(if scenery { p.hero.text } else { p.text });
+        // Centred over the page, so the profile fills the scene rather than its left half.
         let labels = div()
             .flex()
             .flex_col()
-            .self_start()
+            .items_center()
+            .self_center()
             .max_w_full()
             .child(
                 div()
@@ -328,6 +331,7 @@ impl Launcher {
             .child(
                 div()
                     .mt(px(if compact { 5. } else { 10. }))
+                    .max_w_full()
                     .text_size(px(tokens::BODY))
                     .text_color(text)
                     .truncate()
@@ -345,7 +349,7 @@ impl Launcher {
             )
             .children(receipt.then(|| {
                 crate::frame::button("home-build-changes", tr("Build changes"))
-                    .self_start()
+                    .self_center()
                     .mt(px(10.))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.open_build_changes(cx);
@@ -367,15 +371,25 @@ impl Launcher {
         let p = palette();
         let on = rgb(p.accent_on);
         // Xmilon's accent halo sits outside the button. Hover strengthens it without putting
-        // a veil over the gradient or its text.
+        // a veil over the gradient or its text. Inside, the glass controls' top highlight: a
+        // 1 px line of light along the upper edge, clear of the label.
         let glow = move |hover| {
-            vec![gpui::BoxShadow {
-                color: Hsla::from(rgb(p.play_glow)).opacity(if hover { 0.78 } else { 0.58 }),
-                offset: gpui::point(px(0.), px(if hover { 9. } else { 6. })),
-                blur_radius: px(if hover { 32. } else { 22. }),
-                spread_radius: px(-8.),
-                inset: false,
-            }]
+            vec![
+                gpui::BoxShadow {
+                    color: Hsla::from(rgb(p.play_glow)).opacity(if hover { 0.78 } else { 0.58 }),
+                    offset: gpui::point(px(0.), px(if hover { 9. } else { 6. })),
+                    blur_radius: px(if hover { 32. } else { 22. }),
+                    spread_radius: px(-8.),
+                    inset: false,
+                },
+                gpui::BoxShadow {
+                    color: gpui::white().opacity(0.28),
+                    offset: gpui::point(px(0.), px(1.)),
+                    blur_radius: px(0.),
+                    spread_radius: px(0.),
+                    inset: true,
+                },
+            ]
         };
         let signed_out = view.main == Main::SignIn;
         let play = crate::frame::input(false)
@@ -391,7 +405,12 @@ impl Launcher {
             .text_size(px(tokens::LEAD))
             .text_color(on)
             // Signed out: plainly disabled, a muted fill with no glow.
-            .when(!signed_out, |d| d.bg(p.play_gradient()).shadow(glow(false)))
+            // The glass edge every control has, lighter on the accent so it shows.
+            .when(!signed_out, |d| {
+                d.bg(p.play_gradient())
+                    .border_color(gpui::white().opacity(0.18))
+                    .shadow(glow(false))
+            })
             .when(signed_out, |d| {
                 d.bg(rgb(p.hover))
                     .text_color(rgb(p.muted))
@@ -537,7 +556,8 @@ impl Launcher {
         let says = self.ui.home.shade_behind(says, self.settings.scenery());
         // The cat walks the empty stretch and stands on the panel's edge. It stays in while a
         // button stands in its way.
-        let (lane, _) = self.cat(act.is_none(), false, window, cx);
+        let cat_beside = act.is_none();
+        let (lane, _) = self.cat(cat_beside, false, window, cx);
         let has_status = view.said.is_some()
             || view.mods_off.is_some()
             || self.build_said().is_some()
@@ -567,17 +587,29 @@ impl Launcher {
         div()
             .flex()
             .flex_col()
+            .items_center()
             .child(
                 div()
+                    .w_full()
                     .flex()
                     .items_end()
+                    // Matches the cat's lane and its margins, so the buttons sit in the middle.
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .mr(px(12.))
+                            .when(cat_beside, |d| d.ml(px(-(14. + crate::cat::UNDER)))),
+                    )
                     .child(
                         div()
                             .flex()
+                            .flex_wrap()
+                            .justify_center()
                             .items_center()
                             .gap(px(if compact { 8. } else { 12. }))
                             .min_w_0()
-                            .h(px(tokens::PLAY))
+                            .min_h(px(tokens::PLAY))
                             .child(play)
                             .child(self.build_picker(instance, cx))
                             .child(menu)
@@ -609,13 +641,23 @@ impl Launcher {
                 instances::Channel::Dev => tr("Dev · no build yet").into(),
                 _ => tr("Sunrise").into(),
             },
-            |tag| self.version_label(base.as_deref().unwrap_or(tag)),
+            |tag| {
+                let shown = base.as_deref().unwrap_or(tag);
+                // A Nightly or Dev build says how long ago it came out, as the menu does.
+                match (crate::sheets::dated_channel(shown), self.build_when(shown)) {
+                    (Some(channel), Some(when)) => trf(
+                        "{channel} · {version}",
+                        &[("channel", channel), ("version", &when)],
+                    ),
+                    _ => self.version_label(shown),
+                }
+            },
         );
         let at = self.ui.home.picker.clone();
         div()
             .id("alt-build")
             .when_some(version, |d, tag| d.tooltip(crate::glass_ui::tip(tag)))
-            .min_w_0()
+            .min_w(px(120.))
             .max_w(px(340.))
             .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
             .border_1()
@@ -639,8 +681,9 @@ impl Launcher {
                     .text_color(rgb(palette().text))
                     .child(build),
             )
-            .child(div().flex_none().child(blocks::icon(
-                "chevron-down",
+            .child(div().flex_none().child(crate::glass_ui::fold_chevron(
+                "home-build",
+                self.ui.sheet == Some(Sheet::Build),
                 13.,
                 rgb(palette().muted).into(),
             )))

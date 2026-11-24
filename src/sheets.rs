@@ -1,19 +1,17 @@
-//! The three sheets: Resolve (a held update), Build consent and
-//! the game-build chooser. Everything here reads or acts through the existing workers:
+//! The sheets: Resolve (a held update) and the game-build chooser. Everything here reads or
+//! acts through the existing workers:
 //!
 //! * **Resolve** handles the same-base native build’s world stop; Stay writes nothing.
-//! * **Consent** is the real `pending_consent` and `native_consent::resolve`; the registry-crate
-//!   permission is the worker's own mid-build question (`Msg::NativeRegistryConsent`).
 //! * **Build** picks a channel or an exact build. Both use the staged switch.
 use super::*;
 use crate::frame::button;
 use crate::frame::Reach as _;
 use crate::paint::palette;
 use gpui::{rgb, MouseButton, MouseDownEvent};
-use native_consent::PendingConsent;
 use std::sync::mpsc::Sender;
-use sunrise_launcher::native_mods::Consent;
 
+mod provider_choice;
+mod publisher_change;
 mod switching;
 mod versions;
 pub(crate) use versions::bench_wheel;
@@ -35,6 +33,7 @@ pub(crate) enum Sheet {
     /// One build to keep, picked from all of them (`versions`).
     Versions,
     Switching,
+    SwitchProvider,
     BuildChanges,
     /// Who plays, under the account chip (`account_chip`).
     AccountMenu,
@@ -73,9 +72,6 @@ pub(crate) struct SheetsState {
     /// the next layer, even when the page hands the keyboard to one of that layer's fields.
     before: Option<FocusHandle>,
     pub(super) layered: bool,
-    registry: Option<(Consent, Sender<bool>)>,
-    /// The unticked boxes of the sheet on screen: native code, dependency programs.
-    ticked: (bool, bool),
     error: Option<String>,
     /// The Resolve sheet shows what the check said word for word.
     details: bool,
@@ -84,7 +80,11 @@ pub(crate) struct SheetsState {
     way_out: Option<WayOut>,
     versions: versions::State,
     pub(super) switching: switching::State,
+    publisher_change: Option<publisher_change::PendingPublisherChange>,
+    provider_choice: Option<provider_choice::PendingProviderChoice>,
     pub(super) profile_action: Option<crate::profile_delete::Action>,
+    /// A build waits on the unreviewed-code warning for native mods nobody reviewed.
+    pub(crate) unreviewed: Option<crate::github_mods_page::PendingUnreviewed>,
 }
 
 /// A held update as the bottom bar and the Resolve sheet read it.
@@ -136,6 +136,80 @@ fn channel_name(channel: instances::Channel) -> &'static str {
     }
 }
 
+/// The channel name of a dated Nightly or Dev build, which Home's picker shows with its age.
+pub(crate) fn dated_channel(tag: &str) -> Option<&'static str> {
+    channel_build(tag)
+        .filter(|(channel, _)| *channel != instances::Channel::Stable)
+        .map(|(channel, _)| channel_name(channel))
+}
+
+/// What the build menu calls a channel: the newest build it publishes.
+fn latest_name(channel: instances::Channel) -> &'static str {
+    match channel {
+        instances::Channel::Stable => tr("Latest stable"),
+        instances::Channel::Nightly => tr("Latest nightly"),
+        instances::Channel::Dev => tr("Latest dev"),
+    }
+}
+
+/// When a build was published, from its `YYYY-MM-DD` date and `HH:MM` UTC time (empty when
+/// unknown): "13 minutes ago", "1 hour ago", "2 days ago" within a week, else "23/11/2026 16:42
+/// UTC". Without a time it counts whole days: "today", "yesterday", "2 days ago", else the date.
+fn built_when(date: &str, time: &str, now: chrono::DateTime<chrono::Utc>) -> Option<String> {
+    use chrono::{NaiveDate, NaiveTime};
+    let day = NaiveDate::parse_from_str(date, "%Y-%m-%d").ok()?;
+    let count = |n: i64| n.to_string();
+    let Ok(clock) = NaiveTime::parse_from_str(time, "%H:%M") else {
+        return Some(match (now.date_naive() - day).num_days() {
+            ..=0 => tr("today").into(),
+            1 => tr("yesterday").into(),
+            days @ 2..=6 => trf("{days} days ago", &[("days", &count(days))]),
+            _ => day.format("%d/%m/%Y").to_string(),
+        });
+    };
+    let at = day.and_time(clock).and_utc();
+    let ago = now - at;
+    Some(match ago.num_minutes() {
+        // A clock a little behind the publisher's reads as now, not as the future.
+        ..=0 => tr("just now").into(),
+        1 => tr("1 minute ago").into(),
+        minutes @ 2..=59 => trf("{count} minutes ago", &[("count", &count(minutes))]),
+        _ => match ago.num_hours() {
+            1 => tr("1 hour ago").into(),
+            hours @ 2..=23 => trf("{count} hours ago", &[("count", &count(hours))]),
+            _ => match ago.num_days() {
+                1 => tr("1 day ago").into(),
+                days @ 2..=6 => trf("{days} days ago", &[("days", &count(days))]),
+                _ => at.format("%d/%m/%Y %H:%M UTC").to_string(),
+            },
+        },
+    })
+}
+
+impl Launcher {
+    /// When `tag` was published: the catalogue's time when it lists the build, else the date
+    /// in a dated tag.
+    pub(crate) fn build_when(&self, tag: &str) -> Option<String> {
+        let now = chrono::Utc::now();
+        match self.game_releases().iter().find(|r| r.tag == tag) {
+            Some(release) => built_when(&release.date, &release.time, now),
+            None => backend::dev_date(tag)
+                .or_else(|| sunrise_launcher::nightly::date_of(tag))
+                .and_then(|date| built_when(date, "", now)),
+        }
+    }
+}
+
+/// The channel an unpinned profile plays now: a Stable profile plays Nightly until Stable has a
+/// build ([`instances::Channel::play_target`]), and the picker marks what plays.
+fn following_now(saved: instances::Channel, waits_for_stable: bool) -> instances::Channel {
+    if waits_for_stable {
+        instances::Channel::Nightly
+    } else {
+        saved
+    }
+}
+
 /// The version part of the build label, shared with the picker row whose heading is its channel.
 fn channel_build(tag: &str) -> Option<(instances::Channel, String)> {
     use instances::Channel;
@@ -184,30 +258,6 @@ fn muted(text: impl Into<SharedString>) -> Div {
         .text_size(px(tokens::LABEL))
         .text_color(rgb(palette().muted))
         .child(crate::selectable::selectable(text))
-}
-
-fn checkbox(id: &'static str, on: bool, label: String) -> Stateful<Div> {
-    div()
-        .id(id)
-        .reach()
-        .flex()
-        .items_center()
-        .gap(px(10.))
-        .cursor_pointer()
-        .child(
-            div()
-                .size(px(16.))
-                .rounded(crate::tokens::r(crate::tokens::R_SMALL))
-                .border_1()
-                .border_color(rgb(palette().muted))
-                .when(on, |d| d.bg(rgb(palette().accent))),
-        )
-        .child(
-            div()
-                .text_size(px(tokens::BODY))
-                .text_color(rgb(palette().text))
-                .child(label),
-        )
 }
 
 /// The scrim and the sheet's frame. A press outside closes the sheet; inside, nothing does.
@@ -364,18 +414,19 @@ impl Launcher {
     /// These dialogs can arrive over an already-open search. Its shortcut must not cancel
     /// another dialog's answer merely because the search is still underneath it.
     pub(crate) fn blocking_dialog(&self) -> bool {
-        self.ui.sheets.registry.is_some()
-            || self.pending_consent.is_some()
+        self.ui.sheets.publisher_change.is_some()
+            || self.ui.sheets.provider_choice.is_some()
+            || self.ui.sheets.unreviewed.is_some()
             || self.source_question().is_some()
             || self.mods.installs.question.is_some()
             || self.mods.installs.world.is_some()
-            || self.owner_screen_open
+            || self.sign_in_screen.open
             || self.instances.dialog.is_some()
             || self.ui.sheets.profile_action.is_some()
             || (self.ui.page == crate::frame::Page::Hosting && self.servers.create.is_some())
     }
 
-    /// Opens `sheet`. Consent and Libraries open by themselves from their pending state.
+    /// Opens `sheet`. A pending question opens its own sheet.
     pub(crate) fn open_sheet(&mut self, sheet: Sheet) {
         self.ui.sheets.error = None;
         self.ui.sheets.details = false;
@@ -390,24 +441,12 @@ impl Launcher {
     }
 
     pub(crate) fn reset_install_question_sheet(&mut self) {
-        self.ui.sheets.ticked.0 = false;
         self.ui.sheets.details = false;
         self.ui.sheets.error = None;
-        self.consent_error = None;
-    }
-
-    /// The worker asks before dependency build programs run. The sheet answers `reply`; losing the
-    /// sheet answers no.
-    pub(crate) fn registry_consent(&mut self, inventory: Consent, reply: Sender<bool>) {
-        if let Some((_, old)) = self.ui.sheets.registry.replace((inventory, reply)) {
-            let _ = old.send(false);
-        }
-        self.ui.sheets.ticked.1 = false;
     }
 
     /// Closes the sheet on screen the way Escape or a press outside does. Nothing is allowed,
-    /// built or changed by it: a pending permission is declined, a pending library question is
-    /// answered no, a held update stays held.
+    /// built or changed by it: a pending question is answered no, a held update stays held.
     pub(crate) fn close_sheet(&mut self) {
         if self.ui.sheet == Some(Sheet::GithubAdd) {
             self.github.close();
@@ -415,10 +454,13 @@ impl Launcher {
         if self.ui.sheet == Some(Sheet::Switching) {
             self.cancel_switch();
         }
-        if let Some((_, reply)) = self.ui.sheets.registry.take() {
-            let _ = reply.send(false);
-        } else if self.pending_consent.is_some() {
-            self.cancel_native_consent();
+        if self.ui.sheet == Some(Sheet::SwitchProvider) {
+            self.cancel_provider_switch();
+        }
+        if let Some(pending) = self.ui.sheets.unreviewed.take() {
+            pending.refuse();
+        } else if self.dismiss_publisher_change() || self.answer_provider_choice(None) {
+            // Keep the current version and remembered publisher; install no provider.
         } else if self.source_question().is_some() {
             self.answer_source_question(Ok(false));
         } else if let Some(reply) = self
@@ -432,14 +474,14 @@ impl Launcher {
             let _ = reply.send(false);
         }
         self.ui.sheet = None;
-        self.ui.sheets.ticked = (false, false);
         self.ui.sheets.error = None;
     }
 
     /// Escape: true when a sheet was open and is closed now.
     pub(crate) fn sheet_escape(&mut self) -> bool {
-        let prompt_open = self.ui.sheets.registry.is_some()
-            || self.pending_consent.is_some()
+        let prompt_open = self.ui.sheets.publisher_change.is_some()
+            || self.ui.sheets.provider_choice.is_some()
+            || self.ui.sheets.unreviewed.is_some()
             || self.source_question().is_some()
             || self.mods.installs.question.is_some()
             || self.mods.installs.world.is_some();
@@ -537,18 +579,20 @@ impl Launcher {
         )
     }
 
-    /// The sheet on screen, if any: a pending library question, a pending permission, then the
-    /// sheet asked for.
+    /// The sheet on screen, if any: a pending question, then the sheet asked for.
     pub(crate) fn live_sheet(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Stateful<Div>> {
-        if self.ui.sheets.registry.is_some() {
-            return Some(self.libraries_sheet(cx));
+        if let Some(sheet) = self.unreviewed_build_sheet(window, cx) {
+            return Some(sheet);
         }
-        if self.pending_consent.is_some() {
-            return Some(self.consent_sheet(cx));
+        if let Some(pending) = &self.ui.sheets.publisher_change {
+            return Some(self.publisher_change_sheet(&pending.question, cx));
+        }
+        if let Some(pending) = &self.ui.sheets.provider_choice {
+            return Some(self.provider_choice_sheet(&pending.need, cx));
         }
         if let Some(body) = self.source_consent_body(cx) {
             return Some(frame("nightly-source-consent", 660., body, cx));
@@ -627,6 +671,7 @@ impl Launcher {
                 .map(|body| frame("nightly-source-log", 690., body, cx)),
             Some(Sheet::Versions) => Some(self.versions_sheet(cx)),
             Some(Sheet::Switching) => Some(self.switch_sheet(cx)),
+            Some(Sheet::SwitchProvider) => self.provider_switch_sheet(cx),
             Some(Sheet::BuildChanges) => self.switch_receipt_sheet(cx),
             Some(Sheet::AccountMenu) => self.account_menu(cx),
             Some(Sheet::LauncherUpdate) => self.launcher_update_sheet(cx),
@@ -639,7 +684,10 @@ impl Launcher {
                         .flex()
                         .flex_col()
                         .child(title(tr("Getting ready to play").into()))
-                        .child(muted(stage_label(stage)))
+                        .child(muted(crate::eta::with_eta(
+                            stage_label(stage),
+                            self.registry_eta(),
+                        )))
                         .children(
                             stage_fraction(stage)
                                 .map(|f| crate::widgets::progress_bar(Some((f, f)), &self.theme)),
@@ -1058,12 +1106,9 @@ impl Launcher {
                     .text_size(px(tokens::SMALL))
                     .text_color(rgb(palette().muted))
                     .cursor_pointer()
-                    .child(blocks::icon(
-                        if open {
-                            "chevron-down"
-                        } else {
-                            "chevron-right"
-                        },
+                    .child(crate::glass_ui::disclosure_chevron(
+                        "resolve-details",
+                        open,
                         11.,
                         rgb(palette().muted).into(),
                     ))
@@ -1166,289 +1211,6 @@ impl Launcher {
         frame("alt-notice", 560., body, cx)
     }
 
-    // ---- Consent ----
-
-    pub(crate) fn request_native_build_consent(&mut self) {
-        self.native_consent_build = None;
-        self.ui.sheets.ticked.0 = false;
-        self.consent_error = None;
-        // Play can ask before Mods has ever opened. Bind the same folder for the names in
-        // the question, Decline's toggle and the build that Allow dispatches.
-        let Some(home) = self.selected_instance().map(|i| i.home.clone()) else {
-            self.pending_consent = None;
-            return;
-        };
-        let read = self.mods.begin_build_consent(home);
-        self.pending_consent = Some(PendingConsent::ReadingBuild(read.clone()));
-        // Snapshot the registry's own answer before hashing. An answer arriving later must
-        // not replace the names for this question.
-        let index = sunrise_launcher::browser::sunrise::fetched_index();
-        let tx = self.tx.clone();
-        std::thread::spawn(move || {
-            let inputs = native_status::build_inputs(&read, index.as_deref());
-            let _ = tx.send(Msg::NativeConsentRead(read, inputs));
-        });
-    }
-
-    fn consent_sheet(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
-        let pending = self.pending_consent.as_ref();
-        if matches!(pending, Some(PendingConsent::ReadingBuild(_))) {
-            let body = div()
-                .flex()
-                .flex_col()
-                .child(title(tr("Checking package files…").into()))
-                .child(div().flex().justify_end().child(
-                    button("alt-consent-cancel", tr("Cancel")).on_click(cx.listener(
-                        |this, _: &ClickEvent, _, cx| {
-                            this.close_sheet();
-                            cx.notify();
-                        },
-                    )),
-                ));
-            return frame("alt-consent", 760., body, cx);
-        }
-        let name = pending
-            .map(PendingConsent::name)
-            .filter(|name| !name.is_empty())
-            .unwrap_or_else(|| tr("your mods").into());
-        let building = matches!(pending, Some(PendingConsent::Build(_)));
-        let heading = match pending {
-            Some(PendingConsent::Build(inputs)) if inputs.len() == 1 => {
-                tr("Build this mod?").into()
-            }
-            Some(PendingConsent::Build(_)) => {
-                trf("Build {name} on this computer?", &[("name", &name)])
-            }
-            _ => trf("Allow {name} to run as native code?", &[("name", &name)]),
-        };
-        let rows = pending.map(PendingConsent::rows).unwrap_or_default();
-        let mods = if let Some(PendingConsent::Registry(question, _)) = pending {
-            let list = div()
-                .flex()
-                .flex_col()
-                .gap(px(6.))
-                .children(question.names.iter().cloned().map(|name| div().child(name)));
-            let provenance = if question.reviewed {
-                tr("Reviewed by the Sunrise registry and matched to its download checksums.")
-            } else {
-                tr("Not all of these packages are verified Sunrise registry downloads.")
-            };
-            let list = list.child(muted(provenance));
-            let list = if question.retry {
-                list.child(muted(tr("Sunrise is checking a different version. It needs these additional native mods.")))
-            } else {
-                list
-            };
-            fact(tr("Mods"), list, false)
-        } else if rows.is_empty() {
-            fact(tr("Mods"), name.clone(), false)
-        } else {
-            let packages = div()
-                .flex()
-                .flex_col()
-                .gap(px(6.))
-                .children(rows.into_iter().map(|row| {
-                    let picture = row.icon.and_then(|url| {
-                        self.mods_image(&url, sunrise_launcher::browser::images::ROW)
-                    });
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(px(10.))
-                        .child(crate::mod_icons::tile(picture, &row.id, &row.name, 32.))
-                        .child(div().min_w_0().child(row.label))
-                }));
-            fact(tr("Mods"), packages, false)
-        };
-        let host = sunrise_launcher::rust_toolchain::host();
-        let downloads = match (host, sunrise_launcher::rust_toolchain::installed()) {
-            (None, _) => tr("Unavailable on this platform").into(),
-            (Some(_), Some(_)) => tr("Nothing: the build tools are already here").into(),
-            (Some(host), None) => trf(
-                "{size} of build tools from Sunrise",
-                &[("size", &storage::format_bytes(host.download_bytes()))],
-            ),
-        };
-        let ticked = self.ui.sheets.ticked.0;
-        let can = host.is_some() && ticked;
-        let allow = button(
-            "alt-consent-allow",
-            if building {
-                tr("Allow and build")
-            } else {
-                tr("Allow")
-            },
-        );
-        let allow = if can {
-            allow.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                this.allow_native_consent();
-                cx.notify();
-            }))
-        } else {
-            disabled(allow)
-        };
-        let body = div()
-            .flex()
-            .flex_col()
-            .child(title(heading))
-            .child(muted(tr(
-                "Native mods are programs that run inside your game. Like any program you install, they can read and change your files. Allow them only if you trust who made them.",
-            )))
-            .child(
-                card()
-                    .child(mods)
-                    .child(fact(tr("Downloads"), downloads, true))
-                    .child(fact(
-                        tr("While building"),
-                        tr("If a code library the mod uses wants to run its own programs, Sunrise stops and shows you the list first. Nothing runs before you say so."),
-                        true,
-                    ))
-                    .child(fact(
-                        tr("When you play"),
-                        tr("The mod, inside the game, with the same access to your files and programs as the game has."),
-                        true,
-                    )),
-            )
-            .child(
-                checkbox(
-                    "alt-consent-native",
-                    ticked,
-                    trf("Let {name} run as native code in my game", &[("name", &name)]),
-                )
-                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                    this.ui.sheets.ticked.0 ^= true;
-                    cx.notify();
-                })),
-            )
-            .children(
-                self.consent_error
-                    .clone()
-                    .map(|e| div().text_color(rgb(palette().danger)).text_size(px(tokens::LABEL)).child(e)),
-            )
-            .child(consent_footer(
-                tr("This stays allowed on this computer until you take it back in Settings, under Mods. Progress shows beside Play on Home, and at the top of every other page."),
-                button("alt-consent-cancel", tr("Not now")).on_click(cx.listener(
-                    |this, _: &ClickEvent, _, cx| {
-                        this.close_sheet();
-                        cx.notify();
-                    },
-                )),
-                allow,
-            ));
-        frame("alt-consent", 760., body, cx)
-    }
-
-    /// Allow: consume the one pending action. A Toggle's worker saves its grant and enables it.
-    fn allow_native_consent(&mut self) {
-        let result = native_consent::resolve(
-            &mut self.pending_consent,
-            true,
-            true,
-            &mut self.settings,
-            &self.mods.home(),
-        );
-        match result {
-            Err(error) => self.consent_error = Some(error),
-            Ok(None) => {}
-            Ok(Some(action)) => {
-                self.consent_error = None;
-                self.storage_revoke_error = None;
-                self.ui.sheets.ticked = (false, false);
-                match action {
-                    PendingConsent::ReadingBuild(_) => {}
-                    PendingConsent::Build(_) => {
-                        let (base, leave_out) =
-                            self.native_consent_build.take().unwrap_or_default();
-                        self.build_native_on(base, leave_out)
-                    }
-                    PendingConsent::Toggle(toggle) => {
-                        self.enable_registry_mod(&toggle.entry, toggle.home, Some(toggle.identity));
-                    }
-                    PendingConsent::Registry(_, reply) => {
-                        let _ = reply.send(Ok(true));
-                    }
-                }
-            }
-        }
-    }
-
-    // ---- Libraries ----
-
-    fn libraries_sheet(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
-        let (inventory, _) = self
-            .ui
-            .sheets
-            .registry
-            .as_ref()
-            .expect("shown only while a question is pending");
-        let mut names: Vec<&String> = inventory
-            .build_scripts
-            .iter()
-            .chain(&inventory.proc_macros)
-            .collect();
-        names.sort();
-        names.dedup();
-        let count = names.len();
-        let heading = inventory.label();
-        let rows = card()
-            .child(fact(
-                tr("Build scripts"),
-                list_or_none(&inventory.build_scripts),
-                false,
-            ))
-            .child(fact(
-                tr("Proc macros"),
-                list_or_none(&inventory.proc_macros),
-                true,
-            ));
-        let ticked = self.ui.sheets.ticked.1;
-        let go = button("alt-libraries-allow", tr("Allow and continue"));
-        let go = if ticked {
-            go.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                if let Some((_, reply)) = this.ui.sheets.registry.take() {
-                    let _ = reply.send(true);
-                }
-                this.ui.sheets.ticked.1 = false;
-                cx.notify();
-            }))
-        } else {
-            disabled(go)
-        };
-        let body = div()
-            .flex()
-            .flex_col()
-            .child(title(heading))
-            .child(muted(tr(
-                "Registry dependencies are native code. Their build scripts and proc macros run during compilation, before the game starts, with the same access to your files as the launcher has.",
-            )))
-            .child(rows)
-            .child(
-                checkbox(
-                    "alt-libraries-tick",
-                    ticked,
-                    trf(
-                        "Let those {count} libraries run their programs while building",
-                        &[("count", &count.to_string())],
-                    ),
-                )
-                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                    this.ui.sheets.ticked.1 ^= true;
-                    cx.notify();
-                })),
-            )
-            .child(consent_footer(
-                tr("Not now stops the build. Nothing has run."),
-                button("alt-libraries-cancel", tr("Not now")).on_click(cx.listener(
-                    |this, _: &ClickEvent, _, cx| {
-                        this.close_sheet();
-                        cx.notify();
-                    },
-                )),
-                go,
-            ));
-        frame("alt-libraries", 760., body, cx)
-    }
-
     // ---- Game build ----
 
     /// The latest published build, or the latest installed one when the channel is offline.
@@ -1494,7 +1256,11 @@ impl Launcher {
         let active_channel = playing_target
             .as_deref()
             .and_then(instances::Channel::of_build);
-        let follows = pinned.is_none().then_some(instance.channel);
+        let waits_for_stable =
+            instance.channel == instances::Channel::Stable && !self.stable_available();
+        let follows = pinned
+            .is_none()
+            .then_some(following_now(instance.channel, waits_for_stable));
         let is_pack = instance.kind == instances::Kind::Pack;
         let option = |id: &'static str, on: bool, head: String, sub: String| {
             div()
@@ -1540,14 +1306,14 @@ impl Launcher {
         let mut list = div().flex().flex_col().gap(px(2.));
         for (id, channel, unavailable) in [
             (
-                "alt-build-nightly",
-                Channel::Nightly,
-                tr("No Nightly build yet."),
-            ),
-            (
                 "alt-build-stable",
                 Channel::Stable,
                 tr("No Stable build yet."),
+            ),
+            (
+                "alt-build-nightly",
+                Channel::Nightly,
+                tr("No Nightly build yet."),
             ),
             ("alt-build-dev", Channel::Dev, tr("No Dev build yet.")),
         ] {
@@ -1559,13 +1325,32 @@ impl Launcher {
             } else {
                 self.channel_switch_target(channel)
             };
-            let version = tag.and_then(|tag| channel_build(tag).map(|(_, version)| version));
+            // Stable says its version; every row says when its build came out.
+            let version = tag.and_then(|tag| {
+                let (_, version) = channel_build(tag)?;
+                Some(match (channel, self.build_when(tag)) {
+                    (Channel::Stable, Some(when)) => trf(
+                        "{version} · {when}",
+                        &[("version", &version), ("when", &when)],
+                    ),
+                    (Channel::Stable, None) => version,
+                    (_, when) => when.unwrap_or(version),
+                })
+            });
             let unavailable_row = is_pack || version.is_none();
+            // A Stable profile plays Nightly until Stable has a build; say so on the row it
+            // will move to, rather than marking a row that can't play.
+            let unavailable = if channel == Channel::Stable && waits_for_stable && pinned.is_none()
+            {
+                tr("No Stable build yet. Plays Nightly until there is one.")
+            } else {
+                unavailable
+            };
             list = list.child(
                 option(
                     id,
                     selected,
-                    channel_name(channel).into(),
+                    latest_name(channel).into(),
                     version.unwrap_or_else(|| unavailable.into()),
                 )
                 .when(unavailable_row, |d| d.opacity(0.5))
@@ -1766,51 +1551,6 @@ fn extras() -> Div {
         )
 }
 
-fn list_or_none(names: &[String]) -> String {
-    if names.is_empty() {
-        tr("None").into()
-    } else {
-        names.join(", ")
-    }
-}
-
-fn fact(label: &str, value: impl IntoElement, rule: bool) -> Div {
-    div()
-        .flex()
-        .gap(px(16.))
-        .px(px(16.))
-        .py(px(10.))
-        .text_size(px(tokens::LABEL))
-        .when(rule, |d| {
-            d.border_t_1().border_color(rgb(palette().divider))
-        })
-        .child(
-            div()
-                .w(px(110.))
-                .flex_none()
-                .text_color(rgb(palette().muted))
-                .child(label.to_owned()),
-        )
-        .child(div().flex_1().min_w_0().child(value))
-}
-
-fn consent_footer(note: &str, cancel: Stateful<Div>, go: Stateful<Div>) -> Div {
-    div()
-        .flex()
-        .flex_col()
-        .gap(px(12.))
-        .child(muted(note.to_owned()))
-        .child(
-            div()
-                .flex()
-                .flex_wrap()
-                .justify_end()
-                .gap(px(10.))
-                .child(cancel)
-                .child(go),
-        )
-}
-
 /// The pinned preview has room for two lines. Every error can open in the scrollable notice.
 fn build_menu_error(error: String, details: impl FnOnce(String) -> Stateful<Div>) -> Div {
     div()
@@ -1836,6 +1576,43 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_build_menu_marks_nightly_while_a_stable_profile_waits_for_stable() {
+        use instances::Channel;
+        let release = |tag: &str, nightly: bool| backend::Release {
+            tag: tag.into(),
+            name: String::new(),
+            body: String::new(),
+            date: String::new(),
+            time: String::new(),
+            published_at: String::new(),
+            asset: Some(("sunrise.tar.gz".into(), 1)),
+            prerelease: false,
+            nightly: nightly.then(|| "nightly".into()),
+        };
+        let mut releases = vec![release("nightly-2026-11-20-aaaaaaa", true)];
+        let marked = |releases: &[backend::Release]| {
+            let waits = Channel::Stable.builds(releases).next().is_none();
+            following_now(Channel::Stable, waits)
+        };
+        // The marked row is the channel whose build Play starts.
+        let plays = Channel::Stable.play_target(&releases, &[], None, None);
+        assert_eq!(marked(&releases), Channel::Nightly);
+        assert_eq!(
+            plays.and_then(|tag| Channel::of_build(tag)),
+            Some(Channel::Nightly)
+        );
+        releases.push(release("26.3-0.1.0", false));
+        let plays = Channel::Stable.play_target(&releases, &[], None, None);
+        assert_eq!(marked(&releases), Channel::Stable);
+        assert_eq!(
+            plays.and_then(|tag| Channel::of_build(tag)),
+            Some(Channel::Stable)
+        );
+        // Other channels are marked as saved.
+        assert_eq!(following_now(Channel::Dev, false), Channel::Dev);
+    }
+
+    #[test]
     fn every_build_menu_error_offers_details_with_the_full_message() {
         let echoed = format!(
             "instances.json: invalid type: string \"{}\", expected u64 at line 1 column 412",
@@ -1853,6 +1630,37 @@ mod tests {
             });
             assert_eq!(opened.as_deref(), Some(error.as_str()));
         }
+    }
+
+    #[test]
+    fn build_times_read_relative_for_a_week_then_as_the_date() {
+        use chrono::TimeZone as _;
+        let now = chrono::Utc
+            .with_ymd_and_hms(2026, 11, 23, 16, 42, 0)
+            .unwrap();
+        let when = |date, time| built_when(date, time, now);
+        assert_eq!(when("2026-11-23", "16:42").as_deref(), Some("just now"));
+        assert_eq!(when("2026-11-23", "16:45").as_deref(), Some("just now"));
+        assert_eq!(when("2026-11-23", "16:41").as_deref(), Some("1 minute ago"));
+        assert_eq!(
+            when("2026-11-23", "16:29").as_deref(),
+            Some("13 minutes ago")
+        );
+        assert_eq!(when("2026-11-23", "15:30").as_deref(), Some("1 hour ago"));
+        assert_eq!(when("2026-11-23", "01:00").as_deref(), Some("15 hours ago"));
+        assert_eq!(when("2026-11-22", "10:00").as_deref(), Some("1 day ago"));
+        assert_eq!(when("2026-11-21", "10:00").as_deref(), Some("2 days ago"));
+        assert_eq!(when("2026-11-16", "16:43").as_deref(), Some("6 days ago"));
+        assert_eq!(
+            when("2026-11-16", "16:42").as_deref(),
+            Some("16/11/2026 16:42 UTC")
+        );
+        // A tag's date alone counts whole days.
+        assert_eq!(when("2026-11-23", "").as_deref(), Some("today"));
+        assert_eq!(when("2026-11-22", "").as_deref(), Some("yesterday"));
+        assert_eq!(when("2026-11-17", "").as_deref(), Some("6 days ago"));
+        assert_eq!(when("2026-11-16", "").as_deref(), Some("16/11/2026"));
+        assert_eq!(when("not a date", "16:42"), None);
     }
 
     #[test]

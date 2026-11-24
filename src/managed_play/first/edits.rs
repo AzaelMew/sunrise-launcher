@@ -28,6 +28,16 @@ enum Basis<'a> {
     },
 }
 
+/// Receipt and build-choice metadata committed together when publishing a switch edit.
+#[derive(Default)]
+pub(crate) struct SwitchPublication {
+    pub(crate) holds: Vec<Held>,
+    pub(crate) removed: BTreeMap<String, (String, String)>,
+    /// Earlier holds this switch decided again: re-held ones are among `holds`.
+    pub(crate) retired: BTreeSet<String>,
+    pub(crate) build_choice: Option<crate::managed_play::CommittedBuildChoice>,
+}
+
 pub(crate) struct CandidateImage {
     candidate: PathBuf,
     tag: String,
@@ -105,7 +115,7 @@ impl Profile {
                     }
                 };
                 if before != first.bound.inputs {
-                    return Err(unsettled());
+                    return Err(unsettled!());
                 }
                 Basis::First(first)
             }
@@ -134,7 +144,7 @@ impl Profile {
             }
             None => {
                 if self.0.has_bootstrap()? {
-                    return Err(unsettled());
+                    return Err(unsettled!());
                 }
                 let _references = ReferencePublication::begin(&home)?;
                 Basis::Pending(self.0.reserve(Intent::Install, BTreeSet::new())?)
@@ -249,7 +259,7 @@ impl Edit<'_> {
             Basis::Switch {
                 target, resources, ..
             } => Ok(resources.path(target.base())),
-            _ => Err(unsettled()),
+            _ => Err(unsettled!()),
         }
     }
 
@@ -273,7 +283,7 @@ impl Edit<'_> {
         if inputs(candidate.path(), None)? != self.before
             || inputs(&self.home, None)? != self.before
         {
-            return Err(unsettled());
+            return Err(unsettled!());
         }
         Ok(candidate)
     }
@@ -299,15 +309,15 @@ impl Edit<'_> {
             Basis::Active(_, stage) | Basis::Pending(stage) => stage,
             Basis::First(first) => {
                 if first.stage.resumes_bootstrap() {
-                    return Err(unsettled());
+                    return Err(unsettled!());
                 }
                 first.bound.verify_image()?;
                 first.stage
             }
-            Basis::Switch { .. } => return Err(unsettled()),
+            Basis::Switch { .. } => return Err(unsettled!()),
         };
         if inputs(&self.home, None)? != self.before || inputs(candidate, None)? != checked_inputs {
-            return Err(unsettled());
+            return Err(unsettled!());
         }
         let files = changed_files(&self.home, candidate)?;
         if files.is_empty() {
@@ -320,7 +330,7 @@ impl Edit<'_> {
             if inputs(&self.home, None)? != self.before
                 || inputs(candidate, None)? != checked_inputs
             {
-                return Err(unsettled());
+                return Err(unsettled!());
             }
             cancellation.begin_publication()
         })
@@ -332,14 +342,13 @@ impl Edit<'_> {
         mode: native_mods::Profile,
         cancellation: &native_mods::Cancellation,
         progress: impl Fn(native_mods::Step),
-        consent: Option<&dyn Fn(&native_mods::Consent) -> bool>,
         log: Option<&dyn Fn(std::sync::Arc<str>)>,
     ) -> Result<CandidateImage, native_mods::Failed> {
         let before = inputs(candidate, None)?;
         let preferred = match &self.basis {
             Basis::Active(old, _) => old.executable(),
             Basis::First(first) => first.preferred_image(),
-            Basis::Pending(_) => return Err(unsettled().into()),
+            Basis::Pending(_) => return Err(unsettled!().into()),
             Basis::Switch { target, .. } => target.preferred_image(),
         };
         let tag = image_for_stage(
@@ -350,11 +359,10 @@ impl Edit<'_> {
             mode,
             cancellation,
             progress,
-            consent,
             log,
         )?;
         if inputs(candidate, None)? != before {
-            return Err(unsettled().into());
+            return Err(unsettled!().into());
         }
         Ok(CandidateImage {
             candidate: candidate.into(),
@@ -396,21 +404,24 @@ impl Edit<'_> {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn publish_switch(
         self,
         proof: CandidateImage,
         cancellation: &native_mods::Cancellation,
-        holds: Vec<Held>,
-        removed: BTreeMap<String, (String, String)>,
-        build_choice: Option<crate::managed_play::CommittedBuildChoice>,
+        publication: SwitchPublication,
         authorize: impl FnOnce() -> Result<(), String>,
         at_cutoff: impl FnOnce() -> Result<(), String>,
     ) -> Result<Active, String> {
         if !matches!(self.basis, Basis::Switch { .. }) {
-            return Err(unsettled());
+            return Err(unsettled!());
         }
-        let retired = removed.keys().cloned().collect();
+        let SwitchPublication {
+            holds,
+            removed,
+            mut retired,
+            build_choice,
+        } = publication;
+        retired.extend(removed.keys().cloned());
         let receipt = if holds.is_empty() && removed.is_empty() {
             None
         } else {
@@ -453,10 +464,10 @@ impl Edit<'_> {
         crate::browser::installed::recover_game_install(&self.home)?;
         let _references = ReferencePublication::begin(&self.home)?;
         if inputs(&self.home, None)? != self.before {
-            return Err(unsettled());
+            return Err(unsettled!());
         }
         let (mut active, stage) = match self.basis {
-            Basis::Pending(_) => return Err(unsettled()),
+            Basis::Pending(_) => return Err(unsettled!()),
             Basis::Active(old, stage) => {
                 old.verify_artifacts()?;
                 let active = Active::capture(
@@ -555,11 +566,10 @@ impl Edit<'_> {
                 if inputs(&self.home, None)? != self.before
                     || inputs(&proof.candidate, None)? != proof.inputs
                 {
-                    return Err(unsettled());
+                    return Err(unsettled!());
                 }
-                let permission = cancellation.begin_publication()?;
-                at_cutoff()?;
-                Ok(permission)
+                cancellation.begin_publication()?;
+                at_cutoff()
             },
             observe,
         );
@@ -599,7 +609,7 @@ pub(crate) fn changed_files(
             if super::super::artifact::tree(&old, false)?
                 != super::super::artifact::tree(&next, false)?
             {
-                return Err(at(&name, unsettled()));
+                return Err(at(&name, unsettled!()));
             }
             continue;
         }

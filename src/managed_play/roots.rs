@@ -12,11 +12,27 @@ use std::{
 
 const FILE: &str = "profile-artifact-roots.json";
 
-#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// The directory a registered path named when it was registered. Only `entry` tells two
+/// directories at one path apart: a root is always reached through its recorded path, and the
+/// device number of a btrfs subvolume (`volume`) is assigned at mount time, so it can change
+/// across a reboot while the directory stays the same. `volume` is still written, for the
+/// launchers that read this file before.
+///
+/// A btrfs subvolume's root directory always has inode 256, so a game folder that is itself a
+/// subvolume root can't be told from another subvolume put at its path. The path is still
+/// scanned for references either way; only a reference left in the moved-away original would
+/// go unseen.
+#[derive(Clone, Copy, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Identity {
     volume: u64,
     entry: u64,
+}
+
+impl PartialEq for Identity {
+    fn eq(&self, other: &Self) -> bool {
+        self.entry == other.entry
+    }
 }
 
 impl Identity {
@@ -47,11 +63,11 @@ fn read(cache: &Path) -> Result<BTreeMap<PathBuf, Identity>, String> {
     let roster: Roster = serde_json::from_slice(&bytes).map_err(|e| at(&path, e))?;
     let mut roots = BTreeMap::new();
     if roster.version != 1 {
-        return Err(at(&path, unsettled()));
+        return Err(at(&path, unsettled!()));
     }
     for (root, id) in roster.roots {
         if !root.is_absolute() || roots.insert(root, id).is_some() {
-            return Err(at(&path, unsettled()));
+            return Err(at(&path, unsettled!()));
         }
     }
     Ok(roots)
@@ -68,7 +84,7 @@ pub(super) fn register(cache: &Path, game_home: &Path, profile: &Path) -> Result
         [] => (),
         [collection, _] if *collection == "instances" => (),
         [collection, _, home] if *collection == "sunrise-packs" && *home == "home" => (),
-        _ => return Err(at(&profile, unsettled())),
+        _ => return Err(at(&profile, unsettled!())),
     }
     register_root(cache, root)
 }
@@ -77,8 +93,10 @@ fn register_root(cache: &Path, root: PathBuf) -> Result<(), String> {
     let mut roots = read(cache)?;
     let id = Identity::of(&root)?;
     match roots.get(&root) {
-        Some(previous) if *previous == id => return Ok(()),
-        Some(_) => return Err(at(&root, unsettled())),
+        Some(previous) if *previous == id && previous.volume == id.volume => return Ok(()),
+        // The same directory under a device number the system gave it again.
+        Some(previous) if *previous == id => (),
+        Some(_) => return Err(at(&root, unsettled!())),
         None => (),
     }
     roots.insert(root, id);
@@ -110,7 +128,7 @@ pub(crate) fn remap_relocated_root(
             .expect("relocated game directory name"),
     );
     if Identity::of(&old)? != id || roots.contains_key(&new) {
-        return Err(at(&old, unsettled()));
+        return Err(at(&old, unsettled!()));
     }
     roots.insert(new, Identity::of(staged_game)?);
     save(staged_cache, roots)
@@ -132,7 +150,7 @@ pub(super) fn referenced(cache: &Path, game: &Path, tag: &str) -> Result<bool, S
     let roots = read(cache)?;
     for (root, id) in &roots {
         if root.canonicalize().map_err(|e| at(root, e))? != *root || Identity::of(root)? != *id {
-            return Err(at(root, unsettled()));
+            return Err(at(root, unsettled!()));
         }
         if scan_game(root, tag)? {
             return Ok(true);
@@ -158,13 +176,13 @@ fn scan_game(root: &Path, tag: &str) -> Result<bool, String> {
             }
             Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
             Err(e) => return Err(at(&collection, e)),
-            Ok(_) => return Err(at(&collection, unsettled())),
+            Ok(_) => return Err(at(&collection, unsettled!())),
         };
         for entry in entries {
             let path = entry.map_err(|e| at(&collection, e))?.path();
             let meta = fs::symlink_metadata(&path).map_err(|e| at(&path, e))?;
             if !plain_file(&meta) {
-                return Err(at(&path, unsettled()));
+                return Err(at(&path, unsettled!()));
             }
             if meta.is_dir() {
                 let home = child.map_or(path.clone(), |child| path.join(child));
@@ -182,7 +200,7 @@ fn refers(home: &Path, tag: &str) -> Result<bool, String> {
         Ok(meta) if meta.is_dir() && plain_file(&meta) => (),
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
         Err(e) => return Err(at(home, e)),
-        Ok(_) => return Err(at(home, unsettled())),
+        Ok(_) => return Err(at(home, unsettled!())),
     }
     let snapshot = crate::profile_txn::references(home)?;
     // ASCII tags can refer to the same entry on case-insensitive volumes. Keep both
@@ -252,6 +270,28 @@ mod tests {
         fs::create_dir(&first).unwrap();
         assert!(referenced(&cache, &second, "unrelated").is_err());
         assert!(register_root(&cache, first.canonicalize().unwrap()).is_err());
+    }
+
+    #[test]
+    fn a_root_whose_device_number_changed_across_a_remount_is_still_the_same_root() {
+        let temp = tempfile::tempdir().unwrap();
+        let cache = temp.path().join("launcher");
+        let game = temp.path().join("game");
+        for dir in [&cache, &game] {
+            fs::create_dir(dir).unwrap();
+        }
+        let root = game.canonicalize().unwrap();
+        register_root(&cache, root.clone()).unwrap();
+        // As btrfs does after a reboot: the same inode, under another device number.
+        let mut roots = read(&cache).unwrap();
+        let recorded = roots.get_mut(&root).unwrap();
+        recorded.volume = recorded.volume.wrapping_add(2);
+        save(&cache, roots).unwrap();
+        assert!(!referenced(&cache, &game, "unrelated").unwrap());
+
+        register_root(&cache, root.clone()).unwrap();
+        let now = Identity::of(&root).unwrap();
+        assert_eq!(read(&cache).unwrap()[&root].volume, now.volume);
     }
 
     #[test]
@@ -397,7 +437,6 @@ mod tests {
             .evict_inventory_observed(
                 SystemTime::now() + Duration::from_secs(14 * 24 * 60 * 60),
                 Some(0),
-                false,
                 |path| {
                     if path == derived {
                         assert!(!std::mem::replace(&mut selected, true));

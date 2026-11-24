@@ -27,12 +27,66 @@ pub enum SourceRequest {
     },
 }
 
+/// The exact profile identity, active state, mod inputs and cached base build that a
+/// prepared source or update check was proved against.
+#[derive(Clone, Debug)]
+pub struct SourceProof {
+    pub(super) identity: Identity,
+    pub(super) base: String,
+    pub(super) active: Option<managed_play::Active>,
+    pub(super) before: [u8; 32],
+    pub(super) checked_base: Arc<FirstBuild>,
+}
+
+impl PartialEq for SourceProof {
+    fn eq(&self, other: &Self) -> bool {
+        self.identity == other.identity
+            && self.base == other.base
+            && self.before == other.before
+            && self.active == other.active
+            && self.checked_base.same_cached_base(&other.checked_base)
+    }
+}
+
+impl Eq for SourceProof {}
+
+impl SourceProof {
+    pub fn capture(
+        instance: &Instance,
+        identity: Identity,
+        base: &str,
+    ) -> Result<Self, SourceError> {
+        if instance.kind == InstanceKind::Pack {
+            return Err(SourceError::Changed(
+                tr("This pack controls which mods it installs.").into(),
+            ));
+        }
+        let checked_base = Arc::new(FirstBuild::installed(base)?);
+        if checked_base.base_tag() != base {
+            return Err(changed_source_target());
+        }
+        let _lock = crate::browser::lock_home(&instance.home).map_err(|e| e.to_string())?;
+        let active = managed_play::display_active(&instance.home)?;
+        if Identity::of(&instance.home)? != identity
+            || active
+                .as_ref()
+                .is_some_and(|current| current.base() != base)
+        {
+            return Err(changed_source_target());
+        }
+        let before = managed_play::inputs(&instance.home, None)?;
+        Ok(Self {
+            identity,
+            base: base.into(),
+            active,
+            before,
+            checked_base,
+        })
+    }
+}
+
 pub struct PreparedSource {
-    identity: Identity,
-    base: String,
-    active: Option<managed_play::Active>,
-    before: [u8; 32],
-    checked_base: Arc<FirstBuild>,
+    pub(super) proof: SourceProof,
     package: Packed,
     origin: Origin,
     predecessor: Option<Origin>,
@@ -45,8 +99,14 @@ impl PreparedSource {
     pub fn name(&self) -> &str {
         &self.package.name
     }
+    pub fn sha256(&self) -> &str {
+        &self.package.sha256
+    }
     pub fn base(&self) -> &str {
-        &self.base
+        &self.proof.base
+    }
+    pub fn proof(&self) -> &SourceProof {
+        &self.proof
     }
     pub fn is_update(&self) -> bool {
         self.predecessor.is_some()
@@ -78,8 +138,6 @@ pub enum SourceError {
     /// A public catalogue or resolver explanation, not a raw filesystem or network error.
     Catalogue(String),
     DoesNotFit(String),
-    /// Another native build or a cache cleanup holds the build folder: a later try may pass.
-    Busy,
     Unproved(String),
     Changed(String),
     Tools(String),
@@ -116,9 +174,6 @@ impl std::fmt::Display for SourceError {
                     &[("mod", name), ("why", &why)],
                 ))
             }
-            Self::Busy => f.write_str(tr(
-                "A native build or cache cleanup is running. Try again when it finishes.",
-            )),
             Self::Dependency { detail, .. }
             | Self::Catalogue(detail)
             | Self::Build { detail, .. }
@@ -305,7 +360,7 @@ fn prepare_packages(
         stage.path(),
         &entries,
         &origins,
-        result[0].active.as_ref(),
+        result[0].proof.active.as_ref(),
         base,
     )?;
     if follow_catalogue && origins.is_empty() {
@@ -314,7 +369,7 @@ fn prepare_packages(
             stage.path(),
             base,
             &entries,
-            result[0].active.as_ref(),
+            result[0].proof.active.as_ref(),
             cancellation,
             &|_| {},
         )?;
@@ -424,11 +479,13 @@ fn bind_packages(
                 }
             }
             selected.push(PreparedSource {
-                identity,
-                base: base.into(),
-                active: active.clone(),
-                before,
-                checked_base: checked_base.clone(),
+                proof: SourceProof {
+                    identity,
+                    base: base.into(),
+                    active: active.clone(),
+                    before,
+                    checked_base: checked_base.clone(),
+                },
                 package: pasted.package,
                 origin: pasted.origin,
                 predecessor,
@@ -495,18 +552,16 @@ pub fn apply_sources(
     let Some(first) = prepared.first() else {
         return Err(SourceError::Cancelled);
     };
-    if prepared.iter().any(|entry| {
-        entry.identity != identity
-            || entry.base != first.base
-            || entry.before != first.before
-            || entry.active != first.active
-            || !entry.checked_base.same_cached_base(&first.checked_base)
-    }) {
+    if prepared
+        .iter()
+        .any(|entry| entry.proof != first.proof || entry.proof.identity != identity)
+    {
         return Err(changed_source_target());
     }
     if !first
+        .proof
         .checked_base
-        .same_cached_base(&FirstBuild::installed(&first.base)?)
+        .same_cached_base(&FirstBuild::installed(&first.proof.base)?)
     {
         return Err(changed_source_target());
     }
@@ -519,7 +574,7 @@ pub fn apply_sources(
             .collect::<Vec<_>>(),
         || {
             let first_build = choose()?;
-            if !first.checked_base.same_cached_base(&first_build) {
+            if !first.proof.checked_base.same_cached_base(&first_build) {
                 return Err(changed_source_target().to_string());
             }
             Ok(first_build)
@@ -527,9 +582,9 @@ pub fn apply_sources(
         hooks.install,
         Some(hooks.approve_worlds),
         github::Check::Source(github::SourceBatch {
-            before: first.before,
-            base: &first.base,
-            active: first.active.as_ref(),
+            before: first.proof.before,
+            base: &first.proof.base,
+            active: first.proof.active.as_ref(),
             cancellation,
             authorize: &|dependencies| (hooks.authorize)(prepared, dependencies),
         }),
@@ -588,7 +643,10 @@ fn source_fit(
     base: &str,
     cancellation: &native_mods::Cancellation,
 ) -> Result<native_mods::Routes, SourceError> {
-    native_mods::source_routes(home, base, cancellation).map_err(|why| match why {
+    // A source check waits for another build quietly, under the step it already shows.
+    native_mods::source_routes(home, base, cancellation, &|| ()).map_err(|why| match why {
+        // Stopped while it waited for another build.
+        _ if cancellation.is_stopped() => SourceError::Cancelled,
         native_mods::SourceCheckError::Dependency(detail) => SourceError::Dependency {
             required: None,
             detail,
@@ -597,7 +655,6 @@ fn source_fit(
             SourceError::DoesNotFit(error)
         }
         native_mods::SourceCheckError::Fit(why) => SourceError::Unproved(why.to_string()),
-        native_mods::SourceCheckError::Busy => SourceError::Busy,
     })
 }
 
