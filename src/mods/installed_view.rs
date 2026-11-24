@@ -1234,6 +1234,85 @@ mod tests {
     }
 
     #[test]
+    fn a_mod_rewritten_in_place_shows_on_an_idle_page_once_due() {
+        if scratch_child("a_mod_rewritten_in_place_shows_on_an_idle_page_once_due").is_none() {
+            return;
+        }
+        let profile = sunrise_launcher::instances::create("Pack", None).unwrap();
+        std::fs::create_dir_all(profile.home.join("sunrise-mods")).unwrap();
+        let entries: Vec<_> = (0..3)
+            .map(|n| {
+                let id = format!("mod-{n}");
+                let file = format!("sunrise-mods/{id}.smod");
+                std::fs::write(profile.home.join(&file), b"one").unwrap();
+                serde_json::json!({
+                    "source": "sunrise", "project": id, "slug": id, "title": format!("Mod {n}"),
+                    "kind": "mod", "version": "1.0.0", "number": "1.0.0", "file": file,
+                    "checksum": format!("SHA-256:{}", "0".repeat(64)), "page": ""
+                })
+            })
+            .collect();
+        std::fs::write(
+            profile.home.join("mod-browser.json"),
+            serde_json::json!({ "entries": entries }).to_string(),
+        )
+        .unwrap();
+        let mut settings = sunrise_launcher::backend::Settings::load();
+        settings.instance = Some(profile.id.clone());
+        settings.save().unwrap();
+
+        let mut app = gpui::TestAppContext::single();
+        let (shell, cx) = app.add_window_view(crate::window_root::Shell::new);
+        let launcher = shell.read_with(cx, |shell, _| shell.launcher());
+        launcher.update(cx, |l, cx| {
+            l.show_installed_mods();
+            cx.notify();
+        });
+        let frame = |cx: &mut gpui::VisualTestContext| {
+            launcher.update(cx, |_, cx| cx.notify());
+            cx.run_until_parked();
+        };
+        let read = |cx: &mut gpui::VisualTestContext| {
+            launcher.read_with(cx, |l, _| {
+                l.ui.mods
+                    .snapshot
+                    .as_ref()
+                    .filter(|s| !s.reading)
+                    .map(|s| s.key.clone())
+            })
+        };
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        let wait = |cx: &mut gpui::VisualTestContext, not: Option<&str>| loop {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the mods were never read"
+            );
+            frame(cx);
+            if let Some(key) = read(cx).filter(|key| Some(key.as_str()) != not) {
+                return key;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        };
+        let first = wait(cx, None);
+
+        // Rewritten where it lies: the next frame keeps the fingerprint it has.
+        std::fs::write(profile.home.join("sunrise-mods/mod-1.smod"), b"one, longer").unwrap();
+        frame(cx);
+        assert_eq!(read(cx).as_deref(), Some(first.as_str()));
+        // Before it is due the pump sees nothing to do; once due it sees the change, with no
+        // input in between, and the next frame reads the mods again.
+        let now = std::time::Instant::now();
+        assert!(!launcher.update(cx, |l, _| l.mods_check_due(now)));
+        let due = now + sunrise_launcher::native_status::FULL_EVERY;
+        assert!(launcher.update(cx, |l, _| l.mods_check_due(due)));
+        let second = wait(cx, Some(&first));
+        assert_ne!(second, first);
+        // An unchanged folder asks for nothing, even when due.
+        let again = due + sunrise_launcher::native_status::FULL_EVERY;
+        assert!(!launcher.update(cx, |l, _| l.mods_check_due(again)));
+    }
+
+    #[test]
     fn a_mod_far_down_the_list_is_built_and_revealed() {
         if scratch_child("a_mod_far_down_the_list_is_built_and_revealed").is_none() {
             return;
