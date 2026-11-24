@@ -130,18 +130,25 @@ impl Launcher {
         let Some(instance) = self.selected_instance().cloned() else {
             return;
         };
-        // Changing only the channel/pin preference when the profile is already on `tag` needs
-        // no switch modal, registry fetch, or mod rebuild.
-        let already_on_tag = instance.kind != instances::Kind::Pack
-            && match managed_play::display_active(&instance.home) {
-                Ok(Some(active)) => active.base() == tag && active.verify_artifacts().is_ok(),
-                Ok(None) => {
-                    self.profile_target(&instance).as_deref() == Some(tag.as_str())
-                        && self.installed.contains(&tag)
-                }
-                Err(_) => false,
-            };
-        if already_on_tag {
+        let identity = match install_target(&instance) {
+            Ok(identity) => identity,
+            Err(error) => {
+                self.open_notice(error, Some(WayOut::ProfileFolder(instance.home)));
+                return;
+            }
+        };
+        // Changing only the channel/pin preference when the profile is already on `tag` (and has
+        // no pending recovery or first-Play bootstrap) needs no switch modal, registry fetch, or
+        // mod rebuild. Keep artifact hashing off the UI thread.
+        let unplayed_target = self
+            .target_version(instance.version.as_ref(), instance.channel)
+            .map(String::as_str);
+        if can_fast_save_choice(
+            &instance,
+            &tag,
+            unplayed_target,
+            self.installed.contains(&tag),
+        ) {
             if let Some(choice) = choice {
                 if let Err(error) = save_build_choice(&instance.id, &tag, choice) {
                     self.open_notice(error, Some(WayOut::ProfileFolder(instance.home)));
@@ -152,13 +159,6 @@ impl Launcher {
             self.close_sheet();
             return;
         }
-        let identity = match install_target(&instance) {
-            Ok(identity) => identity,
-            Err(error) => {
-                self.open_notice(error, Some(WayOut::ProfileFolder(instance.home)));
-                return;
-            }
-        };
         let release = self.release_to_install(&tag);
         let stop = native_mods::Cancellation::default();
         let from = (instance.home.clone(), self.profile_target(&instance));
@@ -1160,6 +1160,31 @@ impl Launcher {
     }
 }
 
+/// Whether a picker selection can be saved directly to `instances.json` without running a build
+/// switch: the profile must be ordinary, have no pending transaction recovery or first-Play
+/// bootstrap, and already be on `tag`.
+fn can_fast_save_choice(
+    instance: &instances::Instance,
+    tag: &str,
+    unplayed_target: Option<&str>,
+    installed: bool,
+) -> bool {
+    if instance.kind == instances::Kind::Pack {
+        return false;
+    }
+    if !matches!(
+        sunrise_launcher::profile_txn::recovery_pending(&instance.home),
+        Ok(false)
+    ) {
+        return false;
+    }
+    match managed_play::display_active(&instance.home) {
+        Ok(Some(active)) => active.base() == tag,
+        Ok(None) => unplayed_target == Some(tag) && installed,
+        Err(_) => false,
+    }
+}
+
 /// Whether a profile holds any mod installed from the signed v2 index.
 ///
 /// Propagates `installed.json` read errors so a corrupt or unreadable manifest never falls back
@@ -1188,12 +1213,56 @@ fn publish_report(
 
 #[cfg(test)]
 mod tests {
-    use super::{publish_report, uses_v2_switch};
+    use super::{can_fast_save_choice, publish_report, uses_v2_switch};
     use std::io::{self, Write};
-    use sunrise_launcher::browser::{
-        installed::{Entry, Installed},
-        Kind, SourceId,
+    use sunrise_launcher::{
+        browser::{
+            installed::{Entry, Installed},
+            Kind, SourceId,
+        },
+        instances::{Channel, Instance, Kind as InstanceKind},
     };
+
+    #[test]
+    fn can_fast_save_choice_checks_kind_recovery_and_target() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut instance = Instance {
+            id: "own-1".into(),
+            name: "Own".into(),
+            home: dir.path().to_path_buf(),
+            work: dir.path().to_path_buf(),
+            version: Some("dev-2026-11-24-abc".into()),
+            channel: Channel::Dev,
+            kind: InstanceKind::Own,
+            group: None,
+            icon: None,
+            native_profile: Default::default(),
+            last_played: None,
+            played: Default::default(),
+            launch: Default::default(),
+            incarnation: None,
+        };
+        let tag = "dev-2026-11-24-abc";
+        // Ordinary unplayed profile already targeting `tag` with `tag` installed -> fast path.
+        assert!(can_fast_save_choice(&instance, tag, Some(tag), true));
+        // Not installed yet or different target -> full switch.
+        assert!(!can_fast_save_choice(&instance, tag, Some(tag), false));
+        assert!(!can_fast_save_choice(
+            &instance,
+            tag,
+            Some("dev-2026-11-20-old"),
+            true
+        ));
+        // Pack profiles never take the fast path.
+        instance.kind = InstanceKind::Pack;
+        assert!(!can_fast_save_choice(&instance, tag, Some(tag), true));
+        instance.kind = InstanceKind::Own;
+        // Pending transaction/bootstrap record -> never take the fast path.
+        let txn = dir.path().join("mod-browser/install-txn.json");
+        std::fs::create_dir_all(txn.parent().unwrap()).unwrap();
+        std::fs::write(&txn, "{}").unwrap();
+        assert!(!can_fast_save_choice(&instance, tag, Some(tag), true));
+    }
 
     #[test]
     fn uses_v2_switch_refuses_unreadable_installed_manifest_instead_of_falling_back() {

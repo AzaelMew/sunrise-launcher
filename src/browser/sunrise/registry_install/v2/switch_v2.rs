@@ -129,26 +129,24 @@ fn switch_profile_build_v2_with_index(
         Profile::open_for(&instance.home, None, Some(identity)).map_err(String::from)?;
     let cancellation = hooks.switch.cancellation;
     cancellation.check()?;
-    // Check whether the profile is already on `tag` before refreshing the signed v2 index so
-    // pinning/unpinning the current build never does an unnecessary network round-trip.
-    if let Some(active) = profile.active()? {
-        active.verify_artifacts()?;
-        if active.base() == tag {
-            if let Some(choice) = choice {
-                cancellation.begin_publication()?;
-                crate::browser::sunrise::registry_install::switch::save_build_choice(
-                    &instance.id,
-                    tag,
-                    choice,
-                )?;
-            }
-            return Ok(Switched::AlreadySelected);
+    // Begin the switch before refreshing the signed v2 index so an already-selected build,
+    // pending first-Play bootstrap, or invalid target never hits the network and artifacts are
+    // verified only once.
+    let Some(edit) = profile.begin_switch(tag)? else {
+        if let Some(choice) = choice {
+            cancellation.begin_publication()?;
+            crate::browser::sunrise::registry_install::switch::save_build_choice(
+                &instance.id,
+                tag,
+                choice,
+            )?;
         }
-    }
+        return Ok(Switched::AlreadySelected);
+    };
     let index = fetch_index()?;
-    let result = switch_build_v2_with(
+    let result = switch_build_v2_edit(
         instance,
-        &mut profile,
+        edit,
         index,
         tag,
         choice,
@@ -156,27 +154,14 @@ fn switch_profile_build_v2_with_index(
         &fetch_release_bytes,
         &attestation::verify_release,
     )?;
-    if let Some(choice) = choice {
-        match &result {
-            Switched::Stayed => return Ok(result),
-            Switched::AlreadySelected => {
-                cancellation.begin_publication()?;
-                crate::browser::sunrise::registry_install::switch::save_build_choice(
-                    &instance.id,
-                    tag,
-                    choice,
-                )?;
-            }
-            Switched::Changed(active) => {
-                if let Some(committed) = active.build_choice() {
-                    if let Err(error) =
-                        crate::instances::sync_build_choice(&instance.id, &instance.home, committed)
-                    {
-                        // The choice is already durable in active-build.json; listing or
-                        // editing the profile recovers instances.json on the next write.
-                        eprintln!("Sunrise: instances.json is not saved: {error}");
-                    }
-                }
+    if let (Some(_), Switched::Changed(active)) = (choice, &result) {
+        if let Some(committed) = active.build_choice() {
+            if let Err(error) =
+                crate::instances::sync_build_choice(&instance.id, &instance.home, committed)
+            {
+                // The choice is already durable in active-build.json; listing or
+                // editing the profile recovers instances.json on the next write.
+                eprintln!("Sunrise: instances.json is not saved: {error}");
             }
         }
     }
@@ -303,11 +288,10 @@ pub(super) fn plan_slot_for_build<'a>(
     }
 }
 
-/// Internal testable entrypoint for v2 build switching.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn switch_build_v2_with(
+fn switch_build_v2_edit(
     instance: &Instance,
-    profile: &mut Profile,
+    edit: crate::managed_play::Edit<'_>,
     index: Arc<Index>,
     tag: &str,
     choice: Option<BuildChoice>,
@@ -315,9 +299,6 @@ pub(crate) fn switch_build_v2_with(
     fetch_bytes: BytesFetcher<'_>,
     verify_release: ReleaseVerifier<'_>,
 ) -> Result<Switched, String> {
-    let Some(edit) = profile.begin_switch(tag)? else {
-        return Ok(Switched::AlreadySelected);
-    };
     (hooks.switch.progress)(InstallProgress::Checking);
     let old = edit.candidate()?;
     let before = inventory_v2(old.path(), &index)?;
