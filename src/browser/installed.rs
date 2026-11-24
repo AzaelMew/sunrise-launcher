@@ -537,9 +537,6 @@ pub fn install(
     progress: &dyn Fn(&str, f32),
 ) -> Result<Vec<Entry>, String> {
     let _lock = super::lock_home(home).map_err(|e| e.to_string())?;
-    if project.source == SourceId::Sunrise {
-        return super::sunrise::install_pack(project, home, game, progress);
-    }
     recover_game_install(home)?;
     let installed = Installed::read(home)?;
     let steps = plan(source, project, everything, game)?;
@@ -700,6 +697,15 @@ pub enum PackUpdate {
     Updated(Vec<Entry>),
 }
 
+/// Why a pack installed from Sunrise's first registry can't be updated: that registry is gone,
+/// and the signed one has no packs.
+pub fn old_registry_pack(title: &str) -> String {
+    crate::i18n::trf(
+        "{title} came from Sunrise's old mod registry, which has closed, so it can't be updated. It keeps working as it is.",
+        &[("title", title)],
+    )
+}
+
 /// Check or update an installed resource or shader pack. Data packs are managed within worlds.
 pub fn update_pack(
     home: &Path,
@@ -718,7 +724,7 @@ pub fn update_pack(
         .ok_or_else(|| format!("{} wasn't installed by the browser.", selected.title))?;
     old_pack_path(home, entry, selected.kind)?;
     if entry.source == SourceId::Sunrise {
-        return super::sunrise::update_pack(entry, home, game, check, progress);
+        return Err(old_registry_pack(&entry.title));
     }
     let source = super::modrinth::Modrinth;
     let project = source.project(&entry.project)?;
@@ -781,29 +787,23 @@ pub fn install_datapack(
         std::process::id(),
         project.id
     ));
-    // The registry's are checked against its index (signature, `pack.mcmeta` and `data/`).
-    let fetched = match project.source {
-        SourceId::Sunrise => super::sunrise::fetch_datapack(project, &folder, game, progress),
-        _ => {
-            let versions = source.versions(project)?;
-            let version = pick(Kind::DataPack, &versions, everything, game).ok_or_else(|| {
-                format!(
-                    "{} has no data pack for {}{}.",
-                    project.title,
-                    game,
-                    if everything {
-                        " or any other version"
-                    } else {
-                        ""
-                    }
-                )
-            })?;
-            let file = version.file().expect("pick keeps versions with a file");
-            source
-                .fetch(file, &folder, progress)
-                .map(|zip| (zip, version.number.clone()))
-        }
-    };
+    let versions = source.versions(project)?;
+    let version = pick(Kind::DataPack, &versions, everything, game).ok_or_else(|| {
+        format!(
+            "{} has no data pack for {}{}.",
+            project.title,
+            game,
+            if everything {
+                " or any other version"
+            } else {
+                ""
+            }
+        )
+    })?;
+    let file = version.file().expect("pick keeps versions with a file");
+    let fetched = source
+        .fetch(file, &folder, progress)
+        .map(|zip| (zip, version.number.clone()));
     let result = fetched.and_then(|(zip, number)| {
         let coverage = crate::datapacks::coverage(&zip)?;
         if coverage.read.is_empty() {

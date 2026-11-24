@@ -5,10 +5,9 @@ use crate::{
 };
 
 const BROKEN: &str = "bad_lantern";
-const BROKEN_ARCHIVE: &str = "sunrise-native-mods/bad_lantern.smod";
 
 fn broken(fixture: &mut Fixture, declarations: &str) {
-    fixture.project(BROKEN, "Broken Lantern", index::Kind::NativeMod);
+    fixture.project(BROKEN, "Broken Lantern", V2Kind::NativeMod);
     let tables = format!(
         "{declarations}\n[native]\nsunrise='{}'\nmixins='{}'\ngame='{}'\n",
         "a".repeat(40),
@@ -44,7 +43,7 @@ fi
     .unwrap();
     fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
     configure_tool(&fixture);
-    fixture.project(ID, "Native Lantern", index::Kind::NativeMod);
+    fixture.project(ID, "Native Lantern", V2Kind::NativeMod);
     release(&mut fixture, "1.0.0", 'a', SOURCE);
     broken(&mut fixture, "");
     fixture
@@ -132,37 +131,5 @@ fn changing_the_mod_set_after_a_cancelled_first_play_allows_the_next_play() {
             "::changing_the_mod_set_after_a_cancelled_first_play_allows_the_next_play"
         ),
         |fixture| corrected_play(fixture, true),
-    );
-}
-
-#[test]
-#[ignore = "daily; build the launcher binary first"]
-fn a_failing_add_cannot_disable_a_working_conflict() {
-    Fixture::run(
-        concat!(
-            module_path!(),
-            "::a_failing_add_cannot_disable_a_working_conflict"
-        ),
-        |mut fixture| {
-            configure_tool(&fixture);
-            fixture.project("lantern", "Lantern", index::Kind::Mod);
-            fixture.release("lantern", "1.0.0", "", &[]);
-            fixture.install(&["lantern"]);
-            let before = fixture.snapshot(&[LANTERN]);
-            broken(&mut fixture, "[incompatible]\nlantern='^1'");
-            let result = fixture.apply_resolving(
-                BUILD,
-                Action::Install(projects(&[BROKEN])),
-                Some(&|_| true),
-            );
-            assert!(
-                matches!(result, Err(InstallError::Compile(_))),
-                "{result:?}"
-            );
-            assert_eq!(compiled(&fixture), "1.1.0\n");
-            assert_eq!(fixture.snapshot(&[LANTERN]), before);
-            assert!(mod_list::is_enabled(fixture.home(), "lantern"));
-            assert!(!fixture.home().join(BROKEN_ARCHIVE).exists());
-        },
     );
 }

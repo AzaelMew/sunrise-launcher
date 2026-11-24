@@ -88,26 +88,6 @@ pub fn checked_switch_fit_v2(index: &Index, home: &Path, tag: &str) -> bool {
     true
 }
 
-/// Whether a build switch for `home` should use the signed v2 registry.
-///
-/// Defaults to v2 now that the official registry publishes `v2/index.signed` and no longer serves
-/// the legacy v1 `index.json`. Falls back to v1 only when the caller explicitly overrides
-/// `SUNRISE_MOD_INDEX` (without setting `SUNRISE_MOD_INDEX_V2`) and the profile holds no v2 mods.
-/// Always propagates `installed.json` read errors so a corrupt manifest never silently falls back.
-pub fn prefer_v2_switch(home: &Path) -> Result<bool, String> {
-    let has_v1 = std::env::var_os("SUNRISE_MOD_INDEX").is_some_and(|v| !v.is_empty());
-    let has_v2 = std::env::var_os(catalogue_v2::ENV_OVERRIDE).is_some_and(|v| !v.is_empty());
-    prefer_v2_switch_with(home, has_v1 && !has_v2)
-}
-
-pub fn prefer_v2_switch_with(home: &Path, legacy_v1_override: bool) -> Result<bool, String> {
-    let has_v2_mod = crate::browser::installed::Installed::read(home)?
-        .entries
-        .iter()
-        .any(|e| e.mod_id.is_some());
-    Ok(has_v2_mod || !legacy_v1_override)
-}
-
 /// Switch `instance` to exact prepared Sunrise build `tag` using the signed v2 registry.
 pub fn switch_build_v2(
     instance: &Instance,
@@ -126,20 +106,34 @@ pub fn switch_profile_build_v2(
     choice: Option<BuildChoice>,
     hooks: V2SwitchHooks<'_>,
 ) -> Result<Switched, String> {
-    switch_profile_build_v2_with_index(instance, identity, tag, choice, hooks, || {
-        catalogue_v2::refreshed_index()
-            .map(|c| c.index)
-            .map_err(|e| e.to_string())
-    })
+    switch_profile_build_v2_with(
+        instance,
+        identity,
+        tag,
+        choice,
+        hooks,
+        || {
+            catalogue_v2::refreshed_index()
+                .map(|c| c.index)
+                .map_err(|e| e.to_string())
+        },
+        &fetch_release_bytes,
+        &attestation::verify_release,
+    )
 }
 
-fn switch_profile_build_v2_with_index(
+/// [`switch_profile_build_v2`] with the index read, the download and the attestation check
+/// injected, so tests switch offline through the same path.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn switch_profile_build_v2_with(
     instance: &Instance,
     identity: Identity,
     tag: &str,
     choice: Option<BuildChoice>,
     hooks: V2SwitchHooks<'_>,
     fetch_index: impl FnOnce() -> Result<Arc<Index>, String>,
+    fetch_bytes: BytesFetcher<'_>,
+    verify_release: ReleaseVerifier<'_>,
 ) -> Result<Switched, String> {
     if instance.kind == crate::instances::Kind::Pack {
         return Err(tr("Choose an ordinary profile to switch builds.").into());
@@ -173,8 +167,8 @@ fn switch_profile_build_v2_with_index(
         tag,
         choice,
         hooks,
-        &fetch_release_bytes,
-        &attestation::verify_release,
+        fetch_bytes,
+        verify_release,
     )?;
     if let (Some(_), Switched::Changed(active)) = (choice, &result) {
         if let Some(committed) = active.build_choice() {
@@ -998,13 +992,15 @@ mod tests {
             confirm_publisher_change: None,
             pin_dir: None,
         };
-        let Err(err) = switch_profile_build_v2_with_index(
+        let Err(err) = switch_profile_build_v2_with(
             &instance,
             Identity::of(dir.path()).unwrap(),
             "dev-2026-11-24-abc",
             Some(BuildChoice::Follow(Channel::Dev)),
             hooks,
             || panic!("pack refusal must happen before fetching v2 index"),
+            &fetch_release_bytes,
+            &attestation::verify_release,
         ) else {
             panic!("expected pack refusal error");
         };

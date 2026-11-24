@@ -555,23 +555,27 @@ impl Launcher {
             .snapshot
             .as_ref()
             .and_then(|snap| snap.rows.managed.as_ref())
-            .map(|managed| managed.base().to_owned());
-        let game = base
-            .as_deref()
-            .map_or_else(|| self.mods_game(), backend::game_version);
+            .map(|managed| managed.base().to_owned())
+            .or_else(|| self.selected_exact_build());
         let tx = self.ui.mods.tx.clone();
-        let project = row.entry.as_ref().map(|e| e.project.clone());
+        let entry = row.entry.clone();
         std::thread::spawn(move || {
-            let found = sunrise::refreshed_index().map(|index| {
-                let unfit_updates = base
-                    .as_deref()
-                    .map(sunrise::known_unfit_updates)
-                    .unwrap_or_default();
-                project
-                    .as_deref()
-                    .and_then(|id| index.project(id))
-                    .and_then(|p| model::newer(&index, p, &row.version, &game, &unfit_updates))
-            });
+            let found = sunrise::v2::refreshed_index()
+                .map_err(|error| error.to_string())
+                .map(|catalog| {
+                    let base = base.as_deref()?;
+                    let unfit_updates = sunrise::known_unfit_updates(base);
+                    let entry = entry.as_ref()?;
+                    let project = sunrise::v2::installed_project(&catalog.index, entry)?;
+                    sunrise::v2::newer_release(
+                        &catalog.index,
+                        project,
+                        &entry.version,
+                        base,
+                        &unfit_updates,
+                    )
+                    .map(|release| release.version.clone())
+                });
             let _ = tx.send(Event::Checked(row.title, found));
         });
     }

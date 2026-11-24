@@ -273,29 +273,8 @@ pub const IRIS: &str = "iris";
 /// What an Iris-format shader pack is labelled with.
 pub const IRIS_LABEL: &str = "Iris-format pack: most work, some effects may not";
 
-/// What another source answers for shader packs: Sunrise's own are on its registry only.
-pub const SHADERS_ON_SUNRISE: &str =
-    "Sunrise's shader packs are on Sunrise's registry: pick Sunrise.";
-
-/// The source of that id.
-pub fn source(id: SourceId) -> Box<dyn Source> {
-    match id {
-        SourceId::Modrinth => Box::new(modrinth::Modrinth),
-        SourceId::Sunrise => Box::new(sunrise::Registry),
-    }
-}
-
 /// How well a project of `kind` made for `game_versions` and `loaders` runs in Sunrise on `game`.
 pub fn support(kind: Kind, game_versions: &[String], loaders: &[String], game: &str) -> Support {
-    if loaders.iter().any(|l| l == sunrise::LOADER) {
-        // Made for Sunrise and reviewed: it runs when it is for the version Sunrise plays.
-        return match newest_release(game_versions)
-            .filter(|_| !game_versions.iter().any(|v| v == game))
-        {
-            Some(other) => Support::No(format!("Made for Sunrise on {other}.")),
-            None => Support::Works,
-        };
-    }
     match kind {
         Kind::ResourcePack => {
             if game_versions.iter().any(|v| v == game) {
@@ -375,12 +354,6 @@ pub fn pick<'a>(
     let mut usable = versions
         .iter()
         .filter(|v| v.blocked.is_none() && v.file().is_some());
-    if versions
-        .iter()
-        .any(|v| v.loaders.iter().any(|l| l == sunrise::LOADER))
-    {
-        return usable.find(|v| v.game_versions.iter().any(|g| g == game));
-    }
     if kind == Kind::Shader {
         // An Iris-format zip: never a jar or another loader's file.
         let mut packs = usable.filter(|v| {

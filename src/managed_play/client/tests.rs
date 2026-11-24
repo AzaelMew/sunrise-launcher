@@ -1,7 +1,16 @@
 use super::*;
 use serde_json::json;
 use std::{fs, sync::Arc};
-use sunrise_launcher_smod::{index, manifest, mod_list};
+use sunrise_launcher_smod::{index, index_v2, manifest, mod_list};
+
+/// A signed v2 catalogue that lists nothing.
+fn empty_index() -> index_v2::Index {
+    serde_json::from_value(json!({
+        "schema": 2, "serial": 1, "generated": "2026-11-24T00:00:00Z", "builds": [],
+        "categories": [], "projects": [], "revoked": []
+    }))
+    .unwrap()
+}
 
 fn recovery_mod(home: &Path, id: &str, name: &str, native: bool, dependencies: &str) {
     let body = format!(
@@ -493,10 +502,10 @@ fn play_checks_hash_only_takedowns_after_proving_the_actual_package() {
     };
     let mut profile = Profile::open(&home, None).unwrap();
     let cancellation = native_mods::Cancellation::default();
-    let revoked = |id: &str, hash| {
-        let mut result = index::Index::default();
-        result.revoked.push(index::Revoked {
-            id: id.into(),
+    let revoked = |project: &str, hash| {
+        let mut result = empty_index();
+        result.revoked.push(index_v2::Revoked {
+            project: project.into(),
             sha256: Some(hash),
             reason: "hash-only takedown fixture".into(),
             date: String::new(),
@@ -510,15 +519,13 @@ fn play_checks_hash_only_takedowns_after_proving_the_actual_package() {
             |_, _| Ok(()),
             &cancellation,
             |_| {},
-            (
-                || {
-                    let binding = crate::profile_txn::references(&home).unwrap();
-                    assert!(binding.targets.contains(BUILD));
-                    assert!(binding.pointer.is_none());
-                    revoked("lantern", old)
-                },
-                || None,
-            ),
+            || {
+                let binding = crate::profile_txn::references(&home).unwrap();
+                assert!(binding.targets.contains(BUILD));
+                assert!(binding.pointer.is_none());
+                // A hash-only takedown applies whichever project lists it.
+                revoked("Ab3dE9xQ", old)
+            },
         )
         .unwrap();
     // The old hash-only takedown does not deny the current input. Neither it nor
@@ -533,7 +540,7 @@ fn play_checks_hash_only_takedowns_after_proving_the_actual_package() {
             |_, _| Ok(()),
             &cancellation,
             |_| {},
-            (|| revoked("lantern", replaced), || None),
+            || revoked("Ab3dE9xQ", replaced),
         )
         .expect_err("actual archive was taken down");
     assert!(String::from(error).contains("hash-only takedown fixture"));
@@ -566,9 +573,9 @@ fn play_checks_hash_only_takedowns_after_proving_the_actual_package() {
     )
     .unwrap();
     assert_eq!(crate::native_status::enabled(&home).len(), 1);
-    let mut listed = index::Index::default();
-    listed.revoked.push(index::Revoked {
-        id: "native_lantern".into(),
+    let mut listed = empty_index();
+    listed.revoked.push(index_v2::Revoked {
+        project: "native_lantern".into(),
         sha256: None,
         reason: "only the listed project was taken down".into(),
         date: String::new(),
@@ -586,19 +593,16 @@ fn play_checks_hash_only_takedowns_after_proving_the_actual_package() {
             |_, _| Ok(()),
             &cancellation,
             |step| assert!(!matches!(step, Progress::Native(_)), "started native work"),
-            (
-                || {
-                    let hash = index::sha256_file(&native).unwrap().to_ascii_uppercase();
-                    listed.revoked.push(index::Revoked {
-                        id: "native_lantern".into(),
-                        sha256: Some(hash),
-                        reason: "exact native digest was taken down".into(),
-                        date: String::new(),
-                    });
-                    Some(Arc::new(listed))
-                },
-                || None,
-            ),
+            || {
+                let hash = index::sha256_file(&native).unwrap().to_ascii_uppercase();
+                listed.revoked.push(index_v2::Revoked {
+                    project: "Nl4nTern".into(),
+                    sha256: Some(hash),
+                    reason: "exact native digest was taken down".into(),
+                    date: String::new(),
+                });
+                Some(Arc::new(listed))
+            },
         )
         .expect_err("native input was taken down");
     let error = String::from(error);
@@ -625,16 +629,8 @@ fn a_failed_first_download_can_be_followed_by_a_mod_change_and_play() {
     const UNAVAILABLE: &str = "26.3-0.1.7";
     if std::env::var_os("PLAY_DOWNLOAD_FIXTURE").is_none() {
         let root = tempfile::tempdir().unwrap();
-        let registry = root.path().join("index.json");
-        fs::write(
-            &registry,
-            serde_json::to_vec(&index::Index {
-                schema: index::SCHEMA,
-                ..Default::default()
-            })
-            .unwrap(),
-        )
-        .unwrap();
+        // No registry answers: Play goes on without one when no installed mod needs it.
+        let registry = root.path().join("no-index.signed");
         // libtest names omit the crate prefix included by module_path!().
         let test = TEST.split_once("::").unwrap().1;
         let output = Command::new(std::env::current_exe().unwrap())
@@ -643,7 +639,7 @@ fn a_failed_first_download_can_be_followed_by_a_mod_change_and_play() {
             .env("SUNRISE_HOME", root.path().join("game"))
             .env("SUNRISE_LAUNCHER_HOME", root.path().join("launcher"))
             .env("SUNRISE_LAUNCHER_DEVELOPER_OFFLINE", "1")
-            .env("SUNRISE_MOD_INDEX", registry)
+            .env("SUNRISE_MOD_INDEX_V2", registry)
             .env("XDG_CONFIG_HOME", root.path().join("config"))
             .output()
             .unwrap();
@@ -695,7 +691,7 @@ fn a_failed_first_download_can_be_followed_by_a_mod_change_and_play() {
                     UNAVAILABLE.into(),
                     UNAVAILABLE.into(),
                     [1; 16],
-                    super::super::inputs(&home, None)?,
+                    super::super::inputs(&home)?,
                     json!({"kind":"download", "archive":archive}),
                 ))
             },
@@ -830,7 +826,7 @@ fn windows_bound_x64_fallback_survives_pending_retry_and_committed_replay() {
                         BUILD.into(),
                         BUILD.into(),
                         [1; 16],
-                        super::super::inputs(&home, None).unwrap(),
+                        super::super::inputs(&home).unwrap(),
                         json!({"kind":"download", "archive":{
                             "source":BUILD, "file":"sunrise-windows-x64.zip", "size":0,
                             "requested":"arm64", "time":"",
@@ -867,7 +863,7 @@ fn windows_bound_x64_fallback_survives_pending_retry_and_committed_replay() {
             },
             &cancellation,
             |_| {},
-            (|| None, || None),
+            || None,
         )
     };
     let mut profile = Profile::open(&home, None).unwrap();

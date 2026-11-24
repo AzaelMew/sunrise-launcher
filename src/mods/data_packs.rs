@@ -681,9 +681,9 @@ fn add_to_worlds(
         let put = check_world(home, &world.path).and_then(|_| match (&file, what) {
             (Some(file), _) => datapacks::add(&world.path, file),
             (None, What::Project(project)) => {
-                let source = browser::source(project.source);
+                let source = browser::modrinth::Modrinth;
                 let done = browser::installed::install_datapack(
-                    &*source,
+                    &source,
                     project,
                     false,
                     &world.path,

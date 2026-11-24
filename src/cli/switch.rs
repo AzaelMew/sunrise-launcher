@@ -5,8 +5,7 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
 };
 use sunrise_launcher::browser::sunrise::{
-    install_target, prefer_v2_switch, switch_build, switch_build_v2, SwitchDecision, SwitchHooks,
-    Switched, V2SwitchHooks,
+    install_target, switch_build_v2, SwitchDecision, SwitchHooks, Switched, V2SwitchHooks,
 };
 
 static BEFORE_CUTOFF: AtomicBool = AtomicBool::new(true);
@@ -109,20 +108,16 @@ pub(super) fn run(instance: &instances::Instance, tag: &str, as_json: bool) -> R
             }
         },
     };
-    let result = if prefer_v2_switch(&instance.home)? {
-        switch_build_v2(
-            instance,
-            identity,
-            tag,
-            V2SwitchHooks {
-                switch: hooks,
-                confirm_publisher_change: None,
-                pin_dir: None,
-            },
-        )?
-    } else {
-        switch_build(instance, identity, tag, hooks)?
-    };
+    let result = switch_build_v2(
+        instance,
+        identity,
+        tag,
+        V2SwitchHooks {
+            switch: hooks,
+            confirm_publisher_change: None,
+            pin_dir: None,
+        },
+    )?;
     let mut output = io::stdout().lock();
     match result {
         Switched::Stayed => return Err(cancelled()),

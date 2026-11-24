@@ -57,10 +57,6 @@ pub fn home(work: &Path) -> PathBuf {
     work.join("home")
 }
 
-pub fn install_unavailable() -> String {
-    tr("Installing and updating Sunrise modpacks is paused. Use Mods to install individual mods in another profile.").into()
-}
-
 pub fn play_unavailable() -> String {
     tr("Playing Sunrise modpacks is paused. Choose another profile to play.").into()
 }

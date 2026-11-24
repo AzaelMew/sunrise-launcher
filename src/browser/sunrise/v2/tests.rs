@@ -439,21 +439,6 @@ fn malformed_signed_indexes_are_refused_with_no_salvage() {
 }
 
 #[test]
-fn v2_reader_never_reuses_the_v1_cache_file() {
-    let temp = tempfile::tempdir().unwrap();
-    let v1_cache = temp.path().join(super::super::CACHE);
-    fs::create_dir_all(v1_cache.parent().unwrap()).unwrap();
-    let (bytes, _) = load_fixture("two-ports-index.json");
-    fs::write(&v1_cache, &bytes).unwrap();
-
-    let mut store = Store::new(temp.path().join(CACHE_DIR), REGISTRY_KEYS);
-    let err = store
-        .load_from_fetch(Err("network down".into()), now_2026_11_24())
-        .unwrap_err();
-    assert_eq!(err, LoadError::Fetch("network down".into()));
-}
-
-#[test]
 fn fetch_and_load_verifies_local_files_and_loopback_http() {
     // A local file override is one signed file too.
     let temp = tempfile::tempdir().unwrap();

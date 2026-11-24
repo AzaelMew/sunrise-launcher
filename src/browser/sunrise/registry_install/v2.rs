@@ -43,9 +43,10 @@ use sunrise_launcher_smod::{
 };
 
 mod switch_v2;
+#[cfg(all(test, target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
+pub(crate) use switch_v2::switch_profile_build_v2_with;
 pub use switch_v2::{
-    checked_switch_fit_v2, prefer_v2_switch, prefer_v2_switch_with, switch_build_v2,
-    switch_profile_build_v2, V2SwitchHooks,
+    checked_switch_fit_v2, switch_build_v2, switch_profile_build_v2, V2SwitchHooks,
 };
 
 /// Maximum accepted `.sigstore.json` attestation bundle size (1 MiB).
@@ -1753,7 +1754,18 @@ fn v2_edit_with(
     // World impact review for updates (or guard against unexpected replacements on Install).
     let (suspect, reviewed_worlds) = match &action {
         V2Action::Install(_) => {
-            let suspect = crate::worlds::SuspectMods::new();
+            // A dependency that replaces an installed mod may drop what saved worlds use.
+            let suspect = if replacements.is_empty() {
+                crate::worlds::SuspectMods::new()
+            } else {
+                crate::worlds::unproved_mod_effects(
+                    old.path(),
+                    edit.current(),
+                    next.path(),
+                    edit.current(),
+                    replacements.iter().map(|(_, id)| id.as_str()),
+                )?
+            };
             let reviewed = guard_replacements(
                 &instance.home,
                 &suspect,
@@ -2200,7 +2212,7 @@ pub(crate) fn check_staged_v2_candidate(
             )));
         }
     }
-    if let Some(conflict) = manifest_conflict(home, None, None, Side::Both, staged)? {
+    if let Some(conflict) = manifest_conflict(home, Side::Both, staged)? {
         return Err(InstallError::Refused(conflict.reason));
     }
     Ok(())

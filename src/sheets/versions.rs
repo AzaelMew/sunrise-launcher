@@ -515,23 +515,15 @@ impl Launcher {
                             });
                             let target = tag.clone();
                             let work = cx.background_executor().spawn(async move {
-                                match sunrise_launcher::browser::sunrise::prefer_v2_switch(&home) {
-                                    Ok(true) => sunrise_launcher::browser::sunrise::v2::index()
-                                        .ok()
-                                        .is_some_and(|catalog| {
-                                            sunrise_launcher::browser::sunrise::checked_switch_fit_v2(
-                                                &catalog.index,
-                                                &home,
-                                                &target,
-                                            )
-                                        }),
-                                    Ok(false) => {
-                                        sunrise_launcher::browser::sunrise::checked_switch_fit(
-                                            &home, &target,
+                                sunrise_launcher::browser::sunrise::v2::index().is_ok_and(
+                                    |catalog| {
+                                        sunrise_launcher::browser::sunrise::checked_switch_fit_v2(
+                                            &catalog.index,
+                                            &home,
+                                            &target,
                                         )
-                                    }
-                                    Err(_) => false,
-                                }
+                                    },
+                                )
                             });
                             cx.spawn(async move |this, cx| {
                                 let _ = checked.set(work.await);

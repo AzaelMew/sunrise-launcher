@@ -1760,16 +1760,6 @@ pub fn game_version(tag: &str) -> String {
     game_version_at(&version_dir(tag))
 }
 
-/// Switch must classify packages against the exact build, never the legacy default JAR.
-pub(crate) fn switch_game_version(tag: &str) -> Result<String, String> {
-    locked_game(&version_dir(tag)).ok_or_else(|| {
-        crate::i18n::tr(
-            "The selected build's game version could not be verified. Nothing was switched.",
-        )
-        .into()
-    })
-}
-
 /// Hosting uses the locked version as a destination. Older builds with no lock keep the default.
 pub(crate) fn hosting_game_version(folder: &Path) -> Result<String, String> {
     let path = folder.join("research-lock.json");
