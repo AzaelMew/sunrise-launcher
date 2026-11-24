@@ -523,6 +523,110 @@ fn revalidate_claims(live: &Path, checks: &[(String, String)]) -> Result<(), Str
     Ok(())
 }
 
+/// Turn a held local or source mod back on in `instance`: its exact bytes go through the fit
+/// check and build for the profile's current build, and only a proved image is published,
+/// retiring the hold. A failed check returns what it found, and nothing changes.
+pub fn restore_held(
+    instance: &Instance,
+    identity: Identity,
+    id: &str,
+    cancellation: &native_mods::Cancellation,
+) -> Result<(), String> {
+    let mut profile =
+        Profile::open_for(&instance.home, None, Some(identity)).map_err(String::from)?;
+    let edit = profile.begin_pending_edit()?;
+    // A registry hold waits for its author's update; only local and source bytes are retried.
+    let (title, digest) = edit
+        .held(id)
+        .filter(|hold| {
+            !matches!(hold.source(), managed_play::HeldSource::Registry { .. })
+                && hold.matches_archive(&instance.home)
+        })
+        .map(|hold| {
+            let digest: String = hold.digest().iter().map(|b| format!("{b:02x}")).collect();
+            (hold.title().to_owned(), digest)
+        })
+        .ok_or_else(|| held_change_refusal(id).to_string())?;
+    let next = edit.candidate()?;
+    let packages = inventory(next.path(), None)?;
+    let seen = packages
+        .get(id)
+        .ok_or_else(|| held_change_refusal(id).to_string())?;
+    let manifest = &seen.package.manifest;
+    // These exact bytes stay off once taken down. The signed index's digest takedowns reach local
+    // and source copies whichever index the profile's own switches read, so it is always asked,
+    // and an unreadable index refuses rather than skipping the check.
+    let catalog = crate::browser::sunrise::v2::change_index().map_err(|error| {
+        trf(
+            "Couldn't check {mod} against the registry's takedowns: {error}",
+            &[("mod", &title), ("error", &error.to_string())],
+        )
+    })?;
+    let mut takedown = catalog
+        .index
+        .revoked_by_sha256(&digest)
+        .map(|row| row.reason.clone());
+    // A profile without registry receipts still switches on the first index, which also withholds
+    // an archive claiming a project taken down whole.
+    let v2 = installed::Installed::read(&instance.home)?
+        .entries
+        .iter()
+        .any(|entry| entry.mod_id.is_some());
+    if takedown.is_none() && !v2 {
+        let source = location();
+        let local = super::super::local();
+        if source != super::super::INDEX_URL && !(cfg!(debug_assertions) && local) {
+            return Err(tr("Connect to the Sunrise registry before switching builds.").into());
+        }
+        let (catalogue, _, _) = super::super::complete_index(&source, local)?;
+        takedown = catalogue
+            .revoked(id, &digest)
+            .filter(|row| seen.registry_claim || row.sha256.is_some())
+            .map(|row| row.reason.clone());
+    }
+    if let Some(reason) = takedown {
+        return Err(trf(
+            "{mod} was taken down: {reason}",
+            &[("mod", &title), ("reason", &reason)],
+        ));
+    }
+    if manifest.side == Side::Server {
+        return Err(trf(
+            "{mod} runs only on servers, so it can't be turned on here.",
+            &[("mod", &manifest.name)],
+        ));
+    }
+    if manifest.api != sunrise_launcher_smod::manifest::API {
+        return Err(trf(
+            "{mod} needs mod API {api}, which this launcher doesn't run.",
+            &[("mod", &manifest.name), ("api", &manifest.api)],
+        ));
+    }
+    mutations::check_activation(next.path(), None, &[id])?;
+    mod_list::set_all_enabled(next.path(), &[id], true)?;
+    if let Some(conflict) = manifest_conflict(next.path(), None, None, Side::Both, |_| false)
+        .map_err(|error| error.to_string())?
+    {
+        return Err(conflict.reason);
+    }
+    let proof = edit
+        .prove(
+            next.path(),
+            instance.native_profile,
+            cancellation,
+            |_| {},
+            None,
+        )
+        .map_err(String::from)?;
+    edit.publish_install(
+        proof,
+        cancellation,
+        &BTreeSet::from([id.to_owned()]),
+        || Ok(()),
+    )?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

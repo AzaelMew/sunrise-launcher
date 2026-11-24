@@ -705,13 +705,13 @@ impl Launcher {
             .as_ref()
             .and_then(|entry| entry.install_hold.as_ref())
             .filter(|_| !r.on);
-        let hold_label = self
+        let hold = self
             .ui
             .mods
             .snapshot
             .as_ref()
-            .and_then(|snapshot| snapshot.rows.switch_held.get(&r.id))
-            .map(|hold| hold.label());
+            .and_then(|snapshot| snapshot.rows.switch_held.get(&r.id));
+        let hold_label = hold.map(|hold| (hold.label(), hold.detail().map(str::to_owned)));
         let switch_held = hold_label.is_some();
         let status_cell: AnyElement = if switch_held {
             div().into_any_element()
@@ -788,7 +788,7 @@ impl Launcher {
                     "Enabled for this profile, but not included in the build.",
                 )))
             });
-            if cells.switch && !switch_held && !busy {
+            if cells.switch && !busy {
                 let row = r.clone();
                 s.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     cx.stop_propagation();
@@ -847,10 +847,15 @@ impl Launcher {
                         muted(trf("Update available: {version}", &[("version", version)]))
                     }),
             )
-            .children(hold_label.map(|label| {
+            .children(hold_label.map(|(label, detail)| {
                 div()
+                    .id(("alt-row-hold", n))
                     .text_size(px(tokens::SMALL))
                     .text_color(c(palette().warning))
+                    .truncate()
+                    .when_some(detail, |hold, detail| {
+                        hold.tooltip(crate::glass_ui::tip(detail))
+                    })
                     .child(label)
             }))
             .children(

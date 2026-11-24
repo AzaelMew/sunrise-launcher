@@ -187,7 +187,10 @@ impl Launcher {
             .and_then(|snapshot| snapshot.switch_held.get(&row.id))
             .cloned();
         let status = if let Some(hold) = &hold {
-            Some(note(hold.label()))
+            Some(note(match hold.detail() {
+                Some(detail) => format!("{} {detail}", hold.label()),
+                None => hold.label().to_owned(),
+            }))
         } else if cells.popover {
             row.unfit
                 .clone()
@@ -196,7 +199,7 @@ impl Launcher {
             cells.status.as_ref().map(|status| note(status.tip.clone()))
         };
         let toggle = ui::switch("alt-project-switch", row.on);
-        let toggle = if busy || hold.is_some() || !cells.switch {
+        let toggle = if busy || !cells.switch {
             dim(toggle)
         } else {
             let row = row.clone();

@@ -153,6 +153,7 @@ pub(super) fn plan_slot_for_build<'a>(
     let Some(project) = index.project(project_id) else {
         return SlotPlan::Hold(HeldReason::Unproved {
             build: tag.to_owned(),
+            detail: None,
         });
     };
     if let Some(revoked) = index.revoked(&project.id, None) {
@@ -179,6 +180,7 @@ pub(super) fn plan_slot_for_build<'a>(
         let Some(release) = project.releases.iter().find(|r| r.version == pinned_ver) else {
             return SlotPlan::Hold(HeldReason::Unproved {
                 build: tag.to_owned(),
+                detail: None,
             });
         };
         if index
@@ -198,6 +200,7 @@ pub(super) fn plan_slot_for_build<'a>(
             }),
             FitVerdict::Unknown => SlotPlan::Hold(HeldReason::Unproved {
                 build: tag.to_owned(),
+                detail: None,
             }),
         };
     }
@@ -233,6 +236,7 @@ pub(super) fn plan_slot_for_build<'a>(
     } else {
         SlotPlan::Hold(HeldReason::Unproved {
             build: tag.to_owned(),
+            detail: None,
         })
     }
 }
@@ -439,6 +443,10 @@ pub(crate) fn switch_build_v2_with(
         worlds,
         held: held_names,
         unproved: unproved_names,
+        reasons: holds
+            .iter()
+            .filter_map(|hold| Some((hold.title().to_owned(), hold.reason().detail()?.to_owned())))
+            .collect(),
         removed: removed.values().cloned().collect(),
     };
 
@@ -497,6 +505,7 @@ pub(crate) fn switch_build_v2_with(
         crate::managed_play::SwitchPublication {
             holds: final_holds,
             removed: final_removed,
+            retired: BTreeSet::new(),
             build_choice: committed_choice,
         },
         || fence.revalidate(&instance.home),
