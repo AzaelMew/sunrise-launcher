@@ -830,34 +830,34 @@ pub(in crate::mods) fn fold_members(
 
 /// The collections Discover lists for `filters`: unless Show all is on, only those with a member
 /// that fits, and under a category only those with such a member in it, since browsing folds
-/// members into their collection there too. Search matches the collection's own text or any
-/// member's.
+/// members into their collection there too. Search matches the collection's own text or the
+/// text of a member listed under the same filters.
 pub(in crate::mods) fn discover_collections(
     collections: &[V2Collection],
     cards: &[V2Card],
     filters: &V2Filters,
 ) -> Vec<usize> {
     let words = query_words(&filters.text);
+    // The members that would be listed under these filters if they weren't folded.
+    let listed = |i: usize| {
+        let card = &cards[i];
+        (filters.show_all || card.fit.fits())
+            && filters
+                .category
+                .as_ref()
+                .is_none_or(|k| card.categories.contains(k))
+    };
     collections
         .iter()
         .enumerate()
-        .filter(|(_, c)| {
-            c.members.iter().any(|&(i, _)| {
-                let card = &cards[i];
-                (filters.show_all || card.fit.fits())
-                    && filters
-                        .category
-                        .as_ref()
-                        .is_none_or(|k| card.categories.contains(k))
-            })
-        })
+        .filter(|(_, c)| c.members.iter().any(|&(i, _)| listed(i)))
         .filter(|(_, c)| {
             let own = [&c.name, &c.summary, &c.publisher].map(|s| s.to_lowercase());
             words.iter().all(|w| own.iter().any(|s| s.contains(w)))
                 || (!words.is_empty()
                     && c.members
                         .iter()
-                        .any(|&(i, _)| card_matches_query(&cards[i], &words)))
+                        .any(|&(i, _)| listed(i) && card_matches_query(&cards[i], &words)))
         })
         .map(|(i, _)| i)
         .collect()
@@ -1476,22 +1476,22 @@ mod tests {
     #[test]
     fn a_collection_picks_its_default_members_that_fit_and_installs_only_the_rest() {
         let build = "26.3-0.1.0";
-        let project = |id: &str, slug: &str, fits: &[&str], ch| {
+        let project = |id: &str, slug: &str, category: &str, fits: &[&str], ch| {
             let not = if fits.is_empty() { vec![build] } else { vec![] };
             make_project(
                 id,
                 slug,
                 slug,
                 "A block set.",
-                &["utility"],
+                &[category],
                 vec![make_release("1.0.0", "2026-11-10", build, fits, &not, ch)],
             )
         };
         let mut index = sample_index(
             vec![
-                project("Ab3dE9xQ", "fences", &[build], '1'),
-                project("Bc4eF0yR", "doors", &[build], '2'),
-                project("Cd5fG1zS", "roofs", &[], '3'),
+                project("Ab3dE9xQ", "fences", "utility", &[build], '1'),
+                project("Bc4eF0yR", "doors", "utility", &[build], '2'),
+                project("Cd5fG1zS", "roofs", "decoration", &[], '3'),
             ],
             vec![],
         );
@@ -1502,7 +1502,7 @@ mod tests {
         index.collections = vec![Collection {
             id: "Qm4tZ81c".to_owned(),
             name: "Macaw's Builds".to_owned(),
-            summary: "Fences, doors and roofs.".to_owned(),
+            summary: "Three block sets.".to_owned(),
             description: String::new(),
             publisher: "author".to_owned(),
             icon: format!("pages/Qm4tZ81c/{}.png", hex64('9')),
@@ -1527,12 +1527,16 @@ mod tests {
             ["Bc4eF0yR"]
         );
 
-        let filters = |text: &str, category: Option<&str>| V2Filters {
+        let filters = |text: &str, category: Option<&str>, show_all| V2Filters {
             text: text.to_owned(),
             category: category.map(str::to_owned),
+            show_all,
             ..V2Filters::default()
         };
-        let shown = |text, category| discover_collections(&found, &cards, &filters(text, category));
+        let shown_with = |text, category, show_all| {
+            discover_collections(&found, &cards, &filters(text, category, show_all))
+        };
+        let shown = |text, category| shown_with(text, category, false);
         assert_eq!(shown("macaw", None), [0]);
         assert_eq!(
             shown("doors", None),
@@ -1542,7 +1546,15 @@ mod tests {
         assert!(shown("lantern", None).is_empty());
         // Under a category the collection stands in for its members in it, as when browsing.
         assert_eq!(shown("", Some("utility")), [0]);
+        // Roofs, its only member in Decoration, doesn't fit: there it shows only with Show all.
         assert!(shown("", Some("decoration")).is_empty());
+        assert_eq!(shown_with("", Some("decoration"), true), [0]);
+        assert!(shown("", Some("mobs")).is_empty());
+        // A member's name finds the collection only where that member would be listed.
+        assert!(shown_with("doors", Some("decoration"), true).is_empty());
+        assert!(shown("roofs", None).is_empty());
+        assert_eq!(shown_with("roofs", None, true), [0]);
+        assert_eq!(shown_with("roofs", Some("decoration"), true), [0]);
 
         // Browsing shows the collection's card in place of its members, Show all included; a
         // search finds a member.
