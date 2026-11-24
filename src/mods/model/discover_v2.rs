@@ -8,6 +8,7 @@ use super::{Make, SourceLink};
 use std::cmp::Ordering;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use sunrise_launcher::i18n::{tr, trf};
+use sunrise_launcher::native_mods::local_fit;
 use sunrise_launcher_smod::index::Kind;
 use sunrise_launcher_smod::index_v2::{self, FitVerdict, Index, Project, Release};
 
@@ -61,6 +62,16 @@ pub(in crate::mods) enum CardFit {
     DoesNotFit { build_label: String },
     /// No non-revoked release fits, and the exact build is in neither `fits` nor `does_not_fit`.
     NotCheckedYet { build_label: String },
+    /// The index says nothing of the build, and this computer's check found that a release
+    /// fits it. Carries the newest such release's version.
+    FitsHere { version: String },
+    /// The index says nothing of the build, and this computer's check found that the newest
+    /// release does not fit it.
+    DoesNotFitHere { build_label: String },
+    /// The index says nothing of the build, and this computer is checking the newest release.
+    Checking { build_label: String },
+    /// The index doesn't list the build at all: Discover says so once, not on every card.
+    Unlisted { build_label: String },
     /// The project or every one of its releases is taken down in `index.revoked`.
     Revoked(String),
     /// The selected profile has no game build yet.
@@ -69,20 +80,49 @@ pub(in crate::mods) enum CardFit {
 
 impl CardFit {
     pub(in crate::mods) fn fits(&self) -> bool {
-        matches!(self, CardFit::Fits { .. })
+        matches!(self, CardFit::Fits { .. } | CardFit::FitsHere { .. })
     }
 
     pub(in crate::mods) fn fitting_version(&self) -> Option<&str> {
         match self {
-            CardFit::Fits { version, .. } => Some(version),
+            CardFit::Fits { version, .. } | CardFit::FitsHere { version } => Some(version),
             _ => None,
+        }
+    }
+
+    /// The fit pill a fitting card shows.
+    pub(in crate::mods) fn fit_pill(&self) -> Option<String> {
+        match self {
+            CardFit::Fits { version } => {
+                Some(trf("{version} · Fits build", &[("version", version)]))
+            }
+            CardFit::FitsHere { version } => Some(trf(
+                "{version} · Fits build (checked on this computer)",
+                &[("version", version)],
+            )),
+            _ => None,
+        }
+    }
+
+    /// Whether a card that can't be installed is drawn faded: not while its fit is being
+    /// checked, and not when Discover says once that the build isn't listed.
+    pub(in crate::mods) fn faded(&self) -> bool {
+        !self.fits() && !matches!(self, CardFit::Checking { .. } | CardFit::Unlisted { .. })
+    }
+
+    /// [`Self::reason`] as a card or list row says it: nothing for an unlisted build, which
+    /// Discover says once above the cards.
+    pub(in crate::mods) fn card_reason(&self) -> Option<String> {
+        match self {
+            CardFit::Unlisted { .. } => None,
+            _ => self.reason(),
         }
     }
 
     /// The reason a card is greyed out and cannot be installed on the selected profile.
     pub(in crate::mods) fn reason(&self) -> Option<String> {
         match self {
-            CardFit::Fits { .. } => None,
+            CardFit::Fits { .. } | CardFit::FitsHere { .. } => None,
             CardFit::DoesNotFit { build_label } => {
                 Some(trf("Doesn't fit {build}", &[("build", build_label)]))
             }
@@ -90,6 +130,14 @@ impl CardFit {
                 "Not checked for {build} yet",
                 &[("build", build_label)],
             )),
+            CardFit::DoesNotFitHere { build_label } => Some(trf(
+                "Doesn't fit {build} (checked on this computer)",
+                &[("build", build_label)],
+            )),
+            CardFit::Checking { build_label } => {
+                Some(trf("Checking fit for {build}…", &[("build", build_label)]))
+            }
+            CardFit::Unlisted { build_label } => Some(unlisted_reason(build_label)),
             CardFit::Revoked(why) => Some(trf("Taken down: {reason}", &[("reason", why)])),
             CardFit::NoBuild => Some(tr("No game build selected").to_owned()),
         }
@@ -135,18 +183,89 @@ pub(in crate::mods) enum ReleaseVerdict {
     Fits,
     DoesNotFit(String),
     NotCheckedYet(String),
+    /// Fits by this computer's check; the index says nothing of the build.
+    FitsHere,
+    DoesNotFitHere(String),
+    Checking(String),
+    /// The index doesn't list the build.
+    Unlisted(String),
     Revoked(String),
     NoBuild,
 }
 
+/// What a mod says when the index doesn't list the profile's build.
+fn unlisted_reason(build: &str) -> String {
+    trf(
+        "{build} isn't in the Sunrise registry yet, so its mods can't be installed.",
+        &[("build", build)],
+    )
+}
+
+/// This computer's fit checks for one build: what was found, and what is being checked now.
+#[derive(Clone, Debug, Default)]
+pub(in crate::mods) struct LocalFits {
+    found: local_fit::Found,
+    /// `.smod` SHA-256s (lowercase) a running check will answer.
+    checking: BTreeSet<String>,
+}
+
+impl LocalFits {
+    /// What this computer found for `build`, with every unanswered gap marked as being checked
+    /// when `running`.
+    pub(in crate::mods) fn read(index: &Index, build: Option<&str>, running: bool) -> Self {
+        let Some((build, listed)) = build.and_then(|b| Some((b, index.build(b)?))) else {
+            return Self::default();
+        };
+        let found = local_fit::kept(&listed.commit);
+        let checking = if running {
+            local_fit::gaps(index, build)
+                .into_iter()
+                .map(|r| r.file.sha256.to_ascii_lowercase())
+                .filter(|sha256| !found.contains_key(sha256))
+                .collect()
+        } else {
+            BTreeSet::new()
+        };
+        Self { found, checking }
+    }
+
+    /// The verdict for a release the index says nothing of on a listed `build`.
+    fn verdict(&self, release: &Release, label: String) -> ReleaseVerdict {
+        let sha256 = release.file.sha256.to_ascii_lowercase();
+        match self.found.get(&sha256) {
+            Some(local_fit::Local::Fits) => ReleaseVerdict::FitsHere,
+            Some(local_fit::Local::DoesNotFit) => ReleaseVerdict::DoesNotFitHere(label),
+            Some(local_fit::Local::Unknown) => ReleaseVerdict::NotCheckedYet(label),
+            None if self.checking.contains(&sha256) => ReleaseVerdict::Checking(label),
+            None => ReleaseVerdict::NotCheckedYet(label),
+        }
+    }
+}
+
 impl ReleaseVerdict {
     pub(in crate::mods) fn fits(&self) -> bool {
-        matches!(self, ReleaseVerdict::Fits)
+        matches!(self, ReleaseVerdict::Fits | ReleaseVerdict::FitsHere)
+    }
+
+    /// What a fitting release's row says of its fit.
+    pub(in crate::mods) fn fit_label(&self) -> &'static str {
+        match self {
+            ReleaseVerdict::FitsHere => tr("Fits this build (checked on this computer)"),
+            _ => tr("Fits this build"),
+        }
     }
 
     pub(in crate::mods) fn reason(&self) -> Option<String> {
         match self {
-            ReleaseVerdict::Fits => None,
+            ReleaseVerdict::Fits | ReleaseVerdict::FitsHere => None,
+            ReleaseVerdict::DoesNotFitHere(build) => Some(trf(
+                "Doesn't fit {build} (checked on this computer)",
+                &[("build", build)],
+            )),
+            ReleaseVerdict::Checking(build) => {
+                Some(trf("Checking fit for {build}…", &[("build", build)]))
+            }
+            ReleaseVerdict::Unlisted(build) => Some(unlisted_reason(build)),
             ReleaseVerdict::DoesNotFit(build) => {
                 Some(trf("Doesn't fit {build}", &[("build", build)]))
             }
@@ -292,6 +411,7 @@ fn release_verdict(
     release: &Release,
     exact_build: Option<&str>,
     build_label: &dyn Fn(&str) -> String,
+    local: &LocalFits,
 ) -> ReleaseVerdict {
     if let Some(revoked) = index.revoked(&project.id, Some(&release.file.sha256)) {
         return ReleaseVerdict::Revoked(revoked.reason.clone());
@@ -302,7 +422,10 @@ fn release_verdict(
     match release.fit_verdict(build) {
         FitVerdict::Fits => ReleaseVerdict::Fits,
         FitVerdict::DoesNotFit => ReleaseVerdict::DoesNotFit(build_label(build)),
-        FitVerdict::Unknown => ReleaseVerdict::NotCheckedYet(build_label(build)),
+        FitVerdict::Unknown if index.build(build).is_none() => {
+            ReleaseVerdict::Unlisted(build_label(build))
+        }
+        FitVerdict::Unknown => local.verdict(release, build_label(build)),
     }
 }
 
@@ -312,6 +435,7 @@ fn project_fit(
     sorted_releases: &[&Release],
     exact_build: Option<&str>,
     build_label: &dyn Fn(&str) -> String,
+    local: &LocalFits,
 ) -> (CardFit, String) {
     if let Some(revoked) = index.revoked(&project.id, None) {
         let updated = sorted_releases
@@ -358,10 +482,34 @@ fn project_fit(
         );
     }
 
-    let label = build_label(build);
-    let fit = match newest_active.fit_verdict(build) {
-        FitVerdict::DoesNotFit => CardFit::DoesNotFit { build_label: label },
-        FitVerdict::Unknown | FitVerdict::Fits => CardFit::NotCheckedYet { build_label: label },
+    if let Some(fitting) = active
+        .iter()
+        .copied()
+        .find(|r| release_verdict(index, project, r, exact_build, build_label, local).fits())
+    {
+        return (
+            CardFit::FitsHere {
+                version: fitting.version.clone(),
+            },
+            fitting.published.clone(),
+        );
+    }
+
+    let fit = match release_verdict(
+        index,
+        project,
+        newest_active,
+        exact_build,
+        build_label,
+        local,
+    ) {
+        ReleaseVerdict::DoesNotFit(build_label) => CardFit::DoesNotFit { build_label },
+        ReleaseVerdict::DoesNotFitHere(build_label) => CardFit::DoesNotFitHere { build_label },
+        ReleaseVerdict::Checking(build_label) => CardFit::Checking { build_label },
+        ReleaseVerdict::Unlisted(build_label) => CardFit::Unlisted { build_label },
+        _ => CardFit::NotCheckedYet {
+            build_label: build_label(build),
+        },
     };
     (fit, newest_active.published.clone())
 }
@@ -371,6 +519,7 @@ pub(in crate::mods) fn cards(
     index: &Index,
     exact_build: Option<&str>,
     build_label: &dyn Fn(&str) -> String,
+    local: &LocalFits,
 ) -> Vec<V2Card> {
     index
         .projects
@@ -379,7 +528,7 @@ pub(in crate::mods) fn cards(
             let make = make_of(&p.kind)?;
             let mut sorted: Vec<&Release> = p.releases.iter().collect();
             sorted.sort_by(|a, b| compare_releases_newest_first(a, b));
-            let (fit, updated) = project_fit(index, p, &sorted, exact_build, build_label);
+            let (fit, updated) = project_fit(index, p, &sorted, exact_build, build_label, local);
             let authors = join_authors(p);
             Some(V2Card {
                 id: p.id.clone(),
@@ -668,18 +817,19 @@ pub(in crate::mods) fn page(
     id: &str,
     exact_build: Option<&str>,
     build_label: &dyn Fn(&str) -> String,
+    local: &LocalFits,
 ) -> Option<V2Page> {
     let p = index.project(id)?;
     let make = make_of(&p.kind)?;
     let mut sorted: Vec<&Release> = p.releases.iter().collect();
     sorted.sort_by(|a, b| compare_releases_newest_first(a, b));
 
-    let (fit, updated) = project_fit(index, p, &sorted, exact_build, build_label);
+    let (fit, updated) = project_fit(index, p, &sorted, exact_build, build_label, local);
     let mut fitting_versions = Vec::new();
     let mut other_versions = Vec::new();
     let mut picked: Option<&Release> = None;
     for release in &sorted {
-        let verdict = release_verdict(index, p, release, exact_build, build_label);
+        let verdict = release_verdict(index, p, release, exact_build, build_label, local);
         let line = V2VersionLine {
             version: release.version.clone(),
             published: release.published.clone(),
@@ -915,7 +1065,7 @@ mod tests {
         );
 
         let index = sample_index(vec![p_a, p_b, p_c], Vec::new());
-        let list = cards(&index, Some(build), &label_build);
+        let list = cards(&index, Some(build), &label_build, &LocalFits::default());
         assert_eq!(list.len(), 3);
 
         // Wayfinder fits at newest fitting release 1.2.0 (skipping non-fitting 2.0.0).
@@ -986,7 +1136,7 @@ mod tests {
             )],
         );
         let index = sample_index(vec![summary_hit, name_hit], Vec::new());
-        let list = cards(&index, Some(build), &label_build);
+        let list = cards(&index, Some(build), &label_build, &LocalFits::default());
         let shown = discover(
             &list,
             &V2Filters {
@@ -1045,7 +1195,7 @@ mod tests {
                 },
             ],
         );
-        let list = cards(&index, Some(build), &label_build);
+        let list = cards(&index, Some(build), &label_build, &LocalFits::default());
         assert!(!list[0].fit.fits());
         assert_eq!(list[0].fit.reason().as_deref(), Some("Taken down: Malware"));
         // 2.0.0 is revoked by sha256, so Good Mod falls back to fitting 1.0.0.
@@ -1074,7 +1224,14 @@ mod tests {
             ],
         );
         let index = sample_index(vec![proj], Vec::new());
-        let p = page(&index, "Ab3dE9xQ", Some(build), &label_build).unwrap();
+        let p = page(
+            &index,
+            "Ab3dE9xQ",
+            Some(build),
+            &label_build,
+            &LocalFits::default(),
+        )
+        .unwrap();
         assert_eq!(p.repository_name, "author/wayfinder");
         assert_eq!(p.categories, vec!["utility", "worldgen"]);
         assert_eq!(p.summary, "Clean minimap with waypoints");
@@ -1129,7 +1286,14 @@ mod tests {
             ],
             Vec::new(),
         );
-        let p = page(&index, "Ab3dE9xQ", Some(build), &label_build).unwrap();
+        let p = page(
+            &index,
+            "Ab3dE9xQ",
+            Some(build),
+            &label_build,
+            &LocalFits::default(),
+        )
+        .unwrap();
         let rows: Vec<_> = p
             .dependencies
             .iter()
@@ -1188,7 +1352,7 @@ mod tests {
         assert!(build_listed(&index, Some(listed)));
         assert!(build_listed(&index, None));
         assert!(!build_listed(&index, Some(unlisted)));
-        let cards = cards(&index, Some(unlisted), &label_build);
+        let cards = cards(&index, Some(unlisted), &label_build, &LocalFits::default());
         assert!(discover(&cards, &V2Filters::default()).is_empty());
         let all = V2Filters {
             show_all: true,
@@ -1236,7 +1400,7 @@ mod tests {
                 member("Cd5fG1zS", true),
             ],
         }];
-        let cards = cards(&index, Some(build), &label_build);
+        let cards = cards(&index, Some(build), &label_build, &LocalFits::default());
         let found = collections(&index, &cards);
         let collection = &found[0];
         assert_eq!(collection.fitting(&cards), 2);
@@ -1281,5 +1445,70 @@ mod tests {
         assert_eq!(mods("", false), 0);
         assert_eq!(mods("", true), 0);
         assert_eq!(mods("doors", false), 1);
+    }
+
+    #[test]
+    fn a_local_check_fills_only_cards_the_index_says_nothing_of() {
+        let stable = "26.3-0.1.0";
+        let nightly = "nightly-2026-11-20-abcdef0";
+        let project = |id: &str, fits: &[&str], not: &[&str], ch| {
+            make_project(
+                id,
+                id,
+                id,
+                "summary",
+                &["utility"],
+                vec![make_release("1.0.0", "2026-11-10", stable, fits, not, ch)],
+            )
+        };
+        let index = sample_index(
+            vec![
+                project("AAAAAAAA", &[], &[], '1'),
+                project("BBBBBBBB", &[], &[], '2'),
+                project("CCCCCCCC", &[], &[nightly], '3'),
+                project("DDDDDDDD", &[], &[], '4'),
+            ],
+            Vec::new(),
+        );
+        let local = LocalFits {
+            found: local_fit::Found::from([
+                (hex64('1'), local_fit::Local::Fits),
+                (hex64('2'), local_fit::Local::DoesNotFit),
+                // The index's own verdict wins over this.
+                (hex64('3'), local_fit::Local::Fits),
+            ]),
+            checking: BTreeSet::from([hex64('4')]),
+        };
+        let fit = |id: &str| {
+            cards(&index, Some(nightly), &label_build, &local)
+                .into_iter()
+                .find(|c| c.id == id)
+                .unwrap()
+                .fit
+        };
+        let a = fit("AAAAAAAA");
+        assert_eq!(
+            a,
+            CardFit::FitsHere {
+                version: "1.0.0".into()
+            }
+        );
+        assert!(a.fits() && !a.faded());
+        assert!(matches!(fit("BBBBBBBB"), CardFit::DoesNotFitHere { .. }));
+        assert!(matches!(fit("CCCCCCCC"), CardFit::DoesNotFit { .. }));
+        let d = fit("DDDDDDDD");
+        assert!(matches!(d, CardFit::Checking { .. }));
+        assert!(
+            !d.fits() && !d.faded(),
+            "a card being checked isn't drawn as unfit"
+        );
+
+        // A build the index doesn't list is said once by Discover, not on each card.
+        let unlisted = cards(&index, Some("dev-2026-11-30-1234567"), &label_build, &local);
+        assert!(unlisted
+            .iter()
+            .all(|c| matches!(c.fit, CardFit::Unlisted { .. })
+                && c.fit.card_reason().is_none()
+                && !c.fit.faded()));
     }
 }

@@ -174,7 +174,7 @@ fn classify_bundles(
 
 /// Check a read-only set of projects. Older SDK tools need an explicit mixins pin, so resolve
 /// omitted pins in a temporary copy rather than modifying these projects.
-fn check_projects(
+pub(super) fn check_projects(
     folder: &Path,
     mods: &[Bundle],
     sdk: &sdk_cache::Sdk,

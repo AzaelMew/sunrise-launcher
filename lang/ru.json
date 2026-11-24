@@ -1949,5 +1949,15 @@
   "Nothing was built: {mods} didn't come from the Sunrise registry, and nobody has checked their code. Confirm the warning to build them, or pass --trust-native-code on the command line.": "Nothing was built: {mods} didn't come from the Sunrise registry, and nobody has checked their code. Confirm the warning to build them, or pass --trust-native-code on the command line.",
   "Building native code nobody reviewed: {mods}": "Building native code nobody reviewed: {mods}",
   "{files} · These files are in this profile's mods folder, but did not come from the Sunrise registry. Sunrise cannot verify who built them or where they came from.": "{files} · These files are in this profile's mods folder, but did not come from the Sunrise registry. Sunrise cannot verify who built them or where they came from.",
-  "Waiting for another build to finish…": "Waiting for another build to finish…"
+  "Waiting for another build to finish…": "Waiting for another build to finish…",
+  "{version} · Fits build (checked on this computer)": "{version} · Fits build (checked on this computer)",
+  "Doesn't fit {build} (checked on this computer)": "Doesn't fit {build} (checked on this computer)",
+  "Checking fit for {build}…": "Checking fit for {build}…",
+  "{build} isn't in the Sunrise registry yet, so its mods can't be installed.": "{build} isn't in the Sunrise registry yet, so its mods can't be installed.",
+  "Fits this build (checked on this computer)": "Fits this build (checked on this computer)",
+  "Couldn't check which mods fit {build}: {error}": "Couldn't check which mods fit {build}: {error}",
+  "{build} isn't in the Sunrise registry yet.": "{build} isn't in the Sunrise registry yet.",
+  "The download stopped.": "The download stopped.",
+  "{file} doesn't match the registry's checksum.": "{file} doesn't match the registry's checksum.",
+  "{mod} holds no native mod.": "{mod} holds no native mod."
 }
