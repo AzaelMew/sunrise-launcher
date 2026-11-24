@@ -50,6 +50,7 @@ pub(crate) use data_packs::names;
 pub(crate) use search::Installed;
 mod viewer;
 use std::{rc::Rc, sync::Arc};
+use sunrise_launcher::native_mods::local_fit;
 pub(crate) use ui::{
     checkbox, choices, empty_state, field_theme, reveal, segmented, switch, Choose,
 };
@@ -85,6 +86,16 @@ enum V2Catalog {
         from_cache: bool,
     },
     Failed(String),
+}
+
+/// This computer's fit check of the releases the index says nothing of on one build.
+#[derive(Default)]
+struct LocalFitRun {
+    /// The build checked last, or being checked.
+    build: Option<String>,
+    running: bool,
+    /// Why the last check of `build` stopped; it isn't started again until Try again.
+    failed: Option<String>,
 }
 
 #[derive(PartialEq, Eq)]
@@ -370,6 +381,8 @@ enum Event {
     ),
     /// The verified snapshot on disk was read, ahead of the network read: redraw from it.
     V2Saved,
+    /// This computer's fit check of a build finished.
+    LocalFit(String, Result<(), String>),
     V2Page(u64, Result<Box<model::discover_v2::V2Page>, String>),
     Nightly(nightly::Event),
     Progress(String, f32),
@@ -416,6 +429,7 @@ pub(crate) struct ModsState {
     rx: Receiver<Event>,
     v2_catalog: V2Catalog,
     v2_catalog_build: Option<Option<String>>,
+    local_fit: LocalFitRun,
     /// Why the last read of the v2 index failed, as Installed says it; none while one is out.
     v2_failure: Option<String>,
     find: LineEdit,
@@ -494,6 +508,7 @@ impl Default for ModsState {
             rx,
             v2_catalog: V2Catalog::Idle,
             v2_catalog_build: None,
+            local_fit: LocalFitRun::default(),
             v2_failure: None,
             find: LineEdit::default(),
             find_focus: None,
@@ -964,6 +979,7 @@ impl Launcher {
     /// What the workers said. Nothing here touches a file.
     pub(super) fn mods_drain(&mut self) -> bool {
         let mut changed = false;
+        let mut local_fit_due = false;
         while let Ok(event) = self.ui.mods.rx.try_recv() {
             changed = true;
             let m = &mut self.ui.mods;
@@ -994,7 +1010,16 @@ impl Launcher {
                             },
                             Err(error) => V2Catalog::Failed(error.to_string()),
                         };
+                        local_fit_due = true;
                     }
+                }
+                Event::LocalFit(build, result) => {
+                    if m.local_fit.build.as_ref() == Some(&build) {
+                        m.local_fit.running = false;
+                        m.local_fit.failed = result.err();
+                    }
+                    self.v2_cards_again();
+                    local_fit_due = true;
                 }
                 Event::V2Saved => m.home_mod_labels = None,
                 Event::Local(key, result) => {
@@ -1057,7 +1082,112 @@ impl Launcher {
                 }
             }
         }
+        if local_fit_due {
+            // A catalog read while a check runs drew its cards without it: draw them again.
+            if self.ui.mods.local_fit.running {
+                self.v2_cards_again();
+            }
+            self.start_local_fit();
+        }
         changed
+    }
+
+    /// This computer's fit checks of `build`, as Discover shows them.
+    fn local_fits(
+        &self,
+        index: &sunrise_launcher_smod::index_v2::Index,
+        build: Option<&str>,
+    ) -> model::discover_v2::LocalFits {
+        let run = &self.ui.mods.local_fit;
+        let running = run.running && run.build.as_deref() == build;
+        model::discover_v2::LocalFits::read(index, build, running)
+    }
+
+    /// Starts this computer's fit check of the releases the index says nothing of on the
+    /// selected build, in the background: one at a time, and not again for a build whose last
+    /// check failed until Try again.
+    fn start_local_fit(&mut self) {
+        let run = &self.ui.mods.local_fit;
+        let Some(build) = self.selected_exact_build() else {
+            return;
+        };
+        if run.running || (run.build.as_ref() == Some(&build) && run.failed.is_some()) {
+            return;
+        }
+        let Some(catalog) = sunrise::v2::known_index() else {
+            return;
+        };
+        let Some(listed) = catalog.index.build(&build) else {
+            return;
+        };
+        let found = local_fit::kept(&listed.commit);
+        if local_fit::gaps(&catalog.index, &build)
+            .iter()
+            .all(|r| found.contains_key(&r.file.sha256.to_ascii_lowercase()))
+        {
+            return;
+        }
+        self.ui.mods.local_fit = LocalFitRun {
+            build: Some(build.clone()),
+            running: true,
+            failed: None,
+        };
+        let tx = self.ui.mods.tx.clone();
+        std::thread::spawn(move || {
+            let result = local_fit::check(&catalog.index, &build);
+            let _ = tx.send(Event::LocalFit(build, result));
+        });
+        self.v2_cards_again();
+    }
+
+    /// Try again after the selected build's fit check failed.
+    pub(super) fn retry_local_fit(&mut self) {
+        self.ui.mods.local_fit.failed = None;
+        self.start_local_fit();
+    }
+
+    /// Why the selected build's fit check failed, when it did.
+    pub(super) fn local_fit_failure(&self) -> Option<&str> {
+        let run = &self.ui.mods.local_fit;
+        (run.build == self.selected_exact_build())
+            .then_some(run.failed.as_deref())
+            .flatten()
+    }
+
+    /// Discover's cards and an open mod page drawn again from the index in memory, with what
+    /// this computer's checks have found so far.
+    fn v2_cards_again(&mut self) {
+        let Some(catalog) = sunrise::v2::known_index() else {
+            return;
+        };
+        let build = self.selected_exact_build();
+        let local = self.local_fits(&catalog.index, build.as_deref());
+        let name = &crate::sheets::build_name;
+        if self.ui.mods.v2_catalog_build.as_ref() == Some(&build) {
+            if let V2Catalog::Ready {
+                cards, collections, ..
+            } = &mut self.ui.mods.v2_catalog
+            {
+                let fresh =
+                    model::discover_v2::cards(&catalog.index, build.as_deref(), name, &local);
+                *collections = model::discover_v2::collections(&catalog.index, &fresh).into();
+                *cards = fresh.into();
+            }
+        }
+        if let Some(Ok(page)) = self
+            .ui
+            .mods
+            .open
+            .as_mut()
+            .and_then(|open| open.v2_page.as_mut())
+        {
+            let id = page.id.clone();
+            if let Some(fresh) =
+                model::discover_v2::page(&catalog.index, &id, build.as_deref(), name, &local)
+            {
+                **page = fresh;
+            }
+        }
     }
 
     /// Reads what is installed again when the files' fingerprint moved (an install, a toggle or a
@@ -1145,10 +1275,12 @@ impl Launcher {
             return;
         }
         if let Some(catalog) = (!force).then(sunrise::v2::known_index).flatten() {
+            let local = self.local_fits(&catalog.index, build.as_deref());
             let cards = model::discover_v2::cards(
                 &catalog.index,
                 build.as_deref(),
                 &crate::sheets::build_name,
+                &local,
             );
             let categories = model::discover_v2::categories(&cards);
             let collections = model::discover_v2::collections(&catalog.index, &cards);
@@ -1163,6 +1295,7 @@ impl Launcher {
                 stale_warning: catalog.stale_warning,
                 from_cache: catalog.from_cache,
             };
+            self.start_local_fit();
             return;
         }
         self.ui.mods.v2_catalog_build = Some(build.clone());
@@ -1180,10 +1313,14 @@ impl Launcher {
                 sunrise::v2::index()
             };
             let result = loaded.map(|catalog| {
+                // What a running check finds shows once it answers.
+                let local =
+                    model::discover_v2::LocalFits::read(&catalog.index, build.as_deref(), false);
                 let cards = model::discover_v2::cards(
                     &catalog.index,
                     build.as_deref(),
                     &crate::sheets::build_name,
+                    &local,
                 );
                 let categories = model::discover_v2::categories(&cards);
                 let collections = model::discover_v2::collections(&catalog.index, &cards);
@@ -1241,11 +1378,13 @@ impl Launcher {
         self.ui.mods.page_request += 1;
         let request = self.ui.mods.page_request;
         let immediate = sunrise::v2::known_index().map(|catalog| {
+            let local = self.local_fits(&catalog.index, exact_build.as_deref());
             model::discover_v2::page(
                 &catalog.index,
                 &id,
                 exact_build.as_deref(),
                 &crate::sheets::build_name,
+                &local,
             )
             .map(Box::new)
             .ok_or_else(|| trf("{id} isn't a mod in Sunrise's registry.", &[("id", &id)]))
@@ -1272,11 +1411,17 @@ impl Launcher {
             let result = sunrise::v2::index()
                 .map_err(|e| e.to_string())
                 .and_then(|catalog| {
+                    let local = model::discover_v2::LocalFits::read(
+                        &catalog.index,
+                        exact_build.as_deref(),
+                        false,
+                    );
                     model::discover_v2::page(
                         &catalog.index,
                         &id,
                         exact_build.as_deref(),
                         &crate::sheets::build_name,
+                        &local,
                     )
                     .map(Box::new)
                     .ok_or_else(|| trf("{id} isn't a mod in Sunrise's registry.", &[("id", &id)]))

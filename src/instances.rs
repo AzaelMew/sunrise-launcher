@@ -1525,6 +1525,22 @@ fn pending_build_choice(
         .and_then(|active| active.build_choice().cloned())
 }
 
+/// Persists a switch's already-committed channel or pin choice into `instances.json`.
+pub(crate) fn sync_build_choice(
+    id: &str,
+    home: &Path,
+    choice: &crate::managed_play::CommittedBuildChoice,
+) -> Result<(), String> {
+    Store::mutate(&backend::data_dir(), |store| {
+        let meta = store
+            .instances
+            .entry(id.to_owned())
+            .or_insert_with(|| initial_choices(home).unwrap_or_default());
+        apply_committed_choice(meta, choice);
+        Ok(())
+    })
+}
+
 /// Changes what the player chose about an instance: its name, icon or group. No folder moves.
 pub fn edit(query: &str, change: impl FnOnce(&mut Meta)) -> Result<Instance, String> {
     edit_in(&backend::game_home(), &backend::data_dir(), query, change)

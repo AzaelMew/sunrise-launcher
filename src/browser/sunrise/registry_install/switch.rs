@@ -160,6 +160,34 @@ pub enum BuildChoice {
     Keep,
 }
 
+/// Persist the picker's channel/pin choice to `instances.json` when the active build itself does
+/// not need to change.
+pub(crate) fn save_build_choice(
+    instance_id: &str,
+    tag: &str,
+    choice: BuildChoice,
+) -> Result<(), String> {
+    crate::instances::edit(instance_id, |meta| match choice {
+        BuildChoice::Follow(channel) => {
+            meta.version = None;
+            meta.channel = Some(channel);
+        }
+        BuildChoice::Keep => {
+            meta.version = Some(tag.into());
+            if let Some(channel) = crate::instances::Channel::of_build(tag) {
+                meta.channel = Some(channel);
+            }
+        }
+    })
+    .map(|_| ())
+    .map_err(|error| {
+        trf(
+            "The build is ready, but the profile choice could not be saved: {error}",
+            &[("error", &error)],
+        )
+    })
+}
+
 pub(super) fn sha256_bytes(hex: &str) -> Result<[u8; 32], String> {
     let mut bytes = [0; 32];
     if hex.len() != 64 || !hex.is_ascii() {

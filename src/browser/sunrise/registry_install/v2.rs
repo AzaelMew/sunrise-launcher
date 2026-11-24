@@ -44,7 +44,7 @@ use sunrise_launcher_smod::{
 
 mod switch_v2;
 #[cfg(all(test, target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
-pub(crate) use switch_v2::switch_build_v2_with;
+pub(crate) use switch_v2::switch_profile_build_v2_with;
 pub use switch_v2::{
     checked_switch_fit_v2, switch_build_v2, switch_profile_build_v2, V2SwitchHooks,
 };
@@ -1472,6 +1472,12 @@ pub(crate) fn commit_pending_pins(pin_dir: &Path, pins: &[PendingPin]) -> Result
     Ok(())
 }
 
+/// The index a change plans against: the signed one, with this computer's fit checks filling
+/// only what it says nothing of.
+fn local_fit_filled(index: &Index) -> Arc<Index> {
+    Arc::new(crate::native_mods::local_fit::filled(index))
+}
+
 /// Install one or more schema-2 registry projects (by permanent 8-char project ID) into `instance`.
 pub fn install_registry_v2(
     instance: &Instance,
@@ -1487,7 +1493,7 @@ pub fn install_registry_v2(
         V2EditRequest {
             instance,
             identity,
-            index: catalog.index,
+            index: local_fit_filled(&catalog.index),
             options,
             transfer: V2Transfer {
                 fetch_bytes: &fetch_release_bytes,
@@ -1517,7 +1523,7 @@ pub fn update_registry_v2(
         V2EditRequest {
             instance,
             identity,
-            index: catalog.index,
+            index: local_fit_filled(&catalog.index),
             options,
             transfer: V2Transfer {
                 fetch_bytes: &fetch_release_bytes,
@@ -1548,7 +1554,7 @@ pub fn switch_provider_v2(
         V2EditRequest {
             instance,
             identity,
-            index: catalog.index,
+            index: local_fit_filled(&catalog.index),
             options,
             transfer: V2Transfer {
                 fetch_bytes: &fetch_release_bytes,

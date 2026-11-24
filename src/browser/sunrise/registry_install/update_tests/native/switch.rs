@@ -154,12 +154,9 @@ fn switch_with(
     tag: &str,
     approve: &dyn Fn(&SwitchQuestion) -> Result<SwitchDecision, String>,
 ) -> Result<Switched, String> {
-    let identity = install_target(&fixture.instance).unwrap();
-    let mut profile = Profile::open_for(fixture.home(), None, Some(identity)).unwrap();
-    v2::switch_build_v2_with(
+    v2::switch_profile_build_v2_with(
         &fixture.instance,
-        &mut profile,
-        fixture.index_for(tag),
+        install_target(&fixture.instance).unwrap(),
         tag,
         None,
         v2::V2SwitchHooks {
@@ -172,6 +169,7 @@ fn switch_with(
             confirm_publisher_change: None,
             pin_dir: None,
         },
+        || Ok(fixture.index_for(tag)),
         &fetch_fixture,
         &verify_fixture,
     )

@@ -850,12 +850,12 @@ impl Launcher {
                         .border_color(c(p.success).opacity(0.35))
                         .text_size(px(tokens::CAPTION))
                         .text_color(c(p.success))
-                        .child(tr("Fits this build"))
+                        .child(line.verdict.fit_label())
                 } else {
                     div()
                         .text_size(px(tokens::SMALL))
                         .text_color(c(p.muted))
-                        .child(tr("Fits this build"))
+                        .child(line.verdict.fit_label())
                 };
                 list = list.child(
                     div()
@@ -1062,17 +1062,15 @@ impl Launcher {
                                     .text_color(c(p.muted))
                                     .truncate()
                                     .child(meta_sub),
-                            ),
-                    )
-                    .when(vp.will_install.is_some(), |d| {
-                        d.child(
-                            div()
-                                .flex_none()
-                                .text_size(px(tokens::CAPTION))
-                                .text_color(c(p.success))
-                                .child(tr("Fits this build")),
-                        )
-                    }),
+                            )
+                            // Under the name, where a long label wraps instead of squeezing it.
+                            .children(vp.will_install.as_ref().map(|line| {
+                                div()
+                                    .text_size(px(tokens::CAPTION))
+                                    .text_color(c(p.success))
+                                    .child(line.verdict.fit_label())
+                            })),
+                    ),
             )
             .child(primary_control)
             .children(self.registry_card_outcome(&vp.id, cx))
