@@ -1474,16 +1474,6 @@ fn pipeline(
     // The mods are copied first: the build and its key use the copy, whatever happens to the
     // folder meanwhile.
     let mut workspace = workspace::Workspace::new(&root()).map_err(|e| e.to_string())?;
-    if let Some(length) = workspace::too_deep(workspace.path()).filter(|_| cfg!(windows)) {
-        return Err(trf(
-            "The launcher's folder {folder} is too deep for Windows: a native build there needs paths of {length} characters, and Windows allows 259. Set SUNRISE_LAUNCHER_HOME to a shorter folder.",
-            &[
-                ("folder", &backend::build_dir().display().to_string()),
-                ("length", &length.to_string()),
-            ],
-        )
-        .into());
-    }
     let incoming = workspace.path().join("mods.incoming");
     let found = scan_bundles(folder)?;
     if found.is_empty() {
@@ -1789,6 +1779,17 @@ fn pipeline(
     let prebuilt = if exists {
         None
     } else {
+        // Checked only for a build that will run: a cached build or no mods never needs the paths.
+        if let Some(length) = workspace::too_deep(workspace.path()).filter(|_| cfg!(windows)) {
+            return Err(trf(
+                "The launcher's folder {folder} is too deep for Windows: a native build there needs paths of {length} characters, and Windows allows 259. Set SUNRISE_LAUNCHER_HOME to a shorter folder.",
+                &[
+                    ("folder", &backend::build_dir().display().to_string()),
+                    ("length", &length.to_string()),
+                ],
+            )
+            .into());
+        }
         let package = match (local_sdk, &sdk) {
             (Some(local), _) => {
                 let program = sdk_cache::developer_tool(true).ok_or_else(|| {
