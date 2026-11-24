@@ -441,13 +441,11 @@ impl Launcher {
                     }
                     self.finish_nightly_receipt_retry(&warning, result);
                 }
-                Msg::Removed(errors) => self.storage_builds_removed(errors),
-                Msg::BuildInventory(generation, rows) => {
-                    self.storage_builds_arrived(generation, rows)
-                }
-                Msg::Storage(result) => self.storage_arrived(result),
-                Msg::Imported(result) => self.storage_build_imported(result),
-                Msg::Pruned(errors) => self.storage_builds_pruned(errors),
+                Msg::Removed(_)
+                | Msg::BuildInventory(_, _)
+                | Msg::Storage(_)
+                | Msg::Imported(_)
+                | Msg::Pruned(_) => self.on_storage_message(msg),
                 Msg::Updates(updates) => {
                     self.checking_updates = false;
                     self.launcher_checked_now = None;

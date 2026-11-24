@@ -53,6 +53,18 @@ impl Launcher {
         }
     }
 
+    /// Storage and installed-builds messages routed from `launcher_messages::drain`.
+    pub(super) fn on_storage_message(&mut self, msg: Msg) {
+        match msg {
+            Msg::Removed(errors) => self.storage_builds_removed(errors),
+            Msg::BuildInventory(generation, rows) => self.storage_builds_arrived(generation, rows),
+            Msg::Storage(result) => self.storage_arrived(result),
+            Msg::Imported(result) => self.storage_build_imported(result),
+            Msg::Pruned(errors) => self.storage_builds_pruned(errors),
+            _ => unreachable!("launcher_messages::drain only routes storage messages here"),
+        }
+    }
+
     pub(super) fn storage_builds_arrived(&mut self, generation: u64, rows: Vec<Build>) {
         if self.storage_builds.generation == generation {
             self.storage_builds.rows = Some(rows);
