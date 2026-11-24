@@ -4,9 +4,10 @@
 //! Every v2 operation keys mods by permanent 8-character project ID, treats `project.mod_id` as an
 //! in-game slot with at most one enabled provider per profile, relies solely on authoritative
 //! `release.fits` / `release.does_not_fit` verdicts against the exact Sunrise build ID, verifies
-//! every archive's SHA-256 and offline Sigstore attestation against `project.repository.id` and
-//! `release.workflow`, pins the publisher repository and workflow per computer, and refuses to
-//! silently pick among competing providers or silently substitute a different provider.
+//! every archive's SHA-256 and offline Sigstore attestation against the repository the release
+//! was signed from and `release.workflow`, pins the publisher's owner and workflow per computer,
+//! and refuses to silently pick among competing providers or silently substitute a different
+//! provider.
 
 use super::{
     at, guard_replacements, held_change_refusal, known_unfit_updates, manifest_conflict,
@@ -237,8 +238,8 @@ pub struct V2Hooks<'a> {
     /// entry in `V2InstallOptions::provider_choices`. Returning `None` aborts with
     /// [`InstallError::AmbiguousProvider`].
     pub choose_provider: Option<&'a ChooseProvider<'a>>,
-    /// Prompt when a project's attested repository ID or workflow path changed from this
-    /// computer's remembered pin. Returning `false` (or `None`) aborts with
+    /// Prompt when a project's attested publisher (owner, or for an old pin repository) or workflow
+    /// path changed from this computer's remembered pin. Returning `false` (or `None`) aborts with
     /// [`InstallError::PublisherChanged`].
     pub confirm_publisher_change: Option<ConfirmPublisherChange<'a>>,
 }
@@ -316,7 +317,7 @@ pub fn classify_v2_ownership(
         let Some(repository) = row.repository.as_ref() else {
             return V2Ownership::Local;
         };
-        if repository.id != project.repository.id {
+        if repository.id != project.release_repository(release) {
             return V2Ownership::Local;
         }
         return V2Ownership::Verified {
@@ -343,7 +344,7 @@ pub fn classify_v2_ownership(
                 slug: project.slug.clone(),
                 version: release.version.clone(),
                 repository: installed::VerifiedRepository {
-                    id: project.repository.id,
+                    id: project.release_repository(release),
                     name: project.repository.name.clone(),
                     path: project.repository.path.clone(),
                     workflow: release.workflow.clone(),
@@ -674,7 +675,7 @@ fn planned_from(project: &Project, release: &Release, dependency: bool) -> Plann
         url: release.file.url.clone(),
         attestation_url: release.file.attestation.clone(),
         workflow: release.workflow.clone(),
-        repository_id: project.repository.id,
+        repository_id: project.release_repository(release),
         repository_name: project.repository.name.clone(),
         repository_path: project.repository.path.clone(),
         dependency,
@@ -1314,7 +1315,7 @@ pub(crate) fn stage_and_verify_v2_release(
     let bundle_bytes = fetch_bytes(&release.file.attestation, MAX_ATTESTATION_BYTES)
         .map_err(InstallError::Download)?;
     let expected = ExpectedRelease {
-        repository_id: project.repository.id,
+        repository_id: project.release_repository(release),
         workflow: &release.workflow,
     };
     let verified = verify_release(&bundle_bytes, digest_bytes, &expected).map_err(|error| {

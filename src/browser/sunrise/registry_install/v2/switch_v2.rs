@@ -372,7 +372,7 @@ fn switch_build_v2_edit(
                     url: release.file.url.clone(),
                     attestation_url: release.file.attestation.clone(),
                     workflow: release.workflow.clone(),
-                    repository_id: project.repository.id,
+                    repository_id: project.release_repository(release),
                     repository_name: project.repository.name.clone(),
                     repository_path: project.repository.path.clone(),
                     dependency: doc
@@ -1339,6 +1339,7 @@ mod tests {
         let pin = |project_id: &str| PendingPin {
             project_id: project_id.into(),
             pin: attestation::PublisherPin {
+                owner_id: None,
                 repository_id: 1,
                 repository_name: "camp/swapped".into(),
                 workflow_path: ".github/workflows/release.yml".into(),
