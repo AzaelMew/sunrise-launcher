@@ -62,11 +62,11 @@ fn home_labels_follow_installed_replies_with_the_same_inventory_and_registry() {
             // No forwarding thread: every injected worker reply is available for this drain.
             let (tx, rx) = std::sync::mpsc::channel();
             launcher.ui.mods.rx = rx;
-            tx.send(Event::Local("old fingerprint".into(), Ok(Some((installed(), None)))))
+            tx.send(Event::Local("old fingerprint".into(), Box::new(Ok(Some((installed(), None))))))
                 .unwrap();
             launcher.mods_drain();
             assert!(launcher.home_mod_facts(inventory, index.clone()).is_empty());
-            tx.send(Event::Local(key.clone(), Ok(Some((installed(), None)))))
+            tx.send(Event::Local(key.clone(), Box::new(Ok(Some((installed(), None))))))
                 .unwrap();
             launcher.mods_drain();
             let facts = launcher.home_mod_facts(inventory, index.clone());
@@ -75,7 +75,7 @@ fn home_labels_follow_installed_replies_with_the_same_inventory_and_registry() {
 
             let mut updated = installed();
             updated.local[0].native = false;
-            tx.send(Event::Local(key, Ok(Some((updated, None)))))
+            tx.send(Event::Local(key, Box::new(Ok(Some((updated, None))))))
                 .unwrap();
             launcher.mods_drain();
             let facts = launcher.home_mod_facts(inventory, index);

@@ -1597,6 +1597,6 @@ mod tests;
 #[cfg(all(test, debug_assertions, unix))]
 mod update_tests;
 pub use github::{add_github, install_github_manual, update_github, ManualRelease};
-pub use local::{install_local, install_local_at};
+pub use local::{install_local, install_local_at, restore_held};
 pub(crate) use mutations::check_activation;
 pub use mutations::{remove_mods, ChangeImpact};

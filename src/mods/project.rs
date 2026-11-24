@@ -196,7 +196,7 @@ impl Launcher {
             cells.status.as_ref().map(|status| note(status.tip.clone()))
         };
         let toggle = ui::switch("alt-project-switch", row.on);
-        let toggle = if busy || hold.is_some() || !cells.switch {
+        let toggle = if busy || !cells.switch {
             dim(toggle)
         } else {
             let row = row.clone();

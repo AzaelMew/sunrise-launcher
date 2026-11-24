@@ -458,6 +458,16 @@ impl From<&index::Collection> for CollectionGroup {
     }
 }
 
+/// A switch's hold on a mod's exact archive.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct Hold {
+    /// The build it was held for, by the name players read.
+    pub(super) build: String,
+    pub(super) reason: sunrise_launcher::managed_play::HeldReason,
+    /// Local or source bytes: turning it on checks them against the build again.
+    pub(super) retry: bool,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct Row {
     pub(super) id: String,
@@ -484,7 +494,7 @@ pub(super) struct Row {
     /// It can't run on the game this setup plays: the build left it out.
     pub(super) unfit: Option<Unfit>,
     /// The exact Switch receipt keeps the native archive off until a proved update.
-    pub(super) held_for: Option<String>,
+    pub(super) held_for: Option<Hold>,
     /// The build left it out for another reason (it didn't build, it needs a mod that was left
     /// out, it clashes with another): what the player reads, in a sentence.
     pub(super) left_out: Option<Omission>,
@@ -633,15 +643,19 @@ pub(super) fn cells(row: &Row, error: Option<&str>, building: Option<&BuildState
         ),
         Some(Need::Build) | None => {}
     }
-    if let Some(build) = &row.held_for {
+    if let Some(hold) = &row.held_for {
+        let vars = [("mod", row.title.as_str()), ("build", hold.build.as_str())];
         say(
             "information-circle",
-            tr("Needs an update from its author").into(),
+            hold.reason.label().into(),
             Tone::Warning,
-            trf(
-                "{mod} needs an update from its author for {build}.",
-                &[("mod", &row.title), ("build", build)],
-            ),
+            match hold.reason.detail() {
+                Some(detail) => detail.to_owned(),
+                None if hold.reason.unproved() => {
+                    trf("{mod}'s fit with {build} could not be verified.", &vars)
+                }
+                None => trf("{mod} needs an update from its author for {build}.", &vars),
+            },
         );
     } else if let Some(unfit) = &row.unfit {
         say(
@@ -733,7 +747,7 @@ pub(super) fn cells(row: &Row, error: Option<&str>, building: Option<&BuildState
         status: said.into_iter().next().map(|first| Status { tip, ..first }),
         popover,
         action: row.update.as_ref().map(|_| RowAction::Update),
-        switch: row.held_for.is_none()
+        switch: row.held_for.as_ref().is_none_or(|hold| hold.retry)
             && !matches!(row.need, Some(Need::TakenDown(_)))
             && !row.local.as_ref().is_some_and(|l| l.unreadable),
         unavailable: row.held_for.is_some()

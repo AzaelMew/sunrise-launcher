@@ -523,6 +523,46 @@ fn revalidate_claims(live: &Path, checks: &[(String, String)]) -> Result<(), Str
     Ok(())
 }
 
+/// Turn a held local or source mod back on in `instance`: its exact bytes go through the fit
+/// check and build for the profile's current build, and only a proved image is published,
+/// retiring the hold. A failed check returns what it found, and nothing changes.
+pub fn restore_held(
+    instance: &Instance,
+    identity: Identity,
+    id: &str,
+    cancellation: &native_mods::Cancellation,
+) -> Result<(), String> {
+    let mut profile =
+        Profile::open_for(&instance.home, None, Some(identity)).map_err(String::from)?;
+    let edit = profile.begin_pending_edit()?;
+    // A registry hold waits for its author's update; only local and source bytes are retried.
+    if !edit.held(id).is_some_and(|hold| {
+        !matches!(hold.source(), managed_play::HeldSource::Registry { .. })
+            && hold.matches_archive(&instance.home)
+    }) {
+        return Err(held_change_refusal(id).to_string());
+    }
+    let next = edit.candidate()?;
+    mutations::check_activation(next.path(), None, &[id])?;
+    mod_list::set_all_enabled(next.path(), &[id], true)?;
+    let proof = edit
+        .prove(
+            next.path(),
+            instance.native_profile,
+            cancellation,
+            |_| {},
+            None,
+        )
+        .map_err(String::from)?;
+    edit.publish_install(
+        proof,
+        cancellation,
+        &BTreeSet::from([id.to_owned()]),
+        || Ok(()),
+    )?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
