@@ -218,6 +218,27 @@ async fn segmented_transfers_validate_and_fallback_without_corrupt_output() {
         .any(|(p, r)| p == "/file" && r.is_some_and(|(a, _)| a > 0)));
 }
 #[tokio::test]
+async fn a_single_stream_transfer_hashes_as_it_writes() {
+    let body = data(4096);
+    let server = Server::new(body.clone(), Duration::ZERO).await;
+    let dir = tempfile::tempdir().unwrap();
+    let engine = Downloader::new(config()).unwrap();
+    let artifact = server.artifact(&dir.path().join("download"), "/file", &body);
+    let scratch = dir.path().join("scratch");
+    fs::write(&scratch, b"").await.unwrap();
+    let hash = engine.transfer(&artifact, &scratch).await.unwrap();
+    assert_eq!(hash.as_deref(), Some(sha1_hex(&body).as_str()));
+    assert_eq!(fs::read(&scratch).await.unwrap(), body);
+    let bad = server.artifact(&dir.path().join("bad"), "/corrupt", &body);
+    assert!(engine
+        .download(&bad, &AtomicBool::new(false))
+        .await
+        .unwrap_err()
+        .contains("SHA-1"));
+    assert!(!bad.path.exists());
+}
+
+#[tokio::test]
 #[ignore = "daily"]
 async fn transient_disconnect_resumes_only_validated_ranges() {
     let body = data(16 << 10);

@@ -376,8 +376,10 @@ impl Downloader {
         path: &Path,
         bounds: Option<(u64, u64, u64)>,
         validator: Option<&str>,
-    ) -> Result<(), Failure> {
+    ) -> Result<Option<String>, Failure> {
         let mut copied = 0;
+        let mut hash = crate::hashing::Sha1::new();
+        let mut hashed = true;
         let mut validator = validator.map(str::to_owned);
         let (start, end, total) = bounds.unwrap_or((
             0,
@@ -389,9 +391,17 @@ impl Downloader {
                 copied = 0;
             }
             if copied > 0 && total > 0 && copied == end - start + 1 {
-                return Ok(());
+                return Ok(hashed.then(|| hash.hex()));
             }
             let ranged = bounds.is_some() || (copied > 0 && validator.is_some() && total > 0);
+            // A ranged piece covers only its slice, so its hash is not the artifact's. A retry
+            // that starts over resets the file, and the hash with it.
+            if ranged {
+                hashed = false;
+            } else {
+                hash = crate::hashing::Sha1::new();
+                hashed = true;
+            }
             let result = async {
                 let mut connection = self
                     .request(
@@ -448,6 +458,9 @@ impl Downloader {
                             return Err(Failure::range("Response exceeds expected length"));
                         }
                         writer.write_all(&chunk).await?;
+                        if hashed {
+                            hash.update(&chunk);
+                        }
                         received += chunk.len() as u64;
                         self.metrics
                             .counters
@@ -466,7 +479,7 @@ impl Downloader {
             }
             .await;
             match result {
-                Ok(()) => return Ok(()),
+                Ok(()) => return Ok(hashed.then(|| hash.hex())),
                 Err(e) if e.retry && attempt < self.config.retries => {
                     self.pause(attempt, e.after).await
                 }
@@ -475,7 +488,7 @@ impl Downloader {
         }
         unreachable!()
     }
-    async fn transfer(&self, artifact: &Artifact, path: &Path) -> Result<(), Failure> {
+    async fn transfer(&self, artifact: &Artifact, path: &Path) -> Result<Option<String>, Failure> {
         if let Some(size) = artifact.size.filter(|&size| {
             size >= self.config.threshold
                 && size > self.config.minimum_segment
@@ -535,7 +548,7 @@ impl Downloader {
                         .into_iter()
                         .collect::<Result<Vec<_>, _>>();
                         match result {
-                            Ok(_) => return Ok(()),
+                            Ok(_) => return Ok(None),
                             Err(e) if e.range => {}
                             Err(e) => return Err(e),
                         }
@@ -624,8 +637,12 @@ impl Downloader {
                 .await?;
             let scratch = Scratch(temporary);
             let result = async {
-                self.transfer(artifact, &scratch.0).await?;
-                if !valid(artifact, &scratch.0, self.config.buffer).await? {
+                let streamed = self.transfer(artifact, &scratch.0).await?;
+                let matches = match streamed {
+                    Some(hash) => hash.eq_ignore_ascii_case(&artifact.sha1),
+                    None => valid(artifact, &scratch.0, self.config.buffer).await?,
+                };
+                if !matches {
                     return Err(Failure::permanent(
                         "Downloaded size or SHA-1 does not match the manifest",
                     ));
