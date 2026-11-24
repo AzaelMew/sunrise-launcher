@@ -316,6 +316,16 @@ impl Kept {
             if folder.parent() != Some(builds.as_path()) {
                 continue;
             }
+            // Without its fingerprint the tool compiles the mod anyway: nothing to keep. The
+            // import library may be absent.
+            let regular = |file: &Path| {
+                fs::symlink_metadata(file)
+                    .is_ok_and(|meta| meta.is_file() && !crate::native_cache::linked(&meta))
+            };
+            let (fingerprint, import) = sidecars(&library.name);
+            if !regular(&folder.join(&fingerprint)) {
+                continue;
+            }
             // Only the bytes `verify_outputs` checked: hashed before they are stored, and the
             // stored copy hashed again (`store_blob`).
             if sha256_file(&source).map_err(io::Error::other)? != library.sha256 {
@@ -326,11 +336,15 @@ impl Kept {
                 library.name.clone(),
                 self.store_blob(&source, Some(&library.sha256))?,
             );
-            for name in sidecars(&library.name) {
-                let file = folder.join(&name);
+            files.insert(
+                fingerprint.clone(),
+                self.store_blob(&folder.join(&fingerprint), None)?,
+            );
+            if let Some(import) = import {
+                let file = folder.join(&import);
                 match fs::symlink_metadata(&file) {
-                    Ok(meta) if meta.is_file() && !crate::native_cache::linked(&meta) => {
-                        files.insert(name, self.store_blob(&file, None)?);
+                    Ok(_) if regular(&file) => {
+                        files.insert(import, self.store_blob(&file, None)?);
                     }
                     Ok(_) => return Err(invalid()),
                     Err(error) if error.kind() == io::ErrorKind::NotFound => {}
@@ -469,16 +483,15 @@ impl Kept {
 
 /// The tool's files beside library `name` that tell it the library is up to date: its
 /// fingerprint (`compile_mod`), and on Windows the import library a mod linking to it needs.
-fn sidecars(name: &str) -> Vec<String> {
+fn sidecars(name: &str) -> (String, Option<String>) {
     let stem = Path::new(name)
         .file_stem()
         .and_then(|stem| stem.to_str())
         .unwrap_or(name);
-    let mut names = vec![format!("{stem}.fingerprint")];
-    if cfg!(windows) {
-        names.push(format!("lib{name}.a"));
-    }
-    names
+    (
+        format!("{stem}.fingerprint"),
+        cfg!(windows).then(|| format!("lib{name}.a")),
+    )
 }
 
 /// The tool's API and engine route build folders; the registry route builds elsewhere.

@@ -515,3 +515,37 @@ fn a_bad_blob_already_in_the_store_is_replaced_and_a_good_one_is_dated_now() {
         ["ae2", "ftb", "hnn"]
     );
 }
+
+#[test]
+fn a_mod_without_its_fingerprint_is_not_kept() {
+    let dir = tempfile::tempdir().unwrap();
+    let kept = Kept::new(&dir.path().join("native"));
+    let list = mods(&[]);
+    let keys = keys(&build(), &list);
+    let (work, built, libraries) = work_with(dir.path(), ALL);
+    fs::remove_file(folder(&work).join("mod_hnn.fingerprint")).unwrap();
+    assert_eq!(
+        kept.save(&work, &built, &libraries, &list, &keys).unwrap(),
+        2
+    );
+    assert!(!kept.index_path(&keys["hnn"]).exists());
+    assert!(kept.index_path(&keys["ae2"]).exists());
+}
+
+#[cfg(windows)]
+#[test]
+fn a_mod_without_an_import_library_is_still_kept() {
+    let dir = tempfile::tempdir().unwrap();
+    let kept = Kept::new(&dir.path().join("native"));
+    let list = mods(&[]);
+    let keys = keys(&build(), &list);
+    let (work, built, libraries) = work_with(dir.path(), ALL);
+    fs::remove_file(folder(&work).join("libmod_hnn.dll.a")).unwrap();
+    assert_eq!(
+        kept.save(&work, &built, &libraries, &list, &keys).unwrap(),
+        3
+    );
+    let next = dir.path().join("next");
+    assert_eq!(kept.seed(&next, &list, &keys), ["ae2", "ftb", "hnn"]);
+    assert!(!folder(&next).join("libmod_hnn.dll.a").exists());
+}
