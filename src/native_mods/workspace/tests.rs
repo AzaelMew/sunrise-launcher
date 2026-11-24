@@ -72,7 +72,7 @@ fn registry_library_aliases_keep_their_exact_names_and_bytes_inside_private_root
         dir: dir.path().join("rust"),
         host: crate::rust_toolchain::hosts().first().unwrap(),
     };
-    let work = root.join("work");
+    let work = stage.work();
     let target = work.join("prebuilt-build/registry-fixture/target");
     let release = target.join(rust.host.target).join("release");
     let binary = work
@@ -179,7 +179,7 @@ fn an_sdk_can_only_supply_its_own_files_and_the_exact_requested_mods() {
         dir: dir.path().join("rust"),
         host: crate::rust_toolchain::hosts().first().unwrap(),
     };
-    let work = stage.path().join("work");
+    let work = stage.work();
     let bin = package.runtime.join("bin");
     fs::create_dir_all(&work).unwrap();
     fs::create_dir_all(&bin).unwrap();
@@ -274,4 +274,17 @@ fn an_sdk_can_only_supply_its_own_files_and_the_exact_requested_mods() {
         built.libraries = vec![linked];
         assert!(verify(&built).is_err());
     }
+}
+
+#[test]
+fn a_build_too_deep_for_windows_is_found_before_it_starts() {
+    let home = |user: &str| {
+        std::path::PathBuf::from(format!(
+            r"C:\Users\{user}\AppData\Roaming\sunrise\launcher\native\.nb-a1B2c3"
+        ))
+    };
+    // #396's player, eight letters: 265 characters in the old folders, 232 now.
+    assert_eq!(too_deep(&home("abcdefgh")), None);
+    assert_eq!(too_deep(&home(&"u".repeat(35))), None);
+    assert_eq!(too_deep(&home(&"u".repeat(36))), Some(260));
 }

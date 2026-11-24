@@ -1334,7 +1334,7 @@ mod registry_install;
 pub mod sources;
 pub mod v2;
 pub(crate) use registry_install::check_activation;
-pub(crate) use registry_install::v2::revoked_for_installed_package;
+pub(crate) use registry_install::v2::{fetch_release_bytes, revoked_for_installed_package};
 pub use registry_install::{
     add_github, add_sources, apply_sources, checked_switch_fit, checked_switch_fit_v2,
     classify_v2_ownership, install_github_manual, install_local, install_local_at,

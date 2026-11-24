@@ -1471,6 +1471,12 @@ pub(crate) fn commit_pending_pins(pin_dir: &Path, pins: &[PendingPin]) -> Result
     Ok(())
 }
 
+/// The index a change plans against: the signed one, with this computer's fit checks filling
+/// only what it says nothing of.
+fn local_fit_filled(index: &Index) -> Arc<Index> {
+    Arc::new(crate::native_mods::local_fit::filled(index))
+}
+
 /// Install one or more schema-2 registry projects (by permanent 8-char project ID) into `instance`.
 pub fn install_registry_v2(
     instance: &Instance,
@@ -1486,7 +1492,7 @@ pub fn install_registry_v2(
         V2EditRequest {
             instance,
             identity,
-            index: catalog.index,
+            index: local_fit_filled(&catalog.index),
             options,
             transfer: V2Transfer {
                 fetch_bytes: &fetch_release_bytes,
@@ -1516,7 +1522,7 @@ pub fn update_registry_v2(
         V2EditRequest {
             instance,
             identity,
-            index: catalog.index,
+            index: local_fit_filled(&catalog.index),
             options,
             transfer: V2Transfer {
                 fetch_bytes: &fetch_release_bytes,
@@ -1547,7 +1553,7 @@ pub fn switch_provider_v2(
         V2EditRequest {
             instance,
             identity,
-            index: catalog.index,
+            index: local_fit_filled(&catalog.index),
             options,
             transfer: V2Transfer {
                 fetch_bytes: &fetch_release_bytes,

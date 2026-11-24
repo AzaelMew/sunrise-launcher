@@ -169,7 +169,7 @@ fn switch_profile_build_v2_with_index(
         instance,
         edit,
         &previous_holds,
-        index,
+        Arc::new(crate::native_mods::local_fit::filled(&index)),
         tag,
         choice,
         hooks,
