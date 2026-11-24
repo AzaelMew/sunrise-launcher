@@ -689,7 +689,7 @@ pub(crate) fn write_copy_pointer(home: &Path, bytes: &[u8]) -> Result<(), String
     durable::replace(home, &path, bytes).map_err(|e| at(&path, e))
 }
 
-pub(crate) fn recovery_pending(home: &Path) -> Result<bool, String> {
+pub fn recovery_pending(home: &Path) -> Result<bool, String> {
     for name in [RECORD, RETIRED] {
         let path = home.join(name);
         match fs::symlink_metadata(&path) {

@@ -1,9 +1,12 @@
 //! Exercise real staged Update with a local catalogue vouched for only by this test module.
 use super::*;
+use crate::{attestation, backend};
 use serde_json::json;
 use std::{path::PathBuf, process::Command};
 use sunrise_launcher_nbt::{self as nbt, Limits, NamedTag, Tag};
+use sunrise_launcher_smod::index_v2::{self, Kind as V2Kind};
 use sunrise_launcher_smod::Package;
+use v2::{install_registry_v2_with, update_registry_v2_with, V2EditRequest, V2Transfer};
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
 mod native;
@@ -21,7 +24,35 @@ const EARLIER_BLOCK: &[u8] = br#"{"properties":{"lit":[true,false]}}"#;
 struct Fixture {
     root: PathBuf,
     instance: Instance,
-    catalogue: index::Index,
+    catalogue: index_v2::Index,
+}
+
+/// A local test action: the v2 install or update the GUI would run.
+enum Action<'a> {
+    Install(Vec<String>),
+    Update(UpdateRequest, &'a dyn Fn(&ChangeImpact) -> bool),
+}
+
+/// The fixture's 8-character project ID for in-game mod `id`.
+fn project_id(id: &str) -> String {
+    let mut out: String = id
+        .chars()
+        .filter(char::is_ascii_alphanumeric)
+        .take(8)
+        .collect();
+    while out.len() < 8 {
+        out.push('0');
+    }
+    out
+}
+
+const FIXTURE_REPOSITORY: &str = "fixture/mod";
+
+fn fixture_workflow() -> String {
+    format!(
+        "{}@refs/tags/release-v1",
+        attestation::RELEASE_WORKFLOW_PATH
+    )
 }
 
 impl Fixture {
@@ -40,7 +71,6 @@ impl Fixture {
                 .env("SUNRISE_LAUNCHER_HOME", root.join("launcher"))
                 .env("XDG_CONFIG_HOME", root.join("config"))
                 .env("XDG_DATA_HOME", root.join("xdg"))
-                .env("SUNRISE_MOD_INDEX", root.join("index.json"))
                 .env("SUNRISE_LAUNCHER_DEVELOPER_OFFLINE", "1")
                 .env("SUNRISE_LAUNCHER_DEVELOPER_TOOL", root.join("sdk-tool"))
                 .env("SUNRISE_LAUNCHER_DEVELOPER_SDK", root.join("sdk"))
@@ -71,9 +101,18 @@ impl Fixture {
         scenario(Self {
             root,
             instance,
-            catalogue: index::Index {
-                schema: index::SCHEMA,
-                ..Default::default()
+            catalogue: index_v2::Index {
+                schema: index_v2::SCHEMA,
+                serial: 1,
+                generated: "2026-11-24T00:00:00Z".into(),
+                builds: vec![index_v2::Build {
+                    id: BUILD.into(),
+                    commit: "a".repeat(40),
+                }],
+                categories: Vec::new(),
+                projects: Vec::new(),
+                revoked: Vec::new(),
+                collections: Vec::new(),
             },
         });
     }
@@ -82,14 +121,56 @@ impl Fixture {
         &self.instance.home
     }
 
-    fn project(&mut self, id: &str, name: &str, kind: index::Kind) {
-        self.catalogue.projects.push(
-            serde_json::from_value(json!({
-                "id": id, "name": name, "kind": kind, "summary": "Test mod",
-                "license": "MIT", "source": "https://example.invalid/", "versions": []
-            }))
-            .unwrap(),
+    /// The catalogue as offered on `base`: every release fits it as well as the builds it
+    /// was published for.
+    fn index_for(&self, base: &str) -> Arc<index_v2::Index> {
+        let mut index = self.catalogue.clone();
+        if !index.builds.iter().any(|build| build.id == base) {
+            index.builds.push(index_v2::Build {
+                id: base.into(),
+                commit: "a".repeat(40),
+            });
+            for project in &mut index.projects {
+                for release in &mut project.releases {
+                    release.fits.push(base.into());
+                }
+            }
+        }
+        Arc::new(index)
+    }
+
+    fn project(&mut self, id: &str, name: &str, kind: V2Kind) {
+        let project_id = project_id(id);
+        assert!(
+            self.catalogue.project(&project_id).is_none(),
+            "fixture project IDs must be unique: {id}"
         );
+        let repository = self.catalogue.projects.len() as u64 + 1000;
+        self.catalogue.projects.push(index_v2::Project {
+            id: project_id.clone(),
+            slug: id.into(),
+            mod_id: id.into(),
+            kind,
+            name: name.into(),
+            summary: "Test mod".into(),
+            description: String::new(),
+            authors: vec!["tester".into()],
+            owners: vec!["tester".into()],
+            license: "MIT".into(),
+            homepage: None,
+            issues: None,
+            source: None,
+            icon: format!("pages/{project_id}/{}.png", "0".repeat(64)),
+            screenshots: Vec::new(),
+            categories: Vec::new(),
+            repository: index_v2::Repository {
+                id: repository,
+                name: FIXTURE_REPOSITORY.into(),
+                path: ".".into(),
+            },
+            workflow: attestation::RELEASE_WORKFLOW_PATH.into(),
+            releases: Vec::new(),
+        });
     }
 
     fn release(
@@ -99,11 +180,17 @@ impl Fixture {
         tables: &str,
         files: &[(&str, &[u8])],
     ) -> Vec<u8> {
+        let fits = self
+            .catalogue
+            .builds
+            .iter()
+            .map(|build| build.id.clone())
+            .collect();
         let project = self
             .catalogue
             .projects
             .iter_mut()
-            .find(|p| p.id == id)
+            .find(|p| p.mod_id == id)
             .unwrap();
         let name = &project.name;
         let manifest = format!(
@@ -111,50 +198,41 @@ impl Fixture {
             sunrise_launcher_smod::manifest::API
         );
         let bytes = Package::write_files(&manifest, files).unwrap();
-        let name = format!("{id}-{version}.smod");
-        let archive = self.root.join(&name);
+        let archive = self.root.join(format!("{id}-{version}.smod"));
         fs::write(&archive, &bytes).unwrap();
-        let facts = index::inspect(&project.kind, &archive).unwrap();
-        project.versions.insert(
+        let dependencies = Package::read(&archive)
+            .unwrap()
+            .manifest
+            .dependencies
+            .into_iter()
+            .map(|(mod_id, dependency)| {
+                let details = dependency.details();
+                index_v2::Dependency {
+                    mod_id,
+                    version: details.version.to_string().parse().unwrap(),
+                    project: None,
+                    required: !details.optional,
+                }
+            })
+            .collect();
+        project.releases.insert(
             0,
-            index::Version {
+            index_v2::Release {
                 version: version.into(),
-                published: String::new(),
-                changelog: String::new(),
-                api: facts.api,
-                side: facts.side,
-                capabilities: facts.capabilities.into(),
-                game: backend::PINNED_GAME.into(),
-                requires: Vec::new(),
-                dependencies: Some(
-                    facts
-                        .dependencies
-                        .into_iter()
-                        .map(|(id, dependency)| {
-                            let details = dependency.details();
-                            index::Dependency {
-                                id,
-                                version: details.version.to_string(),
-                                optional: details.optional,
-                                side: (details.side != Side::Both).then_some(details.side),
-                            }
-                        })
-                        .collect(),
-                ),
-                file: index::File {
-                    name,
+                published: "2026-11-24".into(),
+                sunrise: BUILD.into(),
+                workflow: fixture_workflow(),
+                fits,
+                does_not_fit: Vec::new(),
+                file: index_v2::File {
                     url: format!("file://{}", archive.display()),
                     size: bytes.len() as u64,
                     sha256: index::sha256(&bytes),
-                    signature: None,
+                    attestation: format!("file://{}.sigstore.json", archive.display()),
                 },
+                dependencies,
             },
         );
-        fs::write(
-            self.root.join("index.json"),
-            serde_json::to_vec(&self.catalogue).unwrap(),
-        )
-        .unwrap();
         bytes
     }
 
@@ -163,41 +241,32 @@ impl Fixture {
     }
 
     fn apply_on(&self, base: &str, action: Action<'_>) -> Result<InstalledBatch, InstallError> {
-        self.apply_resolving(base, action, None)
-    }
-
-    fn apply_resolving(
-        &self,
-        base: &str,
-        action: Action<'_>,
-        resolve: Option<&dyn Fn(&ResolveQuestion) -> bool>,
-    ) -> Result<InstalledBatch, InstallError> {
-        registry_edit(
-            &self.instance,
-            install_target(&self.instance).unwrap(),
-            || action,
-            || FirstBuild::installed(base),
-            InstallHooks {
+        let request = V2EditRequest {
+            instance: &self.instance,
+            identity: install_target(&self.instance).unwrap(),
+            index: self.index_for(base),
+            options: V2InstallOptions::default(),
+            transfer: V2Transfer {
+                fetch_bytes: &fetch_fixture,
+                verify_release: &verify_fixture,
+            },
+        };
+        let hooks = V2Hooks {
+            install: InstallHooks {
                 progress: &|_| {},
                 continue_after_failure: &|_| false,
-                resolve,
                 cancellation: None,
             },
-            |source, local| {
-                let (catalogue, bytes, authority) = fetch_with_official(source, local)?;
-                assert!(
-                    authority.is_none(),
-                    "a local override must never carry authority"
-                );
-                // Conflict resolution re-fetches the complete index through the ordinary
-                // local override. Keep both reads on the same, nonofficial authority.
-                let authority = resolve
-                    .is_none()
-                    .then(|| OfficialRegistry::fixture(&catalogue));
-                Ok((catalogue, bytes, authority))
-            },
-            None,
-        )
+            choose_provider: None,
+            confirm_publisher_change: None,
+        };
+        let choose = || FirstBuild::installed(base);
+        match action {
+            Action::Install(ids) => install_registry_v2_with(request, ids, choose, hooks),
+            Action::Update(requested, approve) => {
+                update_registry_v2_with(request, requested, choose, hooks, approve)
+            }
+        }
     }
 
     fn install(&self, ids: &[&str]) {
@@ -213,14 +282,7 @@ impl Fixture {
         let cancel = native_mods::Cancellation::default();
         let mut profile = Profile::open(self.home(), None).unwrap();
         if profile
-            .refresh(
-                self.instance.native_profile,
-                &cancel,
-                |_| {},
-                None,
-                None,
-                None,
-            )
+            .refresh(self.instance.native_profile, &cancel, |_| {}, None, None)
             .unwrap()
             .is_some()
         {
@@ -260,8 +322,37 @@ impl Fixture {
     }
 }
 
+/// Reads a fixture release from its `file://` URL; attestation bundles are placeholders.
+fn fetch_fixture(url: &str, _max: u64) -> Result<Vec<u8>, String> {
+    if url.ends_with(".sigstore.json") {
+        return Ok(b"{}".to_vec());
+    }
+    let path = url.strip_prefix("file://").unwrap();
+    fs::read(path).map_err(|error| error.to_string())
+}
+
+/// Accepts every fixture attestation as signed by the release's own repository and workflow.
+fn verify_fixture(
+    _bundle: &[u8],
+    _digest: [u8; 32],
+    expected: &attestation::ExpectedRelease<'_>,
+) -> Result<attestation::VerifiedRelease, attestation::Error> {
+    attestation::check_release_policy(
+        attestation::Attested {
+            repository_id: expected.repository_id,
+            repository_name: FIXTURE_REPOSITORY.into(),
+            signer_workflow_ref: expected.workflow.into(),
+            source_ref: "refs/tags/v1.0.0".into(),
+            source_commit: "c".repeat(40),
+            predicate_type: "https://slsa.dev/provenance/v1".into(),
+        },
+        expected,
+    )
+}
+
+/// The fixture project IDs of in-game mods `ids`.
 fn projects(ids: &[&str]) -> Vec<String> {
-    ids.iter().map(|id| (*id).into()).collect()
+    ids.iter().map(|id| project_id(id)).collect()
 }
 
 fn assert_world_warning(detail: &str, count: usize) {
@@ -323,7 +414,7 @@ fn same_registered_ids_have_no_warning_but_a_dropped_id_requires_approval() {
             "::same_registered_ids_have_no_warning_but_a_dropped_id_requires_approval"
         ),
         |mut fixture| {
-            fixture.project("lantern", "Lanterns", index::Kind::Mod);
+            fixture.project("lantern", "Lanterns", V2Kind::Mod);
             fixture.release("lantern", "1.0.0", "", &[(AMBER, EARLIER_BLOCK)]);
             fixture.install(&["lantern"]);
             world(fixture.home(), "Uses Lanterns", roster("lantern"));
@@ -380,12 +471,12 @@ fn install_names_an_existing_mod_when_its_replacement_would_risk_saved_worlds() 
             "::install_names_an_existing_mod_when_its_replacement_would_risk_saved_worlds"
         ),
         |mut fixture| {
-            fixture.project("lantern", "Amber Lanterns", index::Kind::Mod);
+            fixture.project("lantern", "Amber Lanterns", V2Kind::Mod);
             fixture.release("lantern", "1.0.0", "", &[(AMBER, EARLIER_BLOCK)]);
             fixture.install(&["lantern"]);
             world(fixture.home(), "Uses Lanterns", roster("lantern"));
             fixture.release("lantern", "1.1.0", "", &[(AMBER, b"{}")]);
-            fixture.project("lamp_post", "Lamp Posts", index::Kind::Mod);
+            fixture.project("lamp_post", "Lamp Posts", V2Kind::Mod);
             fixture.release(
                 "lamp_post",
                 "1.0.0",
@@ -416,8 +507,8 @@ fn bulk_update_reviews_dependency_changes_once_for_all_worlds() {
         ),
         |mut fixture| {
             const DEPENDS: &str = "[dependencies]\nlight_core='^1'\n";
-            fixture.project("light_core", "Light Core", index::Kind::Mod);
-            fixture.project("lantern", "Lanterns", index::Kind::Mod);
+            fixture.project("light_core", "Light Core", V2Kind::Mod);
+            fixture.project("lantern", "Lanterns", V2Kind::Mod);
             fixture.release(
                 "light_core",
                 "1.0.0",
@@ -483,14 +574,14 @@ fn bulk_update_reviews_dependency_changes_once_for_all_worlds() {
 }
 
 #[test]
-fn approved_update_refuses_changed_worlds_or_catalogue_at_cutoff() {
+fn approved_update_refuses_changed_worlds_at_cutoff() {
     Fixture::run(
         concat!(
             module_path!(),
-            "::approved_update_refuses_changed_worlds_or_catalogue_at_cutoff"
+            "::approved_update_refuses_changed_worlds_at_cutoff"
         ),
         |mut fixture| {
-            fixture.project("lantern", "Lanterns", index::Kind::Mod);
+            fixture.project("lantern", "Lanterns", V2Kind::Mod);
             fixture.release("lantern", "1.0.0", "", &[(AMBER, EARLIER_BLOCK)]);
             fixture.install(&["lantern"]);
             fixture.release("lantern", "1.1.0", "", &[]);
@@ -521,21 +612,6 @@ fn approved_update_refuses_changed_worlds_or_catalogue_at_cutoff() {
                 );
                 assert_eq!(fixture.snapshot(&[LANTERN]), before);
             }
-            let error = fixture
-                .update(&["lantern"], &|_| {
-                    let path = fixture.root.join("index.json");
-                    let text = fs::read_to_string(&path).unwrap();
-                    fs::write(path, format!("{text}\n")).unwrap();
-                    true
-                })
-                .unwrap_err();
-            assert!(
-                error
-                    .to_string()
-                    .contains("The mod registry changed while the install was being prepared."),
-                "{error}"
-            );
-            assert_eq!(fixture.snapshot(&[LANTERN]), before);
         },
     );
 }
@@ -548,9 +624,9 @@ fn install_resolves_newest_matching_dependency_and_refuses_conflicting_ranges() 
             "::install_resolves_newest_matching_dependency_and_refuses_conflicting_ranges"
         ),
         |mut fixture| {
-            fixture.project("light_core", "Light Core", index::Kind::Mod);
-            fixture.project("fireflies", "Fireflies", index::Kind::Mod);
-            fixture.project("two", "Two", index::Kind::Mod);
+            fixture.project("light_core", "Light Core", V2Kind::Mod);
+            fixture.project("fireflies", "Fireflies", V2Kind::Mod);
+            fixture.project("two", "Two", V2Kind::Mod);
             // `release` prepends, so the index lists 1.0.0, 1.1.0, 2.0.0: the older match first.
             fixture.release("light_core", "2.0.0", "", &[]);
             let core_1_1 = fixture.release("light_core", "1.1.0", "", &[]);
@@ -568,7 +644,7 @@ fn install_resolves_newest_matching_dependency_and_refuses_conflicting_ranges() 
                 .apply(Action::Install(projects(&["fireflies", "two"])))
                 .unwrap_err()
                 .to_string();
-            assert!(error.contains("light_core"), "{error}");
+            assert!(error.contains("Light Core ^2"), "{error}");
             assert!(!fixture.home().join("sunrise-mods/fireflies.smod").exists());
             assert!(!fixture.home().join("sunrise-mods/two.smod").exists());
             assert!(!fixture.home().join(CORE).exists());
@@ -580,12 +656,12 @@ fn install_resolves_newest_matching_dependency_and_refuses_conflicting_ranges() 
             let core = batch
                 .added
                 .iter()
-                .find(|entry| entry.project == "light_core")
+                .find(|entry| entry.project == project_id("light_core"))
                 .unwrap();
             let fireflies = batch
                 .added
                 .iter()
-                .find(|entry| entry.project == "fireflies")
+                .find(|entry| entry.project == project_id("fireflies"))
                 .unwrap();
             assert_eq!(core.version, "1.1.0");
             assert!(core.dependency);

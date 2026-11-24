@@ -13,11 +13,6 @@ pub use dependencies::SourceDependency;
 pub(super) use dependencies::{complete_source_add, SourceAdd};
 #[cfg(test)]
 mod graph_tests;
-mod mixed;
-#[cfg(all(test, target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
-pub(super) use mixed::update_registry_and_sources_with_registry;
-pub(super) use mixed::MixedSources;
-pub use mixed::{update_registry_and_sources, CombinedUpdate};
 
 pub enum SourceRequest {
     Add(SourceCommit),
@@ -74,7 +69,7 @@ impl SourceProof {
         {
             return Err(changed_source_target());
         }
-        let before = managed_play::inputs(&instance.home, None)?;
+        let before = managed_play::inputs(&instance.home)?;
         Ok(Self {
             identity,
             base: base.into(),
@@ -371,7 +366,6 @@ fn prepare_packages(
             &entries,
             result[0].proof.active.as_ref(),
             cancellation,
-            &|_| {},
         )?;
     } else {
         check_source_set(stage.path(), &trial.off, base, cancellation)?;
@@ -452,7 +446,7 @@ fn bind_packages(
         {
             return Err(changed_source_target());
         }
-        let before = managed_play::inputs(&instance.home, None)?;
+        let before = managed_play::inputs(&instance.home)?;
         let mut selected = Vec::with_capacity(packages.len());
         for (pasted, mut predecessor) in packages {
             // An earlier Add only satisfies a pick after publishing these exact bytes.
@@ -498,8 +492,8 @@ fn bind_packages(
                 .collect::<Vec<_>>();
             let origins = github::predecessors(&instance.home, &entries)?;
             managed_play::copy_install_inputs(&instance.home, stage)?;
-            if managed_play::inputs(stage, None)? != before
-                || managed_play::inputs(&instance.home, None)? != before
+            if managed_play::inputs(stage)? != before
+                || managed_play::inputs(&instance.home)? != before
             {
                 return Err(changed_source_target());
             }
@@ -604,7 +598,7 @@ pub(super) fn check_source_set(
     cancellation: &native_mods::Cancellation,
 ) -> Result<(), SourceError> {
     github::with_trial_selection(home, off_trial, || {
-        let packages = inventory(home, None)?;
+        let packages = inventory(home)?;
         let enabled = mutations::enabled(home)?;
         let manifests = packages
             .iter()
@@ -622,10 +616,7 @@ pub(super) fn check_source_set(
                 });
             }
         }
-        let catalogue = super::super::fetched_index();
-        if let Some(conflict) =
-            manifest_conflict(home, catalogue.as_deref(), None, Side::Client, |_| false)?
-        {
+        if let Some(conflict) = manifest_conflict(home, Side::Client, |_| false)? {
             return Err(SourceError::Dependency {
                 required: None,
                 detail: conflict.reason,

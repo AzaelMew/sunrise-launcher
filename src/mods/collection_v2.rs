@@ -33,7 +33,6 @@ impl Launcher {
             request: self.ui.mods.page_request,
             scope: self.mods_page_scope(),
             from,
-            page: None,
             v2_page: None,
             parent: None,
             removing: Vec::new(),
@@ -289,7 +288,7 @@ impl Launcher {
                     .text_color(c(palette().muted))
                     .child(member.summary.clone()),
             );
-        if let Some(why) = member.fit.reason() {
+        if let Some(why) = member.fit.card_reason() {
             text = text.child(div().truncate().child(muted(why)));
         }
         let right = if installed && self.registry_pending(&member.id) {

@@ -531,11 +531,10 @@ impl Storage {
         if checked(&native, true)?.is_some() {
             for entry in fs::read_dir(&native)? {
                 let entry = entry?;
-                if entry
-                    .file_name()
-                    .to_str()
-                    .is_some_and(|name| name.starts_with(native_mods::ATTEMPT_PREFIX))
-                {
+                if entry.file_name().to_str().is_some_and(|name| {
+                    name.starts_with(native_mods::ATTEMPT_PREFIX)
+                        || name.starts_with(native_mods::OLD_ATTEMPT_PREFIX)
+                }) {
                     // A changing or unreadable tree is still protected; zero means its size is unknown.
                     let size = Tree::build(&entry.path()).map_or(0, |tree| tree.size(counted));
                     bytes = Some(bytes.unwrap_or(0u64).saturating_add(size));
@@ -1202,7 +1201,8 @@ mod eviction_tests {
         let now = std::time::SystemTime::now();
         let ordinary = storage.evict_inventory(now, None).unwrap();
         assert!(ordinary.total_bytes > 0 && cache.exists());
-        let old_worker = home.seed("native/.native-attempt-old/compiler/work");
+        let old_worker = home.seed("native/.nb-old/compiler/w");
+        let older_launchers = home.seed("native/.native-attempt-older/compiler/work");
         let report = storage
             .evict_inventory(now, Some(ordinary.total_bytes))
             .unwrap();
@@ -1213,6 +1213,10 @@ mod eviction_tests {
         assert!(
             old_worker.is_file(),
             "the old worker is never a deletion candidate"
+        );
+        assert!(
+            older_launchers.is_file(),
+            "nor is one an earlier launcher left"
         );
         let protected = &report.rows[0];
         assert_eq!(protected.category, Category::BuildFiles);

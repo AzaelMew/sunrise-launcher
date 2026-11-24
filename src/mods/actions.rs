@@ -111,14 +111,6 @@ impl Launcher {
         true
     }
 
-    pub(crate) fn add(&mut self, id: String) {
-        self.ui.mods.notice = None;
-        self.mods.message = None;
-        if let Err(why) = self.queue_registry_install(id.clone(), vec![id]) {
-            self.ui.mods.notice = Some(Err(why));
-        }
-    }
-
     /// Install a project from the signed v2 index (Discover, its pages and port rows).
     pub(crate) fn add_v2(&mut self, project_id: String) {
         let ids = vec![project_id.clone()];
@@ -138,6 +130,8 @@ impl Launcher {
         }
         if row.on {
             self.turn_off(vec![row.id.clone()]);
+        } else if row.held_for.as_ref().is_some_and(|hold| hold.retry) {
+            self.restore_held(row);
         } else if let Some(entry) = &row.entry {
             self.mods.message = None;
             self.enable_registry_mod(entry, self.mods_home());
@@ -147,6 +141,48 @@ impl Launcher {
         } else if let Some(snapshot) = &self.ui.mods.snapshot {
             self.enable_one_in(snapshot.home.clone(), row.id.clone(), row.title.clone());
         }
+    }
+
+    /// A held local or source mod turns on only once its exact bytes pass the fit check and
+    /// build for this profile's build; otherwise the notice says what the check found.
+    fn restore_held(&mut self, row: &Row) {
+        let home = self.mods_home();
+        let Some(instance) = self
+            .selected_instance()
+            .filter(|instance| instance.home == home)
+            .cloned()
+        else {
+            self.ui.mods.notice = Some(Err(tr("The selected profile changed. Try again.").into()));
+            return;
+        };
+        let identity = match Identity::of(&home) {
+            Ok(identity) => identity,
+            Err(error) => {
+                self.ui.mods.notice = Some(Err(error));
+                return;
+            }
+        };
+        self.ui.mods.errors.clear();
+        self.ui.mods.notice = None;
+        self.ui.mods.busy = Some((
+            trf("Checking {mod} for this build…", &[("mod", &row.title)]),
+            0.,
+        ));
+        let tx = self.ui.mods.tx.clone();
+        let (id, title) = (row.id.clone(), row.title.clone());
+        std::thread::spawn(move || {
+            let result = sunrise_launcher::browser::sunrise::restore_held(
+                &instance,
+                identity,
+                &id,
+                &sunrise_launcher::native_mods::Cancellation::default(),
+            )
+            .map(|()| EnabledMods {
+                count: 1,
+                skipped: Vec::new(),
+            });
+            let _ = tx.send(Event::Enabled(home, EnableNotice::One(title), result));
+        });
     }
 
     pub(crate) fn enable_one_in(&mut self, home: PathBuf, id: String, title: String) {
@@ -351,31 +387,26 @@ impl Launcher {
         if !self.guard() {
             return;
         }
-        let (v2, v1): (Vec<Row>, Vec<Row>) = self
+        let ids = self
             .rows()
             .into_iter()
             .filter(|row| {
                 model::bulk_updatable(row)
                     && (!only_selected || self.ui.mods.selection.contains(&row.id))
             })
-            .partition(Row::v2_installed);
-        let ids = |rows: Vec<Row>| rows.into_iter().map(|row| row.id).collect::<Vec<_>>();
-        self.submit_registry_change(Kind::UpdateAll, "update-all", ids(v1), BTreeMap::new());
-        self.submit_registry_change(Kind::UpdateAllV2, "update-all", ids(v2), BTreeMap::new());
+            .map(|row| row.id)
+            .collect();
+        self.submit_registry_change(Kind::UpdateAllV2, "update-all", ids, BTreeMap::new());
     }
 
     pub(super) fn update_one(&mut self, row: &Row) {
         if row.local.is_none() && row.update.is_some() && self.guard() {
-            let kind = if row.v2_installed() {
-                Kind::UpdateV2
-            } else {
-                Kind::Update
-            };
-            self.submit_registry_change(kind, &row.id, vec![row.id.clone()], BTreeMap::new());
+            let ids = vec![row.id.clone()];
+            self.submit_registry_change(Kind::UpdateV2, &row.id, ids, BTreeMap::new());
         }
     }
 
-    fn submit_registry_change(
+    pub(in crate::mods) fn submit_registry_change(
         &mut self,
         kind: Kind,
         card: &str,

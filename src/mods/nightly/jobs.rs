@@ -449,22 +449,21 @@ impl Launcher {
             .filter(model::bulk_updatable)
             .map(|row| row.id)
             .collect();
-        let Some((target, sources)) = self.take_source_updates(None) else {
-            if !registry.is_empty() {
-                self.ask_update(false);
+        // Source mods and registry mods update as two jobs, sources first.
+        if let Some((target, sources)) = self.take_source_updates(None) {
+            self.ui.mods.notice = None;
+            self.mods.message = None;
+            if let Err(error) = self.queue_sources(target, sources) {
+                self.ui.mods.notice = Some(Err(error));
+                return;
             }
-            return;
-        };
-        self.ui.mods.notice = None;
-        self.mods.message = None;
-        let result = if registry.is_empty() {
-            self.queue_sources(target, sources)
-        } else {
-            self.queue_all_mod_updates(target, registry, displayed_names, sources)
-        };
-        if let Err(error) = result {
-            self.ui.mods.notice = Some(Err(error));
         }
+        self.submit_registry_change(
+            crate::mods_page::install::Kind::UpdateAllV2,
+            "update-all",
+            registry,
+            displayed_names,
+        );
     }
 
     fn take_source_updates(
@@ -594,6 +593,7 @@ fn source_for_update(predecessor: &Origin) -> Result<Option<Source>, sources::Fa
 
 #[cfg(test)]
 mod tests {
+    #![cfg_attr(not(debug_assertions), allow(dead_code, unused_imports))]
     use super::*;
     use std::fs;
     use std::process::Command;
@@ -768,7 +768,6 @@ mod tests {
                 install: sunrise::InstallHooks {
                     progress: &|_| {},
                     continue_after_failure: &|_| false,
-                    resolve: None,
                     cancellation: Some(&cancel),
                 },
                 cancellation: &cancel,
@@ -818,6 +817,7 @@ mod tests {
         (target, origin, prepared, unpacked_data, client_path)
     }
 
+    #[cfg(debug_assertions)] // source fixtures are off in release builds
     #[test]
     fn a_check_keeps_only_findings_proved_against_the_same_mods() {
         run_in_scratch(
@@ -972,6 +972,7 @@ mod tests {
         );
     }
 
+    #[cfg(debug_assertions)] // source fixtures are off in release builds
     #[test]
     fn last_known_source_offer_stays_visible_while_offline_but_requires_fresh_catalogue_to_apply() {
         run_in_scratch(

@@ -6,7 +6,7 @@ use std::{
 };
 use sunrise_launcher::{
     browser::sunrise::{
-        install_target, switch_profile_build, switch_profile_build_v2, switch_provider_v2,
+        install_target, save_build_choice, switch_profile_build_v2, switch_provider_v2,
         BuildChoice, InstallError, InstallHooks, InstallProgress, ProviderSwitchPreview,
         SwitchDecision, SwitchHooks, SwitchQuestion, Switched, V2Hooks, V2InstallOptions,
         V2ProviderSwitchHooks, V2SwitchHooks,
@@ -29,6 +29,7 @@ struct ProviderRunning {
     profile_name: String,
     build_label: String,
     progress: InstallProgress,
+    eta: crate::eta::StageEta,
     stop: native_mods::Cancellation,
     question: Option<(Box<ProviderSwitchPreview>, Sender<bool>)>,
 }
@@ -47,6 +48,7 @@ struct Running {
     back: Option<Sheet>,
     pending: Option<Pending>,
     progress: InstallProgress,
+    eta: crate::eta::StageEta,
     stop: native_mods::Cancellation,
     question: Option<(Box<SwitchQuestion>, Sender<SwitchDecision>)>,
 }
@@ -137,6 +139,28 @@ impl Launcher {
                 return;
             }
         };
+        // Changing only the channel/pin preference when the profile is already on `tag` (and has
+        // no pending recovery or first-Play bootstrap) needs no switch modal, registry fetch, or
+        // mod rebuild. Keep artifact hashing off the UI thread.
+        let unplayed_target = self
+            .target_version(instance.version.as_ref(), instance.channel)
+            .map(String::as_str);
+        if can_fast_save_choice(
+            &instance,
+            &tag,
+            unplayed_target,
+            self.installed.contains(&tag),
+        ) {
+            if let Some(choice) = choice {
+                if let Err(error) = save_build_choice(&instance.id, &tag, choice) {
+                    self.open_notice(error, Some(WayOut::ProfileFolder(instance.home)));
+                    return;
+                }
+                self.reload_instances();
+            }
+            self.close_sheet();
+            return;
+        }
         let release = self.release_to_install(&tag);
         let stop = native_mods::Cancellation::default();
         let from = (instance.home.clone(), self.profile_target(&instance));
@@ -150,6 +174,7 @@ impl Launcher {
                 choice,
             }),
             progress: InstallProgress::PreparingBuild,
+            eta: crate::eta::StageEta::default(),
             stop: stop.clone(),
             question: None,
         });
@@ -194,9 +219,15 @@ impl Launcher {
             .as_mut()
             .filter(|run| matches!(run.progress, InstallProgress::Minecraft(..)))
         {
-            running.progress = InstallProgress::Minecraft(
+            let stage = InstallProgress::Minecraft(
                 backend::prepare_step(),
                 sunrise_launcher::mojang::progress(),
+            );
+            running.progress = stage;
+            running.eta.update(
+                crate::eta::install_stage_key(stage),
+                crate::mods_page::install::stage_fraction(stage),
+                Instant::now(),
             );
         }
     }
@@ -236,6 +267,11 @@ impl Launcher {
         // Both switch routes start by checking the profile's mods; a v2 profile first
         // refreshes its index, so don't leave the last download or preparation step showing.
         running.progress = InstallProgress::PreparingBuild;
+        running.eta.update(
+            crate::eta::install_stage_key(InstallProgress::PreparingBuild),
+            None,
+            Instant::now(),
+        );
         let (tag, stop) = (running.tag.clone(), running.stop.clone());
         let tx = self.tx.clone();
         std::thread::spawn(move || {
@@ -255,32 +291,26 @@ impl Launcher {
                     Ok(reply.recv().unwrap_or(SwitchDecision::Cancel))
                 },
             };
-            // A profile holding a mod from the signed v2 index switches through it, which keeps
-            // each mod's chosen project; v1 and local mods keep their exact bytes there. A read
-            // failure must not silently drop back to the v1 switch.
-            let outcome = match uses_v2_switch(&instance.home) {
-                Ok(true) => switch_profile_build_v2(
-                    &instance,
-                    identity,
-                    &tag,
-                    choice,
-                    V2SwitchHooks {
-                        switch: hooks,
-                        confirm_publisher_change: Some(&|question| {
-                            let (answer, reply) = std::sync::mpsc::channel();
-                            tx.send(Msg::PublisherChangeQuestion(
-                                Box::new(question.clone()),
-                                answer,
-                            ))
-                            .is_ok()
-                                && reply.recv().unwrap_or(false)
-                        }),
-                        pin_dir: None,
-                    },
-                ),
-                Ok(false) => switch_profile_build(&instance, identity, &tag, choice, hooks),
-                Err(error) => Err(error),
-            };
+            // Mods installed before the signed registry keep their exact bytes through it.
+            let outcome = switch_profile_build_v2(
+                &instance,
+                identity,
+                &tag,
+                choice,
+                V2SwitchHooks {
+                    switch: hooks,
+                    confirm_publisher_change: Some(&|question| {
+                        let (answer, reply) = std::sync::mpsc::channel();
+                        tx.send(Msg::PublisherChangeQuestion(
+                            Box::new(question.clone()),
+                            answer,
+                        ))
+                        .is_ok()
+                            && reply.recv().unwrap_or(false)
+                    }),
+                    pin_dir: None,
+                },
+            );
             let _ = tx.send(Msg::Switched(instance.home, Box::new(outcome)));
         });
     }
@@ -300,6 +330,11 @@ impl Launcher {
     pub(crate) fn switch_progress(&mut self, stage: InstallProgress) {
         if let Some(running) = &mut self.ui.sheets.switching.running {
             running.progress = stage;
+            running.eta.update(
+                crate::eta::install_stage_key(stage),
+                crate::mods_page::install::stage_fraction(stage),
+                Instant::now(),
+            );
         }
     }
 
@@ -557,7 +592,25 @@ impl Launcher {
                     } else if publishing {
                         tr("Applying the switch.").into()
                     } else {
-                        stage_label(running.progress)
+                        let now = Instant::now();
+                        let remaining = match running.progress {
+                            InstallProgress::Minecraft(backend::PrepareStep::Prepare, _) => {
+                                match backend::prepare_step_state() {
+                                    (backend::PrepareStep::Prepare, Some(started)) => {
+                                        crate::eta::expected_prepare_duration().and_then(
+                                            |expected| {
+                                                crate::eta::remaining_from_expected(
+                                                    started, expected, now,
+                                                )
+                                            },
+                                        )
+                                    }
+                                    _ => None,
+                                }
+                            }
+                            _ => running.eta.remaining(now),
+                        };
+                        crate::eta::with_eta(stage_label(running.progress), remaining)
                     })
                     .truncate(),
                 )
@@ -842,6 +895,7 @@ impl Launcher {
             profile_name: instance.name.clone(),
             build_label: target.as_deref().map(build_name).unwrap_or_default(),
             progress: InstallProgress::Checking,
+            eta: crate::eta::StageEta::default(),
             stop: stop.clone(),
             question: None,
         });
@@ -882,7 +936,6 @@ impl Launcher {
                                 let _ = tx.send(Msg::ProviderSwitchProgress(stage));
                             },
                             continue_after_failure: &|_| false,
-                            resolve: None,
                             cancellation: None,
                         },
                         choose_provider: Some(&|need| {
@@ -928,6 +981,11 @@ impl Launcher {
     pub(crate) fn provider_switch_progress(&mut self, stage: InstallProgress) {
         if let Some(running) = &mut self.ui.sheets.switching.provider {
             running.progress = stage;
+            running.eta.update(
+                crate::eta::install_stage_key(stage),
+                crate::mods_page::install::stage_fraction(stage),
+                Instant::now(),
+            );
         }
     }
 
@@ -1105,7 +1163,14 @@ impl Launcher {
                     "Switching {mod} to {repo}",
                     &[("mod", &switch.mod_name), ("repo", &switch.to_repo)],
                 )))
-                .child(muted(stage_label(running.progress)))
+                .child(muted(if publishing {
+                    stage_label(running.progress)
+                } else {
+                    crate::eta::with_eta(
+                        stage_label(running.progress),
+                        running.eta.remaining(Instant::now()),
+                    )
+                }))
                 .children(
                     stage_fraction(running.progress)
                         .map(|f| crate::widgets::progress_bar(Some((f, f)), &self.theme)),
@@ -1138,15 +1203,29 @@ impl Launcher {
     }
 }
 
-/// Whether a profile holds any mod installed from the signed v2 index.
-///
-/// Propagates `installed.json` read errors so a corrupt or unreadable manifest never falls back
-/// to the v1 build switch.
-fn uses_v2_switch(home: &std::path::Path) -> Result<bool, String> {
-    Ok(sunrise_launcher::browser::installed::Installed::read(home)?
-        .entries
-        .iter()
-        .any(|e| e.mod_id.is_some()))
+/// Whether a picker selection can be saved directly to `instances.json` without running a build
+/// switch: the profile must be ordinary, have no pending transaction recovery or first-Play
+/// bootstrap, and already be on `tag`.
+fn can_fast_save_choice(
+    instance: &instances::Instance,
+    tag: &str,
+    unplayed_target: Option<&str>,
+    installed: bool,
+) -> bool {
+    if instance.kind == instances::Kind::Pack {
+        return false;
+    }
+    if !matches!(
+        sunrise_launcher::profile_txn::recovery_pending(&instance.home),
+        Ok(false)
+    ) {
+        return false;
+    }
+    match managed_play::display_active(&instance.home) {
+        Ok(Some(active)) => active.base() == tag,
+        Ok(None) => unplayed_target == Some(tag) && installed,
+        Err(_) => false,
+    }
 }
 
 /// A partial write or an interrupted writer must not reserve the final report name.
@@ -1166,54 +1245,49 @@ fn publish_report(
 
 #[cfg(test)]
 mod tests {
-    use super::{publish_report, uses_v2_switch};
+    use super::{can_fast_save_choice, publish_report};
     use std::io::{self, Write};
-    use sunrise_launcher::browser::{
-        installed::{Entry, Installed},
-        Kind, SourceId,
-    };
+    use sunrise_launcher::instances::{Channel, Instance, Kind as InstanceKind};
 
     #[test]
-    fn uses_v2_switch_refuses_unreadable_installed_manifest_instead_of_falling_back() {
-        let home = tempfile::tempdir().unwrap();
-        assert_eq!(uses_v2_switch(home.path()), Ok(false));
-
-        let mut list = Installed::default();
-        list.entries.push(Entry {
-            source: SourceId::Sunrise,
-            project: "demo".into(),
-            mod_id: None,
-            slug: "demo".into(),
-            title: "Demo".into(),
-            kind: Kind::Mod,
-            version: "1.0.0".into(),
-            number: "1.0.0".into(),
-            file: "mods/demo.smod".into(),
-            checksum: format!("SHA-256:{}", "00".repeat(32)),
-            page: "https://example.test/demo".into(),
-            dependency: false,
-            verdict: None,
-            install_hold: None,
-            repository: None,
-        });
-        list.save(home.path()).unwrap();
-        assert_eq!(uses_v2_switch(home.path()), Ok(false));
-
-        list.entries[0].mod_id = Some("demo".into());
-        list.save(home.path()).unwrap();
-        assert_eq!(uses_v2_switch(home.path()), Ok(true));
-
-        std::fs::write(
-            home.path()
-                .join(sunrise_launcher_smod::index::browser_state::MANIFEST),
-            "{not valid json",
-        )
-        .unwrap();
-        let error = uses_v2_switch(home.path()).unwrap_err();
-        assert!(
-            error.contains(sunrise_launcher_smod::index::browser_state::MANIFEST),
-            "unexpected error: {error}"
-        );
+    fn can_fast_save_choice_checks_kind_recovery_and_target() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut instance = Instance {
+            id: "own-1".into(),
+            name: "Own".into(),
+            home: dir.path().to_path_buf(),
+            work: dir.path().to_path_buf(),
+            version: Some("dev-2026-11-24-abc".into()),
+            channel: Channel::Dev,
+            kind: InstanceKind::Own,
+            group: None,
+            icon: None,
+            native_profile: Default::default(),
+            last_played: None,
+            played: Default::default(),
+            launch: Default::default(),
+            incarnation: None,
+        };
+        let tag = "dev-2026-11-24-abc";
+        // Ordinary unplayed profile already targeting `tag` with `tag` installed -> fast path.
+        assert!(can_fast_save_choice(&instance, tag, Some(tag), true));
+        // Not installed yet or different target -> full switch.
+        assert!(!can_fast_save_choice(&instance, tag, Some(tag), false));
+        assert!(!can_fast_save_choice(
+            &instance,
+            tag,
+            Some("dev-2026-11-20-old"),
+            true
+        ));
+        // Pack profiles never take the fast path.
+        instance.kind = InstanceKind::Pack;
+        assert!(!can_fast_save_choice(&instance, tag, Some(tag), true));
+        instance.kind = InstanceKind::Own;
+        // Pending transaction/bootstrap record -> never take the fast path.
+        let txn = dir.path().join("mod-browser/install-txn.json");
+        std::fs::create_dir_all(txn.parent().unwrap()).unwrap();
+        std::fs::write(&txn, "{}").unwrap();
+        assert!(!can_fast_save_choice(&instance, tag, Some(tag), true));
     }
 
     #[test]

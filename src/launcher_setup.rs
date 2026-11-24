@@ -4,7 +4,10 @@ use super::*;
 
 impl Launcher {
     pub(crate) fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        sunrise_launcher::storage::eviction::cleanup_after_start();
+        if sunrise_launcher::carry_over::startup_error().is_none() {
+            sunrise_launcher::storage::eviction::cleanup_after_start();
+        }
+        crate::eta::preload_timings();
         // A press on something that then leaves the page (a row that opens its page, a tab)
         // would leave the keyboard on nothing, and Tab dead until the next click.
         cx.on_focus_lost(window, |this, window, cx| {
@@ -238,6 +241,16 @@ impl Launcher {
                 this.ui.sheets.profile_action =
                     Some(profile_delete::Action::Interrupted(interrupted));
             }
+        }
+        if let Some(error) = sunrise_launcher::carry_over::startup_error() {
+            this.perf.keep_local_log(false);
+            this.open_notice(
+                trf(
+                    "Could not copy the earlier launcher's data: {error}\n\nFix the earlier launcher's data folder or reconnect its drive, then restart Sunrise to try again.",
+                    &[("error", &error)],
+                ),
+                None,
+            );
         }
         this.reload_instances();
         if this.bench.is_some() {

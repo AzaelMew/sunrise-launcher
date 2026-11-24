@@ -576,10 +576,19 @@ impl Launcher {
                 items,
             };
         }
-        let mod_facts = (!packs)
-            .then(|| self.home_mod_facts(self.ui.home.mods.revision, sunrise::fetched_index()));
+        let mod_facts = (!packs).then(|| self.home_mod_facts(self.ui.home.mods.revision));
         let (built, place) = self.home_installed_list(packs, list.len());
-        let index = (!packs).then(sunrise::known_index).flatten();
+        let index = (!packs).then(sunrise::v2::shown_index).flatten();
+        // No catalogue read yet this run: fetch it so registry mods get their icons, as the Mods
+        // pages do.
+        if !packs
+            && index.is_none()
+            && list[built.clone()]
+                .iter()
+                .any(|item| matches!(item.picture, Picture::Project(_)))
+        {
+            self.ensure_v2_catalog(false);
+        }
         let mut rows = div().flex().flex_col();
         let mut priority = list[..built.start].iter().filter(|item| item.on).count();
         for item in &list[built] {
@@ -587,9 +596,13 @@ impl Launcher {
                 Picture::Project(project) => tile(
                     index
                         .as_ref()
-                        .and_then(|index| index.project(project)?.icon.clone())
-                        .and_then(|url| {
-                            self.mods_image(&url, sunrise_launcher::browser::images::ROW)
+                        .and_then(|catalog| Some(catalog.index.project(project)?.icon.clone()))
+                        .and_then(|icon| {
+                            self.v2_mod_image(
+                                project,
+                                &icon,
+                                sunrise_launcher::browser::images::ROW,
+                            )
                         }),
                     &item.id,
                     &item.name,

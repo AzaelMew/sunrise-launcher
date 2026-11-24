@@ -87,12 +87,8 @@ fn iris_format_shader_packs_are_labelled_and_only_their_zip_is_picked() {
         p.support(GAME),
         Support::Partial("Iris-format pack: most work, some effects may not".into())
     );
-    // Another loader's pack doesn't run; Sunrise's own are Works on their build, unchanged.
+    // Another loader's pack doesn't run.
     assert!(!support(Kind::Shader, &v(&[GAME]), &v(&["optifine"]), GAME).installable());
-    assert_eq!(
-        support(Kind::Shader, &v(&[GAME]), &v(&[sunrise::LOADER]), GAME),
-        Support::Works
-    );
 
     let mut jar = version("jar", &[GAME], &["iris"]);
     jar.files[0].name = "pack.jar".into();
@@ -264,11 +260,6 @@ fn java_mods_and_modpacks_do_not_run() {
         assert!(!support(kind, &v(&[GAME]), &v(&["neoforge"]), GAME).installable());
         assert!(pick(kind, &versions, true, GAME).is_none());
     }
-    // Made for Sunrise: the registry's own mods and modpacks run.
-    assert_eq!(
-        support(Kind::Mod, &v(&[GAME]), &v(&[sunrise::LOADER]), GAME),
-        Support::Works
-    );
 }
 
 #[test]
@@ -378,6 +369,29 @@ fn a_download_is_kept_only_when_its_checksum_matches() {
 }
 
 #[test]
+fn a_release_tag_may_hold_slashes_but_never_dot_segments() {
+    // Asset URLs from the live registry index. GitHub allows `/` in a tag, and the registry's
+    // release workflow tags a package of a multi-mod repository `<id>/v<version>`, unescaped.
+    for live in [
+        "https://github.com/arismoko/horizon-ports/releases/download/fallingtrees/v0.5.1/fallingtrees-0.5.1.smod",
+        "https://github.com/arismoko/horizon-ports/releases/download/fallingtrees/v0.5.1/fallingtrees-0.5.1.smod.sigstore.json",
+        "https://github.com/arismoko/additional_lights/releases/download/v3.1.6/additional_lights-3.1.6.smod",
+        "https://github.com/arismoko/macaws_paths_and_pavings/releases/download/v0.2.5/mcwpaths-0.2.5.smod.sigstore.json",
+        "https://github.com/arismoko/yungs_extras/releases/download/v0.3.1/yungsextras-0.3.1.smod",
+    ] {
+        assert!(download::github_release_asset(live), "{live}");
+    }
+    for bad in [
+        "https://github.com/acme/zoom/releases/download/fallingtrees/../v0.5.1/z.smod",
+        "https://github.com/acme/zoom/releases/download/v1/%2E%2e/z.smod",
+        "https://github.com/acme/zoom/releases/download/v1//z.smod",
+        "https://github.com/acme/zoom/releases/download/z.smod",
+    ] {
+        assert!(!download::github_release_asset(bad), "{bad}");
+    }
+}
+
+#[test]
 fn downloads_refused_before_any_byte() {
     let body = b"x";
     let mut file = file_for(body, true);
@@ -393,7 +407,6 @@ fn downloads_refused_before_any_byte() {
         "https://github.com/acme/zoom/releases/download/v1/../z.smod",
         "https://github.com/acme/zoom/releases/download/v1/z.smod?x=1",
         "https://github.com.evil.example/a/b/releases/download/v1/z.smod",
-        "https://github.com/acme/zoom/releases/download/v1/a/z.smod",
     ] {
         let mut file = file_for(body, true);
         file.url = bad.into();

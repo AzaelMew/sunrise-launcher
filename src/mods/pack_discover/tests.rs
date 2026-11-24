@@ -184,21 +184,7 @@ fn a_data_pack_that_fails_its_checksum_puts_nothing_in_the_world() {
 }
 
 #[test]
-fn shader_packs_come_from_modrinth_and_sunrises_registry_only() {
-    let hits = vec![
-        project("m", SourceId::Modrinth, Kind::Shader),
-        project("s", SourceId::Sunrise, Kind::Shader),
-        project("r", SourceId::Sunrise, Kind::ResourcePack),
-        project("x", SourceId::Modrinth, Kind::Mod),
-    ];
-    let ids: Vec<_> = keep(Scope::Shader, hits.clone())
-        .into_iter()
-        .map(|p| p.id)
-        .collect();
-    assert_eq!(ids, ["m", "s"]);
-    // The registry's shader pack never shows under resource packs, nor Sunrise's under data.
-    assert!(keep(Scope::Resource, hits.clone()).is_empty());
-    assert!(keep(Scope::Data, hits).is_empty());
+fn shader_scope_searches_shader_packs() {
     assert_eq!(
         query(Scope::Shader, "", "g", &PackFilters::default()).kind,
         Kind::Shader

@@ -205,18 +205,11 @@ impl Client<'_> {
             check_build,
             cancellation,
             &progress,
-            (
-                || {
-                    use crate::browser::sunrise;
-                    sunrise::index().ok()?;
-                    sunrise::fetched_index()
-                },
-                || {
-                    crate::browser::sunrise::v2::index()
-                        .ok()
-                        .map(|catalog| catalog.index)
-                },
-            ),
+            || {
+                crate::browser::sunrise::v2::index()
+                    .ok()
+                    .map(|catalog| catalog.index)
+            },
         )?;
         let tag = active.executable();
         let offline = !self.explicit_account && developer_offline::enabled(tag);
@@ -298,10 +291,7 @@ impl Client<'_> {
         check_build: impl FnOnce(&str, Option<&BoundVariant>) -> Result<(), StartError>,
         cancellation: &native_mods::Cancellation,
         progress: impl Fn(Progress),
-        (load_catalogue, load_v2): (
-            impl FnOnce() -> Option<std::sync::Arc<sunrise_launcher_smod::index::Index>>,
-            impl FnOnce() -> Option<std::sync::Arc<sunrise_launcher_smod::index_v2::Index>>,
-        ),
+        load_index: impl FnOnce() -> Option<std::sync::Arc<sunrise_launcher_smod::index_v2::Index>>,
     ) -> Result<(Active, Vec<String>), StartError> {
         let home = profile.home().to_owned();
         let mode = self.instance.native_profile;
@@ -338,14 +328,12 @@ impl Client<'_> {
             // them out until refresh has staged the exact set we checked.
             let _manifest = game_lock(&home)?;
             crate::browser::installed::recover_game_install(&home).map_err(StartError::Journal)?;
-            let notices = catalogue::inspect_both(&home, load_catalogue, load_v2)?;
-            let registry = crate::browser::sunrise::fetched_index();
+            let notices = catalogue::inspect(&home, load_index)?;
             let active = profile
                 .refresh(
                     mode,
                     cancellation,
                     |step| native(old.base(), step),
-                    registry.as_deref(),
                     Some(&log),
                     replacement,
                 )
@@ -366,7 +354,7 @@ impl Client<'_> {
                 crate::browser::installed::recover_game_install(&home)
                     .map_err(StartError::Journal)?;
                 first.verify_inputs()?;
-                let notices = catalogue::inspect_both(&home, load_catalogue, load_v2)?;
+                let notices = catalogue::inspect(&home, load_index)?;
                 let image = first
                     .exact_image(
                         mode,
