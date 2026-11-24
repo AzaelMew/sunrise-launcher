@@ -478,6 +478,13 @@ fn a_held_source_is_grouped_with_rows_that_need_attention() {
         retry: false,
     });
     assert_eq!(quiet.group(), Group::NeedsYou);
+    // A registry hold waits for its author: its switch is out of reach and dimmed.
+    let waiting = cells(quiet, None, None);
+    assert!(!waiting.switch && waiting.unavailable);
+    // Local or source bytes may be tried again: the switch works and isn't dimmed as dropped.
+    quiet.held_for.as_mut().unwrap().retry = true;
+    let retryable = cells(quiet, None, None);
+    assert!(retryable.switch && !retryable.unavailable);
 }
 
 #[test]

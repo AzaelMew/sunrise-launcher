@@ -536,15 +536,85 @@ pub fn restore_held(
         Profile::open_for(&instance.home, None, Some(identity)).map_err(String::from)?;
     let edit = profile.begin_pending_edit()?;
     // A registry hold waits for its author's update; only local and source bytes are retried.
-    if !edit.held(id).is_some_and(|hold| {
-        !matches!(hold.source(), managed_play::HeldSource::Registry { .. })
-            && hold.matches_archive(&instance.home)
-    }) {
-        return Err(held_change_refusal(id).to_string());
+    let (title, digest) = edit
+        .held(id)
+        .filter(|hold| {
+            !matches!(hold.source(), managed_play::HeldSource::Registry { .. })
+                && hold.matches_archive(&instance.home)
+        })
+        .map(|hold| {
+            let digest: String = hold.digest().iter().map(|b| format!("{b:02x}")).collect();
+            (hold.title().to_owned(), digest)
+        })
+        .ok_or_else(|| held_change_refusal(id).to_string())?;
+    // These exact bytes stay off once taken down, read from the same signed index the profile's
+    // build switch reads: a takedown of a digest reaches local and source copies too.
+    let v2 = installed::Installed::read(&instance.home)?
+        .entries
+        .iter()
+        .any(|entry| entry.mod_id.is_some());
+    let takedown = if v2 {
+        let catalog = crate::browser::sunrise::v2::change_index().map_err(|error| {
+            trf(
+                "Couldn't check {mod} against the registry's takedowns: {error}",
+                &[("mod", &title), ("error", &error.to_string())],
+            )
+        })?;
+        catalog
+            .index
+            .revoked_by_sha256(&digest)
+            .map(|row| row.reason.clone())
+    } else {
+        let source = location();
+        let local = super::super::local();
+        if source != super::super::INDEX_URL && !(cfg!(debug_assertions) && local) {
+            return Err(tr("Connect to the Sunrise registry before switching builds.").into());
+        }
+        let (catalogue, _, _) = super::super::complete_index(&source, local)?;
+        catalogue
+            .revoked
+            .iter()
+            .find(|row| {
+                row.id == id
+                    && row
+                        .sha256
+                        .as_ref()
+                        .is_some_and(|listed| listed.eq_ignore_ascii_case(&digest))
+            })
+            .map(|row| row.reason.clone())
+    };
+    if let Some(reason) = takedown {
+        return Err(trf(
+            "{mod} was taken down: {reason}",
+            &[("mod", &title), ("reason", &reason)],
+        ));
     }
     let next = edit.candidate()?;
+    let packages = inventory(next.path(), None)?;
+    let manifest = &packages
+        .get(id)
+        .ok_or_else(|| held_change_refusal(id).to_string())?
+        .package
+        .manifest;
+    if manifest.side == Side::Server {
+        return Err(trf(
+            "{mod} runs only on servers, so it can't be turned on here.",
+            &[("mod", &manifest.name)],
+        ));
+    }
+    if manifest.api != sunrise_launcher_smod::manifest::API {
+        return Err(trf(
+            "{mod} needs mod API {api}, which this launcher doesn't run.",
+            &[("mod", &manifest.name), ("api", &manifest.api)],
+        ));
+    }
     mutations::check_activation(next.path(), None, &[id])?;
     mod_list::set_all_enabled(next.path(), &[id], true)?;
+    if let Some(conflict) = manifest_conflict(next.path(), None, None, Side::Both, |_| false)
+        .map_err(|error| error.to_string())?
+    {
+        return Err(conflict.reason);
+    }
     let proof = edit
         .prove(
             next.path(),

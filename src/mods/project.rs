@@ -187,7 +187,10 @@ impl Launcher {
             .and_then(|snapshot| snapshot.switch_held.get(&row.id))
             .cloned();
         let status = if let Some(hold) = &hold {
-            Some(note(hold.label()))
+            Some(note(match hold.detail() {
+                Some(detail) => format!("{} {detail}", hold.label()),
+                None => hold.label().to_owned(),
+            }))
         } else if cells.popover {
             row.unfit
                 .clone()

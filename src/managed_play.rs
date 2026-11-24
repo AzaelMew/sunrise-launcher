@@ -681,7 +681,7 @@ impl<'a> PendingChanges<'a> {
             // A hold still waiting says what the check found; a retired one has moved on.
             match holds
                 .iter()
-                .find(|hold| hold.title() == title)
+                .find(|hold| hold.title() == title && hold.reason().unproved() == unknown)
                 .and_then(|hold| hold.reason().detail())
             {
                 Some(reason) => format!("{line} {reason}"),

@@ -750,7 +750,8 @@ pub(super) fn cells(row: &Row, error: Option<&str>, building: Option<&BuildState
         switch: row.held_for.as_ref().is_none_or(|hold| hold.retry)
             && !matches!(row.need, Some(Need::TakenDown(_)))
             && !row.local.as_ref().is_some_and(|l| l.unreadable),
-        unavailable: row.held_for.is_some()
+        // A retryable hold is a switch the player may try, not a mod the build dropped.
+        unavailable: row.held_for.as_ref().is_some_and(|hold| !hold.retry)
             || row.unfit.is_some()
             || row.left_out.is_some()
             || matches!(

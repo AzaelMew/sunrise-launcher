@@ -500,6 +500,28 @@ fn a_held_source_is_offered_again_on_each_switch_and_its_toggle_checks_it() {
             assert_eq!(fixture.snapshot(&[ARCHIVE, EXTRA]), before);
             assert_eq!(Active::read_pointer(home).unwrap().as_ref(), Some(&*active));
 
+            // Bytes taken down by digest stay off: the toggle refuses before any check or build.
+            let mut taken_down = fixture.catalogue.clone();
+            taken_down.revoked.push(index::Revoked {
+                id: ID.into(),
+                sha256: Some(index::sha256(&pinned.archive)),
+                reason: "Fixture takedown.".into(),
+                date: String::new(),
+            });
+            let write_index = |catalogue: &index::Index| {
+                fs::write(
+                    fixture.root.join("index.json"),
+                    serde_json::to_vec(catalogue).unwrap(),
+                )
+                .unwrap()
+            };
+            write_index(&taken_down);
+            let error = restore_held(&fixture.instance, identity, ID, &cancellation).unwrap_err();
+            assert!(error.contains("Fixture takedown."), "{error}");
+            assert_eq!(fixture.snapshot(&[ARCHIVE, EXTRA]), before);
+            assert_eq!(Active::read_pointer(home).unwrap().as_ref(), Some(&*active));
+            write_index(&fixture.catalogue);
+
             // The next switch checks the held bytes again rather than skipping them; this one
             // holds them again for its own reason, replacing the old hold.
             target(OTHER, 'a');

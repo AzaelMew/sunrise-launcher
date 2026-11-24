@@ -438,7 +438,12 @@ fn switch_in(
             )?);
         }
     }
-    let (held, unknown, hold_labels, reasons) = omission_labels(&holds);
+    let OmissionLabels {
+        held,
+        unproved: unknown,
+        by_id: hold_labels,
+        reasons,
+    } = omission_labels(&holds);
     let affected = crate::worlds::unproved_mod_effects(
         old.path(),
         edit.current(),
@@ -913,17 +918,19 @@ pub(super) fn sha256_bytes(hex: &str) -> Result<[u8; 32], String> {
     Ok(bytes)
 }
 
-/// The names a switch's question shows for `holds` (titles, with ids where two read alike),
-/// those names by id, and each one's reason by name.
-#[allow(clippy::type_complexity)]
-fn omission_labels(
-    holds: &[Held],
-) -> (
-    Vec<String>,
-    Vec<String>,
-    BTreeMap<String, String>,
-    BTreeMap<String, String>,
-) {
+/// The names a switch's question shows for its holds: titles, with ids where two read alike.
+struct OmissionLabels {
+    /// Held because they don't fit the build.
+    held: Vec<String>,
+    /// Held because their fit couldn't be verified.
+    unproved: Vec<String>,
+    /// Each hold's name, by mod id.
+    by_id: BTreeMap<String, String>,
+    /// Each hold's reason, by name.
+    reasons: BTreeMap<String, String>,
+}
+
+fn omission_labels(holds: &[Held]) -> OmissionLabels {
     let mut counts: BTreeMap<String, usize> = BTreeMap::new();
     for hold in holds {
         *counts.entry(hold.title().to_lowercase()).or_default() += 1;
@@ -948,7 +955,12 @@ fn omission_labels(
             held.push(label);
         }
     }
-    (held, unproved, labels, reasons)
+    OmissionLabels {
+        held,
+        unproved,
+        by_id: labels,
+        reasons,
+    }
 }
 
 // A bare native archive pinned to a different build has no cross-build proof to try.
@@ -984,17 +996,21 @@ fn prune_missing_uses(
                         .index_for_name(sunrise_launcher_smod::manifest::USES_FILE)
                         .is_none()
                     {
-                        why.insert(
-                            id.clone(),
-                            native_mods::fit::line(
-                                &choice.manifest.name,
-                                &native_mods::fit::Verdict::NoList {
-                                    made_for: native.sunrise.clone(),
-                                    why: None,
-                                },
-                                tag,
-                            ),
-                        );
+                        // Only the installed bytes' reason belongs on a hold: a pruned
+                        // candidate from the index never became one.
+                        if choice.installed {
+                            why.insert(
+                                id.clone(),
+                                native_mods::fit::line(
+                                    &choice.manifest.name,
+                                    &native_mods::fit::Verdict::NoList {
+                                        made_for: native.sunrise.clone(),
+                                        why: None,
+                                    },
+                                    tag,
+                                ),
+                            );
+                        }
                         continue;
                     }
                 }
@@ -1806,7 +1822,12 @@ mod tests {
             hold("beetles", "Beetles", true),
             hold("beta_lantern", "lanterns", true),
         ];
-        let (held, unproved, _, reasons) = omission_labels(&holds);
+        let OmissionLabels {
+            held,
+            unproved,
+            reasons,
+            ..
+        } = omission_labels(&holds);
         assert_eq!(held, ["Lanterns (alpha_lantern)"]);
         assert_eq!(unproved, ["Beetles", "lanterns (beta_lantern)"]);
         let question = SwitchQuestion {
