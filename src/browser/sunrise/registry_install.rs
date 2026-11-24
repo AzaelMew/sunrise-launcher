@@ -228,6 +228,18 @@ fn prove_edit(
     )
 }
 
+/// A line from the first preparation of a profile's game build, which runs only when the build
+/// isn't prepared yet: the install says the step it is at and Mojang's files done, as the Switch
+/// dialog does, instead of "Getting ready…" for all of it.
+fn preparation_line(progress: &dyn Fn(InstallProgress)) -> impl Fn(String) + '_ {
+    move |_| {
+        progress(InstallProgress::Minecraft(
+            crate::backend::prepare_step(),
+            crate::mojang::progress(),
+        ))
+    }
+}
+
 fn build_progress(step: native_mods::Step, progress: &dyn Fn(InstallProgress)) {
     progress(match step {
         // Registry actions already opened their progress before asking for build proof.

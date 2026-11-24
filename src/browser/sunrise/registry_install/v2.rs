@@ -1724,7 +1724,7 @@ fn v2_edit_with(
     }
 
     (hooks.install.progress)(InstallProgress::Preparing);
-    edit.prepare_first(&|_| {})
+    edit.prepare_first(&super::preparation_line(hooks.install.progress))
         .map_err(InstallError::Unproved)?;
     let proof = match prove_edit(&edit, next.path(), instance, cancelled, &hooks.install) {
         Ok(proof) => proof,
@@ -2066,7 +2066,7 @@ pub(crate) fn switch_provider_v2_with(
     }
 
     (hooks.install.install.progress)(InstallProgress::Preparing);
-    edit.prepare_first(&|_| {})
+    edit.prepare_first(&super::preparation_line(hooks.install.install.progress))
         .map_err(InstallError::Unproved)?;
     let proof = prove_edit(
         &edit,
