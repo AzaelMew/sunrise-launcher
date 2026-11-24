@@ -396,7 +396,7 @@ impl Kept {
     fn store_blob(&self, file: &Path, expected: Option<&str>) -> io::Result<String> {
         let blobs = self.blobs();
         fs::create_dir_all(&blobs)?;
-        let mut staged = tempfile::Builder::new()
+        let staged = tempfile::Builder::new()
             .prefix(".incoming-")
             .tempfile_in(&blobs)?;
         fs::copy(file, staged.path())?;
@@ -409,28 +409,21 @@ impl Kept {
         let now = std::time::SystemTime::now();
         staged.as_file().set_modified(now)?;
         // The staged copy replaces anything else there in one rename (a link itself, never its
-        // target). On Windows a rename over a blob another attempt is copying out is refused:
-        // that blob is then checked again, a few times, before this one gives up.
-        for _ in 0..5 {
-            let intact = fs::symlink_metadata(&blob)
-                .is_ok_and(|meta| meta.is_file() && !crate::native_cache::linked(&meta))
-                && sha256_file(&blob).is_ok_and(|digest| digest == sha256);
-            if intact
-                && fs::File::options()
-                    .write(true)
-                    .open(&blob)
-                    .and_then(|existing| existing.set_modified(now))
-                    .is_ok()
-            {
-                return Ok(sha256);
-            }
-            match staged.persist(&blob) {
-                Ok(_) => return Ok(sha256),
-                Err(error) => staged = error.file,
-            }
-            std::thread::sleep(std::time::Duration::from_millis(20));
+        // target). A refused rename fails this save, which costs only the next build's time.
+        let intact = fs::symlink_metadata(&blob)
+            .is_ok_and(|meta| meta.is_file() && !crate::native_cache::linked(&meta))
+            && sha256_file(&blob).is_ok_and(|digest| digest == sha256);
+        if intact
+            && fs::File::options()
+                .write(true)
+                .open(&blob)
+                .and_then(|existing| existing.set_modified(now))
+                .is_ok()
+        {
+            return Ok(sha256);
         }
-        Err(invalid())
+        staged.persist(&blob).map_err(|error| error.error)?;
+        Ok(sha256)
     }
 
     /// Keeps the [`ENTRIES`] most recently used entries and the blobs they name.
