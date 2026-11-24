@@ -1917,8 +1917,8 @@ fn pipeline(
         let seeding = std::time::Instant::now();
         let mixins_from_source = MIXINS_FROM_SOURCE.load(std::sync::atomic::Ordering::Relaxed);
         let kept_store = kept::Kept::new(&root());
-        let kept_keys = match (signed_sdk, expected_route) {
-            (Some(sdk), Some(route)) => kept_keys(
+        let kept_plan = match (signed_sdk, expected_route) {
+            (Some(sdk), Some(route)) => plan_kept(
                 &kept::Build {
                     sdk,
                     tool: &sunrise_launcher_smod::index::sha256_file(program)
@@ -1941,8 +1941,8 @@ fn pipeline(
             ),
             _ => None,
         };
-        if let Some((kept_mods, keys)) = &kept_keys {
-            let reused = kept_store.seed(&work, kept_mods, keys);
+        if let Some(plan) = &kept_plan {
+            let reused = kept_store.seed(&work, &plan.mods, &plan.keys);
             if !reused.is_empty() {
                 timed(
                     &trf(
@@ -1997,9 +1997,9 @@ fn pipeline(
             })?;
         // Kept only now that the launcher has verified them; a failure here costs only the
         // next build's time.
-        if let Some((kept_mods, keys)) = &kept_keys {
+        if let Some(plan) = &kept_plan {
             let keeping = std::time::Instant::now();
-            match kept_store.save(&work, &built, &libraries, kept_mods, keys) {
+            match kept_store.save(&work, &built, &libraries, &plan.mods, &plan.keys) {
                 Ok(0) => {}
                 Ok(_) => timed("Keeping the mods' libraries for the next build", keeping)?,
                 Err(error) => log_warning(&trf(
@@ -2044,20 +2044,22 @@ fn pipeline(
     Ok(built)
 }
 
-/// Each kept-library key (`kept::keys`) for `ordered`, the build's mods in dependency order, from
+/// The build's mods as kept libraries see them, and each one's key.
+struct KeptPlan<'a> {
+    mods: Vec<kept::Mod<'a>>,
+    keys: std::collections::BTreeMap<String, String>,
+}
+
+/// The kept-library plan (`kept::keys`) for `ordered`, the build's mods in dependency order, from
 /// each mod's own files (`digests`, of the copies as found, and its uses table) and the mods in
 /// the build it links to. None when a mod's files couldn't be read: nothing is kept or reused.
-#[allow(clippy::type_complexity)]
-fn kept_keys<'a>(
+fn plan_kept<'a>(
     build: &kept::Build<'_>,
     ordered: &'a [Bundle],
     mods: &'a [Bundle],
     declared: &'a [Vec<dependencies::Dependency>],
     digests: &std::collections::HashMap<String, Option<String>>,
-) -> Option<(
-    Vec<kept::Mod<'a>>,
-    std::collections::BTreeMap<String, String>,
-)> {
+) -> Option<KeptPlan<'a>> {
     let present: std::collections::HashSet<&str> = mods
         .iter()
         .map(|bundle| bundle.manifest.id.as_str())
@@ -2094,7 +2096,7 @@ fn kept_keys<'a>(
         })
         .collect::<Option<_>>()?;
     let keys = kept::keys(build, &list);
-    Some((list, keys))
+    Some(KeptPlan { mods: list, keys })
 }
 
 fn digest_bytes(bytes: &[u8]) -> String {
