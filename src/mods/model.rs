@@ -564,11 +564,13 @@ pub(super) fn rows(entries: &[Entry], w: &World) -> Vec<Row> {
         .filter(|e| e.source == SourceId::Sunrise && e.kind == Kind::Mod)
         .filter_map(|e| {
             let id = mod_id(e)?.to_owned();
-            if e.mod_id.is_some() {
-                return Some(v2_row(e, id, w));
+            let project =
+                w.v2.and_then(|i| sunrise_launcher::browser::sunrise::v2::installed_project(i, e));
+            if e.mod_id.is_some() || project.is_some() {
+                return Some(v2_row(e, id, project, w));
             }
-            // Installed from the old registry, which has closed: the v2 index can still take it
-            // down by its archive's hash, and it gets no updates.
+            // Installed from the old registry, which has closed, and no v2 release has its
+            // archive: the v2 index can still take it down by its hash, and it gets no updates.
             let native = sunrise_launcher::native_status::is_native_file(&e.file);
             let on = w.enabled.contains(&id);
             let taken_down = w.v2.and_then(|i| {
@@ -651,13 +653,14 @@ pub(super) fn rows(entries: &[Entry], w: &World) -> Vec<Row> {
 /// A row for an entry the signed v2 index installed: its project names it, a takedown of the
 /// installed archive needs action, and an update is the newest release listed as fitting the
 /// profile's exact build.
-fn v2_row(e: &Entry, id: String, w: &World) -> Row {
-    let p = w.v2.and_then(|i| i.project(&e.project));
+/// `p` is the row's v2 project, when the index lists it.
+fn v2_row(e: &Entry, id: String, p: Option<&index_v2::Project>, w: &World) -> Row {
     let native = sunrise_launcher::native_status::is_native_file(&e.file);
     let on = w.enabled.contains(&id);
     let hash = e.checksum.strip_prefix("SHA-256:").unwrap_or_default();
+    let project_id = p.map_or(e.project.as_str(), |p| p.id.as_str());
     let taken_down =
-        w.v2.and_then(|i| i.revoked(&e.project, Some(hash)))
+        w.v2.and_then(|i| i.revoked(project_id, Some(hash)))
             .map(|r| r.reason.clone());
     let need = if let Some(reason) = taken_down {
         Some(Need::TakenDown(reason))

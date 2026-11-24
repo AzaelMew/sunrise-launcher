@@ -239,6 +239,29 @@ pub fn shown_index() -> Option<Catalog> {
     known_index().or_else(|| SAVED.lock().unwrap_or_else(|e| e.into_inner()).clone())
 }
 
+/// The project an installed registry row belongs to. A row from the old registry (no `mod_id`)
+/// belongs to the one project with a release of the same mod, version and archive hash, as
+/// `classify_v2_ownership` adopts it; otherwise it has none.
+pub fn installed_project<'a>(
+    index: &'a Index,
+    entry: &crate::browser::installed::Entry,
+) -> Option<&'a index_v2::Project> {
+    if entry.mod_id.is_some() {
+        return index.project(&entry.project);
+    }
+    let hash = entry.checksum.strip_prefix("SHA-256:")?;
+    match index
+        .releases_by_sha256(&entry.project, hash)
+        .into_iter()
+        .filter(|(_, release)| release.version == entry.version)
+        .collect::<Vec<_>>()
+        .as_slice()
+    {
+        [(project, _)] => Some(project),
+        _ => None,
+    }
+}
+
 /// The newest release of `project` newer than the `installed` version that fits `build`: not
 /// taken down and not already proved not to fit (`unfit`, lowercase SHA-256s).
 pub fn newer_release<'a>(

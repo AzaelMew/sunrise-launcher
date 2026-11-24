@@ -2543,8 +2543,15 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                 let status = if e.kind != Kind::Mod {
                     installed::update_pack(&home, e, &game, check, &line)?
                 } else if let Some((catalog, build)) = &checked {
-                    let Some(project) = catalog.index.project(&e.project) else {
-                        println!("{}", installed::old_registry_pack(&e.title));
+                    let Some(project) = sunrise::v2::installed_project(&catalog.index, e) else {
+                        if e.mod_id.is_none() {
+                            println!("{}", installed::old_registry_pack(&e.title));
+                        } else {
+                            println!(
+                                "{}",
+                                trf("{mod} isn't in Sunrise's registry.", &[("mod", &e.title)])
+                            );
+                        }
                         continue;
                     };
                     let unfit = build
@@ -2707,9 +2714,10 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                     .ok()
                     .filter(|_| e.source == SourceId::Sunrise)
                     .and_then(|catalog| {
-                        catalog
-                            .index
-                            .revoked(&e.project, Some(hash))
+                        // A whole-project takedown reaches only a row the index proves is that
+                        // project's; any row is taken down by its archive's hash.
+                        sunrise::v2::installed_project(&catalog.index, &e)
+                            .and_then(|p| catalog.index.revoked(&p.id, Some(hash)))
                             .or_else(|| catalog.index.revoked_by_sha256(hash))
                             .cloned()
                     })

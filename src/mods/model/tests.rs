@@ -1086,3 +1086,36 @@ fn a_served_mod_needs_its_host_on() {
     let both: HashSet<String> = ["runes".to_owned(), "java_host".to_owned()].into();
     assert_eq!(runes(&shown(&both)).need, None);
 }
+
+#[test]
+fn an_old_registry_row_takes_the_v2_project_whose_release_has_its_archive() {
+    let idx = index(
+        vec![project("zoom", "mod", &[("2.0.0", B), ("1.0.0", A)])],
+        vec![],
+    );
+    let none = HashSet::new();
+    let w = world(&idx, &none, &none);
+    // Old receipts name the mod, not a v2 project, and carry no `mod_id`.
+    let adopted = entry("zoom", "1.0.0", false, A);
+    let row = rows(std::slice::from_ref(&adopted), &w).remove(0);
+    assert_eq!(row.title, "ZOOM");
+    assert_eq!(row.authors, "Someone");
+    assert_eq!(row.update.as_deref(), Some("2.0.0"));
+    assert!(bulk_updatable(&row));
+
+    // An archive no v2 release has stays as it was, with no updates.
+    let unknown = entry("zoom", "1.0.0", false, &"c".repeat(64));
+    let row = rows(std::slice::from_ref(&unknown), &w).remove(0);
+    assert_eq!(row.update, None);
+    assert_eq!(row.authors, "");
+
+    // A whole-project takedown reaches the adopted row through its v2 project.
+    let taken = index(
+        vec![project("zoom", "mod", &[("2.0.0", B), ("1.0.0", A)])],
+        vec![serde_json::json!({
+            "project": project_id("zoom"), "reason": "unsafe", "date": "2026-11-01"
+        })],
+    );
+    let row = rows(std::slice::from_ref(&adopted), &world(&taken, &none, &none)).remove(0);
+    assert_eq!(row.need, Some(Need::TakenDown("unsafe".into())));
+}
