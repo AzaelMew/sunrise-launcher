@@ -62,6 +62,7 @@ impl Launcher {
                 crate::glass_toast::say(instances::retired_selection_message(&id));
             }
         }
+        let _ = self.skins_offline();
     }
 
     pub(super) fn refresh_instances_list(&mut self) {
@@ -132,6 +133,7 @@ impl Launcher {
         self.settings.instance =
             (instance.kind != InstanceKind::Default).then(|| instance.id.clone());
         self.save_settings();
+        let _ = self.skins_offline();
     }
 
     /// Closes the dialog; a sheet holding edits not saved asks first. A dialog that is saving

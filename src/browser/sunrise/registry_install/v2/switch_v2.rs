@@ -112,7 +112,7 @@ pub fn switch_profile_build_v2(
     switch_build_v2_with(
         instance,
         &mut profile,
-        catalog.index,
+        Arc::new(crate::native_mods::local_fit::filled(&catalog.index)),
         tag,
         choice,
         hooks,
