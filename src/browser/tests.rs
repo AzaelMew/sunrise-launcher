@@ -378,6 +378,22 @@ fn a_download_is_kept_only_when_its_checksum_matches() {
 }
 
 #[test]
+fn a_release_tag_may_hold_slashes_but_never_dot_segments() {
+    // GitHub allows `/` in a tag; the registry lists such an asset with the slash unescaped.
+    assert!(download::github_release_asset(
+        "https://github.com/arismoko/horizon-ports/releases/download/fallingtrees/v0.5.1/fallingtrees-0.5.1.smod"
+    ));
+    for bad in [
+        "https://github.com/acme/zoom/releases/download/fallingtrees/../v0.5.1/z.smod",
+        "https://github.com/acme/zoom/releases/download/v1/%2E%2e/z.smod",
+        "https://github.com/acme/zoom/releases/download/v1//z.smod",
+        "https://github.com/acme/zoom/releases/download/z.smod",
+    ] {
+        assert!(!download::github_release_asset(bad), "{bad}");
+    }
+}
+
+#[test]
 fn downloads_refused_before_any_byte() {
     let body = b"x";
     let mut file = file_for(body, true);
@@ -393,7 +409,6 @@ fn downloads_refused_before_any_byte() {
         "https://github.com/acme/zoom/releases/download/v1/../z.smod",
         "https://github.com/acme/zoom/releases/download/v1/z.smod?x=1",
         "https://github.com.evil.example/a/b/releases/download/v1/z.smod",
-        "https://github.com/acme/zoom/releases/download/v1/a/z.smod",
     ] {
         let mut file = file_for(body, true);
         file.url = bad.into();
