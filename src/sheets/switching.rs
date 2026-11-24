@@ -29,6 +29,7 @@ struct ProviderRunning {
     profile_name: String,
     build_label: String,
     progress: InstallProgress,
+    eta: crate::eta::StageEta,
     stop: native_mods::Cancellation,
     question: Option<(Box<ProviderSwitchPreview>, Sender<bool>)>,
 }
@@ -47,6 +48,7 @@ struct Running {
     back: Option<Sheet>,
     pending: Option<Pending>,
     progress: InstallProgress,
+    eta: crate::eta::StageEta,
     stop: native_mods::Cancellation,
     question: Option<(Box<SwitchQuestion>, Sender<SwitchDecision>)>,
 }
@@ -150,6 +152,7 @@ impl Launcher {
                 choice,
             }),
             progress: InstallProgress::PreparingBuild,
+            eta: crate::eta::StageEta::default(),
             stop: stop.clone(),
             question: None,
         });
@@ -194,9 +197,15 @@ impl Launcher {
             .as_mut()
             .filter(|run| matches!(run.progress, InstallProgress::Minecraft(..)))
         {
-            running.progress = InstallProgress::Minecraft(
+            let stage = InstallProgress::Minecraft(
                 backend::prepare_step(),
                 sunrise_launcher::mojang::progress(),
+            );
+            running.progress = stage;
+            running.eta.update(
+                crate::eta::install_stage_key(stage),
+                crate::mods_page::install::stage_fraction(stage),
+                Instant::now(),
             );
         }
     }
@@ -236,6 +245,11 @@ impl Launcher {
         // Both switch routes start by checking the profile's mods; a v2 profile first
         // refreshes its index, so don't leave the last download or preparation step showing.
         running.progress = InstallProgress::PreparingBuild;
+        running.eta.update(
+            crate::eta::install_stage_key(InstallProgress::PreparingBuild),
+            None,
+            Instant::now(),
+        );
         let (tag, stop) = (running.tag.clone(), running.stop.clone());
         let tx = self.tx.clone();
         std::thread::spawn(move || {
@@ -300,6 +314,11 @@ impl Launcher {
     pub(crate) fn switch_progress(&mut self, stage: InstallProgress) {
         if let Some(running) = &mut self.ui.sheets.switching.running {
             running.progress = stage;
+            running.eta.update(
+                crate::eta::install_stage_key(stage),
+                crate::mods_page::install::stage_fraction(stage),
+                Instant::now(),
+            );
         }
     }
 
@@ -557,7 +576,25 @@ impl Launcher {
                     } else if publishing {
                         tr("Applying the switch.").into()
                     } else {
-                        stage_label(running.progress)
+                        let now = Instant::now();
+                        let remaining = match running.progress {
+                            InstallProgress::Minecraft(backend::PrepareStep::Prepare, _) => {
+                                match backend::prepare_step_state() {
+                                    (backend::PrepareStep::Prepare, Some(started)) => {
+                                        crate::eta::expected_prepare_duration().and_then(
+                                            |expected| {
+                                                crate::eta::remaining_from_expected(
+                                                    started, expected, now,
+                                                )
+                                            },
+                                        )
+                                    }
+                                    _ => None,
+                                }
+                            }
+                            _ => running.eta.remaining(now),
+                        };
+                        crate::eta::with_eta(stage_label(running.progress), remaining)
                     })
                     .truncate(),
                 )
@@ -842,6 +879,7 @@ impl Launcher {
             profile_name: instance.name.clone(),
             build_label: target.as_deref().map(build_name).unwrap_or_default(),
             progress: InstallProgress::Checking,
+            eta: crate::eta::StageEta::default(),
             stop: stop.clone(),
             question: None,
         });
@@ -928,6 +966,11 @@ impl Launcher {
     pub(crate) fn provider_switch_progress(&mut self, stage: InstallProgress) {
         if let Some(running) = &mut self.ui.sheets.switching.provider {
             running.progress = stage;
+            running.eta.update(
+                crate::eta::install_stage_key(stage),
+                crate::mods_page::install::stage_fraction(stage),
+                Instant::now(),
+            );
         }
     }
 
@@ -1105,7 +1148,14 @@ impl Launcher {
                     "Switching {mod} to {repo}",
                     &[("mod", &switch.mod_name), ("repo", &switch.to_repo)],
                 )))
-                .child(muted(stage_label(running.progress)))
+                .child(muted(if publishing {
+                    stage_label(running.progress)
+                } else {
+                    crate::eta::with_eta(
+                        stage_label(running.progress),
+                        running.eta.remaining(Instant::now()),
+                    )
+                }))
                 .children(
                     stage_fraction(running.progress)
                         .map(|f| crate::widgets::progress_bar(Some((f, f)), &self.theme)),

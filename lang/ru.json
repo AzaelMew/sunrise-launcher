@@ -1972,5 +1972,12 @@
   "{mod} holds no native mod.": "{mod} holds no native mod.",
   "Registry not reachable: {error}": "Registry not reachable: {error}",
   "Registry refused: {error}": "Registry refused: {error}",
-  "The launcher's folder {folder} is too deep for Windows: a native build there needs paths of {length} characters, and Windows allows 259. Set SUNRISE_LAUNCHER_HOME to a shorter folder.": "The launcher's folder {folder} is too deep for Windows: a native build there needs paths of {length} characters, and Windows allows 259. Set SUNRISE_LAUNCHER_HOME to a shorter folder."
+  "The launcher's folder {folder} is too deep for Windows: a native build there needs paths of {length} characters, and Windows allows 259. Set SUNRISE_LAUNCHER_HOME to a shorter folder.": "The launcher's folder {folder} is too deep for Windows: a native build there needs paths of {length} characters, and Windows allows 259. Set SUNRISE_LAUNCHER_HOME to a shorter folder.",
+  "A few seconds left": "A few seconds left",
+  "About {seconds} sec left": "About {seconds} sec left",
+  "About 1 min left": "About 1 min left",
+  "About {minutes} min left": "About {minutes} min left",
+  "About {hours} hr left": "About {hours} hr left",
+  "About {hours} hr {minutes} min left": "About {hours} hr {minutes} min left",
+  "{status} · {eta}": "{status} · {eta}"
 }
