@@ -1447,15 +1447,15 @@ impl Launcher {
                                     .text_color(c(p.muted))
                                     .truncate()
                                     .child(meta_sub),
-                            ),
-                    )
-                    .children(vp.will_install.as_ref().map(|line| {
-                        div()
-                            .flex_none()
-                            .text_size(px(tokens::CAPTION))
-                            .text_color(c(p.success))
-                            .child(line.verdict.fit_label())
-                    })),
+                            )
+                            // Under the name, where a long label wraps instead of squeezing it.
+                            .children(vp.will_install.as_ref().map(|line| {
+                                div()
+                                    .text_size(px(tokens::CAPTION))
+                                    .text_color(c(p.success))
+                                    .child(line.verdict.fit_label())
+                            })),
+                    ),
             )
             .child(primary_control)
             .children(self.registry_card_outcome(&vp.id, cx))

@@ -1153,6 +1153,10 @@ impl Launcher {
             }
         }
         if local_fit_due {
+            // A catalog read while a check runs drew its cards without it: draw them again.
+            if self.ui.mods.local_fit.running {
+                self.v2_cards_again();
+            }
             self.start_local_fit();
         }
         changed

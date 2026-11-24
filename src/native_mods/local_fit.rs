@@ -119,8 +119,8 @@ fn local(verdict: &fit::Verdict) -> Local {
 const PARALLEL: usize = 4;
 
 /// Check every release in [`gaps`] of `index` on `build` that this computer hasn't answered yet,
-/// keeping each answer as it comes. Fails, with what the player reads, when the build's SDK or a
-/// release can't be read; the answers found before that stay kept.
+/// keeping each answer it gets. Fails, with what the player reads, when the build's SDK or a
+/// release can't be read; every other release is still checked and its answer kept.
 pub fn check(index: &Index, build: &str) -> Result<(), String> {
     let commit = &index
         .build(build)
@@ -146,6 +146,7 @@ pub fn check(index: &Index, build: &str) -> Result<(), String> {
     // Each release unpacked into a folder of its own: one run reads them all, and a release
     // that stops the run is then checked alone.
     let mut unpacked: Vec<(String, Bundle)> = Vec::new();
+    let mut failed = None;
     for (n, chunk) in wanted.chunks(PARALLEL).enumerate() {
         let fetched: Vec<Result<Vec<u8>, String>> = std::thread::scope(|scope| {
             let jobs: Vec<_> = chunk
@@ -161,9 +162,16 @@ pub fn check(index: &Index, build: &str) -> Result<(), String> {
         });
         for (m, (release, bytes)) in chunk.iter().zip(fetched).enumerate() {
             let dir = scratch.path().join(format!("{}", n * PARALLEL + m));
-            let bundle = unpack(&bytes?, &dir)?;
-            unpacked.push((release.file.sha256.to_ascii_lowercase(), bundle));
+            match bytes.and_then(|bytes| unpack(&bytes, &dir)) {
+                Ok(bundle) => unpacked.push((release.file.sha256.to_ascii_lowercase(), bundle)),
+                Err(error) => {
+                    failed.get_or_insert(error);
+                }
+            }
         }
+    }
+    if unpacked.is_empty() {
+        return failed.map_or(Ok(()), Err);
     }
 
     let cancellation = Cancellation::default();
@@ -198,15 +206,17 @@ pub fn check(index: &Index, build: &str) -> Result<(), String> {
         }
         Err(_) => unpacked.iter().collect(),
     };
-    let mut failed = None;
     for (sha256, bundle) in alone {
         let only = std::slice::from_ref(bundle);
         match check_projects(&bundle.dir, only, &sdk, &base, &cancellation) {
             Ok(checks) => answer(sha256, said_of(&checks, &bundle.manifest.id)),
-            // The tool can't read this mod: no build of it can either.
-            Err(sdk_cache::Refusal::Refused { .. }) => answer(sha256, Local::DoesNotFit),
+            // The tool stopped on this mod without a verdict: it stays unanswered, and the
+            // next check asks again.
+            Err(refusal @ sdk_cache::Refusal::Refused { .. }) => {
+                failed.get_or_insert(refusal.to_string());
+            }
             Err(refusal) => {
-                failed = Some(refusal.to_string());
+                failed.get_or_insert(refusal.to_string());
                 break;
             }
         }
