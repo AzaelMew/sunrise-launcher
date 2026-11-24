@@ -94,6 +94,18 @@ pub(super) struct Viewer {
     zoom_turn: usize,
 }
 
+impl Viewer {
+    /// Toggles zoom. Zooming in focuses on `at`; zooming out keeps the existing focus so the
+    /// picture shrinks back from where it already sits instead of jumping to the pointer first.
+    fn toggle_zoom(&mut self, at: (f32, f32)) {
+        self.zoomed = !self.zoomed;
+        if self.zoomed {
+            self.focus = at;
+        }
+        self.zoom_turn += 1;
+    }
+}
+
 /// Where a picture of `size` sits: as large as fits in `window` with [`ROOM`] around it, up to
 /// its own size.
 fn fitted(size: Option<(u32, u32)>, window: Size<Pixels>) -> Bounds<Pixels> {
@@ -300,9 +312,7 @@ impl Launcher {
             .cursor_pointer()
             .on_click(cx.listener(move |this, ev: &ClickEvent, _, cx| {
                 if let Some(v) = this.ui.mods.viewer.as_mut().filter(|v| !v.closing) {
-                    v.zoomed = !v.zoomed;
-                    v.focus = over(ev.position());
-                    v.zoom_turn += 1;
+                    v.toggle_zoom(over(ev.position()));
                     cx.notify();
                 }
             }))
@@ -405,5 +415,44 @@ impl Launcher {
             ));
         }
         Some(overlay.into_any_element())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_viewer() -> Viewer {
+        Viewer {
+            urls: Rc::from([]),
+            at: 0,
+            closing: false,
+            turn: 0,
+            zoomed: false,
+            focus: (0.5, 0.5),
+            zoom_turn: 0,
+        }
+    }
+
+    #[test]
+    fn zoom_out_keeps_zoom_in_focus() {
+        let mut viewer = sample_viewer();
+
+        viewer.toggle_zoom((0.2, 0.8));
+        assert!(viewer.zoomed);
+        assert_eq!(viewer.focus, (0.2, 0.8));
+        assert_eq!(viewer.zoom_turn, 1);
+
+        // Clicking somewhere else to zoom out must not jump the focus to the new pointer.
+        viewer.toggle_zoom((0.9, 0.1));
+        assert!(!viewer.zoomed);
+        assert_eq!(viewer.focus, (0.2, 0.8));
+        assert_eq!(viewer.zoom_turn, 2);
+
+        // Zooming back in picks up the new click position.
+        viewer.toggle_zoom((0.75, 0.25));
+        assert!(viewer.zoomed);
+        assert_eq!(viewer.focus, (0.75, 0.25));
+        assert_eq!(viewer.zoom_turn, 3);
     }
 }
