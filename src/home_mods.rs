@@ -579,6 +579,16 @@ impl Launcher {
         let mod_facts = (!packs).then(|| self.home_mod_facts(self.ui.home.mods.revision));
         let (built, place) = self.home_installed_list(packs, list.len());
         let index = (!packs).then(sunrise::v2::shown_index).flatten();
+        // No catalogue read yet this run: fetch it so registry mods get their icons, as the Mods
+        // pages do.
+        if !packs
+            && index.is_none()
+            && list[built.clone()]
+                .iter()
+                .any(|item| matches!(item.picture, Picture::Project(_)))
+        {
+            self.ensure_v2_catalog(false);
+        }
         let mut rows = div().flex().flex_col();
         let mut priority = list[..built.start].iter().filter(|item| item.on).count();
         for item in &list[built] {
