@@ -4217,17 +4217,25 @@ mod tests {
                 );
                 assert_eq!(l.skins.recording, 0);
 
-                // Drain the queue by waiting on a sentinel job on the same worker.
+                // Drain the queue by waiting on a sentinel job on the same worker. The worker
+                // was just released above, so wait briefly for a slot if the queue is still full.
                 let (done_tx, done_rx) = std::sync::mpsc::channel();
-                l.skins
-                    .writes
-                    .push(
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+                loop {
+                    let tx = done_tx.clone();
+                    match l.skins.writes.push(
                         "drain",
                         Box::new(move || {
-                            let _ = done_tx.send(());
+                            let _ = tx.send(());
                         }),
-                    )
-                    .unwrap();
+                    ) {
+                        Ok(()) => break,
+                        Err(_) if std::time::Instant::now() < deadline => {
+                            std::thread::sleep(std::time::Duration::from_millis(5));
+                        }
+                        Err(err) => panic!("write queue never drained: {err:?}"),
+                    }
+                }
                 done_rx.recv().unwrap();
 
                 assert_eq!(
