@@ -44,12 +44,6 @@ pub(crate) struct CandidateImage {
     inputs: [u8; 32],
 }
 
-impl CandidateImage {
-    pub(crate) fn inputs(&self) -> [u8; 32] {
-        self.inputs
-    }
-}
-
 impl Profile {
     pub(crate) fn begin_edit(
         &mut self,

@@ -4,13 +4,12 @@ use crate::github_mods_page::{Feedback, GithubInput, GithubSelection, LocalInput
 use std::{
     collections::{BTreeMap, VecDeque},
     path::Path,
-    sync::Mutex,
 };
 use sunrise_launcher::{
     browser::sunrise::{
-        BuildNotice, ChangeImpact, CombinedUpdate, InstallError, InstallHooks, InstallProgress,
-        InstalledBatch, PreparedSource, ProviderChoiceNeeded, PublisherChangeQuestion,
-        ResolveQuestion, SourceDependency, SourceError, SourceHooks, V2Hooks, V2InstallOptions,
+        BuildNotice, ChangeImpact, InstallError, InstallHooks, InstallProgress, InstalledBatch,
+        PreparedSource, ProviderChoiceNeeded, PublisherChangeQuestion, SourceDependency,
+        SourceError, SourceHooks, V2Hooks, V2InstallOptions,
     },
     github_mods::{AddedFrom, Origin},
     managed_play::FirstBuild,
@@ -53,7 +52,7 @@ impl SourcePicks {
 pub(crate) struct Installs {
     running: Option<Running>,
     waiting: VecDeque<Request>,
-    pub(crate) question: Option<(Decision, Sender<bool>)>,
+    pub(crate) question: Option<(BuildNotice, Sender<bool>)>,
     pub(crate) world: Option<(WorldQuestion, Sender<bool>)>,
     source_question: Option<(SourceQuestion, Sender<Result<bool, String>>)>,
     source_outcomes: BTreeMap<(Identity, String), Result<(), SourceError>>,
@@ -65,14 +64,12 @@ struct Running {
     profile: instances::Instance,
     identity: Identity,
     target: Option<String>,
-    batch: Arc<Mutex<Option<Vec<String>>>>,
     requests: Vec<RequestView>,
     stage: InstallProgress,
     cancellation: Cancellation,
     github: Option<Arc<GithubInput>>,
     local: Option<Arc<LocalInput>>,
     source: Option<RunningSource>,
-    mixed: bool,
 }
 
 struct Request {
@@ -85,7 +82,6 @@ struct Request {
     github: Option<Arc<GithubInput>>,
     local: Option<Arc<LocalInput>>,
     sources: Vec<PreparedSource>,
-    mixed_registry: Vec<String>,
     picks: Option<SourcePicks>,
 }
 
@@ -211,7 +207,6 @@ pub(crate) struct SourceActivity<'a> {
 
 struct RunningSource {
     ids: Vec<String>,
-    visible: bool,
     names: Vec<String>,
     /// Each mod asked for: its id, the name people know, and its `owner/repo`.
     members: Vec<(String, String, String)>,
@@ -223,15 +218,11 @@ struct RunningSource {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Kind {
-    Install,
     /// Projects from the signed v2 index, by project ID.
     InstallV2,
     Github,
     Local,
     Source,
-    Mixed,
-    Update,
-    UpdateAll,
     /// Update mods the signed v2 index installed: one asked for, or every one with an update.
     UpdateV2,
     UpdateAllV2,
@@ -264,18 +255,11 @@ impl WorldQuestion {
     }
 }
 
-pub(crate) enum Decision {
-    Build(BuildNotice),
-    Resolve(Arc<ResolveQuestion>),
-}
-
 pub(crate) enum Worker {
-    SourcePhase,
     SourceRejected(String, SourceError),
-    Mixed(Box<CombinedUpdate>),
     Progress(InstallProgress),
     Source(SourceQuestion, Sender<Result<bool, String>>),
-    Decide(Decision, Sender<bool>),
+    Decide(BuildNotice, Sender<bool>),
     World(WorldQuestion, Sender<bool>),
     Done(Result<InstalledBatch, InstallError>),
 }
@@ -351,30 +335,6 @@ impl Installs {
     }
 
     fn submit(&mut self, request: Request) {
-        if let Some(run) = &mut self.running {
-            if run.profile.id == request.profile.id
-                && run.profile.home == request.profile.home
-                && run.identity == request.identity
-                && run.target == request.target
-                && run.profile.native_profile == request.profile.native_profile
-                && request.view.kind == Kind::Install
-                && run.requests[0].kind == Kind::Install
-            {
-                if run
-                    .requests
-                    .iter()
-                    .any(|work| work.card == request.view.card && work.ids == request.view.ids)
-                {
-                    return;
-                }
-                let mut batch = run.batch.lock().expect("registry batch");
-                if let Some(ids) = batch.as_mut() {
-                    ids.extend(request.view.ids.iter().cloned());
-                    run.requests.push(request.view);
-                    return;
-                }
-            }
-        }
         if !self.waiting.iter().any(|q| {
             q.profile.id == request.profile.id
                 && q.profile.home == request.profile.home
@@ -493,7 +453,6 @@ impl Installs {
                 InstallError::Source(error) => error.clone(),
                 error => SourceError::Unproved(error.to_string()),
             }),
-            Worker::Mixed(done) => done.sources.clone().err(),
             Worker::Done(Ok(_)) => None,
             _ => return None,
         };
@@ -562,8 +521,7 @@ impl Installs {
     /// Why a registry install that just ended failed, for a dialog: the card keeps no error.
     pub(super) fn install_failure(&self, event: &Worker) -> Option<(instances::Instance, String)> {
         let run = self.running.as_ref()?;
-        if run.source.is_some() || !matches!(run.requests[0].kind, Kind::Install | Kind::InstallV2)
-        {
+        if run.source.is_some() || run.requests[0].kind != Kind::InstallV2 {
             return None;
         }
         let (line, detail) = match event {
@@ -585,33 +543,9 @@ impl Installs {
 
     pub(super) fn mutation_failure(&self, event: &Worker) -> Option<String> {
         let run = self.running.as_ref()?;
-        if let Worker::Mixed(done) = event {
-            let mut failures = Vec::new();
-            match &done.registry {
-                Ok(batch) => {
-                    if let Some(notice) = &batch.failure {
-                        failures.extend(notice.changes.iter().map(|change| change.title.clone()));
-                    }
-                }
-                Err(InstallError::Cancelled) => (),
-                Err(_) => failures.extend(run.requests[0].ids.iter().cloned()),
-            }
-            // A source that didn't update says why in the refused modal (`refused`).
-            return (!failures.is_empty()).then(|| {
-                trf(
-                    "These mods didn't update: {mods}",
-                    &[("mods", &crate::mods::names(&failures))],
-                )
-            });
-        }
         if matches!(
             run.requests[0].kind,
-            Kind::Install
-                | Kind::InstallV2
-                | Kind::Github
-                | Kind::Local
-                | Kind::Source
-                | Kind::Mixed
+            Kind::InstallV2 | Kind::Github | Kind::Local | Kind::Source
         ) {
             return None;
         }
@@ -625,48 +559,6 @@ impl Installs {
 
     pub(super) fn handle(&mut self, event: Worker) -> bool {
         match event {
-            Worker::SourcePhase => {
-                if let Some(run) = &mut self.running {
-                    if let Some(source) = &mut run.source {
-                        source.visible = true;
-                    }
-                    run.stage = InstallProgress::Checking;
-                }
-            }
-            Worker::Mixed(done) => {
-                let Some(run) = &mut self.running else {
-                    return false;
-                };
-                let Some(source) = run.source.take() else {
-                    return false;
-                };
-                self.source_question.take();
-                if let Err(error) = &done.sources {
-                    if !matches!(error, SourceError::Cancelled) {
-                        eprintln!("Nightly source update batch: {error}");
-                    }
-                }
-                // A batch of several that failed as a whole is said once, by the modal, not
-                // pinned on each member as if each were refused.
-                let several = source.ids.len() > 1 && done.sources.is_err();
-                for id in source.ids {
-                    if several {
-                        self.source_outcomes.remove(&(run.identity, id));
-                    } else {
-                        self.source_outcomes
-                            .insert((run.identity, id), done.sources.clone());
-                    }
-                }
-                if done.sources.is_err()
-                    && self.play.as_ref().is_some_and(|(home, intent)| {
-                        *home == run.profile.home && intent.instance == run.profile.id
-                    })
-                {
-                    self.play = None;
-                }
-                run.requests.truncate(1);
-                return self.handle(Worker::Done(done.registry));
-            }
             Worker::Progress(step) => {
                 if let Some(run) = &mut self.running {
                     run.stage = step;
@@ -853,16 +745,6 @@ impl Launcher {
         target: SourceTarget,
         inputs: Vec<PreparedSource>,
     ) -> Result<(), String> {
-        self.queue_all_mod_updates(target, Vec::new(), BTreeMap::new(), inputs)
-    }
-
-    pub(crate) fn queue_all_mod_updates(
-        &mut self,
-        target: SourceTarget,
-        registry: Vec<String>,
-        displayed_names: BTreeMap<String, String>,
-        inputs: Vec<PreparedSource>,
-    ) -> Result<(), String> {
         if inputs.is_empty() {
             return Ok(());
         }
@@ -891,37 +773,24 @@ impl Launcher {
             identity: target.identity,
             target: Some(target.base),
             release: None,
-            displayed_names,
+            displayed_names: BTreeMap::new(),
             view: RequestView {
-                kind: if registry.is_empty() {
-                    Kind::Source
-                } else {
-                    Kind::Mixed
-                },
+                kind: Kind::Source,
                 card: ids[0].clone(),
                 ids,
             },
             github: None,
             local: None,
             sources: inputs,
-            mixed_registry: registry,
             picks: None,
         });
         self.start_registry_queue();
         Ok(())
     }
 
-    pub(crate) fn mixed_update_active(&self) -> bool {
-        self.mods
-            .installs
-            .running
-            .as_ref()
-            .is_some_and(|run| run.mixed)
-    }
-
     pub(crate) fn source_activity(&self) -> Option<SourceActivity<'_>> {
         let run = self.mods.installs.running.as_ref()?;
-        if let Some(source) = run.source.as_ref().filter(|source| source.visible) {
+        if let Some(source) = &run.source {
             return Some(SourceActivity {
                 ids: &source.ids,
                 names: &source.names,
@@ -1157,16 +1026,6 @@ impl Launcher {
         self.mods.installs.stage()
     }
 
-    /// The clicked profile and initial build selection travel together into the worker, even
-    /// if the user switches pages or selections while the request waits.
-    pub(crate) fn queue_registry_install(
-        &mut self,
-        card: String,
-        ids: Vec<String>,
-    ) -> Result<(), String> {
-        self.queue_registry_change(Kind::Install, card, ids, BTreeMap::new())
-    }
-
     pub(crate) fn github_target(&self) -> Result<GithubTarget, String> {
         if self.accounts.selected().is_none() && !sunrise_launcher::developer_offline::selected() {
             return Err(tr("Installs after you sign in").into());
@@ -1229,7 +1088,6 @@ impl Launcher {
             github: None,
             local: None,
             sources: Vec::new(),
-            mixed_registry: Vec::new(),
             picks: Some(picks),
         });
         self.start_registry_queue();
@@ -1279,7 +1137,6 @@ impl Launcher {
             github: Some(input),
             local: None,
             sources: Vec::new(),
-            mixed_registry: Vec::new(),
             picks: None,
         });
         self.start_registry_queue();
@@ -1309,7 +1166,6 @@ impl Launcher {
             github: None,
             local: Some(input),
             sources: Vec::new(),
-            mixed_registry: Vec::new(),
             picks: None,
         });
         self.start_registry_queue();
@@ -1326,7 +1182,7 @@ impl Launcher {
         if ids.is_empty() {
             return Ok(());
         }
-        if matches!(kind, Kind::Install | Kind::InstallV2)
+        if kind == Kind::InstallV2
             && self.accounts.selected().is_none()
             && !sunrise_launcher::developer_offline::selected()
         {
@@ -1356,7 +1212,6 @@ impl Launcher {
             github: None,
             local: None,
             sources: Vec::new(),
-            mixed_registry: Vec::new(),
             picks: None,
         });
         self.start_registry_queue();
@@ -1371,12 +1226,9 @@ impl Launcher {
         {
             return false;
         }
-        let Some(mut request) = self.mods.installs.waiting.pop_front() else {
+        let Some(request) = self.mods.installs.waiting.pop_front() else {
             return false;
         };
-        let batch = Arc::new(Mutex::new(
-            (request.view.kind == Kind::Install).then(|| request.view.ids.clone()),
-        ));
         // Pressing Add again reads the source again: its last refusal goes until this run says.
         let identity = request.identity;
         self.mods
@@ -1386,14 +1238,12 @@ impl Launcher {
         let kind = request.view.kind;
         let ids = request.view.ids.clone();
         let cancellation = Cancellation::default();
-        let mixed = kind == Kind::Mixed;
         let listed = request
             .picks
             .as_ref()
             .is_none_or(|picks| self.source_picks_listed(picks.listings()));
-        let source = matches!(kind, Kind::Source | Kind::Mixed).then(|| RunningSource {
+        let source = (kind == Kind::Source).then(|| RunningSource {
             ids: ids.clone(),
-            visible: !mixed,
             members: if let Some(picks) = &request.picks {
                 picks
                     .listings()
@@ -1420,11 +1270,10 @@ impl Launcher {
                     })
                     .collect()
             },
-            update: mixed
-                || request
-                    .source_inputs()
-                    .iter()
-                    .any(PreparedSource::is_update),
+            update: request
+                .source_inputs()
+                .iter()
+                .any(PreparedSource::is_update),
             names: if let Some(picks) = &request.picks {
                 picks
                     .listings()
@@ -1441,22 +1290,11 @@ impl Launcher {
             cancellation: cancellation.clone(),
             rejected: BTreeMap::new(),
         });
-        let mut views = Vec::new();
-        if mixed {
-            views.push(RequestView {
-                kind: Kind::Mixed,
-                card: "mixed-registry".into(),
-                ids: request.mixed_registry.clone(),
-            });
-        }
-        views.push(request.view.clone());
         self.mods.installs.running = Some(Running {
             profile: request.profile.clone(),
             identity: request.identity,
             target: request.target.clone(),
-            batch: batch.clone(),
-            requests: views,
-            mixed,
+            requests: vec![request.view.clone()],
             stage: InstallProgress::Checking,
             cancellation: cancellation.clone(),
             source,
@@ -1480,47 +1318,24 @@ impl Launcher {
                     Err(backend::no_version_installed())
                 }
             };
-            let resolve = |question: &ResolveQuestion| {
-                let (reply, answer) = std::sync::mpsc::channel();
-                post(Worker::Decide(
-                    Decision::Resolve(Arc::new(question.clone())),
-                    reply,
-                )) && answer.recv().unwrap_or(false)
-            };
             let hooks = InstallHooks {
                 progress: &|step| {
                     let _ = post(Worker::Progress(step));
                 },
                 continue_after_failure: &|notice| {
                     let (reply, answer) = std::sync::mpsc::channel();
-                    post(Worker::Decide(Decision::Build(notice.clone()), reply))
-                        && answer.recv().unwrap_or(false)
+                    post(Worker::Decide(notice.clone(), reply)) && answer.recv().unwrap_or(false)
                 },
-                resolve: (kind == Kind::Install)
-                    .then_some(&resolve as &dyn Fn(&ResolveQuestion) -> bool),
                 cancellation: Some(&cancellation),
             };
-            let review = |impact: &ChangeImpact, sources: Option<&ChangeImpact>| {
+            let approve = |impact: &ChangeImpact| {
                 if cancellation.is_stopped() {
                     return false;
                 }
                 let (reply, answer) = std::sync::mpsc::channel();
-                let mut question = WorldQuestion::new(impact, &request.displayed_names);
-                if let Some(sources) = sources {
-                    let next = WorldQuestion::new(sources, &request.displayed_names);
-                    question.heading = tr("Review mod updates").into();
-                    question.detail = format!(
-                        "{}\n{}\n\n{}\n{}",
-                        tr("Registry mods"),
-                        question.detail,
-                        tr("Source mods"),
-                        next.detail
-                    );
-                    question.cancel_default |= next.cancel_default;
-                }
+                let question = WorldQuestion::new(impact, &request.displayed_names);
                 post(Worker::World(question, reply)) && answer.recv().unwrap_or(false)
             };
-            let approve = |impact: &ChangeImpact| review(impact, None);
             let authorize = |prepared: &[PreparedSource], dependencies: &[SourceDependency]| {
                 let question = SourceQuestion {
                     base: prepared[0].base().into(),
@@ -1559,19 +1374,6 @@ impl Launcher {
                 confirm_publisher_change: Some(&confirm_publisher_change),
             };
             let result = match kind {
-                Kind::Install => sunrise::install_registry(
-                    &request.profile,
-                    request.identity,
-                    || {
-                        batch
-                            .lock()
-                            .expect("registry batch")
-                            .take()
-                            .expect("sealed once")
-                    },
-                    choose,
-                    hooks,
-                ),
                 Kind::InstallV2 => sunrise::install_registry_v2(
                     &request.profile,
                     request.identity,
@@ -1722,37 +1524,6 @@ impl Launcher {
                         .map(|()| InstalledBatch::default())
                         .map_err(InstallError::Source)
                 }
-                Kind::Mixed => {
-                    let done = sunrise::update_registry_and_sources(
-                        &request.profile,
-                        request.identity,
-                        request.mixed_registry,
-                        &mut request.sources,
-                        choose,
-                        hooks,
-                        hooks,
-                        &cancellation,
-                        &|prepared| authorize(prepared, &[]),
-                        &review,
-                        || {
-                            let _ = post(Worker::SourcePhase);
-                        },
-                    );
-                    let _ = post(Worker::Mixed(Box::new(done)));
-                    return;
-                }
-                Kind::Update | Kind::UpdateAll => sunrise::update_registry(
-                    &request.profile,
-                    request.identity,
-                    if kind == Kind::Update {
-                        sunrise::UpdateRequest::Strict(ids)
-                    } else {
-                        sunrise::UpdateRequest::Bulk(ids)
-                    },
-                    choose,
-                    hooks,
-                    &approve,
-                ),
                 Kind::Remove => sunrise::remove_mods(
                     &request.profile,
                     request.identity,
@@ -1999,10 +1770,9 @@ mod tests {
             github: None,
             local: None,
             sources: Vec::new(),
-            mixed_registry: Vec::new(),
             picks: None,
             view: RequestView {
-                kind: Kind::Install,
+                kind: Kind::InstallV2,
                 card: id.into(),
                 ids: vec![id.into()],
             },
@@ -2016,14 +1786,12 @@ mod tests {
                 profile: first.profile,
                 identity: first.identity,
                 target: first.target,
-                batch: Arc::new(Mutex::new(Some(first.view.ids.clone()))),
                 requests: vec![first.view],
                 stage: InstallProgress::Checking,
                 cancellation: Cancellation::default(),
                 github: None,
                 local: None,
                 source: None,
-                mixed: false,
             }),
             ..Installs::default()
         }
@@ -2084,7 +1852,6 @@ mod tests {
             |id: &str, name: &str| (id.to_owned(), name.to_owned(), format!("someone/{id}"));
         installs.running.as_mut().unwrap().source = Some(RunningSource {
             ids: vec!["jade".into()],
-            visible: true,
             names: vec!["Jade".into()],
             members: vec![member("jade", "Jade")],
             update: false,
@@ -2134,39 +1901,28 @@ mod tests {
     }
 
     #[test]
-    fn visible_matching_batch_joins_before_sealing_only_and_later_clicks_wait_fifo() {
+    fn later_clicks_wait_fifo_and_a_repeated_click_queues_once() {
         let root = homes();
         let a = root.path().join("A");
         let b = root.path().join("B");
         let mut installs = with_running(root.path());
         installs.submit(request(&b, "two", "nightly"));
         installs.submit(request(&a, "three", "nightly"));
-        installs.submit(request(&a, "four", "stable"));
-        let joined = installs
-            .running
-            .as_ref()
-            .unwrap()
-            .batch
-            .lock()
-            .unwrap()
-            .take()
-            .unwrap();
-        assert_eq!(joined, ["one", "three"]);
         installs.handle(Worker::Progress(InstallProgress::Building(Some(0.5))));
-        installs.submit(request(&a, "five", "nightly"));
-        installs.submit(request(&a, "five", "nightly"));
+        installs.submit(request(&a, "four", "nightly"));
+        installs.submit(request(&a, "four", "nightly"));
         assert!(matches!(
-            installs.card(&a, "three"),
+            installs.card(&a, "one"),
             Some(Card::Progress(InstallProgress::Building(Some(0.5))))
         ));
-        assert!(matches!(installs.card(&a, "five"), Some(Card::Waiting)));
+        assert!(matches!(installs.card(&a, "three"), Some(Card::Waiting)));
         assert_eq!(
             installs
                 .waiting
                 .iter()
                 .map(|q| q.view.card.as_str())
                 .collect::<Vec<_>>(),
-            ["two", "four", "five"]
+            ["two", "three", "four"]
         );
     }
 

@@ -826,11 +826,6 @@ impl Active {
         Ok(())
     }
 
-    /// Hash the actual image, including runtime dependencies and the signed archive marker.
-    pub(crate) fn matches_inputs(&self, home: &Path) -> bool {
-        inputs(home, None).is_ok_and(|input| input == self.inputs)
-    }
-
     pub fn verify_artifacts(&self) -> Result<(), String> {
         let base = match &self.variant {
             Some(variant) => variant.verify(self.base())?,

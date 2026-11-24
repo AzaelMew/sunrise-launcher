@@ -6,10 +6,9 @@ use std::{
 };
 use sunrise_launcher::{
     browser::sunrise::{
-        install_target, prefer_v2_switch, switch_profile_build, switch_profile_build_v2,
-        switch_provider_v2, BuildChoice, InstallError, InstallHooks, InstallProgress,
-        ProviderSwitchPreview, SwitchDecision, SwitchHooks, SwitchQuestion, Switched, V2Hooks,
-        V2InstallOptions, V2ProviderSwitchHooks, V2SwitchHooks,
+        install_target, switch_profile_build_v2, switch_provider_v2, BuildChoice, InstallError,
+        InstallHooks, InstallProgress, ProviderSwitchPreview, SwitchDecision, SwitchHooks,
+        SwitchQuestion, Switched, V2Hooks, V2InstallOptions, V2ProviderSwitchHooks, V2SwitchHooks,
     },
     managed_play::{self, Active, FirstBuild, Profile, ReceiptHint},
     profile_txn::Identity,
@@ -255,32 +254,26 @@ impl Launcher {
                     Ok(reply.recv().unwrap_or(SwitchDecision::Cancel))
                 },
             };
-            // Switch through the signed v2 index by default (v1 and local mods keep their exact
-            // bytes there). Fall back to v1 only when an explicit `SUNRISE_MOD_INDEX` override is
-            // active on a non-v2 profile, and never swallow an `installed.json` read failure.
-            let outcome = match prefer_v2_switch(&instance.home) {
-                Ok(true) => switch_profile_build_v2(
-                    &instance,
-                    identity,
-                    &tag,
-                    choice,
-                    V2SwitchHooks {
-                        switch: hooks,
-                        confirm_publisher_change: Some(&|question| {
-                            let (answer, reply) = std::sync::mpsc::channel();
-                            tx.send(Msg::PublisherChangeQuestion(
-                                Box::new(question.clone()),
-                                answer,
-                            ))
-                            .is_ok()
-                                && reply.recv().unwrap_or(false)
-                        }),
-                        pin_dir: None,
-                    },
-                ),
-                Ok(false) => switch_profile_build(&instance, identity, &tag, choice, hooks),
-                Err(error) => Err(error),
-            };
+            // Mods installed before the signed registry keep their exact bytes through it.
+            let outcome = switch_profile_build_v2(
+                &instance,
+                identity,
+                &tag,
+                choice,
+                V2SwitchHooks {
+                    switch: hooks,
+                    confirm_publisher_change: Some(&|question| {
+                        let (answer, reply) = std::sync::mpsc::channel();
+                        tx.send(Msg::PublisherChangeQuestion(
+                            Box::new(question.clone()),
+                            answer,
+                        ))
+                        .is_ok()
+                            && reply.recv().unwrap_or(false)
+                    }),
+                    pin_dir: None,
+                },
+            );
             let _ = tx.send(Msg::Switched(instance.home, Box::new(outcome)));
         });
     }
@@ -882,7 +875,6 @@ impl Launcher {
                                 let _ = tx.send(Msg::ProviderSwitchProgress(stage));
                             },
                             continue_after_failure: &|_| false,
-                            resolve: None,
                             cancellation: None,
                         },
                         choose_provider: Some(&|need| {
@@ -1157,60 +1149,6 @@ fn publish_report(
 mod tests {
     use super::publish_report;
     use std::io::{self, Write};
-    use sunrise_launcher::browser::{
-        installed::{Entry, Installed},
-        sunrise::prefer_v2_switch_with,
-        Kind, SourceId,
-    };
-
-    #[test]
-    fn prefer_v2_switch_defaults_to_v2_and_refuses_unreadable_installed_manifest() {
-        let home = tempfile::tempdir().unwrap();
-        // Empty profile defaults to v2, and only uses v1 under an explicit legacy override.
-        assert_eq!(prefer_v2_switch_with(home.path(), false), Ok(true));
-        assert_eq!(prefer_v2_switch_with(home.path(), true), Ok(false));
-
-        let mut list = Installed::default();
-        list.entries.push(Entry {
-            source: SourceId::Sunrise,
-            project: "demo".into(),
-            mod_id: None,
-            slug: "demo".into(),
-            title: "Demo".into(),
-            kind: Kind::Mod,
-            version: "1.0.0".into(),
-            number: "1.0.0".into(),
-            file: "mods/demo.smod".into(),
-            checksum: format!("SHA-256:{}", "00".repeat(32)),
-            page: "https://example.test/demo".into(),
-            dependency: false,
-            verdict: None,
-            install_hold: None,
-            repository: None,
-        });
-        list.save(home.path()).unwrap();
-        assert_eq!(prefer_v2_switch_with(home.path(), false), Ok(true));
-        assert_eq!(prefer_v2_switch_with(home.path(), true), Ok(false));
-
-        list.entries[0].mod_id = Some("demo".into());
-        list.save(home.path()).unwrap();
-        assert_eq!(prefer_v2_switch_with(home.path(), false), Ok(true));
-        assert_eq!(prefer_v2_switch_with(home.path(), true), Ok(true));
-
-        std::fs::write(
-            home.path()
-                .join(sunrise_launcher_smod::index::browser_state::MANIFEST),
-            "{not valid json",
-        )
-        .unwrap();
-        for legacy_override in [false, true] {
-            let error = prefer_v2_switch_with(home.path(), legacy_override).unwrap_err();
-            assert!(
-                error.contains(sunrise_launcher_smod::index::browser_state::MANIFEST),
-                "unexpected error: {error}"
-            );
-        }
-    }
 
     #[test]
     fn report_save_can_retry_after_a_partial_write_and_never_clobbers() {

@@ -570,28 +570,9 @@ impl Launcher {
 
     pub(super) fn labeled_installed_rows(&self) -> (Vec<Row>, Vec<Option<String>>) {
         let mut rows = self.rows();
-        // The same catalogue Discover displays, including a saved copy. This is display-only;
-        // `rows` uses a fetched index for registry status and update offers.
-        let registry = sunrise::known_index();
-        let registry_collections = registry
-            .as_deref()
-            .map(model::collection::part_of)
-            .unwrap_or_default();
         // Use the exact installed package's display name here, as in the Remove review.
         // Compute collisions before filtering so a row keeps its label when peers are hidden.
         for row in &mut rows {
-            if let Some(entry) = &row.entry {
-                if let Some(project) = registry
-                    .as_ref()
-                    .and_then(|index| index.project(&entry.project))
-                {
-                    row.icon.clone_from(&project.icon);
-                    row.authors = project.authors.join(", ");
-                }
-                row.collection = registry_collections
-                    .get(entry.project.as_str())
-                    .map(|collection| (*collection).into());
-            }
             if let Some(archive) = self.archive_display(row) {
                 row.title.clone_from(&archive.name);
                 if row.authors.is_empty() {
@@ -1338,8 +1319,6 @@ mod tests {
         let mut rows = model::rows(
             &[],
             &model::World {
-                index: None,
-                game: "26.3",
                 v2: None,
                 v2_failure: None,
                 build: None,
@@ -1444,8 +1423,6 @@ mod tests {
         let rows = model::rows(
             &[],
             &model::World {
-                index: None,
-                game: "26.3",
                 v2: None,
                 v2_failure: None,
                 build: None,

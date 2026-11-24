@@ -189,18 +189,21 @@ impl Launcher {
         let Some(id) = sunrise::mod_id(e) else {
             return;
         };
-        let index = sunrise::fetched_index();
-        let title = index
-            .as_ref()
-            .and_then(|index| index.project(&e.project))
-            .map_or(id, |project| &project.name);
-        if let Some(revoked) = index
-            .as_ref()
-            .and_then(|index| index.revoked(&e.project, e.checksum.trim_start_matches("SHA-256:")))
-        {
-            self.mods.message = Some(Err(format!("{title} was taken down: {}", revoked.reason)));
+        let hash = e.checksum.trim_start_matches("SHA-256:");
+        let catalog = sunrise::v2::known_index();
+        let revoked = catalog.as_ref().and_then(|catalog| {
+            catalog
+                .index
+                .revoked(&e.project, Some(hash))
+                .or_else(|| catalog.index.revoked_by_sha256(hash))
+        });
+        if let Some(revoked) = revoked {
+            self.mods.message = Some(Err(trf(
+                "{mod} was taken down: {reason}",
+                &[("mod", &e.title), ("reason", &revoked.reason)],
+            )));
             return;
         }
-        self.enable_one_in(home, id.into(), title.into());
+        self.enable_one_in(home, id.into(), e.title.clone());
     }
 }

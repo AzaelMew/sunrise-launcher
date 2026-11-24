@@ -229,18 +229,14 @@ pub(super) fn edit_github(
             packages,
             edit.current(),
             source.cancellation,
-            hooks.progress,
         )
         .map_err(InstallError::Source)?,
         _ => super::source::SourceAdd::default(),
     };
-    let home = additions.home(home);
-    let catalogue = super::super::fetched_index();
-    let check_graph =
-        || match manifest_conflict(home, catalogue.as_deref(), None, Side::Client, |_| false)? {
-            Some(conflict) => Err(InstallError::Refused(conflict.reason)),
-            None => Ok(()),
-        };
+    let check_graph = || match manifest_conflict(home, Side::Client, |_| false)? {
+        Some(conflict) => Err(InstallError::Refused(conflict.reason)),
+        None => Ok(()),
+    };
     match (source, previous.is_empty()) {
         (Some(_), true) => (), // Fresh source adds checked their whole catalogue plan above.
         (source, fresh) if source.is_some() || fresh => {
@@ -265,7 +261,7 @@ pub(super) fn edit_github(
         let (impact, suspect) = if source.is_some() || packages.len() != 1 || previous.len() != 1 {
             source_review(&instance.home, old.path(), home, &previous, packages)?
         } else {
-            let before = inventory(old.path(), None)?;
+            let before = inventory(old.path())?;
             let id = &packages[0].origin.id;
             let prior = before.get(id).ok_or_else(|| changed(id))?;
             let (suspect, unchecked) = mutations::update_worlds(home, [&prior.package])?;
@@ -413,7 +409,7 @@ pub(super) fn source_review(
     previous: &BTreeMap<String, github_mods::Origin>,
     entries: &[Entry<'_>],
 ) -> Result<(ChangeImpact, crate::worlds::SuspectMods), String> {
-    let before = inventory(original, None)?;
+    let before = inventory(original)?;
     let replaced = previous
         .keys()
         .map(|id| {
@@ -544,7 +540,7 @@ pub(super) fn stage_entries(
     active: Option<&managed_play::Active>,
     base: &str,
 ) -> Result<Staged, InstallError> {
-    let before = inventory(home, None)?;
+    let before = inventory(home)?;
     let mut result = Staged {
         off: Vec::new(),
         retired: BTreeSet::new(),
@@ -592,7 +588,7 @@ pub(super) fn stage_entries(
 
 fn check_fresh(home: &Path, id: &str) -> Result<(), InstallError> {
     let claims = browser_state::Installed::read(home).map_err(|e| e.details(trf))?;
-    let present = inventory(home, None)?;
+    let present = inventory(home)?;
     let collision = || {
         InstallError::Refused(trf(
             "{mod} is already installed from another source or location. Remove the existing mod first.",
@@ -639,7 +635,7 @@ pub(super) fn installed_origin(
             .check_other_claims(home, id, relative)
             .map_err(|e| e.render(trf))?;
     }
-    let packages = inventory(home, None)?;
+    let packages = inventory(home)?;
     let origin = packages
         .get(id)
         .and_then(|p| p.github_origin(home))

@@ -515,8 +515,14 @@ impl Launcher {
                             });
                             let target = tag.clone();
                             let work = cx.background_executor().spawn(async move {
-                                sunrise_launcher::browser::sunrise::checked_switch_fit(
-                                    &home, &target,
+                                sunrise_launcher::browser::sunrise::v2::index().is_ok_and(
+                                    |catalog| {
+                                        sunrise_launcher::browser::sunrise::checked_switch_fit_v2(
+                                            &catalog.index,
+                                            &home,
+                                            &target,
+                                        )
+                                    },
                                 )
                             });
                             cx.spawn(async move |this, cx| {

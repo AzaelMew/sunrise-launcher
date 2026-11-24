@@ -239,6 +239,31 @@ pub fn shown_index() -> Option<Catalog> {
     known_index().or_else(|| SAVED.lock().unwrap_or_else(|e| e.into_inner()).clone())
 }
 
+/// The newest release of `project` newer than the `installed` version that fits `build`: not
+/// taken down and not already proved not to fit (`unfit`, lowercase SHA-256s).
+pub fn newer_release<'a>(
+    index: &Index,
+    project: &'a index_v2::Project,
+    installed: &str,
+    build: &str,
+    unfit: &std::collections::BTreeSet<String>,
+) -> Option<&'a index_v2::Release> {
+    use sunrise_launcher_smod::dependencies::parse_version;
+    let installed = parse_version(installed).ok()?;
+    project
+        .releases
+        .iter()
+        .filter(|r| {
+            r.fits_build(build)
+                && index.revoked(&project.id, Some(&r.file.sha256)).is_none()
+                && !unfit.contains(&r.file.sha256.to_ascii_lowercase())
+        })
+        .filter_map(|r| Some((parse_version(&r.version).ok()?, r)))
+        .filter(|(v, _)| *v > installed)
+        .max_by(|a, b| a.0.cmp(&b.0))
+        .map(|(_, r)| r)
+}
+
 /// Returns the verified v2 catalogue, reusing an in-memory copy from the last ten minutes for the
 /// same endpoint, otherwise fetching and verifying against [`REGISTRY_KEYS`].
 pub fn index() -> Result<Catalog, LoadError> {

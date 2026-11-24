@@ -449,22 +449,21 @@ impl Launcher {
             .filter(model::bulk_updatable)
             .map(|row| row.id)
             .collect();
-        let Some((target, sources)) = self.take_source_updates(None) else {
-            if !registry.is_empty() {
-                self.ask_update(false);
+        // Source mods and registry mods update as two jobs, sources first.
+        if let Some((target, sources)) = self.take_source_updates(None) {
+            self.ui.mods.notice = None;
+            self.mods.message = None;
+            if let Err(error) = self.queue_sources(target, sources) {
+                self.ui.mods.notice = Some(Err(error));
+                return;
             }
-            return;
-        };
-        self.ui.mods.notice = None;
-        self.mods.message = None;
-        let result = if registry.is_empty() {
-            self.queue_sources(target, sources)
-        } else {
-            self.queue_all_mod_updates(target, registry, displayed_names, sources)
-        };
-        if let Err(error) = result {
-            self.ui.mods.notice = Some(Err(error));
         }
+        self.submit_registry_change(
+            crate::mods_page::install::Kind::UpdateAllV2,
+            "update-all",
+            registry,
+            displayed_names,
+        );
     }
 
     fn take_source_updates(
@@ -769,7 +768,6 @@ mod tests {
                 install: sunrise::InstallHooks {
                     progress: &|_| {},
                     continue_after_failure: &|_| false,
-                    resolve: None,
                     cancellation: Some(&cancel),
                 },
                 cancellation: &cancel,

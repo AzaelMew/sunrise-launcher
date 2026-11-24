@@ -401,12 +401,11 @@ impl Profile {
         mode: native_mods::Profile,
         cancellation: &native_mods::Cancellation,
         progress: impl Fn(native_mods::Step),
-        registry: Option<&sunrise_launcher_smod::index::Index>,
         log: Option<&dyn Fn(std::sync::Arc<str>)>,
         replacement: Option<Resources>,
     ) -> Result<Option<Active>, native_mods::Failed> {
         let home = self.home().to_owned();
-        let (old, epoch, repair, stage) = {
+        let (old, epoch, stage) = {
             let _manifest = game_lock(&home)?;
             crate::browser::installed::recover_game_install(&home).map_err(String::from)?;
             let Some(old) = self.active()? else {
@@ -414,8 +413,8 @@ impl Profile {
             };
             old.verify_artifacts()?;
             let epoch = inputs(&home, None)?;
-            let repair = super::inputs::browser_repair(&home, &scan_packages(&home)?, registry)?;
-            if old.inputs == epoch && repair.is_none() && replacement.is_none() {
+            super::inputs::check_browser_rows(&home, &scan_packages(&home)?)?;
+            if old.inputs == epoch && replacement.is_none() {
                 super::verify_included(old.base(), old.executable(), &home)?;
                 return Ok(Some(old));
             }
@@ -423,7 +422,7 @@ impl Profile {
             let tags = [old.base().to_owned(), old.executable().to_owned()]
                 .into_iter()
                 .collect();
-            (old, epoch, repair, self.0.reserve(Intent::Install, tags)?)
+            (old, epoch, self.0.reserve(Intent::Install, tags)?)
         };
         let image = image_for_stage(
             old.base(),
@@ -453,7 +452,6 @@ impl Profile {
             active,
             &home,
             epoch,
-            repair,
             cancellation,
         )?))
     }
@@ -653,46 +651,27 @@ impl FirstAttempt<'_> {
                 variant: self.variant().map(Box::new),
             },
         )?;
-        let registry = crate::browser::sunrise::fetched_index();
-        let repair = super::inputs::browser_repair(
-            &self.home,
-            &scan_packages(&self.home)?,
-            registry.as_deref(),
-        )?;
+        super::inputs::check_browser_rows(&self.home, &scan_packages(&self.home)?)?;
         publish_generation(
             self.stage,
             active,
             &self.home,
             self.bound.inputs,
-            repair,
             cancellation,
         )
     }
 }
 
-/// The caller holds the profile, game manifest and reference fence. A stale row is a postimage
-/// of this transaction, not a standalone restore. Its published bytes are what the pointer hashes.
+/// The caller holds the profile, game manifest and reference fence.
 fn publish_generation(
     stage: Staging<'_>,
-    mut active: Active,
+    active: Active,
     home: &Path,
     epoch: [u8; 32],
-    repair: Option<Vec<u8>>,
     cancellation: &native_mods::Cancellation,
 ) -> Result<Active, String> {
-    let mut files = Vec::new();
-    if let Some(bytes) = repair {
-        active.inputs = inputs(home, Some(&bytes))?;
-        let candidate = stage.path().join("browser-repair");
-        profile_txn::durable::replace(stage.path(), &candidate, &bytes)
-            .map_err(|error| at(&candidate, error))?;
-        files.push((
-            PathBuf::from(crate::browser::installed::MANIFEST),
-            Some(candidate),
-        ));
-    }
     let pointer = serde_json::to_vec(&active).map_err(|e| e.to_string())?;
-    stage.seal(pointer, &files)?.publish(|| {
+    stage.seal(pointer, &[])?.publish(|| {
         active.verify_artifacts()?;
         if inputs(home, None)? != epoch {
             return Err(unsettled!());

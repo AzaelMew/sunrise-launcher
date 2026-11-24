@@ -425,12 +425,24 @@ pub(crate) fn checkbox(id: impl Into<ElementId>, on: bool) -> Stateful<Div> {
     checkbox_of(id, on, false)
 }
 
+/// How much of a set is ticked, as the header's box draws it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Ticks {
+    None,
+    Some,
+    All,
+}
+
+pub(super) fn ticks(ticked: usize, total: usize) -> Ticks {
+    match ticked {
+        0 => Ticks::None,
+        n if n >= total => Ticks::All,
+        _ => Ticks::Some,
+    }
+}
+
 /// A box over a set: ticked when all of it is, a dash when only some is, empty when none is.
-pub(super) fn checkbox_of_set(
-    id: impl Into<ElementId>,
-    ticks: model::collection::Ticks,
-) -> Stateful<Div> {
-    use model::collection::Ticks;
+pub(super) fn checkbox_of_set(id: impl Into<ElementId>, ticks: Ticks) -> Stateful<Div> {
     checkbox_of(id, ticks != Ticks::None, ticks == Ticks::Some)
 }
 

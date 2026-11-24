@@ -111,28 +111,22 @@ pub(crate) fn inputs(home: &Path, repaired: Option<&[u8]>) -> Result<[u8; 32], S
     Ok(hash.finalize().into())
 }
 
-/// A fresh registry response can corroborate a display change at a claimed destination.
-/// These rows are game-facing metadata, never destructive authority for the launcher.
-pub(super) fn browser_repair(
-    home: &Path,
-    packages: &[ScannedPackage],
-    registry: Option<&index::Index>,
-) -> Result<Option<Vec<u8>>, String> {
+/// Each registry row that names a mod file must claim exactly that package, once. These rows are
+/// game-facing metadata, never destructive authority for the launcher.
+pub(super) fn check_browser_rows(home: &Path, packages: &[ScannedPackage]) -> Result<(), String> {
     use crate::browser::{installed, sunrise, Kind, SourceId};
     use serde_json::Value;
     let path = home.join(installed::MANIFEST);
     let Some(bytes) = super::optional_bytes(&path)? else {
-        return Ok(None);
+        return Ok(());
     };
     let mut document: serde_json::Map<String, Value> =
         serde_json::from_slice(&bytes).map_err(|e| at(&path, e))?;
-    let rows = document
-        .get_mut("entries")
-        .and_then(Value::as_array_mut)
-        .ok_or_else(|| unsettled!())?;
-    let mut claims = index::browser_state::Installed {
-        entries: std::mem::take(rows),
+    let entries = match document.remove("entries") {
+        Some(Value::Array(entries)) => entries,
+        _ => return Err(unsettled!()),
     };
+    let claims = index::browser_state::Installed { entries };
     let by_file = packages
         .iter()
         .map(|package| {
@@ -143,7 +137,6 @@ pub(super) fn browser_repair(
                 .map_err(|e| at(&package.path, e))
         })
         .collect::<Result<std::collections::BTreeMap<_, _>, _>>()?;
-    let mut changes = Vec::new();
     for (position, raw) in claims.entries.iter().enumerate() {
         let Some(file) = raw.get("file").and_then(Value::as_str) else {
             continue;
@@ -177,54 +170,8 @@ pub(super) fn browser_repair(
         claims
             .check_other_claims(home, id, file)
             .map_err(|e| e.render(crate::i18n::trf))?;
-        let digest = index::sha256_file(&package.path)?;
-        if row.version == package.manifest.version
-            && row
-                .checksum
-                .eq_ignore_ascii_case(&format!("SHA-256:{digest}"))
-        {
-            continue;
-        }
-        if row.mod_id.is_some() {
-            continue;
-        }
-        let kind = if package.manifest.native.is_some() {
-            index::Kind::NativeMod
-        } else {
-            index::Kind::Mod
-        };
-        // Adopt the actual profile input separately; never manufacture ownership for
-        // a replacement from just its ID and location. Leave the old row opaque.
-        if registry
-            .and_then(|registry| registry.project(id))
-            .filter(|project| project.kind == kind)
-            .is_some_and(|project| {
-                project.versions.iter().any(|release| {
-                    release.version == package.manifest.version
-                        && release.file.sha256.eq_ignore_ascii_case(&digest)
-                })
-            })
-        {
-            changes.push((
-                position,
-                package.manifest.version.clone(),
-                format!("SHA-256:{digest}"),
-            ));
-        }
     }
-    if changes.is_empty() {
-        return Ok(None);
-    }
-    for (position, version, checksum) in changes {
-        let raw = &mut claims.entries[position];
-        raw["version"] = Value::from(version.clone());
-        raw["number"] = Value::from(version);
-        raw["checksum"] = Value::from(checksum);
-    }
-    *rows = claims.entries;
-    serde_json::to_vec(&document)
-        .map(Some)
-        .map_err(|e| at(&path, e))
+    Ok(())
 }
 
 #[cfg(test)]

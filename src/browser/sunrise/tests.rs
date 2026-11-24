@@ -1,648 +1,59 @@
-//! The registry source against the sample index of `sunrise_launcher_smod::index`
-//! (`crates/smod/tests/index/`), its files served from disk.
+//! Play admission (game-install journals, the browser lock, registry takedowns) and the
+//! registry's GitHub links.
 use super::*;
-const GAME: &str = crate::backend::PINNED_GAME;
+use sunrise_launcher_smod::index;
+use sunrise_launcher_smod::index_v2::{Index, Revoked};
 
-fn fixtures() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/smod/tests/index")
-}
+/// The sample mod package, as an installed registry mod.
+const HUD: &str = "crates/smod/tests/index/coords_hud-0.1.0.smod";
 
-/// The sample index with its files on disk, as a local test registry lists them.
-pub(super) fn sample() -> Index {
-    let text = fs::read_to_string(fixtures().join("index-v1.json")).unwrap();
-    let mut index = Index::parse(&text).unwrap();
-    for p in &mut index.projects {
-        for v in &mut p.versions {
-            let path = fixtures().join(&v.file.name);
-            v.file.url = format!("file://{}", path.canonicalize().unwrap_or(path).display());
-        }
+/// A signed index listing nothing.
+fn sample() -> Index {
+    Index {
+        schema: index_v2::SCHEMA,
+        serial: 1,
+        generated: "2026-11-24T00:00:00Z".into(),
+        builds: Vec::new(),
+        categories: Vec::new(),
+        projects: Vec::new(),
+        revoked: Vec::new(),
+        collections: Vec::new(),
     }
-    index
 }
 
-pub(super) fn scratch(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "sunrise-launcher-registry-{name}-{}",
-        std::process::id()
-    ));
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).unwrap();
-    dir
-}
-
-fn hud(index: &Index) -> Project {
-    project_of(index, index.project("coords_hud").unwrap(), GAME).unwrap()
-}
-
-/// Seeds `coords_hud` as an installed content mod in `home` for play-check and recovery tests.
-fn seed_installed_hud(index: &Index, home: &Path) -> installed::Entry {
-    let p = index.project("coords_hud").unwrap();
-    let v = &p.versions[0];
-    let project = project_of(index, p, &v.game).unwrap();
+/// Seeds `coords_hud` as an installed registry mod in `home` for play-check and recovery tests.
+fn seed_installed_hud(home: &Path) -> installed::Entry {
+    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join(HUD);
     let dest = home.join("sunrise-mods/coords_hud.smod");
     fs::create_dir_all(dest.parent().unwrap()).unwrap();
-    fs::copy(fixtures().join(&v.file.name), &dest).unwrap();
+    fs::copy(&source, &dest).unwrap();
     let entry = installed::Entry {
         source: SourceId::Sunrise,
-        project: p.id.clone(),
+        project: "coords_hud".into(),
         mod_id: None,
-        slug: p.id.clone(),
-        title: p.name.clone(),
-        kind: Kind::Mod,
-        version: v.version.clone(),
-        number: v.version.clone(),
+        slug: "coords_hud".into(),
+        title: "Coordinates HUD".into(),
+        kind: crate::browser::Kind::Mod,
+        version: "0.1.0".into(),
+        number: "0.1.0".into(),
         file: "sunrise-mods/coords_hud.smod".into(),
-        checksum: format!("SHA-256:{}", v.file.sha256),
-        page: project.page,
+        checksum: format!("SHA-256:{}", index::sha256_file(&source).unwrap()),
+        page: String::new(),
         dependency: false,
         verdict: Some("Verified".into()),
         install_hold: None,
         repository: None,
     };
     let mut list = installed::Installed::load(home);
-    list.entries
-        .retain(|e| !(e.source == SourceId::Sunrise && e.project == p.id));
+    list.entries.retain(|e| e.project != entry.project);
     list.entries.push(entry.clone());
     list.save(home).unwrap();
-    mod_list::set_enabled(home, &p.id, true).unwrap();
+    mod_list::set_enabled(home, "coords_hud", true).unwrap();
     entry
 }
 
-/// Installs the sample's checked shader pack through the pack installer.
-fn put_glow(index: &Index, local: bool, home: &Path) -> Result<installed::Entry, String> {
-    let p = index.project("glow").unwrap();
-    install_version(index, local, p, &p.versions[0], home, &|_, _| {})
-}
-
-#[test]
-fn native_install_readiness_changes_the_action_without_changing_catalogue_fit() {
-    let mut index = sample();
-    let project = index
-        .projects
-        .iter_mut()
-        .find(|p| p.id == "coords_hud")
-        .unwrap();
-    project.kind = index::Kind::NativeMod;
-    let local = "a".repeat(40);
-    let other = "b".repeat(40);
-    project.versions[0].api = format!("native-1/{other}");
-    let id = "coords_hud";
-    let catalogue_fits = || fits_game(&index.project(id).unwrap().versions[0], GAME);
-    assert!(catalogue_fits());
-    let published = NativeInstallReadiness {
-        host_block: None,
-        developer_revision: None,
-    };
-    assert!(published.block(&index, id, GAME).is_none());
-    let host = NativeInstallReadiness {
-        host_block: Some("No managed host".into()),
-        developer_revision: None,
-    };
-    assert_eq!(
-        host.block(&index, id, GAME).as_deref(),
-        Some("No managed host")
-    );
-    assert!(host.block(&index, id, "another game").is_none());
-    let developer = NativeInstallReadiness {
-        host_block: None,
-        developer_revision: Some(local.clone()),
-    };
-    assert!(developer.block(&index, id, GAME).is_some());
-    assert!(catalogue_fits());
-
-    let project = index.projects.iter_mut().find(|p| p.id == id).unwrap();
-    let mut older = project.versions[0].clone();
-    older.version = "0.1.0".into();
-    older.api = format!("native-1/{local}");
-    project.versions.push(older);
-    assert!(
-        developer.block(&index, id, GAME).is_none(),
-        "an older archive may work"
-    );
-    index
-        .projects
-        .iter_mut()
-        .find(|p| p.id == id)
-        .unwrap()
-        .versions[1]
-        .api = "unrecognized".into();
-    assert!(
-        developer.block(&index, id, GAME).is_none(),
-        "unrecognized pins belong to the worker"
-    );
-}
-
-#[test]
-fn schema_one_stable_native_records_keep_the_signed_source_on_the_install_path() {
-    let fixture = fixtures().join("stable-native");
-    let text = fs::read_to_string(fixture.join("schema-1.json")).unwrap();
-    let catalogue = Index::parse(&text).unwrap();
-    assert!(catalogue.left_out.is_empty(), "{:?}", catalogue.left_out);
-    // Switch also reads a strict index rather than using the pruned Discover catalogue.
-    serde_json::from_str::<Index>(&text)
-        .unwrap()
-        .check()
-        .unwrap();
-
-    let project = catalogue.project("release_probe").unwrap();
-    let version = newest(&catalogue, project, "26.3").unwrap();
-    let rebuilt_for = "b".repeat(40);
-    let raw: serde_json::Value = serde_json::from_str(&text).unwrap();
-    let other_signature = raw["projects"][0]["versions"][0]["native_binaries"][0]["file"]
-        ["signature"]
-        .as_str()
-        .unwrap()
-        .to_owned();
-
-    // Legacy binary metadata in the JSON is ignored; the installer selects and verifies the .smod.
-    let offer = version_of(&catalogue, project, version);
-    assert!(offer.blocked.is_none());
-    assert_eq!(offer.files.len(), 1);
-    assert_eq!(offer.files[0].name, "release_probe-1.0.0.smod");
-    let source = fixture.join("source.smod");
-    assert_eq!(
-        index::check_file(&catalogue, project, version, &source).unwrap(),
-        Trust::Verified
-    );
-    let mut wrong_signature = version.clone();
-    wrong_signature.file.signature = Some(other_signature);
-    assert!(
-        index::check_file(&catalogue, project, &wrong_signature, &source)
-            .unwrap_err()
-            .contains("signature doesn't match")
-    );
-
-    // Binary availability is not evidence that the source fits a different checkout.
-    let developer = NativeInstallReadiness {
-        host_block: None,
-        developer_revision: Some(rebuilt_for),
-    };
-    assert!(developer.block(&catalogue, &project.id, "26.3").is_some());
-}
-
-#[test]
-fn only_the_builtin_reply_can_prove_a_published_id_and_archive_hash() {
-    assert!(official_endpoint(INDEX_URL, false));
-    assert!(!official_endpoint(INDEX_URL, true));
-    assert!(!official_endpoint(
-        "https://example.invalid/index.json",
-        false
-    ));
-
-    // Published checksums for vanilla_bestiary 0.1.2 and 0.1.1. The older release
-    // still proves origin for those bytes; this is independent of a display row.
-    let old = "2fc5befa05c4190656bb9a9109fb6e15999e33801b13484f73a74f9abbfd00d4";
-    let mut project = sample().project("coords_hud").unwrap().clone();
-    project.id = "vanilla_bestiary".into();
-    project.kind = index::Kind::NativeMod;
-    let mut newest = project.versions[0].clone();
-    newest.version = "0.1.2".into();
-    newest.file.sha256 = "9281fccab1b489924a9291052bd52c62422b7b2c619714a316cf2bc53af1f6ec".into();
-    let mut previous = newest.clone();
-    previous.version = "0.1.1".into();
-    previous.file.sha256 = old.into();
-    project.versions = vec![newest, previous];
-    let authority = OfficialRegistry::fixture(&Index {
-        projects: vec![project],
-        ..Index::default()
-    });
-    assert!(authority.proves_archive("vanilla_bestiary", old));
-    assert!(!authority.proves_archive("foreign_bestiary", old));
-    assert!(!authority.proves_archive("vanilla_bestiary", &"7".repeat(64)));
-}
-
-#[test]
-fn native_registry_entries_are_mods_that_say_they_run_native_code() {
-    assert_eq!(kind_of(&index::Kind::NativeMod), Some(Kind::Mod));
-    let mut index = sample();
-    index.projects[0].kind = index::Kind::NativeMod;
-    index.projects[0].versions[0].file.name = "coords_hud-0.1.0.smod".into();
-    let found = search(&index, &Query::new("", Kind::Mod));
-    assert!(found.iter().any(|p| p.id == index.projects[0].id));
-    let entry = |file: &str| {
-        serde_json::from_value::<installed::Entry>(serde_json::json!({
-            "source": "sunrise", "project": "p", "slug": "p", "title": "P", "kind": "mod",
-            "version": "1", "number": "1", "file": file, "checksum": "", "page": ""
-        }))
-        .unwrap()
-    };
-    assert_eq!(
-        mod_id(&entry("sunrise-native-mods/veinminer.smod")),
-        Some("veinminer")
-    );
-    assert_eq!(mod_id(&entry("sunrise-mods/zoom.smod")), Some("zoom"));
-}
-
-#[test]
-fn only_sunrises_own_projects_go_without_the_not_endorsed_line() {
-    let mut p = sample().projects[0].clone();
-    p.authors = vec!["Sunrise".into()];
-    p.source = "https://github.com/horizon-rust/horizon-mod-zoom".into();
-    assert!(official(&p));
-    p.source = "https://github.com/someone/sunrise-mod-zoom".into();
-    assert!(!official(&p), "the name alone doesn't make it official");
-    p.authors = vec!["levzzz5154".into()];
-    assert!(!official(&p));
-}
-
-#[test]
-fn searches_by_kind_and_words() {
-    let index = sample();
-    let found = |text: &str, kind| -> Vec<String> {
-        search(&index, &Query::new(text, kind))
-            .into_iter()
-            .map(|p| p.id)
-            .collect()
-    };
-    assert_eq!(found("", Kind::Mod), ["coords_hud"]);
-    assert_eq!(found("coordinates HUD", Kind::Mod), ["coords_hud"]);
-    assert!(found("zoom", Kind::Mod).is_empty());
-    // Modpacks under Modpacks; a kind this launcher can't install yet (a world) never.
-    assert_eq!(found("", Kind::Modpack), ["cozy"]);
-    assert!(found("skyblock", Kind::ResourcePack).is_empty());
-    assert_eq!(found("", Kind::Shader), ["glow"]);
-    // The index's download counts, most downloaded first (of native mods: the browser lists them).
-    let mut counted = index.clone();
-    counted.projects[0].kind = index::Kind::NativeMod;
-    counted.projects[0].versions[0].file.name = "coords_hud-0.1.0.smod".into();
-    counted.projects.push(index::Project {
-        id: "zoom".into(),
-        name: "Zoom".into(),
-        downloads: 12_345,
-        ..counted.projects[0].clone()
-    });
-    counted.projects[0].downloads = 80;
-    let first = search(&counted, &Query::new("", Kind::Mod));
-    let order: Vec<(&str, u64)> = first.iter().map(|p| (p.id.as_str(), p.downloads)).collect();
-    assert_eq!(order, [("zoom", 12_345), ("coords_hud", 80)]);
-    // Newest orders by the day a project's first version came out, Updated by its latest.
-    let mut dated = counted.clone();
-    let base = dated.projects[0].versions[0].clone();
-    let version_on = |day: &str| index::Version {
-        published: day.into(),
-        ..base.clone()
-    };
-    dated.projects[0].versions = vec![version_on("2026-09-01"), version_on("2026-01-01")];
-    let zoom = dated.projects.iter().position(|p| p.id == "zoom").unwrap();
-    dated.projects[zoom].versions = vec![version_on("2026-05-01")];
-    let sorted = |sort| -> Vec<String> {
-        let mut q = Query::new("", Kind::Mod);
-        q.filters.sort = Some(sort);
-        search(&dated, &q).into_iter().map(|p| p.id).collect()
-    };
-    assert_eq!(
-        sorted(super::super::details::Sort::Newest),
-        ["zoom", "coords_hud"]
-    );
-    assert_eq!(
-        sorted(super::super::details::Sort::Updated),
-        ["coords_hud", "zoom"]
-    );
-    assert_eq!(
-        sorted(super::super::details::Sort::Downloads),
-        ["zoom", "coords_hud"]
-    );
-    let p = hud(&index);
-    assert_eq!(p.support(GAME), super::super::Support::Works);
-    assert_eq!(p.page, "https://playsunrise.net/mods/coords_hud");
-}
-
-#[test]
-fn an_installed_entry_pointing_out_of_the_game_folder_is_refused() {
-    let index = sample();
-    let home = scratch("escaping-entry");
-    put_glow(&index, true, &home).unwrap();
-    let outside = home.parent().unwrap().join("escaped-by-entry.sshader");
-    fs::write(&outside, b"not a zip").unwrap();
-    let name = format!("../{}", outside.file_name().unwrap().to_string_lossy());
-    // The manifest loader drops such an entry; a list built in memory still must not reach it.
-    let mut list = installed::Installed::load(&home);
-    list.entries[0].version = "0.0.1".into();
-    list.entries[0].file = name;
-    let p = index.project("glow").unwrap();
-    let install = Install {
-        index: &index,
-        local: true,
-        home: &home,
-        progress: &|_, _| {},
-    };
-    let claims = index::browser_state::Installed::read(&home).unwrap();
-    let result = install.prepare(p, &p.versions[0], &list, &claims, &home.join("staging"));
-    assert!(result.is_err());
-    assert_eq!(fs::read(&outside).unwrap(), b"not a zip");
-    fs::remove_file(outside).unwrap();
-    fs::remove_dir_all(home).unwrap();
-}
-
-#[test]
-fn update_replaces_an_entry_whose_file_is_gone() {
-    let index = sample();
-    let home = scratch("gone-installed");
-    put_glow(&index, true, &home).unwrap();
-    let path = home.join("shaderpacks/glow-1.0.0.sshader");
-    fs::remove_file(&path).unwrap();
-    let mut list = installed::Installed::load(&home);
-    list.entries[0].version = "0.0.1".into();
-    list.save(&home).unwrap();
-    let p = index.project("glow").unwrap();
-    install_version(&index, true, p, &p.versions[0], &home, &|_, _| {}).unwrap();
-    assert!(path.is_file());
-    assert_eq!(installed::Installed::load(&home).entries.len(), 1);
-    fs::remove_dir_all(home).unwrap();
-}
-
-#[test]
-fn searches_by_category_and_tag() {
-    let mut index = sample();
-    let glow = index.projects.iter().position(|p| p.id == "glow").unwrap();
-    index.projects[glow].categories = vec!["fantasy".into(), "bloom".into()];
-    index.projects[glow].tags = vec!["sunset".into()];
-    let found = |text: &str, categories: &[&str]| -> Vec<String> {
-        let mut q = Query::new(text, Kind::Shader);
-        q.filters.categories = categories.iter().map(|c| c.to_string()).collect();
-        search(&index, &q).into_iter().map(|p| p.id).collect()
-    };
-    assert_eq!(found("", &["bloom"]), ["glow"]);
-    assert_eq!(found("", &["bloom", "fantasy"]), ["glow"]);
-    assert!(
-        found("", &["bloom", "pbr"]).is_empty(),
-        "every category asked"
-    );
-    assert_eq!(found("sunset", &[]), ["glow"], "tags are searched");
-    assert!(found("dawn", &[]).is_empty());
-    let tagged = |tags: &[&str]| -> Vec<String> {
-        let mut q = Query::new("", Kind::Shader);
-        q.filters.tags = tags.iter().map(|t| t.to_string()).collect();
-        search(&index, &q).into_iter().map(|p| p.id).collect()
-    };
-    assert_eq!(tagged(&["sunset"]), ["glow"]);
-    assert!(tagged(&["sunset", "dawn"]).is_empty(), "every tag asked");
-}
-
-/// A data pack zip with one function, and the registry project that lists it.
-fn data_pack(index: &mut Index, dir: &Path) -> Project {
-    use std::io::Write;
-    let path = dir.join("lanterns-1.0.0.zip");
-    let mut zip = zip::ZipWriter::new(fs::File::create(&path).unwrap());
-    for (name, text) in [
-        (
-            "pack.mcmeta",
-            r#"{"pack": {"description": "Lanterns", "pack_format": 94}}"#,
-        ),
-        ("data/lanterns/function/light.mcfunction", "say lit"),
-    ] {
-        zip.start_file(name, zip::write::SimpleFileOptions::default())
-            .unwrap();
-        zip.write_all(text.as_bytes()).unwrap();
-    }
-    zip.finish().unwrap();
-    let base = index.project("glow").unwrap().clone();
-    let mut version = base.versions[0].clone();
-    version.version = "1.0.0".into();
-    version.api = "94".into();
-    version.side = None;
-    version.capabilities = Default::default();
-    version.requires.clear();
-    version.file = index::File {
-        name: "lanterns-1.0.0.zip".into(),
-        url: format!("file://{}", path.display()),
-        size: fs::metadata(&path).unwrap().len(),
-        sha256: index::sha256_file(&path).unwrap(),
-        signature: None,
-    };
-    index.projects.push(index::Project {
-        id: "lanterns".into(),
-        kind: index::Kind::DataPack,
-        name: "Lanterns".into(),
-        key: None,
-        versions: vec![version],
-        ..base
-    });
-    project_of(index, index.project("lanterns").unwrap(), GAME).unwrap()
-}
-
-#[test]
-fn a_registry_data_pack_is_checked_then_goes_into_a_world() {
-    let dir = scratch("datapack");
-    let mut index = sample();
-    let p = data_pack(&mut index, &dir);
-    assert_eq!(p.kind, Kind::DataPack);
-    assert_eq!(p.support(GAME), super::super::Support::Works);
-    let found: Vec<String> = search(&index, &Query::new("", Kind::DataPack))
-        .into_iter()
-        .map(|p| p.id)
-        .collect();
-    assert_eq!(found, ["lanterns"]);
-    // Not into the game folder: into a world.
-    let lanterns = index.project("lanterns").unwrap();
-    assert!(install_version(
-        &index,
-        true,
-        lanterns,
-        &lanterns.versions[0],
-        &dir.join("home"),
-        &|_, _| {}
-    )
-    .is_err());
-    let (zip, number) =
-        fetch_datapack_from(&index, true, &p, &dir.join("dl"), GAME, &|_| {}).unwrap();
-    assert_eq!(number, "1.0.0");
-    let world = dir.join("world");
-    fs::create_dir(&world).unwrap();
-    let pack = crate::datapacks::add(&world, &zip).unwrap();
-    assert!(world.join("datapacks").join(&pack.file).is_file());
-
-    // A file other than the one the index lists never gets there.
-    let mut changed = index.clone();
-    let at = changed.projects.len() - 1;
-    changed.projects[at].versions[0].file.sha256 = "0".repeat(64);
-    let e = fetch_datapack_from(&changed, true, &p, &dir.join("dl2"), GAME, &|_| {}).unwrap_err();
-    assert!(e.contains("checksum") || e.contains("SHA-256"), "{e}");
-    // Nor one taken down.
-    index.revoked.push(index::Revoked {
-        id: "lanterns".into(),
-        sha256: None,
-        reason: "Test.".into(),
-        date: String::new(),
-    });
-    let e = fetch_datapack_from(&index, true, &p, &dir.join("dl3"), GAME, &|_| {}).unwrap_err();
-    assert_eq!(e, "Lanterns was taken down: Test.");
-    fs::remove_dir_all(&dir).unwrap();
-}
-
-#[test]
-fn screenshots_are_the_gallery_from_the_registry_only() {
-    let mut p = sample().projects[0].clone();
-    assert!(gallery_of(&p).is_empty());
-    let pages = "https://sunrise-org.github.io/sunrise-mods/screenshots/coords_hud";
-    p.screenshots = vec![
-        format!("{pages}/b.png"),
-        "https://example.com/tracker.png".into(),
-        format!("{pages}/a.jpg"),
-    ];
-    let urls: Vec<String> = gallery_of(&p).into_iter().map(|i| i.url).collect();
-    assert_eq!(urls, [format!("{pages}/b.png"), format!("{pages}/a.jpg")]);
-}
-
-#[test]
-fn a_registry_icon_with_a_version_query_and_five_screenshots_are_all_fetchable() {
-    let site = "https://sunrise-org.github.io/sunrise-mods";
-    let mut p = sample().projects[0].clone();
-    p.icon = Some(format!("{site}/icons/jei.png?v=845e5188457e"));
-    p.screenshots = (1..=5)
-        .map(|n| format!("{site}/screenshots/jei/{n}-shot.jpg"))
-        .collect();
-    let hit = project_of(&sample(), &p, GAME).unwrap();
-    let icon = hit.icon.unwrap();
-    assert!(icon.starts_with(sunrise_launcher_addresses::MOD_IMAGES));
-    assert_eq!(super::super::images::refuse(&icon), None);
-    let gallery = gallery_of(&p);
-    assert_eq!(gallery.len(), 5);
-    assert_eq!(gallery[4].url, format!("{site}/screenshots/jei/5-shot.jpg"));
-}
-
-#[test]
-fn combined_native_content_smod_checks_registry_listing_from_live_index_only() {
-    use std::io::Write;
-    let home = scratch("native-content-install");
-    let own = home.join("sunrise-native-mods/coords_hud.smod");
-    fs::create_dir_all(own.parent().unwrap()).unwrap();
-    let a = "a".repeat(40);
-    let b = "b".repeat(40);
-    let mut zip = zip::ZipWriter::new(fs::File::create(&own).unwrap());
-    for (name, text) in [
-        ("Cargo.toml", "[package]\nname='coords_hud'\nversion='0.1.0'\n".into()),
-        ("src/lib.rs", "fn hook() {}".into()),
-        ("sunrise-mod.toml", format!("id='coords_hud'\nname='Sound proof'\nversion='0.1.0'\napi='0.2'\ncapabilities=['registries']\n[native]\ngame='{GAME}'\nsunrise='{a}'\nmixins='{b}'\n")),
-        ("assets/coords_hud/sounds.json", "{}".into()),
-    ] {
-        zip.start_file(name, zip::write::SimpleFileOptions::default()).unwrap();
-        zip.write_all(text.as_bytes()).unwrap();
-    }
-    zip.finish().unwrap();
-    let bytes = fs::read(&own).unwrap();
-    let mut index = sample();
-    let p = &mut index.projects[0];
-    p.kind = index::Kind::NativeMod;
-    p.key = None;
-    let v = &mut p.versions[0];
-    v.api = format!("native-1/{a}/{b}");
-    v.version = "0.1.0".into();
-    v.game = GAME.into();
-    v.side = None;
-    v.requires.clear();
-    v.capabilities = Default::default();
-    v.file.name = "coords_hud.smod".into();
-    v.file.url = format!("file://{}", own.display());
-    v.file.size = bytes.len() as u64;
-    v.file.sha256 = index::sha256(&bytes);
-    v.file.signature = None;
-    mod_list::set_enabled(&home, "coords_hud", true).unwrap();
-    let bundle = index::native::Bundle::read(&own).unwrap();
-    assert_eq!(bundle.files["assets/coords_hud/sounds.json"], b"{}");
-    assert_eq!(crate::native_status::enabled(&home).len(), 1);
-    // The copy of the index kept in the game folder is not the registry's word: offline, a
-    // copy that lists a file put there by hand is kept, but never taken as fetched.
-    let mut bytes = fs::read(&own).unwrap();
-    bytes.extend_from_slice(b"\0");
-    fs::write(&own, &bytes).unwrap();
-    // From here the test models a remote registry. Its file URL is validated but never fetched.
-    index.projects[0].versions[0].file.url = "https://example.com/coords_hud.smod".into();
-    let mut forged = index.clone();
-    forged.projects[0].versions[0].file.sha256 = index::sha256(&bytes);
-    forged.projects[0].versions[0].file.size = bytes.len() as u64;
-    let cache = home.join(CACHE);
-    fs::create_dir_all(cache.parent().unwrap()).unwrap();
-    fs::write(&cache, serde_json::to_string(&forged).unwrap()).unwrap();
-    let (kept, fetched) = load(Err("offline".into()), &cache, false).unwrap();
-    assert!(fetched.is_none());
-    assert!(kept.fetched().is_none());
-    // The registry's own answer is.
-    let text = serde_json::to_string(&index).unwrap();
-    let (answered, fetched) = load(Ok((index, text.clone())), &cache, false).unwrap();
-    assert_eq!(fetched.as_deref(), Some(text.as_str()));
-    assert!(answered.fetched().is_some());
-    fs::remove_dir_all(home).unwrap();
-}
-
-#[test]
-fn revoked_mod_is_turned_off_and_unlisted_game_version_is_refused() {
-    let index = sample();
-    let home = scratch("install");
-    let p = index.project("coords_hud").unwrap();
-    let other = newest(&index, p, "26.9").unwrap_err();
-    assert!(other.contains("no version for 26.9"), "{other}");
-    seed_installed_hud(&index, &home);
-    assert_eq!(
-        fs::read_to_string(home.join("sunrise-mods.txt")).unwrap(),
-        "mod.coords_hud:true\n"
-    );
-
-    let mut revoked = index.clone();
-    revoked.revoked.push(index::Revoked {
-        id: "coords_hud".into(),
-        sha256: None,
-        reason: "Test.".into(),
-        date: String::new(),
-    });
-    let said = turn_off_revoked(&revoked, &home).unwrap();
-    assert_eq!(said, ["Coordinates HUD was taken down and is off: Test."]);
-    assert_eq!(
-        fs::read_to_string(home.join("sunrise-mods.txt")).unwrap(),
-        ""
-    );
-    fs::remove_dir_all(&home).unwrap();
-}
-
-#[test]
-fn registry_play_warns_for_disk_cache_and_turns_off_only_from_a_live_index() {
-    let root = tempfile::tempdir().unwrap();
-    let home = root.path();
-    let cache = home.join(CACHE);
-    seed_installed_hud(&sample(), home);
-    let text = fs::read_to_string(fixtures().join("index-v1.json")).unwrap();
-    fs::create_dir_all(cache.parent().unwrap()).unwrap();
-    fs::write(&cache, &text).unwrap();
-    let (offline, _) = load(Err("offline".into()), &cache, false).unwrap();
-    assert!(offline.index.project("coords_hud").is_some());
-    assert!(offline.fetched().is_none());
-    assert_eq!(
-        check_before_play(home, &[], || offline.fetched()).unwrap(),
-        ["Mods were not checked for registry takedowns."]
-    );
-    assert!(mod_list::is_enabled(home, "coords_hud"));
-
-    let mut index = Index::parse(&text).unwrap();
-    index.revoked.push(index::Revoked {
-        id: "coords_hud".into(),
-        sha256: None,
-        reason: "Test.".into(),
-        date: String::new(),
-    });
-    let text = serde_json::to_string(&index).unwrap();
-    let (local, _) = load(Ok((index.clone(), text.clone())), &cache, true).unwrap();
-    assert!(local.fetched().is_none());
-    assert_eq!(
-        check_before_play(home, &[], || local.fetched()).unwrap(),
-        ["Mods were not checked for registry takedowns."]
-    );
-    assert!(mod_list::is_enabled(home, "coords_hud"));
-
-    let (live, _) = load(Ok((index, text)), &cache, false).unwrap();
-    assert!(live.fetched().is_some());
-    assert_eq!(
-        check_before_play(home, &[], || live.fetched()).unwrap(),
-        ["Coordinates HUD was taken down and is off: Test."]
-    );
-    assert!(!mod_list::is_enabled(home, "coords_hud"));
-}
-
-fn interrupted_game_install(
-    home: &Path,
-    registry: &Index,
-    title: String,
-) -> (installed::Entry, installed::Entry) {
-    let old = seed_installed_hud(registry, home);
+fn interrupted_game_install(home: &Path, title: String) -> (installed::Entry, installed::Entry) {
+    let old = seed_installed_hud(home);
     let bytes = sunrise_launcher_smod::Package::write_files(
         "id='coords_hud'\nname='Coordinates HUD'\nversion='1.0.0'\napi='0.2'\ncapabilities=['registries']\n",
         &[],
@@ -667,122 +78,17 @@ fn interrupted_game_install(
 }
 
 #[test]
-fn duplicate_or_unplaceable_ownership_stops_a_registry_install_before_download() {
-    let root = tempfile::tempdir().unwrap();
-    let home = root.path();
-    let index = sample();
-    let old = put_glow(&index, true, home).unwrap();
-    let project = index.project("glow").unwrap();
-    let version = &project.versions[0];
-    let path = home.join(installed::MANIFEST);
-    let bytes = fs::read(home.join(&old.file)).unwrap();
-    let mut duplicate = old.clone();
-    duplicate.file = "shaderpacks/other.sshader".into();
-    let alias = serde_json::json!({
-        "source": "future-source", "project": "other", "title": "Other",
-        "file": "packs/../shaderpacks/glow-1.0.0.sshader"
-    });
-    for (rows, expected) in [
-        (serde_json::json!([old, duplicate]), "several entries"),
-        (serde_json::json!([old, alias]), "belongs to Other"),
-    ] {
-        let before = serde_json::to_vec(&serde_json::json!({ "entries": rows })).unwrap();
-        fs::write(&path, &before).unwrap();
-        let error = install_version(&index, true, project, version, home, &|_, _| {
-            panic!("ownership must be checked before downloading")
-        })
-        .unwrap_err();
-        assert!(error.contains(expected), "{error}");
-        assert_eq!(fs::read(&path).unwrap(), before);
-        assert_eq!(fs::read(home.join(&old.file)).unwrap(), bytes);
-    }
-}
-
-#[test]
-fn installers_never_move_an_aliased_old_archive_under_a_different_name() {
-    for late_claim in [false, true] {
-        let root = tempfile::tempdir().unwrap();
-        let home = root.path();
-        let index = sample();
-        let mut old = put_glow(&index, true, home).unwrap();
-        let target = home.join(&old.file);
-        old.file = "shaderpacks/old_glow.sshader".into();
-        old.version = "0.0.1".into();
-        let old_path = home.join(&old.file);
-        fs::rename(&target, &old_path).unwrap();
-        fs::write(&old_path, b"unreadable archive").unwrap();
-        let manifest = home.join(installed::MANIFEST);
-        let contested = serde_json::to_vec(&serde_json::json!({"entries": [old, {
-            "source": "future-source", "project": "other", "title": "Other owner",
-            "file": "SHADERPACKS/OLD_GLOW.sshader"
-        }]}))
-        .unwrap();
-        if late_claim {
-            fs::write(
-                &manifest,
-                serde_json::to_vec(&serde_json::json!({"entries": [old]})).unwrap(),
-            )
-            .unwrap();
-        } else {
-            fs::write(&manifest, &contested).unwrap();
-        }
-        let during_download = |_: &str, _: f32| {
-            assert!(
-                late_claim,
-                "already-contested ownership must refuse before downloading"
-            );
-            fs::write(&manifest, &contested).unwrap();
-        };
-        let p = index.project("glow").unwrap();
-        let refused =
-            install_version(&index, true, p, &p.versions[0], home, &during_download).unwrap_err();
-        assert!(
-            refused.contains("shaderpacks/old_glow.sshader belongs to Other owner"),
-            "late_claim={late_claim}: {refused}"
-        );
-        assert_eq!(fs::read(manifest).unwrap(), contested);
-        assert_eq!(fs::read(old_path).unwrap(), b"unreadable archive");
-        assert!(!target.exists());
-    }
-}
-
-#[test]
-fn registry_install_rechecks_ownership_before_moving_the_download() {
-    let home = tempfile::tempdir().unwrap();
-    let home = home.path();
-    let index = sample();
-    let project = index.project("glow").unwrap();
-    let manifest = home.join(installed::MANIFEST);
-    let competing_claim = br#"{"entries":[{"source":"future-source","project":"other","title":"Other","file":"SHADERPACKS/GLOW-1.0.0.sshader"}]}"#;
-    let refused = install_version(
-        &index,
-        true,
-        project,
-        &project.versions[0],
-        home,
-        &|_, _| {
-            // Simulate an editor that doesn't honor the home lock during the download.
-            fs::write(&manifest, competing_claim).unwrap();
-        },
-    )
-    .unwrap_err();
-    assert!(refused.contains("belongs to Other"), "{refused}");
-    assert_eq!(fs::read(manifest).unwrap(), competing_claim);
-    assert!(!home.join("shaderpacks/glow-1.0.0.sshader").exists());
-}
-
-#[test]
 fn registry_play_recovers_a_large_game_journal_before_checking_revocations() {
     let root = tempfile::tempdir().unwrap();
     let home = root.path();
     let mut registry = sample();
-    let (old, new) = interrupted_game_install(home, &registry, "an allowed title ".repeat(20_000));
+    let (old, new) = interrupted_game_install(home, "an allowed title ".repeat(20_000));
     let pending = home.join(index::browser_state::PENDING);
     assert!(fs::metadata(&pending).unwrap().len() > 256 << 10);
     let file = home.join(&old.file);
     let bytes = fs::read(&file).unwrap();
-    registry.revoked.push(index::Revoked {
-        id: "coords_hud".into(),
+    registry.revoked.push(Revoked {
+        project: "coords_hud".into(),
         sha256: Some(old.checksum.strip_prefix("SHA-256:").unwrap().into()),
         reason: "Old file taken down.".into(),
         date: String::new(),
@@ -830,7 +136,7 @@ fn play_waits_for_a_writer_before_the_journal_is_visible_and_unlocks_before_fetc
             completion.recv_timeout(Duration::from_millis(150)),
             Err(mpsc::RecvTimeoutError::Timeout)
         );
-        let (_, new) = interrupted_game_install(home, &registry, "Published during Play".into());
+        let (_, new) = interrupted_game_install(home, "Published during Play".into());
         drop(writer);
         assert!(completion.recv().unwrap().unwrap().is_empty());
         assert!(!home.join(index::browser_state::PENDING).exists());
@@ -843,8 +149,7 @@ fn play_admission_names_the_game_journal_and_leaves_other_profiles_playable() {
     let first = tempfile::tempdir().unwrap();
     let second = tempfile::tempdir().unwrap();
     let home = first.path();
-    let registry = sample();
-    let (old, _) = interrupted_game_install(home, &registry, "Coordinates HUD".into());
+    let (old, _) = interrupted_game_install(home, "Coordinates HUD".into());
     let pending = home.join(index::browser_state::PENDING);
     let manifest = home.join(installed::MANIFEST);
     let package = home.join(&old.file);
@@ -886,7 +191,7 @@ fn registry_play_preserves_metadata_edited_after_a_game_journal_was_written() {
     let root = tempfile::tempdir().unwrap();
     let home = root.path();
     let registry = sample();
-    let (mut current, _) = interrupted_game_install(home, &registry, "Coordinates HUD".into());
+    let (mut current, _) = interrupted_game_install(home, "Coordinates HUD".into());
     current.dependency = !current.dependency;
     let manifest = home.join(installed::MANIFEST);
     let edited = serde_json::to_vec(&serde_json::json!({ "entries": [current] })).unwrap();
@@ -902,266 +207,24 @@ fn registry_play_preserves_metadata_edited_after_a_game_journal_was_written() {
 #[test]
 fn registry_play_refuses_a_taken_down_mod_baked_into_a_build() {
     let root = tempfile::tempdir().unwrap();
-    let home = root.path();
-    let cache = home.join(CACHE);
     let mut index = sample();
-    let version = index.project("coords_hud").unwrap().versions[0].clone();
-    index.revoked.push(index::Revoked {
-        id: "coords_hud".into(),
-        sha256: Some(version.file.sha256),
+    index.revoked.push(Revoked {
+        project: "coords_hud".into(),
+        sha256: Some("a".repeat(64)),
         reason: "Test.".into(),
         date: String::new(),
     });
     let built = [crate::native_status::Included {
         id: "coords_hud".into(),
-        version: version.version,
+        version: "0.1.0".into(),
         sha256: "a".repeat(64),
     }];
-    let loaded = |index: Index| {
-        let text = serde_json::to_string(&index).unwrap();
-        load(Ok((index, text)), &cache, false).unwrap().0.fetched()
-    };
     // Even if the installed-list entry and the enable flag are already gone, the build holds it.
-    let error = check_before_play(home, &built, || loaded(index.clone())).unwrap_err();
+    let error = check_before_play(root.path(), &built, || Some(Arc::new(index))).unwrap_err();
     assert!(
         error.contains("includes a mod the registry took down"),
         "{error}"
     );
-    let p = index
-        .projects
-        .iter_mut()
-        .find(|p| p.id == "coords_hud")
-        .unwrap();
-    p.versions.clear();
-    // Old builds don't record the registry hash. An unlisted version cannot rule it out.
-    let error = check_before_play(home, &built, || loaded(index)).unwrap_err();
-    assert!(error.contains("cannot rule out a mod"), "{error}");
-}
-
-#[test]
-fn executable_content_is_refused_without_installing_or_skipping_code() {
-    use std::io::Write;
-    let home = scratch("executable");
-    let path = home.join("executable.smod");
-    fs::copy(fixtures().join("coords_hud-0.1.0.smod"), &path).unwrap();
-    let file = fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(&path)
-        .unwrap();
-    let mut zip = zip::ZipWriter::new_append(file).unwrap();
-    zip.start_file("payload.exe", zip::write::SimpleFileOptions::default())
-        .unwrap();
-    zip.write_all(b"MZ").unwrap();
-    zip.finish().unwrap();
-    let mut index = sample();
-    let p = &mut index.projects[0];
-    p.key = None;
-    let v = &mut p.versions[0];
-    v.file.url = format!("file://{}", path.display());
-    v.file.size = fs::metadata(&path).unwrap().len();
-    v.file.sha256 = index::sha256_file(&path).unwrap();
-    v.file.signature = None;
-    let e = index::check_file(
-        &index,
-        &index.projects[0],
-        &index.projects[0].versions[0],
-        &path,
-    )
-    .unwrap_err();
-    assert!(
-        e.contains("payload.exe: unsupported executable file"),
-        "{e}"
-    );
-    fs::remove_dir_all(home).unwrap();
-}
-
-#[test]
-fn installs_a_shader_pack_into_shaderpacks() {
-    let index = sample();
-    let home = scratch("shader");
-    let glow = index.project("glow").unwrap();
-    let p = project_of(&index, glow, GAME).unwrap();
-    assert_eq!(p.support(GAME), super::super::Support::Works);
-    let done = install_version(&index, true, glow, &glow.versions[0], &home, &|_, _| {}).unwrap();
-    assert_eq!(done.file, "shaderpacks/glow-1.0.0.sshader");
-    assert_eq!(done.kind, Kind::Shader);
-    assert!(home.join("shaderpacks/glow-1.0.0.sshader").is_file());
-    // Not a mod: nothing turns on in sunrise-mods.txt; the game's Shader Packs page picks it.
-    assert!(!home.join("sunrise-mods.txt").exists());
-    // Installed already: nothing to do.
-    assert_eq!(put_glow(&index, true, &home).unwrap(), done);
-
-    let mut revoked = index.clone();
-    revoked.revoked.push(index::Revoked {
-        id: "glow".into(),
-        sha256: None,
-        reason: "Test.".into(),
-        date: String::new(),
-    });
-    let said = turn_off_revoked(&revoked, &home).unwrap();
-    assert_eq!(said, ["Soft Glow was taken down: Test. Remove it."]);
-
-    installed::remove_pack(&home, &done).unwrap();
-    assert!(!home.join("shaderpacks/glow-1.0.0.sshader").exists());
-    // A file of the same name the registry didn't put there is left alone.
-    fs::write(home.join("shaderpacks/glow-1.0.0.sshader"), b"mine").unwrap();
-    let e = install_version(&index, true, glow, &glow.versions[0], &home, &|_, _| {}).unwrap_err();
-    assert_eq!(
-        e,
-        "shaderpacks/glow-1.0.0.sshader is already there: move it away first."
-    );
-    fs::remove_dir_all(&home).unwrap();
-}
-
-#[test]
-fn refuses_a_changed_file_a_taken_id_and_local_files_from_the_real_registry() {
-    let index = sample();
-    let glow_idx = index.projects.iter().position(|p| p.id == "glow").unwrap();
-
-    let home = scratch("tampered");
-    let mut tampered = index.clone();
-    tampered.projects[glow_idx].versions[0].file.size = 100;
-    let e = put_glow(&tampered, true, &home).unwrap_err();
-    assert!(e.contains("larger than its source says"), "{e}");
-    assert!(!home.join("shaderpacks").exists());
-
-    let e = put_glow(&index, false, &home).unwrap_err();
-    assert!(e.contains("file servers"), "{e}");
-
-    fs::create_dir_all(home.join("shaderpacks")).unwrap();
-    fs::write(home.join("shaderpacks/glow-1.0.0.sshader"), b"mine").unwrap();
-    let e = put_glow(&index, true, &home).unwrap_err();
-    assert!(e.contains("is already there: move it away first"), "{e}");
-
-    let mut taken_down = index.clone();
-    taken_down.revoked.push(index::Revoked {
-        id: "glow".into(),
-        sha256: Some(index.projects[glow_idx].versions[0].file.sha256.clone()),
-        reason: "Test.".into(),
-        date: String::new(),
-    });
-    let e = put_glow(&taken_down, true, &home).unwrap_err();
-    assert_eq!(e, "Soft Glow was taken down: Test.");
-    fs::remove_dir_all(&home).unwrap();
-}
-
-#[test]
-fn registry_versions_run_when_made_for_this_game() {
-    use super::super::{pick, support, Support};
-    let v = |game: &str| vec![game.to_owned()];
-    let sunrise = vec![LOADER.to_owned()];
-    assert_eq!(support(Kind::Mod, &v(GAME), &sunrise, GAME), Support::Works);
-    assert!(!support(Kind::Mod, &v("26.2"), &sunrise, GAME).installable());
-    let index = sample();
-    let versions = |id: &str| -> Vec<Version> {
-        let p = index.project(id).unwrap();
-        p.versions
-            .iter()
-            .map(|x| version_of(&index, p, x))
-            .collect()
-    };
-    assert_eq!(
-        pick(Kind::Modpack, &versions("cozy"), false, GAME)
-            .unwrap()
-            .number,
-        "1.0.0"
-    );
-    let hud = versions("coords_hud");
-    assert!(hud[0].blocked.is_none());
-    assert_eq!(pick(Kind::Mod, &hud, false, GAME).unwrap().number, "0.1.0");
-}
-
-#[test]
-fn a_project_made_for_the_earlier_mod_system_says_it_cant_be_installed() {
-    let mut index = sample();
-    let hud = index
-        .projects
-        .iter_mut()
-        .find(|p| p.id == "coords_hud")
-        .unwrap();
-    hud.versions[0].game = GAME.into();
-    hud.versions[0].capabilities = vec!["game-read".to_string()].into();
-    let p = project_of(&index, index.project("coords_hud").unwrap(), GAME).unwrap();
-    assert!(!p.support(GAME).installable());
-    assert!(p
-        .support(GAME)
-        .reason()
-        .unwrap()
-        .contains("earlier mod system"));
-    // Beside a mod that installs, with fewer downloads:
-    let mut other = index.project("coords_hud").unwrap().clone();
-    other.id = "lanterns_plus".into();
-    other.versions[0].capabilities = Default::default();
-    other.downloads = 0;
-    index.projects.push(other);
-    index
-        .projects
-        .iter_mut()
-        .find(|p| p.id == "coords_hud")
-        .unwrap()
-        .downloads = 1_000_000;
-    let ids = |everything: bool| -> Vec<String> {
-        let mut q = Query::new("", Kind::Mod);
-        q.everything = everything;
-        search(&index, &q).into_iter().map(|p| p.id).collect()
-    };
-    // The list leaves it out, as the note above it says.
-    assert!(!ids(false).iter().any(|id| id == "coords_hud"));
-    // Asked for everything, it comes after what installs, despite its downloads.
-    let order = ids(true);
-    let at = |id: &str| order.iter().position(|o| o == id).unwrap();
-    assert!(at("lanterns_plus") < at("coords_hud"), "{order:?}");
-    // The same project with a version this Sunrise can use installs as before.
-    let mut fine = sample();
-    fine.projects
-        .iter_mut()
-        .find(|p| p.id == "coords_hud")
-        .unwrap()
-        .versions[0]
-        .game = GAME.into();
-    let p = project_of(&fine, fine.project("coords_hud").unwrap(), GAME).unwrap();
-    assert!(p.blocked.is_none());
-}
-
-#[test]
-fn install_takes_the_newest_version_this_build_can_install() {
-    let mut index = sample();
-    let versions = &mut index.projects[0].versions;
-    // A newer version above the sample's, asking for a capability this build does not know.
-    let mut newer = versions[0].clone();
-    newer.version = "9.0.0".into();
-    newer.capabilities = vec!["game-read".to_string()].into();
-    versions.insert(0, newer);
-    let chosen = newest(&index, &index.projects[0], GAME).unwrap();
-    assert_eq!(chosen.version, "0.1.0");
-}
-
-#[test]
-fn install_keeps_the_takedown_reason_of_a_version_it_could_not_install_anyway() {
-    let mut index = sample();
-    let v = &mut index.projects[0].versions[0];
-    v.capabilities = vec!["game-read".to_string()].into();
-    let sha256 = v.file.sha256.clone();
-    index.revoked.push(index::Revoked {
-        id: "coords_hud".into(),
-        sha256: Some(sha256),
-        reason: "Test.".into(),
-        date: String::new(),
-    });
-    let e = newest(&index, &index.projects[0], GAME).unwrap_err();
-    assert_eq!(e, "Coordinates HUD was taken down: Test.");
-}
-
-#[test]
-fn a_summary_the_registry_cut_mid_word_ends_on_a_whole_word() {
-    let cut = format!("{} and tools at the crafti", "x".repeat(SUMMARY_CUT - 24));
-    assert_eq!(cut.chars().count(), SUMMARY_CUT);
-    assert!(summary(&cut).ends_with(" at the…"), "{}", summary(&cut));
-    // Whole sentences, and short ones, stay as written.
-    let whole = format!("{}.", "x ".repeat(SUMMARY_CUT / 2));
-    assert_eq!(summary(&whole), whole);
-    assert_eq!(summary("A short one"), "A short one");
 }
 
 #[test]

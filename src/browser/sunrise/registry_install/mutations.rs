@@ -5,49 +5,6 @@ use sunrise_launcher_smod::{dependencies::parse_version, mod_list::ModList};
 
 mod gui;
 
-pub(super) fn update_floors(
-    catalogue: &index::Index,
-    before: &Inventory,
-    game: &str,
-    requested: &[String],
-) -> Result<BTreeMap<String, semver::Version>, InstallError> {
-    let ids = requested
-        .iter()
-        .map(String::as_str)
-        .collect::<BTreeSet<_>>();
-    let mut above = BTreeMap::new();
-    for id in ids {
-        let installed_package = before.get(id);
-        let Some(old) = installed_package.filter(|p| p.owned) else {
-            let name = installed_package.map_or_else(
-                || {
-                    catalogue
-                        .project(id)
-                        .map_or(tr("This mod"), |p| p.name.as_str())
-                },
-                |p| p.package.manifest.name.as_str(),
-            );
-            return Err(InstallError::Refused(trf(
-                "Sunrise couldn't confirm that {name} came from the Sunrise registry, so it can't be updated here.",
-                &[("name", name)],
-            )));
-        };
-        let installed =
-            parse_version(&old.package.manifest.version).map_err(|_| unproved_mods())?;
-        if catalogue.project(id).is_some_and(|p| {
-            p.versions.iter().any(|v| {
-                fits_game(v, game)
-                    && catalogue.revoked(id, &v.file.sha256).is_none()
-                    && parse_version(&v.version)
-                        .is_ok_and(|new| new.cmp_precedence(&installed).is_gt())
-            })
-        }) {
-            above.insert(id.to_owned(), installed);
-        }
-    }
-    Ok(above)
-}
-
 pub(super) fn enabled(home: &Path) -> Result<BTreeSet<String>, String> {
     let path = home.join(sunrise_launcher_smod::mod_list::FILE);
     match fs::read_to_string(&path) {
@@ -208,10 +165,6 @@ impl ChangeImpact {
         self.evidence
     }
 
-    pub(super) fn matches_world_review(&self, reviewed: &[worlds::WorldRisk]) -> bool {
-        self.evidence == reviewed
-    }
-
     fn affected(&self) -> impl Iterator<Item = &worlds::WorldRisk> {
         self.evidence.iter().filter(|world| !world.mods.is_empty())
     }
@@ -318,7 +271,7 @@ pub(crate) fn check_activation(
     active: Option<&managed_play::Active>,
     activate: &[&str],
 ) -> Result<(), String> {
-    let packages = inventory(home, None)?;
+    let packages = inventory(home)?;
     let mut enabled = enabled(home)?;
     enabled.extend(activate.iter().map(|&id| id.to_owned()));
     let manifests = packages
@@ -560,7 +513,7 @@ pub fn remove_mods(
     let old = edit.candidate()?;
     let next = edit.candidate()?;
     let home = next.path();
-    let present = inventory(home, None)?;
+    let present = inventory(home)?;
     let ids = ids.iter().cloned().collect::<BTreeSet<_>>();
     let enabled = enabled(home)?;
     let mut staged = stage_removal(
@@ -575,7 +528,7 @@ pub fn remove_mods(
     let disabled: BTreeSet<String> = unavailable.difference(&ids).cloned().collect();
     let disabled_ids = unavailable.iter().map(String::as_str).collect::<Vec<_>>();
     mod_list::set_all_enabled(home, &disabled_ids, false)?;
-    if let Some(conflict) = manifest_conflict(home, None, None, Side::Both, |_| false)? {
+    if let Some(conflict) = manifest_conflict(home, Side::Both, |_| false)? {
         return Err(InstallError::Refused(conflict.reason));
     }
     let removed = staged

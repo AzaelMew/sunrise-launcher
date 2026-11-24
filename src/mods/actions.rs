@@ -111,14 +111,6 @@ impl Launcher {
         true
     }
 
-    pub(crate) fn add(&mut self, id: String) {
-        self.ui.mods.notice = None;
-        self.mods.message = None;
-        if let Err(why) = self.queue_registry_install(id.clone(), vec![id]) {
-            self.ui.mods.notice = Some(Err(why));
-        }
-    }
-
     /// Install a project from the signed v2 index (Discover, its pages and port rows).
     pub(crate) fn add_v2(&mut self, project_id: String) {
         let ids = vec![project_id.clone()];
@@ -395,31 +387,26 @@ impl Launcher {
         if !self.guard() {
             return;
         }
-        let (v2, v1): (Vec<Row>, Vec<Row>) = self
+        let ids = self
             .rows()
             .into_iter()
             .filter(|row| {
                 model::bulk_updatable(row)
                     && (!only_selected || self.ui.mods.selection.contains(&row.id))
             })
-            .partition(Row::v2_installed);
-        let ids = |rows: Vec<Row>| rows.into_iter().map(|row| row.id).collect::<Vec<_>>();
-        self.submit_registry_change(Kind::UpdateAll, "update-all", ids(v1), BTreeMap::new());
-        self.submit_registry_change(Kind::UpdateAllV2, "update-all", ids(v2), BTreeMap::new());
+            .map(|row| row.id)
+            .collect();
+        self.submit_registry_change(Kind::UpdateAllV2, "update-all", ids, BTreeMap::new());
     }
 
     pub(super) fn update_one(&mut self, row: &Row) {
         if row.local.is_none() && row.update.is_some() && self.guard() {
-            let kind = if row.v2_installed() {
-                Kind::UpdateV2
-            } else {
-                Kind::Update
-            };
-            self.submit_registry_change(kind, &row.id, vec![row.id.clone()], BTreeMap::new());
+            let ids = vec![row.id.clone()];
+            self.submit_registry_change(Kind::UpdateV2, &row.id, ids, BTreeMap::new());
         }
     }
 
-    fn submit_registry_change(
+    pub(in crate::mods) fn submit_registry_change(
         &mut self,
         kind: Kind,
         card: &str,

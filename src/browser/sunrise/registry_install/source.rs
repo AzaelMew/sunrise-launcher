@@ -13,11 +13,6 @@ pub use dependencies::SourceDependency;
 pub(super) use dependencies::{complete_source_add, SourceAdd};
 #[cfg(test)]
 mod graph_tests;
-mod mixed;
-#[cfg(all(test, target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
-pub(super) use mixed::update_registry_and_sources_with_registry;
-pub(super) use mixed::MixedSources;
-pub use mixed::{update_registry_and_sources, CombinedUpdate};
 
 pub enum SourceRequest {
     Add(SourceCommit),
@@ -371,7 +366,6 @@ fn prepare_packages(
             &entries,
             result[0].proof.active.as_ref(),
             cancellation,
-            &|_| {},
         )?;
     } else {
         check_source_set(stage.path(), &trial.off, base, cancellation)?;
@@ -604,7 +598,7 @@ pub(super) fn check_source_set(
     cancellation: &native_mods::Cancellation,
 ) -> Result<(), SourceError> {
     github::with_trial_selection(home, off_trial, || {
-        let packages = inventory(home, None)?;
+        let packages = inventory(home)?;
         let enabled = mutations::enabled(home)?;
         let manifests = packages
             .iter()
@@ -622,10 +616,7 @@ pub(super) fn check_source_set(
                 });
             }
         }
-        let catalogue = super::super::fetched_index();
-        if let Some(conflict) =
-            manifest_conflict(home, catalogue.as_deref(), None, Side::Client, |_| false)?
-        {
+        if let Some(conflict) = manifest_conflict(home, Side::Client, |_| false)? {
             return Err(SourceError::Dependency {
                 required: None,
                 detail: conflict.reason,

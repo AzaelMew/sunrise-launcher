@@ -1,6 +1,6 @@
 //! The status strip: what Play is doing or what went wrong, with its one action, on every page
-//! except Home, whose fixed Play bar always shows this feedback. Source builds and mixed
-//! registry updates are said here on every page, Home included.
+//! except Home, whose fixed Play bar always shows this feedback. Source builds are said here
+//! on every page, Home included.
 //! It is not drawn at all while there is nothing to tell (`launch_state::View::strip`).
 use super::*;
 use crate::frame::button;
@@ -47,7 +47,6 @@ impl Launcher {
     pub(crate) fn status_strip(&mut self, cx: &mut Context<Self>) -> Option<Div> {
         use crate::mods_page::install::{stage_fraction, stage_label};
         use sunrise_launcher::browser::sunrise::InstallProgress;
-        let mixed = self.mixed_update_active();
         if let Some(activity) = self.source_activity() {
             let step = activity.progress;
             let label = match step {
@@ -82,38 +81,11 @@ impl Launcher {
                             .flex()
                             .flex_col()
                             .gap(px(4.))
-                            .children(mixed.then(|| {
-                                div()
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .child(tr("Building source mods…"))
-                            }))
                             .child(div().truncate().child(label))
                             .child(crate::widgets::progress_bar(fraction, &self.theme)),
                     )
                     .children(stop),
             );
-        }
-        if mixed {
-            if let Some(step) = self.registry_stage() {
-                let fraction = stage_fraction(step).map(|f| (f, f));
-                return Some(
-                    strip().child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .flex()
-                            .flex_col()
-                            .gap(px(4.))
-                            .child(
-                                div()
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .child(tr("Updating registry mods…")),
-                            )
-                            .child(div().truncate().child(stage_label(step)))
-                            .child(crate::widgets::progress_bar(fraction, &self.theme)),
-                    ),
-                );
-            }
         }
         if self.ui.page == crate::frame::Page::Home {
             return None;

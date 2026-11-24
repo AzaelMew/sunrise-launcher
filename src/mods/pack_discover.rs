@@ -1,9 +1,8 @@
-//! Packs › Discover: resource and data packs from Modrinth, shader packs from Sunrise's registry
-//! and Modrinth, installed through the browser's checked path (`browser::installed`: checksum
-//! before anything is put in place). Each card names its source.
+//! Packs › Discover: resource, shader and data packs from Modrinth, installed through the
+//! browser's checked path (`browser::installed`: checksum before anything is put in place).
 //!
 //! **Scope.** Only packs of the chosen kind: no mods or modpacks come from here, and a hit of
-//! any other kind or source is dropped ([`keep`]).
+//! any other kind is dropped ([`keep`]).
 //!
 //! **Where a pack goes.** A resource or shader pack goes into the selected setup's folder. A
 //! data pack goes into the worlds the player ticks in the world picker (`data_packs`): there is
@@ -20,7 +19,7 @@ use crate::frame::button;
 use crate::paint::palette;
 use std::path::Path;
 use sunrise_launcher::browser::details::{category_label, Sort};
-use sunrise_launcher::browser::{self, images, installed, Kind, Project, Query};
+use sunrise_launcher::browser::{self, images, installed, Kind, Project, Query, Source as _};
 use sunrise_launcher::worlds;
 
 /// How many hits one search asks for.
@@ -32,7 +31,7 @@ const TEXT_MAX: usize = 100;
 pub(super) enum Scope {
     #[default]
     Resource,
-    /// Iris-format zips from Modrinth and Sunrise's own `.sshader` packs from its registry.
+    /// Iris-format zips from Modrinth.
     Shader,
     Data,
 }
@@ -127,17 +126,12 @@ pub(super) fn query(scope: Scope, text: &str, game: &str, filters: &PackFilters)
 }
 
 /// The hits a scope shows: Modrinth's, of the scope's kind only (a mod, modpack or other kind
-/// that a source answered anyway is dropped), each project once. Shader packs also come from
-/// Sunrise's registry (its own `.sshader` packs), and from there only.
+/// that a source answered anyway is dropped), each project once.
 pub(super) fn keep(scope: Scope, hits: Vec<Project>) -> Vec<Project> {
     let kind = scope.kind();
     let mut seen = std::collections::HashSet::new();
     hits.into_iter()
-        .filter(|p| p.kind == kind)
-        .filter(|p| {
-            p.source == SourceId::Modrinth
-                || (p.source == SourceId::Sunrise && kind == Kind::Shader)
-        })
+        .filter(|p| p.kind == kind && p.source == SourceId::Modrinth)
         .filter(|p| seen.insert((p.source, p.id.clone())))
         .collect()
 }
@@ -222,21 +216,9 @@ impl Launcher {
         let read_categories = p.categories.as_ref().is_none_or(|(s, _)| *s != p.scope);
         let (seq, scope, tx) = (p.seq, p.scope, self.ui.mods.tx.clone());
         std::thread::spawn(move || {
-            let ask = |id| browser::source(id).search(&q);
-            let modrinth = ask(SourceId::Modrinth);
-            // Sunrise's own shader packs lead; the registry failing leaves Modrinth's.
-            let mut hits = match scope {
-                Scope::Shader => ask(SourceId::Sunrise).unwrap_or_default(),
-                _ => Vec::new(),
-            };
-            let result = match modrinth {
-                Ok(found) => {
-                    hits.extend(found);
-                    Ok(keep(scope, hits))
-                }
-                Err(_) if !hits.is_empty() => Ok(keep(scope, hits)),
-                Err(e) => Err(e),
-            };
+            let result = browser::modrinth::Modrinth
+                .search(&q)
+                .map(|hits| keep(scope, hits));
             let _ = tx.send(Event::Packs(seq, result));
             if read_categories {
                 // Without them the menu offers only "All categories".
@@ -672,13 +654,13 @@ fn install(
     game: &str,
     progress: &dyn Fn(&str, f32),
 ) -> Result<String, String> {
-    let source = browser::source(project.source);
+    let source = browser::modrinth::Modrinth;
     let _lock = browser::try_lock_home(home).ok_or_else(|| {
         tr("This profile is busy. Try again when the operation finishes.").to_string()
     })?;
     match project.kind {
         Kind::ResourcePack | Kind::Shader => {
-            let done = installed::install(&*source, project, false, home, game, progress)?;
+            let done = installed::install(&source, project, false, home, game, progress)?;
             let names: Vec<String> = done
                 .iter()
                 .map(|e| format!("{} {}", e.title, e.number))
