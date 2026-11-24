@@ -458,6 +458,16 @@ impl From<&index::Collection> for CollectionGroup {
     }
 }
 
+/// A switch's hold on a mod's exact archive.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct Hold {
+    /// The build it was held for, by the name players read.
+    pub(super) build: String,
+    pub(super) reason: sunrise_launcher::managed_play::HeldReason,
+    /// Local or source bytes: turning it on checks them against the build again.
+    pub(super) retry: bool,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct Row {
     pub(super) id: String,
@@ -467,8 +477,9 @@ pub(super) struct Row {
     pub(super) version: String,
     pub(super) on: bool,
     pub(super) need: Option<Need>,
-    /// A browser-installed mod whose registry status couldn't be checked this run.
-    pub(super) registry_unchecked: bool,
+    /// Why a registry-installed mod's status couldn't be checked: the registry was unreachable
+    /// or refused. None while the first read is out.
+    pub(super) registry_issue: Option<String>,
     /// The version an update would install.
     pub(super) update: Option<String>,
     /// Installed because another mod needed it.
@@ -484,7 +495,7 @@ pub(super) struct Row {
     /// It can't run on the game this setup plays: the build left it out.
     pub(super) unfit: Option<Unfit>,
     /// The exact Switch receipt keeps the native archive off until a proved update.
-    pub(super) held_for: Option<String>,
+    pub(super) held_for: Option<Hold>,
     /// The build left it out for another reason (it didn't build, it needs a mod that was left
     /// out, it clashes with another): what the player reads, in a sentence.
     pub(super) left_out: Option<Omission>,
@@ -633,15 +644,19 @@ pub(super) fn cells(row: &Row, error: Option<&str>, building: Option<&BuildState
         ),
         Some(Need::Build) | None => {}
     }
-    if let Some(build) = &row.held_for {
+    if let Some(hold) = &row.held_for {
+        let vars = [("mod", row.title.as_str()), ("build", hold.build.as_str())];
         say(
             "information-circle",
-            tr("Needs an update from its author").into(),
+            hold.reason.label().into(),
             Tone::Warning,
-            trf(
-                "{mod} needs an update from its author for {build}.",
-                &[("mod", &row.title), ("build", build)],
-            ),
+            match hold.reason.detail() {
+                Some(detail) => detail.to_owned(),
+                None if hold.reason.unproved() => {
+                    trf("{mod}'s fit with {build} could not be verified.", &vars)
+                }
+                None => trf("{mod} needs an update from its author for {build}.", &vars),
+            },
         );
     } else if let Some(unfit) = &row.unfit {
         say(
@@ -733,10 +748,11 @@ pub(super) fn cells(row: &Row, error: Option<&str>, building: Option<&BuildState
         status: said.into_iter().next().map(|first| Status { tip, ..first }),
         popover,
         action: row.update.as_ref().map(|_| RowAction::Update),
-        switch: row.held_for.is_none()
+        switch: row.held_for.as_ref().is_none_or(|hold| hold.retry)
             && !matches!(row.need, Some(Need::TakenDown(_)))
             && !row.local.as_ref().is_some_and(|l| l.unreadable),
-        unavailable: row.held_for.is_some()
+        // A retryable hold is a switch the player may try, not a mod the build dropped.
+        unavailable: row.held_for.as_ref().is_some_and(|hold| !hold.retry)
             || row.unfit.is_some()
             || row.left_out.is_some()
             || matches!(
@@ -859,6 +875,8 @@ pub(super) struct World<'a> {
     pub(super) game: &'a str,
     /// The signed v2 index, which owns entries keyed by a v2 project ID.
     pub(super) v2: Option<&'a index_v2::Index>,
+    /// Why the last read of the v2 index failed; none while it reads or once it has read.
+    pub(super) v2_failure: Option<&'a str>,
     /// The exact build the profile plays, which v2 `fits` lists name.
     pub(super) build: Option<&'a str>,
     /// Verified archive hashes already rejected by the SDK for this base build.
@@ -933,7 +951,10 @@ pub(super) fn rows(entries: &[Entry], w: &World) -> Vec<Row> {
                 version: e.number.clone(),
                 on,
                 need,
-                registry_unchecked: w.index.is_none(),
+                registry_issue: w
+                    .index
+                    .is_none()
+                    .then(|| tr("Registry not checked").to_owned()),
                 update,
                 dependency: e.dependency,
                 pinned: w.chosen.contains_key(&e.project),
@@ -973,7 +994,7 @@ pub(super) fn rows(entries: &[Entry], w: &World) -> Vec<Row> {
             version: l.version.clone(),
             on,
             need,
-            registry_unchecked: false,
+            registry_issue: None,
             update: None,
             dependency: false,
             pinned: false,
@@ -1038,7 +1059,7 @@ fn v2_row(e: &Entry, id: String, w: &World) -> Row {
         version: e.number.clone(),
         on,
         need,
-        registry_unchecked: w.v2.is_none(),
+        registry_issue: w.v2_failure.map(str::to_owned),
         update,
         dependency: e.dependency,
         pinned: w.chosen.contains_key(&e.project),

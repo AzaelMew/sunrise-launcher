@@ -237,6 +237,7 @@ fn world<'a>(
         index: Some(index),
         game: GAME,
         v2: None,
+        v2_failure: None,
         build: None,
         unfit_updates: &NO_UNFIT_UPDATES,
         enabled,
@@ -469,8 +470,22 @@ fn a_held_source_is_grouped_with_rows_that_need_attention() {
     let mut assembled = rows(&entries, &world(&idx, &enabled, &unbuilt));
     let quiet = assembled.iter_mut().find(|row| row.id == "quiet").unwrap();
     assert_eq!(quiet.group(), Group::Rest);
-    quiet.held_for = Some("nightly-test".into());
+    quiet.held_for = Some(Hold {
+        build: "nightly-test".into(),
+        reason: sunrise_launcher::managed_play::HeldReason::NoFit {
+            build: "nightly-test".into(),
+            detail: None,
+        },
+        retry: false,
+    });
     assert_eq!(quiet.group(), Group::NeedsYou);
+    // A registry hold waits for its author: its switch is out of reach and dimmed.
+    let waiting = cells(quiet, None, None);
+    assert!(!waiting.switch && waiting.unavailable);
+    // Local or source bytes may be tried again: the switch works and isn't dimmed as dropped.
+    quiet.held_for.as_mut().unwrap().retry = true;
+    let retryable = cells(quiet, None, None);
+    assert!(retryable.switch && !retryable.unavailable);
 }
 
 #[test]
@@ -512,7 +527,7 @@ fn registry_installed_rows_use_live_names_and_statuses_or_ids_and_not_checked() 
     assert_eq!(row.authors, "Someone");
     assert_eq!(row.need, Some(Need::TakenDown("unsafe".into())));
     assert_eq!(row.update.as_deref(), Some("2.0.0"));
-    assert!(!row.registry_unchecked);
+    assert_eq!(row.registry_issue, None);
 
     let offline = World {
         index: None,
@@ -524,7 +539,7 @@ fn registry_installed_rows_use_live_names_and_statuses_or_ids_and_not_checked() 
     assert!(row.icon.is_none());
     assert!(row.need.is_none());
     assert!(row.update.is_none());
-    assert!(row.registry_unchecked);
+    assert_eq!(row.registry_issue.as_deref(), Some("Registry not checked"));
 }
 
 #[test]
@@ -723,6 +738,7 @@ fn turning_on_a_local_native_file_exposes_its_build() {
                 index: None,
                 game: GAME,
                 v2: None,
+                v2_failure: None,
                 build: None,
                 unfit_updates: &NO_UNFIT_UPDATES,
                 enabled: &enabled,
@@ -1716,6 +1732,7 @@ fn a_v2_installed_row_offers_the_newest_release_listed_for_its_build_and_shows_a
                 index: None,
                 game: GAME,
                 v2: Some(index),
+                v2_failure: None,
                 build: Some("26.3-0.1.0"),
                 unfit_updates: &NO_UNFIT_UPDATES,
                 enabled: &on,
@@ -1741,6 +1758,41 @@ fn a_v2_installed_row_offers_the_newest_release_listed_for_its_build_and_shows_a
     assert_eq!(
         world(&taken_down).need,
         Some(Need::TakenDown("malware".into()))
+    );
+}
+
+#[test]
+fn a_v2_installed_row_says_why_the_registry_went_unchecked_only_when_a_read_failed() {
+    let mut installed = entry("Ab3dE9xQ", "1.0.0", false, &"a".repeat(64));
+    installed.mod_id = Some("wayfinder".into());
+    let none = HashSet::new();
+    let row = |v2_failure| {
+        rows(
+            std::slice::from_ref(&installed),
+            &World {
+                index: None,
+                game: GAME,
+                v2: None,
+                v2_failure,
+                build: Some("26.3-0.1.0"),
+                unfit_updates: &NO_UNFIT_UPDATES,
+                enabled: &none,
+                unbuilt: &none,
+                chosen: &NO_PINS,
+                local: &[],
+            },
+        )
+        .remove(0)
+    };
+    assert_eq!(
+        row(None).registry_issue,
+        None,
+        "nothing while the first read is out"
+    );
+    let unreachable = "Registry not reachable: connection refused";
+    assert_eq!(
+        row(Some(unreachable)).registry_issue.as_deref(),
+        Some(unreachable)
     );
 }
 
@@ -1771,6 +1823,7 @@ fn a_served_mod_needs_its_host_on() {
                 index: None,
                 game: GAME,
                 v2: None,
+                v2_failure: None,
                 build: None,
                 unfit_updates: &NO_UNFIT_UPDATES,
                 enabled,

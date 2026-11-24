@@ -1927,5 +1927,17 @@
   "Building native code nobody reviewed: {mods}": "Building native code nobody reviewed: {mods}",
   "{files} · These files are in this profile's mods folder, but did not come from the Sunrise registry. Sunrise cannot verify who built them or where they came from.": "{files} · These files are in this profile's mods folder, but did not come from the Sunrise registry. Sunrise cannot verify who built them or where they came from.",
   "Waiting for another build to finish…": "Waiting for another build to finish…",
+  "Checking {mod} for this build…": "Checking {mod} for this build…",
+  "Connect to the Sunrise registry before switching builds.": "Connect to the Sunrise registry before switching builds.",
+  "Couldn't check {mod} against the registry's takedowns: {error}": "Couldn't check {mod} against the registry's takedowns: {error}",
+  "The selected profile changed. Try again.": "The selected profile changed. Try again.",
+  "{mod} needs an update from its author for {build}.": "{mod} needs an update from its author for {build}.",
+  "{mod} needs mod API {api}, which this launcher doesn't run.": "{mod} needs mod API {api}, which this launcher doesn't run.",
+  "{mod} runs only on servers, so it can't be turned on here.": "{mod} runs only on servers, so it can't be turned on here.",
+  "{mod}'s fit with {build} could not be verified.": "{mod}'s fit with {build} could not be verified.",
+  "{mod} — Not compatible with this build. {reason}": "{mod} — Not compatible with this build. {reason}",
+  "{mod} — Fit could not be verified. {reason}": "{mod} — Fit could not be verified. {reason}",
+  "Registry not reachable: {error}": "Registry not reachable: {error}",
+  "Registry refused: {error}": "Registry refused: {error}",
   "The launcher's folder {folder} is too deep for Windows: a native build there needs paths of {length} characters, and Windows allows 259. Set SUNRISE_LAUNCHER_HOME to a shorter folder.": "The launcher's folder {folder} is too deep for Windows: a native build there needs paths of {length} characters, and Windows allows 259. Set SUNRISE_LAUNCHER_HOME to a shorter folder."
 }

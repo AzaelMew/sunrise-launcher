@@ -33,6 +33,8 @@ enum Basis<'a> {
 pub(crate) struct SwitchPublication {
     pub(crate) holds: Vec<Held>,
     pub(crate) removed: BTreeMap<String, (String, String)>,
+    /// Earlier holds this switch decided again: re-held ones are among `holds`.
+    pub(crate) retired: BTreeSet<String>,
     pub(crate) build_choice: Option<crate::managed_play::CommittedBuildChoice>,
 }
 
@@ -416,9 +418,10 @@ impl Edit<'_> {
         let SwitchPublication {
             holds,
             removed,
+            mut retired,
             build_choice,
         } = publication;
-        let retired = removed.keys().cloned().collect();
+        retired.extend(removed.keys().cloned());
         let receipt = if holds.is_empty() && removed.is_empty() {
             None
         } else {
