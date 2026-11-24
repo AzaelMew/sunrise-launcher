@@ -33,6 +33,7 @@ mod tool;
 pub use internals_sync::catalog;
 pub mod fit;
 mod isolate;
+pub mod local_fit;
 mod mixins;
 mod picker;
 pub mod sdk_cache;
