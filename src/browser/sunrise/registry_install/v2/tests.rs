@@ -1178,8 +1178,10 @@ fn v2_switch_slot_planning_keeps_chosen_project_maps_verdicts_and_honors_pins() 
 
     // 5. V2 hold carries 8-char project ID + VerifiedRepository and passes Held validation!
     let hold = make_v2_hold(
+        Path::new(""),
         "wayfinder",
         item,
+        item.enabled,
         HeldReason::NoFit {
             build: "26.3-0.1.2".into(),
             detail: None,
