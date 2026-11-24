@@ -382,11 +382,13 @@ mod tests {
             change: PublisherChange {
                 project_id: "frnt1234".into(),
                 pinned: PublisherPin {
+                    owner_id: None,
                     repository_id: old_id,
                     repository_name: old_repo.into(),
                     workflow_path: old_wf.into(),
                 },
                 incoming: PublisherPin {
+                    owner_id: None,
                     repository_id: new_id,
                     repository_name: new_repo.into(),
                     workflow_path: new_wf.into(),

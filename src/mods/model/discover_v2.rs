@@ -976,6 +976,7 @@ mod tests {
             workflow: format!(
                 "sunrise-org/sunrise-mods/.github/workflows/release.yml@refs/tags/release-v{version}"
             ),
+            repository: None,
             fits: fits.iter().map(|s| (*s).to_owned()).collect(),
             does_not_fit: does_not_fit.iter().map(|s| (*s).to_owned()).collect(),
             file: File {

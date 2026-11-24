@@ -150,6 +150,11 @@ pub struct Release {
     pub sunrise: String,
     /// Full signer workflow reference (`<project.workflow>@refs/tags/release-v<number>`).
     pub workflow: String,
+    /// Numeric GitHub ID of the repository this release was signed from, recorded when it was
+    /// published, so a project that later moves to another repository keeps its older releases
+    /// verifiable. Absent in indexes written before the field existed: the project's repository.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository: Option<u64>,
     /// Exact Sunrise build IDs this release is known to fit.
     pub fits: Vec<String>,
     /// Exact Sunrise build IDs this release is definitively known not to fit.
@@ -252,6 +257,11 @@ impl Release {
 }
 
 impl Project {
+    /// The repository ID `release` was signed from: its own row's, else the project's.
+    pub fn release_repository(&self, release: &Release) -> u64 {
+        release.repository.unwrap_or(self.repository.id)
+    }
+
     /// Releases whose computed fit list names `build` exactly.
     pub fn releases_fitting<'a>(&'a self, build: &'a str) -> impl Iterator<Item = &'a Release> {
         self.releases.iter().filter(move |r| r.fits_build(build))
@@ -847,6 +857,9 @@ fn check_release(
     }
     check_release_workflow(project_workflow, &release.workflow)
         .map_err(|e| at(format!("workflow: {e}")))?;
+    if release.repository == Some(0) {
+        return Err(at("repository must be positive".into()));
+    }
 
     let mut seen_verdicts = HashSet::new();
     for build in &release.fits {

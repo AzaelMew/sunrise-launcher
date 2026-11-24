@@ -316,7 +316,7 @@ pub fn classify_v2_ownership(
         let Some(repository) = row.repository.as_ref() else {
             return V2Ownership::Local;
         };
-        if repository.id != project.repository.id {
+        if repository.id != project.release_repository(release) {
             return V2Ownership::Local;
         }
         return V2Ownership::Verified {
@@ -343,7 +343,7 @@ pub fn classify_v2_ownership(
                 slug: project.slug.clone(),
                 version: release.version.clone(),
                 repository: installed::VerifiedRepository {
-                    id: project.repository.id,
+                    id: project.release_repository(release),
                     name: project.repository.name.clone(),
                     path: project.repository.path.clone(),
                     workflow: release.workflow.clone(),
@@ -674,7 +674,7 @@ fn planned_from(project: &Project, release: &Release, dependency: bool) -> Plann
         url: release.file.url.clone(),
         attestation_url: release.file.attestation.clone(),
         workflow: release.workflow.clone(),
-        repository_id: project.repository.id,
+        repository_id: project.release_repository(release),
         repository_name: project.repository.name.clone(),
         repository_path: project.repository.path.clone(),
         dependency,
@@ -1314,7 +1314,7 @@ pub(crate) fn stage_and_verify_v2_release(
     let bundle_bytes = fetch_bytes(&release.file.attestation, MAX_ATTESTATION_BYTES)
         .map_err(InstallError::Download)?;
     let expected = ExpectedRelease {
-        repository_id: project.repository.id,
+        repository_id: project.release_repository(release),
         workflow: &release.workflow,
     };
     let verified = verify_release(&bundle_bytes, digest_bytes, &expected).map_err(|error| {

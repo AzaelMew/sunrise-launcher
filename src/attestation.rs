@@ -2,16 +2,20 @@
 //!
 //! Cryptographic verification lives in `sunrise-attestation` (`crates/attestation`). This module
 //! applies Sunrise's release policy:
-//! - the attested repository ID equals the project's `repository.id`;
+//! - the attested repository ID equals the repository the release's own row says it was signed
+//!   from (the project's `repository.id` when the row names none);
 //! - the attested signer workflow equals the release's `workflow` field exactly;
 //! - that workflow is `sunrise-org/sunrise-mods/.github/workflows/release.yml` at a
 //!   `refs/tags/release-v<number>` tag.
 //!
-//! At a project's first install on this computer, the launcher remembers its repository ID and
-//! workflow path in `publisher-pins.json` under the launcher data folder (outside disposable
-//! caches). A newer `release-v<number>` tag on the same workflow path is accepted; a different
-//! repository ID or workflow path returns [`Error::PublisherChanged`] so the UI can ask the player
-//! before accepting the new publisher.
+//! At a project's first install on this computer, the launcher remembers its publisher in
+//! `publisher-pins.json` under the launcher data folder (outside disposable caches): the owner
+//! account ID of the repository it was signed from and the workflow path. A newer
+//! `release-v<number>` tag on the same workflow path, or a release from another repository of the
+//! same owner (a project moved within one account), is accepted; a different owner or workflow
+//! path returns [`Error::PublisherChanged`] so the UI can ask the player before accepting the new
+//! publisher. A pin written before owner IDs were remembered gains its owner from the next release
+//! verified from its own repository; until then a move asks once.
 
 use crate::backend;
 use crate::i18n::trf;
@@ -36,7 +40,8 @@ const PIN_SCHEMA: u32 = 1;
 /// What a v2 registry release claims its attestation proves.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ExpectedRelease<'a> {
-    /// Stable numeric GitHub repository ID (`project.repository.id`).
+    /// Stable numeric GitHub repository ID the release was signed from
+    /// (`Project::release_repository`).
     pub repository_id: u64,
     /// Full signer workflow ref recorded on the release (`release.workflow`),
     /// e.g. `sunrise-org/sunrise-mods/.github/workflows/release.yml@refs/tags/release-v1`.
@@ -57,6 +62,7 @@ impl VerifiedRelease {
     /// The publisher identity remembered per project on this computer.
     pub fn pin(&self) -> PublisherPin {
         PublisherPin {
+            owner_id: Some(self.attested.owner_id),
             repository_id: self.attested.repository_id,
             repository_name: self.attested.repository_name.clone(),
             workflow_path: self.workflow_path.clone(),
@@ -64,20 +70,30 @@ impl VerifiedRelease {
     }
 }
 
-/// The repository ID and workflow path remembered for a registry project on this computer.
+/// The publisher remembered for a registry project on this computer: the owner account and
+/// workflow path that matter, and the repository last verified, shown when they change.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PublisherPin {
+    /// GitHub owner account ID of the signing repository. `None` only in pins written by
+    /// launchers before owner IDs were remembered.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_id: Option<u64>,
     pub repository_id: u64,
     pub repository_name: String,
     pub workflow_path: String,
 }
 
 impl PublisherPin {
-    /// True when `other` keeps the same pinned repository ID and workflow path.
-    /// A repository rename (`repository_name`) or a newer `release-v<number>` tag on the same
-    /// workflow path is not a publisher change.
+    /// True when `other` keeps the pinned owner and workflow path. A move to another repository
+    /// of the same owner, a repository rename or a newer `release-v<number>` tag on the same
+    /// workflow path is not a publisher change. A pin without an owner ID only matches its own
+    /// repository.
     pub fn matches(&self, other: &PublisherPin) -> bool {
-        self.repository_id == other.repository_id && self.workflow_path == other.workflow_path
+        self.workflow_path == other.workflow_path
+            && match (self.owner_id, other.owner_id) {
+                (Some(pinned), Some(incoming)) => pinned == incoming,
+                _ => self.repository_id == other.repository_id,
+            }
     }
 }
 
@@ -91,6 +107,10 @@ pub struct PublisherChange {
 }
 
 impl PublisherChange {
+    pub fn owner_changed(&self) -> bool {
+        self.pinned.owner_id != self.incoming.owner_id
+    }
+
     pub fn repository_changed(&self) -> bool {
         self.pinned.repository_id != self.incoming.repository_id
     }
@@ -105,7 +125,7 @@ impl PublisherChange {
 pub enum PinStatus {
     /// First install of this project on this computer (no prior pin existed).
     FirstInstall,
-    /// Matches the repository ID and workflow path remembered at first install.
+    /// Matches the owner (or, for an old pin, the repository) and workflow path remembered.
     Matched,
 }
 
@@ -113,7 +133,7 @@ pub enum PinStatus {
 pub enum Error {
     /// Offline Sigstore bundle verification failed.
     Verify(Box<sunrise_attestation::Error>),
-    /// The attested repository ID did not match the project's `repository.id`.
+    /// The attested repository ID did not match the repository the release was signed from.
     WrongRepository {
         expected: u64,
         actual: u64,
@@ -124,8 +144,8 @@ pub enum Error {
     /// The attested signer workflow is not Sunrise's shared release workflow at a
     /// `refs/tags/release-v<number>` tag.
     UntrustedWorkflow { workflow: String },
-    /// The release's repository ID or workflow path differs from what this computer remembered for
-    /// this project at first install. The UI turns this into a confirmation prompt.
+    /// The release's owner (or, for an old pin, repository) or workflow path differs from what
+    /// this computer remembered for this project. The UI turns this into a confirmation prompt.
     PublisherChanged(Box<PublisherChange>),
     /// Reading or saving the computer's publisher pin file failed.
     PinStore(String),
@@ -365,15 +385,16 @@ pub fn check_pin_in(
 }
 
 /// Check `incoming` against this computer's remembered pin for `project_id`, recording the pin on
-/// first install. Returns [`Error::PublisherChanged`] without modifying disk when the repository ID
-/// or workflow path differs.
+/// first install and refreshing it on a match. Returns [`Error::PublisherChanged`] without
+/// modifying disk when the publisher differs.
 pub fn pin_or_check(project_id: &str, incoming: &PublisherPin) -> Result<PinStatus, Error> {
     pin_or_check_in(&backend::data_dir(), project_id, incoming)
 }
 
 /// Check `incoming` against the remembered pin for `project_id` in `data_dir`, recording the pin on
-/// first install. Returns [`Error::PublisherChanged`] without modifying disk when the repository ID
-/// or workflow path differs.
+/// first install and refreshing it on a match: a pin without an owner ID gains it, and a same-owner
+/// move records the new repository. Returns [`Error::PublisherChanged`] without modifying disk when
+/// the publisher differs.
 pub fn pin_or_check_in(
     data_dir: &Path,
     project_id: &str,
@@ -391,7 +412,7 @@ pub fn pin_or_check_in(
             Some(pinned) if pinned.matches(incoming) => {
                 // Written again even when unchanged: an earlier save may have made the pin
                 // visible and then failed its flush, and success must mean it is durable.
-                pinned.repository_name = incoming.repository_name.clone();
+                *pinned = incoming.clone();
                 save_file(data_dir, &file)?;
                 Ok(PinStatus::Matched)
             }
@@ -430,7 +451,7 @@ pub fn accept_pin_in(data_dir: &Path, change: &PublisherChange) -> Result<(), Er
             Some(current) if current.matches(&change.incoming) => {
                 // Written again even when unchanged: an earlier confirmation may have made the
                 // pin visible and then failed its flush.
-                current.repository_name = change.incoming.repository_name.clone();
+                *current = change.incoming.clone();
                 save_file(data_dir, &file)
             }
             Some(current) => Err(Error::PublisherChanged(Box::new(PublisherChange {
@@ -540,6 +561,7 @@ mod tests {
     fn sample_attested(repository_id: u64, repository_name: &str, workflow_ref: &str) -> Attested {
         Attested {
             repository_id,
+            owner_id: repository_id,
             repository_name: repository_name.to_owned(),
             signer_workflow_ref: workflow_ref.to_owned(),
             source_ref: "refs/tags/v1.0.0".to_owned(),
@@ -781,6 +803,7 @@ mod tests {
 
         // Another project is pinned independently.
         let other = PublisherPin {
+            owner_id: None,
             repository_id: 2002,
             repository_name: "bob/mod-b".to_owned(),
             workflow_path: RELEASE_WORKFLOW_PATH.to_owned(),
@@ -796,6 +819,7 @@ mod tests {
     fn pin_rejects_changed_repository_or_workflow_path_until_accepted() {
         let dir = tempfile::tempdir().unwrap();
         let initial = PublisherPin {
+            owner_id: None,
             repository_id: 1001,
             repository_name: "alice/mod-a".to_owned(),
             workflow_path: RELEASE_WORKFLOW_PATH.to_owned(),
@@ -807,6 +831,7 @@ mod tests {
 
         // Different repository ID triggers PublisherChanged without overwriting disk.
         let moved_repo = PublisherPin {
+            owner_id: None,
             repository_id: 2002,
             repository_name: "bob/mod-a-fork".to_owned(),
             workflow_path: RELEASE_WORKFLOW_PATH.to_owned(),
@@ -829,6 +854,7 @@ mod tests {
 
         // Different workflow path triggers PublisherChanged without overwriting disk.
         let moved_workflow = PublisherPin {
+            owner_id: None,
             repository_id: 1001,
             repository_name: "alice/mod-a".to_owned(),
             workflow_path: "sunrise-org/sunrise-mods/.github/workflows/release-v2.yml".to_owned(),
@@ -854,16 +880,19 @@ mod tests {
     fn stale_accept_does_not_overwrite_a_newer_pin() {
         let dir = tempfile::tempdir().unwrap();
         let pin_a = PublisherPin {
+            owner_id: None,
             repository_id: 1001,
             repository_name: "alice/mod-a".to_owned(),
             workflow_path: RELEASE_WORKFLOW_PATH.to_owned(),
         };
         let pin_b = PublisherPin {
+            owner_id: None,
             repository_id: 2002,
             repository_name: "bob/mod-a".to_owned(),
             workflow_path: RELEASE_WORKFLOW_PATH.to_owned(),
         };
         let pin_c = PublisherPin {
+            owner_id: None,
             repository_id: 3003,
             repository_name: "carol/mod-a".to_owned(),
             workflow_path: RELEASE_WORKFLOW_PATH.to_owned(),
@@ -918,11 +947,13 @@ mod tests {
         let data_dir = dir.path().join("nested/data/dir");
         let path = data_dir.join(PINS_FILE);
         let pin_a = PublisherPin {
+            owner_id: None,
             repository_id: 1001,
             repository_name: "alice/mod-a".to_owned(),
             workflow_path: RELEASE_WORKFLOW_PATH.to_owned(),
         };
         let pin_b = PublisherPin {
+            owner_id: None,
             repository_id: 2002,
             ..pin_a.clone()
         };
@@ -968,11 +999,13 @@ mod tests {
     #[test]
     fn publisher_change_text_includes_both_repository_ids_when_names_match() {
         let old = PublisherPin {
+            owner_id: None,
             repository_id: 1001,
             repository_name: "alice/mod-a".to_owned(),
             workflow_path: RELEASE_WORKFLOW_PATH.to_owned(),
         };
         let recreated = PublisherPin {
+            owner_id: None,
             repository_id: 2002,
             repository_name: "alice/mod-a".to_owned(),
             workflow_path: RELEASE_WORKFLOW_PATH.to_owned(),
@@ -988,10 +1021,110 @@ mod tests {
         assert!(message.contains("2002"), "{message}");
     }
 
+    fn verified_from(owner_id: u64, repository_id: u64, repository_name: &str) -> VerifiedRelease {
+        let mut attested = sample_attested(repository_id, repository_name, SUNRISE_WORKFLOW_V1);
+        attested.owner_id = owner_id;
+        check_release_policy(
+            attested,
+            &ExpectedRelease {
+                repository_id,
+                workflow: SUNRISE_WORKFLOW_V1,
+            },
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn a_move_within_one_owner_keeps_the_pin_and_another_owner_asks() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = verified_from(19_542_195, 1001, "arismoko/Jade-Sunrise").pin();
+        pin_or_check_in(dir.path(), "Ab3dE9xQ", &first).unwrap();
+
+        // Another repository of the same owner: no prompt, and the pin follows the move.
+        let moved = verified_from(19_542_195, 2002, "arismoko/sunrise-ports").pin();
+        assert_eq!(
+            pin_or_check_in(dir.path(), "Ab3dE9xQ", &moved).unwrap(),
+            PinStatus::Matched
+        );
+        assert_eq!(load_pins_in(dir.path()).unwrap()["Ab3dE9xQ"], moved);
+
+        // Another owner, even in a repository the project used before, asks first.
+        let other_owner = verified_from(77, 1001, "someone/Jade-Sunrise").pin();
+        let err = pin_or_check_in(dir.path(), "Ab3dE9xQ", &other_owner).unwrap_err();
+        let change = err
+            .publisher_change()
+            .expect("must return PublisherChanged");
+        assert!(change.owner_changed());
+        assert_eq!(load_pins_in(dir.path()).unwrap()["Ab3dE9xQ"], moved);
+
+        // The same owner on another workflow asks too.
+        let other_workflow = PublisherPin {
+            workflow_path: "sunrise-org/sunrise-mods/.github/workflows/other.yml".to_owned(),
+            ..moved.clone()
+        };
+        let err = check_pin_in(dir.path(), "Ab3dE9xQ", &other_workflow).unwrap_err();
+        assert!(err.publisher_change().unwrap().workflow_changed());
+    }
+
+    #[test]
+    fn a_pin_without_an_owner_gains_it_from_its_own_repository_and_asks_once_after_a_move() {
+        let dir = tempfile::tempdir().unwrap();
+        // A pin as launchers before owner IDs wrote it.
+        fs::write(
+            dir.path().join(PINS_FILE),
+            format!(
+                r#"{{"schema":1,"projects":{{"Ab3dE9xQ":{{"repository_id":1001,"repository_name":"arismoko/Jade-Sunrise","workflow_path":"{RELEASE_WORKFLOW_PATH}"}}}}}}"#
+            ),
+        )
+        .unwrap();
+        assert_eq!(load_pins_in(dir.path()).unwrap()["Ab3dE9xQ"].owner_id, None);
+
+        // The next release verified from the pinned repository fills the owner in.
+        let same_repo = verified_from(19_542_195, 1001, "arismoko/Jade-Sunrise").pin();
+        assert_eq!(
+            pin_or_check_in(dir.path(), "Ab3dE9xQ", &same_repo).unwrap(),
+            PinStatus::Matched
+        );
+        assert_eq!(
+            load_pins_in(dir.path()).unwrap()["Ab3dE9xQ"].owner_id,
+            Some(19_542_195)
+        );
+        let moved = verified_from(19_542_195, 2002, "arismoko/sunrise-ports").pin();
+        assert_eq!(
+            pin_or_check_in(dir.path(), "Zz91kLmN", &same_repo).unwrap(),
+            PinStatus::FirstInstall
+        );
+        assert_eq!(
+            pin_or_check_in(dir.path(), "Ab3dE9xQ", &moved).unwrap(),
+            PinStatus::Matched
+        );
+
+        // An old pin that never saw its owner asks once when the project has already moved,
+        // and once accepted remembers the owner.
+        let old = PublisherPin {
+            owner_id: None,
+            repository_id: 3003,
+            repository_name: "arismoko/Earshot-Sunrise".to_owned(),
+            workflow_path: RELEASE_WORKFLOW_PATH.to_owned(),
+        };
+        pin_or_check_in(dir.path(), "Ear5h0tX", &old).unwrap();
+        let moved = verified_from(19_542_195, 2002, "arismoko/sunrise-ports").pin();
+        let err = pin_or_check_in(dir.path(), "Ear5h0tX", &moved).unwrap_err();
+        let change = err.publisher_change().unwrap().clone();
+        assert!(change.repository_changed());
+        accept_pin_in(dir.path(), &change).unwrap();
+        let next = verified_from(19_542_195, 4004, "arismoko/elsewhere").pin();
+        assert_eq!(
+            pin_or_check_in(dir.path(), "Ear5h0tX", &next).unwrap(),
+            PinStatus::Matched
+        );
+    }
+
     #[test]
     fn corrupt_or_unsupported_pin_file_is_refused() {
         let dir = tempfile::tempdir().unwrap();
         let pin = PublisherPin {
+            owner_id: None,
             repository_id: 1001,
             repository_name: "alice/mod-a".to_owned(),
             workflow_path: RELEASE_WORKFLOW_PATH.to_owned(),
