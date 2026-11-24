@@ -73,6 +73,7 @@ impl Resources {
                     &handoff,
                 )?;
                 backend::sounds_staged(base, &minecraft, log, &handoff);
+                backend::set_prepare_step(backend::PrepareStep::Prepare);
                 preparer::run_staged(command, &handoff, log)?;
             }
         }
