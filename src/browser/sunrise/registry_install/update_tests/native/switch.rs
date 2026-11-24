@@ -491,10 +491,28 @@ fn a_held_source_is_offered_again_on_each_switch_and_its_toggle_checks_it() {
             let reason = pinned.assert_kept_off(&fixture, SIGNED_BUILD, &active);
             assert!(reason.detail().unwrap().contains("tick_light (changed)"));
 
-            // While the check still fails, the toggle says why and changes nothing.
+            // The signed index's takedowns are always asked, even by a profile without registry
+            // receipts: while it can't be read, the toggle refuses and changes nothing.
             let identity = install_target(&fixture.instance).unwrap();
             let cancellation = native_mods::Cancellation::default();
             let before = fixture.snapshot(&[ARCHIVE, EXTRA]);
+            let signed = fixture.root.join("index-v2.signed");
+            std::env::set_var("SUNRISE_MOD_INDEX_V2", &signed);
+            let error = restore_held(&fixture.instance, identity, ID, &cancellation).unwrap_err();
+            assert!(error.contains("takedowns"), "{error}");
+            assert_eq!(fixture.snapshot(&[ARCHIVE, EXTRA]), before);
+            let v2 = Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/smod/tests/index_v2");
+            fs::write(
+                &signed,
+                [
+                    fs::read(v2.join("two-ports-index.json.minisig")).unwrap(),
+                    fs::read(v2.join("two-ports-index.json")).unwrap(),
+                ]
+                .concat(),
+            )
+            .unwrap();
+
+            // While the check still fails, the toggle says why and changes nothing.
             let error = restore_held(&fixture.instance, identity, ID, &cancellation).unwrap_err();
             assert!(error.contains("tick_light"), "{error}");
             assert_eq!(fixture.snapshot(&[ARCHIVE, EXTRA]), before);
