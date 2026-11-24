@@ -360,8 +360,11 @@ fn a_library_whose_bytes_changed_after_verification_is_refused() {
     let keys = keys(&build(), &list);
     let (work, built, libraries) = work_with(dir.path(), ALL);
     fs::write(folder(&work).join("mod_ae2.dll"), b"swapped").unwrap();
+    let swapped = sha256_file(&folder(&work).join("mod_ae2.dll")).unwrap();
     assert!(kept.save(&work, &built, &libraries, &list, &keys).is_err());
     assert!(!kept.index_path(&keys["ae2"]).exists());
+    // The unverified bytes never reach the store.
+    assert!(!kept.blobs().join(swapped).exists());
 }
 
 #[test]
@@ -472,4 +475,96 @@ fn concurrent_attempts_only_ever_seed_whole_verified_libraries() {
         after == ["ae2", "ftb", "hnn"] || after == ["ae2", "hnn"],
         "{after:?}"
     );
+}
+
+#[test]
+fn a_bad_blob_already_in_the_store_is_replaced_and_a_good_one_is_dated_now() {
+    let dir = tempfile::tempdir().unwrap();
+    let kept = Kept::new(&dir.path().join("native"));
+    let list = mods(&[]);
+    let keys = keys(&build(), &list);
+    let (work, built, libraries) = work_with(dir.path(), ALL);
+    let ae2 = libraries.iter().find(|l| l.name == "mod_ae2.dll").unwrap();
+    let hnn = libraries.iter().find(|l| l.name == "mod_hnn.dll").unwrap();
+    fs::create_dir_all(kept.blobs()).unwrap();
+    // A blob named for ae2's bytes holding others, and an old but intact one for hnn.
+    fs::write(kept.blobs().join(&ae2.sha256), b"not ae2").unwrap();
+    fs::copy(&hnn.source, kept.blobs().join(&hnn.sha256)).unwrap();
+    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(10 * 60 * 60);
+    fs::File::options()
+        .write(true)
+        .open(kept.blobs().join(&hnn.sha256))
+        .unwrap()
+        .set_modified(old)
+        .unwrap();
+    kept.save(&work, &built, &libraries, &list, &keys).unwrap();
+    assert_eq!(
+        sha256_file(&kept.blobs().join(&ae2.sha256)).unwrap(),
+        ae2.sha256
+    );
+    let dated = fs::metadata(kept.blobs().join(&hnn.sha256))
+        .unwrap()
+        .modified()
+        .unwrap();
+    assert!(
+        dated > old,
+        "an intact blob is dated now, so a prune keeps it"
+    );
+    assert_eq!(
+        kept.seed(&dir.path().join("next"), &list, &keys),
+        ["ae2", "ftb", "hnn"]
+    );
+}
+
+#[test]
+fn a_mod_without_its_fingerprint_is_not_kept() {
+    let dir = tempfile::tempdir().unwrap();
+    let kept = Kept::new(&dir.path().join("native"));
+    let list = mods(&[]);
+    let keys = keys(&build(), &list);
+    let (work, built, libraries) = work_with(dir.path(), ALL);
+    fs::remove_file(folder(&work).join("mod_hnn.fingerprint")).unwrap();
+    assert_eq!(
+        kept.save(&work, &built, &libraries, &list, &keys).unwrap(),
+        2
+    );
+    assert!(!kept.index_path(&keys["hnn"]).exists());
+    assert!(kept.index_path(&keys["ae2"]).exists());
+}
+
+#[cfg(windows)]
+#[test]
+fn a_mod_without_an_import_library_is_still_kept() {
+    let dir = tempfile::tempdir().unwrap();
+    let kept = Kept::new(&dir.path().join("native"));
+    let list = mods(&[]);
+    let keys = keys(&build(), &list);
+    let (work, built, libraries) = work_with(dir.path(), ALL);
+    fs::remove_file(folder(&work).join("libmod_hnn.dll.a")).unwrap();
+    assert_eq!(
+        kept.save(&work, &built, &libraries, &list, &keys).unwrap(),
+        3
+    );
+    let next = dir.path().join("next");
+    assert_eq!(kept.seed(&next, &list, &keys), ["ae2", "ftb", "hnn"]);
+    assert!(!folder(&next).join("libmod_hnn.dll.a").exists());
+}
+
+#[test]
+fn a_mod_linking_to_one_that_comes_later_has_no_key() {
+    let list = vec![
+        Mod {
+            id: "ftb",
+            files: "ftb-files".into(),
+            links: vec!["ae2"],
+        },
+        Mod {
+            id: "ae2",
+            files: "ae2-files".into(),
+            links: vec![],
+        },
+    ];
+    let keys = keys(&build(), &list);
+    assert!(!keys.contains_key("ftb"));
+    assert!(keys.contains_key("ae2"));
 }

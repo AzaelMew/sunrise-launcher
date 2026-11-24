@@ -97,6 +97,8 @@ pub enum BuildCache {
     InternalsSync,
     Prebuilt,
     ServerBuilds,
+    /// Mod libraries kept between native builds (`native_mods::kept`).
+    KeptMods,
     Rust,
     Cargo,
     Scratch,
@@ -111,6 +113,7 @@ impl BuildCache {
             Self::InternalsSync => "native/internals-sync",
             Self::Prebuilt => "native/prebuilt",
             Self::ServerBuilds => "native/server-builds",
+            Self::KeptMods => "native/kept-mods",
             Self::Rust => "rust",
             Self::Cargo => "cargo",
             Self::Scratch => "tmp",
@@ -119,7 +122,8 @@ impl BuildCache {
 
     fn access(self, path: &Path) -> Result<Access, Error> {
         match self {
-            Self::Rust | Self::Cargo | Self::Scratch => Ok(Access::BuildTools),
+            // No game runs from kept mod libraries: a build copies them into its workspace.
+            Self::KeptMods | Self::Rust | Self::Cargo | Self::Scratch => Ok(Access::BuildTools),
             _ => Access::for_unit(path),
         }
     }

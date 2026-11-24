@@ -105,7 +105,8 @@ impl Build<'_> {
 }
 
 /// Each mod's key, given in dependency order: a mod's key covers the keys of the mods it links
-/// to, so a changed mod changes the key of every mod linking to it.
+/// to, so a changed mod changes the key of every mod linking to it. A mod linking to one without
+/// a key (one that comes later) has none: it is neither reused nor kept.
 pub(super) fn keys(build: &Build<'_>, mods: &[Mod<'_>]) -> BTreeMap<String, String> {
     let base = build.key();
     let mut keys: BTreeMap<String, String> = BTreeMap::new();
@@ -114,14 +115,13 @@ pub(super) fn keys(build: &Build<'_>, mods: &[Mod<'_>]) -> BTreeMap<String, Stri
         links.sort_unstable();
         links.dedup();
         let mut parts = vec![base.as_str(), m.id, m.files.as_str()];
-        let linked: Vec<String> = links
+        let Some(linked) = links
             .iter()
-            .map(|id| match keys.get(*id) {
-                Some(key) => format!("{id}={key}"),
-                // Linked to a mod that comes later: never reused.
-                None => format!("{id}=?{}", m.id),
-            })
-            .collect();
+            .map(|id| keys.get(*id).map(|key| format!("{id}={key}")))
+            .collect::<Option<Vec<String>>>()
+        else {
+            continue;
+        };
         parts.extend(linked.iter().map(String::as_str));
         keys.insert(m.id.to_owned(), hash_parts(parts));
     }
@@ -316,18 +316,35 @@ impl Kept {
             if folder.parent() != Some(builds.as_path()) {
                 continue;
             }
-            let mut files = BTreeMap::new();
-            // The verified bytes: the copy must hash as `verify_outputs` found them.
-            let sha256 = self.store_blob(&source)?;
-            if sha256 != library.sha256 {
+            // Without its fingerprint the tool compiles the mod anyway: nothing to keep. The
+            // import library may be absent.
+            let regular = |file: &Path| {
+                fs::symlink_metadata(file)
+                    .is_ok_and(|meta| meta.is_file() && !crate::native_cache::linked(&meta))
+            };
+            let (fingerprint, import) = sidecars(&library.name);
+            if !regular(&folder.join(&fingerprint)) {
+                continue;
+            }
+            // Only the bytes `verify_outputs` checked: hashed before they are stored, and the
+            // stored copy hashed again (`store_blob`).
+            if sha256_file(&source).map_err(io::Error::other)? != library.sha256 {
                 return Err(invalid());
             }
-            files.insert(library.name.clone(), sha256);
-            for name in sidecars(&library.name) {
-                let file = folder.join(&name);
+            let mut files = BTreeMap::new();
+            files.insert(
+                library.name.clone(),
+                self.store_blob(&source, Some(&library.sha256))?,
+            );
+            files.insert(
+                fingerprint.clone(),
+                self.store_blob(&folder.join(&fingerprint), None)?,
+            );
+            if let Some(import) = import {
+                let file = folder.join(&import);
                 match fs::symlink_metadata(&file) {
-                    Ok(meta) if meta.is_file() && !crate::native_cache::linked(&meta) => {
-                        files.insert(name, self.store_blob(&file)?);
+                    Ok(_) if regular(&file) => {
+                        files.insert(import, self.store_blob(&file, None)?);
                     }
                     Ok(_) => return Err(invalid()),
                     Err(error) if error.kind() == io::ErrorKind::NotFound => {}
@@ -372,27 +389,48 @@ impl Kept {
         Err(invalid())
     }
 
-    /// Stores `file` under its SHA-256, which it returns. A blob already there is left alone:
-    /// it is checked when it is used.
-    fn store_blob(&self, file: &Path) -> io::Result<String> {
+    /// Stores `file` under its SHA-256, which it returns; with `expected`, only bytes hashing
+    /// to it. A blob already there is used only when it is a regular file with those bytes, and
+    /// is then dated now, so a concurrent prune keeps it until the index naming it is written.
+    /// Anything else there is replaced whole.
+    fn store_blob(&self, file: &Path, expected: Option<&str>) -> io::Result<String> {
         let blobs = self.blobs();
         fs::create_dir_all(&blobs)?;
-        let staged = tempfile::Builder::new()
+        let mut staged = tempfile::Builder::new()
             .prefix(".incoming-")
             .tempfile_in(&blobs)?;
         fs::copy(file, staged.path())?;
         let sha256 = sha256_file(staged.path()).map_err(io::Error::other)?;
-        let blob = blobs.join(&sha256);
-        if fs::symlink_metadata(&blob).is_err() {
-            // Dated now, not with the copied file's time, for the grace before pruning.
-            staged
-                .as_file()
-                .set_modified(std::time::SystemTime::now())?;
-            // Another attempt storing the same bytes at the same time is harmless: either copy
-            // is the same content, and a failed rename leaves the one already there.
-            let _ = staged.persist_noclobber(&blob);
+        if expected.is_some_and(|expected| expected != sha256) {
+            return Err(invalid());
         }
-        Ok(sha256)
+        let blob = blobs.join(&sha256);
+        // Dated now, not with the copied file's time, for the grace before pruning.
+        let now = std::time::SystemTime::now();
+        staged.as_file().set_modified(now)?;
+        // The staged copy replaces anything else there in one rename (a link itself, never its
+        // target). On Windows a rename over a blob another attempt is copying out is refused:
+        // that blob is then checked again, a few times, before this one gives up.
+        for _ in 0..5 {
+            let intact = fs::symlink_metadata(&blob)
+                .is_ok_and(|meta| meta.is_file() && !crate::native_cache::linked(&meta))
+                && sha256_file(&blob).is_ok_and(|digest| digest == sha256);
+            if intact
+                && fs::File::options()
+                    .write(true)
+                    .open(&blob)
+                    .and_then(|existing| existing.set_modified(now))
+                    .is_ok()
+            {
+                return Ok(sha256);
+            }
+            match staged.persist(&blob) {
+                Ok(_) => return Ok(sha256),
+                Err(error) => staged = error.file,
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        Err(invalid())
     }
 
     /// Keeps the [`ENTRIES`] most recently used entries and the blobs they name.
@@ -445,16 +483,15 @@ impl Kept {
 
 /// The tool's files beside library `name` that tell it the library is up to date: its
 /// fingerprint (`compile_mod`), and on Windows the import library a mod linking to it needs.
-fn sidecars(name: &str) -> Vec<String> {
+fn sidecars(name: &str) -> (String, Option<String>) {
     let stem = Path::new(name)
         .file_stem()
         .and_then(|stem| stem.to_str())
         .unwrap_or(name);
-    let mut names = vec![format!("{stem}.fingerprint")];
-    if cfg!(windows) {
-        names.push(format!("lib{name}.a"));
-    }
-    names
+    (
+        format!("{stem}.fingerprint"),
+        cfg!(windows).then(|| format!("lib{name}.a")),
+    )
 }
 
 /// The tool's API and engine route build folders; the registry route builds elsewhere.

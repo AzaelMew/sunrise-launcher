@@ -7,13 +7,14 @@ use crate::{backend, instances, native_mods};
 use serde::Serialize;
 use std::sync::Arc;
 
-const BUILD_CACHES: [BuildCache; 9] = [
+const BUILD_CACHES: [BuildCache; 10] = [
     BuildCache::Source,
     BuildCache::Tools,
     BuildCache::PrebuiltOutput,
     BuildCache::InternalsSync,
     BuildCache::Prebuilt,
     BuildCache::ServerBuilds,
+    BuildCache::KeptMods,
     BuildCache::Rust,
     BuildCache::Cargo,
     BuildCache::Scratch,
@@ -270,6 +271,10 @@ impl Entry {
     fn access(&self) -> Result<Access, Error> {
         match self.category {
             Category::RustCompiler => Ok(Access::BuildTools),
+            // No game runs from kept mod libraries: a build copies them into its workspace.
+            _ if self.relative.starts_with(BuildCache::KeptMods.relative()) => {
+                Ok(Access::BuildTools)
+            }
             _ => Access::for_unit(&self.path),
         }
     }
