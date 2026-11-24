@@ -44,6 +44,7 @@ pub(crate) use ports::PortSwitch;
 mod project;
 mod rating;
 pub(crate) mod refused;
+mod release_builds;
 mod search;
 mod ui;
 pub(crate) use data_packs::names;
@@ -485,6 +486,8 @@ pub(crate) struct ModsState {
     viewer: Option<viewer::Viewer>,
     /// What the refused-Add modal shows (`refused`).
     refused: Option<refused::Refused>,
+    /// The release whose builds window is open (`release_builds`).
+    release_builds: Option<model::discover_v2::ReleaseBuilds>,
     /// Registry mods' ratings (`rating`).
     ratings: rating::Ratings,
 }
@@ -546,6 +549,7 @@ impl Default for ModsState {
             revealed: Default::default(),
             viewer: None,
             refused: None,
+            release_builds: None,
             ratings: Default::default(),
         }
     }
@@ -1141,10 +1145,11 @@ impl Launcher {
         let Some(catalog) = sunrise::v2::known_index() else {
             return;
         };
-        let Some(listed) = catalog.index.build(&build) else {
-            return;
-        };
-        let found = local_fit::kept(&listed.commit);
+        // A build the index doesn't list is checked too, by the build id its own release names
+        // (known once the first check has read it).
+        let found = local_fit::commit_of(&catalog.index, &build)
+            .map(|commit| local_fit::kept(&commit))
+            .unwrap_or_default();
         if local_fit::gaps(&catalog.index, &build)
             .iter()
             .all(|r| found.contains_key(&r.file.sha256.to_ascii_lowercase()))

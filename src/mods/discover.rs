@@ -228,11 +228,11 @@ impl Launcher {
                         )),
                 );
         }
-        // Show all on a build the registry doesn't list: said once here, not on every card.
-        if f.show_all && !build_listed {
+        // A build the registry doesn't list yet: its mods are checked here, said once.
+        if !build_listed {
             if let Some(build) = build_label.as_deref() {
                 page = page.child(muted(trf(
-                    "{build} isn't in the Sunrise registry yet, so its mods can't be installed.",
+                    "{build} isn't in the Sunrise registry yet: mods are checked on this computer.",
                     &[("build", build)],
                 )));
             }
@@ -372,7 +372,7 @@ impl Launcher {
                     if let Some(pill) = card_data.fit.fit_pill() {
                         facts.push(fit_pill(pill));
                         facts.push(tag(card_data.make.label()));
-                    } else if let Some(reason) = card_data.fit.card_reason() {
+                    } else if let Some(reason) = card_data.fit.reason() {
                         facts.push(match card_data.fit {
                             discover_v2::CardFit::Checking { .. } => muted(reason),
                             _ => unfit_pill(reason),
@@ -422,7 +422,6 @@ impl Launcher {
         };
         let empty = self.discover_empty_state(
             &f,
-            build_listed,
             hidden_other_builds,
             !cards.is_empty(),
             &profile_target,
@@ -439,7 +438,6 @@ impl Launcher {
     fn discover_empty_state(
         &self,
         f: &discover_v2::V2Filters,
-        build_listed: bool,
         hidden_other_builds: usize,
         has_any_cards: bool,
         profile_target: &str,
@@ -454,18 +452,6 @@ impl Launcher {
                 },
             ))
         };
-        if !f.show_all && !build_listed {
-            return empty_state(
-                "search-01",
-                trf(
-                    "No mods are listed for {target} yet",
-                    &[("target", profile_target)],
-                ),
-                tr("The registry lists mods for recent Sunrise builds. Turn on Show all to see mods for other builds."),
-                Some(show_all(cx)),
-            )
-            .into_any_element();
-        }
         if !f.show_all && (hidden_other_builds > 0 || has_any_cards) {
             let title = if f.text.is_empty() && f.category.is_none() {
                 trf("No mods fit {target} yet", &[("target", profile_target)])

@@ -858,28 +858,29 @@ impl Launcher {
                         .child(line.verdict.fit_label())
                 };
                 list = list.child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .gap(px(12.))
-                        .px(px(14.))
-                        .py(px(10.))
+                    self.release_row(("release-row", idx), &vp.id, line, cx)
                         .when(idx > 0, |d| d.border_t_1().border_color(c(p.divider)))
                         .child(
                             div()
                                 .flex()
-                                .items_baseline()
-                                .gap(px(12.))
+                                .flex_col()
+                                .gap(px(2.))
                                 .child(
                                     div()
-                                        .font_family(crate::theme::MONO)
-                                        .font_weight(FontWeight::SEMIBOLD)
-                                        .text_size(px(tokens::LABEL))
-                                        .child(line.version.clone()),
+                                        .flex()
+                                        .items_baseline()
+                                        .gap(px(12.))
+                                        .child(
+                                            div()
+                                                .font_family(crate::theme::MONO)
+                                                .font_weight(FontWeight::SEMIBOLD)
+                                                .text_size(px(tokens::LABEL))
+                                                .child(line.version.clone()),
+                                        )
+                                        .child(muted(line.published.clone()))
+                                        .child(muted(model::size(line.size))),
                                 )
-                                .child(muted(line.published.clone()))
-                                .child(muted(model::size(line.size))),
+                                .child(made_for(line)),
                         )
                         .child(badge_el),
                 );
@@ -897,31 +898,32 @@ impl Launcher {
                         .child(reason),
                 );
             }
-            for line in &vp.other_versions {
+            for (idx, line) in vp.other_versions.iter().enumerate() {
                 let reason = line.verdict.reason().unwrap_or_default();
                 list = list.child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .gap(px(12.))
-                        .px(px(14.))
-                        .py(px(10.))
+                    self.release_row(("other-release-row", idx), &vp.id, line, cx)
                         .border_t_1()
                         .border_color(c(p.divider))
                         .opacity(0.75)
                         .child(
                             div()
                                 .flex()
-                                .items_baseline()
-                                .gap(px(12.))
+                                .flex_col()
+                                .gap(px(2.))
                                 .child(
                                     div()
-                                        .font_family(crate::theme::MONO)
-                                        .text_size(px(tokens::LABEL))
-                                        .child(line.version.clone()),
+                                        .flex()
+                                        .items_baseline()
+                                        .gap(px(12.))
+                                        .child(
+                                            div()
+                                                .font_family(crate::theme::MONO)
+                                                .text_size(px(tokens::LABEL))
+                                                .child(line.version.clone()),
+                                        )
+                                        .child(muted(line.published.clone())),
                                 )
-                                .child(muted(line.published.clone())),
+                                .child(made_for(line)),
                         )
                         .child(muted(reason)),
                 );
@@ -1362,4 +1364,42 @@ impl Launcher {
         }
         Some(grid)
     }
+}
+
+impl Launcher {
+    /// One release row on a mod's page: pressing it opens the builds the release works on.
+    fn release_row(
+        &self,
+        id: (&'static str, usize),
+        project: &str,
+        line: &model::discover_v2::V2VersionLine,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let (project, version) = (project.to_owned(), line.version.clone());
+        div()
+            .id(id)
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap(px(12.))
+            .px(px(14.))
+            .py(px(10.))
+            .cursor_pointer()
+            .hover(|d| d.bg(c(palette().line).opacity(0.35)))
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                this.open_release_builds(&project, &version);
+                cx.notify();
+            }))
+    }
+}
+
+/// The build a release was made for, by its short commit too: two Dev builds can share a day.
+fn made_for(line: &model::discover_v2::V2VersionLine) -> Div {
+    muted(trf(
+        "Made for {build}",
+        &[(
+            "build",
+            &crate::sheets::build_name_with_commit(&line.made_for),
+        )],
+    ))
 }

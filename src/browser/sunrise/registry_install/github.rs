@@ -311,7 +311,7 @@ pub(super) fn edit_github(
             })
             .map_err(Into::into);
     }
-    edit.prepare_first(&|_| (hooks.progress)(InstallProgress::Preparing))?;
+    edit.prepare_first(&super::preparation_line(hooks.progress))?;
     let tools = std::cell::Cell::new(false);
     let progress = |progress: InstallProgress| {
         tools.set(matches!(
