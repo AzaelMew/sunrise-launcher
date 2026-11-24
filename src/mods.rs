@@ -1058,17 +1058,20 @@ impl Launcher {
                     }
                 }
                 Event::V2Catalog(build, result) => {
-                    m.v2_failure = result.as_ref().err().map(|error| match error {
-                        sunrise::v2::LoadError::Fetch(_) => trf(
-                            "Registry not reachable: {error}",
-                            &[("error", &error.to_string())],
-                        ),
-                        _ => trf(
-                            "Registry refused: {error}",
-                            &[("error", &error.to_string())],
-                        ),
-                    });
                     if m.v2_catalog_build.as_ref() == Some(&build) {
+                        m.v2_failure = result.as_ref().err().map(|error| match error {
+                            sunrise::v2::LoadError::Fetch(_) => trf(
+                                "Registry not reachable: {error}",
+                                &[("error", &error.to_string())],
+                            ),
+                            _ => trf(
+                                "Registry refused: {error}",
+                                &[("error", &error.to_string())],
+                            ),
+                        });
+                        if result.is_ok() {
+                            m.home_mod_labels = None;
+                        }
                         m.v2_catalog = match result {
                             Ok(payload) => V2Catalog::Ready {
                                 cards: payload.cards.into(),
@@ -1082,7 +1085,7 @@ impl Launcher {
                         };
                     }
                 }
-                Event::V2Saved => {}
+                Event::V2Saved => m.home_mod_labels = None,
                 Event::Local(key, result) => {
                     if let Some(snap) = m.snapshot.as_mut().filter(|s| s.key == key) {
                         let ready = snap.finish(*result);
@@ -1104,6 +1107,9 @@ impl Launcher {
                     }
                 }
                 Event::V2Page(request, page) => {
+                    if page.is_ok() {
+                        self.ui.mods.v2_failure = None;
+                    }
                     let scope = self.mods_page_scope();
                     if let Some(open) = self.ui.mods.open.as_mut() {
                         open.finish_v2(request, &scope, page);
@@ -1245,6 +1251,7 @@ impl Launcher {
             let categories = model::discover_v2::categories(&cards);
             let collections = model::discover_v2::collections(&catalog.index, &cards);
             let build_listed = model::discover_v2::build_listed(&catalog.index, build.as_deref());
+            self.ui.mods.v2_failure = None;
             self.ui.mods.v2_catalog_build = Some(build);
             self.ui.mods.v2_catalog = V2Catalog::Ready {
                 cards: cards.into(),
