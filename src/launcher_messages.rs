@@ -448,21 +448,10 @@ impl Launcher {
                 Msg::Storage(result) => self.storage_arrived(result),
                 Msg::Imported(result) => self.storage_build_imported(result),
                 Msg::Pruned(errors) => self.storage_builds_pruned(errors),
-                Msg::Updates(updates) => {
-                    self.checking_updates = false;
-                    self.launcher_checked_now = None;
-                    let updates = *updates;
-                    self.updates.sunrise = updates.sunrise;
-                    self.updates.sunrise_error = updates.sunrise_error;
-                    self.note_launcher_check(
-                        updates.launcher_error.map_or(Ok(updates.launcher), Err),
-                    );
-                }
-                Msg::LauncherChecked(result) => {
-                    self.checking_updates = false;
-                    self.launcher_checked_now = result.is_ok().then(Instant::now);
-                    self.note_launcher_check(*result);
-                }
+                Msg::Updates(_)
+                | Msg::LauncherChecked(_)
+                | Msg::LauncherProgress(_)
+                | Msg::LauncherUpdated(_) => self.on_update_message(msg),
                 Msg::ConfirmUnreviewed(found, reply) => {
                     let pending = crate::github_mods_page::PendingUnreviewed::new(found, reply);
                     if let Some(earlier) = self.ui.sheets.unreviewed.replace(pending) {
@@ -536,12 +525,6 @@ impl Launcher {
                         self.play(play);
                     }
                 }
-                Msg::LauncherProgress(p) => {
-                    if let SelfUpdate::Downloading(_, f) = &mut self.self_update {
-                        *f = p;
-                    }
-                }
-                Msg::LauncherUpdated(result) => self.launcher_update_finished(result),
                 // Old versions log their session; it never reaches the window.
                 Msg::Line(_, line) if line.contains("Session ID is") => {}
                 Msg::Line(job, line) => {
