@@ -57,6 +57,8 @@ impl Pinned {
         })
         .unwrap();
         fs::write(github_mods::origin_path(home, ID), &receipt).unwrap();
+        // The player confirmed this source's unreviewed code when it was added.
+        backend::allow_native_files([index::sha256(&archive)]).unwrap();
         mod_list::set_enabled(home, ID, true).unwrap();
         let active = Profile::open(home, None)
             .unwrap()
@@ -291,6 +293,8 @@ fn switch_keeps_the_registry_mod_when_only_a_sources_original_sdk_is_missing() {
                 repository: None,
             });
             installed.save(home).unwrap();
+            // A registry install records its reviewed archive as allowed to build.
+            backend::allow_native_files([index::sha256(&registry)]).unwrap();
             mod_list::set_enabled(home, REGISTRY, true).unwrap();
 
             // The target SDK and tools are available; only the source's original index is gone.
