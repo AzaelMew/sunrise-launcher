@@ -66,6 +66,11 @@ impl Launcher {
                 ),
                 _ => stage_label(step),
             };
+            let label = if step == InstallProgress::Publishing || activity.stopping {
+                label
+            } else {
+                crate::eta::with_eta(label, self.registry_eta())
+            };
             let stop = (step != InstallProgress::Publishing && !activity.stopping).then(|| {
                 button("nightly-source-stop", tr("Stop")).on_click(cx.listener(|this, _, _, cx| {
                     this.stop_source();
@@ -109,7 +114,10 @@ impl Launcher {
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .child(tr("Updating registry mods…")),
                             )
-                            .child(div().truncate().child(stage_label(step)))
+                            .child(div().truncate().child(crate::eta::with_eta(
+                                stage_label(step),
+                                self.registry_eta(),
+                            )))
                             .child(crate::widgets::progress_bar(fraction, &self.theme)),
                     ),
                 );

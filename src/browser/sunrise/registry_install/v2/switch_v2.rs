@@ -108,7 +108,7 @@ pub fn switch_profile_build_v2(
 ) -> Result<Switched, String> {
     switch_profile_build_v2_with_index(instance, identity, tag, choice, hooks, || {
         catalogue_v2::refreshed_index()
-            .map(|c| c.index)
+            .map(|c| Arc::new(crate::native_mods::local_fit::filled(&c.index)))
             .map_err(|e| e.to_string())
     })
 }

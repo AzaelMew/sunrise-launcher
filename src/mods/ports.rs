@@ -372,7 +372,8 @@ impl Launcher {
         let Some(catalog) = v2::known_index() else {
             return Vec::new();
         };
-        let index = &catalog.index;
+        // This computer's fit checks fill what the index says nothing of, as installs plan.
+        let index = &crate::native_mods::local_fit::filled(&catalog.index);
         let mut installed_map = BTreeMap::new();
         if let Some(rows) = self.discover_installed() {
             for entry in &rows.entries {
@@ -694,7 +695,7 @@ impl Launcher {
             .map(|entry| entry.project.as_str())
             .unwrap_or(project_id);
         let other = other_ports_for(
-            &catalog.index,
+            &crate::native_mods::local_fit::filled(&catalog.index),
             current_project,
             &row.id,
             &row.version,
