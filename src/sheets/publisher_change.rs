@@ -69,6 +69,8 @@ pub(crate) fn publisher_change_copy(question: &PublisherChangeQuestion) -> Publi
             &[("version", &question.incoming_version)],
         )
     };
+    // A new owner is a new publisher, whether or not the workflow changed with it.
+    let owner_changed = change.owner_changed();
     let explanation = match (repo_changed, workflow_changed) {
         (true, true) => trf(
             "Version {version} comes from a different GitHub repository and build workflow than the one remembered when you first installed {mod}.",
@@ -84,14 +86,14 @@ pub(crate) fn publisher_change_copy(question: &PublisherChangeQuestion) -> Publi
                 ("mod", &question.mod_name),
             ],
         ),
-        (false, true) => trf(
+        (false, true) if !owner_changed => trf(
             "Version {version} comes from a different build workflow than the one remembered when you first installed {mod}.",
             &[
                 ("version", &question.incoming_version),
                 ("mod", &question.mod_name),
             ],
         ),
-        (false, false) => trf(
+        (false, _) => trf(
             "Version {version} comes from a different publisher than the one remembered when you first installed {mod}.",
             &[
                 ("version", &question.incoming_version),
@@ -136,7 +138,7 @@ pub(crate) fn publisher_change_copy(question: &PublisherChangeQuestion) -> Publi
                 ("version", &question.incoming_version),
             ],
         )
-    } else if !workflow_changed {
+    } else if !workflow_changed || owner_changed {
         trf(
             "Accepting updates {mod} to {version} and remembers the new publisher for future updates.",
             &[
@@ -520,5 +522,20 @@ mod tests {
         let transferred = publisher_change_copy(&transferred);
         assert!(transferred.explanation.contains("different publisher"));
         assert!(transferred.accept_note.contains("new publisher"));
+
+        // Transferred and given a new workflow in the same release: still a new publisher.
+        let mut moved = sample_question(
+            100,
+            "Zekrenlight/frontier",
+            ".github/workflows/old.yml",
+            100,
+            "someone/frontier",
+            ".github/workflows/new.yml",
+        );
+        moved.change.pinned.owner_id = Some(1);
+        moved.change.incoming.owner_id = Some(2);
+        let moved = publisher_change_copy(&moved);
+        assert!(moved.explanation.contains("different publisher"));
+        assert!(moved.accept_note.contains("new publisher"));
     }
 }
