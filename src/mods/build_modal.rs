@@ -566,7 +566,7 @@ impl Launcher {
                     let base = base.as_deref()?;
                     let unfit_updates = sunrise::known_unfit_updates(base);
                     let entry = entry.as_ref()?;
-                    let project = catalog.index.project(&entry.project)?;
+                    let project = sunrise::v2::installed_project(&catalog.index, entry)?;
                     sunrise::v2::newer_release(
                         &catalog.index,
                         project,

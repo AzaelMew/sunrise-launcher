@@ -2714,10 +2714,17 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                     .ok()
                     .filter(|_| e.source == SourceId::Sunrise)
                     .and_then(|catalog| {
-                        // A whole-project takedown reaches only a row the index proves is that
-                        // project's; any row is taken down by its archive's hash.
-                        sunrise::v2::installed_project(&catalog.index, &e)
-                            .and_then(|p| catalog.index.revoked(&p.id, Some(hash)))
+                        // A whole-project takedown reaches a v2 row's project, delisted or not,
+                        // and an old-registry row only when the index proves its project; any row
+                        // is taken down by its archive's hash.
+                        let project = if e.mod_id.is_some() {
+                            Some(e.project.as_str())
+                        } else {
+                            sunrise::v2::installed_project(&catalog.index, &e)
+                                .map(|p| p.id.as_str())
+                        };
+                        project
+                            .and_then(|p| catalog.index.revoked(p, Some(hash)))
                             .or_else(|| catalog.index.revoked_by_sha256(hash))
                             .cloned()
                     })
