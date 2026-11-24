@@ -252,6 +252,15 @@ jobs:
           mkdir -p "$resources"
           echo '{}' > "$resources/sunrise-resources.json"
           echo "{\"output_version\":$output}" > "$resources/sunrise-prepare.json"
+      # GitHub's Windows images turn on long paths (LongPathsEnabled = 1); a player's Windows has them
+      # off unless someone turned them on, so the build runs with Windows' default.
+      - name: Windows' default path limit
+        shell: pwsh
+        run: |
+          $key = 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem'
+          "LongPathsEnabled was $((Get-ItemProperty $key).LongPathsEnabled)"
+          Set-ItemProperty $key -Name LongPathsEnabled -Value 0
+          "LongPathsEnabled is $((Get-ItemProperty $key).LongPathsEnabled)"
       - name: Build the mixin mod
         run: |
           mods="$RUNNER_TEMP/mods"
