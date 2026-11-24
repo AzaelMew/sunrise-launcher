@@ -302,6 +302,12 @@ fn copy_slice(from: &Path, to: &Path) -> io::Result<()> {
             copy_slice(&entry.path(), &to)?;
         } else if meta.is_file() {
             crate::preparer::clone_or_copy(&entry.path(), &to)?;
+            // The tool names its kept build folder by each slice file's modified time: a copy
+            // dated now would never find the libraries kept from an earlier attempt.
+            fs::File::options()
+                .write(true)
+                .open(&to)?
+                .set_modified(meta.modified()?)?;
         } else {
             return Err(invalid());
         }

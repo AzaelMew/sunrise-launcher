@@ -63,6 +63,26 @@ fn writable_sdk_slices_do_not_share_the_cached_bytes() {
 }
 
 #[test]
+fn sdk_slice_copies_keep_their_modified_times() {
+    let dir = tempfile::tempdir().unwrap();
+    let stage = Workspace::new(dir.path()).unwrap();
+    let cached = Package::at(&dir.path().join("cache"));
+    fs::create_dir_all(cached.runtime.join("lib")).unwrap();
+    let file = cached.runtime.join("lib/input");
+    fs::write(&file, b"slice").unwrap();
+    let then = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+    fs::File::options()
+        .write(true)
+        .open(&file)
+        .unwrap()
+        .set_modified(then)
+        .unwrap();
+    let private = stage.package(&cached).unwrap();
+    let copied = fs::metadata(private.runtime.join("lib/input")).unwrap();
+    assert_eq!(copied.modified().unwrap(), then);
+}
+
+#[test]
 fn registry_library_aliases_keep_their_exact_names_and_bytes_inside_private_roots() {
     let dir = tempfile::tempdir().unwrap();
     let stage = Workspace::new(dir.path()).unwrap();
