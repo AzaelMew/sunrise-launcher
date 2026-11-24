@@ -1,7 +1,7 @@
 //! Local `.smod` files and local mod folders added via "Add from source".
 //! Nothing here trusts the mod: the caller shows the unreviewed-code warning first,
 //! and native mods still go through the launcher's native-code permission and build flow.
-use super::{sha256, Origin, DEPTH, MAX_ASSET};
+use super::{sha256_hex, Origin, DEPTH, MAX_ASSET};
 use crate::i18n::{tr, trf};
 use crate::native_mods;
 use std::collections::BTreeSet;
@@ -194,7 +194,7 @@ fn validate_staged(
     attestation: LocalAttestation,
     origin: Option<Origin>,
 ) -> Result<LocalPackage, String> {
-    let sum = sha256(&bytes);
+    let sum = sha256_hex(&bytes);
     let staged = scratch.path().join(format!("{}.smod", &sum[..16]));
     fs::write(&staged, &bytes).map_err(|e| format!("{}: {e}", staged.display()))?;
     let package = sunrise_launcher_smod::manifest::Package::read(&staged).inspect_err(|_| {
@@ -465,7 +465,7 @@ mod tests {
         )
         .unwrap();
         fs::write(&smod_path, &bytes).unwrap();
-        let expected_sha = sha256(&bytes);
+        let expected_sha = sha256_hex(&bytes);
         let expected_digest = crate::attestation::parse_sha256_hex(&expected_sha).unwrap();
         let bundle =
             include_bytes!("../../crates/attestation/tests/fixtures/ruff-source.sigstore.json");

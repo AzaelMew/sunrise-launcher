@@ -11,10 +11,10 @@
 //! content fence is not run here either: the game runs it when it loads the mod.
 //! Callers show [`WARNING`] and ask first (`--trust-native-code`).
 use crate::backend;
+use crate::hashing::sha256_hex;
 use crate::i18n::{tr, trf};
 use crate::native_mods::{self, Bundle, INSTALLED};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -573,16 +573,9 @@ impl Packed {
     }
 }
 
-fn sha256(bytes: &[u8]) -> String {
-    Sha256::digest(bytes)
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
-}
-
 /// Reads `bytes` as `.smod`, with the registry's checks, into a file `Packed` names.
 fn checked(bytes: &[u8], dir: &Path, asset: Option<&Asset>) -> Result<Packed, String> {
-    let sum = sha256(bytes);
+    let sum = sha256_hex(bytes);
     if let Some(asset) = asset.filter(|asset| {
         asset
             .sha256
