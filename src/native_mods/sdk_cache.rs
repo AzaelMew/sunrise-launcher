@@ -1015,6 +1015,36 @@ pub(super) fn build_of(version: &str, base: &Base, keys: &[PublicKey]) -> Result
     build_of_in(&root().join("versions"), version, base, keys)
 }
 
+/// The build id [`build_of`] kept for game version `version`, without reaching the network.
+pub(super) fn kept_build_of(version: &str) -> Option<String> {
+    let text = plain_version(version)
+        .then(|| fs::read_to_string(root().join("versions").join(version)).ok())??;
+    super::is_revision(text.trim()).then(|| text.trim().to_owned())
+}
+
+/// Every game version [`build_of`] kept a build id for, with that id.
+pub(super) fn kept_builds() -> Vec<(String, String)> {
+    let Ok(entries) = fs::read_dir(root().join("versions")) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter_map(|entry| {
+            let version = entry.file_name().into_string().ok()?;
+            let commit = kept_build_of(&version)?;
+            Some((version, commit))
+        })
+        .collect()
+}
+
+/// Whether `version` can name a kept file: letters, digits, `.`, `-` and `_` only.
+fn plain_version(version: &str) -> bool {
+    !version.is_empty()
+        && version
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_'))
+}
+
 fn build_of_in(
     kept: &Path,
     version: &str,
@@ -1025,11 +1055,7 @@ fn build_of_in(
         build: version.to_owned(),
         why,
     };
-    let plain = !version.is_empty()
-        && version
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_'));
-    if !plain {
+    if !plain_version(version) {
         return Err(refused(trf(
             "{version} is not a game version",
             &[("version", version)],

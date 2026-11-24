@@ -1141,10 +1141,11 @@ impl Launcher {
         let Some(catalog) = sunrise::v2::known_index() else {
             return;
         };
-        let Some(listed) = catalog.index.build(&build) else {
-            return;
-        };
-        let found = local_fit::kept(&listed.commit);
+        // A build the index doesn't list is checked too, by the build id its own release names
+        // (known once the first check has read it).
+        let found = local_fit::commit_of(&catalog.index, &build)
+            .map(|commit| local_fit::kept(&commit))
+            .unwrap_or_default();
         if local_fit::gaps(&catalog.index, &build)
             .iter()
             .all(|r| found.contains_key(&r.file.sha256.to_ascii_lowercase()))
