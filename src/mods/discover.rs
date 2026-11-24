@@ -194,6 +194,50 @@ impl Launcher {
             );
         }
 
+        // This computer's fit check stopped: the cards it would have answered stay unchecked.
+        if let Some(error) = self.local_fit_failure() {
+            let line = trf(
+                "Couldn't check which mods fit {build}: {error}",
+                &[
+                    ("build", build_label.as_deref().unwrap_or_default()),
+                    ("error", error),
+                ],
+            );
+            page =
+                page.child(
+                    card()
+                        .px(px(12.))
+                        .py(px(8.))
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .gap(px(10.))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .text_size(px(tokens::SMALL))
+                                .text_color(c(palette().warning))
+                                .child(line),
+                        )
+                        .child(button("alt-local-fit-retry", tr("Try again")).on_click(
+                            cx.listener(|this, _: &ClickEvent, _, cx| {
+                                this.retry_local_fit();
+                                cx.notify();
+                            }),
+                        )),
+                );
+        }
+        // Show all on a build the registry doesn't list: said once here, not on every card.
+        if f.show_all && !build_listed {
+            if let Some(build) = build_label.as_deref() {
+                page = page.child(muted(trf(
+                    "{build} isn't in the Sunrise registry yet, so its mods can't be installed.",
+                    &[("build", build)],
+                )));
+            }
+        }
+
         // Count & ranking summary line when results exist.
         if total > 0 {
             let count_line = summary_count_line(
@@ -325,14 +369,14 @@ impl Launcher {
                     };
 
                     let mut facts: Vec<Div> = Vec::new();
-                    if let Some(version) = card_data.fit.fitting_version() {
-                        facts.push(fit_pill(trf(
-                            "{version} · Fits build",
-                            &[("version", version)],
-                        )));
+                    if let Some(pill) = card_data.fit.fit_pill() {
+                        facts.push(fit_pill(pill));
                         facts.push(tag(card_data.make.label()));
-                    } else if let Some(reason) = card_data.fit.reason() {
-                        facts.push(unfit_pill(reason));
+                    } else if let Some(reason) = card_data.fit.card_reason() {
+                        facts.push(match card_data.fit {
+                            discover_v2::CardFit::Checking { .. } => muted(reason),
+                            _ => unfit_pill(reason),
+                        });
                     }
                     if let Some(collection) = collections
                         .iter()
@@ -355,7 +399,7 @@ impl Launcher {
                         control,
                         issue,
                     );
-                    if !fits {
+                    if card_data.fit.faded() {
                         card_el = card_el.opacity(0.62);
                     }
                     row = row.child(card_el.on_click(cx.listener(
@@ -907,6 +951,8 @@ fn summary_count_line(
 fn fit_pill(label: String) -> Div {
     let p = palette();
     div()
+        // A long pill wraps within the card instead of running under its button.
+        .min_w_0()
         .px(px(7.))
         .py(px(1.))
         .rounded(crate::tokens::r(crate::tokens::R_SMALL))
@@ -921,6 +967,7 @@ fn fit_pill(label: String) -> Div {
 fn unfit_pill(label: String) -> Div {
     let p = palette();
     div()
+        .min_w_0()
         .px(px(7.))
         .py(px(1.))
         .rounded(crate::tokens::r(crate::tokens::R_SMALL))
