@@ -38,8 +38,8 @@ pub use source::{
     SourceDependency, SourceError, SourceHooks, SourceProof, SourceRequest,
 };
 pub use switch::{
-    checked_switch_fit, switch_build, switch_profile_build, BuildChoice, SwitchDecision,
-    SwitchHooks, SwitchQuestion, Switched,
+    checked_switch_fit, save_build_choice, switch_build, switch_profile_build, BuildChoice,
+    SwitchDecision, SwitchHooks, SwitchQuestion, Switched,
 };
 pub use v2::{
     checked_switch_fit_v2, classify_v2_ownership, install_registry_v2, inventory_v2,

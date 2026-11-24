@@ -106,19 +106,81 @@ pub fn switch_profile_build_v2(
     choice: Option<BuildChoice>,
     hooks: V2SwitchHooks<'_>,
 ) -> Result<Switched, String> {
-    let catalog = catalogue_v2::refreshed_index().map_err(|e| e.to_string())?;
+    switch_profile_build_v2_with_index(instance, identity, tag, choice, hooks, || {
+        catalogue_v2::refreshed_index()
+            .map(|c| c.index)
+            .map_err(|e| e.to_string())
+    })
+}
+
+fn switch_profile_build_v2_with_index(
+    instance: &Instance,
+    identity: Identity,
+    tag: &str,
+    choice: Option<BuildChoice>,
+    hooks: V2SwitchHooks<'_>,
+    fetch_index: impl FnOnce() -> Result<Arc<Index>, String>,
+) -> Result<Switched, String> {
+    if instance.kind == crate::instances::Kind::Pack {
+        return Err(tr("Choose an ordinary profile to switch builds.").into());
+    }
+    (hooks.switch.progress)(InstallProgress::PreparingBuild);
     let mut profile =
         Profile::open_for(&instance.home, None, Some(identity)).map_err(String::from)?;
-    switch_build_v2_with(
+    let cancellation = hooks.switch.cancellation;
+    cancellation.check()?;
+    // Check whether the profile is already on `tag` before refreshing the signed v2 index so
+    // pinning/unpinning the current build never does an unnecessary network round-trip.
+    if let Some(active) = profile.active()? {
+        active.verify_artifacts()?;
+        if active.base() == tag {
+            if let Some(choice) = choice {
+                cancellation.begin_publication()?;
+                crate::browser::sunrise::registry_install::switch::save_build_choice(
+                    &instance.id,
+                    tag,
+                    choice,
+                )?;
+            }
+            return Ok(Switched::AlreadySelected);
+        }
+    }
+    let index = fetch_index()?;
+    let result = switch_build_v2_with(
         instance,
         &mut profile,
-        catalog.index,
+        index,
         tag,
         choice,
         hooks,
         &fetch_release_bytes,
         &attestation::verify_release,
-    )
+    )?;
+    if let Some(choice) = choice {
+        match &result {
+            Switched::Stayed => return Ok(result),
+            Switched::AlreadySelected => {
+                cancellation.begin_publication()?;
+                crate::browser::sunrise::registry_install::switch::save_build_choice(
+                    &instance.id,
+                    tag,
+                    choice,
+                )?;
+            }
+            Switched::Changed(active) => {
+                if let Some(committed) = active.build_choice() {
+                    if let Err(error) =
+                        crate::instances::sync_build_choice(&instance.id, &instance.home, committed)
+                    {
+                        // The choice is already durable in active-build.json; listing or
+                        // editing the profile recovers instances.json on the next write.
+                        eprintln!("Sunrise: instances.json is not saved: {error}");
+                    }
+                }
+            }
+        }
+    }
+    Ok(result)
 }
 
 pub(super) enum SlotPlan<'a> {
@@ -584,4 +646,56 @@ fn split_hold_names(holds: &[Held]) -> (Vec<String>, Vec<String>) {
 
 fn change_message(change: &PublisherChange) -> String {
     attestation::Error::PublisherChanged(Box::new(change.clone())).to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        instances::{Channel, Kind as InstanceKind},
+        native_mods::Cancellation,
+    };
+
+    #[test]
+    fn v2_profile_switch_refuses_pack_without_fetching_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let instance = Instance {
+            id: "pack-1".into(),
+            name: "Pack".into(),
+            home: dir.path().to_path_buf(),
+            work: dir.path().to_path_buf(),
+            version: None,
+            channel: Channel::Dev,
+            kind: InstanceKind::Pack,
+            group: None,
+            icon: None,
+            native_profile: Default::default(),
+            last_played: None,
+            played: Default::default(),
+            launch: Default::default(),
+            incarnation: None,
+        };
+        let cancel = Cancellation::default();
+        let hooks = V2SwitchHooks {
+            switch: SwitchHooks {
+                cancellation: &cancel,
+                progress: &|_| {},
+                approve: &|_| Ok(SwitchDecision::Cancel),
+                at_cutoff: &|| Ok(()),
+            },
+            confirm_publisher_change: None,
+            pin_dir: None,
+        };
+        let Err(err) = switch_profile_build_v2_with_index(
+            &instance,
+            Identity::of(dir.path()).unwrap(),
+            "dev-2026-11-24-abc",
+            Some(BuildChoice::Follow(Channel::Dev)),
+            hooks,
+            || panic!("pack refusal must happen before fetching v2 index"),
+        ) else {
+            panic!("expected pack refusal error");
+        };
+        assert!(err.contains("ordinary profile"), "unexpected error: {err}");
+    }
 }

@@ -6,10 +6,10 @@ use std::{
 };
 use sunrise_launcher::{
     browser::sunrise::{
-        install_target, switch_profile_build, switch_profile_build_v2, switch_provider_v2,
-        BuildChoice, InstallError, InstallHooks, InstallProgress, ProviderSwitchPreview,
-        SwitchDecision, SwitchHooks, SwitchQuestion, Switched, V2Hooks, V2InstallOptions,
-        V2ProviderSwitchHooks, V2SwitchHooks,
+        install_target, save_build_choice, switch_profile_build, switch_profile_build_v2,
+        switch_provider_v2, BuildChoice, InstallError, InstallHooks, InstallProgress,
+        ProviderSwitchPreview, SwitchDecision, SwitchHooks, SwitchQuestion, Switched, V2Hooks,
+        V2InstallOptions, V2ProviderSwitchHooks, V2SwitchHooks,
     },
     managed_play::{self, Active, FirstBuild, Profile, ReceiptHint},
     profile_txn::Identity,
@@ -130,6 +130,28 @@ impl Launcher {
         let Some(instance) = self.selected_instance().cloned() else {
             return;
         };
+        // Changing only the channel/pin preference when the profile is already on `tag` needs
+        // no switch modal, registry fetch, or mod rebuild.
+        let already_on_tag = instance.kind != instances::Kind::Pack
+            && match managed_play::display_active(&instance.home) {
+                Ok(Some(active)) => active.base() == tag && active.verify_artifacts().is_ok(),
+                Ok(None) => {
+                    self.profile_target(&instance).as_deref() == Some(tag.as_str())
+                        && self.installed.contains(&tag)
+                }
+                Err(_) => false,
+            };
+        if already_on_tag {
+            if let Some(choice) = choice {
+                if let Err(error) = save_build_choice(&instance.id, &tag, choice) {
+                    self.open_notice(error, Some(WayOut::ProfileFolder(instance.home)));
+                    return;
+                }
+                self.reload_instances();
+            }
+            self.close_sheet();
+            return;
+        }
         let identity = match install_target(&instance) {
             Ok(identity) => identity,
             Err(error) => {
