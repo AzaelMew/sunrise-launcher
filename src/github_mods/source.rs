@@ -328,7 +328,7 @@ pub(crate) fn forward(predecessor: &Origin, next: &Origin) -> Result<bool, Failu
 
 fn fixture_repo(owner: &str, repo: &str) -> Option<PathBuf> {
     // Inputs come from validated catalog/receipt segments. Never honor this in signed builds.
-    if !cfg!(debug_assertions) {
+    if !cfg!(any(test, debug_assertions)) {
         return None;
     }
     std::env::var_os("SUNRISE_SOURCE_FIXTURES")
