@@ -863,7 +863,7 @@ fn windows_bound_x64_fallback_survives_pending_retry_and_committed_replay() {
             },
             &cancellation,
             |_| {},
-            (|| None, || None),
+            || None,
         )
     };
     let mut profile = Profile::open(&home, None).unwrap();
