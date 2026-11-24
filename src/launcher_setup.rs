@@ -5,6 +5,7 @@ use super::*;
 impl Launcher {
     pub(crate) fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         sunrise_launcher::storage::eviction::cleanup_after_start();
+        crate::eta::preload_timings();
         // A press on something that then leaves the page (a row that opens its page, a tab)
         // would leave the keyboard on nothing, and Tab dead until the next click.
         cx.on_focus_lost(window, |this, window, cx| {

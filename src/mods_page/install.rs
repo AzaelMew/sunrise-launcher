@@ -68,6 +68,7 @@ struct Running {
     batch: Arc<Mutex<Option<Vec<String>>>>,
     requests: Vec<RequestView>,
     stage: InstallProgress,
+    eta: crate::eta::StageEta,
     cancellation: Cancellation,
     github: Option<Arc<GithubInput>>,
     local: Option<Arc<LocalInput>>,
@@ -631,6 +632,11 @@ impl Installs {
                         source.visible = true;
                     }
                     run.stage = InstallProgress::Checking;
+                    run.eta.update(
+                        crate::eta::install_stage_key(InstallProgress::Checking),
+                        None,
+                        Instant::now(),
+                    );
                 }
             }
             Worker::Mixed(done) => {
@@ -670,6 +676,11 @@ impl Installs {
             Worker::Progress(step) => {
                 if let Some(run) = &mut self.running {
                     run.stage = step;
+                    run.eta.update(
+                        crate::eta::install_stage_key(step),
+                        stage_fraction(step),
+                        Instant::now(),
+                    );
                 }
             }
             Worker::SourceRejected(id, error) => {
@@ -1157,6 +1168,14 @@ impl Launcher {
         self.mods.installs.stage()
     }
 
+    pub(crate) fn registry_eta(&self) -> Option<Duration> {
+        self.mods
+            .installs
+            .running
+            .as_ref()
+            .and_then(|run| run.eta.remaining(Instant::now()))
+    }
+
     /// The clicked profile and initial build selection travel together into the worker, even
     /// if the user switches pages or selections while the request waits.
     pub(crate) fn queue_registry_install(
@@ -1458,6 +1477,7 @@ impl Launcher {
             requests: views,
             mixed,
             stage: InstallProgress::Checking,
+            eta: crate::eta::StageEta::default(),
             cancellation: cancellation.clone(),
             source,
             github: request.github.clone(),
@@ -2019,6 +2039,7 @@ mod tests {
                 batch: Arc::new(Mutex::new(Some(first.view.ids.clone()))),
                 requests: vec![first.view],
                 stage: InstallProgress::Checking,
+                eta: crate::eta::StageEta::default(),
                 cancellation: Cancellation::default(),
                 github: None,
                 local: None,

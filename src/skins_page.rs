@@ -746,6 +746,11 @@ impl Skins {
         };
         // A reading asked before this Save ended may say what was worn before it.
         self.reading = None;
+        // What was worn before this Save: read before `outcome.profile` replaces `self.profile`.
+        let before = match &self.profile {
+            Some(Ok(profile)) => Some(profile.clone()),
+            _ => None,
+        };
         if let Some(profile) = &outcome.profile {
             // A change an earlier Save left unconfirmed may show in it.
             self.profile_seen(profile);
@@ -757,11 +762,6 @@ impl Skins {
             self.forget_file(&saved_key(self.uuid.as_deref(), &saved.id));
         }
         let accepted = |change: &Option<Change>| change.as_ref().is_some_and(Change::accepted);
-        // What was worn before the changes left unconfirmed: the latest profile known.
-        let before = match &self.profile {
-            Some(Ok(profile)) => Some(profile.clone()),
-            _ => None,
-        };
         if matches!(outcome.skin, Some(Change::Unconfirmed(_))) {
             self.unconfirmed.skin = submitted.skin.clone();
             self.unconfirmed.slim = submitted.slim;
@@ -782,6 +782,9 @@ impl Skins {
             self.awaited.left = AWAITED_READINGS;
         }
         if accepted(&outcome.skin) {
+            // A newer accepted write supersedes any earlier confirmed record still waiting on the
+            // write queue for the same field.
+            self.confirmed.skin = None;
             if self.edit.skin == submitted.skin {
                 self.edit.skin = None;
             }
@@ -789,8 +792,11 @@ impl Skins {
                 self.edit.slim = None;
             }
         }
-        if accepted(&outcome.cape) && self.edit.cape == submitted.cape {
-            self.edit.cape = None;
+        if accepted(&outcome.cape) {
+            self.confirmed.cape = None;
+            if self.edit.cape == submitted.cape {
+                self.edit.cape = None;
+            }
         }
         self.said = said(outcome);
         true
@@ -1103,7 +1109,7 @@ impl Launcher {
     ///
     /// Each answer is also stored for the page's queued texture jobs, which read it as they
     /// start, so they go by the same answer as the page.
-    fn skins_offline(&self) -> bool {
+    pub(super) fn skins_offline(&self) -> bool {
         let offline = self.skins_offline_worked_out();
         self.skins.offline_flag.store(offline, Ordering::Relaxed);
         offline
@@ -4106,6 +4112,178 @@ mod tests {
                     "Use the default folder waits"
                 );
                 assert!(pointer.is_file(), "the pointer left as it was");
+            },
+        );
+    }
+
+    #[test]
+    fn a_failed_texture_fetch_then_a_successful_one_records_the_new_skin() {
+        in_a_scratch_launcher(
+            "skins_page::tests::a_failed_texture_fetch_then_a_successful_one_records_the_new_skin",
+            |l, _| {
+                l.skins.offline_for_test = Some(false);
+                l.accounts.save().unwrap();
+                l.skins.show(UUID, |_| true);
+                l.skins.profile = Some(Ok(profile(SKIN, false, None)));
+                pick(&mut l.skins, SkinPick::Default("alex"));
+                let save = l.skins.submit(false).unwrap();
+                let uploaded_png = skin_png(7);
+                let mut unconfirmed = outcome(
+                    Some(Change::Unconfirmed("couldn't check".into())),
+                    None,
+                    // Mojang already returned the new skin URL, only fetching its PNG failed.
+                    Some(profile(NEW, true, None)),
+                );
+                unconfirmed.uploaded =
+                    Some((skin_library::id_of_png(&uploaded_png).unwrap(), true));
+                l.look_saved(UUID.into(), save.id, unconfirmed);
+                assert_eq!(
+                    l.skins.awaited.skin_before,
+                    Some((SKIN.into(), "classic".into())),
+                    "keeps the pre-upload skin, not the post-upload URL"
+                );
+
+                // First texture fetch at NEW fails.
+                l.skins_picture(NEW.into(), None);
+                assert_eq!(l.skins.confirmed.skin, None);
+
+                // Later profile read returns the same NEW profile; then the PNG fetch succeeds.
+                l.skins.reading = None;
+                let reading = l.skins.read_asked();
+                l.skins_profile(UUID.into(), reading, Ok(profile(NEW, true, None)));
+                assert_eq!(
+                    l.skins.awaited.skin_at,
+                    Some((NEW.into(), "slim".into())),
+                    "NEW is not mistaken for the pre-upload skin"
+                );
+                l.skins_picture(NEW.into(), Some(uploaded_png));
+                let Msg::LookRecorded(uuid, record, recorded) =
+                    next(l, |msg| matches!(msg, Msg::LookRecorded(..)))
+                else {
+                    unreachable!()
+                };
+                l.look_recorded(uuid, record, recorded);
+                assert_eq!(
+                    account::Accounts::load().accounts[0].skin,
+                    Some((NEW.into(), "slim".into())),
+                    "new skin recorded without uploading again"
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn a_newer_accepted_save_supersedes_a_pending_confirmed_record() {
+        in_a_scratch_launcher(
+            "skins_page::tests::a_newer_accepted_save_supersedes_a_pending_confirmed_record",
+            |l, _| {
+                l.skins.offline_for_test = Some(false);
+                l.accounts.save().unwrap();
+                l.skins.show(UUID, |_| true);
+                l.skins.profile = Some(Ok(profile(SKIN, false, Some("c1"))));
+
+                // Fill the write queue so an older confirmed cape record stays pending.
+                let (release, held) = std::sync::mpsc::channel::<()>();
+                l.skins
+                    .writes
+                    .push(
+                        "test",
+                        Box::new(move || {
+                            let _ = held.recv();
+                        }),
+                    )
+                    .unwrap();
+                while l.skins.writes.push("test", Box::new(|| {})).is_ok() {}
+                l.skins.confirmed.cape =
+                    Some(Some("http://textures.minecraft.net/texture/c1".into()));
+                l.record_confirmed(UUID);
+                assert!(l.skins.confirmed.cape.is_some());
+                assert_eq!(l.skins.recording, 0);
+
+                // Release the queue before the newer Save lands, and simulate the newer Save
+                // writing cape c2 to accounts.json directly (as look::save does on Change::Done).
+                release.send(()).unwrap();
+                let newer_cape = Some("http://textures.minecraft.net/texture/c2".to_string());
+                account::Accounts::save_look(UUID, None, Some(newer_cape.clone())).unwrap();
+
+                l.skins.edit.cape = Some(CapePick::Minecraft("c2".into()));
+                let save = l.skins.submit(false).unwrap();
+                let done = outcome(
+                    None,
+                    Some(Change::Done),
+                    Some(profile(SKIN, false, Some("c2"))),
+                );
+                l.look_saved(UUID.into(), save.id, done);
+                assert_eq!(
+                    l.skins.confirmed.cape, None,
+                    "superseded by the newer accepted Save"
+                );
+                assert_eq!(l.skins.recording, 0);
+
+                // Drain the queue by waiting on a sentinel job on the same worker. The worker
+                // was just released above, so wait briefly for a slot if the queue is still full.
+                let (done_tx, done_rx) = std::sync::mpsc::channel();
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+                loop {
+                    let tx = done_tx.clone();
+                    match l.skins.writes.push(
+                        "drain",
+                        Box::new(move || {
+                            let _ = tx.send(());
+                        }),
+                    ) {
+                        Ok(()) => break,
+                        Err(_) if std::time::Instant::now() < deadline => {
+                            std::thread::sleep(std::time::Duration::from_millis(5));
+                        }
+                        Err(err) => panic!("write queue never drained: {err:?}"),
+                    }
+                }
+                done_rx.recv().unwrap();
+
+                assert_eq!(
+                    account::Accounts::load().accounts[0].cape,
+                    newer_cape,
+                    "newer cape stays in accounts.json after the queue drains"
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn switching_profiles_from_the_rail_refreshes_the_texture_offline_flag() {
+        in_a_scratch_launcher(
+            "skins_page::tests::switching_profiles_from_the_rail_refreshes_the_texture_offline_flag",
+            |l, cx| {
+                static FETCHED: AtomicU64 = AtomicU64::new(0);
+                fn fetch(_: &str) -> Option<Vec<u8>> {
+                    FETCHED.fetch_add(1, Ordering::Relaxed);
+                    Some(vec![1])
+                }
+                l.skins.offline_for_test = Some(false);
+                assert!(!l.skins_offline());
+                assert!(!l.skins.offline_flag.load(Ordering::Relaxed));
+
+                // Queue a texture job while online.
+                let (tx, rx) = std::sync::mpsc::channel();
+                let job = texture_job(tx, SKIN.into(), l.skins.offline_flag.clone(), fetch);
+
+                // Switch from the rail to another profile whose build is in offline mode.
+                // Switching from the rail opens Home, not Skins, yet must refresh the flag.
+                let other = instances::create("Offline", None).unwrap();
+                l.reload_instances();
+                l.skins.offline_for_test = Some(true);
+                l.switch_profile(&other, cx);
+                assert!(matches!(l.ui.page, crate::frame::Page::Home));
+                assert!(
+                    l.skins.offline_flag.load(Ordering::Relaxed),
+                    "offline flag refreshed on profile switch outside Skins"
+                );
+
+                // Running the queued job now makes no online request.
+                job();
+                assert!(matches!(rx.recv().unwrap(), Msg::Picture(url, None) if url == SKIN));
+                assert_eq!(FETCHED.load(Ordering::Relaxed), 0);
             },
         );
     }

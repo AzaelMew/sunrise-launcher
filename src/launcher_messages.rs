@@ -591,6 +591,11 @@ impl Launcher {
                             }
                             if let (None, Some(started)) = (&error, self.prepare_started.take()) {
                                 self.perf.record_since("launcher.prepare_ms", started);
+                                if let (backend::PrepareStep::Prepare, Some(step_started)) =
+                                    backend::prepare_step_state()
+                                {
+                                    crate::eta::record_prepare_duration(step_started.elapsed());
+                                }
                             }
                             // A preparer process's exit status says little, so its last line
                             // follows; the launcher's own errors are full sentences already.
@@ -747,6 +752,18 @@ impl Launcher {
             changed = true;
         }
         self.restart_launcher_if_ready(cx);
+        // Repaint once a second while a loading sheet or status-strip stage is active so ETAs
+        // tick down and stall/expiry hides take effect even if the worker goes quiet.
+        if !changed && (self.switch_busy() || self.registry_stage().is_some()) {
+            static LAST_ETA_TICK: std::sync::Mutex<Option<Instant>> = std::sync::Mutex::new(None);
+            let now = Instant::now();
+            if let Ok(mut last) = LAST_ETA_TICK.lock() {
+                if last.is_none_or(|t| now.saturating_duration_since(t) >= Duration::from_secs(1)) {
+                    *last = Some(now);
+                    changed = true;
+                }
+            }
+        }
         if changed {
             cx.notify();
         }

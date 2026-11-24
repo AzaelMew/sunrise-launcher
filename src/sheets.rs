@@ -684,7 +684,10 @@ impl Launcher {
                         .flex()
                         .flex_col()
                         .child(title(tr("Getting ready to play").into()))
-                        .child(muted(stage_label(stage)))
+                        .child(muted(crate::eta::with_eta(
+                            stage_label(stage),
+                            self.registry_eta(),
+                        )))
                         .children(
                             stage_fraction(stage)
                                 .map(|f| crate::widgets::progress_bar(Some((f, f)), &self.theme)),
