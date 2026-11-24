@@ -441,9 +441,10 @@ fn concurrent_attempts_only_ever_seed_whole_verified_libraries() {
                         &base.join(round.to_string()),
                         &[("ae2", bytes), ("ftb", b"ftb"), ("hnn", b"hnn")],
                     );
-                    Kept::new(root)
-                        .save(&work, &built, &libraries, list, keys)
-                        .unwrap();
+                    let saved = Kept::new(root).save(&work, &built, &libraries, list, keys);
+                    // On Windows a blob another attempt is copying out can't be replaced: that
+                    // save fails, costing only a later miss.
+                    assert!(saved.is_ok() || cfg!(windows), "{saved:?}");
                 }
             });
         }

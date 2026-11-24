@@ -413,13 +413,13 @@ impl Kept {
         let intact = fs::symlink_metadata(&blob)
             .is_ok_and(|meta| meta.is_file() && !crate::native_cache::linked(&meta))
             && sha256_file(&blob).is_ok_and(|digest| digest == sha256);
-        if intact
-            && fs::File::options()
+        if intact {
+            // On Windows a blob another attempt is copying out refuses this; a prune that then
+            // takes it costs only a miss.
+            let _ = fs::File::options()
                 .write(true)
                 .open(&blob)
-                .and_then(|existing| existing.set_modified(now))
-                .is_ok()
-        {
+                .and_then(|existing| existing.set_modified(now));
             return Ok(sha256);
         }
         staged.persist(&blob).map_err(|error| error.error)?;
