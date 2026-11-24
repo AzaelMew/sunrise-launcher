@@ -1047,8 +1047,20 @@ fn resolve_v2_queue(
                 continue;
             }
 
-            // Unpinned slot dependency (`dep.project == None`):
-            if planned.contains_key(&dep.mod_id) {
+            // Unpinned slot dependency (`dep.project == None`): a provider already planned in
+            // this install serves it only inside the range this mod asks for.
+            if let Some(existing) = planned.get(&dep.mod_id) {
+                if !in_range(Some(&dep.version), &existing.version) {
+                    return Err(InstallError::NotForVersion(trf(
+                        "{mod} needs {dep} {range}, but {version} is planned for another mod.",
+                        &[
+                            ("mod", &project.name),
+                            ("dep", &existing.name),
+                            ("range", &dep.version.to_string()),
+                            ("version", &existing.version),
+                        ],
+                    )));
+                }
                 continue;
             }
             if let Some(existing) = installed.get(&dep.mod_id) {
