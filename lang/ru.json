@@ -1959,5 +1959,6 @@
   "{mod} runs only on servers, so it can't be turned on here.": "{mod} runs only on servers, so it can't be turned on here.",
   "{mod}'s fit with {build} could not be verified.": "{mod}'s fit with {build} could not be verified.",
   "{mod} — Not compatible with this build. {reason}": "{mod} — Not compatible with this build. {reason}",
-  "{mod} — Fit could not be verified. {reason}": "{mod} — Fit could not be verified. {reason}"
+  "{mod} — Fit could not be verified. {reason}": "{mod} — Fit could not be verified. {reason}",
+  "Every mod in this profile has a release for this build.": "Every mod in this profile has a release for this build."
 }
