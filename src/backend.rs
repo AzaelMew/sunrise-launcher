@@ -1760,16 +1760,6 @@ pub fn game_version(tag: &str) -> String {
     game_version_at(&version_dir(tag))
 }
 
-/// Switch must classify packages against the exact build, never the legacy default JAR.
-pub(crate) fn switch_game_version(tag: &str) -> Result<String, String> {
-    locked_game(&version_dir(tag)).ok_or_else(|| {
-        crate::i18n::tr(
-            "The selected build's game version could not be verified. Nothing was switched.",
-        )
-        .into()
-    })
-}
-
 /// Hosting uses the locked version as a destination. Older builds with no lock keep the default.
 pub(crate) fn hosting_game_version(folder: &Path) -> Result<String, String> {
     let path = folder.join("research-lock.json");
@@ -3003,15 +2993,25 @@ impl PrepareStep {
     }
 }
 
-/// The step the preparation under way is at (`PrepareStep::ALL`'s index).
-static PREPARE_STEP: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+/// The step the preparation under way is at and when it began, kept together so readers never
+/// pair a new step with the previous step's start time.
+static PREPARE_STATE: std::sync::Mutex<(PrepareStep, Option<std::time::Instant>)> =
+    std::sync::Mutex::new((PrepareStep::Files, None));
 
 pub fn prepare_step() -> PrepareStep {
-    PrepareStep::ALL[PREPARE_STEP.load(std::sync::atomic::Ordering::Relaxed)]
+    prepare_step_state().0
+}
+
+pub fn prepare_step_state() -> (PrepareStep, Option<std::time::Instant>) {
+    *PREPARE_STATE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 pub fn set_prepare_step(step: PrepareStep) {
-    PREPARE_STEP.store(step as usize, std::sync::atomic::Ordering::Relaxed);
+    *PREPARE_STATE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = (step, Some(std::time::Instant::now()));
 }
 
 /// Checks what the preparation needs and picks how to run it. PLAY.txt describes the same

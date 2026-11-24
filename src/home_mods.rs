@@ -576,13 +576,13 @@ impl Launcher {
                 items,
             };
         }
-        let mod_facts = (!packs)
-            .then(|| self.home_mod_facts(self.ui.home.mods.revision, sunrise::fetched_index()));
+        let mod_facts = (!packs).then(|| self.home_mod_facts(self.ui.home.mods.revision));
         let (built, place) = self.home_installed_list(packs, list.len());
-        let index = (!packs).then(sunrise::known_index).flatten();
-        let catalog = (!packs).then(sunrise::v2::known_index).flatten();
+        let index = (!packs).then(sunrise::v2::shown_index).flatten();
+        // No catalogue read yet this run: fetch it so registry mods get their icons, as the Mods
+        // pages do.
         if !packs
-            && catalog.is_none()
+            && index.is_none()
             && list[built.clone()]
                 .iter()
                 .any(|item| matches!(item.picture, Picture::Project(_)))
@@ -593,27 +593,21 @@ impl Launcher {
         let mut priority = list[..built.start].iter().filter(|item| item.on).count();
         for item in &list[built] {
             let picture = match &item.picture {
-                Picture::Project(project) => {
-                    // A v2 install's project is in the v2 catalogue; one from the old registry
-                    // is in its index.
-                    let picture = match catalog
+                Picture::Project(project) => tile(
+                    index
                         .as_ref()
                         .and_then(|catalog| Some(catalog.index.project(project)?.icon.clone()))
-                    {
-                        Some(icon) => self.v2_mod_image(
-                            project,
-                            &icon,
-                            sunrise_launcher::browser::images::ROW,
-                        ),
-                        None => index
-                            .as_ref()
-                            .and_then(|index| index.project(project)?.icon.clone())
-                            .and_then(|url| {
-                                self.mods_image(&url, sunrise_launcher::browser::images::ROW)
-                            }),
-                    };
-                    tile(picture, &item.id, &item.name, PICTURE)
-                }
+                        .and_then(|icon| {
+                            self.v2_mod_image(
+                                project,
+                                &icon,
+                                sunrise_launcher::browser::images::ROW,
+                            )
+                        }),
+                    &item.id,
+                    &item.name,
+                    PICTURE,
+                ),
                 Picture::Local { package, source } => {
                     let listing = if let Some(origin) = source {
                         self.read_nightly_catalogue(false);

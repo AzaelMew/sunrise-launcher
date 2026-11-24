@@ -178,6 +178,8 @@ struct RefreshContext<'a> {
 }
 
 static LOADED: Mutex<Option<LoadedState>> = Mutex::new(None);
+/// The verified snapshot on disk, read by [`read_saved_index`] while nothing is loaded yet.
+static SAVED: Mutex<Option<Catalog>> = Mutex::new(None);
 /// Serializes on-disk serial-floor checks and cache publication across stores.
 /// Lock order is always `LOADED` (when held) before `COMMIT_LOCK`.
 static COMMIT_LOCK: Mutex<()> = Mutex::new(());
@@ -216,6 +218,73 @@ pub fn known_index() -> Option<Catalog> {
         .unwrap_or_else(|e| e.into_inner())
         .as_ref()
         .map(|state| state.catalog.clone())
+}
+
+/// Reads the last verified catalogue on disk, when none is loaded this run, so views can show it
+/// before the network read lands. Disk I/O: call it off the window thread.
+pub fn read_saved_index() -> Option<Catalog> {
+    if let Some(catalog) = known_index() {
+        return Some(catalog);
+    }
+    let saved = Store::new(cache_dir(), REGISTRY_KEYS)
+        .load_cached(now_unix_seconds())
+        .ok()?;
+    *SAVED.lock().unwrap_or_else(|e| e.into_inner()) = Some(saved.clone());
+    Some(saved)
+}
+
+/// The catalogue to show without I/O: the one loaded this run, else the snapshot
+/// [`read_saved_index`] read from disk.
+pub fn shown_index() -> Option<Catalog> {
+    known_index().or_else(|| SAVED.lock().unwrap_or_else(|e| e.into_inner()).clone())
+}
+
+/// The project an installed registry row belongs to. A row from the old registry (no `mod_id`)
+/// belongs to the one project with a release of the same mod, version and archive hash, as
+/// `classify_v2_ownership` adopts it; otherwise it has none.
+pub fn installed_project<'a>(
+    index: &'a Index,
+    entry: &crate::browser::installed::Entry,
+) -> Option<&'a index_v2::Project> {
+    if entry.mod_id.is_some() {
+        return index.project(&entry.project);
+    }
+    let hash = entry.checksum.strip_prefix("SHA-256:")?;
+    match index
+        .releases_by_sha256(&entry.project, hash)
+        .into_iter()
+        .filter(|(_, release)| release.version == entry.version)
+        .collect::<Vec<_>>()
+        .as_slice()
+    {
+        [(project, _)] => Some(project),
+        _ => None,
+    }
+}
+
+/// The newest release of `project` newer than the `installed` version that fits `build`: not
+/// taken down and not already proved not to fit (`unfit`, lowercase SHA-256s).
+pub fn newer_release<'a>(
+    index: &Index,
+    project: &'a index_v2::Project,
+    installed: &str,
+    build: &str,
+    unfit: &std::collections::BTreeSet<String>,
+) -> Option<&'a index_v2::Release> {
+    use sunrise_launcher_smod::dependencies::parse_version;
+    let installed = parse_version(installed).ok()?;
+    project
+        .releases
+        .iter()
+        .filter(|r| {
+            r.fits_build(build)
+                && index.revoked(&project.id, Some(&r.file.sha256)).is_none()
+                && !unfit.contains(&r.file.sha256.to_ascii_lowercase())
+        })
+        .filter_map(|r| Some((parse_version(&r.version).ok()?, r)))
+        .filter(|(v, _)| *v > installed)
+        .max_by(|a, b| a.0.cmp(&b.0))
+        .map(|(_, r)| r)
 }
 
 /// Returns the verified v2 catalogue, reusing an in-memory copy from the last ten minutes for the

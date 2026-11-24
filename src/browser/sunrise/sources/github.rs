@@ -167,7 +167,7 @@ pub(super) struct Github {
 
 impl Github {
     pub(super) fn current() -> Self {
-        let fixture = if cfg!(debug_assertions) {
+        let fixture = if cfg!(any(test, debug_assertions)) {
             std::env::var_os("SUNRISE_SOURCE_FIXTURES").map(PathBuf::from)
         } else {
             None

@@ -597,12 +597,8 @@ impl Launcher {
         if let Some(body) = self.source_consent_body(cx) {
             return Some(frame("nightly-source-consent", 660., body, cx));
         }
-        use crate::mods_page::install::Decision;
-        if let Some((decision, _)) = &self.mods.installs.question {
-            return Some(match decision {
-                Decision::Build(failure) => self.registry_build_failed(failure, cx),
-                Decision::Resolve(question) => self.registry_resolve(question, cx),
-            });
+        if let Some((failure, _)) = &self.mods.installs.question {
+            return Some(self.registry_build_failed(failure, cx));
         }
         if let Some((impact, _)) = &self.mods.installs.world {
             let action = if impact.removal {
@@ -684,7 +680,10 @@ impl Launcher {
                         .flex()
                         .flex_col()
                         .child(title(tr("Getting ready to play").into()))
-                        .child(muted(stage_label(stage)))
+                        .child(muted(crate::eta::with_eta(
+                            stage_label(stage),
+                            self.registry_eta(),
+                        )))
                         .children(
                             stage_fraction(stage)
                                 .map(|f| crate::widgets::progress_bar(Some((f, f)), &self.theme)),
@@ -850,84 +849,6 @@ impl Launcher {
             });
         })
         .detach();
-    }
-
-    fn registry_resolve(
-        &self,
-        question: &std::sync::Arc<sunrise_launcher::browser::sunrise::ResolveQuestion>,
-        cx: &mut Context<Self>,
-    ) -> Stateful<Div> {
-        use crate::mods_page::install::Decision;
-        let consent = question.clone();
-        let count = question.blockers.len().to_string();
-        let names = crate::mods::names(&question.requested);
-        let body = div()
-            .flex()
-            .flex_col()
-            .child(title(trf(
-                "Installing {mods} would break {count} of your mods",
-                &[("mods", &names), ("count", &count)],
-            )))
-            .child(
-                div()
-                    .id("resolve-install-mods")
-                    .max_h(px(220.))
-                    .overflow_y_scroll()
-                    .flex()
-                    .flex_col()
-                    .gap(px(9.))
-                    .children(question.blockers.iter().map(|(mod_, reason)| {
-                        div()
-                            .flex()
-                            .flex_col()
-                            .child(
-                                div()
-                                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .child(mod_.clone()),
-                            )
-                            .child(muted(reason.clone()))
-                    }))
-                    .children(question.worlds.lines().into_iter().map(muted)),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .justify_end()
-                    .gap(px(8.))
-                    .child(
-                        button(
-                            "resolve-install-accept",
-                            if question.blockers.len() == 1 {
-                                tr("Install and turn off 1 mod").to_owned()
-                            } else {
-                                trf("Install and turn off {count} mods", &[("count", &count)])
-                            },
-                        )
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            if this
-                                .mods
-                                .installs
-                                .question
-                                .as_ref()
-                                .is_some_and(|(q, _)| matches!(q, Decision::Resolve(current) if std::sync::Arc::ptr_eq(current, &consent)))
-                            {
-                                if let Some((_, answer)) = this.mods.installs.question.take() {
-                                    let _ = answer.send(true);
-                                }
-                            }
-                            cx.notify();
-                        })),
-                    )
-                    .child(
-                        crate::frame::primary("resolve-install-stay", tr("Don't install"))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.close_sheet();
-                                cx.notify();
-                            })),
-                    ),
-            );
-        frame("registry-install-conflict", 600., body, cx)
     }
 
     // ---- Resolve ----

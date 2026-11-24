@@ -7,7 +7,7 @@ use super::ui::*;
 use super::*;
 use crate::paint::palette;
 use sunrise_launcher::browser::details::Details;
-use sunrise_launcher::browser::{self, images, Kind, Project, Version};
+use sunrise_launcher::browser::{self, images, Kind, Project, Source as _, Version};
 
 /// How many versions the page lists: the newest.
 const VERSIONS: usize = 8;
@@ -88,7 +88,7 @@ impl Launcher {
         self.ui.page = Page::PackProject;
         let tx = self.ui.mods.tx.clone();
         std::thread::spawn(move || {
-            let s = browser::source(project.source);
+            let s = browser::modrinth::Modrinth;
             let result = (|| Ok(Box::new((s.details(&project)?, s.versions(&project)?))))();
             let _ = tx.send(Event::PackPage((project.source, project.id), result));
         });

@@ -87,12 +87,8 @@ fn iris_format_shader_packs_are_labelled_and_only_their_zip_is_picked() {
         p.support(GAME),
         Support::Partial("Iris-format pack: most work, some effects may not".into())
     );
-    // Another loader's pack doesn't run; Sunrise's own are Works on their build, unchanged.
+    // Another loader's pack doesn't run.
     assert!(!support(Kind::Shader, &v(&[GAME]), &v(&["optifine"]), GAME).installable());
-    assert_eq!(
-        support(Kind::Shader, &v(&[GAME]), &v(&[sunrise::LOADER]), GAME),
-        Support::Works
-    );
 
     let mut jar = version("jar", &[GAME], &["iris"]);
     jar.files[0].name = "pack.jar".into();
@@ -264,11 +260,6 @@ fn java_mods_and_modpacks_do_not_run() {
         assert!(!support(kind, &v(&[GAME]), &v(&["neoforge"]), GAME).installable());
         assert!(pick(kind, &versions, true, GAME).is_none());
     }
-    // Made for Sunrise: the registry's own mods and modpacks run.
-    assert_eq!(
-        support(Kind::Mod, &v(&[GAME]), &v(&[sunrise::LOADER]), GAME),
-        Support::Works
-    );
 }
 
 #[test]

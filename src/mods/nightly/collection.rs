@@ -147,7 +147,7 @@ impl Launcher {
             .iter()
             .filter(|source| ticked.contains(source.id()))
             .count();
-        let all_state = model::collection::ticks(picked, pickable.len());
+        let all_state = super::super::ui::ticks(picked, pickable.len());
         let all_ids: Vec<String> = pickable.iter().map(|s| s.id().to_owned()).collect();
         let list_head = div()
             .id("nightly-collection-all")

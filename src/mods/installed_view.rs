@@ -570,28 +570,9 @@ impl Launcher {
 
     pub(super) fn labeled_installed_rows(&self) -> (Vec<Row>, Vec<Option<String>>) {
         let mut rows = self.rows();
-        // The same catalogue Discover displays, including a saved copy. This is display-only;
-        // `rows` uses a fetched index for registry status and update offers.
-        let registry = sunrise::known_index();
-        let registry_collections = registry
-            .as_deref()
-            .map(model::collection::part_of)
-            .unwrap_or_default();
         // Use the exact installed package's display name here, as in the Remove review.
         // Compute collisions before filtering so a row keeps its label when peers are hidden.
         for row in &mut rows {
-            if let Some(entry) = &row.entry {
-                if let Some(project) = registry
-                    .as_ref()
-                    .and_then(|index| index.project(&entry.project))
-                {
-                    row.icon.clone_from(&project.icon);
-                    row.authors = project.authors.join(", ");
-                }
-                row.collection = registry_collections
-                    .get(entry.project.as_str())
-                    .map(|collection| (*collection).into());
-            }
             if let Some(archive) = self.archive_display(row) {
                 row.title.clone_from(&archive.name);
                 if row.authors.is_empty() {
@@ -705,13 +686,13 @@ impl Launcher {
             .as_ref()
             .and_then(|entry| entry.install_hold.as_ref())
             .filter(|_| !r.on);
-        let hold_label = self
+        let hold = self
             .ui
             .mods
             .snapshot
             .as_ref()
-            .and_then(|snapshot| snapshot.rows.switch_held.get(&r.id))
-            .map(|hold| hold.label());
+            .and_then(|snapshot| snapshot.rows.switch_held.get(&r.id));
+        let hold_label = hold.map(|hold| (hold.label(), hold.detail().map(str::to_owned)));
         let switch_held = hold_label.is_some();
         let status_cell: AnyElement = if switch_held {
             div().into_any_element()
@@ -788,7 +769,7 @@ impl Launcher {
                     "Enabled for this profile, but not included in the build.",
                 )))
             });
-            if cells.switch && !switch_held && !busy {
+            if cells.switch && !busy {
                 let row = r.clone();
                 s.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     cx.stop_propagation();
@@ -847,10 +828,15 @@ impl Launcher {
                         muted(trf("Update available: {version}", &[("version", version)]))
                     }),
             )
-            .children(hold_label.map(|label| {
+            .children(hold_label.map(|(label, detail)| {
                 div()
+                    .id(("alt-row-hold", n))
                     .text_size(px(tokens::SMALL))
                     .text_color(c(palette().warning))
+                    .truncate()
+                    .when_some(detail, |hold, detail| {
+                        hold.tooltip(crate::glass_ui::tip(detail))
+                    })
                     .child(label)
             }))
             .children(
@@ -871,12 +857,15 @@ impl Launcher {
                             .child(line)
                     }),
             )
-            .when(r.registry_unchecked, |d| {
+            .when_some(r.registry_issue.clone(), |d, issue| {
                 d.child(
                     div()
+                        .id(("installed-registry-issue", n))
                         .text_size(px(tokens::SMALL))
                         .text_color(c(palette().muted))
-                        .child(tr("Registry not checked")),
+                        .truncate()
+                        .tooltip(crate::glass_ui::tip(issue.clone()))
+                        .child(issue),
                 )
             });
         use model::column;
@@ -1245,6 +1234,85 @@ mod tests {
     }
 
     #[test]
+    fn a_mod_rewritten_in_place_shows_on_an_idle_page_once_due() {
+        if scratch_child("a_mod_rewritten_in_place_shows_on_an_idle_page_once_due").is_none() {
+            return;
+        }
+        let profile = sunrise_launcher::instances::create("Pack", None).unwrap();
+        std::fs::create_dir_all(profile.home.join("sunrise-mods")).unwrap();
+        let entries: Vec<_> = (0..3)
+            .map(|n| {
+                let id = format!("mod-{n}");
+                let file = format!("sunrise-mods/{id}.smod");
+                std::fs::write(profile.home.join(&file), b"one").unwrap();
+                serde_json::json!({
+                    "source": "sunrise", "project": id, "slug": id, "title": format!("Mod {n}"),
+                    "kind": "mod", "version": "1.0.0", "number": "1.0.0", "file": file,
+                    "checksum": format!("SHA-256:{}", "0".repeat(64)), "page": ""
+                })
+            })
+            .collect();
+        std::fs::write(
+            profile.home.join("mod-browser.json"),
+            serde_json::json!({ "entries": entries }).to_string(),
+        )
+        .unwrap();
+        let mut settings = sunrise_launcher::backend::Settings::load();
+        settings.instance = Some(profile.id.clone());
+        settings.save().unwrap();
+
+        let mut app = gpui::TestAppContext::single();
+        let (shell, cx) = app.add_window_view(crate::window_root::Shell::new);
+        let launcher = shell.read_with(cx, |shell, _| shell.launcher());
+        launcher.update(cx, |l, cx| {
+            l.show_installed_mods();
+            cx.notify();
+        });
+        let frame = |cx: &mut gpui::VisualTestContext| {
+            launcher.update(cx, |_, cx| cx.notify());
+            cx.run_until_parked();
+        };
+        let read = |cx: &mut gpui::VisualTestContext| {
+            launcher.read_with(cx, |l, _| {
+                l.ui.mods
+                    .snapshot
+                    .as_ref()
+                    .filter(|s| !s.reading)
+                    .map(|s| s.key.clone())
+            })
+        };
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        let wait = |cx: &mut gpui::VisualTestContext, not: Option<&str>| loop {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the mods were never read"
+            );
+            frame(cx);
+            if let Some(key) = read(cx).filter(|key| Some(key.as_str()) != not) {
+                return key;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        };
+        let first = wait(cx, None);
+
+        // Rewritten where it lies: the next frame keeps the fingerprint it has.
+        std::fs::write(profile.home.join("sunrise-mods/mod-1.smod"), b"one, longer").unwrap();
+        frame(cx);
+        assert_eq!(read(cx).as_deref(), Some(first.as_str()));
+        // Before it is due the pump sees nothing to do; once due it sees the change, with no
+        // input in between, and the next frame reads the mods again.
+        let now = std::time::Instant::now();
+        assert!(!launcher.update(cx, |l, _| l.mods_check_due(now)));
+        let due = now + sunrise_launcher::native_status::FULL_EVERY;
+        assert!(launcher.update(cx, |l, _| l.mods_check_due(due)));
+        let second = wait(cx, Some(&first));
+        assert_ne!(second, first);
+        // An unchanged folder asks for nothing, even when due.
+        let again = due + sunrise_launcher::native_status::FULL_EVERY;
+        assert!(!launcher.update(cx, |l, _| l.mods_check_due(again)));
+    }
+
+    #[test]
     fn a_mod_far_down_the_list_is_built_and_revealed() {
         if scratch_child("a_mod_far_down_the_list_is_built_and_revealed").is_none() {
             return;
@@ -1330,9 +1398,8 @@ mod tests {
         let mut rows = model::rows(
             &[],
             &model::World {
-                index: None,
-                game: "26.3",
                 v2: None,
+                v2_failure: None,
                 build: None,
                 unfit_updates: &BTreeSet::new(),
                 enabled: &HashSet::new(),
@@ -1435,9 +1502,8 @@ mod tests {
         let rows = model::rows(
             &[],
             &model::World {
-                index: None,
-                game: "26.3",
                 v2: None,
+                v2_failure: None,
                 build: None,
                 unfit_updates: &BTreeSet::new(),
                 enabled: &HashSet::new(),

@@ -6,7 +6,13 @@ use crate::{
 };
 use gpui::{rgb, MouseButton, MouseDownEvent};
 use instances::{Icon, Instance, Kind};
-use std::{cell::Cell, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
+
+/// Each drawn profile row that opens a context menu, with its bounds in the window.
+pub(crate) type ProfileRows = Rc<RefCell<Vec<(gpui::Bounds<gpui::Pixels>, Instance)>>>;
 
 /// How wide the sidebar is closed, and open.
 const CLOSED: f32 = 54.;
@@ -318,6 +324,8 @@ impl Launcher {
                 }))
             });
         let selected = self.selected_instance().map(|i| i.id.clone());
+        let rows = self.ui.profile_rows.clone();
+        rows.borrow_mut().clear();
         let mut list = div()
             .id("sidebar-profiles")
             .flex()
@@ -343,8 +351,24 @@ impl Launcher {
             .when(labelled, |d| d.child(txt(i.name.clone())))
             .when(labelled && more, |d| d.pr(px(36.)))
             .when(deletable, |d| {
+                let (drawn, at) = (i.clone(), rows.clone());
                 let i = i.clone();
-                d.on_mouse_down(
+                d.child(
+                    gpui::canvas(
+                        // Only the part of the row the list shows counts: a row scrolled past
+                        // either end lies under the rail's controls.
+                        move |bounds, window, _| {
+                            let visible = bounds.intersect(&window.content_mask().bounds);
+                            if !visible.is_empty() {
+                                at.borrow_mut().push((visible, drawn.clone()));
+                            }
+                        },
+                        |_, _, _, _| {},
+                    )
+                    .absolute()
+                    .inset_0(),
+                )
+                .on_mouse_down(
                     MouseButton::Right,
                     cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
                         this.open_profile_menu(&i, f32::from(ev.position.y));

@@ -85,7 +85,6 @@ fn github_native_from(
     let hooks = sunrise::InstallHooks {
         progress: &|_| {},
         continue_after_failure: &|_| false,
-        resolve: None,
         cancellation: None,
     };
     let report = |action, origin: github_mods::Origin| {
