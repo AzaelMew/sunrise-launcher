@@ -280,6 +280,28 @@ fn release_workflow_is_required_and_must_match_project_at_release_tag() {
 }
 
 #[test]
+fn a_release_row_names_the_repository_it_was_signed_from_or_falls_back_to_the_project() {
+    let golden = golden_json();
+    let index = parse_value(&golden).unwrap();
+    let project = &index.projects[0];
+    assert_eq!(project.releases[0].repository, None);
+    assert_eq!(
+        project.release_repository(&project.releases[0]),
+        project.repository.id
+    );
+
+    let mut moved = golden_json();
+    moved["projects"][0]["releases"][0]["repository"] = json!(424242);
+    let index = parse_value(&moved).unwrap();
+    let project = &index.projects[0];
+    assert_eq!(project.release_repository(&project.releases[0]), 424242);
+
+    let mut zero = golden_json();
+    zero["projects"][0]["releases"][0]["repository"] = json!(0);
+    assert!(parse_value(&zero).is_err());
+}
+
+#[test]
 fn project_and_dependency_mod_ids_reuse_manifest_portable_validator() {
     let too_long = "a".repeat(65);
     for bad_id in ["", "con", "nul", "com1", "lpt9", "BadId", too_long.as_str()] {

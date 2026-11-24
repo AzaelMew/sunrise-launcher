@@ -47,6 +47,7 @@ fn make_release(
         published: "2026-11-22".into(),
         sunrise: sunrise.into(),
         workflow: workflow.into(),
+        repository: None,
         fits: fits.iter().map(|s| (*s).into()).collect(),
         does_not_fit: does_not_fit.iter().map(|s| (*s).into()).collect(),
         file: V2File {
@@ -207,6 +208,7 @@ fn policy_verifier_for(
     move |_bundle, _digest, expected| {
         let attested = Attested {
             repository_id: repo_id,
+            owner_id: repo_id,
             repository_name: repo_name.into(),
             signer_workflow_ref: workflow.into(),
             source_ref: "refs/tags/v1.0.0".into(),
@@ -897,6 +899,121 @@ fn v2_stage_and_verify_checks_digest_real_attestation_and_publisher_pins() {
     );
 }
 
+/// An attestation verifier for releases signed from `repo_id`, owned by `owner_id`.
+fn owned_verifier(
+    owner_id: u64,
+    repo_id: u64,
+) -> impl Fn(&[u8], [u8; 32], &ExpectedRelease<'_>) -> Result<VerifiedRelease, attestation::Error> {
+    move |_bundle, _digest, expected| {
+        let attested = Attested {
+            repository_id: repo_id,
+            owner_id,
+            repository_name: format!("owner{owner_id}/repo{repo_id}"),
+            signer_workflow_ref: WORKFLOW_V1.into(),
+            source_ref: "refs/tags/v1.0.0".into(),
+            source_commit: "c".repeat(40),
+            predicate_type: "https://slsa.dev/provenance/v1".into(),
+        };
+        attestation::check_release_policy(attested, expected)
+    }
+}
+
+#[test]
+fn an_older_release_of_a_moved_project_verifies_against_its_own_repository() {
+    let old_bytes = smod_bytes("wayfinder", "Wayfinder", "1.0.0", "");
+    let new_bytes = smod_bytes("wayfinder", "Wayfinder", "1.1.0", "");
+    let release = |version: &str, bytes: &[u8], repository: Option<u64>| Release {
+        repository,
+        ..make_release(
+            "alice/ports",
+            version,
+            "26.3-0.1.0",
+            WORKFLOW_V1,
+            &["26.3-0.1.0"],
+            &[],
+            bytes,
+            Vec::new(),
+        )
+    };
+    // The project now publishes from 7002; 1.0.0 was signed from 7001 before the move.
+    let moved = make_project(
+        "Ab3dE9xQ",
+        "wayfinder",
+        "wayfinder",
+        "Wayfinder",
+        7002,
+        "alice/ports",
+        vec![
+            release("1.0.0", &old_bytes, Some(7001)),
+            release("1.1.0", &new_bytes, Some(7002)),
+        ],
+    );
+    let idx = make_index(vec![moved.clone()], Vec::new());
+    let pin_dir = tempfile::tempdir().unwrap();
+    let stage = tempfile::tempdir().unwrap();
+    let fetch = |url: &str, _max: u64| -> Result<Vec<u8>, String> {
+        Ok(if url.ends_with(".sigstore.json") {
+            b"{}".to_vec()
+        } else if url.contains("v1.1.0") {
+            new_bytes.clone()
+        } else {
+            old_bytes.clone()
+        })
+    };
+    let stage_release = |release: &Release, verifier: ReleaseVerifier<'_>| {
+        let index = make_index(
+            vec![Project {
+                releases: vec![release.clone()],
+                ..moved.clone()
+            }],
+            Vec::new(),
+        );
+        let step = planned_from(&index.projects[0], release, false);
+        stage_and_verify_v2_release(
+            &index,
+            stage.path(),
+            &step,
+            pin_dir.path(),
+            &BTreeSet::new(),
+            Some(&|_| false),
+            V2Transfer {
+                fetch_bytes: &fetch,
+                verify_release: verifier,
+            },
+        )
+    };
+
+    // The older release verifies against the repository its row records, with no prompt.
+    let (entry, pin) = stage_release(&moved.releases[0], &owned_verifier(42, 7001)).unwrap();
+    assert_eq!(entry.repository.as_ref().unwrap().id, 7001);
+    commit_pending_pins(pin_dir.path(), &[pin]).unwrap();
+    // The newer one, from the same owner's other repository, asks nothing either.
+    let (_, pin) = stage_release(&moved.releases[1], &owned_verifier(42, 7002)).unwrap();
+    commit_pending_pins(pin_dir.path(), &[pin]).unwrap();
+    // Another owner's release in the project's repository is a publisher change.
+    assert!(matches!(
+        stage_release(&moved.releases[1], &owned_verifier(43, 7002)),
+        Err(InstallError::PublisherChanged(_))
+    ));
+    // A row from an index without the field is checked against the project's repository.
+    assert!(matches!(
+        stage_release(
+            &release("1.0.0", &old_bytes, None),
+            &owned_verifier(42, 7001)
+        ),
+        Err(InstallError::Refused(_))
+    ));
+
+    // The installed older release still counts as this project's verified install after the move.
+    let home = tempfile::tempdir().unwrap();
+    write_installed_mod(home.path(), "wayfinder", &old_bytes, Some(entry), true);
+    let inv = inventory_v2(home.path(), &idx).unwrap();
+    assert!(matches!(
+        inv["wayfinder"].ownership,
+        V2Ownership::Verified { ref project_id, .. } if project_id == "Ab3dE9xQ"
+    ));
+}
+
 #[test]
 fn v2_adoption_adopts_v1_only_on_unique_verified_digest_match() {
     let bytes_a = smod_bytes("wayfinder", "Wayfinder", "1.0.0", "");
@@ -1521,6 +1638,133 @@ fn v2_plan_picks_the_newest_library_release_in_the_range_the_dependent_asks_for(
     // Nothing in range fits this build: refused, naming the range.
     let refused = plan(">=3").unwrap_err().to_string();
     assert!(refused.contains(">=3"), "{refused}");
+}
+
+/// Core Lib 2.0.0 and 1.3.0 fit 26.3-0.1.0, 1.4.0 is not judged for it yet, and 1.2.0 does
+/// not fit it. Compass needs `core_lib` in `range`, naming the Core Lib project or not.
+fn library_and_dependent(range: &str, named: bool) -> Vec<Project> {
+    let lib = |version: &str, fits: &[&str], does_not_fit: &[&str]| {
+        let bytes = smod_bytes("core_lib", "Core Lib", version, "");
+        make_release(
+            "alice/core-lib",
+            version,
+            "26.3-0.1.0",
+            WORKFLOW_V1,
+            fits,
+            does_not_fit,
+            &bytes,
+            Vec::new(),
+        )
+    };
+    let library = make_project(
+        "Core1234",
+        "core-lib",
+        "core_lib",
+        "Core Lib",
+        2001,
+        "alice/core-lib",
+        vec![
+            lib("2.0.0", &["26.3-0.1.0"], &[]),
+            lib("1.4.0", &["26.3-0.1.1"], &[]),
+            lib("1.3.0", &["26.3-0.1.0"], &[]),
+            lib("1.2.0", &["26.3-0.1.1"], &["26.3-0.1.0"]),
+        ],
+    );
+    let bytes = smod_bytes(
+        "compass",
+        "Compass",
+        "1.0.0",
+        &format!("[dependencies]\ncore_lib = '{range}'\n"),
+    );
+    let app = make_project(
+        "App90123",
+        "compass",
+        "compass",
+        "Compass",
+        2003,
+        "alice/compass",
+        vec![make_release(
+            "alice/compass",
+            "1.0.0",
+            "26.3-0.1.0",
+            WORKFLOW_V1,
+            &["26.3-0.1.0"],
+            &[],
+            &bytes,
+            vec![Dependency {
+                mod_id: "core_lib".into(),
+                version: VersionReq::parse(range).unwrap(),
+                project: named.then(|| "Core1234".into()),
+                required: true,
+            }],
+        )],
+    );
+    vec![library, app]
+}
+
+fn plan_together(projects: Vec<Project>, requested: &[&str]) -> Result<V2Plan, InstallError> {
+    plan_v2_install(
+        &make_index(projects, Vec::new()),
+        "26.3-0.1.0",
+        &requested
+            .iter()
+            .map(|id| (*id).to_owned())
+            .collect::<Vec<_>>(),
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+        &V2InstallOptions::default(),
+        None,
+    )
+}
+
+#[test]
+fn v2_plan_says_why_no_release_of_a_dependency_can_be_used() {
+    let refused = |range: &str| {
+        plan_together(library_and_dependent(range, false), &["App90123"])
+            .unwrap_err()
+            .to_string()
+    };
+    // 1.2.0 is the only release in range, and it does not fit this build.
+    assert_eq!(
+        refused("~1.2"),
+        "Compass needs core_lib ~1.2, which has no release fitting Sunrise 26.3-0.1.0."
+    );
+    // 1.4.0 is in range but not judged for this build yet.
+    assert_eq!(
+        refused("^1.4"),
+        "Compass needs core_lib, whose fit on Sunrise 26.3-0.1.0 is not known yet."
+    );
+}
+
+#[test]
+fn v2_plan_checks_the_range_of_a_dependency_planned_in_the_same_install() {
+    // Installing the library with its dependent plans the library's newest fitting release,
+    // 2.0.0, which Compass's `^1` does not allow, whichever is asked for first and whether
+    // Compass names the library's project or only its mod id.
+    for named in [true, false] {
+        for requested in [["Core1234", "App90123"], ["App90123", "Core1234"]] {
+            let refused = plan_together(library_and_dependent("^1", named), &requested)
+                .unwrap_err()
+                .to_string();
+            assert_eq!(
+                refused, "Compass needs Core Lib ^1, but 2.0.0 is planned for another mod.",
+                "named {named}, requested {requested:?}"
+            );
+        }
+    }
+
+    // A range the planned release is in installs it once.
+    let steps = plan_together(
+        library_and_dependent(">=2", false),
+        &["Core1234", "App90123"],
+    )
+    .unwrap()
+    .steps;
+    let versions: Vec<_> = steps
+        .iter()
+        .map(|s| (s.project_id.as_str(), s.version.as_str()))
+        .collect();
+    assert_eq!(versions, [("Core1234", "2.0.0"), ("App90123", "1.0.0")]);
 }
 
 #[test]

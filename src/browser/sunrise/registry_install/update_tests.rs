@@ -222,6 +222,7 @@ impl Fixture {
                 published: "2026-11-24".into(),
                 sunrise: BUILD.into(),
                 workflow: fixture_workflow(),
+                repository: None,
                 fits,
                 does_not_fit: Vec::new(),
                 file: index_v2::File {
@@ -340,6 +341,7 @@ fn verify_fixture(
     attestation::check_release_policy(
         attestation::Attested {
             repository_id: expected.repository_id,
+            owner_id: expected.repository_id,
             repository_name: FIXTURE_REPOSITORY.into(),
             signer_workflow_ref: expected.workflow.into(),
             source_ref: "refs/tags/v1.0.0".into(),

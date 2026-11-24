@@ -828,22 +828,29 @@ pub(in crate::mods) fn fold_members(
     shown.retain(|i| !folded.contains(i));
 }
 
-/// The collections Discover lists for `filters`: none under a category, and unless Show all is
-/// on only those with a member that fits. Search matches the collection's own text or any
+/// The collections Discover lists for `filters`: unless Show all is on, only those with a member
+/// that fits, and under a category only those with such a member in it, since browsing folds
+/// members into their collection there too. Search matches the collection's own text or any
 /// member's.
 pub(in crate::mods) fn discover_collections(
     collections: &[V2Collection],
     cards: &[V2Card],
     filters: &V2Filters,
 ) -> Vec<usize> {
-    if filters.category.is_some() {
-        return Vec::new();
-    }
     let words = query_words(&filters.text);
     collections
         .iter()
         .enumerate()
-        .filter(|(_, c)| filters.show_all || c.fitting(cards) > 0)
+        .filter(|(_, c)| {
+            c.members.iter().any(|&(i, _)| {
+                let card = &cards[i];
+                (filters.show_all || card.fit.fits())
+                    && filters
+                        .category
+                        .as_ref()
+                        .is_none_or(|k| card.categories.contains(k))
+            })
+        })
         .filter(|(_, c)| {
             let own = [&c.name, &c.summary, &c.publisher].map(|s| s.to_lowercase());
             words.iter().all(|w| own.iter().any(|s| s.contains(w)))
@@ -976,6 +983,7 @@ mod tests {
             workflow: format!(
                 "sunrise-org/sunrise-mods/.github/workflows/release.yml@refs/tags/release-v{version}"
             ),
+            repository: None,
             fits: fits.iter().map(|s| (*s).to_owned()).collect(),
             does_not_fit: does_not_fit.iter().map(|s| (*s).to_owned()).collect(),
             file: File {
@@ -1532,7 +1540,9 @@ mod tests {
             "a member's name finds its collection"
         );
         assert!(shown("lantern", None).is_empty());
-        assert!(shown("", Some("utility")).is_empty());
+        // Under a category the collection stands in for its members in it, as when browsing.
+        assert_eq!(shown("", Some("utility")), [0]);
+        assert!(shown("", Some("decoration")).is_empty());
 
         // Browsing shows the collection's card in place of its members, Show all included; a
         // search finds a member.
@@ -1549,6 +1559,14 @@ mod tests {
         assert_eq!(mods("", false), 0);
         assert_eq!(mods("", true), 0);
         assert_eq!(mods("doors", false), 1);
+        // Members stay folded under a category too: only their collection shows there.
+        let in_category = V2Filters {
+            category: Some("utility".to_owned()),
+            ..V2Filters::default()
+        };
+        let mut shown = discover(&cards, &in_category);
+        fold_members(&mut shown, &found, &in_category);
+        assert!(shown.is_empty());
     }
 
     #[test]
