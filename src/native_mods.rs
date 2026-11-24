@@ -1995,19 +1995,6 @@ fn pipeline(
                 tr("The native build tool's output couldn't be verified. See the build log.")
                     .to_owned()
             })?;
-        // Kept only now that the launcher has verified them; a failure here costs only the
-        // next build's time.
-        if let Some(plan) = &kept_plan {
-            let keeping = std::time::Instant::now();
-            match kept_store.save(&work, &built, &libraries, &plan.mods, &plan.keys) {
-                Ok(0) => {}
-                Ok(_) => timed("Keeping the mods' libraries for the next build", keeping)?,
-                Err(error) => log_warning(&trf(
-                    "The mods' libraries couldn't be kept for the next build: {error}",
-                    &[("error", &error.to_string())],
-                )),
-            }
-        }
         append_log(&trf(
             "Native mods route: {route}.",
             &[("route", built.route.name())],
@@ -2036,6 +2023,20 @@ fn pipeline(
             cancellation,
         )?;
         timed("Installing the build", installing)?;
+        // Kept only once the build they verified is installed, and only while the attempt
+        // hasn't been stopped: a stopped build keeps nothing. A failure here costs only the
+        // next build's time.
+        if let (Some(plan), Ok(())) = (&kept_plan, cancellation.check()) {
+            let keeping = std::time::Instant::now();
+            match kept_store.save(&work, &built, &libraries, &plan.mods, &plan.keys) {
+                Ok(0) => {}
+                Ok(_) => timed("Keeping the mods' libraries for the next build", keeping)?,
+                Err(error) => log_warning(&trf(
+                    "The mods' libraries couldn't be kept for the next build: {error}",
+                    &[("error", &error.to_string())],
+                )),
+            }
+        }
     } else {
         // Used again: it counts as the newest of the builds kept (`prune`).
         let _ = fs::write(target.directory(&version).join(".installed"), "");
