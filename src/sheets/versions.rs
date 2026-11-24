@@ -515,9 +515,23 @@ impl Launcher {
                             });
                             let target = tag.clone();
                             let work = cx.background_executor().spawn(async move {
-                                sunrise_launcher::browser::sunrise::checked_switch_fit(
-                                    &home, &target,
-                                )
+                                match sunrise_launcher::browser::sunrise::prefer_v2_switch(&home) {
+                                    Ok(true) => sunrise_launcher::browser::sunrise::v2::index()
+                                        .ok()
+                                        .is_some_and(|catalog| {
+                                            sunrise_launcher::browser::sunrise::checked_switch_fit_v2(
+                                                &catalog.index,
+                                                &home,
+                                                &target,
+                                            )
+                                        }),
+                                    Ok(false) => {
+                                        sunrise_launcher::browser::sunrise::checked_switch_fit(
+                                            &home, &target,
+                                        )
+                                    }
+                                    Err(_) => false,
+                                }
                             });
                             cx.spawn(async move |this, cx| {
                                 let _ = checked.set(work.await);
@@ -527,7 +541,7 @@ impl Launcher {
                         }
                         plan = Some(
                             if request.as_ref().and_then(|p| p.checked.get()) == Some(&true) {
-                                tr("The installed mod files fit this build.")
+                                tr("Every mod in this profile has a release for this build.")
                             } else {
                                 tr("The mod changes aren't known until Sunrise checks this build.")
                             },
