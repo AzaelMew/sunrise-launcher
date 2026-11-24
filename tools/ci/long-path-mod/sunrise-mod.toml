@@ -8,6 +8,7 @@ side = "client"
 
 [native]
 game = "26.3"
+# CI pins the commit of the build it installs.
 sunrise = "94256510f74e6843754e0a93fd9e4da7e45b1056"
 
 # Replaces the darkness fog's result with itself: a patch only, so the build links `sunrise_patch`.

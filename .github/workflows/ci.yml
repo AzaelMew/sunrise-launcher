@@ -196,18 +196,27 @@ jobs:
   # A real native mod build on Windows in the launcher's default home (%APPDATA%\sunrise\launcher), under a user name of 11
   # letters: the depth a player's build reaches, which Windows' 260-character path limit cuts short.
   windows-native-build:
+    name: windows-native-build (${{ matrix.build }})
     needs: route
     if: needs.route.outputs.full == 'true'
     runs-on: windows-latest
     timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The Nightly players run, whichever it is today (#396 failed on its SDK), and a Dev build.
+          - build: nightly
+            channel: nightly
+          - build: dev-2026-11-24-f8aa80e
+            channel: dev
     defaults:
       run:
         shell: bash
     env:
       SUNRISE_LAUNCHER_NO_SELF_UPDATE: "1"
-      # The Nightly the mod in tools/ci/long-path-mod pins (9425651): its SDK builds the patch
-      # library through Cargo, in `target/x86_64-pc-windows-gnu/release/deps`, the deepest path.
-      BUILD: nightly
+      BUILD: ${{ matrix.build }}
+      SUNRISE_GITHUB_TOKEN: ${{ needs.route.outputs.trusted == 'true' && github.token || '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -222,16 +231,19 @@ jobs:
           shared-key: ci-windows-native-build
           save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
       - run: cargo build --locked --bin sunrise-launcher
-      - name: The pinned Nightly, on a Nightly profile
+      - name: The build, on a profile of its channel
+        env:
+          CHANNEL: ${{ matrix.channel }}
         run: |
           home="${APPDATA//\\//}/sunrise/launcher"
           echo "home=$home" | tee -a "$GITHUB_ENV"
           [[ ! -e "$home" ]] || { echo "::error::$home exists before the launcher made it"; exit 1; }
           target/debug/sunrise-launcher install "$BUILD"
-          echo '{"instances":{"sunrise":{"channel":"nightly"}}}' > "$home/instances.json"
+          echo "{\"instances\":{\"sunrise\":{\"channel\":\"$CHANNEL\"}}}" > "$home/instances.json"
           # Mojang's files never reach CI: only the preparation's manifest and stamp, which a
           # native build checks for, and no game starts here.
           version=$(ls -d "$home"/versions/*/ | head -1)
+          echo "version=$version" | tee -a "$GITHUB_ENV"
           output=$(sed -n 's/^pub const OUTPUT_VERSION: u32 = \([0-9]*\);$/\1/p' "$version/crates/sunrise-prepare/src/lib.rs")
           resources="$version/.local/sunrise-client/26.3"
           mkdir -p "$resources"
@@ -242,6 +254,13 @@ jobs:
           mods="$RUNNER_TEMP/mods"
           mkdir -p "$mods"
           cp -r tools/ci/long-path-mod "$mods/wpm"
+          # The mod pins the commit of the build just installed, as a mod made for it does.
+          COMMIT=$(grep -o '"commit": *"[0-9a-f]\{40\}"' "$version/sunrise-release.json" | grep -o '[0-9a-f]\{40\}')
+          [[ -n "$COMMIT" ]] || { echo "::error::no commit in $version/sunrise-release.json"; exit 1; }
+          echo "pinned $COMMIT"
+          sed -i "s/^sunrise = \".*\"$/sunrise = \"$COMMIT\"/" "$mods/wpm/sunrise-mod.toml"
+          # Its crates.io dependency takes the build through Cargo's target folder, the deepest route.
+          target/debug/sunrise-launcher native-lock "$mods/wpm"
           target/debug/sunrise-launcher native-build "$mods" --trust-native-code
       - name: The build log
         if: always()
@@ -280,7 +299,7 @@ jobs:
 
   # A dispatch for a fork's pull request: posts `build` on its head. It runs none of that code, so it alone holds the write permission, and only for commit statuses.
   pr-status:
-    needs: [route, format, check]
+    needs: [route, format, check, windows-native-build]
     if: always() && github.event_name == 'workflow_dispatch' && inputs.pr != '' && needs.route.outputs.sha != '' && needs.route.outputs.trusted == 'false'
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -292,11 +311,12 @@ jobs:
           SHA: ${{ needs.route.outputs.sha }}
           FORMAT: ${{ needs.format.result }}
           CHECK: ${{ needs.check.result }}
+          WINDOWS_BUILD: ${{ needs.windows-native-build.result }}
           RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           state=failure
-          if [[ "$FORMAT" == success && "$CHECK" == success ]]; then state=success
-          elif [[ "$FORMAT" == cancelled || "$CHECK" == cancelled ]]; then state=error; fi
+          if [[ "$FORMAT" == success && "$CHECK" == success && "$WINDOWS_BUILD" == success ]]; then state=success
+          elif [[ "$FORMAT" == cancelled || "$CHECK" == cancelled || "$WINDOWS_BUILD" == cancelled ]]; then state=error; fi
           gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$SHA" -f state="$state" -f context=build \
-            -f description="Full checks dispatched on this head: format $FORMAT, systems $CHECK" -f target_url="$RUN" > /dev/null
+            -f description="Full checks dispatched on this head: format $FORMAT, systems $CHECK, Windows build $WINDOWS_BUILD" -f target_url="$RUN" > /dev/null
           echo "build=$state on $SHA"
