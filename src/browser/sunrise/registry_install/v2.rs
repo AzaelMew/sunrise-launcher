@@ -44,7 +44,8 @@ use sunrise_launcher_smod::{
 
 mod switch_v2;
 pub use switch_v2::{
-    checked_switch_fit_v2, switch_build_v2, switch_profile_build_v2, V2SwitchHooks,
+    checked_switch_fit_v2, prefer_v2_switch, prefer_v2_switch_with, switch_build_v2,
+    switch_profile_build_v2, V2SwitchHooks,
 };
 
 /// Maximum accepted `.sigstore.json` attestation bundle size (1 MiB).

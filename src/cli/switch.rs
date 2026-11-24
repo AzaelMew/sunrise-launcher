@@ -5,7 +5,8 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
 };
 use sunrise_launcher::browser::sunrise::{
-    install_target, switch_build, SwitchDecision, SwitchHooks, Switched,
+    install_target, prefer_v2_switch, switch_build, switch_build_v2, SwitchDecision, SwitchHooks,
+    Switched, V2SwitchHooks,
 };
 
 static BEFORE_CUTOFF: AtomicBool = AtomicBool::new(true);
@@ -65,53 +66,63 @@ pub(super) fn run(instance: &instances::Instance, tag: &str, as_json: bool) -> R
     let identity = install_target(instance)?;
     catch_interrupt().map_err(|error| error.to_string())?;
     let tty = io::stdin().is_terminal() && io::stderr().is_terminal();
-    let result = switch_build(
-        instance,
-        identity,
-        tag,
-        SwitchHooks {
-            cancellation: &native_mods::Cancellation::default(),
-            progress: &|_| {},
-            approve: &|question| {
-                let ask = || -> io::Result<SwitchDecision> {
-                    let mut out = io::stderr().lock();
-                    writeln!(
-                        out,
-                        "{}",
-                        trf("Switch to {build}?", &[("build", &question.build)])
-                    )?;
-                    if question.has_omissions() {
-                        writeln!(out, "{}", question.omission_summary())?;
-                    }
-                    for line in question
-                        .hold_lines()
-                        .chain(question.removed.iter().map(|(name, reason)| {
-                            trf(
-                                "{mod} was taken down: {reason}",
-                                &[("mod", name), ("reason", reason)],
-                            )
-                        }))
-                        .chain(question.world_lines())
-                    {
-                        writeln!(out, "{}", line.replace(char::is_control, " "))?;
-                    }
-                    approve(tty, question.has_omissions(), io::stdin().lock(), out)
-                };
-                ask().map_err(|error| error.to_string())
-            },
-            at_cutoff: &|| {
+    let cancellation = native_mods::Cancellation::default();
+    let hooks = SwitchHooks {
+        cancellation: &cancellation,
+        progress: &|_| {},
+        approve: &|question| {
+            let ask = || -> io::Result<SwitchDecision> {
                 let mut out = io::stderr().lock();
-                writeln!(out, "{}", tr("Applying the switch."))
-                    .and_then(|()| out.flush())
-                    .map_err(|error| error.to_string())?;
-                if BEFORE_CUTOFF.swap(false, Ordering::SeqCst) {
-                    Ok(())
-                } else {
-                    Err(cancelled())
+                writeln!(
+                    out,
+                    "{}",
+                    trf("Switch to {build}?", &[("build", &question.build)])
+                )?;
+                if question.has_omissions() {
+                    writeln!(out, "{}", question.omission_summary())?;
                 }
-            },
+                for line in question
+                    .hold_lines()
+                    .chain(question.removed.iter().map(|(name, reason)| {
+                        trf(
+                            "{mod} was taken down: {reason}",
+                            &[("mod", name), ("reason", reason)],
+                        )
+                    }))
+                    .chain(question.world_lines())
+                {
+                    writeln!(out, "{}", line.replace(char::is_control, " "))?;
+                }
+                approve(tty, question.has_omissions(), io::stdin().lock(), out)
+            };
+            ask().map_err(|error| error.to_string())
         },
-    )?;
+        at_cutoff: &|| {
+            let mut out = io::stderr().lock();
+            writeln!(out, "{}", tr("Applying the switch."))
+                .and_then(|()| out.flush())
+                .map_err(|error| error.to_string())?;
+            if BEFORE_CUTOFF.swap(false, Ordering::SeqCst) {
+                Ok(())
+            } else {
+                Err(cancelled())
+            }
+        },
+    };
+    let result = if prefer_v2_switch(&instance.home)? {
+        switch_build_v2(
+            instance,
+            identity,
+            tag,
+            V2SwitchHooks {
+                switch: hooks,
+                confirm_publisher_change: None,
+                pin_dir: None,
+            },
+        )?
+    } else {
+        switch_build(instance, identity, tag, hooks)?
+    };
     let mut output = io::stdout().lock();
     match result {
         Switched::Stayed => return Err(cancelled()),

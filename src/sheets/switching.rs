@@ -6,10 +6,10 @@ use std::{
 };
 use sunrise_launcher::{
     browser::sunrise::{
-        install_target, switch_profile_build, switch_profile_build_v2, switch_provider_v2,
-        BuildChoice, InstallError, InstallHooks, InstallProgress, ProviderSwitchPreview,
-        SwitchDecision, SwitchHooks, SwitchQuestion, Switched, V2Hooks, V2InstallOptions,
-        V2ProviderSwitchHooks, V2SwitchHooks,
+        install_target, prefer_v2_switch, switch_profile_build, switch_profile_build_v2,
+        switch_provider_v2, BuildChoice, InstallError, InstallHooks, InstallProgress,
+        ProviderSwitchPreview, SwitchDecision, SwitchHooks, SwitchQuestion, Switched, V2Hooks,
+        V2InstallOptions, V2ProviderSwitchHooks, V2SwitchHooks,
     },
     managed_play::{self, Active, FirstBuild, Profile, ReceiptHint},
     profile_txn::Identity,
@@ -255,10 +255,10 @@ impl Launcher {
                     Ok(reply.recv().unwrap_or(SwitchDecision::Cancel))
                 },
             };
-            // A profile holding a mod from the signed v2 index switches through it, which keeps
-            // each mod's chosen project; v1 and local mods keep their exact bytes there. A read
-            // failure must not silently drop back to the v1 switch.
-            let outcome = match uses_v2_switch(&instance.home) {
+            // Switch through the signed v2 index by default (v1 and local mods keep their exact
+            // bytes there). Fall back to v1 only when an explicit `SUNRISE_MOD_INDEX` override is
+            // active on a non-v2 profile, and never swallow an `installed.json` read failure.
+            let outcome = match prefer_v2_switch(&instance.home) {
                 Ok(true) => switch_profile_build_v2(
                     &instance,
                     identity,
@@ -1138,17 +1138,6 @@ impl Launcher {
     }
 }
 
-/// Whether a profile holds any mod installed from the signed v2 index.
-///
-/// Propagates `installed.json` read errors so a corrupt or unreadable manifest never falls back
-/// to the v1 build switch.
-fn uses_v2_switch(home: &std::path::Path) -> Result<bool, String> {
-    Ok(sunrise_launcher::browser::installed::Installed::read(home)?
-        .entries
-        .iter()
-        .any(|e| e.mod_id.is_some()))
-}
-
 /// A partial write or an interrupted writer must not reserve the final report name.
 fn publish_report(
     folder: &std::path::Path,
@@ -1166,17 +1155,20 @@ fn publish_report(
 
 #[cfg(test)]
 mod tests {
-    use super::{publish_report, uses_v2_switch};
+    use super::publish_report;
     use std::io::{self, Write};
     use sunrise_launcher::browser::{
         installed::{Entry, Installed},
+        sunrise::prefer_v2_switch_with,
         Kind, SourceId,
     };
 
     #[test]
-    fn uses_v2_switch_refuses_unreadable_installed_manifest_instead_of_falling_back() {
+    fn prefer_v2_switch_defaults_to_v2_and_refuses_unreadable_installed_manifest() {
         let home = tempfile::tempdir().unwrap();
-        assert_eq!(uses_v2_switch(home.path()), Ok(false));
+        // Empty profile defaults to v2, and only uses v1 under an explicit legacy override.
+        assert_eq!(prefer_v2_switch_with(home.path(), false), Ok(true));
+        assert_eq!(prefer_v2_switch_with(home.path(), true), Ok(false));
 
         let mut list = Installed::default();
         list.entries.push(Entry {
@@ -1197,11 +1189,13 @@ mod tests {
             repository: None,
         });
         list.save(home.path()).unwrap();
-        assert_eq!(uses_v2_switch(home.path()), Ok(false));
+        assert_eq!(prefer_v2_switch_with(home.path(), false), Ok(true));
+        assert_eq!(prefer_v2_switch_with(home.path(), true), Ok(false));
 
         list.entries[0].mod_id = Some("demo".into());
         list.save(home.path()).unwrap();
-        assert_eq!(uses_v2_switch(home.path()), Ok(true));
+        assert_eq!(prefer_v2_switch_with(home.path(), false), Ok(true));
+        assert_eq!(prefer_v2_switch_with(home.path(), true), Ok(true));
 
         std::fs::write(
             home.path()
@@ -1209,11 +1203,13 @@ mod tests {
             "{not valid json",
         )
         .unwrap();
-        let error = uses_v2_switch(home.path()).unwrap_err();
-        assert!(
-            error.contains(sunrise_launcher_smod::index::browser_state::MANIFEST),
-            "unexpected error: {error}"
-        );
+        for legacy_override in [false, true] {
+            let error = prefer_v2_switch_with(home.path(), legacy_override).unwrap_err();
+            assert!(
+                error.contains(sunrise_launcher_smod::index::browser_state::MANIFEST),
+                "unexpected error: {error}"
+            );
+        }
     }
 
     #[test]

@@ -88,6 +88,26 @@ pub fn checked_switch_fit_v2(index: &Index, home: &Path, tag: &str) -> bool {
     true
 }
 
+/// Whether a build switch for `home` should use the signed v2 registry.
+///
+/// Defaults to v2 now that the official registry publishes `v2/index.signed` and no longer serves
+/// the legacy v1 `index.json`. Falls back to v1 only when the caller explicitly overrides
+/// `SUNRISE_MOD_INDEX` (without setting `SUNRISE_MOD_INDEX_V2`) and the profile holds no v2 mods.
+/// Always propagates `installed.json` read errors so a corrupt manifest never silently falls back.
+pub fn prefer_v2_switch(home: &Path) -> Result<bool, String> {
+    let has_v1 = std::env::var_os("SUNRISE_MOD_INDEX").is_some_and(|v| !v.is_empty());
+    let has_v2 = std::env::var_os(catalogue_v2::ENV_OVERRIDE).is_some_and(|v| !v.is_empty());
+    prefer_v2_switch_with(home, has_v1 && !has_v2)
+}
+
+pub fn prefer_v2_switch_with(home: &Path, legacy_v1_override: bool) -> Result<bool, String> {
+    let has_v2_mod = crate::browser::installed::Installed::read(home)?
+        .entries
+        .iter()
+        .any(|e| e.mod_id.is_some());
+    Ok(has_v2_mod || !legacy_v1_override)
+}
+
 /// Switch `instance` to exact prepared Sunrise build `tag` using the signed v2 registry.
 pub fn switch_build_v2(
     instance: &Instance,
