@@ -398,6 +398,71 @@ mod tests {
     }
 
     #[test]
+    fn a_right_click_outside_the_scrolled_profiles_or_on_the_menu_moves_nothing() {
+        if scratch_child("a_right_click_outside_the_scrolled_profiles_or_on_the_menu_moves_nothing")
+            .is_none()
+        {
+            return;
+        }
+        let first = instances::create("Profile 0", None).unwrap();
+        let count = 40;
+        for n in 1..count {
+            instances::create(&format!("Profile {n}"), None).unwrap();
+        }
+        let mut settings = Settings::load();
+        settings.instance = Some(first.id.clone());
+        settings.save().unwrap();
+        let mut app = gpui::TestAppContext::single();
+        let (shell, cx) = app.add_window_view(crate::window_root::Shell::new);
+        let launcher = shell.read_with(cx, |shell, _| shell.launcher());
+        cx.run_until_parked();
+        let rows = |cx: &mut gpui::VisualTestContext| {
+            launcher.read_with(cx, |l, _| {
+                l.ui.profile_rows
+                    .borrow()
+                    .iter()
+                    .map(|(bounds, profile)| (*bounds, profile.id.clone()))
+                    .collect::<Vec<_>>()
+            })
+        };
+        let menu = |cx: &mut gpui::VisualTestContext| {
+            launcher.read_with(cx, |l, _| match &l.ui.sheets.profile_action {
+                Some(Action::Menu { target, top }) => Some((target.id.clone(), *top)),
+                _ => None,
+            })
+        };
+        let right = |cx: &mut gpui::VisualTestContext, at| {
+            cx.simulate_mouse_down(at, MouseButton::Right, gpui::Modifiers::none());
+            cx.simulate_mouse_up(at, MouseButton::Right, gpui::Modifiers::none());
+            cx.run_until_parked();
+        };
+        let drawn = rows(cx);
+        assert!(
+            drawn.len() < count,
+            "the list scrolls: {} of {count} rows show",
+            drawn.len()
+        );
+        let (first_row, _) = drawn.iter().find(|(_, id)| *id == first.id).unwrap();
+        let (last_row, _) = drawn.last().unwrap();
+        right(cx, first_row.center());
+        let (_, top) = menu(cx).expect("the first profile's menu opens");
+        // Just below the list's end, where the next profile would be if it were not scrolled
+        // out of view, a right-click lands on the rail's controls and only closes the menu.
+        right(
+            cx,
+            gpui::point(last_row.center().x, last_row.bottom() + gpui::px(10.)),
+        );
+        assert_eq!(menu(cx), None);
+        // A right-click on the open menu itself leaves it open.
+        right(cx, first_row.center());
+        let at = launcher.read_with(cx, |l, _| {
+            tokens::FRAME_INSET + crate::rail::rail_width(l.rail_open()) + 8.
+        });
+        right(cx, gpui::point(gpui::px(at + 40.), gpui::px(top + 12.)));
+        assert_eq!(menu(cx).map(|(id, _)| id), Some(first.id.clone()));
+    }
+
+    #[test]
     fn a_download_save_survives_a_profile_delete() {
         let Some(root) = scratch_child("a_download_save_survives_a_profile_delete") else {
             return;

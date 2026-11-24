@@ -355,7 +355,14 @@ impl Launcher {
                 let i = i.clone();
                 d.child(
                     gpui::canvas(
-                        move |bounds, _, _| at.borrow_mut().push((bounds, drawn.clone())),
+                        // Only the part of the row the list shows counts: a row scrolled past
+                        // either end lies under the rail's controls.
+                        move |bounds, window, _| {
+                            let visible = bounds.intersect(&window.content_mask().bounds);
+                            if !visible.is_empty() {
+                                at.borrow_mut().push((visible, drawn.clone()));
+                            }
+                        },
                         |_, _, _, _| {},
                     )
                     .absolute()
