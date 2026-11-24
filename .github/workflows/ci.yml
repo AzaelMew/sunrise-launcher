@@ -205,8 +205,9 @@ jobs:
         shell: bash
     env:
       SUNRISE_LAUNCHER_NO_SELF_UPDATE: "1"
-      # The Dev build the mod in tools/ci/long-path-mod pins.
-      BUILD: dev-2026-11-24-f8aa80e
+      # The Nightly the mod in tools/ci/long-path-mod pins (9425651): its SDK builds the patch
+      # library through Cargo, in `target/x86_64-pc-windows-gnu/release/deps`, the deepest path.
+      BUILD: nightly
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -221,16 +222,16 @@ jobs:
           shared-key: ci-windows-native-build
           save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
       - run: cargo build --locked --bin sunrise-launcher
-      - name: The pinned Dev build, on a Dev profile
+      - name: The pinned Nightly, on a Nightly profile
         run: |
           home="${APPDATA//\\//}/sunrise/launcher"
           echo "home=$home" | tee -a "$GITHUB_ENV"
           [[ ! -e "$home" ]] || { echo "::error::$home exists before the launcher made it"; exit 1; }
           target/debug/sunrise-launcher install "$BUILD"
-          echo '{"instances":{"sunrise":{"channel":"dev"}}}' > "$home/instances.json"
+          echo '{"instances":{"sunrise":{"channel":"nightly"}}}' > "$home/instances.json"
           # Mojang's files never reach CI: only the preparation's manifest and stamp, which a
           # native build checks for, and no game starts here.
-          version="$home/versions/$BUILD"
+          version=$(ls -d "$home"/versions/*/ | head -1)
           output=$(sed -n 's/^pub const OUTPUT_VERSION: u32 = \([0-9]*\);$/\1/p' "$version/crates/sunrise-prepare/src/lib.rs")
           resources="$version/.local/sunrise-client/26.3"
           mkdir -p "$resources"

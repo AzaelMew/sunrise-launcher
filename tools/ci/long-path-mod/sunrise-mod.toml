@@ -8,7 +8,7 @@ side = "client"
 
 [native]
 game = "26.3"
-sunrise = "f8aa80e4c40cf1a5d30e85d13937f3fcf06d8237"
+sunrise = "94256510f74e6843754e0a93fd9e4da7e45b1056"
 
 # Replaces the darkness fog's result with itself: a patch only, so the build links `sunrise_patch`.
 [[native.mixin]]
