@@ -320,6 +320,9 @@ impl Launcher {
             button.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                 let (rows, labels) = this.labeled_installed_rows();
                 let names = super::installed_view::remove_names(&rows, &labels);
+                if let Some(open) = this.ui.mods.open.as_mut() {
+                    open.removing = vec![id.clone()];
+                }
                 this.ask_remove(&home, vec![id.clone()], names);
                 cx.notify();
             }))

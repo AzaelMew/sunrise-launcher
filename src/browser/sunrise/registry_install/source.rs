@@ -138,8 +138,6 @@ pub enum SourceError {
     /// A public catalogue or resolver explanation, not a raw filesystem or network error.
     Catalogue(String),
     DoesNotFit(String),
-    /// Another native build or a cache cleanup holds the build folder: a later try may pass.
-    Busy,
     Unproved(String),
     Changed(String),
     Tools(String),
@@ -176,9 +174,6 @@ impl std::fmt::Display for SourceError {
                     &[("mod", name), ("why", &why)],
                 ))
             }
-            Self::Busy => f.write_str(tr(
-                "A native build or cache cleanup is running. Try again when it finishes.",
-            )),
             Self::Dependency { detail, .. }
             | Self::Catalogue(detail)
             | Self::Build { detail, .. }
@@ -648,7 +643,10 @@ fn source_fit(
     base: &str,
     cancellation: &native_mods::Cancellation,
 ) -> Result<native_mods::Routes, SourceError> {
-    native_mods::source_routes(home, base, cancellation).map_err(|why| match why {
+    // A source check waits for another build quietly, under the step it already shows.
+    native_mods::source_routes(home, base, cancellation, &|| ()).map_err(|why| match why {
+        // Stopped while it waited for another build.
+        _ if cancellation.is_stopped() => SourceError::Cancelled,
         native_mods::SourceCheckError::Dependency(detail) => SourceError::Dependency {
             required: None,
             detail,
@@ -657,7 +655,6 @@ fn source_fit(
             SourceError::DoesNotFit(error)
         }
         native_mods::SourceCheckError::Fit(why) => SourceError::Unproved(why.to_string()),
-        native_mods::SourceCheckError::Busy => SourceError::Busy,
     })
 }
 

@@ -92,6 +92,7 @@ impl Launcher {
         let mut github_feedback = None;
         let mut refused_here = None;
         let mut failed_here = None;
+        let mut removed_here = None;
         let mut done = false;
         while let Ok(event) = self.mods.rx.try_recv() {
             changed = true;
@@ -112,6 +113,9 @@ impl Launcher {
                     }
                     if let Some(failed) = m.installs.install_failure(&event) {
                         failed_here = Some(failed);
+                    }
+                    if let Some((home, ids)) = m.installs.removed(&event) {
+                        removed_here = Some((home.to_owned(), ids.to_vec()));
                     }
                     if m.installs.handle(event) {
                         done = true;
@@ -144,6 +148,9 @@ impl Launcher {
                     self.resume_play(intent);
                 }
             }
+        }
+        if let Some((home, ids)) = removed_here {
+            self.mods_leave_removed(&home, &ids);
         }
         if let Some(feedback) = github_feedback {
             self.show_github_result(feedback);

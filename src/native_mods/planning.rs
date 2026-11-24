@@ -13,8 +13,6 @@ pub fn routes(home: &Path, base: Option<&str>) -> Result<Routes, Failed> {
 pub(crate) enum SourceCheckError {
     Dependency(String),
     Fit(Failed),
-    /// Another native build or a cache cleanup holds the build folder.
-    Busy,
 }
 
 impl From<String> for SourceCheckError {
@@ -29,6 +27,7 @@ pub(crate) fn source_routes(
     home: &Path,
     base: &str,
     cancellation: &Cancellation,
+    waiting: &dyn Fn(),
 ) -> Result<Routes, SourceCheckError> {
     cancellation.check()?;
     let scratch = tempfile::tempdir().map_err(|error| error.to_string())?;
@@ -47,13 +46,8 @@ pub(crate) fn source_routes(
         .map_err(SourceCheckError::Dependency)?;
     cancellation.check()?;
 
-    let lease =
-        crate::native_cache::Cache::acquire(&backend::build_dir()).map_err(
-            |error| match error {
-                crate::native_cache::Error::Busy => SourceCheckError::Busy,
-                error => SourceCheckError::Fit(cache_error(error).into()),
-            },
-        )?;
+    let lease = super::build_lease(cancellation, waiting)?
+        .map_err(|error| SourceCheckError::Fit(cache_error(error).into()))?;
     let result = classify_bundles(&folder, &found, Some(base), &lease, cancellation)
         .map_err(SourceCheckError::Fit)?;
     cancellation.check()?;

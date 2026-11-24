@@ -244,28 +244,47 @@ pub fn is_native(version: &str) -> bool {
 
 /// Records the whole attempt, including selection or export after compilation.
 fn logged<T, E: std::fmt::Display + From<String>>(
+    cancellation: &Cancellation,
+    waiting: &dyn Fn(),
     build: impl FnOnce(Result<&crate::native_cache::Cache, &str>) -> Result<T, E>,
 ) -> Result<T, E> {
-    logged_then(build, |cache| {
+    logged_then(cancellation, waiting, build, |cache| {
         crate::storage::eviction::after_build_logged(cache, append_log, log_warning)
     })
 }
 
+/// The build lease on the build folder. While another build or a cache cleanup holds it, this
+/// waits, calling `waiting` once when the wait starts, until the lease is free or the attempt
+/// is stopped. Any other failure to take it is returned as it is.
+pub(crate) fn build_lease(
+    cancellation: &Cancellation,
+    waiting: &dyn Fn(),
+) -> Result<Result<crate::native_cache::Cache, crate::native_cache::Error>, String> {
+    let mut said = false;
+    loop {
+        match crate::native_cache::Cache::acquire(&backend::build_dir()) {
+            Err(crate::native_cache::Error::Busy) => (),
+            lease => return Ok(lease),
+        }
+        cancellation.check()?;
+        if !std::mem::replace(&mut said, true) {
+            waiting();
+        }
+        std::thread::sleep(std::time::Duration::from_millis(250));
+    }
+}
+
 /// [`logged`] with the cleanup it runs after the result line, inside the build lease.
 fn logged_then<T, E: std::fmt::Display + From<String>>(
+    cancellation: &Cancellation,
+    waiting: &dyn Fn(),
     build: impl FnOnce(Result<&crate::native_cache::Cache, &str>) -> Result<T, E>,
     cleanup: impl FnOnce(&crate::native_cache::Cache),
 ) -> Result<T, E> {
-    // Another build or a cleanup holds the lease on the same target/: refuse. Any other
+    // Another build or a cleanup holds the lease on the same target/: wait for it. Any other
     // failure only stops cleanup for explicit builds. Automatic selection requires a held
     // cache for its catalog and can refuse instead of accessing an unsafe tree.
-    let cache = match crate::native_cache::Cache::acquire(&backend::build_dir()) {
-        Ok(cache) => Ok(cache),
-        Err(crate::native_cache::Error::Busy) => {
-            return Err(cache_error(crate::native_cache::Error::Busy).into());
-        }
-        Err(error) => Err(cache_error(error)),
-    };
+    let cache = build_lease(cancellation, waiting)?.map_err(cache_error);
     clear_log()?;
     if let Err(warning) = &cache {
         log_warning(warning);
@@ -756,6 +775,8 @@ pub fn version_for(
 #[derive(Clone, Debug, PartialEq)]
 pub enum Step {
     Starting,
+    /// Another build or a cache cleanup holds the build folder: this one waits for it.
+    Waiting,
     Rust(f32),
     Tool,
     Source(String),
@@ -840,6 +861,7 @@ impl Step {
         let (stage, fraction) = match self {
             Self::Rust(done) => (Stage::Prepare, Some(*done)),
             Self::Starting
+            | Self::Waiting
             | Self::Tool
             | Self::Source(_)
             | Self::Mixins
@@ -871,6 +893,7 @@ impl Step {
     pub fn label(&self) -> String {
         match self {
             Self::Starting => tr("Starting the build").into(),
+            Self::Waiting => tr("Waiting for another build to finish…").into(),
             Self::Rust(done) => trf(
                 "Downloading Rust {version} (once): {done}%",
                 &[
@@ -2247,7 +2270,7 @@ pub fn build(
     if let Some(error) = backend::native_mod_architecture_error() {
         return Err(Failed::Other(error));
     }
-    logged(|cache| {
+    logged(cancellation, &|| progress(Step::Waiting), |cache| {
         let lease = cache.map_err(|error| Failed::Other(error.into()))?;
         let profile = select_build_profile(instance.native_profile, profile, cancellation, || {
             planning::classify(folder, Some(base), lease, cancellation)
@@ -2290,6 +2313,8 @@ pub(crate) fn build_exact_client(
 ) -> Result<String, Failed> {
     progress(Step::Starting);
     logged_then(
+        cancellation,
+        &|| progress(Step::Waiting),
         |cache| {
             cancellation.check()?;
             if let Some(error) = backend::native_mod_architecture_error() {
@@ -2461,61 +2486,67 @@ pub fn build_server(
     progress: impl Fn(Step),
 ) -> Result<PathBuf, Failed> {
     let cancellation = Cancellation::default();
-    logged(|cache| {
-        if output.symlink_metadata().is_ok() {
-            return Err(trf(
-                "{path} already exists. Move it away, or build into another folder.",
-                &[("path", &output.display().to_string())],
-            ));
-        }
-        let parent = output
-            .parent()
-            .filter(|p| !p.as_os_str().is_empty())
-            .unwrap_or(Path::new("."));
-        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-        let output = parent.canonicalize().map_err(|e| e.to_string())?.join(
-            output
-                .file_name()
-                .ok_or_else(|| tr("Choose a new folder for the server export."))?,
-        );
-        for managed in [backend::version_dir(""), root()] {
-            if managed
-                .canonicalize()
-                .is_ok_and(|dir| output.starts_with(dir))
-            {
-                return Err(tr("Export the server outside the launcher's managed folders.").into());
+    logged(
+        &cancellation.clone(),
+        &|| progress(Step::Waiting),
+        |cache| {
+            if output.symlink_metadata().is_ok() {
+                return Err(trf(
+                    "{path} already exists. Move it away, or build into another folder.",
+                    &[("path", &output.display().to_string())],
+                ));
             }
-        }
-        let lease = cache.map_err(str::to_owned)?;
-        let profile = select_build_profile(Profile::default(), profile, &cancellation, || {
-            planning::classify(folder, Some(base), lease, &cancellation)
-        })?;
-        let built = pipeline(
-            lease,
-            base,
-            folder,
-            profile,
-            Target::Server,
-            BuildOptions {
-                cancellation,
-                allow_jar_downloads,
-                ..BuildOptions::default()
-            },
-            &progress,
-        )
-        .map_err(String::from)?;
-        export(&Target::Server.directory(&built.version), &output)?;
-        // logged() runs central eviction under the retained build lease.
-        if built.plan != Plan::UpToDate {
-            progress(Step::Done {
-                secs: built.secs,
-                profile: built.profile,
-                plan: built.plan,
-            });
-        }
-        let engine = output.join(Target::Server.binary());
-        Ok(std::path::absolute(&engine).unwrap_or(engine))
-    })
+            let parent = output
+                .parent()
+                .filter(|p| !p.as_os_str().is_empty())
+                .unwrap_or(Path::new("."));
+            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            let output = parent.canonicalize().map_err(|e| e.to_string())?.join(
+                output
+                    .file_name()
+                    .ok_or_else(|| tr("Choose a new folder for the server export."))?,
+            );
+            for managed in [backend::version_dir(""), root()] {
+                if managed
+                    .canonicalize()
+                    .is_ok_and(|dir| output.starts_with(dir))
+                {
+                    return Err(
+                        tr("Export the server outside the launcher's managed folders.").into(),
+                    );
+                }
+            }
+            let lease = cache.map_err(str::to_owned)?;
+            let profile = select_build_profile(Profile::default(), profile, &cancellation, || {
+                planning::classify(folder, Some(base), lease, &cancellation)
+            })?;
+            let built = pipeline(
+                lease,
+                base,
+                folder,
+                profile,
+                Target::Server,
+                BuildOptions {
+                    cancellation,
+                    allow_jar_downloads,
+                    ..BuildOptions::default()
+                },
+                &progress,
+            )
+            .map_err(String::from)?;
+            export(&Target::Server.directory(&built.version), &output)?;
+            // logged() runs central eviction under the retained build lease.
+            if built.plan != Plan::UpToDate {
+                progress(Step::Done {
+                    secs: built.secs,
+                    profile: built.profile,
+                    plan: built.plan,
+                });
+            }
+            let engine = output.join(Target::Server.binary());
+            Ok(std::path::absolute(&engine).unwrap_or(engine))
+        },
+    )
     .map_err(Failed::Other)
 }
 
@@ -4719,7 +4750,7 @@ printf ']}}\n'
         assert!(log.contains("is not prepared yet"), "{log}");
         assert!(!log.contains("the last build's output"), "{log}");
         // A failure after compiler output keeps those diagnostics and the final reason.
-        let failure: Result<(), String> = logged(|_| {
+        let failure: Result<(), String> = logged(&Cancellation::default(), &|| (), |_| {
             append_log("error[E0425]: cannot find value `missing` in this scope")?;
             Err("Could not export the engine".into())
         });
@@ -4731,7 +4762,7 @@ printf ']}}\n'
             "{log}"
         );
         assert!(!log.contains("Build completed."), "{log}");
-        let success: Result<(), String> = logged(|_| Ok(()));
+        let success: Result<(), String> = logged(&Cancellation::default(), &|| (), |_| Ok(()));
         success.unwrap();
         let log = fs::read_to_string(log_path()).unwrap();
         assert!(after_result(&log, "Build completed.\n"), "{log}");
@@ -4748,6 +4779,8 @@ printf ']}}\n'
         ] {
             let seen = std::cell::RefCell::new(String::new());
             let result: Result<(), String> = logged_then(
+                &Cancellation::default(),
+                &|| (),
                 |_| outcome,
                 |_cache| {
                     *seen.borrow_mut() = fs::read_to_string(log_path()).unwrap();
@@ -4767,6 +4800,35 @@ printf ']}}\n'
                 format!("{line}Freed 1 MiB of old caches\nwarning: kept\n")
             );
         }
+    }
+
+    /// A build that finds the build folder held by another build or a cleanup waits for it,
+    /// says so once, and goes on once the folder is free. A stop ends the wait.
+    #[test]
+    fn a_held_build_folder_is_waited_for() {
+        use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
+        let _guard = scratch_state();
+        let held = crate::native_cache::Cache::acquire(&backend::build_dir()).unwrap();
+        let said = AtomicUsize::new(0);
+        std::thread::scope(|scope| {
+            scope.spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(600));
+                drop(held);
+            });
+            let lease = build_lease(&Cancellation::default(), &|| {
+                said.fetch_add(1, Relaxed);
+            });
+            assert!(lease.unwrap().is_ok());
+        });
+        assert_eq!(said.load(Relaxed), 1);
+
+        let _held = crate::native_cache::Cache::acquire(&backend::build_dir()).unwrap();
+        let stopped = Cancellation::default();
+        stopped.stop();
+        assert_eq!(
+            build_lease(&stopped, &|| ()).err().as_deref(),
+            Some(CANCELLED)
+        );
     }
 
     /// The result line is on the log, and only what the cleanup after it said (what it freed, what

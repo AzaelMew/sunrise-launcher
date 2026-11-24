@@ -609,12 +609,19 @@ pub fn remove_mods(
     if !approve(&impact) {
         return Err(InstallError::Cancelled);
     }
-    let cancellation = native_mods::Cancellation::default();
-    let proof = prove_edit(&edit, home, instance, &cancellation, &hooks)
-        .map_err(|e| InstallError::Unproved(e.into()))?;
+    // Stop reaches a Remove that waits for another build to finish.
+    let unstoppable = native_mods::Cancellation::default();
+    let cancellation = hooks.cancellation.unwrap_or(&unstoppable);
+    let proof = prove_edit(&edit, home, instance, cancellation, &hooks).map_err(|e| {
+        if cancellation.is_stopped() {
+            InstallError::Cancelled
+        } else {
+            InstallError::Unproved(e.into())
+        }
+    })?;
     (hooks.progress)(InstallProgress::Publishing);
     let reviewed = impact.into_evidence();
-    edit.publish_install(proof, &cancellation, &staged.retired, || {
+    edit.publish_install(proof, cancellation, &staged.retired, || {
         if managed_play::inputs(home, None)? != reviewed_image {
             return Err(tr(
                 "The files prepared for removal changed. Nothing was removed; try again.",

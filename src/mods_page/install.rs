@@ -400,6 +400,13 @@ impl Installs {
         }
     }
 
+    /// The mods a Remove that just finished took out of its profile.
+    pub(super) fn removed(&self, event: &Worker) -> Option<(&Path, &[String])> {
+        let run = self.running.as_ref()?;
+        let request = run.requests.first().filter(|r| r.kind == Kind::Remove)?;
+        matches!(event, Worker::Done(Ok(_))).then_some((&run.profile.home, &request.ids))
+    }
+
     pub(super) fn github_feedback(&self, event: &Worker) -> Option<Feedback> {
         let run = self.running.as_ref()?;
         let Worker::Done(result) = event else {
@@ -1766,6 +1773,7 @@ pub(crate) fn stage_label(step: InstallProgress) -> String {
     match step {
         InstallProgress::PreparingBuild => tr("Getting the build ready…").into(),
         InstallProgress::Checking => tr("Checking the mod set…").into(),
+        InstallProgress::Waiting => tr("Waiting for another build to finish…").into(),
         InstallProgress::Downloading(f) => trf(
             "Downloading {percent}%",
             &[("percent", &format!("{:.0}", f * 100.))],
@@ -1877,9 +1885,6 @@ fn failure_line(error: &InstallError) -> &'static str {
             tr("The profile or game build changed. Check the source again; nothing was changed.")
         }
         InstallError::Source(SourceError::Cancelled) => tr("Install cancelled."),
-        InstallError::Source(SourceError::Busy) => {
-            tr("Sunrise is building mods right now. Try again when that finishes.")
-        }
         InstallError::Source(SourceError::Build { .. }) => tr("Couldn't build on this computer."),
         InstallError::GithubBuild(_) => tr("Could not build the selected mods."),
         InstallError::Download(_) => tr("Download failed. Try again"),
@@ -2103,7 +2108,9 @@ mod tests {
         source.ids = vec!["jade".into(), "minimap".into()];
         source.names = vec!["Jade".into(), "Minimap".into()];
         source.members = vec![member("jade", "Jade"), member("minimap", "Minimap")];
-        source.rejected.insert("minimap".into(), SourceError::Busy);
+        source
+            .rejected
+            .insert("minimap".into(), SourceError::Changed(String::new()));
         let (_, modal) = installs
             .refused(&Worker::Done(Ok(InstalledBatch::default())))
             .unwrap();
