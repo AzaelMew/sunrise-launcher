@@ -29,6 +29,7 @@ mod console_page;
 mod cull;
 mod datapacks_page;
 mod developer_play;
+mod eta;
 mod frame;
 mod game_tools;
 mod github_mods_page;

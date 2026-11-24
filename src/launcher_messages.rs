@@ -591,6 +591,11 @@ impl Launcher {
                             }
                             if let (None, Some(started)) = (&error, self.prepare_started.take()) {
                                 self.perf.record_since("launcher.prepare_ms", started);
+                                if backend::prepare_step() == backend::PrepareStep::Prepare {
+                                    if let Some(step_started) = backend::prepare_step_started() {
+                                        crate::eta::record_prepare_duration(step_started.elapsed());
+                                    }
+                                }
                             }
                             // A preparer process's exit status says little, so its last line
                             // follows; the launcher's own errors are full sentences already.

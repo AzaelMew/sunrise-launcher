@@ -3005,13 +3005,22 @@ impl PrepareStep {
 
 /// The step the preparation under way is at (`PrepareStep::ALL`'s index).
 static PREPARE_STEP: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static PREPARE_STEP_STARTED: std::sync::Mutex<Option<std::time::Instant>> =
+    std::sync::Mutex::new(None);
 
 pub fn prepare_step() -> PrepareStep {
     PrepareStep::ALL[PREPARE_STEP.load(std::sync::atomic::Ordering::Relaxed)]
 }
 
+pub fn prepare_step_started() -> Option<std::time::Instant> {
+    PREPARE_STEP_STARTED.lock().ok().and_then(|g| *g)
+}
+
 pub fn set_prepare_step(step: PrepareStep) {
     PREPARE_STEP.store(step as usize, std::sync::atomic::Ordering::Relaxed);
+    if let Ok(mut started) = PREPARE_STEP_STARTED.lock() {
+        *started = Some(std::time::Instant::now());
+    }
 }
 
 /// Checks what the preparation needs and picks how to run it. PLAY.txt describes the same
