@@ -5,6 +5,17 @@
 use crate::data_location::{self, Roots};
 use std::fs;
 use std::path::Path;
+use std::sync::Mutex;
+
+static STARTUP_ERROR: Mutex<Option<String>> = Mutex::new(None);
+
+/// The error from [`at_start`], if carrying over an earlier launcher's data failed.
+pub fn startup_error() -> Option<String> {
+    STARTUP_ERROR
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+}
 
 /// What a launcher folder holds that is the player's: settings, accounts (with the secrets file
 /// of a computer without a keychain), the instances' names and icons, the servers made in the
@@ -29,9 +40,13 @@ const GAME_CACHES: [&str; 4] = [".horizon-cache", ".sunrise-cache", "wasm-cache"
 const COMPLETE: &str = "complete";
 
 /// Runs [`carry_over`] on the player's folders before anything reads them, unless a home
-/// override or a moved Sunrise location decides where the data is. A failure is reported and
-/// leaves the launcher to start empty: the earlier launcher's data is untouched either way.
-pub fn at_start() {
+/// override or a moved Sunrise location decides where the data is. A failure is remembered in
+/// [`startup_error`] and reported to stderr so startup skips creating an empty root and the
+/// player can repair the earlier location and restart to retry.
+pub fn at_start() -> Result<(), String> {
+    *STARTUP_ERROR
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
     let overridden = ["SUNRISE_LAUNCHER_HOME", "SUNRISE_HOME"]
         .iter()
         .any(|name| std::env::var_os(name).is_some_and(|v| !v.is_empty()));
@@ -39,14 +54,19 @@ pub fn at_start() {
         || overridden
         || !matches!(data_location::configured_roots(), Ok(None))
     {
-        return;
+        return Ok(());
     }
     let (Some(data), Some(config)) = (dirs::data_dir(), dirs::config_dir()) else {
-        return;
+        return Ok(());
     };
     if let Err(error) = carry_over(&data, &config) {
         eprintln!("Could not copy the earlier launcher's data: {error}");
+        *STARTUP_ERROR
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(error.clone());
+        return Err(error);
     }
+    Ok(())
 }
 
 /// Copies the data of the first earlier launcher that has any into this launcher's folders under
@@ -202,9 +222,9 @@ fn discard(stage: &Path) {
 /// Returns `path`'s own metadata (without following links), refusing symlinks and junctions.
 fn refuse_link(path: &Path) -> Result<Option<fs::Metadata>, String> {
     match fs::symlink_metadata(path) {
-        Ok(meta) if crate::native_cache::linked(&meta) => Err(format!(
-            "Symbolic links and reparse points cannot be relocated: {}",
-            path.display()
+        Ok(meta) if crate::native_cache::linked(&meta) => Err(crate::i18n::trf(
+            "Symbolic links and reparse points cannot be relocated: {path}",
+            &[("path", &path.display().to_string())],
         )),
         Ok(meta) => Ok(Some(meta)),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -702,30 +722,54 @@ mod tests {
             return;
         };
         let (data, config, base) = scratch("linked-earlier-location");
-        let real_root = base.join("real-root");
-        fs::create_dir_all(real_root.join("launcher")).unwrap();
-        fs::create_dir_all(real_root.join("game")).unwrap();
-        let linked_root = base.join("linked-root");
-        link_dir(&real_root, &linked_root);
+        let real_launcher = base.join("real-launcher");
+        let real_game = base.join("real-game");
+        fs::create_dir_all(&real_launcher).unwrap();
+        fs::create_dir_all(&real_game).unwrap();
+        fs::write(real_launcher.join("settings.json"), r#"{"ok":true}"#).unwrap();
+        let linked_launcher = base.join("linked-launcher");
+        link_dir(&real_launcher, &linked_launcher);
 
         let loc_dir = config.join(location);
         fs::create_dir_all(&loc_dir).unwrap();
+        let loc_file = loc_dir.join("location.json");
         let location_json = serde_json::json!({
-            "schema": 1,
+            "version": 1,
             "roots": {
-                "launcher": linked_root.join("launcher"),
-                "game": linked_root.join("game"),
-                "build": linked_root.join("launcher"),
+                "launcher": linked_launcher,
+                "game": real_game,
+                "build": linked_launcher,
             }
         });
-        fs::write(loc_dir.join("location.json"), location_json.to_string()).unwrap();
+        fs::write(&loc_file, location_json.to_string()).unwrap();
 
         let error = carry_over(&data, &config).unwrap_err();
+        let linked_text = linked_launcher.display().to_string();
         assert!(
-            error.contains("Symbolic links and reparse points") || error.contains("link"),
-            "{error}"
+            error.contains("Symbolic links and reparse points") && error.contains(&linked_text),
+            "expected link refusal naming {linked_text}, got: {error}"
         );
-        unlink_dir(&linked_root);
+        // Neither target root was created, so repairing the pointer allows carry_over to retry.
+        assert!(!crate::identity::launcher_folder_in(&data).exists());
+        assert!(!crate::identity::game_folder_in(&data).exists());
+
+        let repaired_json = serde_json::json!({
+            "version": 1,
+            "roots": {
+                "launcher": real_launcher,
+                "game": real_game,
+                "build": real_launcher,
+            }
+        });
+        fs::write(&loc_file, repaired_json.to_string()).unwrap();
+        assert!(carry_over(&data, &config).unwrap());
+        let copied: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(crate::identity::launcher_folder_in(&data).join("settings.json"))
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(copied, serde_json::json!({ "ok": true }));
+        unlink_dir(&linked_launcher);
         let _ = fs::remove_dir_all(&base);
     }
 

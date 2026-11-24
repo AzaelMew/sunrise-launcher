@@ -240,6 +240,16 @@ impl Launcher {
                     Some(profile_delete::Action::Interrupted(interrupted));
             }
         }
+        if let Some(error) = sunrise_launcher::carry_over::startup_error() {
+            this.perf.keep_local_log(false);
+            this.open_notice(
+                trf(
+                    "Could not copy the earlier launcher's data: {error}\n\nFix the earlier launcher's data folder or reconnect its drive, then restart Sunrise to try again.",
+                    &[("error", &error)],
+                ),
+                None,
+            );
+        }
         this.reload_instances();
         if this.bench.is_some() {
             this.perf.keep_local_log(false);
