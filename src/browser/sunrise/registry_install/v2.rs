@@ -4,9 +4,10 @@
 //! Every v2 operation keys mods by permanent 8-character project ID, treats `project.mod_id` as an
 //! in-game slot with at most one enabled provider per profile, relies solely on authoritative
 //! `release.fits` / `release.does_not_fit` verdicts against the exact Sunrise build ID, verifies
-//! every archive's SHA-256 and offline Sigstore attestation against `project.repository.id` and
-//! `release.workflow`, pins the publisher repository and workflow per computer, and refuses to
-//! silently pick among competing providers or silently substitute a different provider.
+//! every archive's SHA-256 and offline Sigstore attestation against the repository the release
+//! was signed from and `release.workflow`, pins the publisher's owner and workflow per computer,
+//! and refuses to silently pick among competing providers or silently substitute a different
+//! provider.
 
 use super::{
     at, guard_replacements, held_change_refusal, known_unfit_updates, manifest_conflict,
@@ -237,8 +238,8 @@ pub struct V2Hooks<'a> {
     /// entry in `V2InstallOptions::provider_choices`. Returning `None` aborts with
     /// [`InstallError::AmbiguousProvider`].
     pub choose_provider: Option<&'a ChooseProvider<'a>>,
-    /// Prompt when a project's attested repository ID or workflow path changed from this
-    /// computer's remembered pin. Returning `false` (or `None`) aborts with
+    /// Prompt when a project's attested publisher (owner, or for an old pin repository) or workflow
+    /// path changed from this computer's remembered pin. Returning `false` (or `None`) aborts with
     /// [`InstallError::PublisherChanged`].
     pub confirm_publisher_change: Option<ConfirmPublisherChange<'a>>,
 }

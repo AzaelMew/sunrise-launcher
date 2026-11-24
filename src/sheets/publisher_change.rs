@@ -136,6 +136,14 @@ pub(crate) fn publisher_change_copy(question: &PublisherChangeQuestion) -> Publi
                 ("version", &question.incoming_version),
             ],
         )
+    } else if !workflow_changed {
+        trf(
+            "Accepting updates {mod} to {version} and remembers the new publisher for future updates.",
+            &[
+                ("mod", &question.mod_name),
+                ("version", &question.incoming_version),
+            ],
+        )
     } else {
         trf(
             "Accepting updates {mod} to {version} and remembers the new build workflow for future updates.",
@@ -496,5 +504,21 @@ mod tests {
         assert!(recreated.remembered_repo.contains("100"));
         assert!(recreated.incoming_repo.contains("999"));
         assert_ne!(recreated.remembered_repo, recreated.incoming_repo);
+
+        // A repository transferred to another owner keeps its ID and workflow: the note names
+        // the publisher, not a workflow that did not change.
+        let mut transferred = sample_question(
+            100,
+            "Zekrenlight/frontier",
+            ".github/workflows/release.yml",
+            100,
+            "someone/frontier",
+            ".github/workflows/release.yml",
+        );
+        transferred.change.pinned.owner_id = Some(1);
+        transferred.change.incoming.owner_id = Some(2);
+        let transferred = publisher_change_copy(&transferred);
+        assert!(transferred.explanation.contains("different publisher"));
+        assert!(transferred.accept_note.contains("new publisher"));
     }
 }

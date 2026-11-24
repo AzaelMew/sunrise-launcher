@@ -97,8 +97,8 @@ impl PublisherPin {
     }
 }
 
-/// Details of a verified release whose repository ID or workflow path differs from the computer's
-/// remembered pin for the project.
+/// Details of a verified release whose publisher (owner, or for an old pin repository, and
+/// workflow path) differs from the computer's remembered pin for the project.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PublisherChange {
     pub project_id: String,
@@ -107,8 +107,13 @@ pub struct PublisherChange {
 }
 
 impl PublisherChange {
+    /// True only when both pins know their owner and the owners differ: a pin written before
+    /// owner IDs were remembered says nothing of its owner.
     pub fn owner_changed(&self) -> bool {
-        self.pinned.owner_id != self.incoming.owner_id
+        matches!(
+            (self.pinned.owner_id, self.incoming.owner_id),
+            (Some(pinned), Some(incoming)) if pinned != incoming
+        )
     }
 
     pub fn repository_changed(&self) -> bool {
@@ -1112,6 +1117,8 @@ mod tests {
         let err = pin_or_check_in(dir.path(), "Ear5h0tX", &moved).unwrap_err();
         let change = err.publisher_change().unwrap().clone();
         assert!(change.repository_changed());
+        // The old pin says nothing of its owner, so this is not an owner change.
+        assert!(!change.owner_changed());
         accept_pin_in(dir.path(), &change).unwrap();
         let next = verified_from(19_542_195, 4004, "arismoko/elsewhere").pin();
         assert_eq!(
