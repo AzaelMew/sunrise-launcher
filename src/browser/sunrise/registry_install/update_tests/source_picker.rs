@@ -143,7 +143,6 @@ fn pasted_sources_prove_only_the_selected_packages_together() {
                     install: InstallHooks {
                         progress: &|_| {},
                         continue_after_failure: &|_| false,
-                        resolve: None,
                         cancellation: None,
                     },
                     cancellation: &cancel,
@@ -283,7 +282,6 @@ fn pasted_source_same_repo_refreshes_and_other_repo_stays_refused() {
                     install: InstallHooks {
                         progress: &|_| {},
                         continue_after_failure: &|_| false,
-                        resolve: None,
                         cancellation: None,
                     },
                     cancellation: &cancel,
@@ -332,7 +330,6 @@ fn pasted_source_same_repo_refreshes_and_other_repo_stays_refused() {
                     install: InstallHooks {
                         progress: &|_| {},
                         continue_after_failure: &|_| false,
-                        resolve: None,
                         cancellation: None,
                     },
                     cancellation: &cancel,

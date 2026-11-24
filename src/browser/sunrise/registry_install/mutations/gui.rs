@@ -427,7 +427,7 @@ mod tests {
             )
             .unwrap();
         }
-        let scanned = inventory(&home, None).unwrap();
+        let scanned = inventory(&home).unwrap();
         assert_eq!(scanned.len(), 3);
         assert!(scanned["a"].package.directory);
         // Installed lists regular archives only, even when an unpacked namesake is valid.

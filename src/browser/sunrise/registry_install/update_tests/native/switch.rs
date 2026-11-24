@@ -16,7 +16,7 @@ struct Pinned {
 impl Pinned {
     fn install(fixture: &mut Fixture, source: &[u8], mixins: Option<&str>) -> Self {
         configure_tool(fixture);
-        fixture.project("extra_mod", "Fireflies", index::Kind::Mod);
+        fixture.project("extra_mod", "Fireflies", V2Kind::Mod);
         fixture.release("extra_mod", "1.0.0", "", &[]);
         fixture.install(&["extra_mod"]);
         let home = fixture.home();
@@ -66,7 +66,6 @@ impl Pinned {
                 fixture.instance.native_profile,
                 &native_mods::Cancellation::default(),
                 |_| {},
-                None,
                 None,
                 None,
             )
@@ -140,23 +139,39 @@ fn run_switch(
     tag: &str,
     approve: &dyn Fn(&SwitchQuestion) -> bool,
 ) -> Result<Switched, String> {
-    switch_build(
+    switch_with(fixture, tag, &|q| {
+        assert_eq!(q.worlds.affected[0].world, "Uses Native Lantern");
+        Ok(if approve(q) {
+            SwitchDecision::TurnOff
+        } else {
+            SwitchDecision::Cancel
+        })
+    })
+}
+
+fn switch_with(
+    fixture: &Fixture,
+    tag: &str,
+    approve: &dyn Fn(&SwitchQuestion) -> Result<SwitchDecision, String>,
+) -> Result<Switched, String> {
+    v2::switch_profile_build_v2_with(
         &fixture.instance,
         install_target(&fixture.instance).unwrap(),
         tag,
-        SwitchHooks {
-            cancellation: &native_mods::Cancellation::default(),
-            progress: &|_| {},
-            approve: &|q| {
-                assert_eq!(q.worlds.affected[0].world, "Uses Native Lantern");
-                Ok(if approve(q) {
-                    SwitchDecision::TurnOff
-                } else {
-                    SwitchDecision::Cancel
-                })
+        None,
+        v2::V2SwitchHooks {
+            switch: SwitchHooks {
+                cancellation: &native_mods::Cancellation::default(),
+                progress: &|_| {},
+                approve,
+                at_cutoff: &|| Ok(()),
             },
-            at_cutoff: &|| Ok(()),
+            confirm_publisher_change: None,
+            pin_dir: None,
         },
+        || Ok(fixture.index_for(tag)),
+        &fetch_fixture,
+        &verify_fixture,
     )
 }
 
@@ -256,7 +271,7 @@ fn switch_keeps_the_registry_mod_when_only_a_sources_original_sdk_is_missing() {
 
             const REGISTRY: &str = "registry_lantern";
             const FILE: &str = "sunrise-native-mods/registry_lantern.smod";
-            fixture.project(REGISTRY, "Registry Lantern", index::Kind::NativeMod);
+            fixture.project(REGISTRY, "Registry Lantern", V2Kind::NativeMod);
             let registry = fixture.release(
                 REGISTRY,
                 "2.0.0",
@@ -276,10 +291,11 @@ fn switch_keeps_the_registry_mod_when_only_a_sources_original_sdk_is_missing() {
             let home = fixture.home();
             fs::write(home.join(FILE), &registry).unwrap();
             let mut installed = installed::Installed::read(home).unwrap();
+            let project = fixture.catalogue.project(&project_id(REGISTRY)).unwrap();
             installed.entries.push(installed::Entry {
                 source: SourceId::Sunrise,
-                project: REGISTRY.into(),
-                mod_id: None,
+                project: project.id.clone(),
+                mod_id: Some(REGISTRY.into()),
                 slug: REGISTRY.into(),
                 title: "Registry Lantern".into(),
                 kind: Kind::Mod,
@@ -291,7 +307,12 @@ fn switch_keeps_the_registry_mod_when_only_a_sources_original_sdk_is_missing() {
                 dependency: false,
                 verdict: None,
                 install_hold: None,
-                repository: None,
+                repository: Some(installed::VerifiedRepository {
+                    id: project.repository.id,
+                    name: project.repository.name.clone(),
+                    path: project.repository.path.clone(),
+                    workflow: project.releases[0].workflow.clone(),
+                }),
             });
             installed.save(home).unwrap();
             // A registry install records its reviewed archive as allowed to build.
@@ -518,47 +539,15 @@ fn a_held_source_is_offered_again_on_each_switch_and_its_toggle_checks_it() {
             assert_eq!(fixture.snapshot(&[ARCHIVE, EXTRA]), before);
             assert_eq!(Active::read_pointer(home).unwrap().as_ref(), Some(&*active));
 
-            // Bytes taken down by digest stay off: the toggle refuses before any check or build.
-            let mut taken_down = fixture.catalogue.clone();
-            taken_down.revoked.push(index::Revoked {
-                id: ID.into(),
-                sha256: Some(index::sha256(&pinned.archive)),
-                reason: "Fixture takedown.".into(),
-                date: String::new(),
-            });
-            let write_index = |catalogue: &index::Index| {
-                fs::write(
-                    fixture.root.join("index.json"),
-                    serde_json::to_vec(catalogue).unwrap(),
-                )
-                .unwrap()
-            };
-            write_index(&taken_down);
-            let error = restore_held(&fixture.instance, identity, ID, &cancellation).unwrap_err();
-            assert!(error.contains("Fixture takedown."), "{error}");
-            assert_eq!(fixture.snapshot(&[ARCHIVE, EXTRA]), before);
-            assert_eq!(Active::read_pointer(home).unwrap().as_ref(), Some(&*active));
-            write_index(&fixture.catalogue);
-
             // The next switch checks the held bytes again rather than skipping them; this one
             // holds them again for its own reason, replacing the old hold.
             target(OTHER, 'a');
             fs::write(fixture.root.join("fixture-switch-target"), []).unwrap();
-            let Switched::Changed(active) = switch_build(
-                &fixture.instance,
-                identity,
-                OTHER,
-                SwitchHooks {
-                    cancellation: &cancellation,
-                    progress: &|_| {},
-                    approve: &|q| {
-                        assert_eq!(q.held, [TITLE]);
-                        assert!(q.unproved.is_empty());
-                        Ok(SwitchDecision::TurnOff)
-                    },
-                    at_cutoff: &|| Ok(()),
-                },
-            )
+            let Switched::Changed(active) = switch_with(&fixture, OTHER, &|q| {
+                assert_eq!(q.held, [TITLE]);
+                assert!(q.unproved.is_empty());
+                Ok(SwitchDecision::TurnOff)
+            })
             .unwrap() else {
                 panic!("expected a switch that holds the source again")
             };

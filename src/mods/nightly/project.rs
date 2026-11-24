@@ -1,28 +1,11 @@
 //! The pinned source detail. GitHub content is data; it never selects the profile or executes code.
-use super::super::project::{about_row, back, prose};
+use super::super::project::{about_row, back};
 use super::*;
 use crate::mods_page::install::{stage_label, SourceQuestion};
 use sunrise_launcher::browser::sunrise::SourceError;
 
 impl Launcher {
     pub(in crate::mods) fn nightly_project(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        // A mod the registry lists shows the registry's description and screenshots; otherwise
-        // its listing summary.
-        let registry_page = self.ui.mods.nightly.open.as_ref().and_then(|open| {
-            let index = sunrise::known_index()?;
-            let project = index.project(open.source.id())?;
-            (!project.description.trim().is_empty())
-                .then(|| (project.description.clone(), project.screenshots.clone()))
-        });
-        let pictures = match &registry_page {
-            Some((_, screenshots)) if !screenshots.is_empty() => screenshots
-                .iter()
-                .cloned()
-                .map(super::super::viewer::Picture::Url)
-                .collect(),
-            _ => Vec::new(),
-        };
-        let gallery = self.gallery(pictures, cx);
         let state = &self.ui.mods.nightly;
         let open = state.open.as_ref().expect("a Nightly detail is open");
         let source = &open.source;
@@ -310,23 +293,15 @@ impl Launcher {
                         .on_click(cx.listener(move |_, _, _, cx| cx.open_url(&repo_url))),
                 ),
             );
-        let body = match source_page_body(
-            registry_page
-                .as_ref()
-                .map(|(description, _)| description.as_str()),
-            source.summary(),
-        ) {
-            SourcePageBody::Registry(description) => Some(prose(self.theme, description)),
-            SourcePageBody::Summary(summary) => Some(
-                div()
-                    .text_size(px(tokens::BODY))
-                    .line_height(px(22.))
-                    .text_color(c(palette().text))
-                    .child(crate::selectable::selectable(summary.to_owned()))
-                    .into_any_element(),
-            ),
-            SourcePageBody::Empty => None,
-        };
+        let summary = source.summary();
+        let body = (!summary.trim().is_empty()).then(|| {
+            div()
+                .text_size(px(tokens::BODY))
+                .line_height(px(22.))
+                .text_color(c(palette().text))
+                .child(crate::selectable::selectable(summary.to_owned()))
+                .into_any_element()
+        });
         let header = div()
             .flex()
             .flex_col()
@@ -343,7 +318,7 @@ impl Launcher {
                 })),
             )
             .children(self.strip(cx));
-        self.project_layout(header, title, gallery, body, panel)
+        self.project_layout(header, title, None, body, panel)
     }
 
     pub(in crate::mods) fn nightly_log_button(
@@ -527,26 +502,6 @@ impl Launcher {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
-enum SourcePageBody<'a> {
-    Registry(&'a str),
-    Summary(&'a str),
-    Empty,
-}
-
-fn source_page_body<'a>(
-    registry_description: Option<&'a str>,
-    summary: &'a str,
-) -> SourcePageBody<'a> {
-    if let Some(description) = registry_description.filter(|text| !text.trim().is_empty()) {
-        SourcePageBody::Registry(description)
-    } else if !summary.trim().is_empty() {
-        SourcePageBody::Summary(summary)
-    } else {
-        SourcePageBody::Empty
-    }
-}
-
 fn project_made_for_build(
     profile: Option<&str>,
     inspected: Option<&str>,
@@ -640,23 +595,6 @@ pub(in crate::mods) fn source_error(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn source_page_shows_registry_description_or_listing_summary() {
-        assert_eq!(
-            source_page_body(Some("# Registry notes"), "Listing summary"),
-            SourcePageBody::Registry("# Registry notes")
-        );
-        assert_eq!(
-            source_page_body(Some("   "), "Listing summary"),
-            SourcePageBody::Summary("Listing summary")
-        );
-        assert_eq!(
-            source_page_body(None, "Listing summary"),
-            SourcePageBody::Summary("Listing summary")
-        );
-        assert_eq!(source_page_body(None, "  "), SourcePageBody::Empty);
-    }
 
     #[test]
     fn build_badge_describes_the_installed_commit_not_a_newer_inspection() {

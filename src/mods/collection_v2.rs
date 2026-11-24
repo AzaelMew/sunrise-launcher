@@ -33,7 +33,6 @@ impl Launcher {
             request: self.ui.mods.page_request,
             scope: self.mods_page_scope(),
             from,
-            page: None,
             v2_page: None,
             parent: None,
             removing: Vec::new(),

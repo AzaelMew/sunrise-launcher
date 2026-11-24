@@ -45,7 +45,7 @@ pub fn install_local(
         progress,
         approve,
     )?;
-    let checked_inputs = managed_play::inputs(next.path(), None)?;
+    let checked_inputs = managed_play::inputs(next.path())?;
     check_cancelled(cancellation)?;
     progress(InstallProgress::Publishing);
     let result = edit.publish_pending(next.path(), checked_inputs, cancellation, || {
@@ -84,7 +84,7 @@ pub fn install_local_at(
                 tr("Finish the profile's first Play before changing mods.").into(),
             ));
         }
-        let before = managed_play::inputs(home, None)?;
+        let before = managed_play::inputs(home)?;
         // Under Admission and the home lock: read the profile's own pointer, as Profile::active
         // does. display_active would refuse while any other profile publishes.
         let active = managed_play::Active::read_pointer(home)?;
@@ -105,9 +105,7 @@ pub fn install_local_at(
         let _lock =
             sunrise_launcher_smod::install_lock::lock_home(home).map_err(|e| at(home, e))?;
         managed_play::copy_install_inputs(home, next.path())?;
-        if managed_play::inputs(next.path(), None)? != before
-            || managed_play::inputs(home, None)? != before
-        {
+        if managed_play::inputs(next.path())? != before || managed_play::inputs(home)? != before {
             return Err(InstallError::Unproved(
                 tr(
                     "The profile changed while preparing this install. Nothing was changed; try again.",
@@ -125,15 +123,15 @@ pub fn install_local_at(
         progress,
         approve,
     )?;
-    let checked_inputs = managed_play::inputs(next.path(), None)?;
+    let checked_inputs = managed_play::inputs(next.path())?;
     check_cancelled(cancellation)?;
     progress(InstallProgress::Publishing);
     let result = (|| {
         let _lock =
             sunrise_launcher_smod::install_lock::lock_home(home).map_err(|e| at(home, e))?;
         crate::browser::installed::recover_game_install(home).map_err(String::from)?;
-        if managed_play::inputs(home, None)? != before
-            || managed_play::inputs(next.path(), None)? != checked_inputs
+        if managed_play::inputs(home)? != before
+            || managed_play::inputs(next.path())? != checked_inputs
         {
             return Err(tr(
                 "The profile changed while preparing this install. Nothing was changed; try again.",
@@ -152,8 +150,8 @@ pub fn install_local_at(
             } else {
                 None
             };
-            if managed_play::inputs(home, None)? != before
-                || managed_play::inputs(next.path(), None)? != checked_inputs
+            if managed_play::inputs(home)? != before
+                || managed_play::inputs(next.path())? != checked_inputs
             {
                 return Err(tr(
                     "The profile changed while preparing this install. Nothing was changed; try again.",
@@ -217,10 +215,10 @@ fn stage_and_review(
     check_regular_mod_dirs(live)?;
 
     let claims = browser_state::Installed::read(live).map_err(|e| e.details(trf))?;
-    let before = inventory(candidate, None)?;
+    let before = inventory(candidate)?;
     // The saved-world comparison reads the live profile, which staging never changes: the
     // candidate's copy of a replaced archive is overwritten or removed before the review.
-    let original = inventory(live, None)?;
+    let original = inventory(live)?;
     let enabled_before = mutations::enabled(candidate)?;
 
     let mut seen_ids = BTreeSet::new();
@@ -418,8 +416,8 @@ fn stage_and_review(
     // Verify the resulting candidate inventory has no corrupt archives, duplicate IDs, or
     // manifest conflicts before asking for world review or publishing.
     check_cancelled(cancellation)?;
-    let _ = inventory(candidate, None)?;
-    if let Some(conflict) = manifest_conflict(candidate, None, None, Side::Both, |_| false)? {
+    let _ = inventory(candidate)?;
+    if let Some(conflict) = manifest_conflict(candidate, Side::Both, |_| false)? {
         return Err(InstallError::Refused(conflict.reason));
     }
 
@@ -548,42 +546,24 @@ pub fn restore_held(
         })
         .ok_or_else(|| held_change_refusal(id).to_string())?;
     let next = edit.candidate()?;
-    let packages = inventory(next.path(), None)?;
+    let packages = inventory(next.path())?;
     let seen = packages
         .get(id)
         .ok_or_else(|| held_change_refusal(id).to_string())?;
     let manifest = &seen.package.manifest;
-    // These exact bytes stay off once taken down. The signed index's digest takedowns reach local
-    // and source copies whichever index the profile's own switches read, so it is always asked,
-    // and an unreadable index refuses rather than skipping the check.
+    // These exact bytes stay off once taken down: the signed index's digest takedowns reach local
+    // and source copies, so it is always asked, and an unreadable index refuses rather than
+    // skipping the check.
     let catalog = crate::browser::sunrise::v2::change_index().map_err(|error| {
         trf(
             "Couldn't check {mod} against the registry's takedowns: {error}",
             &[("mod", &title), ("error", &error.to_string())],
         )
     })?;
-    let mut takedown = catalog
+    let takedown = catalog
         .index
         .revoked_by_sha256(&digest)
         .map(|row| row.reason.clone());
-    // A profile without registry receipts still switches on the first index, which also withholds
-    // an archive claiming a project taken down whole.
-    let v2 = installed::Installed::read(&instance.home)?
-        .entries
-        .iter()
-        .any(|entry| entry.mod_id.is_some());
-    if takedown.is_none() && !v2 {
-        let source = location();
-        let local = super::super::local();
-        if source != super::super::INDEX_URL && !(cfg!(debug_assertions) && local) {
-            return Err(tr("Connect to the Sunrise registry before switching builds.").into());
-        }
-        let (catalogue, _, _) = super::super::complete_index(&source, local)?;
-        takedown = catalogue
-            .revoked(id, &digest)
-            .filter(|row| seen.registry_claim || row.sha256.is_some())
-            .map(|row| row.reason.clone());
-    }
     if let Some(reason) = takedown {
         return Err(trf(
             "{mod} was taken down: {reason}",
@@ -604,8 +584,8 @@ pub fn restore_held(
     }
     mutations::check_activation(next.path(), None, &[id])?;
     mod_list::set_all_enabled(next.path(), &[id], true)?;
-    if let Some(conflict) = manifest_conflict(next.path(), None, None, Side::Both, |_| false)
-        .map_err(|error| error.to_string())?
+    if let Some(conflict) =
+        manifest_conflict(next.path(), Side::Both, |_| false).map_err(|error| error.to_string())?
     {
         return Err(conflict.reason);
     }
@@ -891,7 +871,7 @@ mod tests {
         assert!(mods.join("camp_lanterns.smod").is_file());
         assert!(mods.join("camp_lanterns.origin.json").is_file());
 
-        let present = inventory(&home, None).unwrap();
+        let present = inventory(&home).unwrap();
         let staged =
             mutations::stage_removal(&home, &home, None, ["camp_lanterns"], &present).unwrap();
         assert_eq!(staged.archives.len(), 1);
@@ -929,7 +909,7 @@ mod tests {
         )
         .unwrap();
 
-        let present = inventory(&home, None).unwrap();
+        let present = inventory(&home).unwrap();
         assert!(
             !present["alpha"].registry_claim,
             "missing display field must not grant replacement permission"
@@ -956,7 +936,7 @@ mod tests {
             .unwrap(),
         )
         .unwrap();
-        let present = inventory(&home, None).unwrap();
+        let present = inventory(&home).unwrap();
         let err = mutations::stage_removal(&home, &home, None, ["alpha"], &present)
             .err()
             .expect("competing Windows-style claim must block removal");

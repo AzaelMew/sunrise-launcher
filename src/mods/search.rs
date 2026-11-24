@@ -151,8 +151,6 @@ mod tests {
         model::rows(
             &[],
             &model::World {
-                index: None,
-                game: "26.3",
                 v2: None,
                 v2_failure: None,
                 build: None,

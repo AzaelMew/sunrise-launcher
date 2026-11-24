@@ -24,14 +24,13 @@ fn home_finds_resource_packs_after_leaving_a_different_installed_shelf() {
 }
 
 #[test]
-fn home_labels_follow_installed_replies_with_the_same_inventory_and_registry() {
+fn home_labels_follow_installed_replies_with_the_same_inventory() {
     in_scratch_launcher(
-        "mods::home_tests::home_labels_follow_installed_replies_with_the_same_inventory_and_registry",
+        "mods::home_tests::home_labels_follow_installed_replies_with_the_same_inventory",
         |launcher| {
             let home = launcher.mods_home();
             let key = native_status::fingerprint(&home, None);
-            // The registry is already fetched, but the first Installed read has not answered.
-            let index = Some(Arc::new(Index::default()));
+            // The first Installed read has not answered.
             let inventory = 1;
             launcher.ui.mods.snapshot = Some(Snapshot {
                 home,
@@ -41,8 +40,6 @@ fn home_labels_follow_installed_replies_with_the_same_inventory_and_registry() {
                 error: None,
                 backup_notice: None,
             });
-            launcher.ui.mods.catalog_game = Some(launcher.mods_game());
-            launcher.ui.mods.catalog = Catalog::Loading;
             let id = "lantern";
             let installed = || InstalledRows {
                 local: vec![model::Local {
@@ -58,27 +55,36 @@ fn home_labels_follow_installed_replies_with_the_same_inventory_and_registry() {
                 enabled: HashSet::from([id.into()]),
                 ..Default::default()
             };
-            assert!(launcher.home_mod_facts(inventory, index.clone()).is_empty());
+            assert!(launcher.home_mod_facts(inventory).is_empty());
             // No forwarding thread: every injected worker reply is available for this drain.
             let (tx, rx) = std::sync::mpsc::channel();
             launcher.ui.mods.rx = rx;
-            tx.send(Event::Local("old fingerprint".into(), Box::new(Ok(Some((installed(), None))))))
-                .unwrap();
+            tx.send(Event::Local(
+                "old fingerprint".into(),
+                Box::new(Ok(Some((installed(), None)))),
+            ))
+            .unwrap();
             launcher.mods_drain();
-            assert!(launcher.home_mod_facts(inventory, index.clone()).is_empty());
-            tx.send(Event::Local(key.clone(), Box::new(Ok(Some((installed(), None))))))
-                .unwrap();
+            assert!(launcher.home_mod_facts(inventory).is_empty());
+            tx.send(Event::Local(
+                key.clone(),
+                Box::new(Ok(Some((installed(), None)))),
+            ))
+            .unwrap();
             launcher.mods_drain();
-            let facts = launcher.home_mod_facts(inventory, index.clone());
+            let facts = launcher.home_mod_facts(inventory);
             assert_eq!(facts[id].kind, tr("Native"));
-            assert!(facts[id].status.is_none(), "native code needs no permission");
+            assert!(
+                facts[id].status.is_none(),
+                "native code needs no permission"
+            );
 
             let mut updated = installed();
             updated.local[0].native = false;
             tx.send(Event::Local(key, Box::new(Ok(Some((updated, None))))))
                 .unwrap();
             launcher.mods_drain();
-            let facts = launcher.home_mod_facts(inventory, index);
+            let facts = launcher.home_mod_facts(inventory);
             assert_eq!(facts[id].kind, tr("Content"));
             assert!(facts[id].status.is_none());
         },

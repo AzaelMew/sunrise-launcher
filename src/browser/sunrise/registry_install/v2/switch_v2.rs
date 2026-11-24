@@ -36,7 +36,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use sunrise_launcher_smod::index_v2::{FitVerdict, Index, Project, Release};
+use sunrise_launcher_smod::index_v2::{FitVerdict, Index, Kind as V2Kind, Project, Release};
 
 /// Callbacks and pin directory override for v2 build switching.
 pub struct V2SwitchHooks<'a> {
@@ -106,20 +106,34 @@ pub fn switch_profile_build_v2(
     choice: Option<BuildChoice>,
     hooks: V2SwitchHooks<'_>,
 ) -> Result<Switched, String> {
-    switch_profile_build_v2_with_index(instance, identity, tag, choice, hooks, || {
-        catalogue_v2::refreshed_index()
-            .map(|c| Arc::new(crate::native_mods::local_fit::filled(&c.index)))
-            .map_err(|e| e.to_string())
-    })
+    switch_profile_build_v2_with(
+        instance,
+        identity,
+        tag,
+        choice,
+        hooks,
+        || {
+            catalogue_v2::refreshed_index()
+                .map(|c| c.index)
+                .map_err(|e| e.to_string())
+        },
+        &fetch_release_bytes,
+        &attestation::verify_release,
+    )
 }
 
-fn switch_profile_build_v2_with_index(
+/// [`switch_profile_build_v2`] with the index read, the download and the attestation check
+/// injected, so tests switch offline through the same path.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn switch_profile_build_v2_with(
     instance: &Instance,
     identity: Identity,
     tag: &str,
     choice: Option<BuildChoice>,
     hooks: V2SwitchHooks<'_>,
     fetch_index: impl FnOnce() -> Result<Arc<Index>, String>,
+    fetch_bytes: BytesFetcher<'_>,
+    verify_release: ReleaseVerifier<'_>,
 ) -> Result<Switched, String> {
     if instance.kind == crate::instances::Kind::Pack {
         return Err(tr("Choose an ordinary profile to switch builds.").into());
@@ -129,9 +143,10 @@ fn switch_profile_build_v2_with_index(
         Profile::open_for(&instance.home, None, Some(identity)).map_err(String::from)?;
     let cancellation = hooks.switch.cancellation;
     cancellation.check()?;
-    // Begin the switch before refreshing the signed v2 index so an already-selected build,
-    // pending first-Play bootstrap, or invalid target never hits the network and artifacts are
-    // verified only once.
+    let previous_holds: Vec<Held> = profile
+        .active()?
+        .map(|active| active.holds().cloned().collect())
+        .unwrap_or_default();
     let Some(edit) = profile.begin_switch(tag)? else {
         if let Some(choice) = choice {
             cancellation.begin_publication()?;
@@ -147,12 +162,13 @@ fn switch_profile_build_v2_with_index(
     let result = switch_build_v2_edit(
         instance,
         edit,
-        index,
+        &previous_holds,
+        Arc::new(crate::native_mods::local_fit::filled(&index)),
         tag,
         choice,
         hooks,
-        &fetch_release_bytes,
-        &attestation::verify_release,
+        fetch_bytes,
+        verify_release,
     )?;
     if let (Some(_), Switched::Changed(active)) = (choice, &result) {
         if let Some(committed) = active.build_choice() {
@@ -292,6 +308,7 @@ pub(super) fn plan_slot_for_build<'a>(
 fn switch_build_v2_edit(
     instance: &Instance,
     edit: crate::managed_play::Edit<'_>,
+    previous_holds: &[Held],
     index: Arc<Index>,
     tag: &str,
     choice: Option<BuildChoice>,
@@ -311,7 +328,33 @@ fn switch_build_v2_edit(
     let mut holds: Vec<Held> = Vec::new();
     let mut removed: BTreeMap<String, (String, String)> = BTreeMap::new();
     let mut staged_ids: BTreeSet<String> = BTreeSet::new();
+    let mut swaps: BTreeMap<String, StagedSwap> = BTreeMap::new();
     let mut dropped_ids: BTreeSet<String> = BTreeSet::new();
+    let original_doc = Document::read(old.path())?;
+    // A mod held again keeps the on/off state the player wanted before its first hold, not the
+    // "off" the old hold left it in.
+    let holder = Holder {
+        home: old.path(),
+        wanted: previous_holds
+            .iter()
+            .filter(|hold| hold.enabled_before())
+            .map(|hold| hold.id().to_owned())
+            .chain(
+                before
+                    .iter()
+                    .filter(|(_, item)| item.enabled)
+                    .map(|(slot, _)| slot.clone()),
+            )
+            .collect(),
+    };
+
+    // Re-offer previously held local or source mods whose exact bytes are still present and not
+    // revoked; their old holds are retired, and any that still fail `prove` below are held again
+    // with today's target build and reason.
+    let rechecked = collect_rechecked_local_holds(previous_holds, &before, &index);
+    for slot in &rechecked {
+        mod_list::set_enabled(next.path(), slot, true)?;
+    }
 
     for (slot, item) in &before {
         match plan_slot_for_build(&index, slot, item, tag, &pins) {
@@ -354,12 +397,22 @@ fn switch_build_v2_edit(
                 })?;
                 doc.replace(&entry)?;
                 staged_ids.insert(slot.clone());
+                swaps.insert(
+                    slot.clone(),
+                    StagedSwap {
+                        project_id: project.id.clone(),
+                        archive: next
+                            .path()
+                            .join(staged_folder(&project.kind))
+                            .join(format!("{}.smod", project.mod_id)),
+                    },
+                );
                 pending_pins.push(pin);
             }
             SlotPlan::Hold(reason) => {
                 mod_list::set_enabled(next.path(), slot, false)?;
                 dropped_ids.insert(slot.clone());
-                holds.push(make_v2_hold(slot, item, reason)?);
+                holds.push(holder.hold(slot, item, reason)?);
             }
             SlotPlan::Revoked { reason, owned } => {
                 mod_list::set_enabled(next.path(), slot, false)?;
@@ -377,7 +430,7 @@ fn switch_build_v2_edit(
                     doc.remove(slot)?;
                     removed.insert(slot.clone(), (item.package.manifest.name.clone(), reason));
                 } else {
-                    holds.push(make_v2_hold(
+                    holds.push(holder.hold(
                         slot,
                         item,
                         HeldReason::NoFit {
@@ -391,55 +444,88 @@ fn switch_build_v2_edit(
     }
 
     // Hold any enabled dependent whose required dependency was held or removed.
-    loop {
-        let mut newly_held = Vec::new();
-        for (slot, item) in &before {
-            if dropped_ids.contains(slot) || !mod_list::is_enabled(next.path(), slot) {
-                continue;
-            }
-            let missing_dep = item
-                .package
-                .manifest
-                .dependencies
-                .iter()
-                .any(|(dep_id, dep)| !dep.details().optional && dropped_ids.contains(dep_id));
-            if missing_dep {
-                newly_held.push(slot.clone());
-            }
-        }
-        if newly_held.is_empty() {
-            break;
-        }
-        for slot in newly_held {
-            mod_list::set_enabled(next.path(), &slot, false)?;
-            dropped_ids.insert(slot.clone());
-            if let Some(item) = before.get(&slot) {
-                holds.push(make_v2_hold(
-                    &slot,
-                    item,
-                    HeldReason::NoFit {
-                        build: tag.to_owned(),
-                        detail: None,
-                    },
-                )?);
-            }
-        }
-    }
+    hold_missing_dependents(
+        &holder,
+        next.path(),
+        &before,
+        &mut dropped_ids,
+        &mut holds,
+        tag,
+    )?;
+    let undo = SwapUndo {
+        old_home: old.path(),
+        stage_home: next.path(),
+        before: &before,
+        original_doc: &original_doc,
+    };
+    undo.held(
+        &holds,
+        &mut swaps,
+        &mut staged_ids,
+        &mut doc,
+        &mut pending_pins,
+    )?;
 
     doc.write(next.path())?;
     check_staged_v2_candidate(next.path(), &index, |id| staged_ids.contains(id))
         .map_err(|e| e.to_string())?;
 
-    (hooks.switch.progress)(InstallProgress::Preparing);
-    let proof = edit
-        .prove(
+    // Prove the candidate image. If an enabled local, source, or unadopted mod fails to fit or
+    // compile on `tag`, hold it (and its required dependents) and retry instead of aborting the
+    // whole switch.
+    let proof = loop {
+        (hooks.switch.progress)(InstallProgress::Preparing);
+        match edit.prove(
             next.path(),
             instance.native_profile,
             hooks.switch.cancellation,
             |step| build_progress(step, hooks.switch.progress),
             None,
-        )
-        .map_err(|e| e.to_string())?;
+        ) {
+            Ok(proof) => break proof,
+            Err(crate::native_mods::Failed::Mods {
+                left, compiling, ..
+            }) => {
+                hooks.switch.cancellation.check()?;
+                let blamed = classify_prove_failure(&left, compiling, tag);
+                let mut held_any = false;
+                for (slot, reason) in blamed {
+                    if dropped_ids.contains(&slot) || !mod_list::is_enabled(next.path(), &slot) {
+                        continue;
+                    }
+                    let Some(item) = before.get(&slot) else {
+                        continue;
+                    };
+                    mod_list::set_enabled(next.path(), &slot, false)?;
+                    dropped_ids.insert(slot.clone());
+                    holds.push(holder.hold(&slot, item, reason)?);
+                    held_any = true;
+                }
+                if !held_any {
+                    return Err(
+                        tr("Sunrise couldn't prove a working mod set for this build.").into(),
+                    );
+                }
+                hold_missing_dependents(
+                    &holder,
+                    next.path(),
+                    &before,
+                    &mut dropped_ids,
+                    &mut holds,
+                    tag,
+                )?;
+                undo.held(
+                    &holds,
+                    &mut swaps,
+                    &mut staged_ids,
+                    &mut doc,
+                    &mut pending_pins,
+                )?;
+                doc.write(next.path())?;
+            }
+            Err(error) => return Err(error.to_string()),
+        }
+    };
 
     // Compute world risks and SwitchQuestion.
     let mut suspect = crate::worlds::SuspectMods::new();
@@ -542,13 +628,14 @@ fn switch_build_v2_edit(
         })
         .transpose()?;
 
+    let retired = retired_holds(rechecked, previous_holds, &final_holds);
     let active = edit.publish_switch(
         final_proof,
         hooks.switch.cancellation,
         crate::managed_play::SwitchPublication {
             holds: final_holds,
             removed: final_removed,
-            retired: BTreeSet::new(),
+            retired,
             build_choice: committed_choice,
         },
         || fence.revalidate(&instance.home),
@@ -562,9 +649,103 @@ fn switch_build_v2_edit(
     Ok(Switched::Changed(Box::new(active)))
 }
 
+/// The earlier holds this switch replaces: the re-offered ones, and every one that is held again,
+/// which today's hold replaces so the profile never carries two holds for one mod.
+fn retired_holds(
+    rechecked: BTreeSet<String>,
+    previous_holds: &[Held],
+    final_holds: &[Held],
+) -> BTreeSet<String> {
+    let mut retired = rechecked;
+    retired.extend(
+        final_holds
+            .iter()
+            .filter(|hold| previous_holds.iter().any(|old| old.id() == hold.id()))
+            .map(|hold| hold.id().to_owned()),
+    );
+    retired
+}
+
+/// Makes holds for one switch: `home` is the profile the mods were read from, and `wanted` the mods
+/// the player had on, now or before an earlier hold.
+struct Holder<'a> {
+    home: &'a Path,
+    wanted: BTreeSet<String>,
+}
+
+impl Holder<'_> {
+    fn hold(&self, slot: &str, item: &InstalledV2Mod, reason: HeldReason) -> Result<Held, String> {
+        make_v2_hold(self.home, slot, item, self.wanted.contains(slot), reason)
+    }
+}
+
+/// A registry replacement staged into the candidate, kept so it can be undone if the mod is held.
+struct StagedSwap {
+    project_id: String,
+    archive: PathBuf,
+}
+
+fn staged_folder(kind: &V2Kind) -> &'static str {
+    match kind {
+        V2Kind::NativeMod => crate::native_mods::INSTALLED,
+        _ => mod_list::MODS_DIR,
+    }
+}
+
+/// Puts back what a staged replacement changed when that mod ends up held, so the hold, which
+/// names the old archive, matches the bytes and `installed.json` row on disk.
+struct SwapUndo<'a> {
+    old_home: &'a Path,
+    stage_home: &'a Path,
+    before: &'a BTreeMap<String, InstalledV2Mod>,
+    original_doc: &'a Document,
+}
+
+impl SwapUndo<'_> {
+    fn held(
+        &self,
+        holds: &[Held],
+        swaps: &mut BTreeMap<String, StagedSwap>,
+        staged_ids: &mut BTreeSet<String>,
+        doc: &mut Document,
+        pending_pins: &mut Vec<PendingPin>,
+    ) -> Result<(), String> {
+        for hold in holds {
+            let Some(swap) = swaps.remove(hold.id()) else {
+                continue;
+            };
+            let Some(item) = self.before.get(hold.id()) else {
+                continue;
+            };
+            let rel = item
+                .package
+                .path
+                .strip_prefix(self.old_home)
+                .map_err(|e| at(&item.package.path, e))?;
+            let back = self.stage_home.join(rel);
+            if swap.archive != back && swap.archive.exists() {
+                fs::remove_file(&swap.archive).map_err(|e| at(&swap.archive, e))?;
+            }
+            if let Some(parent) = back.parent() {
+                fs::create_dir_all(parent).map_err(|e| at(parent, e))?;
+            }
+            fs::copy(&item.package.path, &back).map_err(|e| at(&back, e))?;
+            match self.original_doc.row(hold.id())? {
+                Some(row) => doc.set(hold.id(), row.clone())?,
+                None => doc.remove(hold.id())?,
+            }
+            staged_ids.remove(hold.id());
+            pending_pins.retain(|pin| pin.project_id != swap.project_id);
+        }
+        Ok(())
+    }
+}
+
 pub(super) fn make_v2_hold(
+    home: &Path,
     slot: &str,
     item: &InstalledV2Mod,
+    wanted: bool,
     reason: HeldReason,
 ) -> Result<Held, String> {
     let root = if item.package.manifest.native.is_some() {
@@ -595,8 +776,18 @@ pub(super) fn make_v2_hold(
             version: item.package.manifest.version.clone(),
             repository: Some(repository.clone()),
         },
-        V2Ownership::Local => HeldSource::Local {
-            version: item.package.manifest.version.clone(),
+        // A mod added from GitHub has no registry project, but its verified receipt says where it
+        // came from, and updating it from there later needs that.
+        V2Ownership::Local => match github_origin(home, item) {
+            Some(origin) => HeldSource::Github {
+                owner: origin.owner,
+                repo: origin.repo,
+                commit: origin.commit,
+                version: origin.version,
+            },
+            None => HeldSource::Local {
+                version: item.package.manifest.version.clone(),
+            },
         },
     };
     Held::new(
@@ -605,9 +796,25 @@ pub(super) fn make_v2_hold(
         digest,
         (root, leaf),
         source,
-        item.enabled,
+        wanted,
         reason,
     )
+}
+
+/// The GitHub receipt of a native mod installed at its usual place, when it matches the archive's
+/// exact bytes. A receipt for a mod added from a local folder doesn't count.
+fn github_origin(home: &Path, item: &InstalledV2Mod) -> Option<crate::github_mods::Origin> {
+    let id = &item.package.manifest.id;
+    let canonical = home
+        .join(crate::native_mods::INSTALLED)
+        .join(format!("{id}.smod"));
+    if item.package.path != canonical || item.package.manifest.native.is_none() {
+        return None;
+    }
+    crate::github_mods::origin(home, id).filter(|origin| {
+        origin.local_folder_path().is_none()
+            && origin.matches_archive(id, &item.package.manifest.version, &item.digest)
+    })
 }
 
 fn split_hold_names(holds: &[Held]) -> (Vec<String>, Vec<String>) {
@@ -629,12 +836,130 @@ fn change_message(change: &PublisherChange) -> String {
     attestation::Error::PublisherChanged(Box::new(change.clone())).to_string()
 }
 
+/// Disable any enabled mod whose required dependency was held or removed, recording a hold for it.
+fn hold_missing_dependents(
+    holder: &Holder<'_>,
+    stage_home: &Path,
+    before: &BTreeMap<String, InstalledV2Mod>,
+    dropped_ids: &mut BTreeSet<String>,
+    holds: &mut Vec<Held>,
+    tag: &str,
+) -> Result<(), String> {
+    loop {
+        let mut newly_held = Vec::new();
+        for (slot, item) in before {
+            if dropped_ids.contains(slot) || !mod_list::is_enabled(stage_home, slot) {
+                continue;
+            }
+            let missing_dep = item
+                .package
+                .manifest
+                .dependencies
+                .iter()
+                .any(|(dep_id, dep)| !dep.details().optional && dropped_ids.contains(dep_id));
+            if missing_dep {
+                newly_held.push(slot.clone());
+            }
+        }
+        if newly_held.is_empty() {
+            break;
+        }
+        for slot in newly_held {
+            mod_list::set_enabled(stage_home, &slot, false)?;
+            dropped_ids.insert(slot.clone());
+            if let Some(item) = before.get(&slot) {
+                holds.push(holder.hold(
+                    &slot,
+                    item,
+                    HeldReason::NoFit {
+                        build: tag.to_owned(),
+                        detail: None,
+                    },
+                )?);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Previously held local or source mods whose exact archive is still on disk (currently disabled)
+/// and not revoked are re-offered on the next build switch; their old holds are retired.
+fn collect_rechecked_local_holds(
+    previous_holds: &[Held],
+    before: &BTreeMap<String, InstalledV2Mod>,
+    index: &Index,
+) -> BTreeSet<String> {
+    let mut rechecked = BTreeSet::new();
+    for hold in previous_holds {
+        if !matches!(
+            hold.source(),
+            HeldSource::Local { .. } | HeldSource::Github { .. }
+        ) {
+            continue;
+        }
+        let Some(item) = before.get(hold.id()) else {
+            continue;
+        };
+        if item.enabled || !hold.enabled_before() {
+            continue;
+        }
+        let Ok(digest) = sha256_bytes(&item.digest) else {
+            continue;
+        };
+        if &digest != hold.digest() {
+            continue;
+        }
+        if revoked_for_package(index, &item.ownership, &item.digest).is_some() {
+            continue;
+        }
+        rechecked.insert(hold.id().to_owned());
+    }
+    rechecked
+}
+
+/// Convert `native_mods::Failed::Mods` omissions into per-mod `HeldReason`s so a failing local,
+/// source, or unadopted mod is held instead of aborting the entire switch.
+fn classify_prove_failure(
+    left: &[crate::native_mods::LeftOut],
+    compiling: bool,
+    tag: &str,
+) -> Vec<(String, HeldReason)> {
+    use crate::native_mods::Why;
+    let mut blamed = Vec::new();
+    for omission in left {
+        let reason = match &omission.why {
+            Why::Unfit(detail) if !compiling => HeldReason::NoFit {
+                build: tag.to_owned(),
+                detail: Some(detail.clone()),
+            },
+            Why::Unproved(detail) if !compiling => HeldReason::Unproved {
+                build: tag.to_owned(),
+                detail: Some(detail.clone()),
+            },
+            Why::DidNotBuild if compiling => HeldReason::BuildFailed {
+                build: tag.to_owned(),
+            },
+            Why::OtherVersion => HeldReason::NoFit {
+                build: tag.to_owned(),
+                detail: None,
+            },
+            Why::Clash(other) => HeldReason::NoFit {
+                build: tag.to_owned(),
+                detail: Some(other.clone()),
+            },
+            Why::Needs(_) | Why::Unfit(_) | Why::Unproved(_) | Why::DidNotBuild => continue,
+        };
+        blamed.push((omission.id.clone(), reason));
+    }
+    blamed
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{
         instances::{Channel, Kind as InstanceKind},
-        native_mods::Cancellation,
+        native_mods::{Cancellation, LeftOut, Why},
     };
 
     #[test]
@@ -667,16 +992,389 @@ mod tests {
             confirm_publisher_change: None,
             pin_dir: None,
         };
-        let Err(err) = switch_profile_build_v2_with_index(
+        let Err(err) = switch_profile_build_v2_with(
             &instance,
             Identity::of(dir.path()).unwrap(),
             "dev-2026-11-24-abc",
             Some(BuildChoice::Follow(Channel::Dev)),
             hooks,
             || panic!("pack refusal must happen before fetching v2 index"),
+            &fetch_release_bytes,
+            &attestation::verify_release,
         ) else {
             panic!("expected pack refusal error");
         };
         assert!(err.contains("ordinary profile"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn classify_prove_failure_maps_unfit_unproved_and_build_failed_to_holds() {
+        let left = vec![
+            LeftOut {
+                id: "local_a".into(),
+                version: "1.0.0".into(),
+                why: Why::Unfit("API changed".into()),
+                detail: None,
+            },
+            LeftOut {
+                id: "local_b".into(),
+                version: "1.0.0".into(),
+                why: Why::Unproved("no uses list".into()),
+                detail: None,
+            },
+            LeftOut {
+                id: "dep_c".into(),
+                version: "1.0.0".into(),
+                why: Why::Needs("local_a".into()),
+                detail: None,
+            },
+        ];
+        let pre = classify_prove_failure(&left, false, "dev-2026-11-24-abc");
+        assert_eq!(pre.len(), 2);
+        assert!(matches!(
+            &pre[0],
+            (id, HeldReason::NoFit { build, detail: Some(d) })
+                if id == "local_a" && build == "dev-2026-11-24-abc" && d == "API changed"
+        ));
+        assert!(matches!(
+            &pre[1],
+            (id, HeldReason::Unproved { build, detail: Some(d) })
+                if id == "local_b" && build == "dev-2026-11-24-abc" && d == "no uses list"
+        ));
+
+        let compile_left = vec![LeftOut {
+            id: "local_native".into(),
+            version: "1.0.0".into(),
+            why: Why::DidNotBuild,
+            detail: None,
+        }];
+        let during = classify_prove_failure(&compile_left, true, "dev-2026-11-24-abc");
+        assert_eq!(during.len(), 1);
+        assert!(matches!(
+            &during[0],
+            (id, HeldReason::BuildFailed { build })
+                if id == "local_native" && build == "dev-2026-11-24-abc"
+        ));
+    }
+
+    #[test]
+    fn collect_rechecked_local_holds_reoffers_matching_local_holds_and_skips_registry_holds() {
+        let index: Index = serde_json::from_value(serde_json::json!({
+            "schema": 2,
+            "serial": 1,
+            "generated": "2026-11-24T00:00:00Z",
+            "builds": [],
+            "categories": [],
+            "collections": [],
+            "projects": [],
+            "revoked": []
+        }))
+        .unwrap();
+        let digest_hex = "11".repeat(32);
+        let digest_bytes = [0x11u8; 32];
+        let local_hold = Held::new(
+            "local_mod".into(),
+            "Local Mod".into(),
+            digest_bytes,
+            (HeldRoot::Native, "local_mod.smod".into()),
+            HeldSource::Local {
+                version: "1.0.0".into(),
+            },
+            true,
+            HeldReason::BuildFailed {
+                build: "dev-2026-11-20-old".into(),
+            },
+        )
+        .unwrap();
+        let registry_hold = Held::new(
+            "reg_mod".into(),
+            "Reg Mod".into(),
+            digest_bytes,
+            (HeldRoot::Content, "reg_mod.smod".into()),
+            HeldSource::Registry {
+                project: "reg_mod".into(),
+                version: "1.0.0".into(),
+                repository: None,
+            },
+            true,
+            HeldReason::NoFit {
+                build: "dev-2026-11-20-old".into(),
+                detail: None,
+            },
+        )
+        .unwrap();
+        let pkg = |id: &str| {
+            let manifest: sunrise_launcher_smod::manifest::Manifest = toml::from_str(&format!(
+                "id = \"{id}\"\nname = \"{id}\"\nversion = \"1.0.0\"\napi = \"1\"\n"
+            ))
+            .unwrap();
+            crate::managed_play::ScannedPackage {
+                path: PathBuf::from(format!("mods/{id}.smod")),
+                directory: false,
+                manifest,
+            }
+        };
+        let before = BTreeMap::from([
+            (
+                "local_mod".into(),
+                InstalledV2Mod {
+                    package: pkg("local_mod"),
+                    digest: digest_hex.clone(),
+                    size: 0,
+                    enabled: false,
+                    ownership: V2Ownership::Local,
+                },
+            ),
+            (
+                "reg_mod".into(),
+                InstalledV2Mod {
+                    package: pkg("reg_mod"),
+                    digest: digest_hex,
+                    size: 0,
+                    enabled: false,
+                    ownership: V2Ownership::Local,
+                },
+            ),
+        ]);
+        let rechecked =
+            collect_rechecked_local_holds(&[local_hold, registry_hold], &before, &index);
+        assert_eq!(rechecked, BTreeSet::from(["local_mod".to_owned()]));
+    }
+
+    fn manifest(id: &str, native: bool) -> sunrise_launcher_smod::manifest::Manifest {
+        let native = if native {
+            format!(
+                "[native]\ngame = '26.3'\nsunrise = '{}'\nmixins = '{}'\n",
+                "a".repeat(40),
+                "b".repeat(40)
+            )
+        } else {
+            String::new()
+        };
+        toml::from_str(&format!(
+            "id = \"{id}\"\nname = \"{id}\"\nversion = \"1.0.0\"\napi = \"1\"\n{native}"
+        ))
+        .unwrap()
+    }
+
+    fn installed(
+        path: PathBuf,
+        id: &str,
+        native: bool,
+        digest: &str,
+        enabled: bool,
+    ) -> InstalledV2Mod {
+        InstalledV2Mod {
+            package: crate::managed_play::ScannedPackage {
+                path,
+                directory: false,
+                manifest: manifest(id, native),
+            },
+            digest: digest.into(),
+            size: 0,
+            enabled,
+            ownership: V2Ownership::Local,
+        }
+    }
+
+    fn local_hold(id: &str, enabled_before: bool) -> Held {
+        Held::new(
+            id.into(),
+            id.into(),
+            [0x11; 32],
+            (HeldRoot::Content, format!("{id}.smod")),
+            HeldSource::Local {
+                version: "1.0.0".into(),
+            },
+            enabled_before,
+            HeldReason::BuildFailed {
+                build: "dev-2026-11-20-old".into(),
+            },
+        )
+        .unwrap()
+    }
+
+    fn no_fit() -> HeldReason {
+        HeldReason::NoFit {
+            build: "dev-2026-11-24-abc".into(),
+            detail: None,
+        }
+    }
+
+    #[test]
+    fn a_mod_held_again_keeps_the_on_state_from_before_its_first_hold() {
+        let dir = tempfile::tempdir().unwrap();
+        let digest = "11".repeat(32);
+        let path = |id: &str| dir.path().join(format!("mods/{id}.smod"));
+        // Re-offered after an earlier hold, then failing again: off on disk, wanted on.
+        let rechecked = installed(path("rechecked"), "rechecked", false, &digest, false);
+        // Turned off by the player before any hold.
+        let off = installed(path("off"), "off", false, &digest, false);
+        let previous = [local_hold("rechecked", true), local_hold("off", false)];
+        let holder = Holder {
+            home: dir.path(),
+            wanted: previous
+                .iter()
+                .filter(|hold| hold.enabled_before())
+                .map(|hold| hold.id().to_owned())
+                .collect(),
+        };
+        let again = holder.hold("rechecked", &rechecked, no_fit()).unwrap();
+        assert!(again.enabled_before());
+        assert!(!holder.hold("off", &off, no_fit()).unwrap().enabled_before());
+    }
+
+    #[test]
+    fn a_held_github_mod_keeps_its_github_source() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        let digest = "22".repeat(32);
+        let archive = home
+            .join(crate::native_mods::INSTALLED)
+            .join("from_github.smod");
+        fs::create_dir_all(archive.parent().unwrap()).unwrap();
+        let receipt = serde_json::json!({
+            "id": "from_github",
+            "version": "1.0.0",
+            "owner": "camp",
+            "repo": "from-github",
+            "commit": "c".repeat(40),
+            "sha256": digest,
+            "added_from": "github",
+        });
+        fs::write(
+            crate::github_mods::origin_path(home, "from_github"),
+            receipt.to_string(),
+        )
+        .unwrap();
+        let item = installed(archive, "from_github", true, &digest, true);
+        let hold = make_v2_hold(home, "from_github", &item, true, no_fit()).unwrap();
+        assert_eq!(
+            hold.source(),
+            &HeldSource::Github {
+                owner: "camp".into(),
+                repo: "from-github".into(),
+                commit: "c".repeat(40),
+                version: "1.0.0".into(),
+            }
+        );
+
+        // A receipt for other bytes is not this archive's.
+        let other = installed(
+            item.package.path.clone(),
+            "from_github",
+            true,
+            &"33".repeat(32),
+            true,
+        );
+        let hold = make_v2_hold(home, "from_github", &other, true, no_fit()).unwrap();
+        assert!(matches!(hold.source(), HeldSource::Local { .. }));
+    }
+
+    #[test]
+    fn a_mod_held_again_retires_its_earlier_hold() {
+        let previous = [
+            local_hold("revoked_local", true),
+            local_hold("still_held", true),
+        ];
+        let final_holds = [local_hold("revoked_local", true)];
+        let retired = retired_holds(
+            BTreeSet::from(["rechecked".to_owned()]),
+            &previous,
+            &final_holds,
+        );
+        assert_eq!(
+            retired,
+            BTreeSet::from(["rechecked".to_owned(), "revoked_local".to_owned()])
+        );
+        // What publication keeps: the earlier holds not retired, plus today's.
+        let mut ids = BTreeSet::new();
+        for hold in previous
+            .iter()
+            .filter(|hold| !retired.contains(hold.id()))
+            .chain(&final_holds)
+        {
+            assert!(ids.insert(hold.id()), "two holds for {}", hold.id());
+        }
+    }
+
+    #[test]
+    fn holding_a_staged_replacement_puts_back_its_archive_row_and_pin() {
+        let dir = tempfile::tempdir().unwrap();
+        let old_home = dir.path().join("old");
+        let stage_home = dir.path().join("stage");
+        let rel = PathBuf::from(mod_list::MODS_DIR).join("swapped.smod");
+        for home in [&old_home, &stage_home] {
+            fs::create_dir_all(home.join(mod_list::MODS_DIR)).unwrap();
+        }
+        fs::write(old_home.join(&rel), b"old bytes").unwrap();
+        fs::write(stage_home.join(&rel), b"new bytes").unwrap();
+        let row = |version: &str| serde_json::json!({ "entries": [{ "source": "sunrise", "project": "Ab3dE9xQ", "mod_id": "swapped", "version": version }] });
+        let manifest = crate::browser::installed::MANIFEST;
+        fs::create_dir_all(old_home.join(manifest).parent().unwrap()).unwrap();
+        fs::create_dir_all(stage_home.join(manifest).parent().unwrap()).unwrap();
+        fs::write(old_home.join(manifest), row("1.0.0").to_string()).unwrap();
+        fs::write(stage_home.join(manifest), row("2.0.0").to_string()).unwrap();
+
+        let before = BTreeMap::from([(
+            "swapped".to_owned(),
+            installed(
+                old_home.join(&rel),
+                "swapped",
+                false,
+                &"11".repeat(32),
+                true,
+            ),
+        )]);
+        let original_doc = Document::read(&old_home).unwrap();
+        let mut doc = Document::read(&stage_home).unwrap();
+        let mut swaps = BTreeMap::from([(
+            "swapped".to_owned(),
+            StagedSwap {
+                project_id: "Ab3dE9xQ".into(),
+                archive: stage_home.join(&rel),
+            },
+        )]);
+        let mut staged_ids = BTreeSet::from(["swapped".to_owned()]);
+        let pin = |project_id: &str| PendingPin {
+            project_id: project_id.into(),
+            pin: attestation::PublisherPin {
+                repository_id: 1,
+                repository_name: "camp/swapped".into(),
+                workflow_path: ".github/workflows/release.yml".into(),
+            },
+            accepted_change: None,
+        };
+        let mut pins = vec![pin("Ab3dE9xQ"), pin("Other123")];
+        let holds = [Held::new(
+            "swapped".into(),
+            "swapped".into(),
+            [0x11; 32],
+            (HeldRoot::Content, "swapped.smod".into()),
+            HeldSource::Local {
+                version: "1.0.0".into(),
+            },
+            true,
+            no_fit(),
+        )
+        .unwrap()];
+        SwapUndo {
+            old_home: &old_home,
+            stage_home: &stage_home,
+            before: &before,
+            original_doc: &original_doc,
+        }
+        .held(&holds, &mut swaps, &mut staged_ids, &mut doc, &mut pins)
+        .unwrap();
+
+        assert_eq!(fs::read(stage_home.join(&rel)).unwrap(), b"old bytes");
+        assert_eq!(doc.row("swapped").unwrap().unwrap()["version"], "1.0.0");
+        assert!(staged_ids.is_empty() && swaps.is_empty());
+        assert_eq!(
+            pins.iter()
+                .map(|p| p.project_id.as_str())
+                .collect::<Vec<_>>(),
+            ["Other123"]
+        );
     }
 }

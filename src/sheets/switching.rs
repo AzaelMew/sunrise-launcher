@@ -6,10 +6,10 @@ use std::{
 };
 use sunrise_launcher::{
     browser::sunrise::{
-        install_target, save_build_choice, switch_profile_build, switch_profile_build_v2,
-        switch_provider_v2, BuildChoice, InstallError, InstallHooks, InstallProgress,
-        ProviderSwitchPreview, SwitchDecision, SwitchHooks, SwitchQuestion, Switched, V2Hooks,
-        V2InstallOptions, V2ProviderSwitchHooks, V2SwitchHooks,
+        install_target, save_build_choice, switch_profile_build_v2, switch_provider_v2,
+        BuildChoice, InstallError, InstallHooks, InstallProgress, ProviderSwitchPreview,
+        SwitchDecision, SwitchHooks, SwitchQuestion, Switched, V2Hooks, V2InstallOptions,
+        V2ProviderSwitchHooks, V2SwitchHooks,
     },
     managed_play::{self, Active, FirstBuild, Profile, ReceiptHint},
     profile_txn::Identity,
@@ -291,32 +291,26 @@ impl Launcher {
                     Ok(reply.recv().unwrap_or(SwitchDecision::Cancel))
                 },
             };
-            // A profile holding a mod from the signed v2 index switches through it, which keeps
-            // each mod's chosen project; v1 and local mods keep their exact bytes there. A read
-            // failure must not silently drop back to the v1 switch.
-            let outcome = match uses_v2_switch(&instance.home) {
-                Ok(true) => switch_profile_build_v2(
-                    &instance,
-                    identity,
-                    &tag,
-                    choice,
-                    V2SwitchHooks {
-                        switch: hooks,
-                        confirm_publisher_change: Some(&|question| {
-                            let (answer, reply) = std::sync::mpsc::channel();
-                            tx.send(Msg::PublisherChangeQuestion(
-                                Box::new(question.clone()),
-                                answer,
-                            ))
-                            .is_ok()
-                                && reply.recv().unwrap_or(false)
-                        }),
-                        pin_dir: None,
-                    },
-                ),
-                Ok(false) => switch_profile_build(&instance, identity, &tag, choice, hooks),
-                Err(error) => Err(error),
-            };
+            // Mods installed before the signed registry keep their exact bytes through it.
+            let outcome = switch_profile_build_v2(
+                &instance,
+                identity,
+                &tag,
+                choice,
+                V2SwitchHooks {
+                    switch: hooks,
+                    confirm_publisher_change: Some(&|question| {
+                        let (answer, reply) = std::sync::mpsc::channel();
+                        tx.send(Msg::PublisherChangeQuestion(
+                            Box::new(question.clone()),
+                            answer,
+                        ))
+                        .is_ok()
+                            && reply.recv().unwrap_or(false)
+                    }),
+                    pin_dir: None,
+                },
+            );
             let _ = tx.send(Msg::Switched(instance.home, Box::new(outcome)));
         });
     }
@@ -942,7 +936,6 @@ impl Launcher {
                                 let _ = tx.send(Msg::ProviderSwitchProgress(stage));
                             },
                             continue_after_failure: &|_| false,
-                            resolve: None,
                             cancellation: None,
                         },
                         choose_provider: Some(&|need| {
@@ -1235,17 +1228,6 @@ fn can_fast_save_choice(
     }
 }
 
-/// Whether a profile holds any mod installed from the signed v2 index.
-///
-/// Propagates `installed.json` read errors so a corrupt or unreadable manifest never falls back
-/// to the v1 build switch.
-fn uses_v2_switch(home: &std::path::Path) -> Result<bool, String> {
-    Ok(sunrise_launcher::browser::installed::Installed::read(home)?
-        .entries
-        .iter()
-        .any(|e| e.mod_id.is_some()))
-}
-
 /// A partial write or an interrupted writer must not reserve the final report name.
 fn publish_report(
     folder: &std::path::Path,
@@ -1263,15 +1245,9 @@ fn publish_report(
 
 #[cfg(test)]
 mod tests {
-    use super::{can_fast_save_choice, publish_report, uses_v2_switch};
+    use super::{can_fast_save_choice, publish_report};
     use std::io::{self, Write};
-    use sunrise_launcher::{
-        browser::{
-            installed::{Entry, Installed},
-            Kind, SourceId,
-        },
-        instances::{Channel, Instance, Kind as InstanceKind},
-    };
+    use sunrise_launcher::instances::{Channel, Instance, Kind as InstanceKind};
 
     #[test]
     fn can_fast_save_choice_checks_kind_recovery_and_target() {
@@ -1312,49 +1288,6 @@ mod tests {
         std::fs::create_dir_all(txn.parent().unwrap()).unwrap();
         std::fs::write(&txn, "{}").unwrap();
         assert!(!can_fast_save_choice(&instance, tag, Some(tag), true));
-    }
-
-    #[test]
-    fn uses_v2_switch_refuses_unreadable_installed_manifest_instead_of_falling_back() {
-        let home = tempfile::tempdir().unwrap();
-        assert_eq!(uses_v2_switch(home.path()), Ok(false));
-
-        let mut list = Installed::default();
-        list.entries.push(Entry {
-            source: SourceId::Sunrise,
-            project: "demo".into(),
-            mod_id: None,
-            slug: "demo".into(),
-            title: "Demo".into(),
-            kind: Kind::Mod,
-            version: "1.0.0".into(),
-            number: "1.0.0".into(),
-            file: "mods/demo.smod".into(),
-            checksum: format!("SHA-256:{}", "00".repeat(32)),
-            page: "https://example.test/demo".into(),
-            dependency: false,
-            verdict: None,
-            install_hold: None,
-            repository: None,
-        });
-        list.save(home.path()).unwrap();
-        assert_eq!(uses_v2_switch(home.path()), Ok(false));
-
-        list.entries[0].mod_id = Some("demo".into());
-        list.save(home.path()).unwrap();
-        assert_eq!(uses_v2_switch(home.path()), Ok(true));
-
-        std::fs::write(
-            home.path()
-                .join(sunrise_launcher_smod::index::browser_state::MANIFEST),
-            "{not valid json",
-        )
-        .unwrap();
-        let error = uses_v2_switch(home.path()).unwrap_err();
-        assert!(
-            error.contains(sunrise_launcher_smod::index::browser_state::MANIFEST),
-            "unexpected error: {error}"
-        );
     }
 
     #[test]
