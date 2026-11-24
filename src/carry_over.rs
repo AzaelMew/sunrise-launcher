@@ -5,6 +5,17 @@
 use crate::data_location::{self, Roots};
 use std::fs;
 use std::path::Path;
+use std::sync::Mutex;
+
+static STARTUP_ERROR: Mutex<Option<String>> = Mutex::new(None);
+
+/// The error from [`at_start`], if carrying over an earlier launcher's data failed.
+pub fn startup_error() -> Option<String> {
+    STARTUP_ERROR
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+}
 
 /// What a launcher folder holds that is the player's: settings, accounts (with the secrets file
 /// of a computer without a keychain), the instances' names and icons, the servers made in the
@@ -29,9 +40,13 @@ const GAME_CACHES: [&str; 4] = [".horizon-cache", ".sunrise-cache", "wasm-cache"
 const COMPLETE: &str = "complete";
 
 /// Runs [`carry_over`] on the player's folders before anything reads them, unless a home
-/// override or a moved Sunrise location decides where the data is. A failure is reported and
-/// leaves the launcher to start empty: the earlier launcher's data is untouched either way.
-pub fn at_start() {
+/// override or a moved Sunrise location decides where the data is. A failure is remembered in
+/// [`startup_error`] and reported to stderr so startup skips creating an empty root and the
+/// player can repair the earlier location and restart to retry.
+pub fn at_start() -> Result<(), String> {
+    *STARTUP_ERROR
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
     let overridden = ["SUNRISE_LAUNCHER_HOME", "SUNRISE_HOME"]
         .iter()
         .any(|name| std::env::var_os(name).is_some_and(|v| !v.is_empty()));
@@ -39,14 +54,19 @@ pub fn at_start() {
         || overridden
         || !matches!(data_location::configured_roots(), Ok(None))
     {
-        return;
+        return Ok(());
     }
     let (Some(data), Some(config)) = (dirs::data_dir(), dirs::config_dir()) else {
-        return;
+        return Ok(());
     };
     if let Err(error) = carry_over(&data, &config) {
         eprintln!("Could not copy the earlier launcher's data: {error}");
+        *STARTUP_ERROR
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(error.clone());
+        return Err(error);
     }
+    Ok(())
 }
 
 /// Copies the data of the first earlier launcher that has any into this launcher's folders under
@@ -62,26 +82,36 @@ pub fn carry_over(data: &Path, config: &Path) -> Result<bool, String> {
     let stage = launcher.with_file_name(".carry-over");
     if launcher.exists() || game.exists() {
         // A copy that was finished but stopped between its two renames: the one folder that is
-        // still in the stage goes where the game reads it.
-        if stage.join(COMPLETE).is_file() || first_rename_done(&stage, &launcher, &game) {
-            return resume(&stage, &launcher, &game);
-        }
-        // A copy that reached both targets but could not remove its stage (a file appearing in
-        // it mid-delete) left it beside them; nothing reads it, so it goes on a later start.
-        if launcher.exists() && game.exists() && stage.exists() {
-            settle(&stage);
+        // still in the stage goes where the game reads it. Refuse links at the stage root, the
+        // marker, or either staged part before touching anything.
+        if refuse_link(&stage)?.is_some() {
+            let marker_meta = refuse_link(&stage.join(COMPLETE))?;
+            refuse_link(&stage.join("launcher"))?;
+            refuse_link(&stage.join("game"))?;
+            if marker_meta.is_some_and(|m| m.is_file())
+                || first_rename_done(&stage, &launcher, &game)
+            {
+                return resume(&stage, &launcher, &game);
+            }
+            // A copy that reached both targets but could not remove its stage (a file appearing in
+            // it mid-delete) left it beside them; nothing reads it, so it goes on a later start.
+            if launcher.exists() && game.exists() {
+                settle(&stage);
+            }
         }
         return Ok(false);
     }
-    let Some(source) = crate::identity::EARLIER
-        .iter()
-        .find_map(|&(launcher, game, location)| {
-            earlier_roots(data, config, launcher, game, location)
-        })
-    else {
+    let mut source = None;
+    for &(old_launcher, old_game, location) in crate::identity::EARLIER {
+        if let Some(roots) = earlier_roots(data, config, old_launcher, old_game, location)? {
+            source = Some(roots);
+            break;
+        }
+    }
+    let Some(source) = source else {
         return Ok(false);
     };
-    if stage.exists() {
+    if refuse_link(&stage)?.is_some() {
         fs::remove_dir_all(&stage).map_err(|e| format!("{}: {e}", stage.display()))?;
     }
     let staged = Roots {
@@ -189,6 +219,19 @@ fn discard(stage: &Path) {
     }
 }
 
+/// Returns `path`'s own metadata (without following links), refusing symlinks and junctions.
+fn refuse_link(path: &Path) -> Result<Option<fs::Metadata>, String> {
+    match fs::symlink_metadata(path) {
+        Ok(meta) if crate::native_cache::linked(&meta) => Err(crate::i18n::trf(
+            "Symbolic links and reparse points cannot be relocated: {path}",
+            &[("path", &path.display().to_string())],
+        )),
+        Ok(meta) => Ok(Some(meta)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(format!("{}: {e}", path.display())),
+    }
+}
+
 /// An earlier launcher's folders, when its launcher or game folder exists: where its
 /// `location.json` moved them, else its default folders under `data`.
 fn earlier_roots(
@@ -197,16 +240,14 @@ fn earlier_roots(
     launcher: &str,
     game: &str,
     location: &str,
-) -> Option<Roots> {
-    let moved = data_location::resolve_at(&config.join(location).join("location.json"))
-        .ok()
-        .flatten();
+) -> Result<Option<Roots>, String> {
+    let moved = data_location::resolve_at(&config.join(location).join("location.json"))?;
     let roots = moved.unwrap_or_else(|| Roots {
         launcher: data.join(launcher),
         game: data.join(game),
         build: data.join(launcher),
     });
-    (roots.launcher.is_dir() || roots.game.is_dir()).then_some(roots)
+    Ok((roots.launcher.is_dir() || roots.game.is_dir()).then_some(roots))
 }
 
 #[cfg(test)]
@@ -603,6 +644,136 @@ mod tests {
             fs::metadata(&game).unwrap().permissions().mode() & 0o777,
             0o700
         );
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn a_resumed_stage_with_a_linked_root_marker_or_part_is_refused() {
+        let (data, config, base) = scratch("resumed-linked-stage");
+        let launcher = crate::identity::launcher_folder_in(&data);
+        let game = crate::identity::game_folder_in(&data);
+        let stage = launcher.with_file_name(".carry-over");
+        fs::create_dir_all(&launcher).unwrap();
+
+        // 1. Linked stage root.
+        let elsewhere = base.join("elsewhere");
+        fs::create_dir_all(elsewhere.join("game/saves")).unwrap();
+        fs::write(elsewhere.join(COMPLETE), []).unwrap();
+        link_dir(&elsewhere, &stage);
+        let error = carry_over(&data, &config).unwrap_err();
+        assert!(
+            error.contains("Symbolic links and reparse points"),
+            "{error}"
+        );
+        assert!(!game.exists());
+        unlink_dir(&stage);
+
+        // 2. Linked staged child (`game`).
+        fs::create_dir_all(&stage).unwrap();
+        fs::write(stage.join(COMPLETE), []).unwrap();
+        link_dir(&elsewhere.join("game"), &stage.join("game"));
+        let error = carry_over(&data, &config).unwrap_err();
+        assert!(
+            error.contains("Symbolic links and reparse points"),
+            "{error}"
+        );
+        assert!(!game.exists());
+        unlink_dir(&stage.join("game"));
+
+        // 3. Linked `complete` marker (Unix file symlink).
+        #[cfg(unix)]
+        {
+            fs::remove_file(stage.join(COMPLETE)).unwrap();
+            let marker_target = base.join("marker-target");
+            fs::write(&marker_target, []).unwrap();
+            std::os::unix::fs::symlink(&marker_target, stage.join(COMPLETE)).unwrap();
+            let error = carry_over(&data, &config).unwrap_err();
+            assert!(
+                error.contains("Symbolic links and reparse points"),
+                "{error}"
+            );
+            assert!(!game.exists());
+            fs::remove_file(stage.join(COMPLETE)).unwrap();
+        }
+
+        // Still allow the platform data base itself to sit behind a link on resume.
+        let real_data = base.join("real-data");
+        let linked_data = base.join("linked-data");
+        let real_launcher = crate::identity::launcher_folder_in(&real_data);
+        let real_stage = real_launcher.with_file_name(".carry-over");
+        fs::create_dir_all(&real_launcher).unwrap();
+        fs::create_dir_all(real_stage.join("game/saves/World")).unwrap();
+        fs::write(real_stage.join("game/saves/World/level.dat"), [1, 2, 3]).unwrap();
+        fs::write(real_stage.join(COMPLETE), []).unwrap();
+        link_dir(&real_data, &linked_data);
+        assert_eq!(carry_over(&linked_data, &config), Ok(true));
+        assert_eq!(
+            fs::read(crate::identity::game_folder_in(&real_data).join("saves/World/level.dat"))
+                .unwrap(),
+            [1, 2, 3]
+        );
+        unlink_dir(&linked_data);
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn a_linked_earlier_location_is_refused_with_the_named_error() {
+        let Some(&(_, _, location)) = crate::identity::EARLIER.first() else {
+            return;
+        };
+        let (data, config, base) = scratch("linked-earlier-location");
+        let real_launcher = base.join("real-launcher");
+        let real_game = base.join("real-game");
+        fs::create_dir_all(&real_launcher).unwrap();
+        fs::create_dir_all(&real_game).unwrap();
+        fs::write(real_launcher.join("settings.json"), r#"{"ok":true}"#).unwrap();
+        let linked_launcher = base.join("linked-launcher");
+        link_dir(&real_launcher, &linked_launcher);
+
+        let loc_dir = config.join(location);
+        fs::create_dir_all(&loc_dir).unwrap();
+        let loc_file = loc_dir.join("location.json");
+        let location_json = serde_json::json!({
+            "version": 1,
+            "roots": {
+                "launcher": linked_launcher,
+                "game": real_game,
+                "build": linked_launcher,
+            }
+        });
+        fs::write(&loc_file, location_json.to_string()).unwrap();
+
+        let error = carry_over(&data, &config).unwrap_err();
+        let linked_text = fs::canonicalize(&base)
+            .unwrap()
+            .join("linked-launcher")
+            .display()
+            .to_string();
+        assert!(
+            error.contains("Symbolic links and reparse points") && error.contains(&linked_text),
+            "expected link refusal naming {linked_text}, got: {error}"
+        );
+        // Neither target root was created, so repairing the pointer allows carry_over to retry.
+        assert!(!crate::identity::launcher_folder_in(&data).exists());
+        assert!(!crate::identity::game_folder_in(&data).exists());
+
+        let repaired_json = serde_json::json!({
+            "version": 1,
+            "roots": {
+                "launcher": real_launcher,
+                "game": real_game,
+                "build": real_launcher,
+            }
+        });
+        fs::write(&loc_file, repaired_json.to_string()).unwrap();
+        assert!(carry_over(&data, &config).unwrap());
+        let copied: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(crate::identity::launcher_folder_in(&data).join("settings.json"))
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(copied, serde_json::json!({ "ok": true }));
+        unlink_dir(&linked_launcher);
         let _ = fs::remove_dir_all(&base);
     }
 
