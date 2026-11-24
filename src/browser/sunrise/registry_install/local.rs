@@ -523,6 +523,110 @@ fn revalidate_claims(live: &Path, checks: &[(String, String)]) -> Result<(), Str
     Ok(())
 }
 
+/// Turn a held local or source mod back on in `instance`: its exact bytes go through the fit
+/// check and build for the profile's current build, and only a proved image is published,
+/// retiring the hold. A failed check returns what it found, and nothing changes.
+pub fn restore_held(
+    instance: &Instance,
+    identity: Identity,
+    id: &str,
+    cancellation: &native_mods::Cancellation,
+) -> Result<(), String> {
+    let mut profile =
+        Profile::open_for(&instance.home, None, Some(identity)).map_err(String::from)?;
+    let edit = profile.begin_pending_edit()?;
+    // A registry hold waits for its author's update; only local and source bytes are retried.
+    let (title, digest) = edit
+        .held(id)
+        .filter(|hold| {
+            !matches!(hold.source(), managed_play::HeldSource::Registry { .. })
+                && hold.matches_archive(&instance.home)
+        })
+        .map(|hold| {
+            let digest: String = hold.digest().iter().map(|b| format!("{b:02x}")).collect();
+            (hold.title().to_owned(), digest)
+        })
+        .ok_or_else(|| held_change_refusal(id).to_string())?;
+    let next = edit.candidate()?;
+    let packages = inventory(next.path(), None)?;
+    let seen = packages
+        .get(id)
+        .ok_or_else(|| held_change_refusal(id).to_string())?;
+    let manifest = &seen.package.manifest;
+    // These exact bytes stay off once taken down. The signed index's digest takedowns reach local
+    // and source copies whichever index the profile's own switches read, so it is always asked,
+    // and an unreadable index refuses rather than skipping the check.
+    let catalog = crate::browser::sunrise::v2::change_index().map_err(|error| {
+        trf(
+            "Couldn't check {mod} against the registry's takedowns: {error}",
+            &[("mod", &title), ("error", &error.to_string())],
+        )
+    })?;
+    let mut takedown = catalog
+        .index
+        .revoked_by_sha256(&digest)
+        .map(|row| row.reason.clone());
+    // A profile without registry receipts still switches on the first index, which also withholds
+    // an archive claiming a project taken down whole.
+    let v2 = installed::Installed::read(&instance.home)?
+        .entries
+        .iter()
+        .any(|entry| entry.mod_id.is_some());
+    if takedown.is_none() && !v2 {
+        let source = location();
+        let local = super::super::local();
+        if source != super::super::INDEX_URL && !(cfg!(debug_assertions) && local) {
+            return Err(tr("Connect to the Sunrise registry before switching builds.").into());
+        }
+        let (catalogue, _, _) = super::super::complete_index(&source, local)?;
+        takedown = catalogue
+            .revoked(id, &digest)
+            .filter(|row| seen.registry_claim || row.sha256.is_some())
+            .map(|row| row.reason.clone());
+    }
+    if let Some(reason) = takedown {
+        return Err(trf(
+            "{mod} was taken down: {reason}",
+            &[("mod", &title), ("reason", &reason)],
+        ));
+    }
+    if manifest.side == Side::Server {
+        return Err(trf(
+            "{mod} runs only on servers, so it can't be turned on here.",
+            &[("mod", &manifest.name)],
+        ));
+    }
+    if manifest.api != sunrise_launcher_smod::manifest::API {
+        return Err(trf(
+            "{mod} needs mod API {api}, which this launcher doesn't run.",
+            &[("mod", &manifest.name), ("api", &manifest.api)],
+        ));
+    }
+    mutations::check_activation(next.path(), None, &[id])?;
+    mod_list::set_all_enabled(next.path(), &[id], true)?;
+    if let Some(conflict) = manifest_conflict(next.path(), None, None, Side::Both, |_| false)
+        .map_err(|error| error.to_string())?
+    {
+        return Err(conflict.reason);
+    }
+    let proof = edit
+        .prove(
+            next.path(),
+            instance.native_profile,
+            cancellation,
+            |_| {},
+            None,
+        )
+        .map_err(String::from)?;
+    edit.publish_install(
+        proof,
+        cancellation,
+        &BTreeSet::from([id.to_owned()]),
+        || Ok(()),
+    )?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -793,6 +897,73 @@ mod tests {
         assert_eq!(staged.archives.len(), 1);
         assert!(!mods.join("camp_lanterns.smod").exists());
         assert!(!mods.join("camp_lanterns.origin.json").exists());
+    }
+
+    #[test]
+    fn stage_removal_cleans_row_missing_display_field_and_catches_windows_competing_claim() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("profile");
+        let mods = home.join(smod_mod_list::DIR);
+        fs::create_dir_all(&mods).unwrap();
+        let bytes = Package::write_files(
+            "id = 'alpha'\nname = 'Alpha'\nversion = '1.0.0'\napi = '0.2'\nside = 'both'\n",
+            &[],
+        )
+        .unwrap();
+        fs::write(mods.join("alpha.smod"), &bytes).unwrap();
+        // Sunrise row missing display field `page`: cannot deserialize as installed::Entry, so
+        // `registry_claim` stays false, yet removal must still clean it up.
+        let file = format!("{}/alpha.smod", smod_mod_list::DIR);
+        let manifest_path = home.join(installed::MANIFEST);
+        fs::write(
+            &manifest_path,
+            serde_json::to_vec(&serde_json::json!({
+                "entries": [{
+                    "source": "sunrise",
+                    "kind": "mod",
+                    "project": "alpha",
+                    "file": file,
+                }]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let present = inventory(&home, None).unwrap();
+        assert!(
+            !present["alpha"].registry_claim,
+            "missing display field must not grant replacement permission"
+        );
+        mutations::stage_removal(&home, &home, None, ["alpha"], &present).unwrap();
+        assert!(!mods.join("alpha.smod").exists());
+        let after: serde_json::Value =
+            serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+        assert_eq!(after["entries"].as_array().unwrap().len(), 0);
+
+        // Now add a competing row with Windows-style `\` separators claiming alpha's receipt.
+        fs::write(mods.join("alpha.smod"), &bytes).unwrap();
+        let win_file = format!("{}\\alpha.smod", smod_mod_list::DIR);
+        fs::write(
+            &manifest_path,
+            serde_json::to_vec(&serde_json::json!({
+                "entries": [{
+                    "source": "other-source",
+                    "kind": "mod",
+                    "project": "other_owner",
+                    "file": win_file,
+                }]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let present = inventory(&home, None).unwrap();
+        let err = mutations::stage_removal(&home, &home, None, ["alpha"], &present)
+            .err()
+            .expect("competing Windows-style claim must block removal");
+        assert!(
+            err.to_string().contains("other_owner"),
+            "unexpected error: {err}"
+        );
     }
 
     // Reuses the saved-world helpers of `update_tests`, which build only there.

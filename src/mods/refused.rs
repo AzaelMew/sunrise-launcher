@@ -35,10 +35,6 @@ impl Refusal {
                 named("{mod} can't be added together with the mods this profile has."),
                 None,
             ),
-            SourceError::Busy => (
-                tr("Sunrise is building mods right now. Try again when that finishes.").into(),
-                None,
-            ),
             SourceError::Changed(_) => (
                 named("The profile or its game build changed while {mod} was being checked. Nothing was changed; try again."),
                 None,

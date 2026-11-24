@@ -744,7 +744,11 @@ mod tests {
         fs::write(&loc_file, location_json.to_string()).unwrap();
 
         let error = carry_over(&data, &config).unwrap_err();
-        let linked_text = linked_launcher.display().to_string();
+        let linked_text = fs::canonicalize(&base)
+            .unwrap()
+            .join("linked-launcher")
+            .display()
+            .to_string();
         assert!(
             error.contains("Symbolic links and reparse points") && error.contains(&linked_text),
             "expected link refusal naming {linked_text}, got: {error}"

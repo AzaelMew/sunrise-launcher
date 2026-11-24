@@ -28,6 +28,16 @@ enum Basis<'a> {
     },
 }
 
+/// Receipt and build-choice metadata committed together when publishing a switch edit.
+#[derive(Default)]
+pub(crate) struct SwitchPublication {
+    pub(crate) holds: Vec<Held>,
+    pub(crate) removed: BTreeMap<String, (String, String)>,
+    /// Earlier holds this switch decided again: re-held ones are among `holds`.
+    pub(crate) retired: BTreeSet<String>,
+    pub(crate) build_choice: Option<crate::managed_play::CommittedBuildChoice>,
+}
+
 pub(crate) struct CandidateImage {
     candidate: PathBuf,
     tag: String,
@@ -332,7 +342,6 @@ impl Edit<'_> {
         mode: native_mods::Profile,
         cancellation: &native_mods::Cancellation,
         progress: impl Fn(native_mods::Step),
-        consent: Option<&dyn Fn(&native_mods::Consent) -> bool>,
         log: Option<&dyn Fn(std::sync::Arc<str>)>,
     ) -> Result<CandidateImage, native_mods::Failed> {
         let before = inputs(candidate, None)?;
@@ -350,7 +359,6 @@ impl Edit<'_> {
             mode,
             cancellation,
             progress,
-            consent,
             log,
         )?;
         if inputs(candidate, None)? != before {
@@ -396,21 +404,24 @@ impl Edit<'_> {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn publish_switch(
         self,
         proof: CandidateImage,
         cancellation: &native_mods::Cancellation,
-        holds: Vec<Held>,
-        removed: BTreeMap<String, (String, String)>,
-        build_choice: Option<crate::managed_play::CommittedBuildChoice>,
+        publication: SwitchPublication,
         authorize: impl FnOnce() -> Result<(), String>,
         at_cutoff: impl FnOnce() -> Result<(), String>,
     ) -> Result<Active, String> {
         if !matches!(self.basis, Basis::Switch { .. }) {
             return Err(unsettled!());
         }
-        let retired = removed.keys().cloned().collect();
+        let SwitchPublication {
+            holds,
+            removed,
+            mut retired,
+            build_choice,
+        } = publication;
+        retired.extend(removed.keys().cloned());
         let receipt = if holds.is_empty() && removed.is_empty() {
             None
         } else {
@@ -557,9 +568,8 @@ impl Edit<'_> {
                 {
                     return Err(unsettled!());
                 }
-                let permission = cancellation.begin_publication()?;
-                at_cutoff()?;
-                Ok(permission)
+                cancellation.begin_publication()?;
+                at_cutoff()
             },
             observe,
         );

@@ -98,8 +98,8 @@ pub(in crate::browser::sunrise::registry_install) fn update_registry_and_sources
         // still prove its graph and match any world evidence already reviewed.
         if let Some((active, inputs)) = mixed.published {
             for source in &mut *mixed.prepared {
-                source.before = inputs;
-                source.active = Some(active.clone());
+                source.proof.before = inputs;
+                source.proof.active = Some(active.clone());
             }
         }
         let changed = std::cell::Cell::new(false);
@@ -156,11 +156,11 @@ impl MixedSources<'_> {
             let before = managed_play::inputs(original, None)?;
             let base = FirstBuild::installed(edit.base())?;
             if self.prepared.iter().any(|p| {
-                p.identity != self.identity
-                    || p.before != before
-                    || p.base != edit.base()
-                    || p.active.as_ref() != edit.current()
-                    || !p.checked_base.same_cached_base(&base)
+                p.proof.identity != self.identity
+                    || p.proof.before != before
+                    || p.proof.base != edit.base()
+                    || p.proof.active.as_ref() != edit.current()
+                    || !p.proof.checked_base.same_cached_base(&base)
                     || !p.is_update()
             }) {
                 return Err(changed_source_target());

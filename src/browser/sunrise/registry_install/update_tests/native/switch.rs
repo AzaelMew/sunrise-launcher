@@ -57,12 +57,14 @@ impl Pinned {
         })
         .unwrap();
         fs::write(github_mods::origin_path(home, ID), &receipt).unwrap();
+        // The player confirmed this source's unreviewed code when it was added.
+        backend::allow_native_files([index::sha256(&archive)]).unwrap();
         mod_list::set_enabled(home, ID, true).unwrap();
         let active = Profile::open(home, None)
             .unwrap()
             .refresh(
                 fixture.instance.native_profile,
-                (&native_mods::Cancellation::default(), None),
+                &native_mods::Cancellation::default(),
                 |_| {},
                 None,
                 None,
@@ -145,7 +147,6 @@ fn run_switch(
         SwitchHooks {
             cancellation: &native_mods::Cancellation::default(),
             progress: &|_| {},
-            registry_crates: None,
             approve: &|q| {
                 assert_eq!(q.worlds.affected[0].world, "Uses Native Lantern");
                 Ok(if approve(q) {
@@ -216,7 +217,8 @@ fn switch_holds_exact_source_when_sdk_is_missing_but_not_on_local_io_failure() {
             assert_eq!(
                 pinned.assert_kept_off(&fixture, SIGNED_BUILD, &active),
                 HeldReason::Unproved {
-                    build: SIGNED_BUILD.into()
+                    build: SIGNED_BUILD.into(),
+                    detail: None,
                 }
             );
             assert!(
@@ -292,6 +294,8 @@ fn switch_keeps_the_registry_mod_when_only_a_sources_original_sdk_is_missing() {
                 repository: None,
             });
             installed.save(home).unwrap();
+            // A registry install records its reviewed archive as allowed to build.
+            backend::allow_native_files([index::sha256(&registry)]).unwrap();
             mod_list::set_enabled(home, REGISTRY, true).unwrap();
 
             // The target SDK and tools are available; only the source's original index is gone.
@@ -353,7 +357,8 @@ fn switch_keeps_the_registry_mod_when_only_a_sources_original_sdk_is_missing() {
             assert_eq!(
                 pinned.assert_kept_off(&fixture, SIGNED_BUILD, &active),
                 HeldReason::Unproved {
-                    build: SIGNED_BUILD.into()
+                    build: SIGNED_BUILD.into(),
+                    detail: None,
                 }
             );
             assert!(mod_list::is_enabled(home, REGISTRY));
@@ -442,6 +447,137 @@ fn switch_keeps_the_specific_no_fit_reason_for_a_pinned_source() {
             assert!(detail.contains("tick_light (changed)"), "{detail}");
             assert!(checked.is_file());
             assert_eq!(compiled(&fixture), "1.0.0\n");
+        },
+    );
+}
+
+#[test]
+#[ignore = "daily; build the launcher binary first"]
+fn a_held_source_is_offered_again_on_each_switch_and_its_toggle_checks_it() {
+    Fixture::run(
+        concat!(
+            module_path!(),
+            "::a_held_source_is_offered_again_on_each_switch_and_its_toggle_checks_it"
+        ),
+        |mut fixture| {
+            let source = [
+                SOURCE,
+                b"#[cfg(fixture_switch_target)]\ncompile_error!(\"fixture rebuild fails\");\n",
+            ]
+            .concat();
+            let pinned = Pinned::install(&mut fixture, &source, Some(MIXINS));
+            let home = fixture.home();
+            target(SIGNED_BUILD, 'b');
+            sdk_check_fixture(
+                &fixture,
+                'b',
+                json!({
+                    "kind": "does-not-fit", "made_for": "a".repeat(40),
+                    "misfits": [{"id": "game:fn:world::tick_light", "change": "changed"}],
+                }),
+            );
+            // The prompt names the reason beside the held mod.
+            let Switched::Changed(active) = run_switch(&fixture, SIGNED_BUILD, &|q| {
+                assert_eq!(q.held, [TITLE]);
+                assert!(q.reasons[TITLE].contains("tick_light (changed)"), "{q:?}");
+                let line = q.hold_lines().next().unwrap();
+                assert!(line.contains("Not compatible with this build."), "{line}");
+                assert!(line.contains("tick_light (changed)"), "{line}");
+                true
+            })
+            .unwrap() else {
+                panic!("expected a switch with a held source")
+            };
+            let reason = pinned.assert_kept_off(&fixture, SIGNED_BUILD, &active);
+            assert!(reason.detail().unwrap().contains("tick_light (changed)"));
+
+            // The signed index's takedowns are always asked, even by a profile without registry
+            // receipts: while it can't be read, the toggle refuses and changes nothing.
+            let identity = install_target(&fixture.instance).unwrap();
+            let cancellation = native_mods::Cancellation::default();
+            let before = fixture.snapshot(&[ARCHIVE, EXTRA]);
+            let signed = fixture.root.join("index-v2.signed");
+            std::env::set_var("SUNRISE_MOD_INDEX_V2", &signed);
+            let error = restore_held(&fixture.instance, identity, ID, &cancellation).unwrap_err();
+            assert!(error.contains("takedowns"), "{error}");
+            assert_eq!(fixture.snapshot(&[ARCHIVE, EXTRA]), before);
+            let v2 = Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/smod/tests/index_v2");
+            fs::write(
+                &signed,
+                [
+                    fs::read(v2.join("two-ports-index.json.minisig")).unwrap(),
+                    fs::read(v2.join("two-ports-index.json")).unwrap(),
+                ]
+                .concat(),
+            )
+            .unwrap();
+
+            // While the check still fails, the toggle says why and changes nothing.
+            let error = restore_held(&fixture.instance, identity, ID, &cancellation).unwrap_err();
+            assert!(error.contains("tick_light"), "{error}");
+            assert_eq!(fixture.snapshot(&[ARCHIVE, EXTRA]), before);
+            assert_eq!(Active::read_pointer(home).unwrap().as_ref(), Some(&*active));
+
+            // Bytes taken down by digest stay off: the toggle refuses before any check or build.
+            let mut taken_down = fixture.catalogue.clone();
+            taken_down.revoked.push(index::Revoked {
+                id: ID.into(),
+                sha256: Some(index::sha256(&pinned.archive)),
+                reason: "Fixture takedown.".into(),
+                date: String::new(),
+            });
+            let write_index = |catalogue: &index::Index| {
+                fs::write(
+                    fixture.root.join("index.json"),
+                    serde_json::to_vec(catalogue).unwrap(),
+                )
+                .unwrap()
+            };
+            write_index(&taken_down);
+            let error = restore_held(&fixture.instance, identity, ID, &cancellation).unwrap_err();
+            assert!(error.contains("Fixture takedown."), "{error}");
+            assert_eq!(fixture.snapshot(&[ARCHIVE, EXTRA]), before);
+            assert_eq!(Active::read_pointer(home).unwrap().as_ref(), Some(&*active));
+            write_index(&fixture.catalogue);
+
+            // The next switch checks the held bytes again rather than skipping them; this one
+            // holds them again for its own reason, replacing the old hold.
+            target(OTHER, 'a');
+            fs::write(fixture.root.join("fixture-switch-target"), []).unwrap();
+            let Switched::Changed(active) = switch_build(
+                &fixture.instance,
+                identity,
+                OTHER,
+                SwitchHooks {
+                    cancellation: &cancellation,
+                    progress: &|_| {},
+                    approve: &|q| {
+                        assert_eq!(q.held, [TITLE]);
+                        assert!(q.unproved.is_empty());
+                        Ok(SwitchDecision::TurnOff)
+                    },
+                    at_cutoff: &|| Ok(()),
+                },
+            )
+            .unwrap() else {
+                panic!("expected a switch that holds the source again")
+            };
+            assert_eq!(
+                pinned.assert_kept_off(&fixture, OTHER, &active),
+                HeldReason::BuildFailed {
+                    build: OTHER.into()
+                }
+            );
+
+            // Once the exact bytes build for this build, the toggle turns the mod on.
+            fs::remove_file(fixture.root.join("fixture-switch-target")).unwrap();
+            restore_held(&fixture.instance, identity, ID, &cancellation).unwrap();
+            let active = Active::read_pointer(home).unwrap().unwrap();
+            assert_eq!(active.base(), OTHER);
+            assert_eq!(active.holds().count(), 0);
+            assert!(mod_list::is_enabled(home, ID));
+            assert_eq!(fs::read(home.join(ARCHIVE)).unwrap(), pinned.archive);
+            assert_eq!(compiled(&fixture), "1.0.0\n1.0.0\n1.0.0\n");
         },
     );
 }

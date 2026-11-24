@@ -3,9 +3,8 @@ use super::*;
 
 /// Plan enabled native mods for an instance. Worker-only filesystem and release reads.
 pub fn routes(home: &Path, base: Option<&str>) -> Result<Routes, Failed> {
-    require_consent()?;
     let lease = crate::native_cache::Cache::acquire(&backend::build_dir()).map_err(cache_error)?;
-    let Some(folder) = stage_installed(home, root().join("installed.routes"))? else {
+    let Some(folder) = stage_installed(home, root().join("installed.routes"), None)? else {
         return Ok(Routes::default());
     };
     classify(&folder, base, &lease, &Cancellation::default())
@@ -14,8 +13,6 @@ pub fn routes(home: &Path, base: Option<&str>) -> Result<Routes, Failed> {
 pub(crate) enum SourceCheckError {
     Dependency(String),
     Fit(Failed),
-    /// Another native build or a cache cleanup holds the build folder.
-    Busy,
 }
 
 impl From<String> for SourceCheckError {
@@ -30,10 +27,12 @@ pub(crate) fn source_routes(
     home: &Path,
     base: &str,
     cancellation: &Cancellation,
+    waiting: &dyn Fn(),
 ) -> Result<Routes, SourceCheckError> {
     cancellation.check()?;
     let scratch = tempfile::tempdir().map_err(|error| error.to_string())?;
-    let folder = stage_installed(home, scratch.path().join("mods"))?
+    let folder = stage_installed(home, scratch.path().join("mods"), None)
+        .map_err(SourceCheckError::Fit)?
         .ok_or(SourceCheckError::Fit(Failed::Nothing))?;
     let found = scan_bundles(&folder)?;
     let side = sunrise_launcher_smod::manifest::Side::Client;
@@ -47,13 +46,8 @@ pub(crate) fn source_routes(
         .map_err(SourceCheckError::Dependency)?;
     cancellation.check()?;
 
-    let lease =
-        crate::native_cache::Cache::acquire(&backend::build_dir()).map_err(
-            |error| match error {
-                crate::native_cache::Error::Busy => SourceCheckError::Busy,
-                error => SourceCheckError::Fit(cache_error(error).into()),
-            },
-        )?;
+    let lease = super::build_lease(cancellation, waiting)?
+        .map_err(|error| SourceCheckError::Fit(cache_error(error).into()))?;
     let result = classify_bundles(&folder, &found, Some(base), &lease, cancellation)
         .map_err(SourceCheckError::Fit)?;
     cancellation.check()?;
@@ -261,9 +255,8 @@ pub struct UpdateCheck {
 /// [`UpdateCheck`] for the native mods turned on in game folder `home`, on the installed release
 /// or Nightly `to`. Worker-only: it reads releases.
 pub fn update_check(home: &Path, to: &str) -> Result<UpdateCheck, Failed> {
-    require_consent()?;
     let _lease = crate::native_cache::Cache::acquire(&backend::build_dir()).map_err(cache_error)?;
-    let folder = stage_installed(home, root().join("installed.routes"))?;
+    let folder = stage_installed(home, root().join("installed.routes"), None)?;
     let found = match &folder {
         Some(folder) => scan_bundles(folder)?,
         None => Vec::new(),

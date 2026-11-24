@@ -84,7 +84,7 @@ impl Cull {
             let mut drawn = self.0.borrow_mut();
             let focused = drawn.focused;
             drawn.plan(handle.bounds(), handle.offset().y, rows, gap, |index| {
-                keep(index) || focused == Some(index)
+                keep(index) || retain_for_focus(focused, index)
             })
         };
         let children = spans
@@ -240,6 +240,13 @@ impl Drawn {
     }
 }
 
+/// Keep the focused row and its immediate neighbors (up to two indices away, to bridge a
+/// single non-focusable heading or gap between rows) built so Tab and Shift+Tab step across
+/// spacers after a scroll jump instead of leaving the list.
+fn retain_for_focus(focused: Option<usize>, index: usize) -> bool {
+    focused.is_some_and(|f| index.abs_diff(f) <= 2)
+}
+
 /// One viewport of overdraw above and below the visible area.
 fn away(row: Bounds<Pixels>, view: Bounds<Pixels>) -> bool {
     row.bottom() < view.top() - view.size.height || row.top() > view.bottom() + view.size.height
@@ -337,6 +344,32 @@ mod tests {
     }
 
     #[test]
+    fn focused_row_keeps_adjacent_rows_built_across_spacers_after_scroll_jump() {
+        let mut state = Drawn::default();
+        let view = at(0., 500., 600.);
+        state.plan(view, px(0.), 10_000, 8., |_| false);
+        state.width = view.size.width;
+        state.focused = Some(50);
+
+        let focused = state.focused;
+        // Jump far away so rows around 50 are off-screen behind spacers.
+        let jumped = state.plan(view, px(-500_000.), 10_000, 8., |index| {
+            retain_for_focus(focused, index)
+        });
+        let built = rendered(&jumped);
+        for neighbor in [48, 49, 50, 51, 52] {
+            assert!(
+                built.contains(&neighbor),
+                "expected row {neighbor} to stay built for Tab/Shift+Tab, got {built:?}"
+            );
+        }
+        assert!(
+            !built.contains(&47) && !built.contains(&53),
+            "distant rows should stay culled: {built:?}"
+        );
+    }
+
+    #[test]
     fn other_items_forget_the_measurements_and_the_same_keep_them() {
         let list = Cull::default();
         list.items(1);
@@ -369,8 +402,10 @@ mod tests {
                 div().h(px(96.))
             },
         );
+        assert!(built.contains(&8_999), "Shift+Tab reaches the previous row");
         assert!(built.contains(&9_000), "Tab goes on from the focused row");
-        assert!(built.len() <= 18, "built {} rows", built.len());
+        assert!(built.contains(&9_001), "Tab reaches the next row");
+        assert!(built.len() <= 22, "built {} rows", built.len());
     }
 
     #[test]

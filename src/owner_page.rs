@@ -11,7 +11,7 @@ impl Launcher {
     /// Opens the screen and starts the sign-in on it; a sign-in already under way (its code on
     /// screen, or Microsoft still answering) is shown as it is, not started over.
     pub(crate) fn sign_in_to_play(&mut self) {
-        self.owner_screen_open = true;
+        self.sign_in_screen.open = true;
         if !self.sign_in_under_way() {
             self.start_sign_in();
         }
@@ -21,7 +21,7 @@ impl Launcher {
     /// account, so a different Microsoft account is still refused and who plays stays as it was.
     fn sign_in_from_screen(&mut self) {
         if self.sign_in_under_way() {
-            self.owner_screen_open = true;
+            self.sign_in_screen.open = true;
         } else {
             self.retry_sign_in();
         }
@@ -34,7 +34,7 @@ impl Launcher {
     /// Closes it; it comes back with the next refused Play.
     fn close_owner_screen(&mut self) {
         self.cancel_sign_in();
-        self.owner_screen_open = false;
+        self.sign_in_screen.open = false;
         if !self.settings.owner_notice_seen {
             self.settings.owner_notice_seen = true;
             self.save_settings();
@@ -46,7 +46,7 @@ impl Launcher {
     fn sign_in_title(&self) -> &'static str {
         crate::account_chip::sign_in_title(
             self.ui.after_sign_in.is_some(),
-            self.sign_in_target.is_some(),
+            self.sign_in_screen.target.is_some(),
             self.accounts.accounts.len(),
         )
     }

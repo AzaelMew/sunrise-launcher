@@ -7,7 +7,7 @@ use crate::{
     settings::danger,
     sheets::{modal_frame, title},
 };
-use gpui::{rgb, Global, MouseButton};
+use gpui::{rgb, Global, MouseButton, MouseDownEvent};
 use instances::{DeleteError, Instance};
 
 /// A native close or Quit must not abandon a folder in the middle of the move.
@@ -265,6 +265,25 @@ impl Launcher {
                     cx.notify();
                 }),
             )
+            // This layer covers the profiles: a right-click on another one closes this menu
+            // and opens that profile's, and anywhere else it only closes this one.
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(|this, ev: &MouseDownEvent, _, cx| {
+                    let under = this
+                        .ui
+                        .profile_rows
+                        .borrow()
+                        .iter()
+                        .find(|(bounds, _)| bounds.contains(&ev.position))
+                        .map(|(_, profile)| profile.clone());
+                    this.close_profile_action();
+                    if let Some(profile) = under {
+                        this.open_profile_menu(&profile, f32::from(ev.position.y));
+                    }
+                    cx.notify();
+                }),
+            )
             .child(
                 div()
                     .absolute()
@@ -279,6 +298,7 @@ impl Launcher {
                     .text_color(rgb(p.text))
                     .shadow_lg()
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
                     .child(
                         div()
                             .h(px(26.))
@@ -332,10 +352,119 @@ mod tests {
     }
 
     #[test]
-    fn a_download_save_and_install_prompt_survive_a_profile_delete() {
-        let Some(root) =
-            scratch_child("a_download_save_and_install_prompt_survive_a_profile_delete")
-        else {
+    fn a_right_click_on_another_profile_moves_the_open_menu_to_it() {
+        if scratch_child("a_right_click_on_another_profile_moves_the_open_menu_to_it").is_none() {
+            return;
+        }
+        let cabin = instances::create("Cabin", None).unwrap();
+        let tower = instances::create("Tower", None).unwrap();
+        let mut settings = Settings::load();
+        settings.instance = Some(cabin.id.clone());
+        settings.save().unwrap();
+        let mut app = gpui::TestAppContext::single();
+        let (shell, cx) = app.add_window_view(crate::window_root::Shell::new);
+        let launcher = shell.read_with(cx, |shell, _| shell.launcher());
+        cx.run_until_parked();
+        let row = |cx: &mut gpui::VisualTestContext, id: &str| {
+            launcher.read_with(cx, |l, _| {
+                l.ui.profile_rows
+                    .borrow()
+                    .iter()
+                    .find(|(_, profile)| profile.id == id)
+                    .map(|(bounds, _)| bounds.center())
+                    .unwrap_or_else(|| panic!("{id}'s row is drawn"))
+            })
+        };
+        let menu = |cx: &mut gpui::VisualTestContext| {
+            launcher.read_with(cx, |l, _| match &l.ui.sheets.profile_action {
+                Some(Action::Menu { target, .. }) => Some(target.id.clone()),
+                _ => None,
+            })
+        };
+        let right = |cx: &mut gpui::VisualTestContext, at| {
+            cx.simulate_mouse_down(at, MouseButton::Right, gpui::Modifiers::none());
+            cx.simulate_mouse_up(at, MouseButton::Right, gpui::Modifiers::none());
+            cx.run_until_parked();
+        };
+        let (cabin_row, tower_row) = (row(cx, &cabin.id), row(cx, &tower.id));
+        right(cx, cabin_row);
+        assert_eq!(menu(cx), Some(cabin.id.clone()));
+        // With Cabin's menu open over the profiles, one right-click moves it to Tower.
+        right(cx, tower_row);
+        assert_eq!(menu(cx), Some(tower.id.clone()));
+        // A right-click away from any profile only closes it.
+        right(cx, gpui::point(gpui::px(600.), gpui::px(400.)));
+        assert_eq!(menu(cx), None);
+    }
+
+    #[test]
+    fn a_right_click_outside_the_scrolled_profiles_or_on_the_menu_moves_nothing() {
+        if scratch_child("a_right_click_outside_the_scrolled_profiles_or_on_the_menu_moves_nothing")
+            .is_none()
+        {
+            return;
+        }
+        let first = instances::create("Profile 0", None).unwrap();
+        let count = 40;
+        for n in 1..count {
+            instances::create(&format!("Profile {n}"), None).unwrap();
+        }
+        let mut settings = Settings::load();
+        settings.instance = Some(first.id.clone());
+        settings.save().unwrap();
+        let mut app = gpui::TestAppContext::single();
+        let (shell, cx) = app.add_window_view(crate::window_root::Shell::new);
+        let launcher = shell.read_with(cx, |shell, _| shell.launcher());
+        cx.run_until_parked();
+        let rows = |cx: &mut gpui::VisualTestContext| {
+            launcher.read_with(cx, |l, _| {
+                l.ui.profile_rows
+                    .borrow()
+                    .iter()
+                    .map(|(bounds, profile)| (*bounds, profile.id.clone()))
+                    .collect::<Vec<_>>()
+            })
+        };
+        let menu = |cx: &mut gpui::VisualTestContext| {
+            launcher.read_with(cx, |l, _| match &l.ui.sheets.profile_action {
+                Some(Action::Menu { target, top }) => Some((target.id.clone(), *top)),
+                _ => None,
+            })
+        };
+        let right = |cx: &mut gpui::VisualTestContext, at| {
+            cx.simulate_mouse_down(at, MouseButton::Right, gpui::Modifiers::none());
+            cx.simulate_mouse_up(at, MouseButton::Right, gpui::Modifiers::none());
+            cx.run_until_parked();
+        };
+        let drawn = rows(cx);
+        assert!(
+            drawn.len() < count,
+            "the list scrolls: {} of {count} rows show",
+            drawn.len()
+        );
+        let (first_row, _) = drawn.iter().find(|(_, id)| *id == first.id).unwrap();
+        let (last_row, _) = drawn.last().unwrap();
+        right(cx, first_row.center());
+        let (_, top) = menu(cx).expect("the first profile's menu opens");
+        // Just below the list's end, where the next profile would be if it were not scrolled
+        // out of view, a right-click lands on the rail's controls and only closes the menu.
+        right(
+            cx,
+            gpui::point(last_row.center().x, last_row.bottom() + gpui::px(10.)),
+        );
+        assert_eq!(menu(cx), None);
+        // A right-click on the open menu itself leaves it open.
+        right(cx, first_row.center());
+        let at = launcher.read_with(cx, |l, _| {
+            tokens::FRAME_INSET + crate::rail::rail_width(l.rail_open()) + 8.
+        });
+        right(cx, gpui::point(gpui::px(at + 40.), gpui::px(top + 12.)));
+        assert_eq!(menu(cx).map(|(id, _)| id), Some(first.id.clone()));
+    }
+
+    #[test]
+    fn a_download_save_survives_a_profile_delete() {
+        let Some(root) = scratch_child("a_download_save_survives_a_profile_delete") else {
             return;
         };
         let profile = instances::create("To Delete", None).unwrap();
@@ -348,26 +477,11 @@ mod tests {
         let (shell, cx) = app.add_window_view(crate::window_root::Shell::new);
         let launcher = shell.read_with(cx, |shell, _| shell.launcher());
         let window = cx.update(|window, _| window.window_handle());
-        let ask = |launcher: &mut Launcher| {
-            let (send, recv) = std::sync::mpsc::channel();
-            launcher.registry_consent(
-                native_mods::Consent {
-                    added_crates: 1,
-                    build_scripts: vec!["fixture".into()],
-                    proc_macros: Vec::new(),
-                },
-                send,
-            );
-            recv
-        };
         launcher.update(cx, |launcher, cx| {
             // Feed the real message handler synchronously rather than race the wake relay.
             (launcher.tx, launcher.rx) = std::sync::mpsc::channel();
             // Freeze the worker's completion until the download handler has saved.
             launcher.ui.sheets.profile_action = Some(Action::Deleting(profile.name.clone()));
-            let canceled = ask(launcher);
-            assert!(launcher.sheet_escape());
-            assert_eq!(canceled.try_recv(), Ok(false));
             assert!(matches!(
                 launcher.ui.sheets.profile_action,
                 Some(Action::Deleting(_))
@@ -385,17 +499,10 @@ mod tests {
             assert_eq!(live.selected.as_deref(), Some("26.3-0.1.1"));
             assert_eq!(live.instance.as_ref(), Some(&profile.id));
 
-            let pending = ask(launcher);
             let trashed = instances::trash_confirmed(profile.clone());
             assert!(trashed.is_ok(), "{trashed:?}");
             launcher.finish_profile_delete(&profile.id, &profile.name, trashed);
             assert!(launcher.ui.sheets.profile_action.is_none());
-            assert_eq!(
-                pending.try_recv(),
-                Err(std::sync::mpsc::TryRecvError::Empty)
-            );
-            assert!(launcher.sheet_escape());
-            assert_eq!(pending.try_recv(), Ok(false));
         });
         let saved = Settings::load();
         assert!(saved.instance.is_none());

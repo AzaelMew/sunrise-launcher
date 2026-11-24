@@ -99,19 +99,34 @@ pub(super) fn prose(theme: crate::theme::Theme, text: &str) -> AnyElement {
     crate::markdown::render(text, &t)
 }
 
-/// "‹ Discover": the way back from a page.
+/// "‹ Discover": the way back from a page. Its padding widens the hit area and the negative
+/// margin keeps the label lined up with the page.
 pub(super) fn back(label: impl Into<SharedString>) -> Stateful<Div> {
+    let p = palette();
     div()
         .id("alt-project-back")
+        .group("alt-project-back")
         .reach()
         .self_start()
         .flex()
         .items_center()
-        .gap(px(8.))
+        .gap(px(4.))
+        .px(px(8.))
+        .py(px(4.))
+        .ml(px(-8.))
+        .my(px(-4.))
+        .rounded(px(6.))
         .text_size(px(tokens::LABEL))
-        .text_color(c(palette().muted))
+        .text_color(c(p.muted))
         .cursor_pointer()
-        .child("‹")
+        .hover(|s| s.bg(c(p.text).opacity(0.06)).text_color(c(p.text)))
+        .child(
+            crate::blocks::icon("chevron-right", 14., c(p.muted))
+                .with_transformation(gpui::Transformation::rotate(gpui::radians(
+                    std::f32::consts::PI,
+                )))
+                .group_hover("alt-project-back", |s| s.text_color(c(p.text))),
+        )
         .child(label.into())
 }
 
@@ -172,7 +187,10 @@ impl Launcher {
             .and_then(|snapshot| snapshot.switch_held.get(&row.id))
             .cloned();
         let status = if let Some(hold) = &hold {
-            Some(note(hold.label()))
+            Some(note(match hold.detail() {
+                Some(detail) => format!("{} {detail}", hold.label()),
+                None => hold.label().to_owned(),
+            }))
         } else if cells.popover {
             row.unfit
                 .clone()
@@ -180,19 +198,8 @@ impl Launcher {
         } else {
             cells.status.as_ref().map(|status| note(status.tip.clone()))
         };
-        let allow = (cells.action == Some(model::RowAction::Allow)).then(|| {
-            let b = button("alt-project-allow", tr("Allow…"));
-            if busy {
-                dim(b)
-            } else {
-                b.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                    this.allow();
-                    cx.notify();
-                }))
-            }
-        });
         let toggle = ui::switch("alt-project-switch", row.on);
-        let toggle = if busy || hold.is_some() || !cells.switch {
+        let toggle = if busy || !cells.switch {
             dim(toggle)
         } else {
             let row = row.clone();
@@ -255,7 +262,6 @@ impl Launcher {
                     } else {
                         tr("Turned off")
                     }))
-                    .children(allow)
                     .children(manual_refresh)
                     .children(remove),
             )
@@ -269,9 +275,21 @@ impl Launcher {
             .as_ref()
             .map_or(Page::Discover, |o| o.from);
         let parent = self.ui.mods.open.as_ref().and_then(|o| o.parent.clone());
-        let parent_name = parent.as_ref().and_then(|id| match &self.ui.mods.catalog {
-            Catalog::Ready(cards) => cards.iter().find(|c| c.id == *id).map(|c| c.name.clone()),
-            _ => None,
+        let parent_v2 = parent
+            .as_ref()
+            .and_then(|id| match &self.ui.mods.v2_catalog {
+                V2Catalog::Ready { collections, .. } => collections
+                    .iter()
+                    .find(|c| c.id == *id)
+                    .map(|c| c.name.clone()),
+                _ => None,
+            });
+        let parent_is_v2 = parent_v2.is_some();
+        let parent_name = parent_v2.or_else(|| {
+            parent.as_ref().and_then(|id| match &self.ui.mods.catalog {
+                Catalog::Ready(cards) => cards.iter().find(|c| c.id == *id).map(|c| c.name.clone()),
+                _ => None,
+            })
         });
         let back_label = match (back_to, &parent_name) {
             (_, Some(name)) => name.clone(),
@@ -286,6 +304,9 @@ impl Launcher {
             .child(
                 back(back_label).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     match &parent {
+                        Some(collection) if parent_is_v2 => {
+                            this.mods_show_v2_collection(collection.clone(), back_to)
+                        }
                         Some(collection) => this.mods_load_page(collection.clone(), back_to, None),
                         None => this.ui.page = back_to,
                     }
@@ -300,6 +321,9 @@ impl Launcher {
                 .child(muted(tr("No mod is open.")))
                 .into_any_element();
         };
+        if open.collection && open.v2 {
+            return self.v2_collection_page(header, page, cx);
+        }
         if open.collection {
             return self.collection_page(header, page, cx);
         }
@@ -523,7 +547,6 @@ impl Launcher {
                 self.build_here()
                     .filter(|_| row.on)
                     .and_then(|run| run.state_of(&row.id, &row.version)),
-                self.settings.native_mods_allowed_at.is_some(),
             )
         });
         let update = installed_row
@@ -554,7 +577,9 @@ impl Launcher {
                     )
                     .w_full()
                     .h(px(tokens::ACTION));
-                    if busy {
+                    let stale_source = nightly::installed_source(row).is_some()
+                        && !self.nightly_catalogue_current();
+                    if busy || stale_source {
                         dim(b).into_any_element()
                     } else {
                         let row = row.clone();
@@ -643,22 +668,6 @@ impl Launcher {
                 palette().muted,
             ));
         }
-        facts = facts.children(p.make.map(|make| match make {
-            Make::Native => fact(
-                "alt-fact-code",
-                "shield",
-                tr("Native code").into(),
-                tr("Native code: it is built into the game on this computer and runs with full access to your computer.").into(),
-                palette().accent_ink,
-            ),
-            Make::Content => fact(
-                "alt-fact-code",
-                "package-01",
-                tr("Content only").into(),
-                tr("Content only: it adds no native code.").into(),
-                palette().muted,
-            ),
-        }));
         if p.about.as_ref().is_some_and(|about| !about.signed) {
             facts = facts.child(fact(
                 "alt-fact-signed",
@@ -768,20 +777,9 @@ impl Launcher {
             }));
         let details = open.then(|| {
             let facts_line = p.will_install.as_ref().map(|w| {
-                let code = match p.make {
-                    Some(Make::Native) if can_install => {
-                        tr("native code, built on this computer after you allow it")
-                    }
-                    Some(Make::Native) => tr("native code"),
-                    _ => tr("content only, no native code"),
-                };
                 trf(
-                    "Version {version} · {size} to download · {code}",
-                    &[
-                        ("version", &w.number),
-                        ("size", &model::size(w.size)),
-                        ("code", code),
-                    ],
+                    "Version {version} · {size} to download",
+                    &[("version", &w.number), ("size", &model::size(w.size))],
                 )
             });
             div()
@@ -975,14 +973,13 @@ impl Launcher {
             .children(gallery)
             .children(body);
         project_frame()
-            .child(crate::scrollbar::wrap_page(
+            .child(crate::scrollbar::wrap_page_in_margin(
                 "project",
                 div()
                     .id("alt-project-scroll")
                     .flex_1()
                     .min_h_0()
                     .overflow_y_scroll()
-                    .pr(px(14.))
                     .flex()
                     .flex_col()
                     .gap(px(14.))
@@ -1010,6 +1007,36 @@ impl Launcher {
         use sunrise_launcher::browser::details::category_label;
 
         let p = palette();
+        let open_id = self.ui.mods.open.as_ref().map(|o| o.id.clone());
+        // Opened from Installed or Discover alike, an installed mod keeps its own controls here.
+        let (rows, _) = self.labeled_installed_rows();
+        let installed_row = rows.iter().find(|row| {
+            row.v2_installed()
+                && row
+                    .entry
+                    .as_ref()
+                    .is_some_and(|e| Some(&e.project) == open_id.as_ref())
+        });
+        let busy = self.mods_busy()
+            || self.mods_locked().is_some()
+            || self
+                .ui
+                .mods
+                .snapshot
+                .as_ref()
+                .is_none_or(|snapshot| !snapshot.ready());
+        let cells = installed_row.map(|row| {
+            model::cells(
+                row,
+                self.ui.mods.errors.get(&row.id).map(String::as_str),
+                self.build_here()
+                    .filter(|_| row.on)
+                    .and_then(|run| run.state_of(&row.id, &row.version)),
+            )
+        });
+        let controls = installed_row
+            .zip(cells.as_ref())
+            .map(|(row, cells)| self.installed_project_controls(row, cells, busy, cx));
         let vp = match self.ui.mods.open.as_ref().and_then(|o| o.v2_page.as_ref()) {
             None => {
                 return page
@@ -1026,6 +1053,8 @@ impl Launcher {
                             .child(tr("This mod can't be shown")),
                     )
                     .child(note(error.clone()))
+                    // An installed mod the registry no longer lists can still be removed here.
+                    .children(controls.map(|controls| controls.max_w(px(320.))))
                     .into_any_element();
             }
             Some(Ok(vp)) => (**vp).clone(),
@@ -1138,6 +1167,27 @@ impl Launcher {
         let mut body: Vec<AnyElement> = Vec::new();
         if !vp.description.trim().is_empty() {
             body.push(prose(self.theme, &vp.description));
+        }
+        if !vp.dependencies.is_empty() {
+            let mut list = card().flex().flex_col();
+            for (n, dep) in vp.dependencies.iter().enumerate() {
+                list = list.child(self.v2_dependency_line(n, dep, cx));
+            }
+            body.push(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.))
+                    .pt(px(8.))
+                    .child(
+                        div()
+                            .text_size(px(tokens::HEADING))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(tr("Dependencies")),
+                    )
+                    .child(list)
+                    .into_any_element(),
+            );
         }
 
         let versions_heading = div()
@@ -1274,11 +1324,47 @@ impl Launcher {
         );
 
         // Right sticky side panel: action card + publisher provenance + pin callout + About card.
-        let working = self.registry_card_control(&vp.id, |label| {
+        // An update runs under the installed mod's id, which can differ from the project's.
+        let installed_id = installed_row
+            .map(|row| row.id.as_str())
+            .filter(|id| *id != vp.id);
+        let working_id = installed_id
+            .filter(|id| {
+                matches!(
+                    self.registry_card(id),
+                    Some(crate::mods_page::install::Card::Progress(_))
+                        | Some(crate::mods_page::install::Card::Waiting)
+                )
+            })
+            .unwrap_or(&vp.id);
+        let working = self.registry_card_control(working_id, |label| {
             dim(crate::frame::button("alt-project-add", label).w_full()).into_any_element()
         });
+        let update = installed_row
+            .zip(cells.as_ref())
+            .filter(|(_, cells)| cells.action == Some(model::RowAction::Update))
+            .and_then(|(row, _)| row.update.as_ref().map(|to| (row, to)));
         let primary_control: AnyElement = if let Some(control) = working {
             control
+        } else if let Some((row, to)) = update {
+            let b = primary(
+                "alt-project-update",
+                trf(
+                    "Update {from} → {to}",
+                    &[("from", &row.version), ("to", to)],
+                ),
+            )
+            .w_full();
+            if busy {
+                dim(b).into_any_element()
+            } else {
+                let row = row.clone();
+                b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    this.update_one(&row);
+                    cx.notify();
+                }))
+                .into_any_element()
+            }
         } else if let Some(version) = &installed_version {
             super::discover::install_fact(version, pending).into_any_element()
         } else if vp.will_install.is_some() {
@@ -1331,32 +1417,6 @@ impl Launcher {
             }
         };
 
-        let pin_note = div()
-            .p(px(10.))
-            .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
-            .border_1()
-            .border_color(c(p.divider))
-            .bg(c(p.field))
-            .flex()
-            .items_start()
-            .gap(px(8.))
-            .child(
-                div()
-                    .pt(px(2.))
-                    .child(crate::glass_ui::icon("shield", 14., c(p.muted))),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .text_size(px(tokens::SMALL))
-                    .text_color(c(p.muted))
-                    .child(trf(
-                        "First install remembers github.com/{repo} as this mod's publisher. Future updates stop and ask if it ever changes.",
-                        &[("repo", &vp.repository_name)],
-                    )),
-            );
-
         let action_card = card()
             .p(px(16.))
             .flex()
@@ -1401,12 +1461,25 @@ impl Launcher {
             )
             .child(primary_control)
             .children(self.registry_card_outcome(&vp.id, cx))
+            .children(installed_id.and_then(|id| self.registry_card_outcome(id, cx)))
             .when(vp.will_install.is_none(), |d| {
                 d.children(vp.fit.reason().map(note))
             })
+            .children(controls)
             .child(div().h(px(1.)).bg(c(p.divider)))
-            .child(published_row)
-            .child(pin_note);
+            .child(self.rating_block(&vp.id, cx))
+            .child(div().h(px(1.)).bg(c(p.divider)))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .text_size(px(tokens::SMALL))
+                    .text_color(c(p.muted))
+                    .child(crate::glass_ui::icon("tick-02", 14., c(p.muted)))
+                    .child(tr("Reviewed by Sunrise")),
+            )
+            .child(published_row);
 
         let link_url = |link: &Option<SourceLink>| -> Option<String> {
             link.as_ref().map(|l| match l {
@@ -1472,6 +1545,99 @@ impl Launcher {
             .child(about);
 
         self.project_layout(header, head, gallery, body, side)
+    }
+
+    /// One dependency, as Modrinth lists them: its picture and name, which open its page when the
+    /// registry has it, the versions it must be, and whether it is required.
+    fn v2_dependency_line(
+        &mut self,
+        n: usize,
+        dep: &super::model::discover_v2::V2Dependency,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        use super::model::discover_v2::V2Provider;
+        let p = palette();
+        let (picture, id, name, detail) = match &dep.provider {
+            V2Provider::Listed { id, name, icon } => (
+                icon.as_deref()
+                    .and_then(|rel| self.v2_mod_image(id, rel, images::ROW)),
+                id.clone(),
+                name.clone(),
+                None,
+            ),
+            V2Provider::Several(count) => (
+                None,
+                dep.mod_id.clone(),
+                dep.mod_id.clone(),
+                Some(trf(
+                    "{count} mods on the registry provide it: installing asks which one",
+                    &[("count", &count.to_string())],
+                )),
+            ),
+            V2Provider::Missing => (
+                None,
+                dep.mod_id.clone(),
+                dep.mod_id.clone(),
+                Some(tr("Not on the registry").to_owned()),
+            ),
+        };
+        let mut title = div()
+            .id(("alt-v2-dependency", n))
+            .truncate()
+            .font_weight(FontWeight::SEMIBOLD)
+            .text_size(px(tokens::LABEL))
+            .child(name.clone());
+        if let V2Provider::Listed { id, .. } = &dep.provider {
+            let project = id.clone();
+            title = title
+                .reach()
+                .cursor_pointer()
+                .hover(|s| s.text_color(c(p.accent_ink)))
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    this.mods_show_v2_project(project.clone());
+                    cx.notify();
+                }));
+        }
+        let range = dep
+            .range
+            .clone()
+            .unwrap_or_else(|| tr("any version").to_owned());
+        div()
+            .flex()
+            .items_center()
+            .gap(px(12.))
+            .px(px(14.))
+            .py(px(10.))
+            .when(n > 0, |d| d.border_t_1().border_color(c(p.divider)))
+            .child(tile(picture, &id, &name, 36.))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .child(
+                        div()
+                            .flex()
+                            .items_baseline()
+                            .gap(px(8.))
+                            .min_w_0()
+                            .child(title)
+                            .child(
+                                div()
+                                    .flex_none()
+                                    .font_family(crate::theme::MONO)
+                                    .text_size(px(tokens::SMALL))
+                                    .text_color(c(p.muted))
+                                    .child(range),
+                            ),
+                    )
+                    .children(detail.map(|text| div().truncate().child(muted(text)))),
+            )
+            .child(match dep.required {
+                true => tag(tr("Required")),
+                false => tag(tr("Optional")),
+            })
     }
 
     /// Captioned screenshot gallery for a v2 mod page: fetches verified content-addressed images

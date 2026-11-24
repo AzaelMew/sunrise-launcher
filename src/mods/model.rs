@@ -438,8 +438,6 @@ pub(super) enum Need {
     TakenDown(String),
     /// A native mod, on, whose build for this computer isn't made yet.
     Build,
-    /// A native mod that can't run until the player allows native code.
-    Permission,
     /// On, but served by this native mod (its name, or its id when not installed), which is off:
     /// the game leaves it out.
     Host(String),
@@ -460,6 +458,16 @@ impl From<&index::Collection> for CollectionGroup {
     }
 }
 
+/// A switch's hold on a mod's exact archive.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct Hold {
+    /// The build it was held for, by the name players read.
+    pub(super) build: String,
+    pub(super) reason: sunrise_launcher::managed_play::HeldReason,
+    /// Local or source bytes: turning it on checks them against the build again.
+    pub(super) retry: bool,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct Row {
     pub(super) id: String,
@@ -469,8 +477,9 @@ pub(super) struct Row {
     pub(super) version: String,
     pub(super) on: bool,
     pub(super) need: Option<Need>,
-    /// A browser-installed mod whose registry status couldn't be checked this run.
-    pub(super) registry_unchecked: bool,
+    /// Why a registry-installed mod's status couldn't be checked: the registry was unreachable
+    /// or refused. None while the first read is out.
+    pub(super) registry_issue: Option<String>,
     /// The version an update would install.
     pub(super) update: Option<String>,
     /// Installed because another mod needed it.
@@ -486,7 +495,7 @@ pub(super) struct Row {
     /// It can't run on the game this setup plays: the build left it out.
     pub(super) unfit: Option<Unfit>,
     /// The exact Switch receipt keeps the native archive off until a proved update.
-    pub(super) held_for: Option<String>,
+    pub(super) held_for: Option<Hold>,
     /// The build left it out for another reason (it didn't build, it needs a mod that was left
     /// out, it clashes with another): what the player reads, in a sentence.
     pub(super) left_out: Option<Omission>,
@@ -567,7 +576,6 @@ pub(super) struct Status {
 /// The one button a row may hold.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum RowAction {
-    Allow,
     Update,
 }
 
@@ -600,12 +608,7 @@ pub(super) mod column {
 
 /// `row`'s cells. `error` is why its last update failed. The status is the first thing that
 /// applies, most pressing first; whatever else applies is in its tooltip.
-pub(super) fn cells(
-    row: &Row,
-    error: Option<&str>,
-    building: Option<&BuildState>,
-    native_allowed: bool,
-) -> Cells {
+pub(super) fn cells(row: &Row, error: Option<&str>, building: Option<&BuildState>) -> Cells {
     let mut said: Vec<Status> = Vec::new();
     let mut say = |icon, label: String, tone, tip: String| {
         said.push(Status {
@@ -630,12 +633,6 @@ pub(super) fn cells(
             Tone::Warning,
             trf("Taken down: {reason}", &[("reason", why)]),
         ),
-        Some(Need::Permission) => say(
-            "shield",
-            tr("Needs permission").into(),
-            Tone::Warning,
-            tr("Needs your permission to run native code").into(),
-        ),
         Some(Need::Host(host)) => say(
             "information-circle",
             trf("Needs {host}", &[("host", host)]),
@@ -647,15 +644,19 @@ pub(super) fn cells(
         ),
         Some(Need::Build) | None => {}
     }
-    if let Some(build) = &row.held_for {
+    if let Some(hold) = &row.held_for {
+        let vars = [("mod", row.title.as_str()), ("build", hold.build.as_str())];
         say(
             "information-circle",
-            tr("Needs an update from its author").into(),
+            hold.reason.label().into(),
             Tone::Warning,
-            trf(
-                "{mod} needs an update from its author for {build}.",
-                &[("mod", &row.title), ("build", build)],
-            ),
+            match hold.reason.detail() {
+                Some(detail) => detail.to_owned(),
+                None if hold.reason.unproved() => {
+                    trf("{mod}'s fit with {build} could not be verified.", &vars)
+                }
+                None => trf("{mod} needs an update from its author for {build}.", &vars),
+            },
         );
     } else if let Some(unfit) = &row.unfit {
         say(
@@ -727,11 +728,6 @@ pub(super) fn cells(
                     "Version {version} is out. You chose its version: update it on its own.",
                     &[("version", to)],
                 )
-            } else if row.native() && !native_allowed {
-                trf(
-                    "Version {version} is out. Updating may ask you to allow native code.",
-                    &[("version", to)],
-                )
             } else {
                 trf("Version {version} is out", &[("version", to)])
             },
@@ -751,15 +747,12 @@ pub(super) fn cells(
         version: row.version.clone(),
         status: said.into_iter().next().map(|first| Status { tip, ..first }),
         popover,
-        action: match (&row.need, &row.update) {
-            (Some(Need::Permission), _) => Some(RowAction::Allow),
-            (_, Some(_)) => Some(RowAction::Update),
-            _ => None,
-        },
-        switch: row.held_for.is_none()
+        action: row.update.as_ref().map(|_| RowAction::Update),
+        switch: row.held_for.as_ref().is_none_or(|hold| hold.retry)
             && !matches!(row.need, Some(Need::TakenDown(_)))
             && !row.local.as_ref().is_some_and(|l| l.unreadable),
-        unavailable: row.held_for.is_some()
+        // A retryable hold is a switch the player may try, not a mod the build dropped.
+        unavailable: row.held_for.as_ref().is_some_and(|hold| !hold.retry)
             || row.unfit.is_some()
             || row.left_out.is_some()
             || matches!(
@@ -847,10 +840,6 @@ impl Row {
         }
     }
 
-    pub(super) fn native(&self) -> bool {
-        self.make == Some(Make::Native)
-    }
-
     /// The native mod that serves this content package's code, when it names one.
     pub(super) fn served_by(&self) -> Option<&str> {
         self.local.as_ref().and_then(|l| l.served_by.as_deref())
@@ -886,6 +875,8 @@ pub(super) struct World<'a> {
     pub(super) game: &'a str,
     /// The signed v2 index, which owns entries keyed by a v2 project ID.
     pub(super) v2: Option<&'a index_v2::Index>,
+    /// Why the last read of the v2 index failed; none while it reads or once it has read.
+    pub(super) v2_failure: Option<&'a str>,
     /// The exact build the profile plays, which v2 `fits` lists name.
     pub(super) build: Option<&'a str>,
     /// Verified archive hashes already rejected by the SDK for this base build.
@@ -893,7 +884,6 @@ pub(super) struct World<'a> {
     pub(super) enabled: &'a HashSet<String>,
     /// Native mods whose build isn't made.
     pub(super) unbuilt: &'a HashSet<String>,
-    pub(super) native_allowed: bool,
     /// The versions the player picked, by project id.
     pub(super) chosen: &'a std::collections::BTreeMap<String, String>,
     /// Native files the browser didn't install.
@@ -910,7 +900,7 @@ pub(super) struct Local {
     pub(super) name: String,
     pub(super) version: String,
     pub(super) github: Option<sunrise_launcher::github_mods::Origin>,
-    /// Native code, which needs permission and a build, rather than content only.
+    /// Native code, which needs a build, rather than content only.
     pub(super) native: bool,
     /// The native mod whose code serves this content package (`served_by`).
     pub(super) served_by: Option<String>,
@@ -944,8 +934,6 @@ pub(super) fn rows(entries: &[Entry], w: &World) -> Vec<Row> {
             });
             let need = if let Some(reason) = taken_down {
                 Some(Need::TakenDown(reason))
-            } else if native && on && !w.native_allowed {
-                Some(Need::Permission)
             } else if native && on && w.unbuilt.contains(&id) {
                 Some(Need::Build)
             } else {
@@ -963,7 +951,10 @@ pub(super) fn rows(entries: &[Entry], w: &World) -> Vec<Row> {
                 version: e.number.clone(),
                 on,
                 need,
-                registry_unchecked: w.index.is_none(),
+                registry_issue: w
+                    .index
+                    .is_none()
+                    .then(|| tr("Registry not checked").to_owned()),
                 update,
                 dependency: e.dependency,
                 pinned: w.chosen.contains_key(&e.project),
@@ -981,7 +972,6 @@ pub(super) fn rows(entries: &[Entry], w: &World) -> Vec<Row> {
     out.extend(w.local.iter().map(|l| {
         let on = !l.unreadable && w.enabled.contains(&l.id);
         let need = match on && l.native {
-            true if !w.native_allowed => Some(Need::Permission),
             true if w.unbuilt.contains(&l.id) => Some(Need::Build),
             _ => l
                 .served_by
@@ -1004,7 +994,7 @@ pub(super) fn rows(entries: &[Entry], w: &World) -> Vec<Row> {
             version: l.version.clone(),
             on,
             need,
-            registry_unchecked: false,
+            registry_issue: None,
             update: None,
             dependency: false,
             pinned: false,
@@ -1036,8 +1026,6 @@ fn v2_row(e: &Entry, id: String, w: &World) -> Row {
             .map(|r| r.reason.clone());
     let need = if let Some(reason) = taken_down {
         Some(Need::TakenDown(reason))
-    } else if native && on && !w.native_allowed {
-        Some(Need::Permission)
     } else if native && on && w.unbuilt.contains(&id) {
         Some(Need::Build)
     } else {
@@ -1071,7 +1059,7 @@ fn v2_row(e: &Entry, id: String, w: &World) -> Row {
         version: e.number.clone(),
         on,
         need,
-        registry_unchecked: w.v2.is_none(),
+        registry_issue: w.v2_failure.map(str::to_owned),
         update,
         dependency: e.dependency,
         pinned: w.chosen.contains_key(&e.project),
@@ -1262,20 +1250,13 @@ pub(super) fn bulk_updatable(r: &Row) -> bool {
 }
 
 /// Which of the chosen mods can be turned on now, and which can't (and why).
-pub(super) fn turn_on_plan<'a>(
-    chosen: &[&'a Row],
-    native_allowed: bool,
-) -> (Vec<&'a Row>, Vec<(&'a Row, String)>) {
+pub(super) fn turn_on_plan<'a>(chosen: &[&'a Row]) -> (Vec<&'a Row>, Vec<(&'a Row, String)>) {
     let (mut ok, mut no) = (Vec::new(), Vec::new());
     for r in chosen {
         match &r.need {
             Some(Need::TakenDown(why)) => {
                 no.push((*r, trf("taken down: {reason}", &[("reason", why)])))
             }
-            _ if r.native() && !native_allowed => no.push((
-                *r,
-                tr("native code needs your permission first").to_string(),
-            )),
             _ => ok.push(*r),
         }
     }

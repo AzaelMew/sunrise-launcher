@@ -11,7 +11,7 @@
 use super::{
     at, guard_replacements, held_change_refusal, known_unfit_updates, manifest_conflict,
     missing_required, mutations, prove_edit, remember_unfit_sha256, ChangeImpact, Document,
-    InstallError, InstallHooks, InstallProgress, InstalledBatch, NativeQuestion, UpdateRequest,
+    InstallError, InstallHooks, InstallProgress, InstalledBatch, UpdateRequest,
 };
 use crate::{
     attestation::{self, ExpectedRelease, PublisherChange, PublisherPin, VerifiedRelease},
@@ -691,7 +691,6 @@ fn planned_from(project: &Project, release: &Release, dependency: bool) -> Plann
 ///   silently picking one.
 /// - Refuses with [`InstallError::ProviderConflict`] rather than silently substituting a different
 ///   provider in an occupied slot.
-#[allow(clippy::too_many_arguments)]
 pub fn plan_v2_install(
     index: &Index,
     build: &str,
@@ -737,21 +736,22 @@ pub fn plan_v2_install(
         queue.push_back((project.id.clone(), false, project.name.clone(), None));
     }
     resolve_v2_queue(
-        index,
-        build,
+        &ResolveContext {
+            index,
+            build,
+            installed,
+            chosen_pins,
+            options,
+            unfit_hashes: &unfit_hashes,
+            choose_provider,
+        },
         queue,
-        installed,
-        chosen_pins,
-        options,
-        &unfit_hashes,
-        choose_provider,
     )
 }
 
 /// Plan a schema-2 update for `request` (Strict or Bulk). Accepts either permanent project IDs or
 /// in-game mod IDs, ALWAYS keeps each installed mod's chosen project, honors `chosen-versions.json`
 /// pins on bulk updates, and resolves any new required dependencies using the same non-silent rules.
-#[allow(clippy::too_many_arguments)]
 pub fn plan_v2_update(
     index: &Index,
     build: &str,
@@ -886,28 +886,42 @@ pub fn plan_v2_update(
         });
     }
     resolve_v2_queue(
-        index,
-        build,
+        &ResolveContext {
+            index,
+            build,
+            installed,
+            chosen_pins,
+            options: &effective_options,
+            unfit_hashes: &unfit_hashes,
+            choose_provider,
+        },
         queue,
-        installed,
-        chosen_pins,
-        &effective_options,
-        &unfit_hashes,
-        choose_provider,
     )
 }
 
-#[allow(clippy::too_many_arguments)]
+struct ResolveContext<'a> {
+    index: &'a Index,
+    build: &'a str,
+    installed: &'a BTreeMap<String, InstalledV2Mod>,
+    chosen_pins: &'a BTreeMap<String, String>,
+    options: &'a V2InstallOptions,
+    unfit_hashes: &'a BTreeSet<String>,
+    choose_provider: Option<&'a ChooseProvider<'a>>,
+}
+
 fn resolve_v2_queue(
-    index: &Index,
-    build: &str,
+    ctx: &ResolveContext<'_>,
     mut queue: VecDeque<Queued>,
-    installed: &BTreeMap<String, InstalledV2Mod>,
-    chosen_pins: &BTreeMap<String, String>,
-    options: &V2InstallOptions,
-    unfit_hashes: &BTreeSet<String>,
-    choose_provider: Option<&ChooseProvider<'_>>,
 ) -> Result<V2Plan, InstallError> {
+    let ResolveContext {
+        index,
+        build,
+        installed,
+        chosen_pins,
+        options,
+        unfit_hashes,
+        choose_provider,
+    } = *ctx;
     let mut planned: BTreeMap<String, PlannedV2Release> = BTreeMap::new();
     let mut order: Vec<String> = Vec::new();
     let mut optional_dependencies: Vec<index_v2::Dependency> = Vec::new();
@@ -1210,7 +1224,22 @@ pub(crate) fn fetch_release_bytes(url: &str, max_bytes: u64) -> Result<Vec<u8>, 
     Ok(bytes)
 }
 
-#[allow(clippy::too_many_arguments)]
+/// Download and verification callbacks for staging schema-2 registry releases.
+#[derive(Clone, Copy)]
+pub(crate) struct V2Transfer<'a> {
+    pub(crate) fetch_bytes: BytesFetcher<'a>,
+    pub(crate) verify_release: ReleaseVerifier<'a>,
+}
+
+/// Shared inputs for schema-2 registry install, update, and provider-switch edits.
+pub(crate) struct V2EditRequest<'a> {
+    pub(crate) instance: &'a Instance,
+    pub(crate) identity: Identity,
+    pub(crate) index: Arc<Index>,
+    pub(crate) options: V2InstallOptions,
+    pub(crate) transfer: V2Transfer<'a>,
+}
+
 pub(crate) fn stage_and_verify_v2_release(
     index: &Index,
     home: &Path,
@@ -1218,9 +1247,12 @@ pub(crate) fn stage_and_verify_v2_release(
     pin_dir: &Path,
     accepted_publisher_changes: &BTreeSet<String>,
     confirm_publisher_change: Option<ConfirmPublisherChange<'_>>,
-    fetch_bytes: BytesFetcher<'_>,
-    verify_release: ReleaseVerifier<'_>,
+    transfer: V2Transfer<'_>,
 ) -> Result<(installed::Entry, PendingPin), InstallError> {
+    let V2Transfer {
+        fetch_bytes,
+        verify_release,
+    } = transfer;
     let project = index.project(&step.project_id).ok_or_else(|| {
         InstallError::Refused(trf(
             "Project {project} is not in the Sunrise registry.",
@@ -1388,6 +1420,12 @@ pub(crate) fn stage_and_verify_v2_release(
         }
     }
 
+    // The signed index listed these bytes and their attestation verified: a build takes them
+    // without the unreviewed-code warning.
+    if matches!(project.kind, V2Kind::NativeMod) {
+        backend::allow_native_files_in(pin_dir, [actual_sha256.clone()])
+            .map_err(InstallError::Unproved)?;
+    }
     let entry = installed::Entry {
         source: SourceId::Sunrise,
         project: project.id.clone(),
@@ -1444,15 +1482,19 @@ pub fn install_registry_v2(
     let catalog =
         catalogue_v2::change_index().map_err(|error| InstallError::Unproved(error.to_string()))?;
     install_registry_v2_with(
-        instance,
-        identity,
-        catalog.index,
+        V2EditRequest {
+            instance,
+            identity,
+            index: catalog.index,
+            options,
+            transfer: V2Transfer {
+                fetch_bytes: &fetch_release_bytes,
+                verify_release: &attestation::verify_release,
+            },
+        },
         requested_projects,
-        options,
         choose,
         hooks,
-        &fetch_release_bytes,
-        &attestation::verify_release,
     )
 }
 
@@ -1470,16 +1512,20 @@ pub fn update_registry_v2(
     let catalog =
         catalogue_v2::change_index().map_err(|error| InstallError::Unproved(error.to_string()))?;
     update_registry_v2_with(
-        instance,
-        identity,
-        catalog.index,
+        V2EditRequest {
+            instance,
+            identity,
+            index: catalog.index,
+            options,
+            transfer: V2Transfer {
+                fetch_bytes: &fetch_release_bytes,
+                verify_release: &attestation::verify_release,
+            },
+        },
         requested,
-        options,
         choose,
         hooks,
         approve,
-        &fetch_release_bytes,
-        &attestation::verify_release,
     )
 }
 
@@ -1497,68 +1543,45 @@ pub fn switch_provider_v2(
     let catalog =
         catalogue_v2::change_index().map_err(|error| InstallError::Unproved(error.to_string()))?;
     switch_provider_v2_with(
-        instance,
-        identity,
-        catalog.index,
+        V2EditRequest {
+            instance,
+            identity,
+            index: catalog.index,
+            options,
+            transfer: V2Transfer {
+                fetch_bytes: &fetch_release_bytes,
+                verify_release: &attestation::verify_release,
+            },
+        },
         mod_id,
         to_project_id,
-        options,
         choose,
         hooks,
-        &fetch_release_bytes,
-        &attestation::verify_release,
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn install_registry_v2_with(
-    instance: &Instance,
-    identity: Identity,
-    index: Arc<Index>,
+    request: V2EditRequest<'_>,
     requested_projects: Vec<String>,
-    options: V2InstallOptions,
     choose: impl FnOnce() -> Result<FirstBuild, String>,
     hooks: V2Hooks<'_>,
-    fetch_bytes: BytesFetcher<'_>,
-    verify_release: ReleaseVerifier<'_>,
 ) -> Result<InstalledBatch, InstallError> {
     v2_edit_with(
-        instance,
-        identity,
-        index,
+        request,
         V2Action::Install(requested_projects),
-        options,
         choose,
         hooks,
-        fetch_bytes,
-        verify_release,
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn update_registry_v2_with(
-    instance: &Instance,
-    identity: Identity,
-    index: Arc<Index>,
+    request: V2EditRequest<'_>,
     requested: UpdateRequest,
-    options: V2InstallOptions,
     choose: impl FnOnce() -> Result<FirstBuild, String>,
     hooks: V2Hooks<'_>,
     approve: &dyn Fn(&ChangeImpact) -> bool,
-    fetch_bytes: BytesFetcher<'_>,
-    verify_release: ReleaseVerifier<'_>,
 ) -> Result<InstalledBatch, InstallError> {
-    v2_edit_with(
-        instance,
-        identity,
-        index,
-        V2Action::Update(requested, approve),
-        options,
-        choose,
-        hooks,
-        fetch_bytes,
-        verify_release,
-    )
+    v2_edit_with(request, V2Action::Update(requested, approve), choose, hooks)
 }
 
 enum V2Action<'a> {
@@ -1566,18 +1589,19 @@ enum V2Action<'a> {
     Update(UpdateRequest, &'a dyn Fn(&ChangeImpact) -> bool),
 }
 
-#[allow(clippy::too_many_arguments)]
 fn v2_edit_with(
-    instance: &Instance,
-    identity: Identity,
-    index: Arc<Index>,
+    request: V2EditRequest<'_>,
     action: V2Action<'_>,
-    options: V2InstallOptions,
     choose: impl FnOnce() -> Result<FirstBuild, String>,
     hooks: V2Hooks<'_>,
-    fetch_bytes: BytesFetcher<'_>,
-    verify_release: ReleaseVerifier<'_>,
 ) -> Result<InstalledBatch, InstallError> {
+    let V2EditRequest {
+        instance,
+        identity,
+        index,
+        options,
+        transfer,
+    } = request;
     if instance.kind == InstanceKind::Pack {
         return Err(InstallError::Refused(
             tr("No registry mods to install in this profile.").into(),
@@ -1629,7 +1653,7 @@ fn v2_edit_with(
     let mut doc = Document::read(next.path())?;
     let mut entries: BTreeMap<String, installed::Entry> = BTreeMap::new();
     let mut pending_pins: Vec<PendingPin> = Vec::new();
-    let mut native_names: Vec<String> = Vec::new();
+    let mut native = false;
     let mut replacements: Vec<(String, String)> = Vec::new();
     let mut retired_holds: BTreeSet<String> = BTreeSet::new();
 
@@ -1644,8 +1668,7 @@ fn v2_edit_with(
             &pin_dir,
             &options.accepted_publisher_changes,
             hooks.confirm_publisher_change,
-            fetch_bytes,
-            verify_release,
+            transfer,
         )?;
         // Preserve player-owned dependency flag if previously explicitly installed.
         if let Ok(Some(prev_row)) = doc.row(&step.mod_id) {
@@ -1671,9 +1694,7 @@ fn v2_edit_with(
         }
         doc.replace(&entry)?;
         mod_list::set_enabled(next.path(), &step.mod_id, true)?;
-        if step.kind == V2Kind::NativeMod {
-            native_names.push(step.name.clone());
-        }
+        native |= step.kind == V2Kind::NativeMod;
         if let Some(prev) = before.get(&step.mod_id) {
             replacements.push((prev.package.manifest.name.clone(), step.mod_id.clone()));
         }
@@ -1685,26 +1706,13 @@ fn v2_edit_with(
     // Check enabled manifests and v2 revocations on the staged candidate before any build.
     check_staged_v2_candidate(next.path(), &index, |id| entries.contains_key(id))?;
 
-    if !native_names.is_empty() {
-        native_names.sort();
-        native_names.dedup();
+    // A reviewed registry release asks nothing before its build: its attestation and the
+    // signed index were verified while it was fetched and staged above.
+    if native {
         if let Some(error) = native_mods::known_host_block(Some(&base_build)) {
             return Err(InstallError::Host(error));
         }
-        if backend::NativeGrant::read()?.is_none() {
-            let approved = (hooks.install.native)(&NativeQuestion {
-                names: native_names,
-                reviewed: true,
-                retry: false,
-            })
-            .map_err(InstallError::Unproved)?;
-            if !approved {
-                return Err(InstallError::Cancelled);
-            }
-        }
-        cancelled
-            .admit_native_work()
-            .map_err(|e| InstallError::Unproved(e.into()))?;
+        cancelled.check().map_err(InstallError::Unproved)?;
     }
 
     (hooks.install.progress)(InstallProgress::Preparing);
@@ -1774,9 +1782,12 @@ fn v2_edit_with(
     };
 
     (hooks.install.progress)(InstallProgress::Publishing);
+    cancelled.check().map_err(|_| InstallError::Cancelled)?;
+    // Persist verified publisher pins before publishing so a pin-store failure aborts the
+    // install cleanly instead of failing after the mods are already live.
+    commit_pending_pins(&pin_dir, &pending_pins).map_err(InstallError::Unproved)?;
     let authorize = || mutations::bind_worlds(&instance.home, &suspect, &reviewed_worlds);
     edit.publish_install(proof, cancelled, &retired_holds, authorize)?;
-    commit_pending_pins(&pin_dir, &pending_pins).map_err(InstallError::Unproved)?;
 
     let mut result = InstalledBatch::default();
     for (id, entry) in entries {
@@ -1792,19 +1803,20 @@ fn v2_edit_with(
 }
 
 /// Internal testable entrypoint for explicit provider switching.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn switch_provider_v2_with(
-    instance: &Instance,
-    identity: Identity,
-    index: Arc<Index>,
+    request: V2EditRequest<'_>,
     mod_id: &str,
     to_project_id: &str,
-    options: V2InstallOptions,
     choose: impl FnOnce() -> Result<FirstBuild, String>,
     hooks: V2ProviderSwitchHooks<'_>,
-    fetch_bytes: BytesFetcher<'_>,
-    verify_release: ReleaseVerifier<'_>,
 ) -> Result<InstalledBatch, InstallError> {
+    let V2EditRequest {
+        instance,
+        identity,
+        index,
+        options,
+        transfer,
+    } = request;
     if instance.kind == InstanceKind::Pack {
         return Err(InstallError::Refused(
             tr("No registry mods to install in this profile.").into(),
@@ -1982,15 +1994,18 @@ pub(crate) fn switch_provider_v2_with(
     let dep_steps = if dep_queue.is_empty() {
         Vec::new()
     } else {
+        let chosen_pins = chosen(&instance.home);
         resolve_v2_queue(
-            &index,
-            &base_build,
+            &ResolveContext {
+                index: &index,
+                build: &base_build,
+                installed: &before,
+                chosen_pins: &chosen_pins,
+                options: &options,
+                unfit_hashes: &unfit_hashes,
+                choose_provider: hooks.install.choose_provider,
+            },
             dep_queue,
-            &before,
-            &chosen(&instance.home),
-            &options,
-            &unfit_hashes,
-            hooks.install.choose_provider,
         )?
         .steps
     };
@@ -2000,7 +2015,7 @@ pub(crate) fn switch_provider_v2_with(
     let mut doc = Document::read(next.path())?;
     let mut entries: BTreeMap<String, installed::Entry> = BTreeMap::new();
     let mut pending_pins: Vec<PendingPin> = Vec::new();
-    let mut native_names: Vec<String> = Vec::new();
+    let mut native = false;
 
     for planned_step in std::iter::once(&step).chain(dep_steps.iter()) {
         let (entry, pin) = stage_and_verify_v2_release(
@@ -2010,14 +2025,11 @@ pub(crate) fn switch_provider_v2_with(
             &pin_dir,
             &options.accepted_publisher_changes,
             hooks.install.confirm_publisher_change,
-            fetch_bytes,
-            verify_release,
+            transfer,
         )?;
         doc.replace(&entry)?;
         mod_list::set_enabled(next.path(), &planned_step.mod_id, true)?;
-        if planned_step.kind == V2Kind::NativeMod {
-            native_names.push(planned_step.name.clone());
-        }
+        native |= planned_step.kind == V2Kind::NativeMod;
         entries.insert(planned_step.mod_id.clone(), entry);
         pending_pins.push(pin);
     }
@@ -2025,25 +2037,13 @@ pub(crate) fn switch_provider_v2_with(
 
     check_staged_v2_candidate(next.path(), &index, |id| entries.contains_key(id))?;
 
-    if !native_names.is_empty() {
-        native_names.sort();
-        native_names.dedup();
+    // A reviewed registry release asks nothing before its build: its attestation and the
+    // signed index were verified while it was fetched and staged above.
+    if native {
         if let Some(error) = native_mods::known_host_block(Some(&base_build)) {
             return Err(InstallError::Host(error));
         }
-        if backend::NativeGrant::read()?.is_none()
-            && !(hooks.install.install.native)(&NativeQuestion {
-                names: native_names,
-                reviewed: true,
-                retry: false,
-            })
-            .map_err(InstallError::Unproved)?
-        {
-            return Err(InstallError::Cancelled);
-        }
-        cancelled
-            .admit_native_work()
-            .map_err(|e| InstallError::Unproved(e.into()))?;
+        cancelled.check().map_err(InstallError::Unproved)?;
     }
 
     (hooks.install.install.progress)(InstallProgress::Preparing);
@@ -2080,9 +2080,10 @@ pub(crate) fn switch_provider_v2_with(
     }
 
     (hooks.install.install.progress)(InstallProgress::Publishing);
+    cancelled.check().map_err(|_| InstallError::Cancelled)?;
+    commit_pending_pins(&pin_dir, &pending_pins).map_err(InstallError::Unproved)?;
     let authorize = || mutations::bind_worlds(&instance.home, &suspect, &worlds);
     edit.publish_install(proof, cancelled, &BTreeSet::new(), authorize)?;
-    commit_pending_pins(&pin_dir, &pending_pins).map_err(InstallError::Unproved)?;
 
     let mut result = InstalledBatch::default();
     for (id, entry) in entries {

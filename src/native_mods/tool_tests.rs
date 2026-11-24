@@ -14,12 +14,6 @@ fn fake(dir: &Path, events: &[&str]) -> std::process::Command {
             "CONSENT" => script.push_str(
                 "echo '{\"event\":\"consent\",\"added_crates\":2,\"build_scripts\":[\"syn\"],\"proc_macros\":[]}'\nread answer\necho \"$answer\" > \"$(dirname \"$0\")/answer\"\n",
             ),
-            "QUIET" => script.push_str(
-                "echo '{\"event\":\"consent\",\"added_crates\":3,\"build_scripts\":[],\"proc_macros\":[]}'\nread answer\necho \"$answer\" > \"$(dirname \"$0\")/answer\"\n",
-            ),
-            "MACRO" => script.push_str(
-                "echo '{\"event\":\"consent\",\"added_crates\":1,\"build_scripts\":[],\"proc_macros\":[\"serde_derive\"]}'\nread answer\necho \"$answer\" > \"$(dirname \"$0\")/answer\"\n",
-            ),
             "ERRORS" => script.push_str("printf 'warming up\\n\\377 unknown contract\\n' >&2\n"),
             "EXIT1" => script.push_str("exit 1\n"),
             "EXIT2" => script.push_str("exit 2\n"),
@@ -37,17 +31,12 @@ fn fake(dir: &Path, events: &[&str]) -> std::process::Command {
 #[cfg(unix)]
 #[test]
 #[ignore = "daily"]
-fn a_tool_run_reports_its_mods_asks_consent_and_ends_built_or_blamed() {
+fn a_tool_run_reports_its_mods_answers_its_crates_question_and_ends_built_or_blamed() {
     let dir = std::env::temp_dir().join(format!("sunrise-native-tool-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     let started = RefCell::new(Vec::new());
     let on_mod = |id: &str, done: usize, total: usize| {
         started.borrow_mut().push(format!("{id} {done}/{total}"))
-    };
-    let asked = RefCell::new(0);
-    let consent = |question: &Consent| {
-        *asked.borrow_mut() += question.added_crates;
-        true
     };
     let built = run(
         fake(
@@ -60,7 +49,6 @@ fn a_tool_run_reports_its_mods_asks_consent_and_ends_built_or_blamed() {
             ],
         ),
         r#"{"contract":2}"#,
-        Some(&consent),
         &on_mod,
         &Cancellation::default(),
         None,
@@ -72,7 +60,6 @@ fn a_tool_run_reports_its_mods_asks_consent_and_ends_built_or_blamed() {
         ("prebuilt", Path::new("/b/game"))
     );
     assert_eq!(*started.borrow(), ["greeter 1/1"]);
-    assert_eq!(*asked.borrow(), 2);
     assert_eq!(
         std::fs::read_to_string(dir.join("answer")).unwrap().trim(),
         "true"
@@ -86,7 +73,6 @@ fn a_tool_run_reports_its_mods_asks_consent_and_ends_built_or_blamed() {
     let failed = run(
         fake(&dir, &[blamed, "EXIT1"]),
         "{}",
-        None,
         &on_mod,
         &Cancellation::default(),
         None,
@@ -104,7 +90,6 @@ fn a_tool_run_reports_its_mods_asks_consent_and_ends_built_or_blamed() {
         assert!(run(
             fake(&dir, events),
             "{}",
-            None,
             &on_mod,
             &Cancellation::default(),
             None,
@@ -117,7 +102,6 @@ fn a_tool_run_reports_its_mods_asks_consent_and_ends_built_or_blamed() {
     let silent = run(
         fake(&dir, &[]),
         "{}",
-        None,
         &on_mod,
         &Cancellation::default(),
         None,
@@ -144,7 +128,6 @@ fn published_sdk_reply_names_the_archive_id_not_the_cargo_package() {
     let reported = run(
         fake(dir.path(), &[reply, "EXIT1"]),
         "{}",
-        None,
         &|_, _, _| (),
         &Cancellation::default(),
         None,
@@ -180,7 +163,6 @@ fn resolver_failure_uses_cargos_requiring_chains_not_the_mods_lock_versions() {
     let mut reported = run(
         fake(dir.path(), &[&reply, "EXIT1"]),
         "{}",
-        None,
         &|_, _, _| (),
         &Cancellation::default(),
         None,
@@ -266,172 +248,21 @@ fn original_lock_comparison_and_network_failure_keep_distinct_actions() {
     }
 }
 
-#[cfg(unix)]
-#[test]
-fn crates_that_run_nothing_while_building_are_not_asked_about() {
-    let dir = tempfile::tempdir().unwrap();
-    let built = r#"{"event":"built","route":"prebuilt","binary":"/b/game","libraries":[],"records":[],"mods":[],"internals":{},"mixins":"x","used":[]}"#;
-    run(
-        fake(dir.path(), &["QUIET", built]),
-        "{}",
-        Some(&|_: &Consent| unreachable!("nothing runs while building")),
-        &|_, _, _| {},
-        &Cancellation::default(),
-        None,
-        None,
-    )
-    .unwrap();
-    assert_eq!(
-        std::fs::read_to_string(dir.path().join("answer"))
-            .unwrap()
-            .trim(),
-        "true"
-    );
-
-    // A proc macro alone still runs while building, so it is asked about.
-    let macros = tempfile::tempdir().unwrap();
-    let asked = RefCell::new(Vec::new());
-    run(
-        fake(macros.path(), &["MACRO", built]),
-        "{}",
-        Some(&|question: &Consent| {
-            asked.borrow_mut().extend(question.proc_macros.clone());
-            false
-        }),
-        &|_, _, _| {},
-        &Cancellation::default(),
-        None,
-        None,
-    )
-    .unwrap();
-    assert_eq!(*asked.borrow(), ["serde_derive"]);
-    assert_eq!(
-        std::fs::read_to_string(macros.path().join("answer"))
-            .unwrap()
-            .trim(),
-        "false"
-    );
-}
-
-/// The yes given without asking is bound to the attempt's original permission like an asked
-/// one: a revoke and regrant before the question refuses it (#104 on #157).
-#[test]
-#[cfg(unix)]
-fn a_regrant_refuses_the_yes_given_without_asking() {
-    let _scratch = super::super::tests::scratch_state();
-    let settings = RefCell::new(crate::backend::Settings::default());
-    settings.borrow_mut().allow_native_mods().unwrap();
-    let current = Cancellation::default();
-    current.admit_native_work().unwrap();
-    let dir = tempfile::tempdir().unwrap();
-    let failure = run(
-        fake(
-            dir.path(),
-            &[
-                r#"{"event":"mod","id":"greeter","done":1,"total":1}"#,
-                "QUIET",
-                "EXIT1",
-            ],
-        ),
-        "{}",
-        Some(&|_: &Consent| unreachable!("nothing runs while building")),
-        &|_, _, _| {
-            settings.borrow_mut().revoke_native_mods().unwrap();
-            settings.borrow_mut().allow_native_mods().unwrap();
-        },
-        &current,
-        None,
-        None,
-    )
-    .unwrap_err();
-    assert!(
-        failure.error.contains("Native mod permission changed"),
-        "{}",
-        failure.error
-    );
-    assert_ne!(
-        std::fs::read_to_string(dir.path().join("answer"))
-            .unwrap_or_default()
-            .trim(),
-        "true"
-    );
-}
-
-#[test]
-#[cfg(unix)]
-fn a_regrant_cannot_admit_a_stale_sdk_check_or_registry_yes() {
-    let _scratch = super::super::tests::scratch_state();
-    let mut settings = crate::backend::Settings::default();
-    settings.allow_native_mods().unwrap();
-    let cancellation = Cancellation::default();
-    cancellation.admit_native_work().unwrap();
-    settings.revoke_native_mods().unwrap();
-    settings.allow_native_mods().unwrap();
-    let dir = tempfile::tempdir().unwrap();
-    let error = ask(
-        fake(dir.path(), &[]),
-        "native-check",
-        &serde_json::json!({}),
-        &cancellation,
-    )
-    .unwrap_err();
-    assert!(error.contains("Native mod permission changed"), "{error}");
-    assert!(!dir.path().join("plan").exists());
-
-    let current = Cancellation::default();
-    current.admit_native_work().unwrap();
-    let settings = RefCell::new(settings);
-    let consent = |_: &Consent| {
-        settings.borrow_mut().revoke_native_mods().unwrap();
-        settings.borrow_mut().allow_native_mods().unwrap();
-        true
-    };
-    let failure = run(
-        fake(dir.path(), &["CONSENT", "EXIT1"]),
-        "{}",
-        Some(&consent),
-        &|_, _, _| unreachable!(),
-        &current,
-        None,
-        None,
-    )
-    .unwrap_err();
-    assert!(
-        failure.error.contains("Native mod permission changed"),
-        "{}",
-        failure.error
-    );
-    assert_ne!(
-        std::fs::read_to_string(dir.path().join("answer"))
-            .unwrap_or_default()
-            .trim(),
-        "true"
-    );
-    assert!(
-        dir.path().join("plan").is_file(),
-        "the revision was valid at spawn"
-    );
-}
-
 #[test]
 #[cfg(unix)]
 #[ignore = "daily"]
 fn not_starting_a_worker_does_not_retain_its_staged_directory() {
     let dir = tempfile::tempdir().unwrap();
     let _scratch = super::super::tests::scratch_state();
-    let mut settings = crate::backend::Settings::default();
-    settings.allow_native_mods().unwrap();
-    let stale = Cancellation::default();
-    stale.admit_native_work().unwrap();
-    settings.revoke_native_mods().unwrap();
-    let no_consent = Cancellation::default();
+    let stopped = Cancellation::default();
+    stopped.stop();
     for (command, cancellation, expected) in [
         (
             std::process::Command::new(dir.path().join("missing-program")),
-            &no_consent,
+            &Cancellation::default(),
             "couldn't run",
         ),
-        (fake(dir.path(), &[]), &stale, "permission changed"),
+        (fake(dir.path(), &[]), &stopped, super::super::CANCELLED),
     ] {
         let mut workspace = Workspace::new(dir.path()).unwrap();
         let path = workspace.path().to_owned();
@@ -439,7 +270,6 @@ fn not_starting_a_worker_does_not_retain_its_staged_directory() {
         let failure = run(
             command,
             "{}",
-            None,
             &|_, _, _| unreachable!(),
             cancellation,
             Some(&mut workspace),
@@ -483,7 +313,6 @@ exit 125
                 run(
                     command,
                     "{}",
-                    None,
                     &|_, _, _| unreachable!(),
                     &active,
                     Some(&mut workspace),
@@ -565,7 +394,6 @@ fn the_runner_refuses_duplicate_terminal_events_and_wrong_or_extra_check_replies
     let result = run(
         fake(dir.path(), &[built, failed]),
         "{}",
-        None,
         &|_, _, _| unreachable!(),
         &Cancellation::default(),
         None,
@@ -591,7 +419,6 @@ fn leader_success_or_blamed_failure_is_not_a_compiler_handoff() {
             run(
                 fake(dir.path(), lines),
                 "{}",
-                None,
                 &|_, _, _| unreachable!(),
                 &Cancellation::default(),
                 None,
@@ -659,16 +486,6 @@ for dir in "$CARGO_HOME" "$CARGO_TARGET_DIR" "$TMPDIR"; do printf retry > "$dir/
 printf '%s\n' '{"event":"built","route":"prebuilt-api","binary":"unused","libraries":[],"records":[],"mods":[],"internals":{}}'
 "#,
     );
-    let revoke_tool = write_tool(
-        "registry-tool",
-        r#"#!/bin/sh
-set -eu
-read -r plan
-printf '%s\n' '{"event":"consent","added_crates":1,"build_scripts":["syn"],"proc_macros":[]}'
-read -r answer
-printf '%s' "$answer" > "$TMPDIR/answer"
-"#,
-    );
     use crate::profile_txn::{Admission, Intent};
     let home = root.path().join("game");
     fs::create_dir(&home).unwrap();
@@ -679,8 +496,7 @@ printf '%s' "$answer" > "$TMPDIR/answer"
     let build_fixture = |program: &Path,
                          workspace: &mut Workspace,
                          cancellation: &Cancellation,
-                         on_mod: &dyn Fn(&str, usize, usize),
-                         consent: Option<&dyn Fn(&Consent) -> bool>| {
+                         on_mod: &dyn Fn(&str, usize, usize)| {
         let saved = workspace.path().to_owned();
         build(
             &rust,
@@ -697,57 +513,22 @@ printf '%s' "$answer" > "$TMPDIR/answer"
                 server: false,
                 mixins_from_source: false,
             },
-            consent,
             on_mod,
             cancellation,
             Some(stage.handoff()),
         )
     };
-    let mut settings = crate::backend::Settings::default();
-    settings.allow_native_mods().unwrap();
     let stop = Cancellation::default();
-    stop.admit_native_work().unwrap();
     let mut first = Workspace::new(root.path()).unwrap();
     let old = first.path().to_owned();
-    let error =
-        build_fixture(&detached, &mut first, &stop, &|_, _, _| stop.stop(), None).unwrap_err();
+    let error = build_fixture(&detached, &mut first, &stop, &|_, _, _| stop.stop()).unwrap_err();
     assert_eq!(error.error, super::super::CANCELLED);
     drop(first);
     assert!(old.join("tmp/holding").exists() && !old.join("tmp/finished").exists());
 
-    let mut revoke = Workspace::new(root.path()).unwrap();
-    let stale = Cancellation::default();
-    stale.admit_native_work().unwrap();
-    let settings = RefCell::new(settings);
-    let failure = build_fixture(
-        &revoke_tool,
-        &mut revoke,
-        &stale,
-        &|_, _, _| unreachable!(),
-        Some(&|_| {
-            settings.borrow_mut().revoke_native_mods().unwrap();
-            settings.borrow_mut().allow_native_mods().unwrap();
-            true
-        }),
-    )
-    .unwrap_err();
-    assert!(
-        failure.error.contains("permission changed"),
-        "{}",
-        failure.error
-    );
-    assert!(!revoke.path().join("tmp/answer").exists());
-
     let mut retry = Workspace::new(root.path()).unwrap();
     let fresh = Cancellation::default();
-    fresh.admit_native_work().unwrap();
-    let result = build_fixture(
-        &succeeds,
-        &mut retry,
-        &fresh,
-        &|_, _, _| unreachable!(),
-        None,
-    );
+    let result = build_fixture(&succeeds, &mut retry, &fresh, &|_, _, _| unreachable!());
     assert_eq!(result.unwrap().route, CheckRoute::PrebuiltApi);
     assert!(
         !old.join("tmp/finished").exists(),
@@ -848,7 +629,6 @@ fn a_tool_on_another_contract_says_to_update_the_launcher_and_logs_its_errors() 
     let failed = run(
         fake(&dir, &["ERRORS", "EXIT3"]),
         "{}",
-        None,
         &|_, _, _| {},
         &Cancellation::default(),
         None,

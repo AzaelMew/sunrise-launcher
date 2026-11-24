@@ -422,8 +422,8 @@ pub fn official(p: &index::Project) -> bool {
 }
 
 /// What the player reads about a registry project before installing it: who made it, whether its
-/// files are signed, and for a mod what it may do, in the game's words (Options > Mods). A native
-/// mod says it runs with the player's rights, and how its version for `game` fits `instance`.
+/// files are signed, that the registry reviewed it, and for a native mod how its version for
+/// `game` fits `instance`.
 pub fn trust_and_capabilities(
     id: &str,
     instance: Option<&crate::instances::Instance>,
@@ -451,10 +451,8 @@ pub fn trust_and_capabilities(
         )
         .to_string(),
     });
+    lines.push(tr("Reviewed by Sunrise").to_string());
     if p.kind == index::Kind::NativeMod {
-        lines.push(
-            tr("Native code: it is built into the game and runs with full access to your computer.").to_string(),
-        );
         if let Some(v) = p.versions.iter().find(|v| v.game == game) {
             let pin = v.api.split('/').nth(1).unwrap_or_default();
             lines.push(
@@ -1331,6 +1329,7 @@ fn check_baked_revocations(
 
 pub mod auto;
 pub mod pack;
+pub mod ratings;
 mod registry_install;
 pub mod sources;
 pub mod v2;
@@ -1341,14 +1340,15 @@ pub use registry_install::{
     classify_v2_ownership, install_github_manual, install_local, install_local_at,
     install_registry, install_registry_v2, install_target, inventory_v2, known_unfit_updates,
     pack_sources, plan_v2_install, plan_v2_update, prepare_pasted_sources, prepare_source,
-    read_pasted_sources, remove_mods, revoked_for_package, switch_build, switch_build_v2,
-    switch_profile_build, switch_profile_build_v2, switch_provider_v2, turn_off_revoked_v2,
-    update_github, update_registry, update_registry_and_sources, update_registry_v2, BuildChoice,
-    BuildNotice, ChangeImpact, CombinedUpdate, InstallError, InstallHooks, InstallProgress,
-    InstalledBatch, InstalledV2Mod, ManualRelease, NativeQuestion, PastedSource, PlannedV2Release,
-    PreparedSource, ProviderCandidate, ProviderChoiceNeeded, ProviderConflict,
-    ProviderSwitchPreview, PublisherChangeQuestion, ResolveQuestion, SourceDependency, SourceError,
-    SourceHooks, SourceRequest, SwitchDecision, SwitchHooks, SwitchQuestion, Switched,
+    read_pasted_sources, remove_mods, restore_held, revoked_for_package, switch_build,
+    switch_build_v2, switch_profile_build, switch_profile_build_v2, switch_provider_v2,
+    turn_off_revoked_v2, unfit_updates_revision, update_github, update_registry,
+    update_registry_and_sources, update_registry_v2, BuildChange, BuildChoice, BuildNotice,
+    ChangeImpact, CombinedUpdate, InstallError, InstallHooks, InstallProgress, InstalledBatch,
+    InstalledV2Mod, ManualRelease, PastedSource, PlannedV2Release, PreparedSource,
+    ProviderCandidate, ProviderChoiceNeeded, ProviderConflict, ProviderSwitchPreview,
+    PublisherChangeQuestion, ResolveQuestion, SourceDependency, SourceError, SourceHooks,
+    SourceProof, SourceRequest, SwitchDecision, SwitchHooks, SwitchQuestion, Switched,
     UpdateRequest, V2AffectedDependent, V2Hooks, V2InstallOptions, V2Ownership, V2Plan,
     V2ProviderSwitchHooks, V2SwitchHooks,
 };

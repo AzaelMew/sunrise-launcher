@@ -40,7 +40,6 @@ mod glass_ui;
 mod home;
 mod home_mods;
 mod instance_icons;
-mod instance_mods;
 mod instances_page;
 mod internet;
 mod jar_launch;
@@ -59,7 +58,6 @@ mod mods_page;
 mod mods_project;
 mod motion;
 mod multiplayer_page;
-mod native_consent;
 mod native_log_page;
 mod owner_page;
 mod packs_page;
@@ -101,7 +99,6 @@ use gpui::{
     KeyBinding, KeyDownEvent, Menu, MenuItem, PathPromptOptions, SharedString, Stateful,
     Subscription, Window, WindowBounds, WindowOptions,
 };
-use native_consent::PendingConsent;
 use scrollbar::Scrollbar;
 use std::borrow::Cow;
 use std::collections::{HashMap, VecDeque};
@@ -222,18 +219,6 @@ struct Launcher {
     /// A Clear the player still has to confirm: `Some(None)` is Clear all.
     storage_confirm: Option<Option<storage::Category>>,
     storage_error: Option<String>,
-    /// Turn off for native mods was pressed once: how many switched-on native mods it would
-    /// switch off, and in how many instances, counted then (`glass_storage.rs`).
-    storage_revoke: Option<(usize, usize)>,
-    /// Storage is counting native mods for Turn off: the count of this Settings visit.
-    storage_counting: Option<u64>,
-    /// Each page switch: a count from an earlier visit is dropped when it arrives.
-    storage_visit: u64,
-    /// Why Turn off didn't finish, shown at the Native mods row.
-    storage_revoke_error: Option<String>,
-    /// The build asked for (its base and back-up choice) while the permission question is open:
-    /// Allow resumes it, not a plain build.
-    native_consent_build: Option<(Option<String>, bool)>,
     install_error: Option<(String, String)>,
     /// Storage is copying in a local game build.
     importing_build: bool,
@@ -254,9 +239,6 @@ struct Launcher {
     /// Mods the last build would have switched off that worlds were saved with: the choice
     /// between staying and backing those worlds up first, shown with `native_error`.
     native_worlds: Option<native_mods::AtStake>,
-    pending_consent: Option<PendingConsent>,
-    /// Why the last Allow or Cancel failed, shown inside the dialog that the page is behind.
-    consent_error: Option<String>,
     /// The instance (id) the build under way, or the last one's error, is for.
     native_for: Option<String>,
     /// The native mods the build under way (or the last one) was given (`native_build.rs`).
@@ -322,7 +304,7 @@ struct Launcher {
     search: command_search::Search,
     /// When page switches last checked every account's sign-in.
     auth_checked: Option<Instant>,
-    sign_in_target: Option<account::Account>,
+    sign_in_screen: launcher_play::SignInScreen,
     sign_in_copies: owner_page::SignInCopies,
     auth_busy: HashMap<String, u64>,
     auth_next: u64,
@@ -334,7 +316,6 @@ struct Launcher {
     /// none until the keychain has been read.
     owner: Option<bool>,
     /// Play was refused (or Home's Sign in pressed): the owner gate's screen is open.
-    owner_screen_open: bool,
     /// The game is waiting for its session (a token renewal), before it starts.
     starting_client: Option<String>,
     /// Which step the accepted Play is at, for the label while the game is starting.
@@ -388,8 +369,6 @@ struct Launcher {
     prepare_started: Option<Instant>,
     /// The download under way as first seen (when, files done), for the time left.
     download_seen: Option<(Instant, usize)>,
-    /// The selected instance's mods, for Home's Mods tab (`instance_mods.rs`).
-    instance_mods: instance_mods::InstanceMods,
     play_pressed: Option<Instant>,
     /// `sunrise-launcher benchmark` started this window to measure it.
     bench: Option<perf::Bench>,

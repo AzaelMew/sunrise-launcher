@@ -83,9 +83,15 @@ impl Launcher {
         if instance.kind != instances::Kind::Pack {
             match sunrise_launcher::managed_play::display_active(&instance.home) {
                 Ok(Some(active)) => return Some(active.base().to_owned()),
-                // Our source transaction may hold this profile's admission. Keep its captured
-                // base visible for the next request, rather than treating the profile as uninstalled.
-                Err(_) => return self.source_install_base(instance).map(str::to_owned),
+                // Our install or switch may hold this profile's admission. Keep the base it
+                // captured visible, rather than treating the profile as uninstalled: Discover and
+                // the build chooser would otherwise read "No game build selected" until it ends.
+                Err(_) => {
+                    return self
+                        .install_base(instance)
+                        .or_else(|| self.switch_base(&instance.home))
+                        .map(str::to_owned)
+                }
                 Ok(None) => (),
             }
         }
@@ -123,8 +129,6 @@ impl Launcher {
     }
 
     pub(super) fn select_instance(&mut self, instance: &Instance) {
-        // A native build's warning names the mods of the instance it was opened for.
-        self.pending_consent = None;
         self.settings.instance =
             (instance.kind != InstanceKind::Default).then(|| instance.id.clone());
         self.save_settings();
