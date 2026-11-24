@@ -1941,8 +1941,8 @@ fn pipeline(
             ),
             _ => None,
         };
-        if let Some((kept_mods, keys)) = &kept_keys {
-            let reused = kept_store.seed(&work, kept_mods, keys);
+        if let Some(kept) = &kept_keys {
+            let reused = kept_store.seed(&work, &kept.mods, &kept.keys);
             if !reused.is_empty() {
                 timed(
                     &trf(
@@ -1995,19 +1995,6 @@ fn pipeline(
                 tr("The native build tool's output couldn't be verified. See the build log.")
                     .to_owned()
             })?;
-        // Kept only now that the launcher has verified them; a failure here costs only the
-        // next build's time.
-        if let Some((kept_mods, keys)) = &kept_keys {
-            let keeping = std::time::Instant::now();
-            match kept_store.save(&work, &built, &libraries, kept_mods, keys) {
-                Ok(0) => {}
-                Ok(_) => timed("Keeping the mods' libraries for the next build", keeping)?,
-                Err(error) => log_warning(&trf(
-                    "The mods' libraries couldn't be kept for the next build: {error}",
-                    &[("error", &error.to_string())],
-                )),
-            }
-        }
         append_log(&trf(
             "Native mods route: {route}.",
             &[("route", built.route.name())],
@@ -2036,6 +2023,19 @@ fn pipeline(
             cancellation,
         )?;
         timed("Installing the build", installing)?;
+        // Kept only once the launcher has verified and installed them; a failure here costs only the
+        // next build's time.
+        if let Some(kept) = &kept_keys {
+            let keeping = std::time::Instant::now();
+            match kept_store.save(&work, &built, &libraries, &kept.mods, &kept.keys) {
+                Ok(0) => {}
+                Ok(_) => timed("Keeping the mods' libraries for the next build", keeping)?,
+                Err(error) => log_warning(&trf(
+                    "The mods' libraries couldn't be kept for the next build: {error}",
+                    &[("error", &error.to_string())],
+                )),
+            }
+        }
     } else {
         // Used again: it counts as the newest of the builds kept (`prune`).
         let _ = fs::write(target.directory(&version).join(".installed"), "");
@@ -2044,20 +2044,22 @@ fn pipeline(
     Ok(built)
 }
 
+/// The build's mods as the kept-library store sees them, with each one's key.
+struct KeptKeys<'a> {
+    mods: Vec<kept::Mod<'a>>,
+    keys: std::collections::BTreeMap<String, String>,
+}
+
 /// Each kept-library key (`kept::keys`) for `ordered`, the build's mods in dependency order, from
 /// each mod's own files (`digests`, of the copies as found, and its uses table) and the mods in
 /// the build it links to. None when a mod's files couldn't be read: nothing is kept or reused.
-#[allow(clippy::type_complexity)]
 fn kept_keys<'a>(
     build: &kept::Build<'_>,
     ordered: &'a [Bundle],
     mods: &'a [Bundle],
     declared: &'a [Vec<dependencies::Dependency>],
     digests: &std::collections::HashMap<String, Option<String>>,
-) -> Option<(
-    Vec<kept::Mod<'a>>,
-    std::collections::BTreeMap<String, String>,
-)> {
+) -> Option<KeptKeys<'a>> {
     let present: std::collections::HashSet<&str> = mods
         .iter()
         .map(|bundle| bundle.manifest.id.as_str())
@@ -2094,7 +2096,7 @@ fn kept_keys<'a>(
         })
         .collect::<Option<_>>()?;
     let keys = kept::keys(build, &list);
-    Some((list, keys))
+    Some(KeptKeys { mods: list, keys })
 }
 
 fn digest_bytes(bytes: &[u8]) -> String {
