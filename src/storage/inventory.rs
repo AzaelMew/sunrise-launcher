@@ -7,13 +7,14 @@ use crate::{backend, instances, native_mods};
 use serde::Serialize;
 use std::sync::Arc;
 
-const BUILD_CACHES: [BuildCache; 9] = [
+const BUILD_CACHES: [BuildCache; 10] = [
     BuildCache::Source,
     BuildCache::Tools,
     BuildCache::PrebuiltOutput,
     BuildCache::InternalsSync,
     BuildCache::Prebuilt,
     BuildCache::ServerBuilds,
+    BuildCache::KeptMods,
     BuildCache::Rust,
     BuildCache::Cargo,
     BuildCache::Scratch,

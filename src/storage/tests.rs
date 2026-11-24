@@ -32,6 +32,7 @@ fn build_tools_remain_clearable_without_claiming_game_absence() {
     let home = Home::new();
     let storage = Storage::at(&home.0).unwrap();
     for (cache, directory) in [
+        (BuildCache::KeptMods, "native/kept-mods"),
         (BuildCache::Rust, "rust"),
         (BuildCache::Cargo, "cargo"),
         (BuildCache::Scratch, "tmp"),
@@ -228,6 +229,7 @@ fn child_cargo_locks_prevent_clear_and_survive_idle_cleanup() {
         (BuildCache::InternalsSync, "native/internals-sync"),
         (BuildCache::Prebuilt, "native/prebuilt"),
         (BuildCache::ServerBuilds, "native/server-builds"),
+        (BuildCache::KeptMods, "native/kept-mods"),
         (BuildCache::Rust, "rust"),
         (BuildCache::Cargo, "cargo"),
         (BuildCache::Scratch, "tmp"),

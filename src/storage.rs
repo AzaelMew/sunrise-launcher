@@ -97,6 +97,7 @@ pub enum BuildCache {
     InternalsSync,
     Prebuilt,
     ServerBuilds,
+    KeptMods,
     Rust,
     Cargo,
     Scratch,
@@ -111,6 +112,7 @@ impl BuildCache {
             Self::InternalsSync => "native/internals-sync",
             Self::Prebuilt => "native/prebuilt",
             Self::ServerBuilds => "native/server-builds",
+            Self::KeptMods => "native/kept-mods",
             Self::Rust => "rust",
             Self::Cargo => "cargo",
             Self::Scratch => "tmp",
@@ -119,7 +121,8 @@ impl BuildCache {
 
     fn access(self, path: &Path) -> Result<Access, Error> {
         match self {
-            Self::Rust | Self::Cargo | Self::Scratch => Ok(Access::BuildTools),
+            // Kept mod libraries are read only by a build, under the build lease.
+            Self::KeptMods | Self::Rust | Self::Cargo | Self::Scratch => Ok(Access::BuildTools),
             _ => Access::for_unit(path),
         }
     }
