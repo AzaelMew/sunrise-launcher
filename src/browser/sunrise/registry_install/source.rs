@@ -69,7 +69,7 @@ impl SourceProof {
         {
             return Err(changed_source_target());
         }
-        let before = managed_play::inputs(&instance.home, None)?;
+        let before = managed_play::inputs(&instance.home)?;
         Ok(Self {
             identity,
             base: base.into(),
@@ -446,7 +446,7 @@ fn bind_packages(
         {
             return Err(changed_source_target());
         }
-        let before = managed_play::inputs(&instance.home, None)?;
+        let before = managed_play::inputs(&instance.home)?;
         let mut selected = Vec::with_capacity(packages.len());
         for (pasted, mut predecessor) in packages {
             // An earlier Add only satisfies a pick after publishing these exact bytes.
@@ -492,8 +492,8 @@ fn bind_packages(
                 .collect::<Vec<_>>();
             let origins = github::predecessors(&instance.home, &entries)?;
             managed_play::copy_install_inputs(&instance.home, stage)?;
-            if managed_play::inputs(stage, None)? != before
-                || managed_play::inputs(&instance.home, None)? != before
+            if managed_play::inputs(stage)? != before
+                || managed_play::inputs(&instance.home)? != before
             {
                 return Err(changed_source_target());
             }

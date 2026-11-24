@@ -557,7 +557,7 @@ pub fn remove_mods(
         },
         &suspect,
     )?;
-    let reviewed_image = managed_play::inputs(home, None)?;
+    let reviewed_image = managed_play::inputs(home)?;
     (hooks.progress)(InstallProgress::Reviewing);
     if !approve(&impact) {
         return Err(InstallError::Cancelled);
@@ -575,7 +575,7 @@ pub fn remove_mods(
     (hooks.progress)(InstallProgress::Publishing);
     let reviewed = impact.into_evidence();
     edit.publish_install(proof, cancellation, &staged.retired, || {
-        if managed_play::inputs(home, None)? != reviewed_image {
+        if managed_play::inputs(home)? != reviewed_image {
             return Err(tr(
                 "The files prepared for removal changed. Nothing was removed; try again.",
             )

@@ -207,7 +207,7 @@ fn game_replacements_leave_registry_rows_alone_and_advance_the_same_base() {
         assert_eq!(current.base, previous.base);
         assert_eq!(current.resources, previous.resources);
         assert_eq!(profile.active().unwrap(), Some(current.clone()));
-        assert_eq!(inputs(&home, None).unwrap(), current.inputs);
+        assert_eq!(inputs(&home).unwrap(), current.inputs);
         assert_eq!(
             serde_json::from_slice::<Value>(&fs::read(&path).unwrap()).unwrap(),
             expected
@@ -517,7 +517,7 @@ fn home_read_recovers_the_first_switch_receipt_after_a_killed_commit() {
             BUILD,
             BUILD,
             &home,
-            inputs(&home, None).unwrap(),
+            inputs(&home).unwrap(),
             Generation::First {
                 profile: [4; 16],
                 resources: Resources::capture(BUILD, &stage).unwrap(),

@@ -72,8 +72,7 @@ pub fn scan_packages(home: &Path) -> Result<Vec<ScannedPackage>, String> {
 }
 
 /// Hash actual input nodes (not a display manifest), including opaque entries in the mod roots.
-/// `repaired` is a browser-row postimage to be published in the same exact journal.
-pub(crate) fn inputs(home: &Path, repaired: Option<&[u8]>) -> Result<[u8; 32], String> {
+pub(crate) fn inputs(home: &Path) -> Result<[u8; 32], String> {
     require_dir(home)?;
     let mut hash = Sha256::new();
     let browser = home.join("mod-browser");
@@ -91,10 +90,7 @@ pub(crate) fn inputs(home: &Path, repaired: Option<&[u8]>) -> Result<[u8; 32], S
     ] {
         hash.update(rel.as_bytes());
         hash.update([0]);
-        if let (crate::browser::installed::MANIFEST, Some(bytes)) = (rel, repaired) {
-            hash.update([1]);
-            hash.update(Sha256::digest(bytes));
-        } else if matches!(rel, mod_list::DIR | mod_list::NATIVE_DIR) {
+        if matches!(rel, mod_list::DIR | mod_list::NATIVE_DIR) {
             if let Some(digest) = super::artifact::tree(&home.join(rel), false)? {
                 hash.update([2]);
                 hash.update(digest);
@@ -189,9 +185,9 @@ mod tests {
         assert_eq!(inventory.len(), 1);
         assert!(inventory[0].directory);
         assert_eq!(inventory[0].manifest.id, "lantern");
-        let before = inputs(home, None).unwrap();
+        let before = inputs(home).unwrap();
         fs::write(unpacked.join("local-addition"), b"different bytes").unwrap();
-        assert_ne!(inputs(home, None).unwrap(), before);
+        assert_ne!(inputs(home).unwrap(), before);
         let archive = home.join(mod_list::NATIVE_DIR).join("different-name.smod");
         fs::create_dir_all(archive.parent().unwrap()).unwrap();
         fs::write(archive, manifest::Package::write_files(&body, &[]).unwrap()).unwrap();

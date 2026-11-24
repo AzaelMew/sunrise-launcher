@@ -145,7 +145,7 @@ fn source_install(fixture: Fixture, approve: Option<bool>) {
     }
     let count = Cell::new(0);
     install_target(&fixture.instance).unwrap();
-    let before = managed_play::inputs(fixture.home(), None).unwrap();
+    let before = managed_play::inputs(fixture.home()).unwrap();
     let result = add(&fixture, root, |roots, dependencies| {
         count.set(count.get() + 1);
         assert_eq!(
@@ -165,7 +165,7 @@ fn source_install(fixture: Fixture, approve: Option<bool>) {
                 .collect::<Vec<_>>(),
             [(LIB, "1.1.0"), (FARMER, "3.6.30-sunrise.1")]
         );
-        assert_eq!(managed_play::inputs(fixture.home(), None).unwrap(), before);
+        assert_eq!(managed_play::inputs(fixture.home()).unwrap(), before);
         let approve = approve.expect("unlisted dependency should never be offered");
         Ok(approve)
     });
@@ -195,7 +195,7 @@ fn source_install(fixture: Fixture, approve: Option<bool>) {
         );
     }
     if approve != Some(true) {
-        assert_eq!(managed_play::inputs(fixture.home(), None).unwrap(), before);
+        assert_eq!(managed_play::inputs(fixture.home()).unwrap(), before);
     }
     assert!(!fixture.home().join(crate::profile_txn::POINTER).exists());
 }
@@ -250,7 +250,7 @@ fn stable_refuses_a_source_mod_whose_required_mod_isnt_installed() {
                 "[dependencies]\nported_farmersdelight='^1'",
             );
             fs::create_dir_all(fixture.home()).unwrap();
-            let before = managed_play::inputs(fixture.home(), None).unwrap();
+            let before = managed_play::inputs(fixture.home()).unwrap();
             let result = add(&fixture, root, |_, _| {
                 panic!("a missing Stable dependency must not reach consent")
             });
@@ -262,7 +262,7 @@ fn stable_refuses_a_source_mod_whose_required_mod_isnt_installed() {
                 ))
             );
             assert!(github_mods::origin(fixture.home(), ROOT).is_none());
-            assert_eq!(managed_play::inputs(fixture.home(), None).unwrap(), before);
+            assert_eq!(managed_play::inputs(fixture.home()).unwrap(), before);
         },
     );
 }

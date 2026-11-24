@@ -852,7 +852,7 @@ impl Active {
     ) -> Result<Self, String> {
         scan_packages(home)?;
         verify_included(base, executable, home)?;
-        if inputs(home, None)? != epoch {
+        if inputs(home)? != epoch {
             return Err(unsettled!());
         }
         let base = Artifact::capture(base)?;

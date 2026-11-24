@@ -52,7 +52,7 @@ impl Profile {
     ) -> Result<Edit<'_>, String> {
         let home = self.home().to_owned();
         let manifest = game_lock(&home)?;
-        let before = inputs(&home, None)?;
+        let before = inputs(&home)?;
         let basis = match self.active()? {
             Some(active) => {
                 active.verify_artifacts()?;
@@ -126,7 +126,7 @@ impl Profile {
     pub(crate) fn begin_pending_edit(&mut self) -> Result<Edit<'_>, String> {
         let home = self.home().to_owned();
         let _manifest = game_lock(&home)?;
-        let before = inputs(&home, None)?;
+        let before = inputs(&home)?;
         let basis = match self.active()? {
             Some(active) => {
                 active.verify_artifacts()?;
@@ -155,7 +155,7 @@ impl Profile {
     pub(crate) fn begin_switch(&mut self, tag: &str) -> Result<Option<Edit<'_>>, String> {
         let home = self.home().to_owned();
         let manifest = game_lock(&home)?;
-        let before = inputs(&home, None)?;
+        let before = inputs(&home)?;
         let old = self.active()?;
         if let Some(active) = &old {
             active.verify_artifacts()?;
@@ -274,9 +274,7 @@ impl Edit<'_> {
             .tempdir_in(self.stage().path())
             .map_err(|e| at(self.stage().path(), e))?;
         copy_install_inputs(&self.home, candidate.path())?;
-        if inputs(candidate.path(), None)? != self.before
-            || inputs(&self.home, None)? != self.before
-        {
+        if inputs(candidate.path())? != self.before || inputs(&self.home)? != self.before {
             return Err(unsettled!());
         }
         Ok(candidate)
@@ -310,7 +308,7 @@ impl Edit<'_> {
             }
             Basis::Switch { .. } => return Err(unsettled!()),
         };
-        if inputs(&self.home, None)? != self.before || inputs(candidate, None)? != checked_inputs {
+        if inputs(&self.home)? != self.before || inputs(candidate)? != checked_inputs {
             return Err(unsettled!());
         }
         let files = changed_files(&self.home, candidate)?;
@@ -321,9 +319,7 @@ impl Edit<'_> {
         let mut authorization = None;
         stage.seal_files(None, &files)?.publish(|| {
             authorization = Some(authorize()?);
-            if inputs(&self.home, None)? != self.before
-                || inputs(candidate, None)? != checked_inputs
-            {
+            if inputs(&self.home)? != self.before || inputs(candidate)? != checked_inputs {
                 return Err(unsettled!());
             }
             cancellation.begin_publication()
@@ -338,7 +334,7 @@ impl Edit<'_> {
         progress: impl Fn(native_mods::Step),
         log: Option<&dyn Fn(std::sync::Arc<str>)>,
     ) -> Result<CandidateImage, native_mods::Failed> {
-        let before = inputs(candidate, None)?;
+        let before = inputs(candidate)?;
         let preferred = match &self.basis {
             Basis::Active(old, _) => old.executable(),
             Basis::First(first) => first.preferred_image(),
@@ -355,7 +351,7 @@ impl Edit<'_> {
             progress,
             log,
         )?;
-        if inputs(candidate, None)? != before {
+        if inputs(candidate)? != before {
             return Err(unsettled!().into());
         }
         Ok(CandidateImage {
@@ -457,7 +453,7 @@ impl Edit<'_> {
         let _manifest = game_lock(&self.home)?;
         crate::browser::installed::recover_game_install(&self.home)?;
         let _references = ReferencePublication::begin(&self.home)?;
-        if inputs(&self.home, None)? != self.before {
+        if inputs(&self.home)? != self.before {
             return Err(unsettled!());
         }
         let (mut active, stage) = match self.basis {
@@ -557,9 +553,7 @@ impl Edit<'_> {
             || {
                 authorization = Some(authorize()?);
                 active.verify_artifacts()?;
-                if inputs(&self.home, None)? != self.before
-                    || inputs(&proof.candidate, None)? != proof.inputs
-                {
+                if inputs(&self.home)? != self.before || inputs(&proof.candidate)? != proof.inputs {
                     return Err(unsettled!());
                 }
                 cancellation.begin_publication()?;

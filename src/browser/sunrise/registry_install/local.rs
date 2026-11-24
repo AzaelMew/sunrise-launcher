@@ -45,7 +45,7 @@ pub fn install_local(
         progress,
         approve,
     )?;
-    let checked_inputs = managed_play::inputs(next.path(), None)?;
+    let checked_inputs = managed_play::inputs(next.path())?;
     check_cancelled(cancellation)?;
     progress(InstallProgress::Publishing);
     let result = edit.publish_pending(next.path(), checked_inputs, cancellation, || {
@@ -84,7 +84,7 @@ pub fn install_local_at(
                 tr("Finish the profile's first Play before changing mods.").into(),
             ));
         }
-        let before = managed_play::inputs(home, None)?;
+        let before = managed_play::inputs(home)?;
         // Under Admission and the home lock: read the profile's own pointer, as Profile::active
         // does. display_active would refuse while any other profile publishes.
         let active = managed_play::Active::read_pointer(home)?;
@@ -105,9 +105,7 @@ pub fn install_local_at(
         let _lock =
             sunrise_launcher_smod::install_lock::lock_home(home).map_err(|e| at(home, e))?;
         managed_play::copy_install_inputs(home, next.path())?;
-        if managed_play::inputs(next.path(), None)? != before
-            || managed_play::inputs(home, None)? != before
-        {
+        if managed_play::inputs(next.path())? != before || managed_play::inputs(home)? != before {
             return Err(InstallError::Unproved(
                 tr(
                     "The profile changed while preparing this install. Nothing was changed; try again.",
@@ -125,15 +123,15 @@ pub fn install_local_at(
         progress,
         approve,
     )?;
-    let checked_inputs = managed_play::inputs(next.path(), None)?;
+    let checked_inputs = managed_play::inputs(next.path())?;
     check_cancelled(cancellation)?;
     progress(InstallProgress::Publishing);
     let result = (|| {
         let _lock =
             sunrise_launcher_smod::install_lock::lock_home(home).map_err(|e| at(home, e))?;
         crate::browser::installed::recover_game_install(home).map_err(String::from)?;
-        if managed_play::inputs(home, None)? != before
-            || managed_play::inputs(next.path(), None)? != checked_inputs
+        if managed_play::inputs(home)? != before
+            || managed_play::inputs(next.path())? != checked_inputs
         {
             return Err(tr(
                 "The profile changed while preparing this install. Nothing was changed; try again.",
@@ -152,8 +150,8 @@ pub fn install_local_at(
             } else {
                 None
             };
-            if managed_play::inputs(home, None)? != before
-                || managed_play::inputs(next.path(), None)? != checked_inputs
+            if managed_play::inputs(home)? != before
+                || managed_play::inputs(next.path())? != checked_inputs
             {
                 return Err(tr(
                     "The profile changed while preparing this install. Nothing was changed; try again.",

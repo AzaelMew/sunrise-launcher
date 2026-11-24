@@ -691,7 +691,7 @@ fn a_failed_first_download_can_be_followed_by_a_mod_change_and_play() {
                     UNAVAILABLE.into(),
                     UNAVAILABLE.into(),
                     [1; 16],
-                    super::super::inputs(&home, None)?,
+                    super::super::inputs(&home)?,
                     json!({"kind":"download", "archive":archive}),
                 ))
             },
@@ -826,7 +826,7 @@ fn windows_bound_x64_fallback_survives_pending_retry_and_committed_replay() {
                         BUILD.into(),
                         BUILD.into(),
                         [1; 16],
-                        super::super::inputs(&home, None).unwrap(),
+                        super::super::inputs(&home).unwrap(),
                         json!({"kind":"download", "archive":{
                             "source":BUILD, "file":"sunrise-windows-x64.zip", "size":0,
                             "requested":"arm64", "time":"",

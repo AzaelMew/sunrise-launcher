@@ -186,7 +186,7 @@ pub(super) fn edit_github(
     let previous = {
         let _home = profile.lock_inputs()?;
         if let Some(source) = source {
-            if managed_play::inputs(&instance.home, None)? != source.before
+            if managed_play::inputs(&instance.home)? != source.before
                 || profile.active()?.as_ref() != source.active
             {
                 return Err(InstallError::Source(super::source::changed_source_target()));
@@ -211,7 +211,7 @@ pub(super) fn edit_github(
     if let Some(source) = source {
         if edit.base() != source.base
             || edit.current() != source.active
-            || managed_play::inputs(old.path(), None)? != source.before
+            || managed_play::inputs(old.path())? != source.before
         {
             return Err(InstallError::Source(super::source::changed_source_target()));
         }
@@ -251,7 +251,7 @@ pub(super) fn edit_github(
         }
         _ => check_graph()?,
     }
-    let reviewed_inputs = managed_play::inputs(home, None)?;
+    let reviewed_inputs = managed_play::inputs(home)?;
     let review = if previous.is_empty() {
         None
     } else {
@@ -287,7 +287,7 @@ pub(super) fn edit_github(
         Some((suspect, impact.into_evidence()))
     };
     let unchanged_candidate = || {
-        if managed_play::inputs(home, None)? != reviewed_inputs {
+        if managed_play::inputs(home)? != reviewed_inputs {
             return Err(
                 tr("The staged GitHub packages changed. Nothing was changed; try again.")
                     .to_owned(),
