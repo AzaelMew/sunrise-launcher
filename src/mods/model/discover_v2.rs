@@ -70,8 +70,6 @@ pub(in crate::mods) enum CardFit {
     DoesNotFitHere { build_label: String },
     /// The index says nothing of the build, and this computer is checking the newest release.
     Checking { build_label: String },
-    /// The index doesn't list the build at all: Discover says so once, not on every card.
-    Unlisted { build_label: String },
     /// The project or every one of its releases is taken down in `index.revoked`.
     Revoked(String),
     /// The selected profile has no game build yet.
@@ -105,18 +103,9 @@ impl CardFit {
     }
 
     /// Whether a card that can't be installed is drawn faded: not while its fit is being
-    /// checked, and not when Discover says once that the build isn't listed.
+    /// checked.
     pub(in crate::mods) fn faded(&self) -> bool {
-        !self.fits() && !matches!(self, CardFit::Checking { .. } | CardFit::Unlisted { .. })
-    }
-
-    /// [`Self::reason`] as a card or list row says it: nothing for an unlisted build, which
-    /// Discover says once above the cards.
-    pub(in crate::mods) fn card_reason(&self) -> Option<String> {
-        match self {
-            CardFit::Unlisted { .. } => None,
-            _ => self.reason(),
-        }
+        !self.fits() && !matches!(self, CardFit::Checking { .. })
     }
 
     /// The reason a card is greyed out and cannot be installed on the selected profile.
@@ -137,7 +126,6 @@ impl CardFit {
             CardFit::Checking { build_label } => {
                 Some(trf("Checking fit for {build}…", &[("build", build_label)]))
             }
-            CardFit::Unlisted { build_label } => Some(unlisted_reason(build_label)),
             CardFit::Revoked(why) => Some(trf("Taken down: {reason}", &[("reason", why)])),
             CardFit::NoBuild => Some(tr("No game build selected").to_owned()),
         }
@@ -187,18 +175,8 @@ pub(in crate::mods) enum ReleaseVerdict {
     FitsHere,
     DoesNotFitHere(String),
     Checking(String),
-    /// The index doesn't list the build.
-    Unlisted(String),
     Revoked(String),
     NoBuild,
-}
-
-/// What a mod says when the index doesn't list the profile's build.
-fn unlisted_reason(build: &str) -> String {
-    trf(
-        "{build} isn't in the Sunrise registry yet, so its mods can't be installed.",
-        &[("build", build)],
-    )
 }
 
 /// This computer's fit checks for one build: what was found, and what is being checked now.
@@ -210,13 +188,15 @@ pub(in crate::mods) struct LocalFits {
 }
 
 impl LocalFits {
-    /// What this computer found for `build`, with every unanswered gap marked as being checked
-    /// when `running`.
+    /// What this computer found for `build`, listed in the index or not, with every unanswered
+    /// gap marked as being checked when `running`.
     pub(in crate::mods) fn read(index: &Index, build: Option<&str>, running: bool) -> Self {
-        let Some((build, listed)) = build.and_then(|b| Some((b, index.build(b)?))) else {
+        let Some(build) = build else {
             return Self::default();
         };
-        let found = local_fit::kept(&listed.commit);
+        let found = local_fit::commit_of(index, build)
+            .map(|commit| local_fit::kept(&commit))
+            .unwrap_or_default();
         let checking = if running {
             local_fit::gaps(index, build)
                 .into_iter()
@@ -229,7 +209,7 @@ impl LocalFits {
         Self { found, checking }
     }
 
-    /// The verdict for a release the index says nothing of on a listed `build`.
+    /// The verdict for a release the index says nothing of on `build`.
     fn verdict(&self, release: &Release, label: String) -> ReleaseVerdict {
         let sha256 = release.file.sha256.to_ascii_lowercase();
         match self.found.get(&sha256) {
@@ -265,7 +245,6 @@ impl ReleaseVerdict {
             ReleaseVerdict::Checking(build) => {
                 Some(trf("Checking fit for {build}…", &[("build", build)]))
             }
-            ReleaseVerdict::Unlisted(build) => Some(unlisted_reason(build)),
             ReleaseVerdict::DoesNotFit(build) => {
                 Some(trf("Doesn't fit {build}", &[("build", build)]))
             }
@@ -422,9 +401,6 @@ fn release_verdict(
     match release.fit_verdict(build) {
         FitVerdict::Fits => ReleaseVerdict::Fits,
         FitVerdict::DoesNotFit => ReleaseVerdict::DoesNotFit(build_label(build)),
-        FitVerdict::Unknown if index.build(build).is_none() => {
-            ReleaseVerdict::Unlisted(build_label(build))
-        }
         FitVerdict::Unknown => local.verdict(release, build_label(build)),
     }
 }
@@ -506,7 +482,6 @@ fn project_fit(
         ReleaseVerdict::DoesNotFit(build_label) => CardFit::DoesNotFit { build_label },
         ReleaseVerdict::DoesNotFitHere(build_label) => CardFit::DoesNotFitHere { build_label },
         ReleaseVerdict::Checking(build_label) => CardFit::Checking { build_label },
-        ReleaseVerdict::Unlisted(build_label) => CardFit::Unlisted { build_label },
         _ => CardFit::NotCheckedYet {
             build_label: build_label(build),
         },
@@ -624,14 +599,14 @@ fn relevance_score(card: &V2Card, full_query: &str, words: &[String]) -> u32 {
     score
 }
 
-/// Indices into `cards` matching `filters`, ordered by `filters.sort`.
-/// Whether the index lists `exact_build` among its offered builds. Discover uses only the index's
-/// precomputed fits, so a profile on an unlisted build has no fitting mods to show; a profile
-/// without a build is handled by its own empty state.
+/// Whether the index lists `exact_build` among its offered builds: Discover notes once that an
+/// unlisted build's mods are checked on this computer. A profile without a build is handled by
+/// its own empty state.
 pub(in crate::mods) fn build_listed(index: &Index, exact_build: Option<&str>) -> bool {
     exact_build.is_none_or(|build| index.build(build).is_some())
 }
 
+/// Indices into `cards` matching `filters`, ordered by `filters.sort`.
 pub(in crate::mods) fn discover(cards: &[V2Card], filters: &V2Filters) -> Vec<usize> {
     let words = query_words(&filters.text);
     let full_query = filters.text.trim().to_lowercase();
@@ -1503,12 +1478,21 @@ mod tests {
             "a card being checked isn't drawn as unfit"
         );
 
-        // A build the index doesn't list is said once by Discover, not on each card.
-        let unlisted = cards(&index, Some("dev-2026-11-30-1234567"), &label_build, &local);
-        assert!(unlisted
-            .iter()
-            .all(|c| matches!(c.fit, CardFit::Unlisted { .. })
-                && c.fit.card_reason().is_none()
-                && !c.fit.faded()));
+        // On a build the index doesn't list, every card takes this computer's answer, the one
+        // the index judged only for another build included.
+        let unlisted = |id: &str| {
+            cards(&index, Some("dev-2026-11-30-1234567"), &label_build, &local)
+                .into_iter()
+                .find(|c| c.id == id)
+                .unwrap()
+                .fit
+        };
+        assert!(matches!(unlisted("AAAAAAAA"), CardFit::FitsHere { .. }));
+        assert!(matches!(
+            unlisted("BBBBBBBB"),
+            CardFit::DoesNotFitHere { .. }
+        ));
+        assert!(matches!(unlisted("CCCCCCCC"), CardFit::FitsHere { .. }));
+        assert!(matches!(unlisted("DDDDDDDD"), CardFit::Checking { .. }));
     }
 }
