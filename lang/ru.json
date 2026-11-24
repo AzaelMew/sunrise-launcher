@@ -1947,5 +1947,7 @@
   "About {minutes} min left": "About {minutes} min left",
   "About {hours} hr left": "About {hours} hr left",
   "About {hours} hr {minutes} min left": "About {hours} hr {minutes} min left",
-  "{status} · {eta}": "{status} · {eta}"
+  "{status} · {eta}": "{status} · {eta}",
+  "Symbolic links and reparse points cannot be relocated: {path}": "Symbolic links and reparse points cannot be relocated: {path}",
+  "Could not copy the earlier launcher's data: {error}\n\nFix the earlier launcher's data folder or reconnect its drive, then restart Sunrise to try again.": "Could not copy the earlier launcher's data: {error}\n\nFix the earlier launcher's data folder or reconnect its drive, then restart Sunrise to try again."
 }
