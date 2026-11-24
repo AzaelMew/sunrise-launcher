@@ -533,7 +533,7 @@ impl Launcher {
                         }
                         plan = Some(
                             if request.as_ref().and_then(|p| p.checked.get()) == Some(&true) {
-                                tr("The installed mod files fit this build.")
+                                tr("Every mod in this profile has a release for this build.")
                             } else {
                                 tr("The mod changes aren't known until Sunrise checks this build.")
                             },
