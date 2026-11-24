@@ -273,10 +273,13 @@ def item(path: Path, head: str) -> str:
     depth, at = 0, found.end()
     while at < len(source):
         rest = source[at:]
+        char = re.match(r"'(\\.|[^\\'])'", rest)
         if rest.startswith("//"):
             at = source.find("\n", at)
         elif rest.startswith('"'):
             at = re.compile(r'"(\\.|[^"\\])*"', re.S).match(source, at).end() - 1
+        elif char:
+            at += len(char.group(0)) - 1
         elif rest[0] in "{[(":
             depth += 1
         elif rest[0] in "}])":
