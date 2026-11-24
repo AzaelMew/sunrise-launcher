@@ -114,14 +114,15 @@ pub(super) fn keys(build: &Build<'_>, mods: &[Mod<'_>]) -> BTreeMap<String, Stri
         links.sort_unstable();
         links.dedup();
         let mut parts = vec![base.as_str(), m.id, m.files.as_str()];
-        let linked: Vec<String> = links
+        // Linked to a mod with no key (one that comes later, or has none itself): no key either,
+        // so it is never kept or reused.
+        let Some(linked) = links
             .iter()
-            .map(|id| match keys.get(*id) {
-                Some(key) => format!("{id}={key}"),
-                // Linked to a mod that comes later: never reused.
-                None => format!("{id}=?{}", m.id),
-            })
-            .collect();
+            .map(|id| Some(format!("{id}={}", keys.get(*id)?)))
+            .collect::<Option<Vec<String>>>()
+        else {
+            continue;
+        };
         parts.extend(linked.iter().map(String::as_str));
         keys.insert(m.id.to_owned(), hash_parts(parts));
     }
@@ -287,7 +288,7 @@ impl Kept {
             })
             .collect();
         let mut kept = 0;
-        for m in mods {
+        'mods: for m in mods {
             let Some(key) = keys.get(m.id) else {
                 continue;
             };
@@ -318,19 +319,24 @@ impl Kept {
             }
             let mut files = BTreeMap::new();
             // The verified bytes: the copy must hash as `verify_outputs` found them.
-            let sha256 = self.store_blob(&source)?;
-            if sha256 != library.sha256 {
-                return Err(invalid());
-            }
-            files.insert(library.name.clone(), sha256);
+            files.insert(
+                library.name.clone(),
+                self.store_blob(&source, Some(&library.sha256))?,
+            );
             for name in sidecars(&library.name) {
                 let file = folder.join(&name);
                 match fs::symlink_metadata(&file) {
                     Ok(meta) if meta.is_file() && !crate::native_cache::linked(&meta) => {
-                        files.insert(name, self.store_blob(&file)?);
+                        files.insert(name, self.store_blob(&file, None)?);
                     }
                     Ok(_) => return Err(invalid()),
-                    Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                    // The tool skips a mod only by its fingerprint: without one, the library
+                    // would be seeded and compiled again anyway.
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                        if name.ends_with(".fingerprint") {
+                            continue 'mods;
+                        }
+                    }
                     Err(error) => return Err(error),
                 }
             }
@@ -372,9 +378,10 @@ impl Kept {
         Err(invalid())
     }
 
-    /// Stores `file` under its SHA-256, which it returns. A blob already there is left alone:
-    /// it is checked when it is used.
-    fn store_blob(&self, file: &Path) -> io::Result<String> {
+    /// Stores `file` under its SHA-256, which it returns; with `expected`, only when the copy
+    /// hashes to it. A blob already there with those bytes is dated now, so a prune running
+    /// meanwhile keeps it; one that isn't (damaged, or a link) is replaced.
+    fn store_blob(&self, file: &Path, expected: Option<&str>) -> io::Result<String> {
         let blobs = self.blobs();
         fs::create_dir_all(&blobs)?;
         let staged = tempfile::Builder::new()
@@ -382,15 +389,27 @@ impl Kept {
             .tempfile_in(&blobs)?;
         fs::copy(file, staged.path())?;
         let sha256 = sha256_file(staged.path()).map_err(io::Error::other)?;
+        if expected.is_some_and(|expected| expected != sha256) {
+            return Err(invalid());
+        }
         let blob = blobs.join(&sha256);
-        if fs::symlink_metadata(&blob).is_err() {
+        let now = std::time::SystemTime::now();
+        let intact = fs::symlink_metadata(&blob).is_ok_and(|meta| {
+            meta.is_file()
+                && !crate::native_cache::linked(&meta)
+                && sha256_file(&blob).is_ok_and(|found| found == sha256)
+        });
+        if intact {
+            fs::File::options()
+                .write(true)
+                .open(&blob)?
+                .set_modified(now)?;
+        } else {
             // Dated now, not with the copied file's time, for the grace before pruning.
-            staged
-                .as_file()
-                .set_modified(std::time::SystemTime::now())?;
+            staged.as_file().set_modified(now)?;
             // Another attempt storing the same bytes at the same time is harmless: either copy
-            // is the same content, and a failed rename leaves the one already there.
-            let _ = staged.persist_noclobber(&blob);
+            // is the same content, and a refused rename leaves the other one there.
+            let _ = staged.persist(&blob);
         }
         Ok(sha256)
     }

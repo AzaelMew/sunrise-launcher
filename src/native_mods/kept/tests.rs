@@ -362,6 +362,39 @@ fn a_library_whose_bytes_changed_after_verification_is_refused() {
     fs::write(folder(&work).join("mod_ae2.dll"), b"swapped").unwrap();
     assert!(kept.save(&work, &built, &libraries, &list, &keys).is_err());
     assert!(!kept.index_path(&keys["ae2"]).exists());
+    // The unverified bytes never become a blob.
+    let swapped = sha256_file(&folder(&work).join("mod_ae2.dll")).unwrap();
+    assert!(!kept.blobs().join(swapped).exists());
+}
+
+#[test]
+fn a_mod_without_its_fingerprint_is_not_kept() {
+    let dir = tempfile::tempdir().unwrap();
+    let kept = Kept::new(&dir.path().join("native"));
+    let list = mods(&[]);
+    let keys = keys(&build(), &list);
+    let (work, built, libraries) = work_with(dir.path(), ALL);
+    fs::remove_file(folder(&work).join("mod_hnn.fingerprint")).unwrap();
+    assert_eq!(
+        kept.save(&work, &built, &libraries, &list, &keys).unwrap(),
+        2
+    );
+    assert!(!kept.index_path(&keys["hnn"]).exists());
+}
+
+#[test]
+fn a_damaged_blob_is_replaced_when_its_bytes_are_kept_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let kept = Kept::new(&dir.path().join("native"));
+    let list = mods(&[]);
+    let keys = keys(&build(), &list);
+    let (work, built, libraries) = work_with(dir.path(), ALL);
+    kept.save(&work, &built, &libraries, &list, &keys).unwrap();
+    let hnn = libraries.iter().find(|l| l.name == "mod_hnn.dll").unwrap();
+    fs::write(kept.blobs().join(&hnn.sha256), b"not hnn").unwrap();
+    kept.save(&work, &built, &libraries, &list, &keys).unwrap();
+    let next = dir.path().join("next");
+    assert_eq!(kept.seed(&next, &list, &keys), ["ae2", "ftb", "hnn"]);
 }
 
 #[test]
