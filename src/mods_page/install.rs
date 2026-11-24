@@ -66,6 +66,7 @@ struct Running {
     target: Option<String>,
     requests: Vec<RequestView>,
     stage: InstallProgress,
+    eta: crate::eta::StageEta,
     cancellation: Cancellation,
     github: Option<Arc<GithubInput>>,
     local: Option<Arc<LocalInput>>,
@@ -562,6 +563,11 @@ impl Installs {
             Worker::Progress(step) => {
                 if let Some(run) = &mut self.running {
                     run.stage = step;
+                    run.eta.update(
+                        crate::eta::install_stage_key(step),
+                        stage_fraction(step),
+                        Instant::now(),
+                    );
                 }
             }
             Worker::SourceRejected(id, error) => {
@@ -1026,6 +1032,14 @@ impl Launcher {
         self.mods.installs.stage()
     }
 
+    pub(crate) fn registry_eta(&self) -> Option<Duration> {
+        self.mods
+            .installs
+            .running
+            .as_ref()
+            .and_then(|run| run.eta.remaining(Instant::now()))
+    }
+
     pub(crate) fn github_target(&self) -> Result<GithubTarget, String> {
         if self.accounts.selected().is_none() && !sunrise_launcher::developer_offline::selected() {
             return Err(tr("Installs after you sign in").into());
@@ -1296,6 +1310,7 @@ impl Launcher {
             target: request.target.clone(),
             requests: vec![request.view.clone()],
             stage: InstallProgress::Checking,
+            eta: crate::eta::StageEta::default(),
             cancellation: cancellation.clone(),
             source,
             github: request.github.clone(),
@@ -1788,6 +1803,7 @@ mod tests {
                 target: first.target,
                 requests: vec![first.view],
                 stage: InstallProgress::Checking,
+                eta: crate::eta::StageEta::default(),
                 cancellation: Cancellation::default(),
                 github: None,
                 local: None,
