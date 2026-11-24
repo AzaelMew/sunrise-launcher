@@ -23,6 +23,10 @@ const MIN_SAMPLE_DT: f64 = 0.15;
 /// Hide the ETA if a determinate stage hasn't moved in this long.
 const STALL_TIMEOUT: Duration = Duration::from_secs(15);
 
+/// A fraction drop larger than this inside the same stage means a new sub-download started
+/// (for example Mojang's file sets or sequential mod downloads), so reset the estimator.
+const RESTART_DROP: f32 = 0.05;
+
 /// Smoothing factor for the progress rate EMA (`fraction / second`).
 const RATE_ALPHA: f64 = 0.25;
 
@@ -36,7 +40,7 @@ const MAX_FRACTION: f32 = 0.995;
 /// Discard absurdly large ETAs (> 3 hours).
 const MAX_ETA_SECS: f64 = 3.0 * 3600.0;
 
-/// Bounds for recording a historical preparation duration.
+/// Bounds for recording and reading a historical preparation duration.
 const MIN_RECORD_PREPARE_SECS: f64 = 2.0;
 const MAX_RECORD_PREPARE_SECS: f64 = 30.0 * 60.0;
 
@@ -45,6 +49,7 @@ const MAX_RECORD_PREPARE_SECS: f64 = 30.0 * 60.0;
 pub(crate) struct StageEta {
     stage: Option<u8>,
     started: Option<Instant>,
+    start_fraction: f32,
     last_sample: Option<(Instant, f32)>,
     last_advance: Option<Instant>,
     rate_ema: Option<f64>,
@@ -52,24 +57,34 @@ pub(crate) struct StageEta {
 }
 
 impl StageEta {
+    fn begin(&mut self, stage: u8, fraction: Option<f32>, now: Instant) {
+        self.stage = Some(stage);
+        self.started = Some(now);
+        self.start_fraction = fraction.unwrap_or(0.0);
+        self.last_sample = fraction.map(|f| (now, f));
+        self.last_advance = Some(now);
+        self.rate_ema = None;
+        self.last_fraction = self.start_fraction;
+    }
+
     /// Feed the current stage key and optional determinate fraction (`0.0..=1.0`).
-    /// Switching to a different `stage` resets the estimator cleanly.
+    /// Switching to a different `stage`, or restarting a sub-download inside the same stage,
+    /// resets the estimator cleanly.
     pub(crate) fn update(&mut self, stage: u8, fraction: Option<f32>, now: Instant) {
         let clamped = fraction
             .filter(|f| f.is_finite())
             .map(|f| f.clamp(0.0, 1.0));
         if self.stage != Some(stage) {
-            self.stage = Some(stage);
-            self.started = Some(now);
-            self.last_sample = clamped.map(|f| (now, f));
-            self.last_advance = Some(now);
-            self.rate_ema = None;
-            self.last_fraction = clamped.unwrap_or(0.0);
+            self.begin(stage, clamped, now);
             return;
         }
         let Some(f) = clamped else {
             return;
         };
+        if f + RESTART_DROP < self.last_fraction {
+            self.begin(stage, Some(f), now);
+            return;
+        }
         if f > self.last_fraction + 1e-4 {
             if let Some((prev_time, prev_f)) = self.last_sample {
                 let dt = now.saturating_duration_since(prev_time).as_secs_f64();
@@ -107,8 +122,9 @@ impl StageEta {
         }
         let rate = self.rate_ema.unwrap_or_else(|| {
             let secs = elapsed.as_secs_f64();
-            if secs > 0.0 {
-                self.last_fraction as f64 / secs
+            let gained = (self.last_fraction - self.start_fraction).max(0.0) as f64;
+            if secs > 0.0 && gained > 0.0 {
+                gained / secs
             } else {
                 0.0
             }
@@ -120,7 +136,7 @@ impl StageEta {
         if !remaining_secs.is_finite() || remaining_secs > MAX_ETA_SECS {
             return None;
         }
-        Some(Duration::from_secs_f64(remaining_secs.max(0.0)))
+        Duration::try_from_secs_f64(remaining_secs.max(0.0)).ok()
     }
 }
 
@@ -162,12 +178,14 @@ pub(crate) fn install_stage_key(step: InstallProgress) -> u8 {
 
 /// Format a remaining duration in calm, coarsely rounded words so it never jitters every second.
 pub(crate) fn format_eta(remaining: Duration) -> String {
-    let secs = remaining.as_secs_f64().round() as u64;
+    let secs = remaining
+        .as_secs()
+        .saturating_add(u64::from(remaining.subsec_nanos() >= 500_000_000));
     if secs < 5 {
         return tr("A few seconds left").into();
     }
     if secs <= 52 {
-        let rounded = (((secs + 2) / 5) * 5).clamp(5, 50);
+        let rounded = ((secs.saturating_add(2) / 5) * 5).clamp(5, 50);
         return trf(
             "About {seconds} sec left",
             &[("seconds", &rounded.to_string())],
@@ -176,7 +194,7 @@ pub(crate) fn format_eta(remaining: Duration) -> String {
     if secs <= 89 {
         return tr("About 1 min left").into();
     }
-    let total_mins = (secs + 30) / 60;
+    let total_mins = secs.saturating_add(30) / 60;
     if total_mins < 60 {
         return trf(
             "About {minutes} min left",
@@ -201,7 +219,10 @@ pub(crate) fn format_eta(remaining: Duration) -> String {
 /// Append a formatted ETA to a status line when one is available.
 pub(crate) fn with_eta(label: String, remaining: Option<Duration>) -> String {
     match remaining {
-        Some(duration) => format!("{label} · {}", format_eta(duration)),
+        Some(duration) => trf(
+            "{status} · {eta}",
+            &[("status", &label), ("eta", &format_eta(duration))],
+        ),
         None => label,
     }
 }
@@ -210,6 +231,11 @@ pub(crate) fn with_eta(label: String, remaining: Option<Duration>) -> String {
 struct Timings {
     #[serde(default)]
     prepare_secs: Option<f64>,
+}
+
+fn valid_prepare_secs(secs: f64) -> Option<f64> {
+    (secs.is_finite() && (MIN_RECORD_PREPARE_SECS..=MAX_RECORD_PREPARE_SECS).contains(&secs))
+        .then_some(secs)
 }
 
 fn timings_path() -> PathBuf {
@@ -222,10 +248,12 @@ fn cached_timings() -> &'static Mutex<Option<Timings>> {
 }
 
 fn load_from(path: &Path) -> Timings {
-    fs::read_to_string(path)
+    let mut timings = fs::read_to_string(path)
         .ok()
         .and_then(|text| serde_json::from_str::<Timings>(&text).ok())
-        .unwrap_or_default()
+        .unwrap_or_default();
+    timings.prepare_secs = timings.prepare_secs.and_then(valid_prepare_secs);
+    timings
 }
 
 fn save_to(path: &Path, timings: &Timings) {
@@ -240,44 +268,51 @@ fn save_to(path: &Path, timings: &Timings) {
         return;
     }
     let _ = fs::remove_file(&tmp);
-    let _ = fs::write(path, &bytes);
 }
 
 fn blend_prepare_secs(existing: Option<f64>, elapsed: Duration) -> Option<f64> {
-    let secs = elapsed.as_secs_f64();
-    if !secs.is_finite() || !(MIN_RECORD_PREPARE_SECS..=MAX_RECORD_PREPARE_SECS).contains(&secs) {
+    let existing = existing.and_then(valid_prepare_secs);
+    let Some(secs) = valid_prepare_secs(elapsed.as_secs_f64()) else {
         return existing;
-    }
+    };
     Some(match existing {
-        Some(prev) if prev.is_finite() && prev > 0.0 => {
-            HISTORY_ALPHA * secs + (1.0 - HISTORY_ALPHA) * prev
-        }
-        _ => secs,
+        Some(prev) => HISTORY_ALPHA * secs + (1.0 - HISTORY_ALPHA) * prev,
+        None => secs,
     })
 }
 
-/// Expected duration of `PrepareStep::Prepare` on this machine, from prior successful runs.
-pub(crate) fn expected_prepare_duration() -> Option<Duration> {
-    let mut guard = cached_timings().lock().ok()?;
-    let timings = guard.get_or_insert_with(|| load_from(&timings_path()));
-    timings
-        .prepare_secs
-        .filter(|s| s.is_finite() && *s >= MIN_RECORD_PREPARE_SECS)
-        .map(Duration::from_secs_f64)
+/// Load `eta-timings.json` off the window thread once at startup so render never touches disk.
+pub(crate) fn preload_timings() {
+    let path = timings_path();
+    std::thread::spawn(move || {
+        let loaded = load_from(&path);
+        if let Ok(mut guard) = cached_timings().lock() {
+            if guard.is_none() {
+                *guard = Some(loaded);
+            }
+        }
+    });
 }
 
-/// Record a completed `PrepareStep::Prepare` duration to improve future estimates.
+/// Expected duration of `PrepareStep::Prepare` on this machine, from the in-memory cache.
+pub(crate) fn expected_prepare_duration() -> Option<Duration> {
+    let guard = cached_timings().lock().ok()?;
+    let secs = guard.as_ref()?.prepare_secs.and_then(valid_prepare_secs)?;
+    Duration::try_from_secs_f64(secs).ok()
+}
+
+/// Record a completed `PrepareStep::Prepare` duration in memory and persist it off the window thread.
 pub(crate) fn record_prepare_duration(elapsed: Duration) {
     let path = timings_path();
     let updated = {
         let Ok(mut guard) = cached_timings().lock() else {
             return;
         };
-        let timings = guard.get_or_insert_with(|| load_from(&path));
+        let timings = guard.get_or_insert_with(Timings::default);
         timings.prepare_secs = blend_prepare_secs(timings.prepare_secs, elapsed);
         timings.clone()
     };
-    save_to(&path, &updated);
+    std::thread::spawn(move || save_to(&path, &updated));
 }
 
 #[cfg(test)]
@@ -301,6 +336,34 @@ mod tests {
         // Switching stage resets the estimator.
         eta.update(8, Some(0.05), t0 + Duration::from_secs(3));
         assert_eq!(eta.remaining(t0 + Duration::from_secs(3)), None);
+    }
+
+    #[test]
+    fn determinate_eta_resets_when_fraction_restarts_mid_stage() {
+        let mut eta = StageEta::default();
+        let t0 = Instant::now();
+        eta.update(3, Some(0.0), t0);
+        eta.update(3, Some(0.80), t0 + Duration::from_secs(4));
+        assert!(eta.remaining(t0 + Duration::from_secs(4)).is_some());
+
+        // Second file set starts back at 0.0 under the same stage key.
+        eta.update(3, Some(0.0), t0 + Duration::from_secs(5));
+        assert_eq!(eta.remaining(t0 + Duration::from_secs(5)), None);
+        eta.update(3, Some(0.25), t0 + Duration::from_secs(7));
+        let rem = eta.remaining(t0 + Duration::from_secs(7)).unwrap();
+        assert!((rem.as_secs_f64() - 6.0).abs() < 0.2, "got {rem:?}");
+    }
+
+    #[test]
+    fn fallback_rate_ignores_progress_present_when_stage_began() {
+        let mut eta = StageEta::default();
+        let t0 = Instant::now();
+        // Stage begins already 50% complete; tiny rapid updates stay under MIN_SAMPLE_DT.
+        eta.update(2, Some(0.50), t0);
+        eta.update(2, Some(0.501), t0 + Duration::from_millis(50));
+        // Only 0.001 gained over 2s -> rate ~0.0005/s, remaining ~998s (not ~2s from 0.501/2s).
+        let rem = eta.remaining(t0 + Duration::from_secs(2)).unwrap();
+        assert!(rem.as_secs() > 500, "got {rem:?}");
     }
 
     #[test]
@@ -353,20 +416,26 @@ mod tests {
             format_eta(Duration::from_secs(4500)),
             "About 1 hr 15 min left"
         );
+        // Huge duration never overflows.
+        let _ = format_eta(Duration::MAX);
     }
 
     #[test]
-    fn timings_round_trip_and_blend() {
+    fn timings_round_trip_blend_and_drop_out_of_range_values() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("eta-timings.json");
         let first = blend_prepare_secs(None, Duration::from_secs(20));
         assert_eq!(first, Some(20.0));
         let second = blend_prepare_secs(first, Duration::from_secs(30)).unwrap();
         assert!((second - 23.5).abs() < 1e-6, "got {second}");
-        // Out-of-range durations are ignored.
+        // Out-of-range durations are ignored, and corrupt stored values are dropped.
         assert_eq!(
             blend_prepare_secs(Some(second), Duration::from_millis(500)),
             Some(second)
+        );
+        assert_eq!(
+            blend_prepare_secs(Some(1e30), Duration::from_secs(15)),
+            Some(15.0)
         );
         save_to(
             &path,
@@ -376,5 +445,11 @@ mod tests {
         );
         let loaded = load_from(&path);
         assert!((loaded.prepare_secs.unwrap() - second).abs() < 1e-6);
+
+        // Damaged / huge values in eta-timings.json are dropped instead of panicking.
+        fs::write(&path, r#"{"prepare_secs": 1e30}"#).unwrap();
+        assert_eq!(load_from(&path).prepare_secs, None);
+        fs::write(&path, r#"{"prepare_secs": -10.0}"#).unwrap();
+        assert_eq!(load_from(&path).prepare_secs, None);
     }
 }

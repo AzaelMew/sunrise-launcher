@@ -1942,5 +1942,6 @@
   "About 1 min left": "About 1 min left",
   "About {minutes} min left": "About {minutes} min left",
   "About {hours} hr left": "About {hours} hr left",
-  "About {hours} hr {minutes} min left": "About {hours} hr {minutes} min left"
+  "About {hours} hr {minutes} min left": "About {hours} hr {minutes} min left",
+  "{status} · {eta}": "{status} · {eta}"
 }

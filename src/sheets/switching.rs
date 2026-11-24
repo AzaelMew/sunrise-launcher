@@ -579,11 +579,18 @@ impl Launcher {
                         let now = Instant::now();
                         let remaining = match running.progress {
                             InstallProgress::Minecraft(backend::PrepareStep::Prepare, _) => {
-                                backend::prepare_step_started()
-                                    .zip(crate::eta::expected_prepare_duration())
-                                    .and_then(|(started, expected)| {
-                                        crate::eta::remaining_from_expected(started, expected, now)
-                                    })
+                                match backend::prepare_step_state() {
+                                    (backend::PrepareStep::Prepare, Some(started)) => {
+                                        crate::eta::expected_prepare_duration().and_then(
+                                            |expected| {
+                                                crate::eta::remaining_from_expected(
+                                                    started, expected, now,
+                                                )
+                                            },
+                                        )
+                                    }
+                                    _ => None,
+                                }
                             }
                             _ => running.eta.remaining(now),
                         };
