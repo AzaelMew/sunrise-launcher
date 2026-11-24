@@ -417,12 +417,15 @@ fn manual_release_refresh_publishes_on_approval_and_keeps_old_files_on_decline()
             let archive = home.join(ARCHIVE);
             let sidecar = github_mods::origin_path(&home, ID);
 
+            // A GitHub release is unreviewed code, so its build asks, as the window's
+            // warning does; this answers yes for the fixture only. The answer is
+            // process-wide, and each of these tests runs in its own worker process.
+            crate::native_mods::ask_unreviewed_with(|found| {
+                found.iter().all(|package| package.name == "Native Lantern")
+            });
             let hooks = || InstallHooks {
                 progress: &|_| {},
-                native: &|_| Ok(true),
-                registry_crates: None,
                 continue_after_failure: &|_| false,
-                resolve: None,
                 cancellation: None,
             };
 
