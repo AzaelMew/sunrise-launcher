@@ -1165,7 +1165,7 @@ fn v2_switch_slot_planning_keeps_chosen_project_maps_verdicts_and_honors_pins() 
     let plan_unknown = plan_slot_for_build(&idx, "wayfinder", item, "26.3-0.9.0", &BTreeMap::new());
     assert!(matches!(
         plan_unknown,
-        SlotPlan::Hold(HeldReason::Unproved { ref build }) if build == "26.3-0.9.0"
+        SlotPlan::Hold(HeldReason::Unproved { ref build, .. }) if build == "26.3-0.9.0"
     ));
 
     // 4. Pinned version 1.0.0 in chosen-versions.json does NOT fit 26.3-0.1.1 -> Hold (NoFit),

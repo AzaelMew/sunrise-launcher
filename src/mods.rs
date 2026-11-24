@@ -183,6 +183,8 @@ struct InstalledRows {
     managed: Option<Box<sunrise_launcher::managed_play::Active>>,
     unbuilt: HashSet<String>,
     switch_held: std::collections::HashMap<String, sunrise_launcher::managed_play::HeldReason>,
+    /// Held local or source mods: their switch checks their exact bytes again.
+    local_holds: HashSet<String>,
 }
 
 const ADDED_PENDING: &str = "Added · builds when you play";
@@ -242,6 +244,17 @@ impl InstalledRows {
             .flat_map(|active| active.holds())
             .map(|hold| (hold.id().to_owned(), hold.reason().clone()))
             .collect();
+        let local_holds = active
+            .iter()
+            .flat_map(|active| active.holds())
+            .filter(|hold| {
+                !matches!(
+                    hold.source(),
+                    sunrise_launcher::managed_play::HeldSource::Registry { .. }
+                )
+            })
+            .map(|hold| hold.id().to_owned())
+            .collect();
         let unbuilt = native_status::pending(home, active.as_ref())
             .into_iter()
             .collect();
@@ -255,6 +268,7 @@ impl InstalledRows {
                 managed: active.map(Box::new),
                 unbuilt,
                 switch_held,
+                local_holds,
             },
             backup_notice,
         )))
@@ -361,7 +375,7 @@ impl InstalledRefresh<'_> {
 
 enum Event {
     /// Installed rows read for the requested folder and fingerprint, off the window thread.
-    Local(String, InstalledRead),
+    Local(String, Box<InstalledRead>),
     Enabled(
         PathBuf,
         actions::EnableNotice,
@@ -1052,7 +1066,7 @@ impl Launcher {
                 }
                 Event::Local(key, result) => {
                     if let Some(snap) = m.snapshot.as_mut().filter(|s| s.key == key) {
-                        let ready = snap.finish(result);
+                        let ready = snap.finish(*result);
                         m.home_mod_labels = None;
                         if ready {
                             let rows: HashSet<String> =
@@ -1157,7 +1171,7 @@ impl Launcher {
                     // Delay just the busy display retry, without holding any profile/cache lock.
                     std::thread::sleep(std::time::Duration::from_millis(100));
                 }
-                let _ = tx.send(Event::Local(worker_key, result));
+                let _ = tx.send(Event::Local(worker_key, Box::new(result)));
             });
             self.ui.mods.snapshot = Some(Snapshot {
                 key,
@@ -1447,7 +1461,11 @@ impl Launcher {
         for row in &mut rows {
             let held = snap.rows.switch_held.get(&row.id);
             if let Some(reason) = held {
-                row.held_for = Some(crate::sheets::build_name(reason.build()));
+                row.held_for = Some(model::Hold {
+                    build: crate::sheets::build_name(reason.build()),
+                    reason: reason.clone(),
+                    retry: snap.rows.local_holds.contains(&row.id),
+                });
                 row.on = false;
                 if !matches!(row.need, Some(model::Need::TakenDown(_))) {
                     row.need = None;
