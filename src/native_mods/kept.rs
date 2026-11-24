@@ -105,7 +105,8 @@ impl Build<'_> {
 }
 
 /// Each mod's key, given in dependency order: a mod's key covers the keys of the mods it links
-/// to, so a changed mod changes the key of every mod linking to it.
+/// to, so a changed mod changes the key of every mod linking to it. A mod linking to one without
+/// a key (one that comes later) has none: it is neither reused nor kept.
 pub(super) fn keys(build: &Build<'_>, mods: &[Mod<'_>]) -> BTreeMap<String, String> {
     let base = build.key();
     let mut keys: BTreeMap<String, String> = BTreeMap::new();
@@ -114,14 +115,13 @@ pub(super) fn keys(build: &Build<'_>, mods: &[Mod<'_>]) -> BTreeMap<String, Stri
         links.sort_unstable();
         links.dedup();
         let mut parts = vec![base.as_str(), m.id, m.files.as_str()];
-        let linked: Vec<String> = links
+        let Some(linked) = links
             .iter()
-            .map(|id| match keys.get(*id) {
-                Some(key) => format!("{id}={key}"),
-                // Linked to a mod that comes later: never reused.
-                None => format!("{id}=?{}", m.id),
-            })
-            .collect();
+            .map(|id| keys.get(*id).map(|key| format!("{id}={key}")))
+            .collect::<Option<Vec<String>>>()
+        else {
+            continue;
+        };
         parts.extend(linked.iter().map(String::as_str));
         keys.insert(m.id.to_owned(), hash_parts(parts));
     }

@@ -549,3 +549,22 @@ fn a_mod_without_an_import_library_is_still_kept() {
     assert_eq!(kept.seed(&next, &list, &keys), ["ae2", "ftb", "hnn"]);
     assert!(!folder(&next).join("libmod_hnn.dll.a").exists());
 }
+
+#[test]
+fn a_mod_linking_to_one_that_comes_later_has_no_key() {
+    let list = vec![
+        Mod {
+            id: "ftb",
+            files: "ftb-files".into(),
+            links: vec!["ae2"],
+        },
+        Mod {
+            id: "ae2",
+            files: "ae2-files".into(),
+            links: vec![],
+        },
+    ];
+    let keys = keys(&build(), &list);
+    assert!(!keys.contains_key("ftb"));
+    assert!(keys.contains_key("ae2"));
+}
