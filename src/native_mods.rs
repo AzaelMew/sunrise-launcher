@@ -41,7 +41,7 @@ pub use isolate::{kept as kept_left_out, kept_current, kept_stamp, Detail, LeftO
 pub use picker::{Route, Routes};
 pub use tool::Cancellation;
 mod workspace;
-pub(crate) use workspace::ATTEMPT_PREFIX;
+pub(crate) use workspace::{ATTEMPT_PREFIX, OLD_ATTEMPT_PREFIX};
 mod uses;
 
 // Settings and logs are shared by native-build and diagnostics tests.
@@ -1474,6 +1474,16 @@ fn pipeline(
     // The mods are copied first: the build and its key use the copy, whatever happens to the
     // folder meanwhile.
     let mut workspace = workspace::Workspace::new(&root()).map_err(|e| e.to_string())?;
+    if let Some(length) = workspace::too_deep(workspace.path()).filter(|_| cfg!(windows)) {
+        return Err(trf(
+            "The launcher's folder {folder} is too deep for Windows: a native build there needs paths of {length} characters, and Windows allows 259. Set SUNRISE_LAUNCHER_HOME to a shorter folder.",
+            &[
+                ("folder", &backend::build_dir().display().to_string()),
+                ("length", &length.to_string()),
+            ],
+        )
+        .into());
+    }
     let incoming = workspace.path().join("mods.incoming");
     let found = scan_bundles(folder)?;
     if found.is_empty() {
@@ -1931,7 +1941,7 @@ fn pipeline(
             copy_bundle(bundle, &compiled.join(&bundle.manifest.id))?;
         }
         let game = workspace.package(game).map_err(|e| e.to_string())?;
-        let work = workspace.path().join("work");
+        let work = workspace.work();
         let built = tool::build(
             &rust,
             program,
