@@ -189,11 +189,12 @@ fn valid_id(id: &str) -> bool {
 
 /// The index `list` as written. With a new entry (`adds`) it is refused when it would weigh
 /// more than [`MAX_INDEX`], before anything is written, so the saved skins stay as they were
-/// and can still be listed. A change that adds no entry (a removal, other arms) always goes
-/// through, so an index already over it can still be changed and made smaller.
+/// and can still be listed. Any change is refused when the written index would weigh more than
+/// [`MAX_INDEX_READ`], so rewriting a large legacy index never leaves one that can't be read.
 fn index_bytes(list: &[Saved], adds: bool) -> Result<Vec<u8>, String> {
-    let text = serde_json::to_string_pretty(list).map_err(|e| e.to_string())? + "\n";
-    if adds && text.len() as u64 > MAX_INDEX {
+    let text = serde_json::to_string(list).map_err(|e| e.to_string())? + "\n";
+    let limit = if adds { MAX_INDEX } else { MAX_INDEX_READ };
+    if text.len() as u64 > limit {
         return Err(tr("There are too many saved skins. Remove some, then try again.").into());
     }
     Ok(text.into_bytes())
@@ -591,7 +592,7 @@ mod tests {
             name,
             slim: false,
         };
-        let len = |all: &[Saved]| serde_json::to_string_pretty(all).unwrap().len() as u64 + 1;
+        let len = |all: &[Saved]| serde_json::to_string(all).unwrap().len() as u64 + 1;
         let base = len(&[first.clone(), filler(String::new())]);
         let all = [
             first.clone(),
@@ -599,7 +600,7 @@ mod tests {
         ];
         std::fs::write(
             dir.path().join("index.json"),
-            serde_json::to_string_pretty(&all).unwrap() + "\n",
+            serde_json::to_string(&all).unwrap() + "\n",
         )
         .unwrap();
         let before = std::fs::read(dir.path().join("index.json")).unwrap();
@@ -684,5 +685,47 @@ mod tests {
                 .unwrap()
                 .slim
         );
+    }
+
+    #[test]
+    fn a_legacy_index_is_written_compact_and_never_pushed_past_the_read_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = add(dir.path(), &picture(64, 64, false), "First", Some(true)).unwrap();
+        let filler = |name: String| Saved {
+            id: "ffffffffffffffff".into(),
+            name,
+            slim: false,
+        };
+        let compact_len = |all: &[Saved]| serde_json::to_string(all).unwrap().len() as u64 + 1;
+        let base = compact_len(&[first.clone(), filler(String::new())]);
+        // Exactly at MAX_INDEX_READ in compact form: changing `"slim":true` to `"slim":false`
+        // would push the rewritten index one byte past MAX_INDEX_READ, so it must be refused and
+        // leave the previous index intact.
+        let all = [
+            first.clone(),
+            filler("x".repeat((MAX_INDEX_READ - base) as usize)),
+        ];
+        let initial = serde_json::to_string(&all).unwrap() + "\n";
+        assert_eq!(initial.len() as u64, MAX_INDEX_READ);
+        let index = dir.path().join("index.json");
+        std::fs::write(&index, &initial).unwrap();
+
+        assert!(
+            set_slim(dir.path(), &first.id, false).is_err(),
+            "expanding past MAX_INDEX_READ is refused"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&index).unwrap(),
+            initial,
+            "the previous index stays in place"
+        );
+        assert_eq!(list(dir.path()).unwrap(), std::slice::from_ref(&first));
+
+        // A removal shrinks it and rewrites compact JSON, staying readable and well under the cap.
+        remove(dir.path(), "ffffffffffffffff").unwrap();
+        let after = std::fs::read_to_string(&index).unwrap();
+        assert!(after.len() as u64 <= MAX_INDEX_READ);
+        assert!(!after.contains("\n  "), "written compact");
+        assert_eq!(list(dir.path()).unwrap(), std::slice::from_ref(&first));
     }
 }
