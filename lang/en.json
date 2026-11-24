@@ -578,5 +578,7 @@
   "{build} isn't in the Sunrise registry yet.": "{build} isn't in the Sunrise registry yet.",
   "The download stopped.": "The download stopped.",
   "{file} doesn't match the registry's checksum.": "{file} doesn't match the registry's checksum.",
-  "{mod} holds no native mod.": "{mod} holds no native mod."
+  "{mod} holds no native mod.": "{mod} holds no native mod.",
+  "Registry not reachable: {error}": "Registry not reachable: {error}",
+  "Registry refused: {error}": "Registry refused: {error}"
 }
