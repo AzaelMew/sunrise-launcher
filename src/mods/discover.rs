@@ -951,6 +951,8 @@ fn summary_count_line(
 fn fit_pill(label: String) -> Div {
     let p = palette();
     div()
+        // A long pill wraps within the card instead of running under its button.
+        .min_w_0()
         .px(px(7.))
         .py(px(1.))
         .rounded(crate::tokens::r(crate::tokens::R_SMALL))
@@ -965,6 +967,7 @@ fn fit_pill(label: String) -> Div {
 fn unfit_pill(label: String) -> Div {
     let p = palette();
     div()
+        .min_w_0()
         .px(px(7.))
         .py(px(1.))
         .rounded(crate::tokens::r(crate::tokens::R_SMALL))
