@@ -50,6 +50,8 @@ pub(crate) enum Sheet {
     NightlySourceLog,
     /// Why an Add or Update was refused (`mods::refused`).
     Refused,
+    /// The builds a registry release works on (`mods::release_builds`).
+    ReleaseBuilds,
 }
 
 /// The way out of a problem the play bar raised, as the Notice sheet's one action.
@@ -133,6 +135,18 @@ fn channel_name(channel: instances::Channel) -> &'static str {
         instances::Channel::Nightly => tr("Nightly"),
         instances::Channel::Stable => tr("Stable"),
         instances::Channel::Dev => tr("Dev"),
+    }
+}
+
+/// [`build_name`] with a dated build's short commit, which tells apart two builds of one day.
+pub(crate) fn build_name_with_commit(tag: &str) -> String {
+    let name = build_name(tag);
+    match dated_channel(tag).and(tag.rsplit_once('-')) {
+        Some((_, commit)) => trf(
+            "{build} ({commit})",
+            &[("build", &name), ("commit", commit)],
+        ),
+        None => name,
     }
 }
 
@@ -232,6 +246,8 @@ fn dated_game_builds_share_the_button_and_picker_labels() {
     assert_eq!(build_name(dev), "Dev · Nov 22");
     assert_eq!(build_name(nightly), "Nightly · Nov 20");
     assert_eq!(build_name("26.3-0.1.0"), "Stable · 0.1.0");
+    assert_eq!(build_name_with_commit(dev), "Dev · Nov 22 (7cfdf81)");
+    assert_eq!(build_name_with_commit("26.3-0.1.0"), "Stable · 0.1.0");
     assert_eq!(channel_build(dev), Some((Channel::Dev, "Nov 22".into())));
     assert_eq!(
         channel_build(nightly),
@@ -657,6 +673,13 @@ impl Launcher {
             Some(Sheet::GithubAdd) => Some(self.github_add_sheet(window, cx)),
             Some(Sheet::Refused) => {
                 let sheet = self.refused_sheet(cx);
+                if sheet.is_none() {
+                    self.ui.sheet = None;
+                }
+                sheet
+            }
+            Some(Sheet::ReleaseBuilds) => {
+                let sheet = self.release_builds_sheet(cx);
                 if sheet.is_none() {
                     self.ui.sheet = None;
                 }

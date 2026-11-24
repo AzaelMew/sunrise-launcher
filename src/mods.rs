@@ -44,6 +44,7 @@ pub(crate) use ports::PortSwitch;
 mod project;
 mod rating;
 pub(crate) mod refused;
+mod release_builds;
 mod search;
 mod ui;
 pub(crate) use data_packs::names;
@@ -485,6 +486,8 @@ pub(crate) struct ModsState {
     viewer: Option<viewer::Viewer>,
     /// What the refused-Add modal shows (`refused`).
     refused: Option<refused::Refused>,
+    /// The release whose builds window is open (`release_builds`).
+    release_builds: Option<model::discover_v2::ReleaseBuilds>,
     /// Registry mods' ratings (`rating`).
     ratings: rating::Ratings,
 }
@@ -546,6 +549,7 @@ impl Default for ModsState {
             revealed: Default::default(),
             viewer: None,
             refused: None,
+            release_builds: None,
             ratings: Default::default(),
         }
     }
