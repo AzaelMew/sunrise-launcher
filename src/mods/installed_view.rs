@@ -876,12 +876,15 @@ impl Launcher {
                             .child(line)
                     }),
             )
-            .when(r.registry_unchecked, |d| {
+            .when_some(r.registry_issue.clone(), |d, issue| {
                 d.child(
                     div()
+                        .id(("installed-registry-issue", n))
                         .text_size(px(tokens::SMALL))
                         .text_color(c(palette().muted))
-                        .child(tr("Registry not checked")),
+                        .truncate()
+                        .tooltip(crate::glass_ui::tip(issue.clone()))
+                        .child(issue),
                 )
             });
         use model::column;
@@ -1338,6 +1341,7 @@ mod tests {
                 index: None,
                 game: "26.3",
                 v2: None,
+                v2_failure: None,
                 build: None,
                 unfit_updates: &BTreeSet::new(),
                 enabled: &HashSet::new(),
@@ -1443,6 +1447,7 @@ mod tests {
                 index: None,
                 game: "26.3",
                 v2: None,
+                v2_failure: None,
                 build: None,
                 unfit_updates: &BTreeSet::new(),
                 enabled: &HashSet::new(),

@@ -383,7 +383,12 @@ enum Event {
     ),
     /// The v1 index's cards for this game, or `None` when it couldn't be read.
     Catalog(String, Option<Vec<Card>>),
-    V2Catalog(Option<String>, Result<V2CatalogPayload, String>),
+    V2Catalog(
+        Option<String>,
+        Result<V2CatalogPayload, sunrise::v2::LoadError>,
+    ),
+    /// The verified snapshot on disk was read, ahead of the network read: redraw from it.
+    V2Saved,
     Page(u64, Result<Box<model::Page>, String>),
     V2Page(u64, Result<Box<model::discover_v2::V2Page>, String>),
     Nightly(nightly::Event),
@@ -433,6 +438,8 @@ pub(crate) struct ModsState {
     catalog_game: Option<String>,
     v2_catalog: V2Catalog,
     v2_catalog_build: Option<Option<String>>,
+    /// Why the last read of the v2 index failed, as Installed says it; none while one is out.
+    v2_failure: Option<String>,
     find: LineEdit,
     find_focus: Option<FocusHandle>,
     have: LineEdit,
@@ -513,6 +520,7 @@ impl Default for ModsState {
             catalog_game: None,
             v2_catalog: V2Catalog::Idle,
             v2_catalog_build: None,
+            v2_failure: None,
             find: LineEdit::default(),
             find_focus: None,
             have: LineEdit::default(),
@@ -1050,6 +1058,16 @@ impl Launcher {
                     }
                 }
                 Event::V2Catalog(build, result) => {
+                    m.v2_failure = result.as_ref().err().map(|error| match error {
+                        sunrise::v2::LoadError::Fetch(_) => trf(
+                            "Registry not reachable: {error}",
+                            &[("error", &error.to_string())],
+                        ),
+                        _ => trf(
+                            "Registry refused: {error}",
+                            &[("error", &error.to_string())],
+                        ),
+                    });
                     if m.v2_catalog_build.as_ref() == Some(&build) {
                         m.v2_catalog = match result {
                             Ok(payload) => V2Catalog::Ready {
@@ -1060,10 +1078,11 @@ impl Launcher {
                                 stale_warning: payload.stale_warning,
                                 from_cache: payload.from_cache,
                             },
-                            Err(error) => V2Catalog::Failed(error),
+                            Err(error) => V2Catalog::Failed(error.to_string()),
                         };
                     }
                 }
+                Event::V2Saved => {}
                 Event::Local(key, result) => {
                     if let Some(snap) = m.snapshot.as_mut().filter(|s| s.key == key) {
                         let ready = snap.finish(*result);
@@ -1204,7 +1223,7 @@ impl Launcher {
         if wants_v1_index {
             self.ensure_mod_catalog();
         }
-        if matches!(self.ui.page, Page::Discover | Page::Project) {
+        if wants_v1_index || matches!(self.ui.page, Page::Discover | Page::Project) {
             self.ensure_v2_catalog(false);
         }
     }
@@ -1239,14 +1258,19 @@ impl Launcher {
         }
         self.ui.mods.v2_catalog_build = Some(build.clone());
         self.ui.mods.v2_catalog = V2Catalog::Loading;
+        self.ui.mods.v2_failure = None;
         let tx = self.ui.mods.tx.clone();
         std::thread::spawn(move || {
+            // Installed starts from the snapshot on disk while the network read is out.
+            if !force && sunrise::v2::read_saved_index().is_some() {
+                let _ = tx.send(Event::V2Saved);
+            }
             let loaded = if force {
                 sunrise::v2::refreshed_index()
             } else {
                 sunrise::v2::index()
             };
-            let result = loaded.map_err(|e| e.to_string()).map(|catalog| {
+            let result = loaded.map(|catalog| {
                 let cards = model::discover_v2::cards(
                     &catalog.index,
                     build.as_deref(),
@@ -1436,7 +1460,7 @@ impl Launcher {
         } else {
             None
         };
-        let v2 = sunrise::v2::known_index();
+        let v2 = sunrise::v2::shown_index();
         let build = snap
             .rows
             .managed
@@ -1449,6 +1473,7 @@ impl Launcher {
                 index,
                 game: &game,
                 v2: v2.as_ref().map(|catalog| &*catalog.index),
+                v2_failure: self.ui.mods.v2_failure.as_deref(),
                 build: build.as_deref(),
                 unfit_updates: &unfit_updates,
                 enabled: &snap.rows.enabled,

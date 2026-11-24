@@ -558,5 +558,7 @@
   "Building native code nobody reviewed: {mods}": "Building native code nobody reviewed: {mods}",
   "{files} · These files are in this profile's mods folder, but did not come from the Sunrise registry. Sunrise cannot verify who built them or where they came from.": "{files} · These files are in this profile's mods folder, but did not come from the Sunrise registry. Sunrise cannot verify who built them or where they came from.",
   "Default": "Default",
-  "Waiting for another build to finish…": "Waiting for another build to finish…"
+  "Waiting for another build to finish…": "Waiting for another build to finish…",
+  "Registry not reachable: {error}": "Registry not reachable: {error}",
+  "Registry refused: {error}": "Registry refused: {error}"
 }
