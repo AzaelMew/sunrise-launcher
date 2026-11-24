@@ -210,8 +210,8 @@ pub fn check(index: &Index, build: &str) -> Result<(), String> {
         let only = std::slice::from_ref(bundle);
         match check_projects(&bundle.dir, only, &sdk, &base, &cancellation) {
             Ok(checks) => answer(sha256, said_of(&checks, &bundle.manifest.id)),
-            // The tool stopped on this mod without a verdict: it stays unanswered, and the
-            // next check asks again.
+            // The tool stopped on this mod without a verdict: it stays unanswered until Try
+            // again.
             Err(refusal @ sdk_cache::Refusal::Refused { .. }) => {
                 failed.get_or_insert(refusal.to_string());
             }
