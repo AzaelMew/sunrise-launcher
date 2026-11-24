@@ -758,7 +758,7 @@ impl Launcher {
                                             div()
                                                 .text_size(px(tokens::LABEL))
                                                 .text_color(c(p.muted))
-                                                .child(credit),
+                                                .child(crate::selectable::selectable(credit)),
                                         )
                                     })
                                     .child(tag(vp.make.label()))
@@ -771,7 +771,7 @@ impl Launcher {
                     div()
                         .text_size(px(tokens::BODY))
                         .text_color(c(p.text))
-                        .child(vp.summary.clone()),
+                        .child(crate::selectable::selectable(vp.summary.clone())),
                 )
             });
 
