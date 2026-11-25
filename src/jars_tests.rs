@@ -101,6 +101,7 @@ fn cache_hits_are_offline_and_corrupt_files_are_not_silently_replaced() {
     prepare_with(
         &home.0,
         &requirements(std::slice::from_ref(&jar)),
+        &BTreeSet::new(),
         Permission::Refuse,
         |_| panic!("cache hit must not use the network"),
         |_, _, _| panic!("download"),
@@ -110,6 +111,7 @@ fn cache_hits_are_offline_and_corrupt_files_are_not_silently_replaced() {
     let error = prepare_with(
         &home.0,
         &requirements(&[jar]),
+        &BTreeSet::new(),
         Permission::Allow,
         |_| panic!("corrupt cache must fail"),
         |_, _, _| panic!("download"),
@@ -144,6 +146,7 @@ fn all_missing_hashes_share_one_consent_and_each_download_once() {
     prepare_with(
         &home.0,
         &jars,
+        &BTreeSet::new(),
         Permission::Ask(&ask),
         |missing| {
             assert_eq!(prompts.get(), 1, "consent precedes metadata requests");
@@ -177,6 +180,7 @@ fn all_missing_hashes_share_one_consent_and_each_download_once() {
     let refusal = prepare_with(
         &home.0,
         &jars,
+        &BTreeSet::new(),
         Permission::Refuse,
         |_| panic!("a shared missing jar must refuse before lookup"),
         |_, _, _| panic!("a shared missing jar must refuse before downloads"),
@@ -200,6 +204,7 @@ fn one_unresolved_hash_refuses_the_whole_batch_before_any_download() {
     let error = prepare_with(
         &home.0,
         &requirements(&[first.clone(), second.clone()]),
+        &BTreeSet::new(),
         Permission::Allow,
         |missing| {
             assert_eq!(missing.len(), 2);
@@ -230,6 +235,7 @@ fn headless_refusal_is_actionable_and_never_contacts_modrinth() {
     let error = prepare_with(
         &home.0,
         &requirements(&[jar]),
+        &BTreeSet::new(),
         Permission::Refuse,
         |_| panic!("headless refusal must be offline"),
         |_, _, _| panic!("download"),
@@ -242,6 +248,97 @@ fn headless_refusal_is_actionable_and_never_contacts_modrinth() {
 }
 
 #[test]
+fn a_jar_listed_by_a_registry_mod_downloads_while_the_prompt_would_refuse() {
+    let home = Scratch::new();
+    let (jar, _) = source(b"registry");
+    let ask = |_: &[&JarRef]| -> bool { panic!("a registry mod's jar must not prompt") };
+    let jars = collect_jar_requirements([
+        ("local_addon", [jar.clone()].as_slice()),
+        ("reviewed", [jar.clone()].as_slice()),
+    ])
+    .unwrap();
+    let registry = BTreeSet::from(["reviewed".to_owned()]);
+    for permission in [Permission::Refuse, Permission::Ask(&ask)] {
+        let mut downloads = Vec::new();
+        prepare_with(
+            &home.0,
+            &jars,
+            &registry,
+            permission,
+            |missing| {
+                assert_eq!(missing, [&jar]);
+                Ok(BTreeMap::from([(
+                    jar.sha512().to_owned(),
+                    "url".to_owned(),
+                )]))
+            },
+            |url, requested, dest| {
+                downloads.push((url.to_owned(), requested.clone(), dest.to_owned()));
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            downloads,
+            [(
+                "url".to_owned(),
+                jar.clone(),
+                home.0.join("jars").join(format!("{}.jar", jar.sha512()))
+            )]
+        );
+    }
+}
+
+#[test]
+fn a_jar_listed_only_by_local_mods_still_asks_and_the_prompt_leaves_out_registry_jars() {
+    let home = Scratch::new();
+    let (reviewed_jar, _) = source(b"reviewed");
+    let (local_jar, _) = source(b"local");
+    let jars = collect_jar_requirements([
+        ("reviewed", [reviewed_jar.clone()].as_slice()),
+        ("folder_mod", [local_jar.clone()].as_slice()),
+    ])
+    .unwrap();
+    let registry = BTreeSet::from(["reviewed".to_owned()]);
+
+    let refusal = prepare_with(
+        &home.0,
+        &jars,
+        &registry,
+        Permission::Refuse,
+        |_| panic!("a refused jar must not reach Modrinth"),
+        |_, _, _| panic!("download"),
+    )
+    .unwrap_err();
+    let PrepareError::Refused { missing } = refusal else {
+        panic!("the local mod's jar needs permission");
+    };
+    assert_eq!(
+        missing.iter().map(|m| &m.jar).collect::<Vec<_>>(),
+        [&local_jar]
+    );
+
+    let asked = Cell::new(0);
+    let decline = |jars: &[&JarRef]| {
+        asked.set(asked.get() + 1);
+        assert_eq!(jars, [&local_jar]);
+        false
+    };
+    let declined = prepare_with(
+        &home.0,
+        &jars,
+        &registry,
+        Permission::Ask(&decline),
+        |_| panic!("declined consent must not contact Modrinth"),
+        |_, _, _| panic!("declined"),
+    )
+    .unwrap_err();
+    assert_eq!(asked.get(), 1);
+    assert!(matches!(declined, PrepareError::Refused { .. }));
+    assert!(!home.0.join("jars").exists());
+}
+
+#[test]
 fn declined_consent_and_missing_or_failed_lookup_never_download() {
     let home = Scratch::new();
     let (jar, _) = source(b"missing");
@@ -249,6 +346,7 @@ fn declined_consent_and_missing_or_failed_lookup_never_download() {
     let error = prepare_with(
         &home.0,
         &requirements(std::slice::from_ref(&jar)),
+        &BTreeSet::new(),
         Permission::Ask(&ask),
         |_| panic!("declined consent must not contact Modrinth"),
         |_, _, _| panic!("declined"),
@@ -269,6 +367,7 @@ fn declined_consent_and_missing_or_failed_lookup_never_download() {
         let error = prepare_with(
             &home.0,
             &requirements(std::slice::from_ref(&jar)),
+            &BTreeSet::new(),
             Permission::Ask(&ask),
             |_| {
                 assert!(consented.get());
@@ -313,6 +412,7 @@ fn failed_metadata_lookup_names_every_missing_jar_but_not_cache_hits() {
         let error = prepare_with(
             &home.0,
             &jars,
+            &BTreeSet::new(),
             Permission::Ask(&ask),
             |missing| {
                 assert_eq!(prompts.get(), 1);

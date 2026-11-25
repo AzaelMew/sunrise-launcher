@@ -1,16 +1,18 @@
 //! Resolve a mod set's passive Java jars before a launcher-managed launch.
 mod download;
 mod launch;
+use crate::browser::installed::Installed;
 use crate::i18n::{tr, trf};
 pub use launch::{prepare_for_command, prepare_launch, LaunchError};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fmt, fs, io,
     path::{Path, PathBuf},
 };
 use sunrise_launcher_smod::manifest::{JarRef, JarRequirement, MissingJar};
 
-/// Download consent for this mod set, never a permission to execute Java code.
+/// Download consent for this mod set, never a permission to execute Java code. It decides only
+/// jars that no installed Sunrise registry mod lists: those are fetched without asking.
 #[non_exhaustive]
 pub enum Permission<'a> {
     Refuse,
@@ -102,16 +104,29 @@ impl std::error::Error for PrepareError {
     }
 }
 
-/// Cache hits work offline. Missing jars are resolved by exact SHA-512 and
-/// downloaded only after one consent decision for the complete mod set.
+/// In-game ids of the mods installed from the Sunrise registry, read from the installed rows of
+/// the game folder `game_dir`. An unreadable list names none, so every jar then asks as before.
+pub fn registry_mods(game_dir: &Path) -> BTreeSet<String> {
+    Installed::load(game_dir)
+        .entries
+        .iter()
+        .filter_map(|row| row.in_game_mod_id().map(str::to_owned))
+        .collect()
+}
+
+/// Cache hits work offline. Missing jars are resolved by exact SHA-512. A missing jar listed by a
+/// mod in `registry_mods` is downloaded without asking; the rest are downloaded only after one
+/// consent decision for their complete set.
 pub fn prepare(
     home: &Path,
     jars: &[JarRequirement],
+    registry_mods: &BTreeSet<String>,
     permission: Permission<'_>,
 ) -> Result<(), PrepareError> {
     prepare_with(
         home,
         jars,
+        registry_mods,
         permission,
         download::jar_urls,
         download::download_jar,
@@ -121,6 +136,7 @@ pub fn prepare(
 fn prepare_with(
     home: &Path,
     jars: &[JarRequirement],
+    registry_mods: &BTreeSet<String>,
     permission: Permission<'_>,
     mut lookup: impl FnMut(&[&JarRef]) -> Result<BTreeMap<String, String>, String>,
     mut download: impl FnMut(&str, &JarRef, &Path) -> Result<(), String>,
@@ -155,9 +171,8 @@ fn prepare_with(
     if missing.is_empty() {
         return Ok(());
     }
-    let missing_entries = || {
-        missing
-            .iter()
+    let entries = |list: &[&JarRequirement]| -> Vec<MissingJar> {
+        list.iter()
             .map(|requirement| MissingJar {
                 owners: requirement.owners.clone(),
                 jar: requirement.jar.clone(),
@@ -165,17 +180,35 @@ fn prepare_with(
             })
             .collect()
     };
-    if matches!(permission, Permission::Refuse) {
-        return Err(PrepareError::Refused {
-            missing: missing_entries(),
-        });
-    }
+    let missing_entries = || entries(&missing);
     let missing_refs: Vec<_> = missing.iter().map(|requirement| &requirement.jar).collect();
-    if let Permission::Ask(ask) = permission {
-        if !ask(&missing_refs) {
-            return Err(PrepareError::Refused {
-                missing: missing_entries(),
-            });
+    let asking: Vec<_> = missing
+        .iter()
+        .copied()
+        .filter(|requirement| {
+            !requirement
+                .owners
+                .iter()
+                .any(|owner| registry_mods.contains(owner))
+        })
+        .collect();
+    if !asking.is_empty() {
+        match permission {
+            Permission::Refuse => {
+                return Err(PrepareError::Refused {
+                    missing: entries(&asking),
+                })
+            }
+            Permission::Allow => {}
+            Permission::Ask(ask) => {
+                let asking_refs: Vec<_> =
+                    asking.iter().map(|requirement| &requirement.jar).collect();
+                if !ask(&asking_refs) {
+                    return Err(PrepareError::Refused {
+                        missing: entries(&asking),
+                    });
+                }
+            }
         }
     }
     let urls = lookup(&missing_refs).map_err(|reason| PrepareError::Lookup {
