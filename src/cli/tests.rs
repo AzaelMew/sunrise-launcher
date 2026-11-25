@@ -235,7 +235,9 @@ fn settings_accepts_german_and_chinese() {
 fn play_takes_an_account_for_one_launch() {
     let cli = Cli::try_parse_from(["sunrise-launcher", "play", "--account", "Alex"]).unwrap();
     match cli.command {
-        Some(Cmd::Play { account, .. }) => assert_eq!(account.as_deref(), Some("Alex")),
+        Some(Cmd::Play(play::PlayArgs { account, .. })) => {
+            assert_eq!(account.as_deref(), Some("Alex"))
+        }
         _ => panic!("not play"),
     }
 }
@@ -252,7 +254,7 @@ fn play_takes_extra_arguments_that_start_with_hyphens() {
     ])
     .unwrap();
     match cli.command {
-        Some(Cmd::Play { arg, .. }) => assert_eq!(arg, ["--server-thread", "40"]),
+        Some(Cmd::Play(play::PlayArgs { arg, .. })) => assert_eq!(arg, ["--server-thread", "40"]),
         _ => panic!("expected play"),
     }
 }
