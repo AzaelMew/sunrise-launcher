@@ -254,16 +254,12 @@ impl Launcher {
                 Msg::SwitchProgress(_) | Msg::SwitchQuestion(_, _) | Msg::Switched(_, _) => {
                     self.on_switch_message(msg)
                 }
-                Msg::ProviderSwitchProgress(stage) => self.provider_switch_progress(stage),
-                Msg::ProviderSwitchQuestion(question, reply) => {
-                    self.provider_switch_question(question, reply)
-                }
-                Msg::ProviderSwitched(home, result) => self.provider_switch_finished(&home, result),
-                Msg::ProviderChoice(need, reply) => self.provider_choice_question(need, reply),
-                Msg::PublisherChangeQuestion(question, reply) => {
-                    self.publisher_change_question(question, reply)
-                }
-                Msg::ReceiptAcknowledged(home, result) => self.receipt_acknowledged(&home, result),
+                Msg::ProviderSwitchProgress(_)
+                | Msg::ProviderSwitchQuestion(_, _)
+                | Msg::ProviderSwitched(_, _)
+                | Msg::ProviderChoice(_, _)
+                | Msg::PublisherChangeQuestion(_, _)
+                | Msg::ReceiptAcknowledged(_, _) => self.on_provider_message(msg),
                 }
                 Msg::Removed(_)
                 | Msg::BuildInventory(_, _)
