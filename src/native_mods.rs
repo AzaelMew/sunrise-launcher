@@ -1690,6 +1690,7 @@ fn pipeline(
         crate::jars::prepare(
             &backend::game_home(),
             &jars,
+            &crate::jars::registry_mods(folder),
             crate::jars::Permission::headless(options.allow_jar_downloads),
         )
         .map_err(|error| error.to_string())?;
