@@ -1,4 +1,5 @@
 //! Explicit player consent for local unsigned game commands.
+use super::Error;
 use std::path::{Path, PathBuf};
 use sunrise_launcher::{
     backend, build_import, developer_install,
@@ -19,7 +20,7 @@ pub(super) struct DeveloperInstall {
     trust_unsigned: bool,
 }
 
-pub(super) fn install(args: DeveloperInstall, as_json: bool) -> Result<(), String> {
+pub(super) fn install(args: DeveloperInstall, as_json: bool) -> Result<(), Error> {
     let tag = developer_install::install(&args.checkout, &args.program, args.trust_unsigned)?;
     let label = developer_install::label(&tag).unwrap();
     let prepared = backend::check_prepared(&tag);
@@ -47,7 +48,7 @@ pub(super) fn import(
     version: Option<&str>,
     trust_unsigned: bool,
     as_json: bool,
-) -> Result<(), String> {
+) -> Result<(), Error> {
     if !trust_unsigned {
         return Err(tr("An imported build is unsigned: Sunrise can't check where it came from. If you trust it, pass --trust-unsigned.").into());
     }

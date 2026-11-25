@@ -160,7 +160,7 @@ pub(super) fn approve_mod_change(
 }
 
 /// Commands for browser-installed content and registry mods in a selected profile.
-pub(super) fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
+pub(super) fn mods(action: ModsCmd, as_json: bool) -> Result<(), Error> {
     use sunrise_launcher::browser::SourceId;
     use sunrise_launcher::browser::{installed, modrinth::Modrinth, sunrise, Kind, Query, Source};
     // What the browser installs goes into an instance's game folder.
@@ -408,10 +408,9 @@ pub(super) fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                 return Ok(());
             }
             if p.kind == Kind::DataPack {
-                return Err(format!(
-                    "{} is a data pack: say which world with --world.",
-                    p.title
-                ));
+                return Err(
+                    format!("{} is a data pack: say which world with --world.", p.title).into(),
+                );
             }
             if p.kind == Kind::Mod {
                 return Err(
@@ -446,7 +445,8 @@ pub(super) fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                 return Err(match project {
                     Some(n) => format!("{n} wasn't installed by the browser."),
                     None => "Nothing installed from the browser yet.".into(),
-                });
+                }
+                .into());
             }
             let registry = |e: &installed::Entry| {
                 instance.kind != instances::Kind::Pack
@@ -601,7 +601,7 @@ pub(super) fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                 return Err(match id {
                     Some(i) => format!("{i} wasn't installed from GitHub."),
                     None => "No native mod was installed from GitHub: sunrise-launcher mods add-github <url>".into(),
-                });
+                }.into());
             }
             for o in origins {
                 let latest = github_mods::resolve(&o.follows(), &github_mods::api)?;
@@ -703,12 +703,12 @@ pub(super) fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                             .cloned()
                     })
                 {
-                    return Err(format!("{} was taken down: {}", e.title, r.reason));
+                    return Err(format!("{} was taken down: {}", e.title, r.reason).into());
                 }
             }
             if let Some(profile) = profile {
                 if let Some((_, reason)) = profile.enable_unheld(&[id])?.into_iter().next() {
-                    return Err(format!("{}: {}.", e.title, reason.label()));
+                    return Err(format!("{}: {}.", e.title, reason.label()).into());
                 }
             } else {
                 sunrise_launcher::browser::mod_list::set_enabled(&home, id, false)?;
