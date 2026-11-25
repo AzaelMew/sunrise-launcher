@@ -5,11 +5,21 @@ use std::path::{Path, PathBuf};
 
 /// The launcher's data folder; `SUNRISE_LAUNCHER_HOME` overrides it (for tests and scripts).
 pub fn data_dir() -> PathBuf {
+    // Tests set the override in this process, between cases: they must see it every call.
+    if cfg!(test) {
+        if let Some(home) = std::env::var_os("SUNRISE_LAUNCHER_HOME").filter(|h| !h.is_empty()) {
+            return PathBuf::from(home);
+        }
+        return crate::data_location::test_home().join("launcher");
+    }
+    // The player's folder is stable for the process; an override is read before the first call.
+    static RESOLVED: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    RESOLVED.get_or_init(resolve_data_dir).clone()
+}
+
+fn resolve_data_dir() -> PathBuf {
     if let Some(home) = std::env::var_os("SUNRISE_LAUNCHER_HOME").filter(|h| !h.is_empty()) {
         return PathBuf::from(home);
-    }
-    if cfg!(test) {
-        return crate::data_location::test_home().join("launcher");
     }
     // A location that does not open stands in as the default folders, as
     // `data_location::startup` makes it for the window: never a panic here.
