@@ -126,7 +126,7 @@ fn a_release_keeps_all_distinct_checked_packages_and_their_asset_receipts() {
     for (package, (name, bytes)) in checked.iter().zip(&assets) {
         let origin = package.release_origin(&found).unwrap();
         assert_eq!(origin.asset.as_deref(), Some(name.as_str()));
-        assert_eq!(origin.sha256, sha256(bytes));
+        assert_eq!(origin.sha256, sha256_hex(bytes));
     }
     let retained = checked[0].file.clone();
     assert!(retained.is_file());
@@ -416,7 +416,7 @@ fn a_mod_folder_packs_into_a_bundle_the_registry_checks_accept() {
         (packed.id.as_str(), packed.version.as_str()),
         ("zoom", "0.1.0")
     );
-    assert_eq!(packed.sha256, sha256(&bytes));
+    assert_eq!(packed.sha256, sha256_hex(&bytes));
     let read = sunrise_launcher_smod::index::native::Bundle::read(&packed.file).unwrap();
     for shipped in [
         "src/zoom.rs",
@@ -508,7 +508,7 @@ fn origins_follow_releases_or_the_head() {
     };
     let origin = ready.origin(&found, None);
     assert_eq!(origin.label(), "acme/zoom @ 0123456");
-    assert_eq!(origin.sha256, sha256(&bytes));
+    assert_eq!(origin.sha256, sha256_hex(&bytes));
     // A commit's mod follows the default branch's head.
     assert_eq!(origin.follows().target, Target::Head);
     let newer = Resolved {

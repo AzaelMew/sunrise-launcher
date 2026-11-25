@@ -18,9 +18,9 @@
 //!
 //! Redirect targets must use HTTPS. Retry-After delays are capped at 60 seconds. Each destination
 //! directory is swept once before use for generated partials whose owning process has exited.
+use crate::hashing::Sha1;
 use futures_util::{stream, StreamExt};
 use reqwest::{header, Client, Response, StatusCode, Url};
-use sha1::{Digest, Sha1};
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -875,7 +875,7 @@ async fn valid(artifact: &Artifact, path: &Path, buffer: usize) -> Result<bool, 
         }
         hash.update(&buffer[..n]);
     }
-    Ok(format!("{:x}", hash.finalize()).eq_ignore_ascii_case(&artifact.sha1))
+    Ok(hash.hex().eq_ignore_ascii_case(&artifact.sha1))
 }
 /// On dropped/cancelled futures, unlink asynchronously after all stream handles have dropped.
 struct Scratch(PathBuf);

@@ -1,4 +1,5 @@
 use super::*;
+use crate::hashing::sha1_hex;
 use std::sync::atomic::AtomicUsize;
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
@@ -144,7 +145,7 @@ impl Server {
         Artifact {
             url: format!("{}{route}", self.url),
             path: path.into(),
-            sha1: format!("{:x}", Sha1::digest(data)),
+            sha1: sha1_hex(data),
             size: Some(data.len() as u64),
         }
     }
@@ -492,7 +493,7 @@ async fn benchmark_download_pipeline() {
                                 &mut body,
                             )
                             .unwrap();
-                            assert_eq!(format!("{:x}", Sha1::digest(&body)), file.sha1);
+                            assert_eq!(sha1_hex(&body), file.sha1);
                             std::fs::write(&file.path, body).unwrap();
                         }
                     });

@@ -5,11 +5,10 @@
 //! files found elsewhere are linked into that layout in the launcher's data folder, with the
 //! pinned version JSON from Mojang when the other launcher keeps its own rewrite of it.
 
+pub(crate) use crate::hashing::{sha1_file, sha1_hex};
 use crate::i18n::{tr, trf};
 use serde_json::Value;
-use sha1::{Digest, Sha1};
 use std::fs;
-use std::io::Read;
 use std::path::{Path, PathBuf};
 
 /// What a version's research-lock.json pins about the game files.
@@ -243,19 +242,6 @@ fn loader_jars(base: &Path, version: &str) -> Vec<String> {
     jars
 }
 
-pub(crate) fn sha1_file(path: &Path) -> Option<String> {
-    let mut file = fs::File::open(path).ok()?;
-    let mut hash = Sha1::new();
-    let mut buffer = vec![0; 1 << 20];
-    loop {
-        match file.read(&mut buffer).ok()? {
-            0 => break,
-            n => hash.update(&buffer[..n]),
-        }
-    }
-    Some(hash.finalize().iter().map(|b| format!("{b:02x}")).collect())
-}
-
 /// The Prism or MultiMC launcher root above `dir` (#693). Their instances live in
 /// `instances/<name>/` (Prism's game folder is `minecraft`, MultiMC's `.minecraft`) and the
 /// shared `libraries` and assets sit in the launcher root above `instances`, two or three
@@ -480,13 +466,6 @@ pub(crate) fn fetch_manifest(
     let body =
         fetch_checked(fetch, &url, sha1).map_err(|e| format!("Mojang's {v} version file {e}"))?;
     write_file(path, &body)
-}
-
-pub(crate) fn sha1_hex(data: &[u8]) -> String {
-    Sha1::digest(data)
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
 }
 
 /// A download checked against its sha1; the error says how it differs.
