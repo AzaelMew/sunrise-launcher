@@ -1,4 +1,4 @@
-//! The Logs panel: a small button at the bottom of the window slides a panel up over the current
+//! The Logs panel: the sidebar's Logs row slides a panel up over the current
 //! page with the launcher's own log (`sunrise_launcher::launcher_log`) and the game's output, so a
 //! bug report can carry what happened. The page under it never changes. Every line shown, copied
 //! or saved has been through `launcher_log::scrub`.
@@ -43,8 +43,13 @@ pub(crate) struct LogsPanel {
 }
 
 impl Launcher {
+    /// Whether the panel is open (or opening), for the sidebar's Logs row.
+    pub(crate) fn logs_open(&self) -> bool {
+        self.ui.logs.open
+    }
+
     /// Opens the panel, or closes it.
-    pub(super) fn toggle_logs(&mut self) {
+    pub(crate) fn toggle_logs(&mut self) {
         let logs = &mut self.ui.logs;
         logs.open = !logs.open;
         let mut fade = crate::motion::Fade::toward(logs.fade, logs.open, Instant::now());
@@ -121,33 +126,17 @@ impl Launcher {
         .detach();
     }
 
-    /// The Logs button, and the panel while it is open or sliding. Both lie over the frame, the
-    /// button in its bottom inset and the panel above it, so no page moves for either.
+    /// The panel while it is open or sliding. It lies over the pane, so no page moves.
     pub(super) fn logs_layer(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Vec<AnyElement> {
+    ) -> Option<AnyElement> {
         let inset = crate::tokens::FRAME_INSET;
         // The pane's left edge: the frame's inset, the sidebar and the gap after it.
         let left = inset + crate::rail::rail_width(self.rail_open()) + 12.;
-        let button = crate::frame::button("logs-button", tr("Logs"))
-            .absolute()
-            .left(px(left + 4.))
-            .bottom(px(0.))
-            .h(px(inset + 4.))
-            .px(px(8.))
-            .text_size(px(crate::tokens::SMALL))
-            .bg(rgb(palette().background))
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.toggle_logs();
-                cx.notify();
-            }));
-        let mut layer = vec![button.into_any_element()];
         let now = Instant::now();
-        let Some(fade) = self.ui.logs.fade.filter(|fade| !fade.rested(now)) else {
-            return layer;
-        };
+        let fade = self.ui.logs.fade.filter(|fade| !fade.rested(now))?;
         if fade.moving(now) {
             window.request_animation_frame();
         }
@@ -274,12 +263,8 @@ impl Launcher {
             .child(header)
             .child(list);
         // It rises from below the window's edge to rest on the inset, and sinks back the same way.
-        layer.insert(
-            0,
-            fade.play(&"logs-panel".into(), panel, move |d, p| {
-                d.bottom(px(inset - height * (1. - p)))
-            }),
-        );
-        layer
+        Some(fade.play(&"logs-panel".into(), panel, move |d, p| {
+            d.bottom(px(inset - height * (1. - p)))
+        }))
     }
 }
