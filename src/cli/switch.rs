@@ -182,6 +182,13 @@ fn approve(
     })
 }
 
+/// `switch`: the profile it names (default: the selected one) to `tag`.
+pub(super) fn profile(tag: String, profile: Option<String>, as_json: bool) -> Result<(), Error> {
+    let instance = instances::read_profile(profile.as_deref())?;
+    switch::run(&instance, &tag, as_json)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -198,11 +205,4 @@ mod tests {
         }
         assert_eq!(decide(false, true, "r\n"), SwitchDecision::Cancel);
     }
-}
-
-/// `switch`: the profile it names (default: the selected one) to `tag`.
-pub(super) fn profile(tag: String, profile: Option<String>, as_json: bool) -> Result<(), Error> {
-    let instance = instances::read_profile(profile.as_deref())?;
-    switch::run(&instance, &tag, as_json)?;
-    Ok(())
 }
