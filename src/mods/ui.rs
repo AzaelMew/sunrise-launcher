@@ -4,7 +4,7 @@ use crate::paint::palette;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-pub(super) use crate::widgets::{c, mix};
+pub(super) use crate::frame::{c, mix};
 
 pub(super) fn tag(label: &'static str) -> Div {
     div()

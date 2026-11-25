@@ -2,6 +2,7 @@
 //! mod's name; the checker's own words and the build log behind Show details.
 use super::*;
 use crate::frame::button;
+use crate::frame::c;
 use std::sync::Arc;
 use sunrise_launcher::browser::sunrise::{sources::Failure, SourceError};
 

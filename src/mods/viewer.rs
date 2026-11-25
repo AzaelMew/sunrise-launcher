@@ -3,6 +3,7 @@
 //! tile on Esc, ✕ or a click on the dark around it. Pictures load as they are shown, so a pack's
 //! long gallery isn't fetched on opening its page.
 use super::*;
+use crate::frame::c;
 use crate::paint::palette;
 use gpui::{
     img, AnimationExt, Bounds, ElementId, MouseButton, ObjectFit, Pixels, Point, ScrollHandle, Size,
