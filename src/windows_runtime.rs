@@ -90,10 +90,10 @@ pub(crate) fn verify_dedicated(expected: &Command, actual: &Command) -> io::Resu
     {
         return Err(invalid());
     }
-    let trusted_slot = data
-        .canonicalize()?
-        .join("run")
-        .join(slot.file_name().unwrap());
+    let trusted_slot = data.canonicalize()?.join("run").join(
+        slot.file_name()
+            .expect("a slot is run/<the digest of its home>"),
+    );
     if program.canonicalize()? != trusted_slot.join("game").join(crate::backend::CLIENT)
         || fs::symlink_metadata(&program)?.file_attributes() & 0x400 != 0
         || sha256_file(&program).map_err(io::Error::other)?
