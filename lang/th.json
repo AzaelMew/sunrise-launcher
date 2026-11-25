@@ -1940,5 +1940,10 @@
   "The original file {id} {version} is no longer on Modrinth. Put the original file with this exact SHA-512 at {path} to use it.": "The original file {id} {version} is no longer on Modrinth. Put the original file with this exact SHA-512 at {path} to use it.",
   "The original file {id} {version} is no longer on Modrinth.": "The original file {id} {version} is no longer on Modrinth.",
   "Needs {mod}, which has no release for Sunrise {build}.": "Needs {mod}, which has no release for Sunrise {build}.",
-  "Has no release for Sunrise {build}.": "Has no release for Sunrise {build}."
+  "Has no release for Sunrise {build}.": "Has no release for Sunrise {build}.",
+  "{var} must be an absolute path, not {folder}.": "{var} must be an absolute path, not {folder}.",
+  "{var} names {folder}, which isn't a folder.": "{var} names {folder}, which isn't a folder.",
+  "{url} is not a release file {var} can stand in for.": "{url} is not a release file {var} can stand in for.",
+  "{var} is set, and {release} isn't a folder: put the release's files there, or unset {var}.": "{var} is set, and {release} isn't a folder: put the release's files there, or unset {var}.",
+  "{build} · Test build from local files": "{build} · Test build from local files"
 }
