@@ -317,53 +317,11 @@ impl Launcher {
                     self.publisher_change_question(question, reply)
                 }
                 Msg::ReceiptAcknowledged(home, result) => self.receipt_acknowledged(&home, result),
-                Msg::Session(session) => self.handle_game_session(session),
-                Msg::JarConsent { jars, reply } => jar_launch::consent(window, jars, reply, cx),
-                Msg::JarClient {
-                    run,
-                    account: accepted,
-                    session_file,
-                    registry_notices,
-                    prepared,
-                } => {
-                    if self.starting_client.take().is_none() {
-                        account::discard_launch_session(session_file);
-                        continue;
-                    }
-                    for notice in &registry_notices {
-                        console_page::keep_line(
-                            &mut self.prepare_log,
-                            &mut self.log_revision,
-                            notice.clone(),
-                        );
-                    }
-                    self.play_registry_notices = registry_notices;
-                    let started = prepared.and_then(|cmd| {
-                        self.accounts = Accounts::load();
-                        if let Some(uuid) = accepted.as_deref() {
-                            account::check_launch_account(&self.accounts, uuid)
-                                .map_err(|refused| refused.in_window())?;
-                        }
-                        self.client_home = cmd.get_current_dir().map(|d| d.to_path_buf());
-                        backend::spawn(Job::Client, cmd, self.tx.clone())
-                    });
-                    match started {
-                        Ok(r) => {
-                            self.client = Some(r);
-                            self.client_run = run.map(|instance| (*instance, Instant::now()));
-                            // Do not hide or minimize the window when the registry has
-                            // something the player needs to see about this run.
-                            if self.play_registry_notices.is_empty() {
-                                self.step_aside(cx);
-                            }
-                        }
-                        // A start that does not happen leaves no session file behind.
-                        Err(e) => {
-                            self.client_error = Some(e);
-                            account::discard_launch_session(session_file);
-                        }
-                    }
-                }
+                Msg::Session(_)
+                | Msg::JarConsent { .. }
+                | Msg::JarClient { .. }
+                | Msg::Line(_, _)
+                | Msg::ClientObservationLost(_) => self.on_session_message(msg, window, cx),
                 Msg::Progress(tag, p) => {
                     self.bar = (self.bar.1, p);
                     self.switch_download_progress(&tag, p);
@@ -542,36 +500,6 @@ impl Launcher {
                     }
                 }
                 Msg::LauncherUpdated(result) => self.launcher_update_finished(result),
-                // Old versions log their session; it never reaches the window.
-                Msg::Line(_, line) if line.contains("Session ID is") => {}
-                Msg::Line(job, line) => {
-                    if job == Job::Client && line.starts_with(perf::GAME_FIRST_FRAME) {
-                        if let Some(pressed) = self.play_pressed.take() {
-                            self.perf
-                                .record_since("launcher.play_to_game_frame_ms", pressed);
-                        }
-                    }
-                    if job == Job::Prepare {
-                        self.follow_switch_preparation();
-                    }
-                    // The MCP server keeps its own server's log; the launcher's are the preparer's
-                    // and the game's.
-                    if job != Job::Server {
-                        console_page::keep_line(
-                            &mut self.prepare_log,
-                            &mut self.log_revision,
-                            line,
-                        );
-                    }
-                }
-                Msg::ClientObservationLost(error) => {
-                    self.cancel_launcher_restart();
-                    self.client = None;
-                    self.client_run = None;
-                    self.client_started = None;
-                    self.come_back(cx);
-                    self.client_error = Some(error);
-                }
                 Msg::Exit(job, result) => {
                     // A preparation (or a build) ended: the disk may have changed under the pages.
                     backend::forget_prepared();
