@@ -61,7 +61,7 @@ fn catch_interrupt() -> io::Result<()> {
     Ok(())
 }
 
-pub(super) fn run(instance: &instances::Instance, tag: &str, as_json: bool) -> Result<(), String> {
+pub(super) fn run(instance: &instances::Instance, tag: &str, as_json: bool) -> Result<(), Error> {
     let identity = install_target(instance)?;
     catch_interrupt().map_err(|error| error.to_string())?;
     let tty = io::stdin().is_terminal() && io::stderr().is_terminal();
@@ -120,7 +120,7 @@ pub(super) fn run(instance: &instances::Instance, tag: &str, as_json: bool) -> R
     )?;
     let mut output = io::stdout().lock();
     match result {
-        Switched::Stayed => return Err(cancelled()),
+        Switched::Stayed => return Err(cancelled().into()),
         Switched::AlreadySelected if as_json => writeln!(output, "{}", serde_json::json!({"profile": instance.id, "build": tag, "changed": false})),
         Switched::AlreadySelected => writeln!(output, "{}", trf("This profile already plays {build}.", &[("build", tag)])),
         Switched::Changed(active) if as_json => writeln!(output, "{}", serde_json::json!({
@@ -144,7 +144,7 @@ pub(super) fn run(instance: &instances::Instance, tag: &str, as_json: bool) -> R
             };
             report()
         }
-    }.and_then(|()| output.flush()).map_err(|error| error.to_string())
+    }.and_then(|()| output.flush()).map_err(|error| error.to_string().into())
 }
 
 fn cancelled() -> String {

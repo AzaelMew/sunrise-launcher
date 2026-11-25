@@ -6,9 +6,9 @@ use crate::backend::lock::recover;
 /// Where secrets are kept: the OS keychain, a file of the launcher's own when there is none, or
 /// memory in tests.
 pub trait SecretStore: Send + Sync {
-    fn get(&self, key: &str) -> Result<Option<String>, String>;
-    fn set(&self, key: &str, secret: &str) -> Result<(), String>;
-    fn delete(&self, key: &str) -> Result<(), String>;
+    fn get(&self, key: &str) -> Result<Option<String>, StoreError>;
+    fn set(&self, key: &str, secret: &str) -> Result<(), StoreError>;
+    fn delete(&self, key: &str) -> Result<(), StoreError>;
     /// False for memory: secrets are gone when the launcher closes.
     fn persistent(&self) -> bool;
     /// A shared lock for read/renew/write operations; memory stores need only the process lock.
@@ -23,17 +23,47 @@ pub trait SecretStore: Send + Sync {
     }
 }
 
+/// Why a secret store couldn't read, keep or forget a secret, in the words the player sees. The
+/// stores never tell one failure from another (a failing keychain is only ever fallen back from),
+/// so this carries the message and nothing else; it turns back into that String unchanged.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StoreError(pub String);
+
+impl std::fmt::Display for StoreError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl From<String> for StoreError {
+    fn from(message: String) -> Self {
+        Self(message)
+    }
+}
+
+impl From<&str> for StoreError {
+    fn from(message: &str) -> Self {
+        Self(message.into())
+    }
+}
+
+impl From<StoreError> for String {
+    fn from(error: StoreError) -> Self {
+        error.0
+    }
+}
+
 #[derive(Default)]
 pub struct MemoryStore(Mutex<HashMap<String, String>>, Mutex<()>);
 impl SecretStore for MemoryStore {
-    fn get(&self, key: &str) -> Result<Option<String>, String> {
+    fn get(&self, key: &str) -> Result<Option<String>, StoreError> {
         Ok(recover(&self.0).get(key).cloned())
     }
-    fn set(&self, key: &str, secret: &str) -> Result<(), String> {
+    fn set(&self, key: &str, secret: &str) -> Result<(), StoreError> {
         recover(&self.0).insert(key.into(), secret.into());
         Ok(())
     }
-    fn delete(&self, key: &str) -> Result<(), String> {
+    fn delete(&self, key: &str) -> Result<(), StoreError> {
         recover(&self.0).remove(key);
         Ok(())
     }
@@ -86,19 +116,19 @@ impl Bounded {
 
     fn call<T: Send + 'static>(
         &self,
-        f: impl FnOnce(&dyn SecretStore) -> Result<T, String> + Send + 'static,
-    ) -> Result<T, String> {
+        f: impl FnOnce(&dyn SecretStore) -> Result<T, StoreError> + Send + 'static,
+    ) -> Result<T, StoreError> {
         use std::sync::atomic::Ordering::SeqCst;
         let no_answer = || {
             let said = keyring_no_answer(self.wait);
             eprintln!("Sunrise: {said}");
-            Err(said)
+            Err(said.into())
         };
         if self.stuck.load(SeqCst) > 0 {
             return no_answer();
         }
         let call = std::sync::Arc::new((
-            Mutex::new(Call::<Result<T, String>> {
+            Mutex::new(Call::<Result<T, StoreError>> {
                 answer: None,
                 gave_up: false,
             }),
@@ -119,7 +149,7 @@ impl Bounded {
                 }
             });
         if let Err(e) = spawned {
-            return Err(e.to_string());
+            return Err(e.to_string().into());
         }
         let (slot, done) = &*call;
         let slot = slot.lock().unwrap_or_else(|e| e.into_inner());
@@ -138,15 +168,15 @@ impl Bounded {
 }
 
 impl SecretStore for Bounded {
-    fn get(&self, key: &str) -> Result<Option<String>, String> {
+    fn get(&self, key: &str) -> Result<Option<String>, StoreError> {
         let key = key.to_string();
         self.call(move |keyring| keyring.get(&key))
     }
-    fn set(&self, key: &str, secret: &str) -> Result<(), String> {
+    fn set(&self, key: &str, secret: &str) -> Result<(), StoreError> {
         let (key, secret) = (key.to_string(), secret.to_string());
         self.call(move |keyring| keyring.set(&key, &secret))
     }
-    fn delete(&self, key: &str) -> Result<(), String> {
+    fn delete(&self, key: &str) -> Result<(), StoreError> {
         let key = key.to_string();
         self.call(move |keyring| keyring.delete(&key))
     }
@@ -244,7 +274,10 @@ impl Layered {
     }
 
     /// Runs `f`, a write to the keychain and what it reads first, holding the keychain's lock.
-    fn keychain_writes<T>(&self, f: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+    fn keychain_writes<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, StoreError>,
+    ) -> Result<T, StoreError> {
         self.file.holding("keychain.lock", f)
     }
 
@@ -255,8 +288,8 @@ impl Layered {
     /// Asks the keychain unless it was away; an error means it is away for the rest of the run.
     fn ask<T>(
         &self,
-        call: impl FnOnce(&dyn SecretStore) -> Result<T, String>,
-    ) -> Result<T, String> {
+        call: impl FnOnce(&dyn SecretStore) -> Result<T, StoreError>,
+    ) -> Result<T, StoreError> {
         if self.is_away() {
             return Err(KEYCHAIN_AWAY.into());
         }
@@ -268,7 +301,7 @@ impl Layered {
     }
 
     /// Puts `value` in the file for `key`, the keychain being away.
-    fn park(&self, key: &str, value: &str) -> Result<(), String> {
+    fn park(&self, key: &str, value: &str) -> Result<(), StoreError> {
         self.file.put(key, value)?;
         recover(&self.parked).insert(key.into());
         Ok(())
@@ -277,7 +310,7 @@ impl Layered {
     /// The keychain took `key`: the file's copy read before goes, unless another process wrote since.
     /// Still in the file, it stays counted as seen there, so its hand-over by another process is
     /// noticed.
-    fn unpark(&self, key: &str, before: Option<String>) -> Result<(), String> {
+    fn unpark(&self, key: &str, before: Option<String>) -> Result<(), StoreError> {
         let still_there = self.file.settle(key, before.as_deref())?;
         let mut parked = recover(&self.parked);
         if still_there {
@@ -290,7 +323,7 @@ impl Layered {
 }
 
 impl SecretStore for Layered {
-    fn get(&self, key: &str) -> Result<Option<String>, String> {
+    fn get(&self, key: &str) -> Result<Option<String>, StoreError> {
         match self.file.entry(key)? {
             Some(secret) if secret == SIGNED_OUT => return Ok(None),
             Some(secret) => {
@@ -306,7 +339,7 @@ impl SecretStore for Layered {
         }
         self.ask(|keychain| keychain.get(key))
     }
-    fn set(&self, key: &str, secret: &str) -> Result<(), String> {
+    fn set(&self, key: &str, secret: &str) -> Result<(), StoreError> {
         if self.is_away() {
             return self.park(key, secret);
         }
@@ -318,7 +351,7 @@ impl SecretStore for Layered {
             }
         })
     }
-    fn delete(&self, key: &str) -> Result<(), String> {
+    fn delete(&self, key: &str) -> Result<(), StoreError> {
         // The keychain may hold a copy: the mark hides it until it can go.
         if self.is_away() {
             return self.park(key, SIGNED_OUT);
@@ -337,7 +370,7 @@ impl SecretStore for Layered {
 }
 
 /// The OS keychain if it answers, else why not.
-fn keychain_or_why() -> Result<Box<dyn SecretStore>, String> {
+fn keychain_or_why() -> Result<Box<dyn SecretStore>, StoreError> {
     // Unit tests never reach the player's keychain.
     #[cfg(all(
         not(test),
@@ -383,7 +416,7 @@ pub fn store() -> &'static dyn SecretStore {
                 ));
             }
             keychain_or_why().unwrap_or_else(|why| {
-                let _ = NO_KEYCHAIN_WHY.set(why);
+                let _ = NO_KEYCHAIN_WHY.set(why.into());
                 Box::<MemoryStore>::default()
             })
         })

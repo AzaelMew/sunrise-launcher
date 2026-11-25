@@ -203,11 +203,15 @@ pub fn find(world: &Path, query: &str) -> Result<DataPack, String> {
         })
 }
 
-/// Moves the data pack to the system's trash and forgets it in the world's level.dat.
-pub fn remove(world: &Path, pack: &DataPack) -> Result<(), String> {
+/// Moves the data pack to the system's trash, or into `trash` when one is given (a test's
+/// scratch folder), and forgets it in the world's level.dat.
+pub fn remove(world: &Path, pack: &DataPack, trash: Option<&Path>) -> Result<(), String> {
     let _claim = crate::worlds::lock_saved_dir(world)?;
-    crate::desktop_seams::to_trash(&pack.path)
-        .map_err(|e| format!("Could not move {} to the trash: {e}", pack.file))?;
+    match trash {
+        Some(folder) => crate::desktop_seams::to_folder(&pack.path, folder),
+        None => crate::desktop_seams::to_trash(&pack.path),
+    }
+    .map_err(|e| format!("Could not move {} to the trash: {e}", pack.file))?;
     forget(world, &pack.file)
 }
 

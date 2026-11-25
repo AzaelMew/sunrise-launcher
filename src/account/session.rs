@@ -54,7 +54,7 @@ pub struct Status {
     pub message: String,
 }
 
-const DAMAGED_SIGN_IN: &str = "Could not read the saved sign-in. Sign in again.";
+pub(super) const DAMAGED_SIGN_IN: &str = "Could not read the saved sign-in. Sign in again.";
 
 impl Status {
     pub fn label(&self) -> &'static str {
@@ -67,15 +67,15 @@ impl Status {
         }
     }
 
-    fn failed(message: &str) -> Self {
+    fn failed(error: &SignInError) -> Self {
         Self {
-            state: if message == DAMAGED_SIGN_IN {
+            state: if *error == SignInError::DamagedSignIn {
                 State::SignInRequired
             } else {
                 State::Retry
             },
             expires_at: None,
-            message: message.into(),
+            message: error.to_string(),
         }
     }
 
@@ -184,11 +184,11 @@ pub(super) fn lock_within(
     })
 }
 
-fn read(store: &dyn SecretStore, uuid: &str) -> Result<Option<Secrets>, String> {
+fn read(store: &dyn SecretStore, uuid: &str) -> Result<Option<Secrets>, SignInError> {
     store
         .get(uuid)
         .map_err(|_| "Could not read the keychain. Unlock it and retry.".to_string())?
-        .map(|text| serde_json::from_str(&text).map_err(|_| DAMAGED_SIGN_IN.into()))
+        .map(|text| serde_json::from_str(&text).map_err(|_| SignInError::DamagedSignIn))
         .transpose()
 }
 
@@ -220,7 +220,7 @@ fn status_within(
         progress(Phase::Queued);
         let _operation = lock_within(store, within)?;
         progress(Phase::Keychain);
-        Ok::<_, String>(Status::from_secrets(read(store, uuid)?.as_ref()))
+        Ok::<_, SignInError>(Status::from_secrets(read(store, uuid)?.as_ref()))
     })();
     result.unwrap_or_else(|e| Status::failed(&e))
 }
@@ -298,7 +298,7 @@ pub(super) fn refresh_account(
                     if !s.sign_in_required {
                         status.state = State::Retry;
                     }
-                    status.message = e;
+                    status.message = e.to_string();
                     (status, s)
                 }
             };
@@ -313,7 +313,7 @@ pub(super) fn refresh_account(
                 "The renewed sign-in could not be saved in the keychain. Unlock it and retry."
                     .into();
         }
-        Ok::<_, String>(status)
+        Ok::<_, SignInError>(status)
     })();
     result.unwrap_or_else(|e| Status::failed(&e))
 }
@@ -348,9 +348,9 @@ pub(super) fn renew_for_game_with(
     if status.state != State::Ready {
         return Err(status);
     }
-    let _operation = lock(store).map_err(|e| Status::failed(&e))?;
+    let _operation = lock(store).map_err(|e| Status::failed(&e.into()))?;
     let secrets = read(store, &account.uuid)
         .map_err(|e| Status::failed(&e))?
         .ok_or_else(|| Status::from_secrets(None))?;
-    write_session_file(dir, account, &secrets).map_err(|e| Status::failed(&e))
+    write_session_file(dir, account, &secrets).map_err(|e| Status::failed(&e.into()))
 }

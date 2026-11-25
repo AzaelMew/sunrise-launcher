@@ -75,8 +75,7 @@ fn stub(body: &'static str) -> (String, std::thread::JoinHandle<String>) {
 fn shares_and_deletes_through_the_paste_api() {
     let (url, served) =
         stub(r#"{"success":true,"id":"Ab12","url":"https://mclo.gs/Ab12","token":"t0k"}"#);
-    std::env::set_var(PASTE_ENV, &url);
-    let shared = share("[main/INFO]: hello\n").unwrap();
+    let shared = share(&url, "[main/INFO]: hello\n").unwrap();
     assert_eq!(
         shared,
         Shared {
@@ -93,8 +92,7 @@ fn shares_and_deletes_through_the_paste_api() {
     );
 
     let (url, served) = stub(r#"{"success":true}"#);
-    std::env::set_var(PASTE_ENV, &url);
-    unshare(&shared).unwrap();
+    unshare(&url, &shared).unwrap();
     let request = served.join().unwrap();
     assert!(request.starts_with("DELETE /log/Ab12 "), "{request}");
     assert!(
@@ -105,10 +103,8 @@ fn shares_and_deletes_through_the_paste_api() {
     );
 
     let (url, _served) = stub(r#"{"success":false,"error":"Required field 'content' not found."}"#);
-    std::env::set_var(PASTE_ENV, &url);
     assert_eq!(
-        share("").unwrap_err(),
+        share(&url, "").unwrap_err(),
         "mclo.gs didn't take the log: Required field 'content' not found."
     );
-    std::env::remove_var(PASTE_ENV);
 }

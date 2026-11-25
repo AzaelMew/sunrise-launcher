@@ -51,7 +51,7 @@ pub(super) enum WorldsCmd {
     },
 }
 
-pub(super) fn worlds(action: WorldsCmd, as_json: bool) -> Result<(), String> {
+pub(super) fn worlds(action: WorldsCmd, as_json: bool) -> Result<(), Error> {
     use sunrise_launcher::datapacks;
     use sunrise_launcher::worlds::{self, World};
     let profile = |instance: Option<String>| match instance {
@@ -149,7 +149,7 @@ pub(super) fn worlds(action: WorldsCmd, as_json: bool) -> Result<(), String> {
                 sunrise_launcher::managed_play::Profile::open_selected(&profile(instance)?)?;
             let w = worlds::find(profile.home(), &world)?;
             let p = datapacks::find(&w.path, &pack)?;
-            datapacks::remove(&w.path, &p)?;
+            datapacks::remove(&w.path, &p, None)?;
             println!("{} is in the trash.", p.file);
         }
     }
@@ -215,7 +215,7 @@ pub(super) enum PacksCmd {
     },
 }
 
-pub(super) fn game_packs(action: PacksCmd, as_json: bool) -> Result<(), String> {
+pub(super) fn game_packs(action: PacksCmd, as_json: bool) -> Result<(), Error> {
     use sunrise_launcher::packs::{self, Kind};
     let home = |instance: Option<String>| -> Result<PathBuf, String> {
         Ok(match instance {
@@ -319,7 +319,7 @@ pub(super) enum ScreenshotsCmd {
     },
 }
 
-pub(super) fn screenshots(action: ScreenshotsCmd, as_json: bool) -> Result<(), String> {
+pub(super) fn screenshots(action: ScreenshotsCmd, as_json: bool) -> Result<(), Error> {
     use sunrise_launcher::screenshots;
     let home = |instance: Option<String>| -> Result<PathBuf, String> {
         Ok(match instance {

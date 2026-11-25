@@ -1,10 +1,6 @@
 use super::*;
 use std::io::Write;
-use std::sync::Mutex;
 use sunrise_launcher_nbt::{self as nbt, Limits, Tag};
-
-/// `SUNRISE_LAUNCHER_TRASH` is process-wide: one test at a time may point it somewhere.
-static TRASH: Mutex<()> = Mutex::new(());
 
 fn scratch(name: &str) -> PathBuf {
     let root = std::env::temp_dir().join(format!(
@@ -96,11 +92,7 @@ fn lists_adds_and_removes_as_the_game_reads_them() {
 
     let folder = find(&world, "folder pack").unwrap();
     let trash = root.join("trash");
-    let held = TRASH.lock().unwrap_or_else(|e| e.into_inner());
-    std::env::set_var(crate::desktop_seams::TRASH_ENV, &trash);
-    remove(&world, &folder).unwrap();
-    std::env::remove_var(crate::desktop_seams::TRASH_ENV);
-    drop(held);
+    remove(&world, &folder, Some(&trash)).unwrap();
     assert!(trash.join("folder pack/pack.mcmeta").is_file());
     assert!(!fs::read_to_string(world.join("datapacks.json"))
         .unwrap()
@@ -340,11 +332,7 @@ fn removing_and_adding_a_disabled_pack_drops_it_from_level_dat_and_changes_no_ot
     assert!(!a.enabled);
 
     let trash = root.join("trash");
-    let held = TRASH.lock().unwrap_or_else(|e| e.into_inner());
-    std::env::set_var(crate::desktop_seams::TRASH_ENV, &trash);
-    let removed = remove(&world, &a);
-    std::env::remove_var(crate::desktop_seams::TRASH_ENV);
-    drop(held);
+    let removed = remove(&world, &a, Some(&trash));
     removed.unwrap();
 
     // Expected: the same tags, with only `file/a.zip` gone from the two lists.
@@ -421,7 +409,8 @@ fn a_world_the_game_holds_is_refused_and_level_dat_is_left_as_it_is() {
     let a = find(&world, "a.zip").unwrap();
     let game = crate::worlds::lock_saved_dir(&world).unwrap();
     assert!(add(&world, &drops.join("datapacks/b.zip")).is_err());
-    assert!(remove(&world, &a).is_err());
+    // Refused before anything moves, and never into the system's trash either way.
+    assert!(remove(&world, &a, Some(&root.join("trash"))).is_err());
     assert!(a.path.is_file());
     drop(game);
     assert_eq!(fs::read(world.join("level.dat")).unwrap(), before);

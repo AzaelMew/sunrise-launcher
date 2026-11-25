@@ -182,7 +182,7 @@ impl Launcher {
             Ok(()) => Some(Ok(
                 "No keychain here: the token is kept until the launcher closes.".into(),
             )),
-            Err(e) => Some(Err(e)),
+            Err(e) => Some(Err(e.into())),
         };
         self.internet.token = Some(Some(token));
         self.internet_load();

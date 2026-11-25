@@ -40,7 +40,7 @@ pub(super) enum DataCmd {
 }
 
 /// `data`: the same consent as Settings → Data collection.
-pub(super) fn data(action: DataCmd, as_json: bool) -> Result<(), String> {
+pub(super) fn data(action: DataCmd, as_json: bool) -> Result<(), Error> {
     use sunrise_launcher::telemetry;
     let review = |item: &sunrise_launcher_telemetry::Item, yes: bool| -> Result<bool, String> {
         println!(
