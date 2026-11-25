@@ -143,7 +143,9 @@ impl Launcher {
         for home in homes {
             match backend::switch_from_auto(&home, api) {
                 Ok(changed) => switched |= changed,
-                Err(e) => sunrise_launcher::elog!("Sunrise launcher: could not switch to {label}: {e}"),
+                Err(e) => {
+                    sunrise_launcher::elog!("Sunrise launcher: could not switch to {label}: {e}")
+                }
             }
         }
         switched.then_some(label)
