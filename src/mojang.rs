@@ -16,9 +16,9 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::Relaxed};
 use std::sync::Mutex;
 use std::time::Duration;
 
-const OBJECTS: &str = "https://resources.download.minecraft.net";
+const OBJECTS: &str = sunrise_launcher_addresses::MOJANG_RESOURCES;
 /// The index of Mojang's Java runtimes, the one the official launcher reads.
-const JAVA_RUNTIMES: &str = "https://launchermeta.mojang.com/v1/products/java-runtime/2ec0cc96c44e5a76b9c8b7c39df7210883d12871/all.json";
+const JAVA_RUNTIMES: &str = sunrise_launcher_addresses::MOJANG_JAVA_RUNTIMES;
 
 /// Set to stop the download under way (the window's Cancel); cleared when a preparation starts.
 pub static CANCEL: AtomicBool = AtomicBool::new(false);

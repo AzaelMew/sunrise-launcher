@@ -557,7 +557,10 @@ fn remembered(
 }
 
 fn ask_github(repo: &str, revision: &str) -> Result<String, String> {
-    let url = format!("https://api.github.com/repos/{repo}/commits/{revision}");
+    let url = format!(
+        "{}/repos/{repo}/commits/{revision}",
+        sunrise_launcher_addresses::GITHUB_API
+    );
     let commit = crate::github::json(&url)?;
     commit["commit"]["committer"]["date"]
         .as_str()

@@ -15,7 +15,7 @@ use std::process::Command;
 /// Native mods use the same Rust release as the game CI (`tools/ci/rust-version`).
 /// Bumping it also updates [`DIST`] and each platform's component checksums below.
 pub const VERSION: &str = include_str!("../rust-version").trim_ascii();
-const DIST: &str = "https://static.rust-lang.org/dist/2026-10-15";
+const DIST: &str = sunrise_launcher_addresses::RUST_DIST;
 
 /// One platform's components: (name, SHA-256, compressed bytes) of `<name>-<VERSION>-<target>.tar.gz`.
 #[derive(Debug, PartialEq)]
@@ -47,7 +47,7 @@ enum CToolchainKind {
 /// against; POSIX threads; SEH), the release's `mingw64/` folder without its documentation.
 pub const MINGW: CToolchain = CToolchain {
     version: "GCC 16.2.0, MinGW-w64 14.0.0 (WinLibs r3)",
-    url: "https://github.com/brechtsanders/winlibs_mingw/releases/download/16.2.0posix-23.1.3-14.0.0-msvcrt-r3/winlibs-x86_64-posix-seh-gcc-16.2.0-mingw-w64msvcrt-14.0.0-r3.zip",
+    url: sunrise_launcher_addresses::WINLIBS_MINGW,
     sha256: "62af32ea58acdea1318ea5dd8eb7017eaee694dd40b269d52a59c769dcfefb82",
     bytes: 277203392,
     directory: MINGW_DIR,
@@ -58,7 +58,7 @@ pub const MINGW: CToolchain = CToolchain {
 /// LLVM's GNU-compatible ABI; it is not an MSVC object/library toolchain.
 pub const LLVM_MINGW: CToolchain = CToolchain {
     version: "LLVM-MinGW 23.1.5 (20261104, UCRT)",
-    url: "https://github.com/mstorsjo/llvm-mingw/releases/download/20261104/llvm-mingw-20261104-ucrt-aarch64.zip",
+    url: sunrise_launcher_addresses::LLVM_MINGW,
     sha256: "7d7f8387a8706639b0b47a629d6e23f8b3ef9acce67e9832b8cd4c5bb2816eab",
     bytes: 186164073,
     directory: LLVM_MINGW_DIR,
