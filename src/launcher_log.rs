@@ -253,13 +253,18 @@ pub fn since(since: u64) -> (u64, Vec<String>) {
 }
 
 /// Hide `term` from now on (an account name, a server address). Terms under 3 chars ignored.
+/// The accounts are read often, so a term already hidden is skipped.
 pub fn hide(term: impl Into<String>) {
     let term = term.into();
     let mut scrubber = lock(&SCRUBBER);
+    let mut hidden = lock(&HIDDEN);
+    if hidden.contains(&term) {
+        return;
+    }
     if let Some(built) = scrubber.as_mut() {
         *built = Arc::new((**built).clone().term(term.clone()));
     }
-    lock(&HIDDEN).push(term);
+    hidden.push(term);
 }
 
 /// The scrubber, built on first use like `crate::telemetry::scrubber()` and told every hidden term.
