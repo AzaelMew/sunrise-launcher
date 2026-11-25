@@ -45,7 +45,6 @@ pub fn clear_log() -> Result<(), String> {
 
 /// Appends `message` (with a newline) to the build log, so a failure before any command is recorded.
 pub fn append_log(message: &str) -> Result<(), String> {
-    crate::launcher_log::line(format!("native build: {message}"));
     fs::create_dir_all(root()).map_err(|e| format!("{}: {e}", root().display()))?;
     let mut log = fs::OpenOptions::new()
         .create(true)
@@ -57,7 +56,6 @@ pub fn append_log(message: &str) -> Result<(), String> {
 
 /// Appends `text` to the build log, the way a compiler warning reads.
 pub fn log_warning(text: &str) {
-    crate::launcher_log::line(format!("native build: warning: {text}"));
     if let Ok(mut log) = fs::OpenOptions::new()
         .create(true)
         .append(true)
