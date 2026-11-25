@@ -345,7 +345,7 @@ impl Launcher {
                 .into_iter()
                 .find(|p| p.file == file)
                 .ok_or_else(|| tr("This pack changed. Check the refreshed list."))?;
-            datapacks::remove(&world, &pack)
+            datapacks::remove(&world, &pack, None)
         })();
         self.mods_state.notice = result.err().map(Err);
         self.world_packs.reread();
