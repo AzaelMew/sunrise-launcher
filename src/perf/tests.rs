@@ -353,3 +353,50 @@ fn terminal_summary_matches_report_frames_percentiles() {
         "p95 must match report Frames: {line}"
     );
 }
+
+/// A bench whose scrolling is over and that has one local install waiting.
+fn ready_install(name: &str) -> (Perf, Bench) {
+    let perf = drawn();
+    let mut bench = Bench::new(out(name), List::Builds);
+    bench.install = Some(Install {
+        smod: PathBuf::from("bench-install.smod"),
+        home: PathBuf::from("scratch-profile"),
+        began: None,
+        outcome: None,
+    });
+    bench.began = Some(Instant::now() - SWITCHING);
+    bench.scroll = Some(Scroll::opened(Instant::now()));
+    bench.scroll.as_mut().unwrap().ended = true;
+    (perf, bench)
+}
+
+fn finish_install(bench: &mut Bench, perf: &Perf, outcome: Option<String>) -> serde_json::Value {
+    assert!(matches!(bench.tick(perf), Step::Install));
+    let (smod, home) = bench.start_install().unwrap();
+    assert!(smod.ends_with("bench-install.smod"));
+    assert!(home.ends_with("scratch-profile"));
+    assert!(matches!(bench.tick(perf), Step::Wait), "the install runs");
+    bench.installed(outcome);
+    assert!(matches!(bench.tick(perf), Step::Wait), "resting begins");
+    bench.idle_cpu.as_mut().unwrap().0 = Instant::now() - IDLE;
+    assert!(matches!(bench.tick(perf), Step::Quit));
+    let result = serde_json::from_str(&std::fs::read_to_string(&bench.out).unwrap()).unwrap();
+    let _ = std::fs::remove_file(&bench.out);
+    result
+}
+
+#[test]
+fn a_local_install_is_offered_once_and_its_time_is_recorded() {
+    let (perf, mut bench) = ready_install("install");
+    let result = finish_install(&mut bench, &perf, None);
+    assert!(result["install_ms"].as_f64().is_some());
+    assert!(result["install_skipped"].is_null());
+}
+
+#[test]
+fn a_failed_local_install_is_recorded_without_failing_the_benchmark() {
+    let (perf, mut bench) = ready_install("install-failed");
+    let result = finish_install(&mut bench, &perf, Some("no room".into()));
+    assert!(result["install_ms"].is_null());
+    assert_eq!(result["install_skipped"], "no room");
+}
