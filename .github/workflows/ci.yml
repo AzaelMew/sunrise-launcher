@@ -120,6 +120,15 @@ jobs:
           checker="$RUNNER_TEMP/structure_check.py"
           git show "$BASE:tools/ci/structure_check.py" > "$checker" 2>/dev/null || cp tools/ci/structure_check.py "$checker"
           python3 "$checker" --base "$BASE" --head HEAD
+      # A new label whose key was never seeded shows English in every language, silently.
+      - name: Every new tr key is in the translation catalog
+        if: github.event_name == 'pull_request'
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          python3 -m unittest tools/tests/test_lang_keys_check.py
+          git fetch --no-tags --depth=1 origin "$BASE"
+          python3 tools/ci/lang_keys_check.py --base "$BASE" --head HEAD
       - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master, 2026-11-15
         with:
           toolchain: ${{ needs.route.outputs.rust }}
