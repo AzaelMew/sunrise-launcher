@@ -1234,6 +1234,67 @@ impl Launcher {
         }
     }
 
+    pub(crate) fn on_account_message(&mut self, msg: Msg) {
+        match msg {
+            Msg::Keychain(said) => self.keychain = said,
+            Msg::Owner(owns) => self.owner = Some(owns),
+            Msg::AccountHead(uuid, url, face, failed) => {
+                self.profile_heads.loaded(&uuid, &url, face, failed)
+            }
+            Msg::SkinsProfile(uuid, id, result) => self.skins_profile(uuid, id, result),
+            Msg::Picture(url, png) => self.skins_picture(url, png),
+            Msg::LookSaved(uuid, id, outcome) => self.look_saved(uuid, id, *outcome),
+            Msg::SkinsAdded(uuid, added, listing) => self.skins_added(uuid, added, listing),
+            Msg::SkinsListed(uuid, listing) => self.skins_listed(uuid, listing),
+            Msg::LookRecorded(uuid, record, recorded) => self.look_recorded(uuid, record, recorded),
+            Msg::SkinRemoved(uuid, id, removed, listing) => {
+                self.skin_removed(uuid, id, removed, listing)
+            }
+            Msg::SkinFile(key, id, png) => self.skins_file(key, id, png),
+            Msg::SkinKept(uuid, url, kept, listing) => self.skins_kept(uuid, url, kept, listing),
+            Msg::AccountProgress(uuid, generation, phase) => {
+                if self.auth_busy.get(&uuid) == Some(&generation) {
+                    self.auth_progress.insert(uuid, phase);
+                }
+            }
+            Msg::AccountStatus(uuid, generation, status) => {
+                if self.auth_busy.get(&uuid) != Some(&generation) {
+                    return;
+                }
+                self.auth_busy.remove(&uuid);
+                self.auth_progress.remove(&uuid);
+                if self.accounts.find(&uuid).is_some() {
+                    if status.state == account::session::State::Ready {
+                        self.owner = Some(true);
+                    }
+                    self.auth_status.insert(uuid, status);
+                    // A refresh may have saved a new name or skin: show it now.
+                    let saved = Accounts::load();
+                    if saved != self.accounts {
+                        self.accounts = saved;
+                        self.load_profile_heads();
+                    }
+                }
+            }
+            Msg::AccountRemoved(uuid, generation, result) => {
+                if self.auth_busy.get(&uuid) != Some(&generation) {
+                    return;
+                }
+                self.auth_busy.remove(&uuid);
+                self.auth_progress.remove(&uuid);
+                match result {
+                    Ok(owns) => {
+                        self.accounts = Accounts::load();
+                        self.auth_status.remove(&uuid);
+                        self.owner = Some(owns);
+                    }
+                    Err(e) => self.sign_in_state = Some(SignInState::Done(Err(e))),
+                }
+            }
+            _ => unreachable!("not an account or skins message"),
+        }
+    }
+
     /// The saved skins were listed (`Msg::SkinsListed`).
     pub(crate) fn skins_listed(&mut self, uuid: String, listed: skin_library::Listing) {
         if let Some(page) = self.skins.page_mut(&uuid) {
