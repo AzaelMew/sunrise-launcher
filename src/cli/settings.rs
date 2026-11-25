@@ -138,3 +138,71 @@ pub(super) fn set_setting(s: &mut backend::Settings, key: &str, value: &str) -> 
     }
     Ok(())
 }
+
+pub(super) fn show(key: Option<String>, value: Option<String>, as_json: bool) -> Result<(), Error> {
+    let mut settings = backend::Settings::load();
+    if let Some(key) = key {
+        let value = value.ok_or("settings KEY VALUE: the value is missing")?;
+        set_setting(&mut settings, &key, &value)?;
+        settings.save()?;
+        sunrise_launcher::proxy::announce(settings.proxy.clone());
+    }
+    let all = settings_json(&settings);
+    if as_json {
+        json(all);
+    } else {
+        for (key, value) in all.as_object().into_iter().flatten() {
+            println!("{key}: {value}");
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn game_args(args: Option<String>, as_json: bool) -> Result<(), Error> {
+    let mut settings = backend::Settings::load();
+    if let Some(line) = args {
+        settings.game_args = line;
+        settings.save()?;
+    }
+    let line = settings.game_args;
+    if as_json {
+        json(serde_json::json!({
+            "game_args": line,
+            "parsed": backend::split_args(&line),
+        }));
+    } else if line.is_empty() {
+        println!("No extra game arguments.");
+    } else {
+        println!("Game arguments: {line}");
+    }
+    Ok(())
+}
+
+pub(super) fn no_ai(state: Option<String>, as_json: bool) -> Result<(), Error> {
+    if let Some(state) = state {
+        backend::set_no_ai(state == "on")?;
+    }
+    let on = backend::no_ai();
+    if as_json {
+        json(serde_json::json!({ "no_ai": on }));
+    } else if on {
+        println!("No AI is on: every AI feature is hidden and off.");
+    } else {
+        println!("No AI is off: AI features are available.");
+    }
+    Ok(())
+}
+
+pub(super) fn desktop_entry(remove: bool) -> Result<(), Error> {
+    let mut settings = backend::Settings::load();
+    settings.desktop_entry = Some(!remove);
+    settings.save()?;
+    if remove {
+        sunrise_launcher::desktop::remove()?;
+        println!("Removed Sunrise from the applications menu.");
+    } else {
+        sunrise_launcher::desktop::install(backend::exe_path())?;
+        println!("Sunrise is in the applications menu.");
+    }
+    Ok(())
+}

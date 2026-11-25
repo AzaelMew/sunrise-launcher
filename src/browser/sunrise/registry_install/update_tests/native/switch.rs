@@ -155,8 +155,8 @@ fn switch_with(
     approve: &dyn Fn(&SwitchQuestion) -> Result<SwitchDecision, String>,
 ) -> Result<Switched, String> {
     v2::switch_profile_build_v2_with(
-        &fixture.instance,
-        install_target(&fixture.instance).unwrap(),
+        &fixture.target(),
+        fixture.identity(),
         tag,
         None,
         v2::V2SwitchHooks {
@@ -514,12 +514,12 @@ fn a_held_source_is_offered_again_on_each_switch_and_its_toggle_checks_it() {
 
             // The signed index's takedowns are always asked, even by a profile without registry
             // receipts: while it can't be read, the toggle refuses and changes nothing.
-            let identity = install_target(&fixture.instance).unwrap();
+            let identity = fixture.identity();
             let cancellation = native_mods::Cancellation::default();
             let before = fixture.snapshot(&[ARCHIVE, EXTRA]);
             let signed = fixture.root.join("index-v2.signed");
             std::env::set_var("SUNRISE_MOD_INDEX_V2", &signed);
-            let error = restore_held(&fixture.instance, identity, ID, &cancellation).unwrap_err();
+            let error = restore_held(&fixture.target(), identity, ID, &cancellation).unwrap_err();
             assert!(error.contains("takedowns"), "{error}");
             assert_eq!(fixture.snapshot(&[ARCHIVE, EXTRA]), before);
             let v2 = Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/smod/tests/index_v2");
@@ -534,7 +534,7 @@ fn a_held_source_is_offered_again_on_each_switch_and_its_toggle_checks_it() {
             .unwrap();
 
             // While the check still fails, the toggle says why and changes nothing.
-            let error = restore_held(&fixture.instance, identity, ID, &cancellation).unwrap_err();
+            let error = restore_held(&fixture.target(), identity, ID, &cancellation).unwrap_err();
             assert!(error.contains("tick_light"), "{error}");
             assert_eq!(fixture.snapshot(&[ARCHIVE, EXTRA]), before);
             assert_eq!(Active::read_pointer(home).unwrap().as_ref(), Some(&*active));
@@ -560,7 +560,7 @@ fn a_held_source_is_offered_again_on_each_switch_and_its_toggle_checks_it() {
 
             // Once the exact bytes build for this build, the toggle turns the mod on.
             fs::remove_file(fixture.root.join("fixture-switch-target")).unwrap();
-            restore_held(&fixture.instance, identity, ID, &cancellation).unwrap();
+            restore_held(&fixture.target(), identity, ID, &cancellation).unwrap();
             let active = Active::read_pointer(home).unwrap().unwrap();
             assert_eq!(active.base(), OTHER);
             assert_eq!(active.holds().count(), 0);

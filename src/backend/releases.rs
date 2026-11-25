@@ -1,5 +1,10 @@
 //! Releases: their order, parsing the game's and the launcher's, the SDK offers, and the update check.
-use super::*;
+use super::{
+    asset_installed, compare_game_versions, dev_date, fetch_small, game_assets_for, installation,
+    installed, is_game_tag, launcher_asset, native_windows_architecture,
+    selected_game_architecture, LauncherCheckError, Release, Settings, ASSET, GAME_FALLBACK,
+    GAME_REPO, LAUNCHER_REPO, LAUNCHER_TAG_PREFIX,
+};
 
 /// The launcher version in a `vX.Y.Z` tag of [`LAUNCHER_REPO`], or None for any other tag: the verifier's own grammar, so discovery never takes a tag it would refuse.
 pub fn launcher_version(tag: &str) -> Option<&str> {

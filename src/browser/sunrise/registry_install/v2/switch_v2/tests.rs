@@ -1,6 +1,6 @@
 use super::*;
 use crate::{
-    instances::{Channel, Kind as InstanceKind},
+    instances::{Channel, Incarnation, Instance, Kind as InstanceKind},
     native_mods::{Cancellation, LeftOut, Why},
 };
 
@@ -21,7 +21,7 @@ fn v2_profile_switch_refuses_pack_without_fetching_index() {
         last_played: None,
         played: Default::default(),
         launch: Default::default(),
-        incarnation: None,
+        incarnation: Some(Incarnation::of(dir.path(), dir.path()).unwrap()),
     };
     let cancel = Cancellation::default();
     let hooks = V2SwitchHooks {
@@ -34,9 +34,10 @@ fn v2_profile_switch_refuses_pack_without_fetching_index() {
         confirm_publisher_change: None,
         pin_dir: None,
     };
+    let target = Target::of(&instance).unwrap();
     let Err(err) = switch_profile_build_v2_with(
-        &instance,
-        Identity::of(dir.path()).unwrap(),
+        &target,
+        target.identity(),
         "dev-2026-11-24-abc",
         Some(BuildChoice::Follow(Channel::Dev)),
         hooks,

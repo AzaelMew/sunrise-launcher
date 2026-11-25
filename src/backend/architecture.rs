@@ -1,6 +1,11 @@
 //! Which architecture a game build is for: the platform's choices, the installed build's PE
 //! header, and what to say when they don't match.
-use super::*;
+use super::{
+    asset_installed, installation, platform_assets, same, version_dir, Release, Settings, CLIENT,
+    COMPLETE,
+};
+use std::fs;
+use std::path::Path;
 
 /// The game architecture selected in Settings. Auto preserves the launcher's existing behavior:
 /// it follows the process architecture, even when an x64 launcher runs on Windows ARM.

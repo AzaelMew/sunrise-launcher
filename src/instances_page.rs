@@ -61,7 +61,7 @@ impl Launcher {
                 Some(crate::profile_delete::Action::Interrupted(notices))
                     if notices.iter().any(|notice| notice.id() == id)
             ) {
-                crate::glass_toast::say(instances::retired_selection_message(&id));
+                crate::toast::say(instances::retired_selection_message(&id));
             }
         }
         let _ = self.skins_offline();
@@ -269,7 +269,7 @@ impl Launcher {
                 match result {
                     Ok(instance) => {
                         let name = [("name", instance.name.as_str())];
-                        crate::glass_toast::say(if edited {
+                        crate::toast::say(if edited {
                             trf("Saved {name}", &name)
                         } else {
                             trf("Created {name}", &name)

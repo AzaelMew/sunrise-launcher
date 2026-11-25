@@ -5,6 +5,10 @@ use super::resume::{partial_path, sweep_partials, valid};
 use super::runtime::{build_client, Clients};
 use super::CANCELLED;
 use crate::backend::lock::recover;
+
+/// Why acquiring a permit can't fail: nothing closes these semaphores (they are private to this
+/// file, which never calls `close()`).
+const NEVER_CLOSED: &str = "the download semaphores are never closed";
 use futures_util::{stream, StreamExt};
 use reqwest::{header, Client, Response, StatusCode, Url};
 use std::{
@@ -249,8 +253,13 @@ impl Downloader {
                     .or_insert_with(|| Arc::new(Semaphore::new(self.config.per_host)))
                     .clone()
             };
-            let host = budget.acquire_owned().await.unwrap();
-            let global = self.network.clone().acquire_owned().await.unwrap();
+            let host = budget.acquire_owned().await.expect(NEVER_CLOSED);
+            let global = self
+                .network
+                .clone()
+                .acquire_owned()
+                .await
+                .expect(NEVER_CLOSED);
             let count = Count::new(&self.metrics.counters.connections);
             let proxy =
                 sunrise_launcher_proxy::address_for(&url, crate::proxy::setting().as_deref())
@@ -344,8 +353,8 @@ impl Downloader {
                     }
                 }
             };
-            let _unique = lock.acquire().await.unwrap();
-            let _file = self.files.acquire().await.unwrap();
+            let _unique = lock.acquire().await.expect(NEVER_CLOSED);
+            let _file = self.files.acquire().await.expect(NEVER_CLOSED);
             let _active = Count::new(&self.metrics.counters.active);
             let parent = artifact
                 .path
@@ -488,10 +497,7 @@ impl Downloader {
         first.map_or(Ok(()), Err)
     }
     async fn sweep(&self, parent: &Path) {
-        let once = self
-            .sweeps
-            .lock()
-            .unwrap()
+        let once = recover(&self.sweeps)
             .entry(parent.to_owned())
             .or_default()
             .clone();

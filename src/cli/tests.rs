@@ -235,7 +235,9 @@ fn settings_accepts_german_and_chinese() {
 fn play_takes_an_account_for_one_launch() {
     let cli = Cli::try_parse_from(["sunrise-launcher", "play", "--account", "Alex"]).unwrap();
     match cli.command {
-        Some(Cmd::Play { account, .. }) => assert_eq!(account.as_deref(), Some("Alex")),
+        Some(Cmd::Play(play::PlayArgs { account, .. })) => {
+            assert_eq!(account.as_deref(), Some("Alex"))
+        }
         _ => panic!("not play"),
     }
 }
@@ -252,7 +254,7 @@ fn play_takes_extra_arguments_that_start_with_hyphens() {
     ])
     .unwrap();
     match cli.command {
-        Some(Cmd::Play { arg, .. }) => assert_eq!(arg, ["--server-thread", "40"]),
+        Some(Cmd::Play(play::PlayArgs { arg, .. })) => assert_eq!(arg, ["--server-thread", "40"]),
         _ => panic!("expected play"),
     }
 }
@@ -347,11 +349,11 @@ fn native_build_sync_is_explicit_and_never_selects_an_instance() {
     };
     assert!(matches!(
         parse(&["mod", "--trust-native-code"]).unwrap().command,
-        Some(Cmd::NativeBuild {
+        Some(Cmd::NativeBuild(native::NativeBuildArgs {
             sync_internals: true,
             folder: Some(_),
             ..
-        })
+        }))
     ));
     assert!(parse(&[]).is_err());
     for args in [
@@ -379,14 +381,14 @@ fn native_build_export_mode_needs_a_folder_and_refuses_an_instance() {
         .unwrap()
         .command
     {
-        Some(Cmd::NativeBuild {
+        Some(Cmd::NativeBuild(native::NativeBuildArgs {
             folder,
             server_output,
             instance,
             version,
             profile,
             ..
-        }) => {
+        })) => {
             assert_eq!(folder.as_deref(), Some(Path::new("mods")));
             assert_eq!(server_output.as_deref(), Some(Path::new("engine-out")));
             assert_eq!(instance, None);
@@ -404,10 +406,10 @@ fn native_build_export_mode_needs_a_folder_and_refuses_an_instance() {
         ])
         .unwrap()
         .command,
-        Some(Cmd::NativeBuild {
+        Some(Cmd::NativeBuild(native::NativeBuildArgs {
             allow_jar_downloads: true,
             ..
-        })
+        }))
     ));
     assert!(parse(&["mods", "--allow-jar-downloads"]).is_err());
     // The mod folder is explicit in export mode: no default from an instance.
@@ -427,9 +429,9 @@ fn native_build_export_mode_needs_a_folder_and_refuses_an_instance() {
     .unwrap()
     .command
     {
-        Some(Cmd::NativeBuild {
+        Some(Cmd::NativeBuild(native::NativeBuildArgs {
             version, profile, ..
-        }) => {
+        })) => {
             assert_eq!(version.as_deref(), Some("v2026.10.13"));
             assert_eq!(profile, Some(native_mods::Profile::Optimized));
         }
@@ -439,7 +441,7 @@ fn native_build_export_mode_needs_a_folder_and_refuses_an_instance() {
     // The game mode is unchanged: an instance build without --server-output.
     assert!(matches!(
         parse(&["--instance", "A"]).unwrap().command,
-        Some(Cmd::NativeBuild { instance: Some(i), server_output: None, .. }) if i == "A"
+        Some(Cmd::NativeBuild(native::NativeBuildArgs { instance: Some(i), server_output: None, .. })) if i == "A"
     ));
 }
 

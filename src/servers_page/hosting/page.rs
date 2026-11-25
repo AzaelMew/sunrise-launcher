@@ -290,7 +290,7 @@ impl Launcher {
                     .child(
                         button("host-folder", tr("Open folder"))
                             .h(px(tokens::FIELD))
-                            .on_click(move |_, _, cx| crate::glass_toast::open(cx, &folder)),
+                            .on_click(move |_, _, cx| crate::toast::open(cx, &folder)),
                     )
                     .child(panel.h(px(tokens::FIELD)))
                     .child(restart.h(px(tokens::FIELD)))

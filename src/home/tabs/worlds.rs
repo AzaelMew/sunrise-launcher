@@ -35,8 +35,8 @@ impl Launcher {
             let saves = instance.home.join("saves");
             let open = button("home-worlds-folder", tr("Open folder")).on_click(move |_, _, cx| {
                 match std::fs::create_dir_all(&saves) {
-                    Ok(()) => crate::glass_toast::open(cx, &saves),
-                    Err(e) => crate::glass_toast::say(format!("{}: {e}", saves.display())),
+                    Ok(()) => crate::toast::open(cx, &saves),
+                    Err(e) => crate::toast::say(format!("{}: {e}", saves.display())),
                 }
             });
             empty(

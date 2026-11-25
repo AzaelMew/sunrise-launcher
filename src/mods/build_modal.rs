@@ -245,7 +245,7 @@ impl Launcher {
                         run.details = false;
                         cx.notify();
                     } else {
-                        crate::glass_toast::open(cx, &native_mods::log_path());
+                        crate::toast::open(cx, &native_mods::log_path());
                     }
                 }
             }))
@@ -581,7 +581,7 @@ impl Launcher {
 
     /// What [`Self::check_mod_update`] found, said once.
     pub(super) fn checked(&mut self, title: String, found: Result<Option<String>, String>) {
-        crate::glass_toast::say(match found {
+        crate::toast::say(match found {
             Ok(Some(version)) => trf(
                 "{mod} {version} is out. Update it under Mods.",
                 &[("mod", &title), ("version", &version)],

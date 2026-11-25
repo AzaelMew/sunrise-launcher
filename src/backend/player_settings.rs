@@ -1,6 +1,9 @@
 //! settings.json's model: appearance, what happens while playing, the world layout, the
 //! settings themselves and their short-lived cache.
-use super::*;
+use super::{data_dir, look_settings, version_storage, GameArchitecture};
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 /// The launcher's appearance, as older launchers saved it: a theme is one look now, and a saved
 /// `light` opens on the Taiga theme (`Settings::parse`).

@@ -118,7 +118,11 @@ fn migrate_shader_values(home: &Path, pack: &Path, key: &str) -> std::io::Result
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
             Err(e) => return Err(e),
         };
-        fs::create_dir_all(target.parent().unwrap())?;
+        fs::create_dir_all(
+            target
+                .parent()
+                .expect("the target is a file in .sunrise-options/"),
+        )?;
         let mut file = match fs::OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -253,8 +257,11 @@ fn enabled(home: &Path, kind: Kind) -> Vec<String> {
                                 .iter()
                                 .filter_map(|path| shader_key(path))
                                 .find(|key| {
-                                    stem.strip_prefix(key.strip_prefix("sunrise:").unwrap())
-                                        .is_some_and(|v| v.starts_with('-') && v.len() > 1)
+                                    stem.strip_prefix(
+                                        key.strip_prefix("sunrise:")
+                                            .expect("shader_key always says sunrise:<id>"),
+                                    )
+                                    .is_some_and(|v| v.starts_with('-') && v.len() > 1)
                                 })
                         })
                         .unwrap_or(p)
@@ -545,14 +552,15 @@ pub fn set_enabled(home: &Path, pack: &Pack, on: bool) -> Result<(), String> {
                     .unwrap_or_default();
                 if incompatible.contains(&id) {
                     incompatible.retain(|i| *i != id);
-                    let value = serde_json::to_string(&incompatible).unwrap();
+                    let value = serde_json::to_string(&incompatible)
+                        .expect("a list of names always serialises");
                     set_line(&options, "incompatibleResourcePacks", &value)?;
                 }
             }
             set_line(
                 &options,
                 "resourcePacks",
-                &serde_json::to_string(&list).unwrap(),
+                &serde_json::to_string(&list).expect("a list of names always serialises"),
             )
         }
         Kind::Shader => {
@@ -657,7 +665,7 @@ fn free_target(dir: &Path, name: &std::ffi::OsStr) -> PathBuf {
             n => dir.join(format!("{stem} ({n}){ext}")),
         })
         .find(|p| !p.exists())
-        .unwrap()
+        .expect("a folder can't hold a pack under every numbered name")
 }
 
 /// Copies a pack file into the right folder of `home`, under a name not taken yet. Returns it,
@@ -867,7 +875,12 @@ pub fn move_resource(home: &Path, file: &str, neighbor: &str) -> Result<(), Stri
     let ((Some(a), false), (Some(b), false)) = (at(file), at(neighbor)) else {
         return Err(stale());
     };
-    let rank = |i: usize| slots.iter().position(|(s, _)| *s == i).unwrap();
+    let rank = |i: usize| {
+        slots
+            .iter()
+            .position(|(s, _)| *s == i)
+            .expect("both packs were just found among the slots")
+    };
     if rank(a).abs_diff(rank(b)) != 1 {
         return Err(stale());
     }
@@ -875,7 +888,7 @@ pub fn move_resource(home: &Path, file: &str, neighbor: &str) -> Result<(), Stri
     let text = with_line(
         &text,
         "resourcePacks",
-        &serde_json::to_string(&raw).unwrap(),
+        &serde_json::to_string(&raw).expect("a list of names always serialises"),
     );
     write_settings(&options, &text)
 }

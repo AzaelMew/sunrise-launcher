@@ -586,8 +586,8 @@ fn github_add_and_checked_update_share_the_candidate_proof() {
             };
             let install = |fixture: &Fixture, found: &Resolved, packs: &[github_mods::Packed]| {
                 add_github(
-                    &fixture.instance,
-                    install_target(&fixture.instance).unwrap(),
+                    &fixture.target(),
+                    fixture.identity(),
                     found,
                     packs,
                     None,
@@ -636,8 +636,8 @@ fn github_add_and_checked_update_share_the_candidate_proof() {
                 old_pointer
             );
             let updated = update_github(
-                &fixture.instance,
-                install_target(&fixture.instance).unwrap(),
+                &fixture.target(),
+                fixture.identity(),
                 &found,
                 &checked[0],
                 || panic!("the update uses the committed base"),
@@ -674,7 +674,7 @@ fn pinned_source_preflight_refusal_cancel_and_failed_update_keep_the_profile() {
             use crate::native_mods::Cancellation;
             configure_tool(&fixture);
             let home = fixture.home();
-            let identity = install_target(&fixture.instance).unwrap();
+            let identity = fixture.identity();
             let fixtures = fixture.root.join("github");
             std::env::set_var("SUNRISE_SOURCE_FIXTURES", &fixtures);
             let repo = fixtures.join("repos/Fixture/Lantern");
@@ -758,7 +758,7 @@ fn pinned_source_preflight_refusal_cancel_and_failed_update_keep_the_profile() {
                     .pop()
                     .unwrap()?;
                 prepare_pasted_sources(
-                    &fixture.instance,
+                    &fixture.target(),
                     identity,
                     BUILD,
                     vec![packed],
@@ -787,7 +787,7 @@ fn pinned_source_preflight_refusal_cancel_and_failed_update_keep_the_profile() {
                          authorize: &dyn Fn(&[PreparedSource]) -> Result<bool, String>,
                          approve_worlds: &dyn Fn(&ChangeImpact) -> bool| {
                 apply_sources(
-                    &fixture.instance,
+                    &fixture.target(),
                     identity,
                     std::slice::from_ref(prepared),
                     || FirstBuild::installed(BUILD),
@@ -842,7 +842,7 @@ fn pinned_source_preflight_refusal_cancel_and_failed_update_keep_the_profile() {
                 .unwrap()
                 .unwrap();
             add_sources(
-                &fixture.instance,
+                &fixture.target(),
                 identity,
                 BUILD,
                 vec![duplicate],
@@ -881,7 +881,7 @@ fn pinned_source_preflight_refusal_cancel_and_failed_update_keep_the_profile() {
             put("1.1.0", 'a', b"compile_error!(\"fixture failure\");", "");
             let update_candidate = || {
                 prepare_source(
-                    &fixture.instance,
+                    &fixture.target(),
                     identity,
                     BUILD,
                     SourceRequest::Update {

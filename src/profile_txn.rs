@@ -432,6 +432,10 @@ fn write(home: &Path, record: &Record) -> Result<(), String> {
     durable::replace(home, &path, &bytes).map_err(|e| at(&path, e))
 }
 
+fn installed_manifest() -> &'static str {
+    sunrise_launcher_smod::index::browser_state::MANIFEST
+}
+
 fn mod_root(path: &Path) -> bool {
     use sunrise_launcher_smod::mod_list::{DIR, NATIVE_DIR};
     path.as_os_str() == DIR || path.as_os_str() == NATIVE_DIR
@@ -445,7 +449,7 @@ fn valid_destination(path: &Path) -> bool {
     };
     use sunrise_launcher_smod::mod_list::{DIR, FILE, NATIVE_DIR};
     match second {
-        None => first == FILE || first == crate::browser::installed::MANIFEST,
+        None => first == FILE || first == installed_manifest(),
         Some(Component::Normal(file)) if first == "mod-browser" => {
             matches!(file.to_str(), Some("pack.json" | "pack.spack"))
         }

@@ -237,7 +237,7 @@ fn remove_cutoff_worker() {
     };
     use sunrise_launcher::{browser::sunrise::*, instances, managed_play};
     let instance = instances::selection().unwrap();
-    let identity = install_target(&instance).unwrap();
+    let target = Target::of(&instance).unwrap();
     let archive = instance.home.join(mod_list::DIR).join("required_mod.smod");
     let digest = index::sha256_file(&archive).unwrap();
     let decide = |impact: &ChangeImpact| {
@@ -268,8 +268,8 @@ fn remove_cutoff_worker() {
         cancellation: None,
     };
     let error = remove_mods(
-        &instance,
-        identity,
+        &target,
+        target.identity(),
         &["required_mod".into()],
         || managed_play::headless_first(&instance),
         hooks,

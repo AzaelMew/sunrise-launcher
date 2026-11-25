@@ -480,11 +480,10 @@ pub(crate) fn fetch_checked(fetch: Fetch, url: &str, sha1: &str) -> Result<Vec<u
 /// Writes a file whole: a partial one never takes its place.
 pub(crate) fn write_file(path: &Path, data: &[u8]) -> Result<(), String> {
     let error = |e: std::io::Error| format!("{}: {e}", path.display());
-    fs::create_dir_all(path.parent().unwrap()).map_err(error)?;
-    let partial = path.with_file_name(format!(
-        "{}.partial",
-        path.file_name().unwrap().to_string_lossy()
-    ));
+    let not_a_file = || format!("{}: not a file path", path.display());
+    let (folder, name) = path.parent().zip(path.file_name()).ok_or_else(not_a_file)?;
+    fs::create_dir_all(folder).map_err(error)?;
+    let partial = path.with_file_name(format!("{}.partial", name.to_string_lossy()));
     fs::write(&partial, data)
         .and_then(|_| fs::rename(&partial, path))
         .map_err(error)

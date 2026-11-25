@@ -1,6 +1,7 @@
 //! Fetching over HTTP: the agent with the launcher's user agent and the player's proxy, and the
 //! small, cancellable and missing-tolerant gets built on it.
-use super::*;
+use super::VERSION;
+use std::io::Read;
 
 pub(crate) const CLIENT: &str = if cfg!(windows) {
     "sunrise-client.exe"

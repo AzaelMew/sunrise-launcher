@@ -287,7 +287,8 @@ impl Launcher {
         let tx = self.mods_state.tx.clone();
         std::thread::spawn(move || {
             let proof =
-                SourceProof::capture(target.instance(), target.identity(), target.base()).ok();
+                SourceProof::capture(target.profile_target(), target.identity(), target.base())
+                    .ok();
             let mut checked = CheckedUpdates {
                 scope,
                 inputs,
@@ -330,7 +331,7 @@ impl Launcher {
                         }
                     };
                     match sunrise::prepare_source(
-                        target.instance(),
+                        target.profile_target(),
                         target.identity(),
                         target.base(),
                         SourceRequest::Update {

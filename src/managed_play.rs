@@ -8,13 +8,16 @@ mod game;
 mod inputs;
 mod resources;
 mod roots;
+mod target;
 pub use client::{headless_first, Client, FailedBuild, ModRecovery, Progress, StartError, Started};
 pub(crate) use first::{changed_files, copy_install_inputs};
 pub(crate) use first::{CandidateImage, Edit, SwitchPublication};
 pub use first::{FirstAttempt, FirstBuild, Profile};
 pub(crate) use inputs::inputs;
 pub use inputs::{scan_packages, ScannedPackage};
+pub use journal::{recover_game_install, GameInstallProblem, ModLock, VerifiedRepository};
 pub(crate) use roots::remap_relocated_root;
+pub use target::{BuildChoice, Target, TargetError};
 
 /// Check pending and committed references under the exclusive cache publication fence
 /// before detaching a build or publishing an ordinary download at its name.
@@ -95,6 +98,7 @@ macro_rules! unsettled {
     };
 }
 pub(crate) use unsettled;
+mod journal;
 
 pub(crate) fn unsettled_at(check: &str, error: Option<&dyn std::fmt::Display>) -> String {
     // `file!()` uses the host's separators: the same text on every platform.
@@ -203,35 +207,6 @@ impl CommittedBuildChoice {
             channel,
             version,
         })
-    }
-}
-
-/// Exact project, release, SHA-256 digest, and verified repository recorded in the profile's
-/// build lock for a signed schema-2 Sunrise registry mod.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ModLock {
-    pub project: String,
-    pub mod_id: String,
-    pub version: String,
-    pub sha256: String,
-    pub repository: crate::browser::installed::VerifiedRepository,
-}
-
-impl ModLock {
-    fn validate(&self) -> Result<(), String> {
-        use sunrise_launcher_smod::{index::valid_id, index_v2::valid_project_id};
-        if !valid_project_id(&self.project)
-            || !valid_id(&self.mod_id)
-            || self.version.is_empty()
-            || self.version.chars().any(char::is_control)
-            || self.sha256.len() != 64
-            || !self.sha256.bytes().all(|b| b.is_ascii_hexdigit())
-            || !self.repository.valid()
-        {
-            return Err(unsettled!());
-        }
-        Ok(())
     }
 }
 
@@ -359,7 +334,7 @@ pub enum HeldSource {
         project: String,
         version: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        repository: Option<crate::browser::installed::VerifiedRepository>,
+        repository: Option<VerifiedRepository>,
     },
     Github {
         owner: String,
@@ -464,9 +439,7 @@ impl Held {
                 version,
                 repository,
             } if (repository.is_none() && project == &self.id)
-                || (repository
-                    .as_ref()
-                    .is_some_and(crate::browser::installed::VerifiedRepository::valid)
+                || (repository.as_ref().is_some_and(VerifiedRepository::valid)
                     && sunrise_launcher_smod::index_v2::valid_project_id(project)) =>
             {
                 version
@@ -925,7 +898,7 @@ impl Active {
 }
 
 fn capture_mod_locks(home: &Path) -> Result<Vec<ModLock>, String> {
-    let path = home.join(crate::browser::installed::MANIFEST);
+    let path = home.join(sunrise_launcher_smod::index::browser_state::MANIFEST);
     let Some(bytes) = optional_bytes(&path)? else {
         return Ok(Vec::new());
     };
@@ -950,26 +923,41 @@ fn capture_mod_locks(home: &Path) -> Result<Vec<ModLock>, String> {
         {
             continue;
         }
-        let Ok(entry) = serde_json::from_value::<crate::browser::installed::Entry>(raw.clone())
+        // A signed schema-2 row: Sunrise source and mod kind, an 8-character project ID
+        // beside the in-game mod ID, a lowercase SHA-256, and a verified repository.
+        let field = |name: &str| raw.get(name).and_then(serde_json::Value::as_str);
+        let Some(project) = field("project") else {
+            continue;
+        };
+        let Some(mod_id) = field("mod_id") else {
+            continue;
+        };
+        if field("kind") != Some("mod")
+            || !sunrise_launcher_smod::index_v2::valid_project_id(project)
+        {
+            continue;
+        }
+        let Some(version) = field("version").map(str::to_owned) else {
+            continue;
+        };
+        let Some(sha256) = field("checksum")
+            .and_then(|checksum| checksum.strip_prefix("SHA-256:"))
+            .filter(|hash| hash.len() == 64 && hash.bytes().all(|b| b.is_ascii_hexdigit()))
+            .map(str::to_ascii_lowercase)
         else {
             continue;
         };
-        if !entry.is_v2_registry() {
-            continue;
-        }
-        let Some(mod_id) = entry.mod_id.clone() else {
-            continue;
-        };
-        let Some(sha256) = entry.sha256().map(str::to_ascii_lowercase) else {
-            continue;
-        };
-        let Some(repository) = entry.repository.clone() else {
+        let Some(repository) = raw
+            .get("repository")
+            .and_then(|value| serde_json::from_value::<VerifiedRepository>(value.clone()).ok())
+            .filter(VerifiedRepository::valid)
+        else {
             continue;
         };
         let lock = ModLock {
-            project: entry.project,
-            mod_id,
-            version: entry.version,
+            project: project.to_owned(),
+            mod_id: mod_id.to_owned(),
+            version,
             sha256,
             repository,
         };

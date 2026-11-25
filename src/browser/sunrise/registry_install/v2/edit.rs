@@ -10,7 +10,7 @@ pub(super) fn local_fit_filled(index: &Index) -> Arc<Index> {
 
 /// Install one or more schema-2 registry projects (by permanent 8-char project ID) into `instance`.
 pub fn install_registry_v2(
-    instance: &Instance,
+    target: &Target,
     identity: Identity,
     requested_projects: Vec<String>,
     options: V2InstallOptions,
@@ -21,7 +21,7 @@ pub fn install_registry_v2(
         catalogue_v2::change_index().map_err(|error| InstallError::Unproved(error.to_string()))?;
     install_registry_v2_with(
         V2EditRequest {
-            instance,
+            target,
             identity,
             index: local_fit_filled(&catalog.index),
             options,
@@ -39,7 +39,7 @@ pub fn install_registry_v2(
 /// Update installed schema-2 registry mods in `instance`, always preserving each mod's chosen
 /// project and respecting `chosen-versions.json` pins during bulk updates.
 pub fn update_registry_v2(
-    instance: &Instance,
+    target: &Target,
     identity: Identity,
     requested: UpdateRequest,
     options: V2InstallOptions,
@@ -51,7 +51,7 @@ pub fn update_registry_v2(
         catalogue_v2::change_index().map_err(|error| InstallError::Unproved(error.to_string()))?;
     update_registry_v2_with(
         V2EditRequest {
-            instance,
+            target,
             identity,
             index: local_fit_filled(&catalog.index),
             options,
@@ -103,7 +103,7 @@ fn v2_edit_with(
     hooks: V2Hooks<'_>,
 ) -> Result<InstalledBatch, InstallError> {
     let V2EditRequest {
-        instance,
+        target,
         identity,
         index,
         mut options,
@@ -111,8 +111,8 @@ fn v2_edit_with(
     } = request;
     options
         .jar_cache
-        .get_or_insert_with(|| instance.home.join("jars"));
-    if instance.kind == InstanceKind::Pack {
+        .get_or_insert_with(|| target.home().join("jars"));
+    if target.is_pack() {
         return Err(InstallError::Refused(
             tr("No registry mods to install in this profile.").into(),
         ));
@@ -123,7 +123,7 @@ fn v2_edit_with(
     }
 
     let mut profile =
-        Profile::open_for(&instance.home, None, Some(identity)).map_err(String::from)?;
+        Profile::open_for(target.home(), None, Some(identity)).map_err(String::from)?;
     let edit = profile.begin_edit(choose, |f| {
         (hooks.install.progress)(InstallProgress::Downloading(f))
     })?;
@@ -132,7 +132,7 @@ fn v2_edit_with(
     let cancelled = hooks.install.cancellation.unwrap_or(&default_cancelled);
     let old = edit.candidate()?;
     let before = inventory_v2(old.path(), &index)?;
-    let chosen_pins = chosen(&instance.home);
+    let chosen_pins = chosen(target.home());
 
     let plan = match &action {
         V2Action::Install(projects) => plan_v2_install(
@@ -241,13 +241,13 @@ fn v2_edit_with(
             }),
     )
     .map_err(|error| InstallError::Refused(jars::LaunchError::Conflict(error).to_string()))?;
-    jars::fetch_listed(&instance.home, &listed)
+    jars::fetch_listed(target.home(), &listed)
         .map_err(|error| InstallError::Download(error.to_string()))?;
 
     (hooks.install.progress)(InstallProgress::Preparing);
     edit.prepare_first(&super::preparation_line(hooks.install.progress))
         .map_err(InstallError::Unproved)?;
-    let proof = match prove_edit(&edit, next.path(), instance, cancelled, &hooks.install) {
+    let proof = match prove_edit(&edit, next.path(), target, cancelled, &hooks.install) {
         Ok(proof) => proof,
         Err(native_mods::Failed::Mods {
             left,
@@ -288,7 +288,7 @@ fn v2_edit_with(
                 )?
             };
             let reviewed = guard_replacements(
-                &instance.home,
+                target.home(),
                 &suspect,
                 replacements.iter().map(|(name, _)| name.as_str()),
             )?;
@@ -309,7 +309,7 @@ fn v2_edit_with(
                 })
                 .collect();
             let impact = ChangeImpact::read(
-                &instance.home,
+                target.home(),
                 mutations::Change::Update(reviewed_updates),
                 &suspect,
             )?
@@ -326,7 +326,7 @@ fn v2_edit_with(
     // Persist verified publisher pins before publishing so a pin-store failure aborts the
     // install cleanly instead of failing after the mods are already live.
     commit_pending_pins(&pin_dir, &pending_pins).map_err(InstallError::Unproved)?;
-    let authorize = || mutations::bind_worlds(&instance.home, &suspect, &reviewed_worlds);
+    let authorize = || mutations::bind_worlds(target.home(), &suspect, &reviewed_worlds);
     edit.publish_install(proof, cancelled, &retired_holds, authorize)?;
 
     let mut result = InstalledBatch::default();

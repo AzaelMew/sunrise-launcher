@@ -240,7 +240,7 @@ impl Launcher {
             div()
                 .child(
                     button("alt-open-data", tr("Open folder"))
-                        .on_click(|_, _, cx| crate::glass_toast::open(cx, &backend::data_dir())),
+                        .on_click(|_, _, cx| crate::toast::open(cx, &backend::data_dir())),
                 )
                 .child(move_button),
         ));

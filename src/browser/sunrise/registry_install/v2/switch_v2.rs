@@ -25,8 +25,7 @@ use crate::{
         },
     },
     i18n::tr,
-    instances::Instance,
-    managed_play::{Held, HeldReason, HeldRoot, HeldSource, Profile},
+    managed_play::{Held, HeldReason, HeldRoot, HeldSource, Profile, Target},
     profile_txn::Identity,
     worlds::switch::{Fence, TargetAge},
 };
@@ -90,24 +89,24 @@ pub fn checked_switch_fit_v2(index: &Index, home: &Path, tag: &str) -> bool {
 
 /// Switch `instance` to exact prepared Sunrise build `tag` using the signed v2 registry.
 pub fn switch_build_v2(
-    instance: &Instance,
+    target: &Target,
     identity: Identity,
     tag: &str,
     hooks: V2SwitchHooks<'_>,
 ) -> Result<Switched, String> {
-    switch_profile_build_v2(instance, identity, tag, None, hooks)
+    switch_profile_build_v2(target, identity, tag, None, hooks)
 }
 
 /// Switch `instance` to exact prepared Sunrise build `tag` and persist `choice` atomically.
 pub fn switch_profile_build_v2(
-    instance: &Instance,
+    target: &Target,
     identity: Identity,
     tag: &str,
     choice: Option<BuildChoice>,
     hooks: V2SwitchHooks<'_>,
 ) -> Result<Switched, String> {
     switch_profile_build_v2_with(
-        instance,
+        target,
         identity,
         tag,
         choice,
@@ -126,7 +125,7 @@ pub fn switch_profile_build_v2(
 /// injected, so tests switch offline through the same path.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn switch_profile_build_v2_with(
-    instance: &Instance,
+    target: &Target,
     identity: Identity,
     tag: &str,
     choice: Option<BuildChoice>,
@@ -135,12 +134,12 @@ pub(crate) fn switch_profile_build_v2_with(
     fetch_bytes: BytesFetcher<'_>,
     verify_release: ReleaseVerifier<'_>,
 ) -> Result<Switched, String> {
-    if instance.kind == crate::instances::Kind::Pack {
+    if target.is_pack() {
         return Err(tr("Choose an ordinary profile to switch builds.").into());
     }
     (hooks.switch.progress)(InstallProgress::PreparingBuild);
     let mut profile =
-        Profile::open_for(&instance.home, None, Some(identity)).map_err(String::from)?;
+        Profile::open_for(target.home(), None, Some(identity)).map_err(String::from)?;
     let cancellation = hooks.switch.cancellation;
     cancellation.check()?;
     let previous_holds: Vec<Held> = profile
@@ -150,17 +149,13 @@ pub(crate) fn switch_profile_build_v2_with(
     let Some(edit) = profile.begin_switch(tag)? else {
         if let Some(choice) = choice {
             cancellation.begin_publication()?;
-            crate::browser::sunrise::registry_install::switch::save_build_choice(
-                &instance.id,
-                tag,
-                choice,
-            )?;
+            target.save_build_choice(tag, choice)?;
         }
         return Ok(Switched::AlreadySelected);
     };
     let index = fetch_index()?;
     let result = switch_build_v2_edit(
-        instance,
+        target,
         edit,
         &previous_holds,
         Arc::new(crate::native_mods::local_fit::filled(&index)),
@@ -172,13 +167,7 @@ pub(crate) fn switch_profile_build_v2_with(
     )?;
     if let (Some(_), Switched::Changed(active)) = (choice, &result) {
         if let Some(committed) = active.build_choice() {
-            if let Err(error) =
-                crate::instances::sync_build_choice(&instance.id, &instance.home, committed)
-            {
-                // The choice is already durable in active-build.json; listing or
-                // editing the profile recovers instances.json on the next write.
-                eprintln!("Sunrise: instances.json is not saved: {error}");
-            }
+            target.sync_build_choice(committed);
         }
     }
     Ok(result)
@@ -306,7 +295,7 @@ pub(super) fn plan_slot_for_build<'a>(
 
 #[allow(clippy::too_many_arguments)]
 fn switch_build_v2_edit(
-    instance: &Instance,
+    target: &Target,
     edit: crate::managed_play::Edit<'_>,
     previous_holds: &[Held],
     index: Arc<Index>,
@@ -319,7 +308,7 @@ fn switch_build_v2_edit(
     (hooks.switch.progress)(InstallProgress::Checking);
     let old = edit.candidate()?;
     let before = inventory_v2(old.path(), &index)?;
-    let pins = chosen(&instance.home);
+    let pins = chosen(target.home());
     let pin_dir = hooks.pin_dir.clone().unwrap_or_else(backend::data_dir);
 
     let next = edit.candidate()?;
@@ -477,7 +466,7 @@ fn switch_build_v2_edit(
         (hooks.switch.progress)(InstallProgress::Preparing);
         match edit.prove(
             next.path(),
-            instance.native_profile,
+            target.native_profile(),
             hooks.switch.cancellation,
             |step| build_progress(step, hooks.switch.progress),
             None,
@@ -554,7 +543,7 @@ fn switch_build_v2_edit(
             .compare_saved(commit)
     };
     let (fence, worlds) = Fence::hold(
-        &instance.home,
+        target.home(),
         suspect,
         |id| {
             before
@@ -607,7 +596,7 @@ fn switch_build_v2_edit(
             let proof = edit
                 .prove(
                     next.path(),
-                    instance.native_profile,
+                    target.native_profile(),
                     hooks.switch.cancellation,
                     |step| build_progress(step, hooks.switch.progress),
                     None,
@@ -618,15 +607,7 @@ fn switch_build_v2_edit(
             (proof, holds, removed)
         };
 
-    let committed_choice = choice
-        .map(|choice| {
-            let (channel, version) = match choice {
-                BuildChoice::Follow(channel) => (Some(channel), None),
-                BuildChoice::Keep => (crate::instances::Channel::of_build(tag), Some(tag.into())),
-            };
-            crate::managed_play::CommittedBuildChoice::new(channel, version)
-        })
-        .transpose()?;
+    let committed_choice = choice.map(|choice| choice.commit(tag)).transpose()?;
 
     let retired = retired_holds(rechecked, previous_holds, &final_holds);
     let active = edit.publish_switch(
@@ -638,7 +619,7 @@ fn switch_build_v2_edit(
             retired,
             build_choice: committed_choice,
         },
-        || fence.revalidate(&instance.home),
+        || fence.revalidate(target.home()),
         || {
             (hooks.switch.at_cutoff)()?;
             (hooks.switch.progress)(InstallProgress::Publishing);
