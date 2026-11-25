@@ -41,7 +41,7 @@ use sunrise_launcher_smod::{
     dependencies::parse_version,
     index::{self, MAX_FILE},
     index_v2::{self, FitVerdict, Index, Kind as V2Kind, Project, Release, Revoked},
-    manifest::{collect_jar_requirements, Side},
+    manifest::{collect_jar_requirements, JarRef, Side},
 };
 
 mod switch_v2;
@@ -167,6 +167,8 @@ pub struct V2InstallOptions {
     pub accepted_publisher_changes: BTreeSet<String>,
     /// Override directory for `publisher-pins.json` (`None` uses `backend::data_dir()`).
     pub pin_dir: Option<PathBuf>,
+    /// Override directory for the original-jar cache (`None` uses `jars` in the game folder).
+    pub jar_cache: Option<PathBuf>,
 }
 
 /// One concrete release selected by the v2 planner.
@@ -530,6 +532,31 @@ fn in_range(range: Option<&VersionReq>, version: &str) -> bool {
     range.is_none_or(|range| parse_version(version).is_ok_and(|v| range.matches(&v)))
 }
 
+/// The jars `release` lists that Modrinth no longer serves and `jar_cache` doesn't hold. A jar
+/// that is cached still installs, so it is not named.
+fn unavailable_jars<'a>(release: &'a Release, jar_cache: &Path) -> Vec<&'a JarRef> {
+    release
+        .jar_unavailable
+        .iter()
+        .filter(|jar| !jar.cache_path(jar_cache).is_file())
+        .collect()
+}
+
+/// Refuses a release for `jars`, one line per jar.
+fn jars_gone(jars: &[&JarRef]) -> InstallError {
+    InstallError::Refused(
+        jars.iter()
+            .map(|jar| {
+                trf(
+                    "The original file {id} {version} is no longer on Modrinth.",
+                    &[("id", jar.id()), ("version", jar.version())],
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
+}
+
 fn select_project_release<'a>(
     index: &Index,
     project: &'a Project,
@@ -537,6 +564,7 @@ fn select_project_release<'a>(
     pinned_version: Option<&str>,
     range: Option<&VersionReq>,
     unfit_hashes: &BTreeSet<String>,
+    jar_cache: &Path,
 ) -> Result<&'a Release, InstallError> {
     if let Some(revoked) = index.revoked(&project.id, None) {
         return Err(InstallError::Refused(trf(
@@ -582,7 +610,10 @@ fn select_project_release<'a>(
             )));
         }
         return match release.fit_verdict(build) {
-            FitVerdict::Fits => Ok(release),
+            FitVerdict::Fits => match unavailable_jars(release, jar_cache).as_slice() {
+                [] => Ok(release),
+                gone => Err(jars_gone(gone)),
+            },
             FitVerdict::DoesNotFit => Err(InstallError::NotForVersion(trf(
                 "{mod} {version} does not fit Sunrise {build}.",
                 &[
@@ -607,6 +638,8 @@ fn select_project_release<'a>(
     let mut saw_does_not_fit = false;
     let mut saw_revoked = false;
     let mut saw_out_of_range = false;
+    // The newest fitting release whose jar Modrinth no longer serves, with the jars missing.
+    let mut newest_gone: Option<(&str, Vec<&JarRef>)> = None;
     for release in &project.releases {
         if index
             .revoked(&project.id, Some(&release.file.sha256))
@@ -624,7 +657,16 @@ fn select_project_release<'a>(
             continue;
         }
         match release.fit_verdict(build) {
-            FitVerdict::Fits => fitting.push(release),
+            FitVerdict::Fits => {
+                let gone = unavailable_jars(release, jar_cache);
+                if gone.is_empty() {
+                    fitting.push(release);
+                } else if newest_gone.as_ref().is_none_or(|(version, _)| {
+                    compare_versions(&release.version, version) == std::cmp::Ordering::Greater
+                }) {
+                    newest_gone = Some((release.version.as_str(), gone));
+                }
+            }
             FitVerdict::DoesNotFit => saw_does_not_fit = true,
             FitVerdict::Unknown => saw_unknown = true,
         }
@@ -645,7 +687,9 @@ fn select_project_release<'a>(
             ],
         )));
     }
-    if saw_unknown {
+    if let Some((_, gone)) = newest_gone {
+        Err(jars_gone(&gone))
+    } else if saw_unknown {
         Err(InstallError::NotForVersion(trf(
             "Fit for {mod} on Sunrise {build} is not known yet.",
             &[("mod", &project.name), ("build", build)],
@@ -770,6 +814,10 @@ pub fn plan_v2_update(
         UpdateRequest::Bulk(ids) => (ids.as_slice(), false),
     };
     let unfit_hashes = known_unfit_updates(build);
+    let jar_cache = options
+        .jar_cache
+        .clone()
+        .unwrap_or_else(|| backend::game_home().join("jars"));
     let mut queue: VecDeque<Queued> = VecDeque::new();
     let mut effective_options = options.clone();
 
@@ -825,8 +873,15 @@ pub fn plan_v2_update(
             .get(&project.id)
             .map(String::as_str);
         if let Some(explicit) = target_version {
-            let release =
-                select_project_release(index, project, build, Some(explicit), None, &unfit_hashes)?;
+            let release = select_project_release(
+                index,
+                project,
+                build,
+                Some(explicit),
+                None,
+                &unfit_hashes,
+                &jar_cache,
+            )?;
             if release.version != current.package.manifest.version
                 || !release.file.sha256.eq_ignore_ascii_case(&current.digest)
             {
@@ -844,6 +899,7 @@ pub fn plan_v2_update(
                         .revoked(&project.id, Some(&release.file.sha256))
                         .is_none()
                     && !unfit_hashes.contains(&release.file.sha256.to_ascii_lowercase())
+                    && unavailable_jars(release, &jar_cache).is_empty()
                     && compare_versions(&release.version, current_ver)
                         == std::cmp::Ordering::Greater
             })
@@ -856,7 +912,21 @@ pub fn plan_v2_update(
                 queue.push_back((project.id.clone(), false, project.name.clone(), None));
             }
             None if strict => {
-                // Report why no update could be planned (unknown vs does-not-fit vs up-to-date).
+                // Report why no update could be planned (jar gone vs unknown vs does-not-fit vs
+                // up-to-date).
+                let newer_gone = project
+                    .releases
+                    .iter()
+                    .filter(|r| {
+                        compare_versions(&r.version, current_ver) == std::cmp::Ordering::Greater
+                            && r.fit_verdict(build) == FitVerdict::Fits
+                            && index.revoked(&project.id, Some(&r.file.sha256)).is_none()
+                            && !unavailable_jars(r, &jar_cache).is_empty()
+                    })
+                    .max_by(|a, b| compare_versions(&a.version, &b.version));
+                if let Some(release) = newer_gone {
+                    return Err(jars_gone(&unavailable_jars(release, &jar_cache)));
+                }
                 let has_newer_unknown = project.releases.iter().any(|r| {
                     compare_versions(&r.version, current_ver) == std::cmp::Ordering::Greater
                         && r.fit_verdict(build) == FitVerdict::Unknown
@@ -926,6 +996,10 @@ fn resolve_v2_queue(
         unfit_hashes,
         choose_provider,
     } = *ctx;
+    let jar_cache = options
+        .jar_cache
+        .clone()
+        .unwrap_or_else(|| backend::game_home().join("jars"));
     let mut planned: BTreeMap<String, PlannedV2Release> = BTreeMap::new();
     let mut order: Vec<String> = Vec::new();
     let mut optional_dependencies: Vec<index_v2::Dependency> = Vec::new();
@@ -989,6 +1063,7 @@ fn resolve_v2_queue(
             version_override,
             range.as_ref(),
             unfit_hashes,
+            &jar_cache,
         )?;
         let step = planned_from(project, release, is_dependency);
         order.push(project.mod_id.clone());
@@ -1926,6 +2001,10 @@ pub(crate) fn switch_provider_v2_with(
     }
 
     let unfit_hashes = known_unfit_updates(&base_build);
+    let jar_cache = options
+        .jar_cache
+        .clone()
+        .unwrap_or_else(|| backend::game_home().join("jars"));
     let version_override = options.versions.get(&to_project.id).map(String::as_str);
     let release = select_project_release(
         &index,
@@ -1934,6 +2013,7 @@ pub(crate) fn switch_provider_v2_with(
         version_override,
         None,
         &unfit_hashes,
+        &jar_cache,
     )?;
     let step = planned_from(to_project, release, false);
 

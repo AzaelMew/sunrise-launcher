@@ -7,10 +7,12 @@
 use super::{Make, SourceLink};
 use std::cmp::Ordering;
 use std::collections::{BTreeSet, HashMap, HashSet};
+use std::path::PathBuf;
 use sunrise_launcher::i18n::{tr, trf};
 use sunrise_launcher::native_mods::local_fit;
 use sunrise_launcher_smod::index::Kind;
 use sunrise_launcher_smod::index_v2::{self, FitVerdict, Index, Project, Release};
+use sunrise_launcher_smod::manifest::JarRef;
 
 /// How Discover orders matching mods.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -72,6 +74,9 @@ pub(in crate::mods) enum CardFit {
     Checking { build_label: String },
     /// The project or every one of its releases is taken down in `index.revoked`.
     Revoked(String),
+    /// No release can be installed, and the newest one fits but lists original jars that
+    /// Modrinth no longer serves and this computer has not cached.
+    JarUnavailable(Vec<JarRef>),
     /// The selected profile has no game build yet.
     NoBuild,
 }
@@ -127,9 +132,23 @@ impl CardFit {
                 Some(trf("Checking fit for {build}…", &[("build", build_label)]))
             }
             CardFit::Revoked(why) => Some(trf("Taken down: {reason}", &[("reason", why)])),
+            CardFit::JarUnavailable(jars) => Some(jars_gone(jars)),
             CardFit::NoBuild => Some(tr("No game build selected").to_owned()),
         }
     }
+}
+
+/// One line per jar Modrinth no longer serves.
+fn jars_gone(jars: &[JarRef]) -> String {
+    jars.iter()
+        .map(|jar| {
+            trf(
+                "The original file {id} {version} is no longer on Modrinth.",
+                &[("id", jar.id()), ("version", jar.version())],
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// One mod card on Discover built from the v2 index.
@@ -176,6 +195,8 @@ pub(in crate::mods) enum ReleaseVerdict {
     DoesNotFitHere(String),
     Checking(String),
     Revoked(String),
+    /// Fits, but lists original jars Modrinth no longer serves that this computer has not cached.
+    JarUnavailable(Vec<JarRef>),
     NoBuild,
 }
 
@@ -185,6 +206,8 @@ pub(in crate::mods) struct LocalFits {
     found: local_fit::Found,
     /// `.smod` SHA-256s (lowercase) a running check will answer.
     checking: BTreeSet<String>,
+    /// The original-jar cache; `None` holds no jar.
+    jar_cache: Option<PathBuf>,
 }
 
 impl LocalFits {
@@ -206,7 +229,28 @@ impl LocalFits {
         } else {
             BTreeSet::new()
         };
-        Self { found, checking }
+        let jar_cache = Some(sunrise_launcher::backend::game_home().join("jars"));
+        Self {
+            found,
+            checking,
+            jar_cache,
+        }
+    }
+
+    /// The jars `release` lists that Modrinth no longer serves and the cache doesn't hold. A
+    /// cached jar still works, so it is not named.
+    fn unavailable_jars(&self, release: &Release) -> Vec<JarRef> {
+        release
+            .jar_unavailable
+            .iter()
+            .filter(|jar| {
+                !self
+                    .jar_cache
+                    .as_ref()
+                    .is_some_and(|cache| jar.cache_path(cache).is_file())
+            })
+            .cloned()
+            .collect()
     }
 
     /// The verdict for a release the index says nothing of on `build`.
@@ -252,6 +296,7 @@ impl ReleaseVerdict {
                 Some(trf("Not checked for {build} yet", &[("build", build)]))
             }
             ReleaseVerdict::Revoked(why) => Some(trf("Taken down: {reason}", &[("reason", why)])),
+            ReleaseVerdict::JarUnavailable(jars) => Some(jars_gone(jars)),
             ReleaseVerdict::NoBuild => Some(tr("No game build selected").to_owned()),
         }
     }
@@ -468,11 +513,16 @@ fn release_verdict(
     let Some(build) = exact_build else {
         return ReleaseVerdict::NoBuild;
     };
-    match release.fit_verdict(build) {
+    let verdict = match release.fit_verdict(build) {
         FitVerdict::Fits => ReleaseVerdict::Fits,
         FitVerdict::DoesNotFit => ReleaseVerdict::DoesNotFit(build_label(build)),
         FitVerdict::Unknown => local.verdict(release, build_label(build)),
+    };
+    let gone = local.unavailable_jars(release);
+    if verdict.fits() && !gone.is_empty() {
+        return ReleaseVerdict::JarUnavailable(gone);
     }
+    verdict
 }
 
 fn project_fit(
@@ -518,7 +568,7 @@ fn project_fit(
     if let Some(fitting) = active
         .iter()
         .copied()
-        .find(|r| r.fit_verdict(build) == FitVerdict::Fits)
+        .find(|r| r.fit_verdict(build) == FitVerdict::Fits && local.unavailable_jars(r).is_empty())
     {
         return (
             CardFit::Fits {
@@ -552,6 +602,7 @@ fn project_fit(
         ReleaseVerdict::DoesNotFit(build_label) => CardFit::DoesNotFit { build_label },
         ReleaseVerdict::DoesNotFitHere(build_label) => CardFit::DoesNotFitHere { build_label },
         ReleaseVerdict::Checking(build_label) => CardFit::Checking { build_label },
+        ReleaseVerdict::JarUnavailable(jars) => CardFit::JarUnavailable(jars),
         _ => CardFit::NotCheckedYet {
             build_label: build_label(build),
         },
@@ -986,6 +1037,7 @@ mod tests {
             repository: None,
             fits: fits.iter().map(|s| (*s).to_owned()).collect(),
             does_not_fit: does_not_fit.iter().map(|s| (*s).to_owned()).collect(),
+            jar_unavailable: Vec::new(),
             file: File {
                 url: format!("https://github.com/example/mod/releases/download/v{version}/m.smod"),
                 size: 120_000,
@@ -1612,6 +1664,7 @@ mod tests {
                 (hex64('3'), local_fit::Local::Fits),
             ]),
             checking: BTreeSet::from([hex64('4')]),
+            jar_cache: None,
         };
         let fit = |id: &str| {
             cards(&index, Some(nightly), &label_build, &local)
@@ -1653,5 +1706,60 @@ mod tests {
         ));
         assert!(matches!(unlisted("CCCCCCCC"), CardFit::FitsHere { .. }));
         assert!(matches!(unlisted("DDDDDDDD"), CardFit::Checking { .. }));
+    }
+
+    #[test]
+    fn v2_a_release_whose_original_jar_modrinth_no_longer_serves_is_not_installable_unless_cached()
+    {
+        let build = "26.3-0.1.0";
+        let gone = JarRef::new("macaws_bridges".into(), "3.0.0".into(), "ab".repeat(64)).unwrap();
+        let other = JarRef::new("other_lib".into(), "1.2.0".into(), "cd".repeat(64)).unwrap();
+        let mut marked = make_release("1.0.0", "2026-11-22", build, &[build], &[], '1');
+        marked.jar_unavailable = vec![gone.clone(), other];
+        let index = sample_index(
+            vec![make_project(
+                "Ab3dE9xQ",
+                "wayfinder",
+                "Wayfinder",
+                "summary",
+                &["utility"],
+                vec![marked],
+            )],
+            Vec::new(),
+        );
+        let lines = "The original file macaws_bridges 3.0.0 is no longer on Modrinth.\n\
+                     The original file other_lib 1.2.0 is no longer on Modrinth.";
+
+        let empty = tempfile::tempdir().unwrap();
+        let none = LocalFits {
+            jar_cache: Some(empty.path().to_owned()),
+            ..LocalFits::default()
+        };
+        let card = cards(&index, Some(build), &label_build, &none).remove(0);
+        assert!(!card.fit.fits() && card.fit.faded());
+        assert_eq!(card.fit.reason().as_deref(), Some(lines));
+        let p = page(&index, "Ab3dE9xQ", Some(build), &label_build, &none).unwrap();
+        assert!(p.will_install.is_none() && p.fitting_versions.is_empty());
+        assert_eq!(p.other_versions[0].verdict.reason().as_deref(), Some(lines));
+        assert_eq!(p.fit.reason().as_deref(), Some(lines));
+
+        // Once every jar is cached, the release shows nothing and installs.
+        let cached = tempfile::tempdir().unwrap();
+        for jar in &index.projects[0].releases[0].jar_unavailable {
+            std::fs::write(jar.cache_path(cached.path()), b"jar").unwrap();
+        }
+        let have = LocalFits {
+            jar_cache: Some(cached.path().to_owned()),
+            ..LocalFits::default()
+        };
+        let card = cards(&index, Some(build), &label_build, &have).remove(0);
+        assert_eq!(
+            card.fit,
+            CardFit::Fits {
+                version: "1.0.0".into()
+            }
+        );
+        let p = page(&index, "Ab3dE9xQ", Some(build), &label_build, &have).unwrap();
+        assert_eq!(p.will_install.unwrap().verdict, ReleaseVerdict::Fits);
     }
 }
