@@ -26,6 +26,7 @@ use content::{game_packs, screenshots, worlds, PacksCmd, ScreenshotsCmd, WorldsC
 
 mod builds;
 mod logs;
+mod play;
 mod storage;
 use clap::{Parser, Subcommand};
 use sunrise_launcher::account::{self, Accounts};
@@ -800,20 +801,7 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, Error> {
             version,
             accept_eula,
             allow_jar_downloads,
-        } => {
-            let tag = backend::resolve_version(version.as_deref())?;
-            let dir = backend::server_dir(dir);
-            // The server inherits this terminal, so typed lines reach its console.
-            let mut cmd = backend::server(&tag, &dir, accept_eula)?;
-            sunrise_launcher::jars::prepare_launch(
-                &mut cmd,
-                &Default::default(),
-                sunrise_launcher::jars::Permission::headless(allow_jar_downloads),
-            )
-            .map_err(|error| error.to_string())?;
-            let (cmd, _runtime) = backend::prepare_server_command(&tag, &dir, cmd)?;
-            return attached_prepared(cmd).map_err(Error::from);
-        }
+        } => return play::server(dir, version, accept_eula, allow_jar_downloads),
         Cmd::Notes { tag } => builds::notes(tag, as_json)?,
         Cmd::Account { action } => account_command(action.unwrap_or(AccountCmd::List), as_json)?,
         Cmd::Data { action } => data(action.unwrap_or(DataCmd::Status), as_json)?,
