@@ -307,16 +307,12 @@ impl Launcher {
                 Msg::SwitchProgress(stage) => self.switch_progress(stage),
                 Msg::SwitchQuestion(question, reply) => self.switch_question(question, reply),
                 Msg::Switched(home, result) => self.switch_finished(&home, *result),
-                Msg::ProviderSwitchProgress(stage) => self.provider_switch_progress(stage),
-                Msg::ProviderSwitchQuestion(question, reply) => {
-                    self.provider_switch_question(question, reply)
-                }
-                Msg::ProviderSwitched(home, result) => self.provider_switch_finished(&home, result),
-                Msg::ProviderChoice(need, reply) => self.provider_choice_question(need, reply),
-                Msg::PublisherChangeQuestion(question, reply) => {
-                    self.publisher_change_question(question, reply)
-                }
-                Msg::ReceiptAcknowledged(home, result) => self.receipt_acknowledged(&home, result),
+                Msg::ProviderSwitchProgress(_)
+                | Msg::ProviderSwitchQuestion(_, _)
+                | Msg::ProviderSwitched(_, _)
+                | Msg::ProviderChoice(_, _)
+                | Msg::PublisherChangeQuestion(_, _)
+                | Msg::ReceiptAcknowledged(_, _) => self.on_provider_message(msg),
                 Msg::Session(session) => self.handle_game_session(session),
                 Msg::JarConsent { jars, reply } => jar_launch::consent(window, jars, reply, cx),
                 Msg::JarClient {

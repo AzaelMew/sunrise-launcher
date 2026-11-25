@@ -1046,6 +1046,22 @@ impl Launcher {
         }
     }
 
+    pub(crate) fn on_provider_message(&mut self, msg: Msg) {
+        match msg {
+            Msg::ProviderSwitchProgress(stage) => self.provider_switch_progress(stage),
+            Msg::ProviderSwitchQuestion(question, reply) => {
+                self.provider_switch_question(question, reply)
+            }
+            Msg::ProviderSwitched(home, result) => self.provider_switch_finished(&home, result),
+            Msg::ProviderChoice(need, reply) => self.provider_choice_question(need, reply),
+            Msg::PublisherChangeQuestion(question, reply) => {
+                self.publisher_change_question(question, reply)
+            }
+            Msg::ReceiptAcknowledged(home, result) => self.receipt_acknowledged(&home, result),
+            _ => unreachable!("not a provider or publisher message"),
+        }
+    }
+
     pub(super) fn provider_switch_sheet(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
         use crate::mods_page::install::{stage_fraction, stage_label};
         let running = self.ui.sheets.switching.provider.as_ref()?;
