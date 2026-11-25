@@ -20,7 +20,7 @@ pub(super) enum RustCmd {
     Remove,
 }
 
-pub(super) fn java(action: JavaCmd, as_json: bool) -> Result<(), String> {
+pub(super) fn java(action: JavaCmd, as_json: bool) -> Result<(), Error> {
     use sunrise_launcher::java;
     match action {
         JavaCmd::List => {
@@ -57,7 +57,7 @@ pub(super) fn java(action: JavaCmd, as_json: bool) -> Result<(), String> {
     Ok(())
 }
 
-pub(super) fn rust(action: RustCmd, as_json: bool) -> Result<(), String> {
+pub(super) fn rust(action: RustCmd, as_json: bool) -> Result<(), Error> {
     use sunrise_launcher::rust_toolchain as rust;
     match action {
         RustCmd::Status => {

@@ -105,7 +105,7 @@ pub(super) fn after_exit(
     }
 }
 
-pub(super) fn instance(action: InstanceCmd, as_json: bool) -> Result<(), String> {
+pub(super) fn instance(action: InstanceCmd, as_json: bool) -> Result<(), Error> {
     use instances::Icon;
     let value = |i: &instances::Instance, selected: bool| {
         serde_json::json!({
@@ -360,7 +360,8 @@ pub(super) fn instance(action: InstanceCmd, as_json: bool) -> Result<(), String>
                         "{} is a data pack: put it into a world with sunrise-launcher worlds \
                          datapack-add <world> <file>",
                         file.display()
-                    ));
+                    )
+                    .into());
                 }
             }
         }
@@ -423,7 +424,7 @@ pub(super) enum ModpackCmd {
     Remove { pack: String },
 }
 
-pub(super) fn modpack(action: ModpackCmd, as_json: bool) -> Result<i32, String> {
+pub(super) fn modpack(action: ModpackCmd, as_json: bool) -> Result<i32, Error> {
     use sunrise_launcher::browser::sunrise;
     match action {
         ModpackCmd::List => {
@@ -447,8 +448,8 @@ pub(super) fn modpack(action: ModpackCmd, as_json: bool) -> Result<i32, String> 
                 }
             }
         }
-        ModpackCmd::Play { .. } => return Err(sunrise::pack::play_unavailable()),
-        ModpackCmd::Remove { .. } => return Err(sunrise::pack::remove_unavailable()),
+        ModpackCmd::Play { .. } => return Err(sunrise::pack::play_unavailable().into()),
+        ModpackCmd::Remove { .. } => return Err(sunrise::pack::remove_unavailable().into()),
     }
     Ok(0)
 }

@@ -427,7 +427,7 @@ pub fn run() -> Option<i32> {
     let command = cli.command?;
     let result = match command {
         Cmd::Mcp if no_ai => Err(sunrise_launcher::no_ai::REFUSAL.into()),
-        Cmd::Mcp => crate::mcp::serve().map(|()| 0),
+        Cmd::Mcp => crate::mcp::serve().map(|()| 0).map_err(Error::from),
         command => {
             let result = execute(command, cli.json);
             // A game it started has ended (attached) or none did (an error): a session file it
@@ -440,10 +440,30 @@ pub fn run() -> Option<i32> {
         Ok(code) => code,
         Err(e) => {
             // An error may name a file or folder as it was found: shown as text, never obeyed.
-            eprintln!("error: {}", sunrise_launcher::theme_files::for_terminal(&e));
+            eprintln!(
+                "error: {}",
+                sunrise_launcher::theme_files::for_terminal(&e.to_string())
+            );
             1
         }
     })
+}
+
+/// Why a command failed: the message the CLI prints after `error: `, exactly as it was written.
+#[derive(Debug)]
+struct Error(String);
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// Anything the commands' own code fails with turns into its message, as it did into a `String`.
+impl<E: Into<String>> From<E> for Error {
+    fn from(message: E) -> Self {
+        Self(message.into())
+    }
 }
 
 fn json(value: serde_json::Value) {
@@ -482,7 +502,7 @@ fn release_json(r: &Release) -> serde_json::Value {
     })
 }
 
-fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
+fn execute(command: Cmd, as_json: bool) -> Result<i32, Error> {
     if matches!(command, Cmd::Versions { .. } | Cmd::Update { .. }) {
         for (tag, from) in backend::reuse_prepared_everywhere() {
             if !as_json {
@@ -569,7 +589,7 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
             println!("{}", serde_json::to_string_pretty(&report).unwrap());
             if row.is_some() || all {
                 if let Some(kept) = report.rows.iter().flat_map(|row| &row.kept).next() {
-                    return Err(kept.reason.clone());
+                    return Err(kept.reason.clone().into());
                 }
             }
         }
@@ -678,7 +698,7 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
                 }
             };
             if let Some(requested) = version.as_deref().filter(|tag| *tag != base) {
-                return Err(trf("This profile uses {build}, not {requested}. Use Switch to change its game build.", &[("build", &base), ("requested", requested)]));
+                return Err(trf("This profile uses {build}, not {requested}. Use Switch to change its game build.", &[("build", &base), ("requested", requested)]).into());
             }
             // A folder of source is code nobody reviewed. A profile's own mods build when the
             // registry verified them or the player confirmed them; the rest, such as files
@@ -842,7 +862,7 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
                         error @ sunrise_launcher::launch::PreLaunchError::Exit(status),
                     )) => {
                         eprintln!("{error}");
-                        return attached_status(status);
+                        return attached_status(status).map_err(Error::from);
                     }
                     Err(error) => return Err(error.into()),
                 };
@@ -865,7 +885,7 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
                     crate::trf("Play time not saved: {error}", &[("error", &error)])
                 );
             }
-            return played;
+            return played.map_err(Error::from);
         }
         Cmd::Switch { tag, profile } => {
             let instance = instances::read_profile(profile.as_deref())?;
@@ -888,7 +908,7 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
             )
             .map_err(|error| error.to_string())?;
             let (cmd, _runtime) = backend::prepare_server_command(&tag, &dir, cmd)?;
-            return attached_prepared(cmd);
+            return attached_prepared(cmd).map_err(Error::from);
         }
         Cmd::Notes { tag } => {
             let r = backend::release_notes(tag.as_deref())?;

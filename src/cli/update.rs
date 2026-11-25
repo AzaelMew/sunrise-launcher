@@ -1,7 +1,7 @@
 //! `update`: the update check for Sunrise and the launcher, and installing what is newer.
 use super::*;
 
-pub(super) fn update(check: bool, as_json: bool) -> Result<(), String> {
+pub(super) fn update(check: bool, as_json: bool) -> Result<(), Error> {
     let updates = backend::check_updates();
     // A feed that couldn't be read is never "up to date": its error is printed, and the command fails after the other feed's result.
     let failed = || match (&updates.sunrise_error, &updates.launcher_error) {
@@ -20,7 +20,7 @@ pub(super) fn update(check: bool, as_json: bool) -> Result<(), String> {
             "sunrise_error": updates.sunrise_error,
             "launcher_error": updates.launcher_error,
         }));
-        return failed();
+        return failed().map_err(Error::from);
     }
     match &updates.sunrise {
         None if updates.sunrise_error.is_some() => println!("Sunrise: not checked."),
@@ -50,5 +50,5 @@ pub(super) fn update(check: bool, as_json: bool) -> Result<(), String> {
             }
         }
     }
-    failed()
+    failed().map_err(Error::from)
 }
