@@ -194,5 +194,4 @@ pub fn explain(host: &str, dir: &str, code: Option<i32>, stderr: &str) -> String
 }
 
 #[cfg(test)]
-#[path = "remote_tests.rs"]
 mod tests;
