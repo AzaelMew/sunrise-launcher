@@ -307,6 +307,7 @@ impl Client<'_> {
         };
         let log = |output| progress(Progress::NativeLog(output));
         if let Some(old) = profile.active()? {
+            let checking = crate::launcher_log::step("Checking game files");
             check_build(old.base(), old.variant.as_deref())?;
             // Prepare without the game-manifest lock. The profile stays admitted and the
             // saved generation continues to reserve this base until refresh commits.
@@ -327,6 +328,7 @@ impl Client<'_> {
             // Legacy writers still use the game lock, not profile admission. Keep
             // them out until refresh has staged the exact set we checked.
             let _manifest = game_lock(&home)?;
+            checking.note("the profile's lock is held");
             crate::browser::installed::recover_game_install(&home).map_err(StartError::Journal)?;
             let notices = catalogue::inspect(&home, load_index)?;
             let active = profile
@@ -339,6 +341,7 @@ impl Client<'_> {
                 )
                 .map_err(|error| native_failure(&home, error, || Some(Build::Active(old))))?
                 .ok_or_else(|| unsettled!())?;
+            checking.done("");
             return Ok((active, notices));
         }
 
