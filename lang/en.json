@@ -596,5 +596,6 @@
   "{status} · {eta}": "{status} · {eta}",
   "Symbolic links and reparse points cannot be relocated: {path}": "Symbolic links and reparse points cannot be relocated: {path}",
   "Could not copy the earlier launcher's data: {error}\n\nFix the earlier launcher's data folder or reconnect its drive, then restart Sunrise to try again.": "Could not copy the earlier launcher's data: {error}\n\nFix the earlier launcher's data folder or reconnect its drive, then restart Sunrise to try again.",
-  "Accepting updates {mod} to {version} and remembers the new publisher for future updates.": "Accepting updates {mod} to {version} and remembers the new publisher for future updates."
+  "Accepting updates {mod} to {version} and remembers the new publisher for future updates.": "Accepting updates {mod} to {version} and remembers the new publisher for future updates.",
+  "The original file {id} {version} is no longer on Modrinth. Put the original file with this exact SHA-512 at {path} to use it.": "The original file {id} {version} is no longer on Modrinth. Put the original file with this exact SHA-512 at {path} to use it."
 }
