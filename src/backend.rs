@@ -2650,10 +2650,18 @@ fn complete_assets_in(
     let Some(binary) = crate::preparer::binary(&root) else {
         return;
     };
+    let checking = crate::launcher_log::step("Checking game files");
     let lacking = match crate::preparer::missing_extras(&binary, &root, &resources, handoff) {
-        Ok(Some(lacking)) if !lacking.is_empty() => lacking,
-        Ok(_) => return,
-        Err(e) => return log(format!("{tag}: {e}")),
+        Ok(Some(lacking)) if !lacking.is_empty() => {
+            checking.done(format!("{} to fetch", lacking.len()));
+            lacking
+        }
+        Ok(Some(_)) => return checking.done("nothing to fetch"),
+        Ok(None) => return checking.done("this version's preparer cannot check"),
+        Err(e) => {
+            checking.failed(&e);
+            return log(format!("{tag}: {e}"));
+        }
     };
     if stopped() {
         return;
@@ -2666,8 +2674,16 @@ fn complete_assets_in(
         return log(format!("{tag}: {error}"));
     }
     let kinds: Vec<String> = lacking.iter().map(|(kind, _)| kind.clone()).collect();
+    let fetching = crate::launcher_log::step(format!(
+        "Fetching missing game files ({})",
+        kinds.join(", ")
+    ));
     let result =
         crate::preparer::add_extras(&binary, &root, &resources, &kinds, &folders(), log, handoff);
+    match &result {
+        Ok(_) => fetching.done(""),
+        Err(e) => fetching.failed(e),
+    }
     if !stopped() {
         tried.push(root.clone());
     }
@@ -3836,7 +3852,7 @@ pub enum PlayStep {
 /// Says on stderr which step Play is at, one line each: a terminal run shows where it stops when
 /// it never gets to the game (#12179).
 pub fn play_step(step: &str) {
-    eprintln!("Sunrise: Play: {step}…");
+    crate::elog!("Sunrise: Play: {step}…");
 }
 
 /// The client's command, once the owner gate lets it start and its resources are prepared. Past
@@ -5106,6 +5122,7 @@ fn monitor(
     stop: Option<crate::native_mods::Cancellation>,
 ) -> Running {
     let pid = child.id();
+    let began = std::time::Instant::now();
     let group = matches!(job, Job::Prepare);
     if group {
         crate::process::owned::CHILDREN.track_group(pid);
@@ -5163,6 +5180,21 @@ fn monitor(
             let _ = readers_done.recv_timeout(std::time::Duration::from_millis(200));
         }
         *forwarding.lock().unwrap() = false;
+        if let (Job::Client, Ok(status)) = (job, &status) {
+            #[cfg(unix)]
+            let signal = std::os::unix::process::ExitStatusExt::signal(status);
+            #[cfg(not(unix))]
+            let signal: Option<i32> = None;
+            let how = match (status.code(), signal) {
+                (Some(code), _) => format!("exited with code {code}"),
+                (None, Some(signal)) => format!("was stopped by signal {signal}"),
+                (None, None) => "ended without an exit code".into(),
+            };
+            crate::launcher_log::line(format!(
+                "The game {how} after {} s",
+                began.elapsed().as_secs()
+            ));
+        }
         if relayed {
             if let Err(error) = status {
                 let _ = tx.send(Msg::ClientObservationLost(

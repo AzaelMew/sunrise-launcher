@@ -13,7 +13,17 @@ pub(crate) fn get_from_hosts(url: &str, hosts: &[&str]) -> Result<Option<ureq::R
     ) {
         Ok(response) => Ok(Some(response)),
         Err(error) if error.status() == Some(404) => Ok(None),
-        Err(error) => Err(error.to_string()),
+        Err(error) => {
+            let outcome = error.status().map_or_else(
+                || "no answer".to_owned(),
+                |status| format!("status {status}"),
+            );
+            crate::launcher_log::line(format!(
+                "Download from {} failed: {outcome}",
+                crate::downloads::host_of(url)
+            ));
+            Err(error.to_string())
+        }
     }
 }
 

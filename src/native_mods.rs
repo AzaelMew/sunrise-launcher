@@ -1456,7 +1456,26 @@ fn resolve_build_dependencies(
 /// failures without leaving anything out.
 /// Nothing of the player's outside the launcher's data is touched: no instance is edited and
 /// no version selected here.
+/// [`build_stages`] as one step of the launcher log, so a build that hangs shows in the Logs panel.
 fn pipeline(
+    lease: &crate::native_cache::Cache,
+    base: &str,
+    folder: &Path,
+    profile: Profile,
+    target: Target,
+    options: BuildOptions<'_>,
+    progress: &impl Fn(Step),
+) -> Result<Built, Failed> {
+    let step = crate::launcher_log::step(format!("Building native mods for {base}"));
+    let built = build_stages(lease, base, folder, profile, target, options, progress);
+    match &built {
+        Ok(built) => step.done(&built.version),
+        Err(error) => step.failed(error.to_string()),
+    }
+    built
+}
+
+fn build_stages(
     lease: &crate::native_cache::Cache,
     base: &str,
     folder: &Path,
@@ -2003,6 +2022,7 @@ fn pipeline(
                 mixins_from_source,
             },
             &|id, done, total| {
+                crate::launcher_log::line(format!("Compiling {id}"));
                 progress(Step::Mod {
                     id: id.to_owned(),
                     done,
