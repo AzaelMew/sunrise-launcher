@@ -9,6 +9,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 pub use crate::index::Kind;
+use crate::manifest::JarRef;
 pub use crate::manifest::valid_mod_id;
 
 /// The schema number accepted by this reader. Breaking changes raise `schema` and move to a new
@@ -160,9 +161,35 @@ pub struct Release {
     /// Exact Sunrise build IDs this release is definitively known not to fit.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub does_not_fit: Vec<String>,
+    /// The original jars this release lists that Modrinth no longer serves, one entry per jar.
+    /// A release with any is not installable: its `[[jar]]` files can't be fetched. Left out when
+    /// empty. An installed copy whose jar is already cached keeps working.
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        deserialize_with = "unavailable_jars"
+    )]
+    pub jar_unavailable: Vec<JarRef>,
     pub file: File,
     #[serde(default)]
     pub dependencies: Vec<Dependency>,
+}
+
+/// Reads `jar_unavailable` like the release's other fields: a field the reader doesn't know is
+/// ignored, and each jar is checked as a manifest's `[[jar]]` is.
+fn unavailable_jars<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<JarRef>, D::Error> {
+    #[derive(Deserialize)]
+    struct Unavailable {
+        id: String,
+        version: String,
+        sha512: String,
+    }
+    Vec::<Unavailable>::deserialize(deserializer)?
+        .into_iter()
+        .map(|jar| JarRef::new(jar.id, jar.version, jar.sha512).map_err(serde::de::Error::custom))
+        .collect()
 }
 
 /// Three-way compatibility verdict for a release against a specific Sunrise game build.

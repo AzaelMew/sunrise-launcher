@@ -8,6 +8,7 @@ use sunrise_launcher_smod::{
     index_v2::{
         Build, Category, Dependency, File as V2File, Repository, Revoked, Screenshot, SCHEMA,
     },
+    manifest::JarRef,
     Package,
 };
 
@@ -50,6 +51,7 @@ fn make_release(
         repository: None,
         fits: fits.iter().map(|s| (*s).into()).collect(),
         does_not_fit: does_not_fit.iter().map(|s| (*s).into()).collect(),
+        jar_unavailable: Vec::new(),
         file: V2File {
             url: format!("https://github.com/{repo_name}/releases/download/v{version}/mod.smod"),
             size: bytes.len() as u64,
@@ -1850,4 +1852,156 @@ fn a_verified_native_release_is_allowed_to_build_without_the_warning() {
         backend::allowed_native_files_in(pin_dir.path()).unwrap(),
         BTreeSet::from([index::sha256(&bytes).to_ascii_lowercase()])
     );
+}
+
+fn jar(id: &str, version: &str, digit: char) -> JarRef {
+    JarRef::new(id.into(), version.into(), digit.to_string().repeat(128)).unwrap()
+}
+
+/// A project whose 1.0.0 is installed and whose 1.1.0 lists two jars Modrinth no longer serves.
+fn project_with_marked_update(marked: &[JarRef], v1: &[u8], v2: &[u8]) -> Project {
+    let release = |version: &str, bytes: &[u8]| {
+        make_release(
+            "alice/wayfinder",
+            version,
+            "26.3-0.1.0",
+            WORKFLOW_V1,
+            &["26.3-0.1.0"],
+            &[],
+            bytes,
+            Vec::new(),
+        )
+    };
+    let mut newer = release("1.1.0", v2);
+    newer.jar_unavailable = marked.to_vec();
+    make_project(
+        "Ab3dE9xQ",
+        "wayfinder",
+        "wayfinder",
+        "Wayfinder",
+        4001,
+        "alice/wayfinder",
+        vec![release("1.0.0", v1), newer],
+    )
+}
+
+#[test]
+fn v2_install_planning_refuses_a_release_whose_original_jar_modrinth_no_longer_serves() {
+    let gone = [
+        jar("macaws_bridges", "3.0.0", 'a'),
+        jar("other_lib", "1.2.0", 'b'),
+    ];
+    let v1 = smod_bytes("wayfinder", "Wayfinder", "1.0.0", "");
+    let v2 = smod_bytes("wayfinder", "Wayfinder", "1.1.0", "");
+    let project = project_with_marked_update(&gone, &v1, &v2);
+    let idx = make_index(vec![project.clone()], Vec::new());
+    let cache = tempfile::tempdir().unwrap();
+    let options = V2InstallOptions {
+        jar_cache: Some(cache.path().to_owned()),
+        ..V2InstallOptions::default()
+    };
+    let lines = "The original file macaws_bridges 3.0.0 is no longer on Modrinth.\n\
+                 The original file other_lib 1.2.0 is no longer on Modrinth.";
+
+    // The pinned release is refused with one line per jar.
+    let pinned = V2InstallOptions {
+        versions: BTreeMap::from([("Ab3dE9xQ".into(), "1.1.0".into())]),
+        ..options.clone()
+    };
+    let error = plan_v2_install(
+        &idx,
+        "26.3-0.1.0",
+        &["Ab3dE9xQ".into()],
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+        &pinned,
+        None,
+    )
+    .unwrap_err();
+    assert!(matches!(&error, InstallError::Refused(message) if message == lines));
+
+    // Without a pin the install takes the newest release it can fetch, not the marked one.
+    let plan = plan_v2_install(
+        &idx,
+        "26.3-0.1.0",
+        &["Ab3dE9xQ".into()],
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+        &options,
+        None,
+    )
+    .unwrap();
+    assert_eq!(plan.steps[0].version, "1.0.0");
+
+    // An update to the marked release is refused the same way.
+    let temp = tempfile::tempdir().unwrap();
+    write_installed_mod(
+        temp.path(),
+        "wayfinder",
+        &v1,
+        Some(v2_entry(&project, &project.releases[0], &v1, false)),
+        true,
+    );
+    let inv = inventory_v2(temp.path(), &idx).unwrap();
+    let error = plan_v2_update(
+        &idx,
+        "26.3-0.1.0",
+        &UpdateRequest::Strict(vec!["wayfinder".into()]),
+        &inv,
+        &BTreeMap::new(),
+        &options,
+        None,
+    )
+    .unwrap_err();
+    assert!(matches!(&error, InstallError::Refused(message) if message == lines));
+
+    // Update all leaves the marked release alone.
+    let bulk = plan_v2_update(
+        &idx,
+        "26.3-0.1.0",
+        &UpdateRequest::Bulk(vec!["wayfinder".into()]),
+        &inv,
+        &BTreeMap::new(),
+        &options,
+        None,
+    )
+    .unwrap();
+    assert!(bulk.steps.is_empty());
+}
+
+#[test]
+fn v2_an_installed_marked_release_with_its_jar_cached_is_not_flagged() {
+    let gone = [jar("macaws_bridges", "3.0.0", 'a')];
+    let v1 = smod_bytes("wayfinder", "Wayfinder", "1.0.0", "");
+    let v2 = smod_bytes("wayfinder", "Wayfinder", "1.1.0", "");
+    let project = project_with_marked_update(&gone, &v1, &v2);
+    let idx = make_index(vec![project.clone()], Vec::new());
+    let cache = tempfile::tempdir().unwrap();
+    fs::write(gone[0].cache_path(cache.path()), b"the jar").unwrap();
+    let options = V2InstallOptions {
+        jar_cache: Some(cache.path().to_owned()),
+        ..V2InstallOptions::default()
+    };
+
+    let temp = tempfile::tempdir().unwrap();
+    write_installed_mod(
+        temp.path(),
+        "wayfinder",
+        &v1,
+        Some(v2_entry(&project, &project.releases[0], &v1, false)),
+        true,
+    );
+    let inv = inventory_v2(temp.path(), &idx).unwrap();
+    let plan = plan_v2_update(
+        &idx,
+        "26.3-0.1.0",
+        &UpdateRequest::Strict(vec!["wayfinder".into()]),
+        &inv,
+        &BTreeMap::new(),
+        &options,
+        None,
+    )
+    .unwrap();
+    assert_eq!(plan.steps.len(), 1);
+    assert_eq!(plan.steps[0].version, "1.1.0");
 }

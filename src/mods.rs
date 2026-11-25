@@ -1128,7 +1128,7 @@ impl Launcher {
     ) -> model::discover_v2::LocalFits {
         let run = &self.ui.mods.local_fit;
         let running = run.running && run.build.as_deref() == build;
-        model::discover_v2::LocalFits::read(index, build, running)
+        model::discover_v2::LocalFits::read(index, build, running, &self.mods_home())
     }
 
     /// Starts this computer's fit check of the releases the index says nothing of on the
@@ -1336,6 +1336,7 @@ impl Launcher {
         self.ui.mods.v2_catalog = V2Catalog::Loading;
         self.ui.mods.v2_failure = None;
         let tx = self.ui.mods.tx.clone();
+        let home = self.mods_home();
         std::thread::spawn(move || {
             // Installed starts from the snapshot on disk while the network read is out.
             if !force && sunrise::v2::read_saved_index().is_some() {
@@ -1348,8 +1349,12 @@ impl Launcher {
             };
             let result = loaded.map(|catalog| {
                 // What a running check finds shows once it answers.
-                let local =
-                    model::discover_v2::LocalFits::read(&catalog.index, build.as_deref(), false);
+                let local = model::discover_v2::LocalFits::read(
+                    &catalog.index,
+                    build.as_deref(),
+                    false,
+                    &home,
+                );
                 let cards = model::discover_v2::cards(
                     &catalog.index,
                     build.as_deref(),
@@ -1441,6 +1446,7 @@ impl Launcher {
             return;
         }
         let tx = self.ui.mods.tx.clone();
+        let home = self.mods_home();
         std::thread::spawn(move || {
             let result = sunrise::v2::index()
                 .map_err(|e| e.to_string())
@@ -1449,6 +1455,7 @@ impl Launcher {
                         &catalog.index,
                         exact_build.as_deref(),
                         false,
+                        &home,
                     );
                     model::discover_v2::page(
                         &catalog.index,
