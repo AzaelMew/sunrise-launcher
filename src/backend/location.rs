@@ -7,8 +7,9 @@ use std::path::{Path, PathBuf};
 pub fn data_dir() -> PathBuf {
     // Tests set the override in this process, between cases: they must see it every call.
     if cfg!(test) {
-        if let Some(home) = std::env::var_os("SUNRISE_LAUNCHER_HOME").filter(|h| !h.is_empty()) {
-            return PathBuf::from(home);
+        let home = std::env::var_os("SUNRISE_LAUNCHER_HOME");
+        if home.as_ref().is_some_and(|h| !h.is_empty()) {
+            return resolve_data_dir_from(home);
         }
         return crate::data_location::test_home().join("launcher");
     }
@@ -18,7 +19,15 @@ pub fn data_dir() -> PathBuf {
 }
 
 fn resolve_data_dir() -> PathBuf {
-    if let Some(home) = std::env::var_os("SUNRISE_LAUNCHER_HOME").filter(|h| !h.is_empty()) {
+    resolve_data_dir_from(std::env::var_os("SUNRISE_LAUNCHER_HOME"))
+}
+
+/// The data folder for `home`, the process's `SUNRISE_LAUNCHER_HOME` (empty means unset): the
+/// override, else the configured location, else the system's launcher folder. Taking the override
+/// as a value lets a test pass one without changing the process-wide variable other tests read in
+/// parallel.
+fn resolve_data_dir_from(home: Option<std::ffi::OsString>) -> PathBuf {
+    if let Some(home) = home.filter(|h| !h.is_empty()) {
         return PathBuf::from(home);
     }
     // A location that does not open stands in as the default folders, as
