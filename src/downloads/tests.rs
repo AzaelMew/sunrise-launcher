@@ -13,6 +13,7 @@ struct State {
     accepted: AtomicUsize,
     requests: Mutex<Vec<Request>>,
     faults: AtomicUsize,
+    served: AtomicU64,
 }
 struct Server {
     url: String,
@@ -126,13 +127,17 @@ impl Server {
                         if path == "/corrupt" && !body.is_empty() {
                             body[0] ^= 1;
                         }
-                        for chunk in body.chunks(1024) {
+                        for chunk in body.chunks(if path == "/trickle" { 64 << 10 } else { 1024 }) {
                             if path == "/slow" {
                                 tokio::time::sleep(Duration::from_millis(10)).await;
+                            }
+                            if path == "/trickle" {
+                                tokio::time::sleep(Duration::from_millis(5)).await;
                             }
                             if write.write_all(chunk).await.is_err() {
                                 break;
                             }
+                            state.served.fetch_add(chunk.len() as u64, Relaxed);
                         }
                         state.active.fetch_sub(1, Relaxed);
                     }
@@ -217,6 +222,118 @@ async fn segmented_transfers_validate_and_fallback_without_corrupt_output() {
         .iter()
         .any(|(p, r)| p == "/file" && r.is_some_and(|(a, _)| a > 0)));
 }
+#[tokio::test]
+async fn download_resumes_after_cancellation() {
+    let body = data(16 << 20);
+    let server = Server::new(body.clone(), Duration::ZERO).await;
+    let dir = tempfile::tempdir().expect("test");
+    let engine = Downloader::new(Config {
+        threshold: 1,
+        minimum_segment: 1 << 20,
+        segments: 2,
+        connections: 4,
+        ..config()
+    })
+    .expect("test");
+    let artifact = server.artifact(&dir.path().join("resumed"), "/trickle", &body);
+    let chunks = partial_path(&artifact).with_extension("segments");
+    let cancel = AtomicBool::new(false);
+    let stop = async {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let done = std::fs::read_dir(&chunks)
+                .ok()
+                .map(|entries| {
+                    entries
+                        .filter_map(Result::ok)
+                        .filter(|e| {
+                            e.path().extension().is_some_and(|x| x == "seg")
+                                && e.metadata().is_ok_and(|m| m.len() >= 2 << 20)
+                        })
+                        .count()
+                })
+                .unwrap_or(0);
+            if done > 0 || Instant::now() > deadline {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        cancel.store(true, Relaxed);
+    };
+    let (first, ()) = tokio::join!(engine.download(&artifact, &cancel), stop);
+    assert_eq!(first.unwrap_err(), CANCELLED);
+    assert!(!artifact.path.exists());
+    let first_served = server.state.served.load(Relaxed);
+    assert!(first_served > 0 && first_served < body.len() as u64);
+
+    engine
+        .download(&artifact, &AtomicBool::new(false))
+        .await
+        .expect("test");
+    assert_eq!(fs::read(&artifact.path).await.expect("test"), body);
+    let second_served = server.state.served.load(Relaxed) - first_served;
+    println!(
+        "RESUME_BENCH bytes={} first={first_served} second={second_served} saved={}",
+        body.len(),
+        body.len() as u64 - second_served
+    );
+    assert!(
+        second_served < body.len() as u64,
+        "second run re-downloaded every byte: {second_served}"
+    );
+    assert!(!chunks.exists());
+}
+
+#[tokio::test]
+async fn a_server_that_ignores_ranges_restarts_a_stale_partial_cleanly() {
+    let body = data(256 << 10);
+    let server = Server::new(body.clone(), Duration::ZERO).await;
+    let dir = tempfile::tempdir().expect("test");
+    let engine = Downloader::new(Config {
+        threshold: 1,
+        minimum_segment: 1 << 10,
+        segments: 2,
+        ..config()
+    })
+    .expect("test");
+    let artifact = server.artifact(&dir.path().join("ignored"), "/ignore", &body);
+    fs::write(partial_path(&artifact), vec![7; 1000])
+        .await
+        .expect("test");
+    engine
+        .download(&artifact, &AtomicBool::new(false))
+        .await
+        .expect("test");
+    assert_eq!(fs::read(&artifact.path).await.expect("test"), body);
+}
+
+#[tokio::test]
+async fn stable_partials_are_swept_only_after_a_week() {
+    let dir = tempfile::tempdir().expect("test");
+    let name = format!(
+        ".sunrise-download-{}-{}.part",
+        "a".repeat(40),
+        "b".repeat(40)
+    );
+    let recent = dir.path().join(&name);
+    let old = dir.path().join(format!(
+        ".sunrise-download-{}-{}.part",
+        "c".repeat(40),
+        "d".repeat(40)
+    ));
+    fs::write(&recent, b"recent").await.expect("test");
+    fs::write(&old, b"old").await.expect("test");
+    std::fs::File::options()
+        .write(true)
+        .open(&old)
+        .expect("test")
+        .set_modified(SystemTime::now() - PARTIAL_AGE - Duration::from_secs(60))
+        .expect("test");
+    sweep_partials(dir.path());
+    assert!(recent.exists());
+    assert!(!old.exists());
+}
+
 #[tokio::test]
 async fn a_single_stream_transfer_hashes_as_it_writes() {
     let body = data(4096);
@@ -305,7 +422,12 @@ async fn cancellation_and_inactivity_release_resources_and_cleanup() {
     assert_eq!(result.unwrap_err(), CANCELLED);
     assert!(!artifact.path.exists());
     tokio::time::sleep(Duration::from_millis(30)).await;
-    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    // The partial survives, so downloading again resumes instead of starting over.
+    assert!(std::fs::read_dir(dir.path()).expect("test").any(|e| e
+        .expect("test")
+        .file_name()
+        .to_string_lossy()
+        .starts_with(".sunrise-download-")));
     assert_eq!(engine.progress().connections, 0);
     let slow = Server::new(body.clone(), Duration::from_millis(80)).await;
     let stalled = slow.artifact(&dir.path().join("stalled"), "/file", &body);
