@@ -5029,7 +5029,7 @@ pub struct SourceModGrant {
     pub id: String,
 }
 
-#[derive(Default, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct Settings {
     pub selected: Option<String>,
     /// Game asset architecture. Auto preserves the launcher's process-architecture behavior.
@@ -5188,11 +5188,73 @@ impl Settings {
     }
 }
 
+struct CachedSettings {
+    modified: Option<std::time::SystemTime>,
+    len: u64,
+    settings: Settings,
+}
+
+static SETTINGS_CACHE: Mutex<Option<std::collections::HashMap<PathBuf, CachedSettings>>> =
+    Mutex::new(None);
+#[cfg(test)]
+static SETTINGS_FILE_READS: std::sync::LazyLock<Mutex<std::collections::HashMap<PathBuf, u64>>> =
+    std::sync::LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
+
+fn settings_stamp(path: &Path) -> (Option<std::time::SystemTime>, u64) {
+    fs::metadata(path)
+        .map(|m| (m.modified().ok(), m.len()))
+        .unwrap_or((None, 0))
+}
+
+/// Drops the process's parsed Settings after a write to `data`, so a save is visible even when the
+/// filesystem timestamp did not move and the file kept its length.
+pub(super) fn forget_settings_cache(data: &Path) {
+    let mut cache = SETTINGS_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(folders) = cache.as_mut() {
+        folders.remove(data);
+    }
+}
+
 impl Settings {
     pub fn load() -> Self {
-        Self::load_from(&data_dir())
+        Self::load_cached_from(&data_dir())
+    }
+    /// The Settings of `data`, parsed once until the file's stamp changes or a save forgets it.
+    pub(crate) fn load_cached_from(data: &Path) -> Self {
+        let path = data.join(crate::paths::SETTINGS);
+        let (modified, len) = settings_stamp(&path);
+        {
+            let cache = SETTINGS_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(cached) = cache.as_ref().and_then(|folders| folders.get(data)) {
+                if cached.modified == modified && cached.len == len {
+                    return cached.settings.clone();
+                }
+            }
+        }
+        let settings = Self::load_from(data);
+        SETTINGS_CACHE
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get_or_insert_with(std::collections::HashMap::new)
+            .insert(
+                data.to_owned(),
+                CachedSettings {
+                    modified,
+                    len,
+                    settings: settings.clone(),
+                },
+            );
+        settings
     }
     pub(crate) fn load_from(data: &Path) -> Self {
+        #[cfg(test)]
+        {
+            *SETTINGS_FILE_READS
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .entry(data.to_owned())
+                .or_default() += 1;
+        }
         Self::parse(&fs::read_to_string(data.join(crate::paths::SETTINGS)).unwrap_or_default())
     }
     pub fn parse(text: &str) -> Self {
@@ -5352,6 +5414,45 @@ mod tests {
     use super::*;
     use std::cmp::Ordering::*;
     use std::ffi::OsStr;
+
+    fn settings_file_reads(data: &Path) -> u64 {
+        SETTINGS_FILE_READS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(data)
+            .copied()
+            .unwrap_or(0)
+    }
+
+    #[test]
+    fn settings_load_reads_the_file_once_until_it_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(crate::paths::SETTINGS);
+        fs::write(&path, r#"{"selected":"first"}"#).unwrap();
+        let before = settings_file_reads(dir.path());
+        for _ in 0..10_000 {
+            assert_eq!(
+                Settings::load_cached_from(dir.path()).selected.as_deref(),
+                Some("first")
+            );
+        }
+        assert_eq!(settings_file_reads(dir.path()) - before, 1);
+
+        let mut saved = Settings::load_cached_from(dir.path());
+        saved.selected = Some("saved".into());
+        saved.save_to(dir.path()).unwrap();
+        assert_eq!(
+            Settings::load_cached_from(dir.path()).selected.as_deref(),
+            Some("saved")
+        );
+
+        fs::write(&path, r#"{"selected":"external edit"}"#).unwrap();
+        assert_eq!(
+            Settings::load_cached_from(dir.path()).selected.as_deref(),
+            Some("external edit")
+        );
+        assert_eq!(settings_file_reads(dir.path()) - before, 3);
+    }
 
     #[cfg(unix)]
     #[test]
