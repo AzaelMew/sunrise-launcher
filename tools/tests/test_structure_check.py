@@ -106,6 +106,53 @@ class StructureCheck(unittest.TestCase):
         self.assertEqual((counts["unwraps"], counts["string_errors"]), (1, 1))
         self.assertEqual(code, 0, out)
 
+    def test_files_a_test_module_declares_are_test_files(self):
+        test_code = "fn t() -> Result<(), String> { x.unwrap(); Ok(()) }\n"
+        head = self.repo.commit({
+            "src/main.rs": "#[cfg(test)]\nmod harness;\nfn main() {}\n",
+            "src/harness/mod.rs": "mod fixtures;\n" + test_code,
+            "src/harness/fixtures.rs": test_code,
+            "src/store.rs": '#[cfg(test)]\n#[path = "store_checks.rs"]\nmod checks;\n#[cfg(test)]\nmod regressions;\n',
+            "src/store_checks.rs": test_code,
+            "src/store/regressions.rs": test_code,
+        })
+        counts = check.measure(head)
+        self.assertEqual((counts["unwraps"], counts["string_errors"]), (1, 1))
+
+    def test_a_test_module_declaration_hides_none_of_the_code_after_it(self):
+        head = self.repo.commit({
+            "src/net.rs": "#[cfg(test)]\nmod regressions;\n" + BASE_FILES["src/net.rs"],
+            "src/net/regressions.rs": "fn t() { x.unwrap(); }\n",
+        })
+        counts = check.measure(head)
+        self.assertEqual((counts["unwraps"], counts["string_errors"]), (1, 1))
+
+    def test_test_items_are_left_out_one_by_one(self):
+        head = self.repo.commit({
+            "src/net.rs": (
+                "fn a() -> Result<(), String> { b().unwrap(); Ok(()) }\n"
+                "#[cfg(test)]\n#[test]\nfn t() -> Result<(), String> { x.unwrap(); Ok(()) }\n"
+                "fn c() {\n    #[cfg(test)]\n    let y = z.with(|v| v.unwrap());\n    d().unwrap(); }\n"
+                "#[cfg(test)]\nmod tests {\n    fn u() { x.unwrap(); }\n}\n"
+                "fn after_the_tests() { e().unwrap(); }\n"
+            ),
+        })
+        counts = check.measure(head)
+        self.assertEqual((counts["unwraps"], counts["string_errors"]), (2, 1))
+
+    def test_a_test_only_fn_in_the_middle_hides_only_itself(self):
+        handler = "fn handler() -> Result<(), String> { Ok(()) }\n"
+        head = self.repo.commit({
+            "src/cli.rs": (
+                handler
+                + "#[cfg(test)]\nfn attached(cmd: Command) -> Result<i32, String> {\n    run(cmd).unwrap()\n}\n"
+                + handler * 3
+            ),
+        })
+        counts = check.measure(head)
+        # src/net.rs from the base adds one of each.
+        self.assertEqual((counts["unwraps"], counts["string_errors"]), (1, 5))
+
 
 if __name__ == "__main__":
     unittest.main()
