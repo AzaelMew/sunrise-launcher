@@ -695,7 +695,14 @@ pub fn compare_versions(a: &str, b: &str) -> std::cmp::Ordering {
 
 /// Every published release of the game, from GitHub or its configured mirror.
 fn release_list() -> Result<Vec<serde_json::Value>, String> {
-    crate::github::release_list(GAME_REPO, crate::github::CachePolicy::PreferCache)
+    let host = crate::github::API.trim_start_matches("https://");
+    let step = crate::launcher_log::step(format!("Fetching the release list from {host}"));
+    let list = crate::github::release_list(GAME_REPO, crate::github::CachePolicy::PreferCache);
+    match &list {
+        Ok(list) => step.done(format!("{} releases", list.len())),
+        Err(why) => step.failed(why),
+    }
+    list
 }
 
 /// The game's releases in `list` whose tag passes `keep`, with assets in preference order.
@@ -4047,7 +4054,8 @@ fn launcher_update_from(releases: &[Release], own: &str) -> Option<Release> {
 /// Both release lists and both update kinds: static game releases published before launcher
 /// updates and SDK lookups, and neither feed's failure stopping the other's check.
 pub fn releases_and_updates(on_releases: impl FnMut(Result<Vec<Release>, String>)) -> Updates {
-    releases_and_updates_with(
+    let step = crate::launcher_log::step("Checking for updates");
+    let updates = releases_and_updates_with(
         release_list,
         installed,
         crate::instances::selection()
@@ -4055,7 +4063,29 @@ pub fn releases_and_updates(on_releases: impl FnMut(Result<Vec<Release>, String>
             .and_then(|instance| instance.version.is_none().then_some(instance.channel)),
         || checked_launcher_update(crate::github::CachePolicy::PreferCache),
         on_releases,
-    )
+    );
+    let newest = |release: &Option<Release>| {
+        release
+            .as_ref()
+            .map_or_else(|| "none".to_owned(), |r| r.tag.clone())
+    };
+    let errors: Vec<String> = [
+        updates.sunrise_error.clone(),
+        updates.launcher_error.as_ref().map(ToString::to_string),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    if errors.is_empty() {
+        step.done(format!(
+            "game update: {}; launcher update: {}",
+            newest(&updates.sunrise),
+            newest(&updates.launcher)
+        ));
+    } else {
+        step.failed(errors.join("; "));
+    }
+    updates
 }
 
 fn releases_and_updates_with(

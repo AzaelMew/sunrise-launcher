@@ -393,7 +393,15 @@ impl Launcher {
                 }
                 UpdateCheck::Scheduled => Msg::Updates(Box::new(backend::check_updates())),
                 UpdateCheck::ManualLauncher => {
-                    Msg::LauncherChecked(Box::new(backend::refresh_launcher_update()))
+                    let step =
+                        sunrise_launcher::launcher_log::step("Checking for a launcher update");
+                    let checked = backend::refresh_launcher_update();
+                    match &checked {
+                        Ok(Some(release)) => step.done(format!("newest launcher {}", release.tag)),
+                        Ok(None) => step.done("up to date"),
+                        Err(error) => step.failed(error.to_string()),
+                    }
+                    Msg::LauncherChecked(Box::new(checked))
                 }
             };
             let _ = tx.send(message);
