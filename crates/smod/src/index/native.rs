@@ -52,7 +52,7 @@ impl Bundle {
             // The package reader never opens a source file; the build that does refuses a
             // prebuilt binary here.
             if crate::manifest::source_file(&name)
-                && let Some(kind) = crate::manifest::binary_kind(&bytes)
+                && let Some(kind) = crate::manifest::binary_kind(&bytes[..bytes.len().min(1024)])
             {
                 return Err(crate::manifest::ContentFileError::Binary { name, kind }.to_string());
             }

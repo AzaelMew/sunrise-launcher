@@ -1254,17 +1254,18 @@ fn read_folder_uses(root: &Path) -> Result<Option<Vec<u8>>, String> {
     Ok(Some(bytes))
 }
 
-/// The first bytes of a file, up to 8, for the content checks.
+/// The first bytes of a file, up to 1024, for the content checks: enough for a PE's `PE\0\0`,
+/// which its header points to ([`binary_kind`]).
 fn file_head<R: Read>(
     name: &str,
     open: impl FnOnce() -> std::io::Result<R>,
-) -> Result<([u8; 8], usize), ContentFileError> {
+) -> Result<([u8; 1024], usize), ContentFileError> {
     let error = |source| ContentFileError::Read {
         name: name.into(),
         source,
     };
     let mut file = open().map_err(error)?;
-    let mut head = [0; 8];
+    let mut head = [0; 1024];
     let mut read = 0;
     while read < head.len() {
         let size = file.read(&mut head[read..]).map_err(error)?;
@@ -1313,8 +1314,12 @@ pub(crate) fn check_file<R: Read>(
         return Err(ContentFileError::Executable(name.into()));
     }
     let (head, read) = file_head(name, open)?;
-    refuse_binary(name, &head[..read])?;
-    if head.starts_with(b"\0asm") || (head.starts_with(b"#!") && head[2] != b'[') {
+    let head = &head[..read];
+    // Any `MZ` is refused here, not only a PE: a content file has no use for it.
+    if binary_kind(head).is_some()
+        || head.starts_with(b"MZ")
+        || (head.starts_with(b"#!") && head.get(2) != Some(&b'['))
+    {
         return Err(ContentFileError::Executable(name.into()));
     }
     Ok(())
@@ -1848,7 +1853,11 @@ capabilities = ["registries"]
                 .map(String::from_utf8_lossy)
                 .collect::<Vec<_>>()
         );
-        std::fs::write(root.join("src/lib.rs"), b"MZ executable").unwrap();
+        let mut pe = vec![0u8; 0x44];
+        pe[..2].copy_from_slice(b"MZ");
+        pe[0x3c] = 0x40;
+        pe[0x40..].copy_from_slice(b"PE\0\0");
+        std::fs::write(root.join("src/lib.rs"), pe).unwrap();
         assert!(
             Package::pack_directory(&root)
                 .unwrap_err()
@@ -2315,11 +2324,25 @@ issues = \"http://example.org/issues\"
             assert!(
                 matches!(
                     check_file(name, 0o100644, || Ok(std::io::Cursor::new(header))),
-                    Err(ContentFileError::Binary { kind, .. }) if kind == expected
+                    Err(ContentFileError::Executable(_))
                 ),
                 "{expected}"
             );
         }
+    }
+
+    #[test]
+    fn a_source_file_is_a_pe_only_when_its_header_points_at_pe_signature() {
+        let mut pe = vec![0u8; 0x84];
+        pe[..2].copy_from_slice(b"MZ");
+        pe[0x3c..0x40].copy_from_slice(&0x80u32.to_le_bytes());
+        pe[0x80..].copy_from_slice(b"PE\0\0");
+        assert!(matches!(
+            check_source("src/a.c", 0o100644, || Ok(std::io::Cursor::new(pe))),
+            Err(ContentFileError::Binary { kind: "PE", .. })
+        ));
+        let text = b"MZ is how this note starts, and it is only text.\n".repeat(4);
+        assert!(check_source("NOTES", 0o100644, || Ok(std::io::Cursor::new(text))).is_ok());
     }
 
     #[test]

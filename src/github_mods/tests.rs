@@ -463,7 +463,11 @@ fn a_flat_smod_keeps_its_pins_and_ships_only_selected_files() {
     write(&root.join("assets/minecraft/lang/en_us.json"), "{}");
     assert!(pack(bundle).is_err());
     fs::remove_dir_all(root.join("assets/minecraft")).unwrap();
-    write(&root.join("evil.exe"), "MZ");
+    let mut pe = vec![0u8; 0x44];
+    pe[..2].copy_from_slice(b"MZ");
+    pe[0x3c] = 0x40;
+    pe[0x40..].copy_from_slice(b"PE\0\0");
+    fs::write(root.join("evil.exe"), pe).unwrap();
     let error = pack(bundle).unwrap_err();
     assert!(
         error.contains("evil.exe") && error.contains("(PE)"),
