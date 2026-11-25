@@ -311,11 +311,6 @@ impl Launcher {
                         }
                     }
                 }
-                Msg::NightlyReceiptRetried(warning, result) => {
-                    if result.is_ok() {
-                        self.refresh_installed();
-                    }
-                    self.finish_nightly_receipt_retry(&warning, result);
                 }
                 Msg::Removed(_)
                 | Msg::BuildInventory(_, _)
@@ -326,73 +321,6 @@ impl Launcher {
                 | Msg::LauncherChecked(_)
                 | Msg::LauncherProgress(_)
                 | Msg::LauncherUpdated(_) => self.on_update_message(msg),
-                }
-                Msg::NativeProgress(step) => {
-                    self.native_step = Some(step.shown());
-                    self.native_progress = Some(step.progress());
-                    if let Some(run) = &mut self.ui.mods.build {
-                        run.step(&step);
-                    }
-                }
-                Msg::Native(result) => {
-                    self.native_cancellation = None;
-                    self.native_step = None;
-                    self.native_progress = None;
-                    self.first_build = None;
-                    // Build and play: the game starts once the build worked, and only for the
-                    // instance it was pressed for, still on the build just made (another may
-                    // have been picked, or its version changed, meanwhile).
-                    let wanted = self.play_after_build.take();
-                    let cancelled = matches!(&result, Err(native_mods::Failed::Other(error)) if error == native_mods::CANCELLED);
-                    // Keep the window and its diagnostic when a build needs the player's attention.
-                    if result.is_err() && !cancelled {
-                        self.cancel_launcher_restart();
-                    }
-                    self.refresh_installed();
-                    self.reload_instances();
-                    if let (Err(e), false) = (&result, cancelled) {
-                        if let native_mods::Failed::Worlds(stake) = e {
-                            if let Some(run) = &mut self.ui.mods.build {
-                                run.at_stake(&stake.mods, &stake.unbuilt);
-                            }
-                            self.keep_stop(stake);
-                        }
-                        // Read against the mods this build was given, not the instance now
-                        // selected.
-                        let built = std::mem::take(&mut self.native_built_mods);
-                        self.native_failed(e.to_string(), &built);
-                    }
-                    // The build window's build ends as the build did. With its window closed,
-                    // the strip says how it went for a moment.
-                    let shown = self.ui.sheet == Some(crate::sheets::Sheet::ModBuild);
-                    if let Some(run) = &mut self.ui.mods.build {
-                        match &result {
-                            Ok(_) => run.done(),
-                            Err(_) if cancelled => run.cancelled(),
-                            Err(error) => run.native_failed(error, &self.native_failed_mods),
-                        }
-                        if !shown {
-                            run.said_at = Some(Instant::now());
-                            std::thread::spawn(|| {
-                                std::thread::sleep(crate::mods::build_run::SAID_FOR);
-                                crate::wake::wake();
-                            });
-                        }
-                    }
-                    // The build the instance plays now: its own, or its channel's when every mod
-                    // was left out and it follows one.
-                    let plays = self
-                        .selected_instance()
-                        .map(|i| (i.id.as_str(), self.version_of(i).map(String::as_str)));
-                    if let Some(play) =
-                        crate::mods::build_run::play_on_finish(wanted, &result, plays)
-                    {
-                        // The game is what the player asked for: its window gets out of the way.
-                        if shown {
-                            self.close_sheet();
-                        }
-                        self.play(play);
-                    }
                 }
                 // Old versions log their session; it never reaches the window.
                 Msg::Line(_, line) if line.contains("Session ID is") => {}
