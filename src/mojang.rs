@@ -437,5 +437,4 @@ fn fetch_each(
 }
 
 #[cfg(test)]
-#[path = "mojang_tests.rs"]
 mod tests;
