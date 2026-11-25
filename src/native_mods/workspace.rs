@@ -5,7 +5,10 @@ use std::{
     fs, io,
     path::Component,
 };
-use sunrise_launcher_smod::{index::sha256_file, manifest::Manifest};
+use sunrise_launcher_smod::{
+    index::{library_identity::LibraryIdentity, sha256, sha256_file},
+    manifest::Manifest,
+};
 
 /// An attempt's folder: this prefix and 6 random characters. Short, because Windows' path limit
 /// counts every folder above the deepest file the SDK's build writes (#396).
@@ -274,6 +277,9 @@ impl Workspace {
         let mut stamped = BTreeSet::new();
         let mut recorded = BTreeSet::new();
         let mut patch = false;
+        // Each library row's identity, by mod id, and the native mods each one says it links.
+        let mut identities = BTreeMap::new();
+        let mut linked = Vec::new();
         for row in &built.records {
             let Some(file) = files
                 .get(&row.file.to_ascii_lowercase())
@@ -297,15 +303,37 @@ impl Workspace {
                 _ => return Err(invalid()),
             };
             let rust = crate::rust_toolchain::VERSION;
-            if !stamped.insert(&row.file)
-                || row.identity != format!("{revision} {id} {version} {rust} unwind")
-                || file.sha256 != row.sha256
-            {
+            // Since sunrise#5136 the identity also names the mod's files and the identity of each
+            // native mod the library links; SDKs from before it stamp only the five fields.
+            let identity_matches = match LibraryIdentity::parse(&row.identity) {
+                Some(identity) => {
+                    linked.push(identity.dependencies().ok_or_else(invalid)?);
+                    identity.build == revision
+                        && identity.id == id
+                        && identity.version == version
+                        && identity.rust == rust
+                        && identity.panic == "unwind"
+                }
+                None => row.identity == format!("{revision} {id} {version} {rust} unwind"),
+            };
+            if !stamped.insert(&row.file) || !identity_matches || file.sha256 != row.sha256 {
                 return Err(invalid());
+            }
+            if matches!(row.kind, tool::LibraryKind::Mod) {
+                identities.insert(id, row.identity.as_str());
             }
         }
         if recorded != used {
             return Err(invalid());
+        }
+        // A library links only mods of this build, each as the identity this build recorded for it.
+        for (id, digest) in linked.into_iter().flatten() {
+            if identities
+                .get(id)
+                .is_none_or(|identity| sha256(identity.as_bytes()) != digest)
+            {
+                return Err(invalid());
+            }
         }
         Ok(files.into_values().collect())
     }
