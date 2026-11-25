@@ -1205,17 +1205,11 @@ fn session_files_are_private_and_complete() {
 #[test]
 fn client_id_is_configuration() {
     // The run-time variable overrides; empty means not configured.
-    std::env::set_var("SUNRISE_MSA_CLIENT_ID", " ");
-    assert_eq!(client_id(), None);
-    std::env::set_var(
-        "SUNRISE_MSA_CLIENT_ID",
-        "00000000-1111-2222-3333-444444444444",
-    );
+    assert_eq!(client_id_from(Some(" ".into())), None);
     assert_eq!(
-        client_id().as_deref(),
+        client_id_from(Some("00000000-1111-2222-3333-444444444444".into())).as_deref(),
         Some("00000000-1111-2222-3333-444444444444")
     );
-    std::env::remove_var("SUNRISE_MSA_CLIENT_ID");
 }
 
 #[test]
