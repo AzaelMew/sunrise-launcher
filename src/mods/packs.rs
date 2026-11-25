@@ -10,7 +10,7 @@ use sunrise_launcher::packs::{self, Kind};
 
 impl Launcher {
     pub(crate) fn reset_pack_view(&mut self) {
-        let m = &mut self.ui.mods;
+        let m = &mut self.mods_state;
         m.have.set(String::new());
         m.row_filter.text.clear();
         m.selection.clear();
@@ -22,13 +22,12 @@ impl Launcher {
 
     pub(super) fn pack_page(&mut self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let focus = self
-            .ui
-            .mods
+            .mods_state
             .have_focus
             .get_or_insert_with(|| cx.focus_handle().tab_index(0).tab_stop(true))
             .clone();
         let header = self.mods_header(true, &focus, window, cx);
-        let kind = self.ui.mods.shelf.kind();
+        let kind = self.mods_state.shelf.kind();
         let home = self.mods_home();
         let list = match kind {
             Some(kind) => self.installed_packs(kind, cx),
@@ -63,7 +62,7 @@ impl Launcher {
     }
 
     pub(super) fn collection_tabs(&self, cx: &mut Context<Self>) -> Div {
-        let chosen = self.ui.mods.shelf;
+        let chosen = self.mods_state.shelf;
         let tabs = [
             (Shelf::Resource, tr("Resource packs")),
             (Shelf::Shader, tr("Shader packs")),
@@ -72,11 +71,11 @@ impl Launcher {
         .into_iter()
         .map(|(kind, label)| {
             let pick: Choose = Rc::new(move |this, _| {
-                if this.ui.mods.shelf != kind {
-                    this.ui.mods.shelf = kind;
+                if this.mods_state.shelf != kind {
+                    this.mods_state.shelf = kind;
                     this.reset_pack_view();
                     this.worlds.stale();
-                    this.ui.mods.data.reread();
+                    this.mods_state.data.reread();
                 }
             });
             (label.into(), kind == chosen, pick)
@@ -92,7 +91,7 @@ impl Launcher {
             && self.mods_locked().is_none()
             && !self.mutating()
             && self.ui.page == Page::Packs
-            && self.ui.mods.shelf.kind() == Some(kind)
+            && self.mods_state.shelf.kind() == Some(kind)
             && self.selected_instance().is_some_and(|i| i.home == home)
     }
 
@@ -126,7 +125,7 @@ impl Launcher {
             return;
         }
         self.dismiss_notice();
-        self.ui.mods.busy = Some((tr("Importing packs…").into(), 0.));
+        self.mods_state.busy = Some((tr("Importing packs…").into(), 0.));
         cx.notify();
         cx.spawn(async move |this, cx| {
             let result = cx
@@ -158,8 +157,8 @@ impl Launcher {
                 })
                 .await;
             let _ = this.update(cx, |this, cx| {
-                this.ui.mods.busy = None;
-                this.ui.mods.notice = Some(result);
+                this.mods_state.busy = None;
+                this.mods_state.notice = Some(result);
                 this.game_packs.stale();
                 cx.notify();
             });
@@ -180,7 +179,7 @@ impl Launcher {
             Some(_guard) => change(),
             None => Err(tr("This profile is busy. Try again when the operation finishes.").into()),
         };
-        self.ui.mods.notice = result.err().map(Err);
+        self.mods_state.notice = result.err().map(Err);
         self.game_packs.confirm_remove = None;
         self.game_packs.stale();
     }
@@ -192,7 +191,7 @@ impl Launcher {
         let home = instance.home.clone();
         self.load_packs_list(home.clone());
         let editable = self.can_edit_packs(&home, kind);
-        let query = self.ui.mods.have.text().trim().to_lowercase();
+        let query = self.mods_state.have.text().trim().to_lowercase();
         let (detail, empty) = match kind {
             Kind::Resource => (
                 tr("Higher packs take priority. A pack you turn on goes to the top."),
@@ -218,7 +217,7 @@ impl Launcher {
             open.on_click(cx.listener(move |this, _, _, cx| {
                 match std::fs::create_dir_all(&folder) {
                     Ok(()) => crate::glass_toast::open(cx, &folder),
-                    Err(e) => this.ui.mods.notice = Some(Err(e.to_string())),
+                    Err(e) => this.mods_state.notice = Some(Err(e.to_string())),
                 }
                 cx.notify();
             }))
@@ -268,15 +267,14 @@ impl Launcher {
                 })
                 // The pack another page opened the shelf at.
                 .when(
-                    self.ui
-                        .mods
+                    self.mods_state
                         .reveal
                         .as_ref()
                         .is_some_and(|r| r.is_pack(pack)),
                     |d| {
                         d.bg(c(palette().hover)).child(super::ui::reveal(
                             crate::frame::scrolls("packs"),
-                            self.ui.mods.revealed.clone(),
+                            self.mods_state.revealed.clone(),
                             None,
                         ))
                     },

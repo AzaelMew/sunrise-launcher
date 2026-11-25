@@ -11,7 +11,7 @@ impl Launcher {
         if self.ui.page == Page::Packs {
             return self.pack_page(window, cx);
         }
-        let m = &mut self.ui.mods;
+        let m = &mut self.mods_state;
         let find_focus = m
             .find_focus
             .get_or_insert_with(|| cx.focus_handle().tab_index(0).tab_stop(true))
@@ -21,22 +21,23 @@ impl Launcher {
             .get_or_insert_with(|| cx.focus_handle().tab_index(0).tab_stop(true))
             .clone();
         match self.ui.page {
-            Page::Project if self.ui.mods.nightly.collection.is_some() => {
+            Page::Project if self.mods_state.nightly.collection.is_some() => {
                 self.source_collection(cx)
             }
-            Page::Project if self.ui.mods.open.is_none() && self.ui.mods.nightly.open.is_some() => {
+            Page::Project
+                if self.mods_state.open.is_none() && self.mods_state.nightly.open.is_some() =>
+            {
                 self.nightly_project(cx)
             }
             Page::Project => {
                 let scope = self.mods_page_scope();
                 if self
-                    .ui
-                    .mods
+                    .mods_state
                     .open
                     .as_ref()
                     .is_some_and(|open| open.scope != scope)
                 {
-                    let open = self.ui.mods.open.take().expect("different open scope");
+                    let open = self.mods_state.open.take().expect("different open scope");
                     if open.installed.is_some()
                         && (scope.profile != open.scope.profile || scope.home != open.scope.home)
                     {
@@ -48,11 +49,11 @@ impl Launcher {
                     } else {
                         self.mods_load_page(open.id, open.from, open.installed);
                     }
-                    if let Some(now) = self.ui.mods.open.as_mut() {
+                    if let Some(now) = self.mods_state.open.as_mut() {
                         now.parent = open.parent;
                     }
                 }
-                let listing = self.ui.mods.open.as_ref().and_then(|open| {
+                let listing = self.mods_state.open.as_ref().and_then(|open| {
                     let Some(InstalledProject::Local(file)) = &open.installed else {
                         return None;
                     };
@@ -60,8 +61,7 @@ impl Launcher {
                 });
                 if let Some(source) = listing {
                     if self
-                        .ui
-                        .mods
+                        .mods_state
                         .nightly
                         .open
                         .as_ref()
@@ -71,7 +71,7 @@ impl Launcher {
                     }
                     self.nightly_project(cx)
                 } else {
-                    self.ui.mods.nightly.open = None;
+                    self.mods_state.nightly.open = None;
                     self.project(cx)
                 }
             }
@@ -99,7 +99,7 @@ impl Launcher {
     pub(super) fn strip(&self, cx: &mut Context<Self>) -> Option<Div> {
         use ui::{c, muted};
         // Registry installs use the global strip and the clicked card, not a third bar here.
-        if let Some((line, f)) = self.ui.mods.busy.clone() {
+        if let Some((line, f)) = self.mods_state.busy.clone() {
             return Some(
                 div()
                     .flex()
@@ -168,12 +168,12 @@ impl Launcher {
         let placeholder: SharedString = match (packs, installed) {
             (false, false) => tr("Search mods…"),
             (false, true) => tr("Search your mods…"),
-            (true, false) => match self.ui.mods.packs.scope {
+            (true, false) => match self.mods_state.packs.scope {
                 pack_discover::Scope::Resource => tr("Search resource packs…"),
                 pack_discover::Scope::Shader => tr("Search shader packs…"),
                 pack_discover::Scope::Data => tr("Search data packs…"),
             },
-            (true, true) => match self.ui.mods.shelf {
+            (true, true) => match self.mods_state.shelf {
                 Shelf::Resource => tr("Search your resource packs…"),
                 Shelf::Shader => tr("Search your shader packs…"),
                 Shelf::Data => tr("Search your data packs…"),
@@ -181,9 +181,9 @@ impl Launcher {
         }
         .into();
         let edit = if installed {
-            &self.ui.mods.have
+            &self.mods_state.have
         } else {
-            &self.ui.mods.find
+            &self.mods_state.find
         };
         let field = crate::frame::input(focused)
             .id(if installed {
@@ -217,7 +217,7 @@ impl Launcher {
             })
             .on_key_down(cx.listener(move |this, ev: &KeyDownEvent, window, cx| {
                 let packs_scope = this.ui.page == Page::PackFind;
-                let m = &mut this.ui.mods;
+                let m = &mut this.mods_state;
                 let edit = if installed { &mut m.have } else { &mut m.find };
                 match line_edit::handle(edit, ev, cx) {
                     Key::Escape => window.blur(cx),
@@ -243,9 +243,9 @@ impl Launcher {
                 cx.notify();
             }));
         let field = if installed {
-            line_edit::mouse(field, cx, |this: &mut Launcher| &mut this.ui.mods.have)
+            line_edit::mouse(field, cx, |this: &mut Launcher| &mut this.mods_state.have)
         } else {
-            line_edit::mouse(field, cx, |this: &mut Launcher| &mut this.ui.mods.find)
+            line_edit::mouse(field, cx, |this: &mut Launcher| &mut this.mods_state.find)
         };
         let sub_tabs = div()
             .flex()
@@ -256,29 +256,32 @@ impl Launcher {
             .gap_y(px(8.))
             .border_b_1()
             .border_color(gpui::rgb(palette().divider))
-            .child(segmented(
-                "alt-mods-tabs",
-                [
-                    (
-                        "alt-mods-tab-installed",
-                        tr("Installed").into(),
-                        installed,
-                        if packs { Page::Packs } else { Page::Installed },
-                    ),
-                    (
-                        "alt-mods-tab-discover",
-                        tr("Discover").into(),
-                        !installed,
-                        if packs {
-                            Page::PackFind
-                        } else {
-                            Page::Discover
-                        },
-                    ),
-                ],
-                Launcher::choose_view,
-                cx,
-            ));
+            .child(
+                segmented(
+                    "alt-mods-tabs",
+                    [
+                        (
+                            "alt-mods-tab-installed",
+                            tr("Installed").into(),
+                            installed,
+                            if packs { Page::Packs } else { Page::Installed },
+                        ),
+                        (
+                            "alt-mods-tab-discover",
+                            tr("Discover").into(),
+                            !installed,
+                            if packs {
+                                Page::PackFind
+                            } else {
+                                Page::Discover
+                            },
+                        ),
+                    ],
+                    Launcher::choose_view,
+                    cx,
+                )
+                .seen(),
+            );
         let toolbar = if installed && !packs {
             div()
                 .flex()

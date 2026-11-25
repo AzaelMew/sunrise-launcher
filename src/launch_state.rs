@@ -548,7 +548,7 @@ impl Launcher {
                 }
                 if step == backend::PlayStep::SignIn && self.native_step.take().is_some() {
                     self.native_progress = None;
-                    if let Some(run) = &mut self.ui.mods.build {
+                    if let Some(run) = &mut self.mods_state.build {
                         run.done();
                     }
                     if self.ui.sheet == Some(crate::sheets::Sheet::ModBuild) {
@@ -567,7 +567,7 @@ impl Launcher {
                 let lines = self.build_lines(mods, selected);
                 self.native_for = Some(instance.clone());
                 self.native_failed_mods.clear();
-                self.ui.mods.build = Some(crate::mods::build_run::Run::start(
+                self.mods_state.build = Some(crate::mods::build_run::Run::start(
                     instance,
                     profile,
                     crate::sheets::build_name(&base),
@@ -577,7 +577,7 @@ impl Launcher {
                 self.open_sheet(crate::sheets::Sheet::ModBuild);
             }
             Msg::ManagedBuildLog(output) => {
-                if let Some(run) = self.ui.mods.build.as_mut().filter(|run| run.for_play) {
+                if let Some(run) = self.mods_state.build.as_mut().filter(|run| run.for_play) {
                     run.log = Some(output);
                 }
             }
@@ -586,8 +586,7 @@ impl Launcher {
                 self.native_step = None;
                 self.native_progress = None;
                 let active_play_build = self
-                    .ui
-                    .mods
+                    .mods_state
                     .build
                     .as_ref()
                     .is_some_and(|run| run.for_play && run.running());
@@ -597,7 +596,7 @@ impl Launcher {
                     })
                 });
                 let mut captured_build_error = false;
-                if let (Some(run), Err(error)) = (&mut self.ui.mods.build, result.as_ref()) {
+                if let (Some(run), Err(error)) = (&mut self.mods_state.build, result.as_ref()) {
                     if active_play_build {
                         match error {
                             _ if cancelled => run.cancelled(),
@@ -622,7 +621,7 @@ impl Launcher {
                         }
                     }
                 }
-                if !self.ui.mods.build.as_ref().is_some_and(|run| {
+                if !self.mods_state.build.as_ref().is_some_and(|run| {
                     run.for_play && matches!(run.end, Some(crate::mods::build_run::End::Stopped(_)))
                 }) {
                     self.play_retry = None;

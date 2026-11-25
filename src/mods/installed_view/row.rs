@@ -11,7 +11,7 @@ impl Launcher {
         busy: bool,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let selected = self.ui.mods.selection.contains(&r.id);
+        let selected = self.mods_state.selection.contains(&r.id);
         let package = self
             .archive_display(&r)
             .and_then(|archive| archive.icon.clone());
@@ -31,7 +31,7 @@ impl Launcher {
                 .and_then(|url| self.mods_image(url, images::ROW));
             tile(mod_artwork(listed, package), &r.id, &r.title, 32.)
         };
-        let error = self.ui.mods.errors.get(&r.id).cloned();
+        let error = self.mods_state.errors.get(&r.id).cloned();
 
         let check = {
             let file = r.archive_file().map(str::to_owned);
@@ -39,8 +39,7 @@ impl Launcher {
                 move |this, ev: &ClickEvent, _, cx| {
                     cx.stop_propagation();
                     if let Some(file) = &file {
-                        this.ui
-                            .mods
+                        this.mods_state
                             .select_installed_row(file, &shown, ev.modifiers().shift);
                     }
                     cx.notify();
@@ -72,8 +71,7 @@ impl Launcher {
             .and_then(|entry| entry.install_hold.as_ref())
             .filter(|_| !r.on);
         let hold = self
-            .ui
-            .mods
+            .mods_state
             .snapshot
             .as_ref()
             .and_then(|snapshot| snapshot.rows.switch_held.get(&r.id));
@@ -283,11 +281,11 @@ impl Launcher {
             .when(selected, |d| d.bg(c(palette().selected)))
             // The mod another page opened Installed at.
             .when(
-                self.ui.mods.reveal == Some(search::Reveal::Mod(r.id.clone())),
+                self.mods_state.reveal == Some(search::Reveal::Mod(r.id.clone())),
                 |d| {
                     d.bg(c(palette().hover)).child(super::ui::reveal_in(
                         crate::frame::scrolls("installed"),
-                        self.ui.mods.revealed.clone(),
+                        self.mods_state.revealed.clone(),
                         None,
                         Some(self.mods.installed_list.clone()),
                     ))

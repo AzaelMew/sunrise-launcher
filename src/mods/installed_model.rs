@@ -295,8 +295,7 @@ impl HomeModLabels {
 impl Launcher {
     pub(crate) fn registry_install_hold(&self, id: &str) -> Option<installed::InstallHold> {
         let snap = self
-            .ui
-            .mods
+            .mods_state
             .snapshot
             .as_ref()
             .filter(|snap| snap.home == self.mods_home())?;
@@ -328,6 +327,6 @@ impl Launcher {
             )
         });
         let bounds = handle.map_or_else(gpui::Bounds::default, |handle| handle.bounds());
-        (installed_target(self.ui.mods.drawn, laid), bounds)
+        (installed_target(self.mods_state.drawn, laid), bounds)
     }
 }

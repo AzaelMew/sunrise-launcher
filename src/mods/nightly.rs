@@ -116,7 +116,7 @@ impl Launcher {
     }
 
     pub(crate) fn read_nightly_catalogue(&mut self, force: bool) {
-        let n = &mut self.ui.mods.nightly;
+        let n = &mut self.mods_state.nightly;
         if n.reading
             || (!force
                 && n.catalogue
@@ -126,7 +126,7 @@ impl Launcher {
             return;
         }
         n.reading = true;
-        let tx = self.ui.mods.tx.clone();
+        let tx = self.mods_state.tx.clone();
         std::thread::spawn(move || {
             let _ = tx.send(super::Event::Nightly(Event::Catalogue(sources::catalogue(
                 force,
@@ -135,23 +135,25 @@ impl Launcher {
     }
 
     pub(super) fn installed_source_project(&self, id: &str, file: &str) -> Option<&Source> {
-        self.discover_installed()?
-            .source_project(id, file, self.ui.mods.nightly.catalogue.as_ref())
+        self.discover_installed()?.source_project(
+            id,
+            file,
+            self.mods_state.nightly.catalogue.as_ref(),
+        )
     }
 
     pub(crate) fn source_listing(
         &self,
         origin: &sunrise_launcher::github_mods::Origin,
     ) -> Option<&Source> {
-        listing_for_origin(self.ui.mods.nightly.catalogue.as_ref()?, origin)
+        listing_for_origin(self.mods_state.nightly.catalogue.as_ref()?, origin)
     }
 
     pub(super) fn source_collection_for(
         &self,
         source: &Source,
     ) -> Option<&sunrise_launcher_smod::index::Collection> {
-        self.ui
-            .mods
+        self.mods_state
             .nightly
             .catalogue
             .as_ref()?
@@ -171,7 +173,7 @@ impl Launcher {
         commit: Option<&sources::SourceCommit>,
         allow_fetch: bool,
     ) -> (Option<PathBuf>, Option<sources::SourceIcon>) {
-        let work = &self.ui.mods.nightly.work;
+        let work = &self.mods_state.nightly.work;
         let commit = commit.or_else(|| {
             work.release_pins
                 .get(source.id())

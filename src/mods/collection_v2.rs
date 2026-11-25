@@ -21,16 +21,16 @@ type Shown = (Rc<[V2Card]>, V2Collection, BTreeSet<String>);
 impl Launcher {
     /// Opens a registry collection's page; Back returns to where it was opened from.
     pub(super) fn mods_show_v2_collection(&mut self, id: String, from: Page) {
-        self.ui.mods.nightly.open = None;
-        self.ui.mods.nightly.collection = None;
+        self.mods_state.nightly.open = None;
+        self.mods_state.nightly.collection = None;
         crate::frame::scrolls("project").set_offset(gpui::point(px(0.), px(0.)));
-        self.ui.mods.page_request += 1;
-        self.ui.mods.open = Some(Open {
+        self.mods_state.page_request += 1;
+        self.mods_state.open = Some(Open {
             id,
             installed: None,
             collection: true,
             v2: true,
-            request: self.ui.mods.page_request,
+            request: self.mods_state.page_request,
             scope: self.mods_page_scope(),
             from,
             v2_page: None,
@@ -44,13 +44,13 @@ impl Launcher {
     fn v2_collection_view(&mut self, id: &str) -> Option<Shown> {
         let V2Catalog::Ready {
             cards, collections, ..
-        } = &self.ui.mods.v2_catalog
+        } = &self.mods_state.v2_catalog
         else {
             return None;
         };
         let collection = collections.iter().find(|c| c.id == id)?.clone();
         let cards = cards.clone();
-        let slot = &mut self.ui.mods.v2_picks;
+        let slot = &mut self.mods_state.v2_picks;
         if slot.as_ref().is_none_or(|p| p.id != id) {
             *slot = Some(V2Picks {
                 id: id.to_owned(),
@@ -62,7 +62,7 @@ impl Launcher {
     }
 
     fn v2_collection_flip(&mut self, member: &str) {
-        if let Some(picks) = self.ui.mods.v2_picks.as_mut() {
+        if let Some(picks) = self.mods_state.v2_picks.as_mut() {
             if !picks.picked.remove(member) {
                 picks.picked.insert(member.to_owned());
             }
@@ -80,7 +80,7 @@ impl Launcher {
         page: Div,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let Some(id) = self.ui.mods.open.as_ref().map(|o| o.id.clone()) else {
+        let Some(id) = self.mods_state.open.as_ref().map(|o| o.id.clone()) else {
             return page.child(header).into_any_element();
         };
         let Some((cards, collection, picked)) = self.v2_collection_view(&id) else {
@@ -269,7 +269,7 @@ impl Launcher {
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     cx.stop_propagation();
                     this.mods_show_v2_project(project.clone());
-                    if let Some(open) = this.ui.mods.open.as_mut() {
+                    if let Some(open) = this.mods_state.open.as_mut() {
                         open.parent = Some(parent.clone());
                     }
                     cx.notify();

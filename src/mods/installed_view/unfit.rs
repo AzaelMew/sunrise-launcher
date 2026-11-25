@@ -13,7 +13,7 @@ impl Launcher {
         cx: &mut Context<Self>,
     ) -> Div {
         use crate::frame::button;
-        let open = self.ui.mods.unfit_open.as_deref() == Some(r.id.as_str());
+        let open = self.mods_state.unfit_open.as_deref() == Some(r.id.as_str());
         let id = r.id.clone();
         let help = status(
             "information-circle",
@@ -34,7 +34,7 @@ impl Launcher {
             &[("mod", &r.title), ("build", &unfit.on)],
         )))
         .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-            let m = &mut this.ui.mods;
+            let m = &mut this.mods_state;
             m.unfit_open = match m.unfit_open.as_ref() == Some(&id) {
                 true => None,
                 false => Some(id.clone()),
@@ -54,7 +54,7 @@ impl Launcher {
                     &[("mod", &r.title), ("on", &unfit.on)],
                 ),
             };
-            let details = self.ui.mods.unfit_details;
+            let details = self.mods_state.unfit_details;
             let technical = (!unfit.changes.is_empty()).then(|| {
                 div()
                     .flex()
@@ -78,7 +78,7 @@ impl Launcher {
                             ))
                             .child(tr("Details"))
                             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                                this.ui.mods.unfit_details = !this.ui.mods.unfit_details;
+                                this.mods_state.unfit_details = !this.mods_state.unfit_details;
                                 cx.stop_propagation();
                                 cx.notify();
                             })),
@@ -111,7 +111,7 @@ impl Launcher {
                     } else {
                         let row = r.clone();
                         Some(b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                            this.ui.mods.unfit_open = None;
+                            this.mods_state.unfit_open = None;
                             if nightly::installed_source(&row).is_some() {
                                 this.submit_source_update(&row.id);
                             } else {
@@ -129,7 +129,7 @@ impl Launcher {
                     );
                     let tag = tag.clone();
                     Some(b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        this.ui.mods.unfit_open = None;
+                        this.mods_state.unfit_open = None;
                         this.stay_on(tag.clone());
                         cx.stop_propagation();
                         cx.notify();
@@ -197,7 +197,7 @@ impl Launcher {
         }
         match instances::edit(&id, |meta| meta.version = Some(tag)) {
             Ok(_) => self.reload_instances(),
-            Err(e) => self.ui.mods.notice = Some(Err(e)),
+            Err(e) => self.mods_state.notice = Some(Err(e)),
         }
     }
 }

@@ -19,6 +19,7 @@ mod provider_choice;
 mod publisher_change;
 mod resolve;
 mod switching;
+pub(crate) use switching::PortSwitch;
 mod versions;
 #[cfg(test)]
 use build_menu::build_menu_error;

@@ -36,10 +36,10 @@ impl Launcher {
     /// own rating of `id`.
     pub(super) fn ratings_for_page(&mut self, id: &str) {
         let account = self.accounts.selected().map(|a| a.uuid.clone());
-        let r = &mut self.ui.mods.ratings;
+        let r = &mut self.mods_state.ratings;
         if !r.asked {
             r.asked = true;
-            let tx = self.ui.mods.tx.clone();
+            let tx = self.mods_state.tx.clone();
             std::thread::spawn(move || {
                 let _ = tx.send(Event::Rating(Answer::Totals(ratings::totals())));
             });
@@ -56,7 +56,7 @@ impl Launcher {
             return;
         }
         r.mine.insert(id.to_owned(), None);
-        let (tx, id) = (self.ui.mods.tx.clone(), id.to_owned());
+        let (tx, id) = (self.mods_state.tx.clone(), id.to_owned());
         std::thread::spawn(move || {
             // Not knowing it only leaves the stars empty: rating again replaces it either way.
             let stars = ratings::mine(&account, &id).ok().flatten();
@@ -68,13 +68,13 @@ impl Launcher {
         let Some(account) = self.accounts.selected().map(|a| a.uuid.clone()) else {
             return;
         };
-        let r = &mut self.ui.mods.ratings;
+        let r = &mut self.mods_state.ratings;
         if r.sending.is_some() {
             return;
         }
         r.sending = Some(id.clone());
         r.error = None;
-        let tx = self.ui.mods.tx.clone();
+        let tx = self.mods_state.tx.clone();
         std::thread::spawn(move || {
             let result = ratings::rate(&account, &id, stars);
             let _ = tx.send(Event::Rating(Answer::Rated(account, id, stars, result)));
@@ -82,7 +82,7 @@ impl Launcher {
     }
 
     pub(super) fn rating_answer(&mut self, answer: Answer) {
-        let r = &mut self.ui.mods.ratings;
+        let r = &mut self.mods_state.ratings;
         match answer {
             // Without totals the page shows no average; it never says the registry is down.
             Answer::Totals(Ok(totals)) => r.totals = Some(totals),
@@ -113,7 +113,7 @@ impl Launcher {
     /// The ratings block of mod `id`'s page.
     pub(super) fn rating_block(&self, id: &str, cx: &mut Context<Self>) -> Div {
         let p = palette();
-        let r = &self.ui.mods.ratings;
+        let r = &self.mods_state.ratings;
         let summary = match r.totals.as_ref().map(|t| t.get(id)) {
             None if r.totals_failed => None,
             None => Some(muted(tr("Loading ratings…"))),

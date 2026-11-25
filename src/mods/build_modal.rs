@@ -13,7 +13,7 @@ use sunrise_launcher::browser::sunrise;
 impl Launcher {
     /// The build window, while one is open.
     pub(crate) fn build_modal(&mut self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
-        let run = self.ui.mods.build.clone()?;
+        let run = self.mods_state.build.clone()?;
         let running = run.running();
         let counts = run.counts();
         let stop = match &run.end {
@@ -221,7 +221,7 @@ impl Launcher {
                     tr("Show details")
                 })
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    if let Some(run) = &mut this.ui.mods.build {
+                    if let Some(run) = &mut this.mods_state.build {
                         run.details = !run.details;
                         run.log_open = false;
                     }
@@ -239,7 +239,7 @@ impl Launcher {
                 tr("Open the build log")
             };
             button("build-log", label).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                if let Some(run) = &mut this.ui.mods.build {
+                if let Some(run) = &mut this.mods_state.build {
                     if run.for_play {
                         run.log_open = !run.log_open;
                         run.details = false;
@@ -525,11 +525,11 @@ impl Launcher {
     pub(crate) fn build_all(&mut self) {
         if self.native_step.is_none() {
             // A build that first asks for permission opens its window once it starts.
-            self.ui.mods.build_wanted = true;
+            self.mods_state.build_wanted = true;
             self.build();
         }
-        if self.ui.mods.build.as_ref().is_some_and(Run::running) {
-            self.ui.mods.build_wanted = false;
+        if self.mods_state.build.as_ref().is_some_and(Run::running) {
+            self.mods_state.build_wanted = false;
             self.open_sheet(crate::sheets::Sheet::ModBuild);
         }
     }
@@ -537,7 +537,7 @@ impl Launcher {
     /// Cancel build in the window, Stop on the strip and on Home: the build is told to stop,
     /// and from this press on it starts no game, even if it ends well before it hears.
     pub(crate) fn stop_build(&mut self) {
-        build_run::stop_asked(self.ui.mods.build.as_mut(), &mut self.play_after_build);
+        build_run::stop_asked(self.mods_state.build.as_mut(), &mut self.play_after_build);
         if let Some(cancellation) = &self.native_cancellation {
             cancellation.stop();
         }
@@ -550,14 +550,13 @@ impl Launcher {
             return;
         };
         let base = self
-            .ui
-            .mods
+            .mods_state
             .snapshot
             .as_ref()
             .and_then(|snap| snap.rows.managed.as_ref())
             .map(|managed| managed.base().to_owned())
             .or_else(|| self.selected_exact_build());
-        let tx = self.ui.mods.tx.clone();
+        let tx = self.mods_state.tx.clone();
         let entry = row.entry.clone();
         std::thread::spawn(move || {
             let found = sunrise::v2::refreshed_index()

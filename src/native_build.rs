@@ -12,7 +12,7 @@ impl Launcher {
             Msg::NativeProgress(step) => {
                 self.native_step = Some(step.shown());
                 self.native_progress = Some(step.progress());
-                if let Some(run) = &mut self.ui.mods.build {
+                if let Some(run) = &mut self.mods_state.build {
                     run.step(&step);
                 }
             }
@@ -34,7 +34,7 @@ impl Launcher {
                 self.reload_instances();
                 if let (Err(e), false) = (&result, cancelled) {
                     if let native_mods::Failed::Worlds(stake) = e {
-                        if let Some(run) = &mut self.ui.mods.build {
+                        if let Some(run) = &mut self.mods_state.build {
                             run.at_stake(&stake.mods, &stake.unbuilt);
                         }
                         self.keep_stop(stake);
@@ -47,7 +47,7 @@ impl Launcher {
                 // The build window's build ends as the build did. With its window closed,
                 // the strip says how it went for a moment.
                 let shown = self.ui.sheet == Some(crate::sheets::Sheet::ModBuild);
-                if let Some(run) = &mut self.ui.mods.build {
+                if let Some(run) = &mut self.mods_state.build {
                     match &result {
                         Ok(_) => run.done(),
                         Err(_) if cancelled => run.cancelled(),
@@ -151,8 +151,8 @@ impl Launcher {
             for_play,
         );
         run.first_build = self.first_build;
-        self.ui.mods.build = Some(run);
-        if for_play || std::mem::take(&mut self.ui.mods.build_wanted) {
+        self.mods_state.build = Some(run);
+        if for_play || std::mem::take(&mut self.mods_state.build_wanted) {
             self.open_sheet(crate::sheets::Sheet::ModBuild);
         }
         let tx = self.tx.clone();

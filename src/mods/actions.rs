@@ -81,8 +81,7 @@ impl Launcher {
         let refusal = if let Some(why) = self.mods_locked() {
             Some(why.to_string())
         } else if let Some(InstalledReadError::GameInstall(problem)) = self
-            .ui
-            .mods
+            .mods_state
             .snapshot
             .as_ref()
             .filter(|s| s.home == self.mods_home())
@@ -90,8 +89,7 @@ impl Launcher {
         {
             Some(problem.summary().into())
         } else if self
-            .ui
-            .mods
+            .mods_state
             .snapshot
             .as_ref()
             .is_some_and(|snapshot| !snapshot.ready())
@@ -105,7 +103,7 @@ impl Launcher {
             None
         };
         if let Some(why) = refusal {
-            self.ui.mods.notice = Some(Err(why));
+            self.mods_state.notice = Some(Err(why));
             return false;
         }
         true
@@ -136,9 +134,9 @@ impl Launcher {
             self.mods.message = None;
             self.enable_registry_mod(entry, self.mods_home());
             if let Some(Err(e)) = self.mods.message.take() {
-                self.ui.mods.notice = Some(Err(e));
+                self.mods_state.notice = Some(Err(e));
             }
-        } else if let Some(snapshot) = &self.ui.mods.snapshot {
+        } else if let Some(snapshot) = &self.mods_state.snapshot {
             self.enable_one_in(snapshot.home.clone(), row.id.clone(), row.title.clone());
         }
     }
@@ -152,23 +150,24 @@ impl Launcher {
             .filter(|instance| instance.home == home)
             .cloned()
         else {
-            self.ui.mods.notice = Some(Err(tr("The selected profile changed. Try again.").into()));
+            self.mods_state.notice =
+                Some(Err(tr("The selected profile changed. Try again.").into()));
             return;
         };
         let identity = match Identity::of(&home) {
             Ok(identity) => identity,
             Err(error) => {
-                self.ui.mods.notice = Some(Err(error));
+                self.mods_state.notice = Some(Err(error));
                 return;
             }
         };
-        self.ui.mods.errors.clear();
-        self.ui.mods.notice = None;
-        self.ui.mods.busy = Some((
+        self.mods_state.errors.clear();
+        self.mods_state.notice = None;
+        self.mods_state.busy = Some((
             trf("Checking {mod} for this build…", &[("mod", &row.title)]),
             0.,
         ));
-        let tx = self.ui.mods.tx.clone();
+        let tx = self.mods_state.tx.clone();
         let (id, title) = (row.id.clone(), row.title.clone());
         std::thread::spawn(move || {
             let result = sunrise_launcher::browser::sunrise::restore_held(
@@ -196,14 +195,14 @@ impl Launcher {
             return;
         }
         let rows = self.rows();
-        let Some(snapshot) = &self.ui.mods.snapshot else {
+        let Some(snapshot) = &self.mods_state.snapshot else {
             return;
         };
         let mut held = Vec::new();
         let mut candidates = Vec::new();
         for row in rows
             .iter()
-            .filter(|r| r.local.is_none() && self.ui.mods.selection.contains(&r.id))
+            .filter(|r| r.local.is_none() && self.mods_state.selection.contains(&r.id))
         {
             if let Some(reason) = snapshot.switch_held.get(&row.id) {
                 held.push((row.id.clone(), reason.clone()));
@@ -229,11 +228,12 @@ impl Launcher {
             return;
         }
         if home != self.mods_home() {
-            self.ui.mods.notice = Some(Err(tr("The selected profile changed. Try again.").into()));
+            self.mods_state.notice =
+                Some(Err(tr("The selected profile changed. Try again.").into()));
             return;
         }
-        self.ui.mods.errors.clear();
-        self.ui.mods.notice = None;
+        self.mods_state.errors.clear();
+        self.mods_state.notice = None;
         if ids.is_empty() {
             self.enabled_mods(
                 &home,
@@ -248,12 +248,12 @@ impl Launcher {
         let identity = match Identity::of(&home) {
             Ok(identity) => identity,
             Err(error) => {
-                self.ui.mods.notice = Some(Err(error));
+                self.mods_state.notice = Some(Err(error));
                 return;
             }
         };
-        self.ui.mods.busy = Some((tr("Turning on mods…").into(), 0.));
-        let tx = self.ui.mods.tx.clone();
+        self.mods_state.busy = Some((tr("Turning on mods…").into(), 0.));
+        let tx = self.mods_state.tx.clone();
         dispatch_enable(home.clone(), identity, ids, move |result| {
             let _ = tx.send(Event::Enabled(home, notice, result));
         });
@@ -265,11 +265,11 @@ impl Launcher {
         notice: EnableNotice,
         result: Result<EnabledMods, String>,
     ) {
-        self.ui.mods.busy = None;
+        self.mods_state.busy = None;
         if self.mods_home() != home {
             return;
         }
-        let m = &mut self.ui.mods;
+        let m = &mut self.mods_state;
         m.notice = Some(result.and_then(|result| match notice {
             EnableNotice::One(title) => {
                 if let Some((_, reason)) = result.skipped.first() {
@@ -328,11 +328,11 @@ impl Launcher {
         let rows = self.rows();
         let chosen: Vec<String> = rows
             .iter()
-            .filter(|r| r.local.is_none() && r.on && self.ui.mods.selection.contains(&r.id))
+            .filter(|r| r.local.is_none() && r.on && self.mods_state.selection.contains(&r.id))
             .map(|r| r.id.clone())
             .collect();
         if chosen.is_empty() {
-            self.ui.mods.notice = Some(Err(
+            self.mods_state.notice = Some(Err(
                 tr("None of the selected mods is turned on.").to_string()
             ));
             return;
@@ -356,7 +356,7 @@ impl Launcher {
             button.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                 let (rows, labels) = this.labeled_installed_rows();
                 let names = super::installed_view::remove_names(&rows, &labels);
-                if let Some(open) = this.ui.mods.open.as_mut() {
+                if let Some(open) = this.mods_state.open.as_mut() {
                     open.removing = vec![id.clone()];
                 }
                 this.ask_remove(&home, vec![id.clone()], names);
@@ -377,7 +377,8 @@ impl Launcher {
             return;
         }
         if self.mods_home().as_path() != home {
-            self.ui.mods.notice = Some(Err(tr("The selected profile changed. Try again.").into()));
+            self.mods_state.notice =
+                Some(Err(tr("The selected profile changed. Try again.").into()));
             return;
         }
         self.submit_registry_change(Kind::Remove, "remove", chosen, displayed_names);
@@ -392,7 +393,7 @@ impl Launcher {
             .into_iter()
             .filter(|row| {
                 model::bulk_updatable(row)
-                    && (!only_selected || self.ui.mods.selection.contains(&row.id))
+                    && (!only_selected || self.mods_state.selection.contains(&row.id))
             })
             .map(|row| row.id)
             .collect();
@@ -413,10 +414,10 @@ impl Launcher {
         ids: Vec<String>,
         displayed_names: BTreeMap<String, String>,
     ) {
-        self.ui.mods.notice = None;
+        self.mods_state.notice = None;
         self.mods.message = None;
         if let Err(why) = self.queue_registry_change(kind, card.to_owned(), ids, displayed_names) {
-            self.ui.mods.notice = Some(Err(why));
+            self.mods_state.notice = Some(Err(why));
         }
     }
 
@@ -425,7 +426,7 @@ impl Launcher {
             return;
         }
         let home = self.mods_home();
-        let m = &mut self.ui.mods;
+        let m = &mut self.mods_state;
         m.notice = None;
         m.errors.clear();
         m.busy = Some((tr("Working…").to_string(), 0.));

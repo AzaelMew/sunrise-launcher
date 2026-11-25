@@ -17,7 +17,7 @@ mod page;
 mod switch;
 
 pub(crate) use model::{
-    InstalledPort, OtherPortOption, OtherPorts, PortAction, PortGroup, PortOption, PortSwitch,
+    InstalledPort, OtherPortOption, OtherPorts, PortAction, PortGroup, PortOption,
 };
 pub(crate) use switch::{group_ports, grouped_project_ids, other_ports_for};
 

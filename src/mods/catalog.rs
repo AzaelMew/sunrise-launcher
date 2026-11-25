@@ -60,7 +60,7 @@ impl Launcher {
         index: &sunrise_launcher_smod::index_v2::Index,
         build: Option<&str>,
     ) -> model::discover_v2::LocalFits {
-        let run = &self.ui.mods.local_fit;
+        let run = &self.mods_state.local_fit;
         let running = run.running && run.build.as_deref() == build;
         model::discover_v2::LocalFits::read(index, build, running, &self.mods_home())
     }
@@ -69,7 +69,7 @@ impl Launcher {
     /// selected build, in the background: one at a time, and not again for a build whose last
     /// check failed until Try again.
     pub(super) fn start_local_fit(&mut self) {
-        let run = &self.ui.mods.local_fit;
+        let run = &self.mods_state.local_fit;
         let Some(build) = self.selected_exact_build() else {
             return;
         };
@@ -90,12 +90,12 @@ impl Launcher {
         {
             return;
         }
-        self.ui.mods.local_fit = LocalFitRun {
+        self.mods_state.local_fit = LocalFitRun {
             build: Some(build.clone()),
             running: true,
             failed: None,
         };
-        let tx = self.ui.mods.tx.clone();
+        let tx = self.mods_state.tx.clone();
         std::thread::spawn(move || {
             let result = local_fit::check(&catalog.index, &build);
             let _ = tx.send(Event::LocalFit(build, result));
@@ -105,13 +105,13 @@ impl Launcher {
 
     /// Try again after the selected build's fit check failed.
     pub(crate) fn retry_local_fit(&mut self) {
-        self.ui.mods.local_fit.failed = None;
+        self.mods_state.local_fit.failed = None;
         self.start_local_fit();
     }
 
     /// Why the selected build's fit check failed, when it did.
     pub(crate) fn local_fit_failure(&self) -> Option<&str> {
-        let run = &self.ui.mods.local_fit;
+        let run = &self.mods_state.local_fit;
         (run.build == self.selected_exact_build())
             .then_some(run.failed.as_deref())
             .flatten()
@@ -126,10 +126,10 @@ impl Launcher {
         let build = self.selected_exact_build();
         let local = self.local_fits(&catalog.index, build.as_deref());
         let name = &crate::sheets::build_name;
-        if self.ui.mods.v2_catalog_build.as_ref() == Some(&build) {
+        if self.mods_state.v2_catalog_build.as_ref() == Some(&build) {
             if let V2Catalog::Ready {
                 cards, collections, ..
-            } = &mut self.ui.mods.v2_catalog
+            } = &mut self.mods_state.v2_catalog
             {
                 let fresh =
                     model::discover_v2::cards(&catalog.index, build.as_deref(), name, &local);
@@ -138,8 +138,7 @@ impl Launcher {
             }
         }
         if let Some(Ok(page)) = self
-            .ui
-            .mods
+            .mods_state
             .open
             .as_mut()
             .and_then(|open| open.v2_page.as_mut())
@@ -156,8 +155,8 @@ impl Launcher {
     pub(crate) fn ensure_v2_catalog(&mut self, force: bool) {
         let build = self.selected_exact_build();
         if !force
-            && self.ui.mods.v2_catalog_build.as_ref() == Some(&build)
-            && !matches!(self.ui.mods.v2_catalog, V2Catalog::Idle)
+            && self.mods_state.v2_catalog_build.as_ref() == Some(&build)
+            && !matches!(self.mods_state.v2_catalog, V2Catalog::Idle)
         {
             return;
         }
@@ -172,9 +171,9 @@ impl Launcher {
             let categories = model::discover_v2::categories(&cards);
             let collections = model::discover_v2::collections(&catalog.index, &cards);
             let build_listed = model::discover_v2::build_listed(&catalog.index, build.as_deref());
-            self.ui.mods.v2_failure = None;
-            self.ui.mods.v2_catalog_build = Some(build);
-            self.ui.mods.v2_catalog = V2Catalog::Ready {
+            self.mods_state.v2_failure = None;
+            self.mods_state.v2_catalog_build = Some(build);
+            self.mods_state.v2_catalog = V2Catalog::Ready {
                 cards: cards.into(),
                 collections: collections.into(),
                 categories: categories.into(),
@@ -185,10 +184,10 @@ impl Launcher {
             self.start_local_fit();
             return;
         }
-        self.ui.mods.v2_catalog_build = Some(build.clone());
-        self.ui.mods.v2_catalog = V2Catalog::Loading;
-        self.ui.mods.v2_failure = None;
-        let tx = self.ui.mods.tx.clone();
+        self.mods_state.v2_catalog_build = Some(build.clone());
+        self.mods_state.v2_catalog = V2Catalog::Loading;
+        self.mods_state.v2_failure = None;
+        let tx = self.mods_state.tx.clone();
         let home = self.mods_home();
         std::thread::spawn(move || {
             // Installed starts from the snapshot on disk while the network read is out.

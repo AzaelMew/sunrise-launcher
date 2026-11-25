@@ -433,8 +433,13 @@ impl Launcher {
             }
         };
         self.play_retry = Some(intent.clone());
-        if self.ui.mods.build.as_ref().is_some_and(|run| run.for_play) {
-            self.ui.mods.build = None;
+        if self
+            .mods_state
+            .build
+            .as_ref()
+            .is_some_and(|run| run.for_play)
+        {
+            self.mods_state.build = None;
         }
         self.starting_pack = None;
         self.play_install_recovery = None;

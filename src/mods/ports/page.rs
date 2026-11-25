@@ -8,8 +8,8 @@ impl Launcher {
         notice: Result<String, String>,
         open_project_id: Option<String>,
     ) {
-        self.ui.mods.snapshot = None;
-        self.ui.mods.notice = Some(notice);
+        self.mods_state.snapshot = None;
+        self.mods_state.notice = Some(notice);
         if let Some(id) = open_project_id.filter(|_| self.ui.page == Page::Project) {
             self.mods_show_project(id);
         }
@@ -55,9 +55,9 @@ impl Launcher {
             index,
             build_id.as_deref(),
             &installed_map,
-            &self.ui.mods.filters.text,
-            self.ui.mods.filters.category.as_deref(),
-            self.ui.mods.filters.show_all,
+            &self.mods_state.filters.text,
+            self.mods_state.filters.category.as_deref(),
+            self.mods_state.filters.show_all,
         )
     }
 

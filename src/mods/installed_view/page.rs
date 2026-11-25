@@ -5,8 +5,7 @@ use super::*;
 
 impl Launcher {
     pub(in crate::mods) fn archive_display(&self, row: &Row) -> Option<&ArchiveDisplay> {
-        self.ui
-            .mods
+        self.mods_state
             .snapshot
             .as_ref()?
             .archives
@@ -30,7 +29,7 @@ impl Launcher {
             .child(header)
             .children(self.strip(cx));
 
-        let refresh = match InstalledRefresh::of(self.ui.mods.snapshot.as_ref()) {
+        let refresh = match InstalledRefresh::of(self.mods_state.snapshot.as_ref()) {
             InstalledRefresh::Ready => None,
             InstalledRefresh::Reading => Some(
                 card()
@@ -80,7 +79,7 @@ impl Launcher {
                                 .child(
                                     crate::frame::button("retry-installed", tr("Retry")).on_click(
                                         cx.listener(|this, _, _, cx| {
-                                            if let Some(snapshot) = &mut this.ui.mods.snapshot {
+                                            if let Some(snapshot) = &mut this.mods_state.snapshot {
                                                 snapshot.key.clear();
                                             }
                                             this.mods_refresh();
@@ -95,16 +94,16 @@ impl Launcher {
         let refresh_ready = refresh.is_none();
         page = page.children(refresh);
         let (rows, labels) = self.labeled_installed_rows();
-        let (reading, failed) = match InstalledRefresh::of(self.ui.mods.snapshot.as_ref()) {
+        let (reading, failed) = match InstalledRefresh::of(self.mods_state.snapshot.as_ref()) {
             InstalledRefresh::Ready => (false, false),
             InstalledRefresh::Reading => (true, false),
             InstalledRefresh::Failed(..) => (false, true),
         };
-        self.ui.mods.drawn = Some(InstalledDrawn::of(reading, failed, rows.len()));
+        self.mods_state.drawn = Some(InstalledDrawn::of(reading, failed, rows.len()));
         if rows.is_empty() && !refresh_ready {
             return page.into_any_element();
         }
-        let model::FilterCounts { shows, kinds } = self.ui.mods.installed_filters(&rows);
+        let model::FilterCounts { shows, kinds } = self.mods_state.installed_filters(&rows);
         if rows.is_empty() {
             return page
                 .child(empty_state(
@@ -123,7 +122,7 @@ impl Launcher {
                 .into_any_element();
         }
 
-        let visible = model::visible(&rows, &self.ui.mods.row_filter);
+        let visible = model::visible(&rows, &self.mods_state.row_filter);
         let shown: Rc<Vec<_>> = Rc::new(
             visible
                 .iter()
@@ -134,10 +133,10 @@ impl Launcher {
                 })
                 .collect(),
         );
-        let filter = self.ui.mods.row_filter.clone();
+        let filter = self.mods_state.row_filter.clone();
         let selected: Vec<&Row> = rows
             .iter()
-            .filter(|r| r.selectable_archive() && self.ui.mods.selection.contains(&r.id))
+            .filter(|r| r.selectable_archive() && self.mods_state.selection.contains(&r.id))
             .collect();
 
         // ---- what to show: the same row of chips Discover filters with
@@ -154,7 +153,7 @@ impl Launcher {
                     Show::Off => tr("Turned off"),
                 };
                 let pick: Choose = Rc::new(move |this, _| {
-                    let m = &mut this.ui.mods;
+                    let m = &mut this.mods_state;
                     m.row_filter.show = which;
                     m.selection.clear();
                     m.anchor = None;
@@ -178,7 +177,7 @@ impl Launcher {
                 .tab_index(0)
                 .seen()
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    let m = &mut this.ui.mods;
+                    let m = &mut this.mods_state;
                     if !m.row_filter.makes.remove(&make) {
                         m.row_filter.makes.insert(make);
                     }
@@ -193,7 +192,7 @@ impl Launcher {
         // ---- toolbar: select-all and the bulk actions, naming their scope
         let selected_here = shown
             .iter()
-            .filter(|(_, id)| self.ui.mods.selection.contains(id))
+            .filter(|(_, id)| self.mods_state.selection.contains(id))
             .count();
         let all_on = selected_here > 0 && selected_here == shown.len();
         let n_sel = selected.len();
@@ -239,7 +238,7 @@ impl Launcher {
                         .child(div().w(px(10.)).h(px(2.)).bg(c(palette().background)))
                 })
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    let m = &mut this.ui.mods;
+                    let m = &mut this.mods_state;
                     match all_shown.iter().all(|(_, id)| m.selection.contains(id)) {
                         true => m.selection.clear(),
                         false => m
@@ -397,8 +396,8 @@ impl Launcher {
                             .reach()
                             .cursor_pointer()
                             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                                this.ui.mods.selection.clear();
-                                this.ui.mods.anchor = None;
+                                this.mods_state.selection.clear();
+                                this.mods_state.anchor = None;
                                 cx.notify();
                             })),
                     );
@@ -431,8 +430,8 @@ impl Launcher {
         // when two archives share a mod ID.
         cull.items(installed_items_key(&items, &rows));
         // The row another page opened Installed at stays built until it has been scrolled to.
-        let reveal = match &self.ui.mods.reveal {
-            Some(search::Reveal::Mod(id)) if !self.ui.mods.revealed.get() => items
+        let reveal = match &self.mods_state.reveal {
+            Some(search::Reveal::Mod(id)) if !self.mods_state.revealed.get() => items
                 .iter()
                 .position(|item| matches!(item, InstalledItem::Row(i, _) if rows[*i].id == *id)),
             _ => None,
@@ -487,8 +486,7 @@ impl Launcher {
             );
         }
         let hidden = self
-            .ui
-            .mods
+            .mods_state
             .snapshot
             .as_ref()
             .map_or(0, |s| s.entries.len().saturating_sub(rows.len()));

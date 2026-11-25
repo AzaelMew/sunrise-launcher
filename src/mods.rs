@@ -40,7 +40,7 @@ mod pack_discover;
 mod pack_project;
 mod packs;
 mod ports;
-pub(crate) use ports::PortSwitch;
+pub(crate) use crate::sheets::PortSwitch;
 mod project;
 mod rating;
 pub(crate) mod refused;
@@ -67,9 +67,9 @@ pub(crate) use state::ModsState;
 use state::*;
 use std::{rc::Rc, sync::Arc};
 use sunrise_launcher::native_mods::local_fit;
-pub(crate) use ui::{
-    checkbox, choices, empty_state, field_theme, reveal, segmented, switch, Choose,
-};
+pub(crate) use ui::{checkbox, choices, empty_state, field_theme, reveal, switch, Choose};
+
+pub(crate) use crate::frame::segmented;
 
 use crate::paint::palette;
 use model::Row;
