@@ -553,10 +553,9 @@ fn hosting_uses_the_engine_startup_and_a_failed_poll_is_unknown() {
     assert_eq!(poll_hosting(dir.path(), None, 0).0.phase, "unknown");
     drop(lock);
     // A supervisor that died leaves its endpoint behind; with its lock free the server is
-    // stopped, so Start stays available.
-    let dead = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let address = dead.local_addr().unwrap();
-    drop(dead);
+    // stopped, so Start stays available. Port 0 stands for the dead endpoint: nothing can
+    // listen there, so the poll can't reach a server another test bound on a freed port.
+    let address = "127.0.0.1:0";
     fs::write(
         lock_dir.join("api.json"),
         format!(r#"{{"address": "{address}", "token": "stale"}}"#),
