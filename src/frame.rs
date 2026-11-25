@@ -883,6 +883,8 @@ impl Launcher {
                         }
                     }
                     "escape" if this.viewer_close(cx) => {}
+                    // The Logs panel lies over every dialog while it is open.
+                    "escape" if this.close_logs() => {}
                     "left" if this.viewer_step(-1, cx) => {}
                     "right" if this.viewer_step(1, cx) => {}
                     "escape" if this.sign_in_screen.open => {
@@ -894,7 +896,6 @@ impl Launcher {
                         this.instance_escape();
                     }
                     "escape" if this.ui.page == Page::Hosting && this.hosting_escape() => {}
-                    "escape" if this.close_logs() => {}
                     _ => return,
                 }
                 cx.stop_propagation();
@@ -922,7 +923,6 @@ impl Launcher {
                             .child(pane),
                     ),
             );
-        frame = frame.children(self.logs_layer(window, cx));
         // What lies over the page, bottom to top. The top one has the keyboard (`modal`).
         self.versions_focus(window);
         let create = (page == Page::Hosting)
@@ -937,6 +937,8 @@ impl Launcher {
             .collect();
         let top = self.modal(layers.pop(), window, cx);
         frame = frame.children(layers).children(top);
+        // Over the dialogs too, so a sign-in that hangs shows its step while its dialog is up.
+        frame = frame.children(self.logs_layer(window, cx));
         frame = frame.children(self.viewer(window, cx));
         frame = frame.children(self.toast_float());
         self.pictures.free_retired(window);
