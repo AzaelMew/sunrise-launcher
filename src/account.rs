@@ -166,9 +166,17 @@ fn send(request: ureq::Request, body: Option<Body>, service: &str) -> Result<(u1
         }
     };
     let status = response.status();
-    launcher_log::line(format!("{service}: {method} {host} -> {status} ({ms} ms)"));
     let text = response.into_string().unwrap_or_default();
-    Ok((status, serde_json::from_str(&text).unwrap_or(Value::Null)))
+    let value = serde_json::from_str(&text).unwrap_or(Value::Null);
+    // A device-code poll is answered 400 until the player approves; that is a wait, not an error.
+    let answer = match value.get("error").and_then(Value::as_str) {
+        Some(pending @ ("authorization_pending" | "slow_down")) => {
+            format!("waiting for the player's approval ({pending})")
+        }
+        _ => status.to_string(),
+    };
+    launcher_log::line(format!("{service}: {method} {host} -> {answer} ({ms} ms)"));
+    Ok((status, value))
 }
 
 /// Runs one sign-in stage as a step of the launcher log, finished with the stage's own error text.
