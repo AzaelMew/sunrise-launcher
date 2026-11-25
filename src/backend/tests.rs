@@ -1,6 +1,10 @@
 use super::*;
+use crate::{account, mojang, sources};
 use std::cmp::Ordering::*;
 use std::ffi::OsStr;
+use std::io::{Read, Write};
+use std::path::PathBuf;
+use std::process::Stdio;
 
 fn settings_file_reads(data: &Path) -> u64 {
     SETTINGS_FILE_READS

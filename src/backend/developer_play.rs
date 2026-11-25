@@ -1,5 +1,10 @@
 //! Account and unsigned-developer policy for CLI Play.
-use super::*;
+use super::{
+    append_game_args, client_command, complete_assets, game_architecture_launch_error, game_home,
+    need_prepared, play_step, SIGN_IN_HINT,
+};
+use crate::account;
+use std::process::Command;
 
 /// [`client`], playing as `who` for this launch only (`play --account`).
 pub fn client_as(tag: &str, who: Option<&str>) -> Result<Command, String> {
