@@ -572,6 +572,11 @@ pub fn remove_mods(
             InstallError::Unproved(e.into())
         }
     })?;
+    let listed: Vec<_> = ids
+        .iter()
+        .filter_map(|id| present.get(id))
+        .flat_map(|item| item.package.manifest.jar.iter().cloned())
+        .collect();
     (hooks.progress)(InstallProgress::Publishing);
     let reviewed = impact.into_evidence();
     edit.publish_install(proof, cancellation, &staged.retired, || {
@@ -584,5 +589,15 @@ pub fn remove_mods(
         staged.revalidate(&instance.home)?;
         bind_worlds(&instance.home, &suspect, &reviewed)
     })?;
+    // The removal is published. A jar goes from this profile's cache (the game reads
+    // `<home>/jars`) unless a mod still in the profile lists it; when the profile can't be read,
+    // every jar stays.
+    if let Ok(packages) = managed_play::scan_packages(&instance.home) {
+        let kept: Vec<_> = packages
+            .into_iter()
+            .flat_map(|package| package.manifest.jar)
+            .collect();
+        let _ = crate::jars::forget(&instance.home, &listed, &kept);
+    }
     Ok(removed)
 }

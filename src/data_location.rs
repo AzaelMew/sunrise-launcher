@@ -38,14 +38,16 @@ pub fn bootstrap_path() -> Result<PathBuf> {
         return pointer_path(Path::new(&path));
     }
     if cfg!(test) {
-        return Ok(test_home().join("location.json"));
+        return Ok(test_home().join(crate::paths::LOCATION));
     }
     dirs::config_dir()
         .map(|p| {
             p.join(crate::identity::LOCATION_FOLDER)
-                .join("location.json")
+                .join(crate::paths::LOCATION)
         })
-        .ok_or_else(|| "Cannot locate the platform configuration folder for location.json".into())
+        .ok_or_else(|| {
+            "Cannot locate the platform configuration folder for the launcher location file".into()
+        })
 }
 
 /// Where the library's own tests keep the launcher's and the game's data (`launcher`, `game`,
@@ -547,8 +549,7 @@ fn checked_path(path: &Path) -> Result<PathBuf> {
 }
 
 /// `canonicalize`'s verbatim `\\?\C:\…` as the plain drive path the other roots use.
-fn plain_drive(path: PathBuf) -> PathBuf {
-    #[cfg(windows)]
+pub(crate) fn plain_drive(path: PathBuf) -> PathBuf {
     if let Some(rest) = path.to_str().and_then(|s| s.strip_prefix(r"\\?\")) {
         if rest.as_bytes().get(1) == Some(&b':') {
             return PathBuf::from(rest);
@@ -586,11 +587,17 @@ fn resolved_prefix(path: &Path) -> Result<(PathBuf, Vec<std::ffi::OsString>)> {
     }
     let mut existing = path;
     let mut rest = Vec::new();
+    let mut looked_again = false;
     loop {
         match fs::canonicalize(existing) {
             Ok(real) => return Ok((plain_drive(real), rest)),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 match fs::symlink_metadata(existing) {
+                    // Made since `canonicalize` looked (another launcher starting): look again.
+                    Ok(meta) if !meta.file_type().is_symlink() && !looked_again => {
+                        looked_again = true;
+                        continue;
+                    }
                     Ok(_) => return Err(problem(existing, e)), // Not missing: a dangling link.
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
                     Err(error) => return Err(problem(existing, error)),
@@ -625,11 +632,17 @@ fn reject_link(path: &Path, meta: &fs::Metadata) -> Result<()> {
     Ok(())
 }
 
+/// `path` spelled only in ASCII: what Windows' MinGW-w64 tools can open.
+pub(crate) fn ascii(path: &Path) -> bool {
+    path.as_os_str().to_str().is_some_and(str::is_ascii)
+}
+
 fn tool_safe(path: &Path) -> Result<()> {
     if cfg!(windows)
-        && !path
-            .to_str()
-            .is_some_and(|s| s.is_ascii() && !s.bytes().any(|b| b.is_ascii_whitespace()))
+        && !(ascii(path)
+            && !path
+                .to_str()
+                .is_some_and(|s| s.bytes().any(|b| b.is_ascii_whitespace())))
     {
         return Err(
             "Choose a destination with only ASCII characters and no spaces for Windows build tools"

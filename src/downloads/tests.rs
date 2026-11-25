@@ -1,4 +1,5 @@
 use super::*;
+use crate::hashing::sha1_hex;
 use std::sync::atomic::AtomicUsize;
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
@@ -144,7 +145,7 @@ impl Server {
         Artifact {
             url: format!("{}{route}", self.url),
             path: path.into(),
-            sha1: format!("{:x}", Sha1::digest(data)),
+            sha1: sha1_hex(data),
             size: Some(data.len() as u64),
         }
     }
@@ -216,6 +217,27 @@ async fn segmented_transfers_validate_and_fallback_without_corrupt_output() {
         .iter()
         .any(|(p, r)| p == "/file" && r.is_some_and(|(a, _)| a > 0)));
 }
+#[tokio::test]
+async fn a_single_stream_transfer_hashes_as_it_writes() {
+    let body = data(4096);
+    let server = Server::new(body.clone(), Duration::ZERO).await;
+    let dir = tempfile::tempdir().unwrap();
+    let engine = Downloader::new(config()).unwrap();
+    let artifact = server.artifact(&dir.path().join("download"), "/file", &body);
+    let scratch = dir.path().join("scratch");
+    fs::write(&scratch, b"").await.unwrap();
+    let hash = engine.transfer(&artifact, &scratch).await.unwrap();
+    assert_eq!(hash.as_deref(), Some(sha1_hex(&body).as_str()));
+    assert_eq!(fs::read(&scratch).await.unwrap(), body);
+    let bad = server.artifact(&dir.path().join("bad"), "/corrupt", &body);
+    assert!(engine
+        .download(&bad, &AtomicBool::new(false))
+        .await
+        .unwrap_err()
+        .contains("SHA-1"));
+    assert!(!bad.path.exists());
+}
+
 #[tokio::test]
 #[ignore = "daily"]
 async fn transient_disconnect_resumes_only_validated_ranges() {
@@ -492,7 +514,7 @@ async fn benchmark_download_pipeline() {
                                 &mut body,
                             )
                             .unwrap();
-                            assert_eq!(format!("{:x}", Sha1::digest(&body)), file.sha1);
+                            assert_eq!(sha1_hex(&body), file.sha1);
                             std::fs::write(&file.path, body).unwrap();
                         }
                     });

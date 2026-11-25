@@ -327,6 +327,16 @@ impl Launcher {
         }
     }
 
+    /// Build-switch messages routed from `launcher_messages::drain`.
+    pub(crate) fn on_switch_message(&mut self, msg: Msg) {
+        match msg {
+            Msg::SwitchProgress(stage) => self.switch_progress(stage),
+            Msg::SwitchQuestion(question, reply) => self.switch_question(question, reply),
+            Msg::Switched(home, result) => self.switch_finished(&home, *result),
+            _ => unreachable!("launcher_messages::drain only routes build-switch messages here"),
+        }
+    }
+
     pub(crate) fn switch_progress(&mut self, stage: InstallProgress) {
         if let Some(running) = &mut self.ui.sheets.switching.running {
             running.progress = stage;
@@ -1043,6 +1053,22 @@ impl Launcher {
             (Err(error), _) => {
                 self.refresh_mods_after_port_switch(Err(error), None);
             }
+        }
+    }
+
+    pub(crate) fn on_provider_message(&mut self, msg: Msg) {
+        match msg {
+            Msg::ProviderSwitchProgress(stage) => self.provider_switch_progress(stage),
+            Msg::ProviderSwitchQuestion(question, reply) => {
+                self.provider_switch_question(question, reply)
+            }
+            Msg::ProviderSwitched(home, result) => self.provider_switch_finished(&home, result),
+            Msg::ProviderChoice(need, reply) => self.provider_choice_question(need, reply),
+            Msg::PublisherChangeQuestion(question, reply) => {
+                self.publisher_change_question(question, reply)
+            }
+            Msg::ReceiptAcknowledged(home, result) => self.receipt_acknowledged(&home, result),
+            _ => unreachable!("not a provider or publisher message"),
         }
     }
 

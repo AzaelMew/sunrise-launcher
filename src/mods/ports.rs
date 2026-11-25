@@ -828,6 +828,8 @@ mod tests {
                 repository: None,
                 fits: fits.iter().map(|s| (*s).to_owned()).collect(),
                 does_not_fit: does_not_fit.iter().map(|s| (*s).to_owned()).collect(),
+                jar_unavailable: Vec::new(),
+                dependency_unavailable: Vec::new(),
                 file: index_v2::File {
                     url: format!("https://example.invalid/{slug}-{version}.smod"),
                     size: 128,

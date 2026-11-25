@@ -12,7 +12,7 @@ use sunrise_launcher_nbt::{self as nbt, Limits, Tag};
 
 /// The game folder's own files that are the instance's settings.
 pub const FILES: [&str; 6] = [
-    "options.txt",
+    crate::paths::OPTIONS,
     "sunrise-graphics.txt",
     "sunrise-extras.txt",
     "sunrise-controller.txt",
@@ -92,7 +92,7 @@ fn write(path: &Path, files: &[(String, PathBuf)]) -> Result<(), String> {
             rel if rel.ends_with("/level.dat") || rel.ends_with("/level.dat_old") => {
                 shareable_level(file)?
             }
-            "options.txt" => shareable_options(file)?,
+            crate::paths::OPTIONS => shareable_options(file)?,
             _ => fs::read(file).map_err(|e| format!("{}: {e}", file.display()))?,
         };
         zip.start_file(rel, options).map_err(|e| e.to_string())?;

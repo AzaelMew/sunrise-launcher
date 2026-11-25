@@ -192,7 +192,7 @@ pub(crate) fn has_readable_level_dat(folder: &Path) -> bool {
 /// level.dat: gzip, as vanilla writes it, or plain. Read with the limits the game reads a world's
 /// `.dat` files with ([`Limits::saved`]: its depth, no cap on the tag count, and a size bound), so
 /// a level.dat the game loads is never taken for an unreadable one.
-fn level_dat(path: &Path) -> Option<Tag> {
+pub(crate) fn level_dat(path: &Path) -> Option<Tag> {
     decode_level_dat(&fs::read(path).ok()?)
 }
 
@@ -908,6 +908,44 @@ fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
         } else {
             return Err(std::io::ErrorKind::InvalidData.into());
         }
+    }
+    Ok(())
+}
+
+/// Writes `root` as level.dat the way the game does (`LevelStorageSource.saveDataTag`): gzip into
+/// a temp file in the world folder, the old level.dat renamed to `level.dat_old`, then the temp file
+/// renamed to level.dat. The caller holds the world's lock ([`lock_saved_dir`]).
+pub(crate) fn save_level_dat(world: &Path, root: Tag) -> io::Result<()> {
+    let bytes = nbt::write_named(
+        &nbt::NamedTag {
+            name: "".into(),
+            tag: root,
+        },
+        Limits::saved(),
+    )
+    .map_err(io::Error::other)?;
+    let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    gz.write_all(&bytes)?;
+    let mut temp = tempfile::Builder::new()
+        .prefix("level")
+        .suffix(".dat")
+        .tempfile_in(world)?;
+    temp.write_all(&gz.finish()?)?;
+    let dat = world.join("level.dat");
+    let old = world.join("level.dat_old");
+    let had_dat = dat.exists();
+    if had_dat {
+        match fs::remove_file(&old) {
+            Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(e),
+            _ => (),
+        }
+        fs::rename(&dat, &old)?;
+    }
+    if let Err(e) = temp.persist(&dat) {
+        if had_dat {
+            let _ = fs::rename(&old, &dat);
+        }
+        return Err(e.error);
     }
     Ok(())
 }

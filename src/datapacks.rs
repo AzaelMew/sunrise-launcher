@@ -1,11 +1,16 @@
 //! A world's data packs: `<world>/datapacks/`, each a `.zip` or a folder with a `pack.mcmeta`, as
 //! the game discovers them (`datapack::discover`). The game turns on every pack it finds there
-//! that `<world>/datapacks.json` doesn't list as disabled, when the world opens or on `/reload`,
-//! so adding one is copying it in.
+//! that the world's level.dat (`Data.DataPacks.Disabled`) doesn't list as disabled, when the world
+//! opens or on `/reload`, so adding one is copying it in. While a `<world>/datapacks.json` still
+//! exists it is read instead of level.dat; the launcher never creates one.
 use crate::packs::{entry, pack_description, pack_meta};
 use std::fs;
 use std::path::{Path, PathBuf};
+use sunrise_launcher_nbt::{JavaString, Tag};
 
+// Removal: the first release after 26.3-0.1.0 drops every `datapacks.json` use below (the read in
+// `disabled` and the json half of `forget`, with this constant), together with the game's
+// migration of that file into level.dat.
 const SETTINGS: &str = "datapacks.json";
 
 #[derive(Clone, Debug, PartialEq)]
@@ -15,10 +20,12 @@ pub struct DataPack {
     pub path: PathBuf,
     /// `pack.mcmeta`'s description as plain text.
     pub description: String,
-    /// Off when `datapacks.json` lists it as disabled (the game's `/datapack disable`).
+    /// Off when the world's level.dat lists it in `Data.DataPacks.Disabled` (the game's
+    /// `/datapack disable`).
     pub enabled: bool,
 }
 
+/// `datapacks.json`, as the game's migration will read it.
 fn settings(world: &Path) -> serde_json::Value {
     fs::read(world.join(SETTINGS))
         .ok()
@@ -26,18 +33,36 @@ fn settings(world: &Path) -> serde_json::Value {
         .unwrap_or_else(|| serde_json::json!({}))
 }
 
-fn disabled(settings: &serde_json::Value) -> Vec<String> {
-    settings["disabled"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|v| v.as_str().map(str::to_string))
+/// The ids the world has turned off. A `datapacks.json` wins while it exists (the fallback to
+/// remove with the file); otherwise level.dat's `Data.DataPacks.Disabled`, and a world without
+/// `DataPacks` has every pack on.
+fn disabled(world: &Path) -> Vec<String> {
+    if world.join(SETTINGS).exists() {
+        return settings(world)["disabled"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|v| v.as_str().map(str::to_string))
+            .collect();
+    }
+    let root = crate::worlds::level_dat(&world.join("level.dat"));
+    let Some(Tag::List(ids)) = root
+        .as_ref()
+        .and_then(|r| r.get("Data")?.get("DataPacks")?.get("Disabled"))
+    else {
+        return Vec::new();
+    };
+    ids.iter()
+        .filter_map(|t| match t {
+            Tag::String(s) => Some(s.to_string_lossy()),
+            _ => None,
+        })
         .collect()
 }
 
 /// The data packs of the world folder `world`, by name.
 pub fn list(world: &Path) -> Vec<DataPack> {
-    let off = disabled(&settings(world));
+    let off = disabled(world);
     let mut packs: Vec<DataPack> = fs::read_dir(world.join("datapacks"))
         .into_iter()
         .flatten()
@@ -122,10 +147,34 @@ pub fn add(world: &Path, file: &Path) -> Result<DataPack, String> {
         .ok_or_else(|| format!("{} is not a data pack the game reads", target.display()))
 }
 
-/// Drops `file/<name>` from both lists of `datapacks.json`, when it is there.
+/// Drops `file/<name>` from `Data.DataPacks.Enabled` and `Disabled` in level.dat, and changes no
+/// other tag. Called with the world's lock held, so the game is not running it. A world without
+/// a readable level.dat or without `DataPacks` has nothing to drop.
 fn forget(world: &Path, file: &str) -> Result<(), String> {
-    let mut s = settings(world);
     let id = format!("file/{file}");
+    let java_id = JavaString::from(id.as_str());
+    if let Some(mut root) = crate::worlds::level_dat(&world.join("level.dat")) {
+        let mut changed = false;
+        if let Some(packs) = root.get_mut("Data").and_then(|d| d.get_mut("DataPacks")) {
+            for key in ["Enabled", "Disabled"] {
+                if let Some(Tag::List(list)) = packs.get_mut(key) {
+                    let before = list.len();
+                    list.retain(|t| !matches!(t, Tag::String(s) if *s == java_id));
+                    changed |= list.len() != before;
+                }
+            }
+        }
+        if changed {
+            crate::worlds::save_level_dat(world, root).map_err(|e| format!("level.dat: {e}"))?;
+        }
+    }
+    // Removal: the json half goes with the fallback in `disabled`, in the first release after
+    // 26.3-0.1.0. It only edits a file that is already there, so the game's migration carries the
+    // right selection; it never creates one.
+    if !world.join(SETTINGS).exists() {
+        return Ok(());
+    }
+    let mut s = settings(world);
     let mut changed = false;
     for key in ["enabled", "disabled"] {
         if let Some(list) = s[key].as_array_mut() {
@@ -154,7 +203,7 @@ pub fn find(world: &Path, query: &str) -> Result<DataPack, String> {
         })
 }
 
-/// Moves the data pack to the system's trash and forgets it in `datapacks.json`.
+/// Moves the data pack to the system's trash and forgets it in the world's level.dat.
 pub fn remove(world: &Path, pack: &DataPack) -> Result<(), String> {
     let _claim = crate::worlds::lock_saved_dir(world)?;
     crate::desktop_seams::to_trash(&pack.path)

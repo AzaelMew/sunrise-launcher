@@ -557,7 +557,10 @@ fn remembered(
 }
 
 fn ask_github(repo: &str, revision: &str) -> Result<String, String> {
-    let url = format!("https://api.github.com/repos/{repo}/commits/{revision}");
+    let url = format!(
+        "{}/repos/{repo}/commits/{revision}",
+        sunrise_launcher_addresses::GITHUB_API
+    );
     let commit = crate::github::json(&url)?;
     commit["commit"]["committer"]["date"]
         .as_str()
@@ -1690,6 +1693,7 @@ fn pipeline(
         crate::jars::prepare(
             &backend::game_home(),
             &jars,
+            &crate::jars::registry_mods(folder),
             crate::jars::Permission::headless(options.allow_jar_downloads),
         )
         .map_err(|error| error.to_string())?;
@@ -2547,6 +2551,25 @@ pub fn build_server(
             )
             .map_err(String::from)?;
             export(&Target::Server.directory(&built.version), &output)?;
+            // The export is the operator's own copy: each jar its mods list goes beside the
+            // engine, where it reads them (`<home>/jars`), fetched under the same rule as a start.
+            let engine = output.join(Target::Server.binary());
+            let exported = sunrise_launcher_smod::packages::adjacent_manifests(&engine)
+                .map_err(|error| crate::jars::LaunchError::Packages(error).to_string())?;
+            let jars = sunrise_launcher_smod::manifest::collect_jar_requirements(
+                exported
+                    .iter()
+                    .map(|p| (p.manifest.id.as_str(), p.manifest.jar.as_slice())),
+            )
+            .map_err(|error| crate::jars::LaunchError::Conflict(error).to_string())?;
+            crate::jars::export(
+                &backend::game_home(),
+                &output,
+                &jars,
+                &crate::jars::registry_mods(folder),
+                crate::jars::Permission::headless(allow_jar_downloads),
+            )
+            .map_err(|error| error.to_string())?;
             // logged() runs central eviction under the retained build lease.
             if built.plan != Plan::UpToDate {
                 progress(Step::Done {
@@ -2555,7 +2578,6 @@ pub fn build_server(
                     plan: built.plan,
                 });
             }
-            let engine = output.join(Target::Server.binary());
             Ok(std::path::absolute(&engine).unwrap_or(engine))
         },
     )

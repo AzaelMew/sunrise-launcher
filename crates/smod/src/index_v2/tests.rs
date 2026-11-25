@@ -302,6 +302,84 @@ fn a_release_row_names_the_repository_it_was_signed_from_or_falls_back_to_the_pr
 }
 
 #[test]
+fn a_release_row_with_jar_unavailable_parses_and_one_without_it_still_parses() {
+    let index = parse_value(&golden_json()).unwrap();
+    assert!(index.projects[0].releases[0].jar_unavailable.is_empty());
+    let written = serde_json::to_value(&index).unwrap();
+    assert!(
+        written["projects"][0]["releases"][0]
+            .get("jar_unavailable")
+            .is_none()
+    );
+
+    let sha512 = "ab".repeat(64);
+    let mut marked = golden_json();
+    marked["projects"][0]["releases"][0]["jar_unavailable"] =
+        json!([{ "id": "macaws_bridges", "version": "3.0.0", "sha512": sha512 }]);
+    let index = parse_value(&marked).unwrap();
+    let jars = &index.projects[0].releases[0].jar_unavailable;
+    assert_eq!(jars.len(), 1);
+    assert_eq!(jars[0].id(), "macaws_bridges");
+    assert_eq!(jars[0].version(), "3.0.0");
+    assert_eq!(jars[0].sha512(), sha512);
+    let written = serde_json::to_value(&index).unwrap();
+    assert_eq!(
+        written["projects"][0]["releases"][0]["jar_unavailable"],
+        json!([{ "id": "macaws_bridges", "version": "3.0.0", "sha512": sha512 }])
+    );
+
+    let mut later = golden_json();
+    later["projects"][0]["releases"][0]["jar_unavailable"] =
+        json!([{ "id": "macaws_bridges", "version": "3.0.0", "sha512": sha512, "since": 1 }]);
+    let index = parse_value(&later).unwrap();
+    assert_eq!(index.projects[0].releases[0].jar_unavailable, *jars);
+
+    let mut bad = golden_json();
+    bad["projects"][0]["releases"][0]["jar_unavailable"] =
+        json!([{ "id": "macaws_bridges", "version": "3.0.0", "sha512": "abc" }]);
+    assert!(parse_value(&bad).is_err());
+}
+
+#[test]
+fn a_release_row_with_dependency_unavailable_parses_and_one_without_it_still_parses() {
+    let index = parse_value(&golden_json()).unwrap();
+    assert!(
+        index.projects[0].releases[0]
+            .dependency_unavailable
+            .is_empty()
+    );
+    let written = serde_json::to_value(&index).unwrap();
+    assert!(
+        written["projects"][0]["releases"][0]
+            .get("dependency_unavailable")
+            .is_none()
+    );
+
+    let rows = json!([
+        { "build": "26.3-0.1.0", "mod": "macaws_lib" },
+        { "build": "26.3-0.1.0", "mod": "other_lib" }
+    ]);
+    let mut marked = golden_json();
+    marked["projects"][0]["releases"][0]["dependency_unavailable"] = rows.clone();
+    let index = parse_value(&marked).unwrap();
+    let entries = &index.projects[0].releases[0].dependency_unavailable;
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[0].build, "26.3-0.1.0");
+    assert_eq!(entries[0].mod_id, "macaws_lib");
+    assert_eq!(entries[1].mod_id, "other_lib");
+    let written = serde_json::to_value(&index).unwrap();
+    assert_eq!(
+        written["projects"][0]["releases"][0]["dependency_unavailable"],
+        rows
+    );
+
+    let mut bad = golden_json();
+    bad["projects"][0]["releases"][0]["dependency_unavailable"] =
+        json!([{ "build": "26.3-0.1.0", "mod": "BadId" }]);
+    assert!(parse_value(&bad).is_err());
+}
+
+#[test]
 fn project_and_dependency_mod_ids_reuse_manifest_portable_validator() {
     let too_long = "a".repeat(65);
     for bad_id in ["", "con", "nul", "com1", "lpt9", "BadId", too_long.as_str()] {

@@ -137,7 +137,7 @@ pub fn store(home: &Path, url: &str, size: u32, bytes: &[u8]) -> Result<PathBuf,
         .save_with_format(&part, image::ImageFormat::Png)
         .map_err(|e| format!("{}: {e}", part.display()))?;
     fs::rename(&part, &target).map_err(|e| format!("{}: {e}", target.display()))?;
-    prune(&folder, MAX_CACHE);
+    account_write(&folder, file_len(&target), MAX_CACHE);
     Ok(target)
 }
 
@@ -212,7 +212,7 @@ pub fn store_v2(
         let _ = fs::remove_file(&part);
         return Err(format!("{}: {e}", target.display()));
     }
-    prune(&folder, MAX_CACHE);
+    account_write(&folder, file_len(&target), MAX_CACHE);
     Ok(target)
 }
 
@@ -297,8 +297,68 @@ fn read_v2_bytes(index_location: &str, relative_path: &str) -> Result<Vec<u8>, S
     Ok(bytes)
 }
 
-/// Drops the oldest files until the folder holds at most `max` bytes.
-fn prune(folder: &Path, max: u64) {
+/// What the process knows about one cache folder: the bytes it holds, and whether they have been
+/// counted since the process started.
+#[derive(Default)]
+struct CachedFolder {
+    bytes: u64,
+    counted: bool,
+    #[cfg(test)]
+    scans: u32,
+}
+
+/// The cache's running totals, by folder. Four image workers write at once, so this mutex is also
+/// what keeps each write's accounting and its prune a single writer.
+static CACHE: std::sync::Mutex<Option<std::collections::HashMap<PathBuf, CachedFolder>>> =
+    std::sync::Mutex::new(None);
+
+fn file_len(path: &Path) -> u64 {
+    fs::metadata(path).map(|m| m.len()).unwrap_or(0)
+}
+
+fn folder_bytes(folder: &Path) -> u64 {
+    fs::read_dir(folder)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| e.metadata().ok())
+        .map(|m| m.len())
+        .sum()
+}
+
+/// Accounts for `bytes` just added to `folder`, and prunes once the cap is crossed. The folder is
+/// counted by one scan the first time this process writes to it, so a cache left by an earlier run
+/// still has its size known; later writes only add to the total.
+fn account_write(folder: &Path, bytes: u64, max: u64) {
+    let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    let folders = cache.get_or_insert_with(std::collections::HashMap::new);
+    let state = folders.entry(folder.to_path_buf()).or_default();
+    if state.counted {
+        state.bytes = state.bytes.saturating_add(bytes);
+    } else {
+        state.bytes = folder_bytes(folder);
+        state.counted = true;
+        #[cfg(test)]
+        {
+            state.scans += 1;
+        }
+    }
+    if state.bytes > max {
+        state.bytes = prune(folder, max);
+    }
+}
+
+#[cfg(test)]
+fn scan_count(folder: &Path) -> u32 {
+    let cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    cache
+        .as_ref()
+        .and_then(|folders| folders.get(folder))
+        .map_or(0, |state| state.scans)
+}
+
+/// Drops the oldest files until the folder holds at most `max` bytes, and returns what is left.
+fn prune(folder: &Path, max: u64) -> u64 {
     let mut files: Vec<(std::time::SystemTime, u64, PathBuf)> = fs::read_dir(folder)
         .into_iter()
         .flatten()
@@ -318,6 +378,7 @@ fn prune(folder: &Path, max: u64) {
             total -= len;
         }
     }
+    total
 }
 
 /// `bytes` decoded (at most `max_side` pixels a side and `max_alloc` bytes), scaled down to fit
@@ -392,6 +453,47 @@ mod tests {
         prune(&dir(&home), 0);
         assert!(cached(&home, url, ICON).is_none());
         fs::remove_dir_all(&home).unwrap();
+    }
+
+    fn aged_file(folder: &Path, name: &str, len: usize, age: u64) {
+        let path = folder.join(name);
+        fs::write(&path, vec![0u8; len]).unwrap();
+        fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(age))
+            .unwrap();
+    }
+
+    #[test]
+    fn a_burst_is_capped_and_keeps_the_newest_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("images");
+        fs::create_dir_all(&folder).unwrap();
+        aged_file(&folder, "old.png", 60, 30);
+        account_write(&folder, 60, 120);
+        aged_file(&folder, "middle.png", 60, 20);
+        account_write(&folder, 60, 120);
+        aged_file(&folder, "new.png", 60, 10);
+        account_write(&folder, 60, 120);
+        assert!(folder_bytes(&folder) <= 120);
+        assert!(!folder.join("old.png").exists());
+        assert!(folder.join("middle.png").exists());
+        assert!(folder.join("new.png").exists());
+    }
+
+    #[test]
+    fn writes_under_the_cap_count_the_folder_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("images");
+        fs::create_dir_all(&folder).unwrap();
+        aged_file(&folder, "a.png", 60, 10);
+        account_write(&folder, 60, 1 << 20);
+        assert_eq!(scan_count(&folder), 1);
+        aged_file(&folder, "b.png", 60, 5);
+        account_write(&folder, 60, 1 << 20);
+        assert_eq!(scan_count(&folder), 1);
     }
 
     #[test]

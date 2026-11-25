@@ -162,7 +162,7 @@ Native mods (docs/modding/src/how-to/native-mods.md): compile flat Rust mod proj
 - `--catalog-output`: Copy discovery catalogs into this caller-owned empty directory
 - `FOLDER`: A mod folder (sunrise-mod.toml with [native], Cargo.toml and src/), or a folder of them (default: the native mods installed and turned on in the profile)
 - `--server-output`: Export mode: build a standalone dedicated-server engine into this folder instead of a profile's build. Needs a mod FOLDER; no profile is read or changed, and no launcher config is written
-- `--allow-jar-downloads`: Allow exact-hash jar downloads into the local cache for the server export; jar bytes are never included in the exported folder
+- `--allow-jar-downloads`: Allow exact-hash jar downloads into the local cache for the server export, which copies the jars its mods list into its own jars folder (the operator's copy; nothing we publish contains one); jars of mods from the Sunrise registry download without this
 - `--instance`: The profile whose installed native mods to build, and which then plays the build (default: the selected one)
 - `--version`: For a profile, assert its current base. In server-export mode, select the installed game build to use (defaults to the newest installed release or Nightly)
 - `--trust-native-code`: Build native code the registry did not review: a folder, or a profile's mods that were copied in by hand (asked again on every run)

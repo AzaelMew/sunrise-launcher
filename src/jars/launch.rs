@@ -1,5 +1,5 @@
 //! Prepare data for the final game command, before shell or graphics wrappers obscure it.
-use super::{prepare, Permission, PrepareError};
+use super::{prepare, registry_mods, Permission, PrepareError};
 use crate::{
     i18n::trf,
     launch::{self, Launch},
@@ -93,5 +93,6 @@ pub fn prepare_for_command(
             .map(|m| (m.id.as_str(), m.jar.as_slice())),
     )
     .map_err(LaunchError::Conflict)?;
-    prepare(&args.context.home, &jars, permission).map_err(LaunchError::Prepare)
+    let registry = registry_mods(&args.context.game_dir);
+    prepare(&args.context.home, &jars, &registry, permission).map_err(LaunchError::Prepare)
 }

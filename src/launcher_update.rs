@@ -370,6 +370,32 @@ impl Launcher {
         }
     }
 
+    /// Update-check messages routed from `launcher_messages::drain`.
+    pub(super) fn on_update_message(&mut self, msg: Msg) {
+        match msg {
+            Msg::Updates(updates) => {
+                self.checking_updates = false;
+                self.launcher_checked_now = None;
+                let updates = *updates;
+                self.updates.sunrise = updates.sunrise;
+                self.updates.sunrise_error = updates.sunrise_error;
+                self.note_launcher_check(updates.launcher_error.map_or(Ok(updates.launcher), Err));
+            }
+            Msg::LauncherChecked(result) => {
+                self.checking_updates = false;
+                self.launcher_checked_now = result.is_ok().then(Instant::now);
+                self.note_launcher_check(*result);
+            }
+            Msg::LauncherProgress(p) => {
+                if let SelfUpdate::Downloading(_, f) = &mut self.self_update {
+                    *f = p;
+                }
+            }
+            Msg::LauncherUpdated(result) => self.launcher_update_finished(result),
+            _ => unreachable!("launcher_messages::drain only routes update messages here"),
+        }
+    }
+
     /// Only the player's update action arms a restart. Closing the window still drops the stage.
     pub(super) fn restart_launcher_if_ready(&mut self, cx: &mut Context<Self>) {
         self.try_restart_launcher(backend::self_update_allowed(), cx, |cx| {

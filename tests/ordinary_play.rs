@@ -97,6 +97,12 @@ exit 7
             .env("SUNRISE_LAUNCHER_HOME", &self.data)
             .env("XDG_CONFIG_HOME", self.root.join("config"))
             .env("XDG_DATA_HOME", self.root.join("xdg"))
+            // macOS keeps the location pointer in ~/Library/Application Support, which
+            // ignores XDG_CONFIG_HOME: keep it in this fixture too.
+            .env(
+                "SUNRISE_LAUNCHER_LOCATION_FILE",
+                self.root.join("config/location.json"),
+            )
             .env("SUNRISE_LAUNCHER_DEVELOPER_OFFLINE", "1")
             .env("SUNRISE_NO_KEYCHAIN", "1")
             .env("SUNRISE_TELEMETRY_URL", "off")

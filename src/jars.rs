@@ -1,16 +1,18 @@
 //! Resolve a mod set's passive Java jars before a launcher-managed launch.
 mod download;
 mod launch;
+use crate::browser::installed::Installed;
 use crate::i18n::{tr, trf};
 pub use launch::{prepare_for_command, prepare_launch, LaunchError};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fmt, fs, io,
     path::{Path, PathBuf},
 };
 use sunrise_launcher_smod::manifest::{JarRef, JarRequirement, MissingJar};
 
-/// Download consent for this mod set, never a permission to execute Java code.
+/// Download consent for this mod set, never a permission to execute Java code. It decides only
+/// jars that no installed Sunrise registry mod lists: those are fetched without asking.
 #[non_exhaustive]
 pub enum Permission<'a> {
     Refuse,
@@ -46,6 +48,11 @@ pub enum PrepareError {
         path: PathBuf,
         reason: String,
     },
+    /// Modrinth's exact-hash lookup returned no file for this jar.
+    NoLongerOnModrinth {
+        jar: Box<JarRef>,
+        path: PathBuf,
+    },
     HashMismatch {
         path: PathBuf,
         expected: String,
@@ -75,6 +82,10 @@ impl fmt::Display for PrepareError {
                 "Jar {id} {version}: {reason}. Put the original file with this exact SHA-512 at {path}, then retry.",
                 &[("id", jar.id()), ("version", jar.version()), ("reason", reason), ("path", &path.display().to_string())],
             )),
+            Self::NoLongerOnModrinth { jar, path } => f.write_str(&trf(
+                "The original file {id} {version} is no longer on Modrinth. Put the original file with this exact SHA-512 at {path} to use it.",
+                &[("id", jar.id()), ("version", jar.version()), ("path", &path.display().to_string())],
+            )),
             Self::HashMismatch { path, expected, actual } => f.write_str(&trf(
                 "SHA-512 mismatch at {path}: expected {expected}, got {actual}. Replace this cache entry with the exact original file, or remove it and retry with --allow-jar-downloads.",
                 &[("path", &path.display().to_string()), ("expected", expected), ("actual", actual)],
@@ -102,25 +113,121 @@ impl std::error::Error for PrepareError {
     }
 }
 
-/// Cache hits work offline. Missing jars are resolved by exact SHA-512 and
-/// downloaded only after one consent decision for the complete mod set.
+/// In-game ids of the mods installed from the Sunrise registry, read from the installed rows of
+/// the game folder `game_dir`. An unreadable list names none, so every jar then asks as before.
+pub fn registry_mods(game_dir: &Path) -> BTreeSet<String> {
+    Installed::load(game_dir)
+        .entries
+        .iter()
+        .filter_map(|row| row.in_game_mod_id().map(str::to_owned))
+        .collect()
+}
+
+/// Cache hits work offline. Missing jars are resolved by exact SHA-512. A missing jar listed by a
+/// mod in `registry_mods` is downloaded without asking; the rest are downloaded only after one
+/// consent decision for their complete set.
 pub fn prepare(
     home: &Path,
     jars: &[JarRequirement],
+    registry_mods: &BTreeSet<String>,
     permission: Permission<'_>,
 ) -> Result<(), PrepareError> {
     prepare_with(
         home,
         jars,
+        registry_mods,
         permission,
         download::jar_urls,
         download::download_jar,
     )
 }
 
+/// Fetches every jar of `jars` into the cache for an install or update of registry mods, which
+/// asks nothing: each listing mod is a reviewed registry release. A jar Modrinth no longer has
+/// fails with [`PrepareError::NoLongerOnModrinth`].
+pub fn fetch_listed(home: &Path, jars: &[JarRequirement]) -> Result<(), PrepareError> {
+    fetch_listed_with(home, jars, download::jar_urls, download::download_jar)
+}
+
+fn fetch_listed_with(
+    home: &Path,
+    jars: &[JarRequirement],
+    lookup: impl FnMut(&[&JarRef]) -> Result<BTreeMap<String, String>, String>,
+    download: impl FnMut(&str, &JarRef, &Path) -> Result<(), String>,
+) -> Result<(), PrepareError> {
+    let owners: BTreeSet<String> = jars
+        .iter()
+        .flat_map(|requirement| requirement.owners.iter().cloned())
+        .collect();
+    prepare_with(home, jars, &owners, Permission::Refuse, lookup, download)
+}
+
+/// Prepares `jars` like [`prepare`], then copies each into `to`'s own `jars` folder: the home a
+/// server exported there reads them from. The export is the operator's own copy.
+pub fn export(
+    home: &Path,
+    to: &Path,
+    jars: &[JarRequirement],
+    registry_mods: &BTreeSet<String>,
+    permission: Permission<'_>,
+) -> Result<(), PrepareError> {
+    export_with(
+        home,
+        to,
+        jars,
+        registry_mods,
+        permission,
+        download::jar_urls,
+        download::download_jar,
+    )
+}
+
+fn export_with(
+    home: &Path,
+    to: &Path,
+    jars: &[JarRequirement],
+    registry_mods: &BTreeSet<String>,
+    permission: Permission<'_>,
+    lookup: impl FnMut(&[&JarRef]) -> Result<BTreeMap<String, String>, String>,
+    download: impl FnMut(&str, &JarRef, &Path) -> Result<(), String>,
+) -> Result<(), PrepareError> {
+    prepare_with(home, jars, registry_mods, permission, lookup, download)?;
+    if jars.is_empty() {
+        return Ok(());
+    }
+    let (cache, folder) = (home.join("jars"), to.join("jars"));
+    fs::create_dir_all(&folder).map_err(|source| PrepareError::Io {
+        path: folder.clone(),
+        source,
+    })?;
+    for requirement in jars {
+        let path = requirement.jar.cache_path(&folder);
+        fs::copy(requirement.jar.cache_path(&cache), &path)
+            .map_err(|source| PrepareError::Io { path, source })?;
+    }
+    Ok(())
+}
+
+/// Deletes from the cache each jar in `removed` that no jar in `kept` names. A cache file that
+/// `removed` does not list is left alone.
+pub fn forget(home: &Path, removed: &[JarRef], kept: &[JarRef]) -> io::Result<()> {
+    let cache = home.join("jars");
+    for jar in removed {
+        if kept.iter().any(|other| other.sha512() == jar.sha512()) {
+            continue;
+        }
+        match fs::remove_file(jar.cache_path(&cache)) {
+            Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 fn prepare_with(
     home: &Path,
     jars: &[JarRequirement],
+    registry_mods: &BTreeSet<String>,
     permission: Permission<'_>,
     mut lookup: impl FnMut(&[&JarRef]) -> Result<BTreeMap<String, String>, String>,
     mut download: impl FnMut(&str, &JarRef, &Path) -> Result<(), String>,
@@ -155,9 +262,8 @@ fn prepare_with(
     if missing.is_empty() {
         return Ok(());
     }
-    let missing_entries = || {
-        missing
-            .iter()
+    let entries = |list: &[&JarRequirement]| -> Vec<MissingJar> {
+        list.iter()
             .map(|requirement| MissingJar {
                 owners: requirement.owners.clone(),
                 jar: requirement.jar.clone(),
@@ -165,17 +271,35 @@ fn prepare_with(
             })
             .collect()
     };
-    if matches!(permission, Permission::Refuse) {
-        return Err(PrepareError::Refused {
-            missing: missing_entries(),
-        });
-    }
+    let missing_entries = || entries(&missing);
     let missing_refs: Vec<_> = missing.iter().map(|requirement| &requirement.jar).collect();
-    if let Permission::Ask(ask) = permission {
-        if !ask(&missing_refs) {
-            return Err(PrepareError::Refused {
-                missing: missing_entries(),
-            });
+    let asking: Vec<_> = missing
+        .iter()
+        .copied()
+        .filter(|requirement| {
+            !requirement
+                .owners
+                .iter()
+                .any(|owner| registry_mods.contains(owner))
+        })
+        .collect();
+    if !asking.is_empty() {
+        match permission {
+            Permission::Refuse => {
+                return Err(PrepareError::Refused {
+                    missing: entries(&asking),
+                })
+            }
+            Permission::Allow => {}
+            Permission::Ask(ask) => {
+                let asking_refs: Vec<_> =
+                    asking.iter().map(|requirement| &requirement.jar).collect();
+                if !ask(&asking_refs) {
+                    return Err(PrepareError::Refused {
+                        missing: entries(&asking),
+                    });
+                }
+            }
         }
     }
     let urls = lookup(&missing_refs).map_err(|reason| PrepareError::Lookup {
@@ -186,10 +310,9 @@ fn prepare_with(
         .iter()
         .map(|jar| {
             urls.get(jar.sha512())
-                .ok_or_else(|| PrepareError::Download {
+                .ok_or_else(|| PrepareError::NoLongerOnModrinth {
                     jar: Box::new((*jar).clone()),
                     path: jar.cache_path(&cache),
-                    reason: tr("no exact file on Modrinth").into(),
                 })
         })
         .collect::<Result<_, _>>()?;

@@ -520,7 +520,7 @@ fn initialize_default_in(game_home: &Path, data: &Path) -> Result<(), String> {
         Ok(mut entries) => entries.next().is_none(),
         Err(e) => e.kind() == NotFound,
     };
-    if ![FILE, "settings.json", "accounts.json"]
+    if ![FILE, crate::paths::SETTINGS, "accounts.json"]
         .iter()
         .all(|f| missing(&data.join(f)))
         || !empty(game_home)
@@ -1139,7 +1139,7 @@ const NOT_COPIED: &[&str] = &[
 
 /// Files of the player, not of one instance, that a new instance starts with: the keys and video
 /// settings, and the offline name (so the player stays the same player in its worlds).
-const PLAYER_FILES: &[&str] = &["options.txt", "sunrise-player.txt"];
+const PLAYER_FILES: &[&str] = &[crate::paths::OPTIONS, "sunrise-player.txt"];
 
 /// Creates an instance named `name`: empty but for the player's options and offline name, or a
 /// copy of `from`'s game folder (its worlds, options and packs). Nothing of `from` changes.
