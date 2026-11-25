@@ -115,7 +115,7 @@ pub(crate) struct Held {
 pub(crate) fn build_name(tag: &str) -> String {
     // A game built with mods is named by the build it was made from.
     if native_mods::is_native(tag) {
-        if let Some(base) = crate::glass_instance::native_base(tag) {
+        if let Some(base) = crate::profile_builds::native_base(tag) {
             return build_name(&base);
         }
     }

@@ -1,8 +1,5 @@
-//! The instance dialog in the glass look (the mockup's `InstanceModal`, sunrise-site
-//! `components/launcher/instance-modal.tsx`): one plate round at 28 over the dimmed page. On the
-//! left, what the instance will be (its icon, name and what it plays) and its kind; on the right,
-//! what it plays, its name and group, and its icon; Cancel and Create at the foot. Dark
-//! appearance only: the light look keeps `instance_dialog`.
+//! The builds a profile plays and can pick: its play target and the release to install for it,
+//! the build choices its dialog offers, Home's update offer, and how a build is named.
 use super::*;
 
 use std::path::Path;
