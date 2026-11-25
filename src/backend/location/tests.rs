@@ -1,6 +1,16 @@
 use super::*;
 use std::path::{Path, PathBuf};
 
+/// `SUNRISE_LAUNCHER_HOME` is the launch script's (and every test's) way to keep the launcher away
+/// from the player's folder. The override is passed to the resolver, so this test does not change
+/// the process-wide variable that other tests read in parallel.
+#[test]
+fn the_launcher_home_override_is_resolved_when_given() {
+    let home = tempfile::tempdir().expect("a scratch home");
+    let override_home = Some(home.path().as_os_str().to_owned());
+    assert_eq!(resolve_data_dir_from(override_home), home.path());
+}
+
 #[test]
 fn with_every_name_taken_the_fallback_is_never_a_claimed_folder() {
     let temp = Path::new("/scratch/tmp");
