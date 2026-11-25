@@ -18,12 +18,10 @@ fn running() -> Value {
 
 #[test]
 fn the_api_address_can_be_overridden() {
-    std::env::set_var("SUNRISE_TAILSCALE_API", "http://127.0.0.1:9");
-    let api = Api::new("token");
+    let api = Api::at(&api_base(Some("http://127.0.0.1:9".into())), "token");
     assert_eq!(api.base, "http://127.0.0.1:9");
-    std::env::remove_var("SUNRISE_TAILSCALE_API");
     assert_eq!(
-        Api::new("token").base,
+        Api::at(&api_base(None), "token").base,
         sunrise_launcher_addresses::TAILSCALE_API
     );
 }

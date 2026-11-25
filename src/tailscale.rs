@@ -238,11 +238,17 @@ pub struct Api {
     token: String,
 }
 
+/// The API's address: `SUNRISE_TAILSCALE_API`'s value when it is set, else Tailscale's own.
+fn api_base(variable: Option<String>) -> String {
+    variable.unwrap_or_else(|| sunrise_launcher_addresses::TAILSCALE_API.into())
+}
+
 impl Api {
     pub fn new(token: &str) -> Self {
-        let base = std::env::var("SUNRISE_TAILSCALE_API")
-            .unwrap_or_else(|_| sunrise_launcher_addresses::TAILSCALE_API.into());
-        Self::at(&base, token)
+        Self::at(
+            &api_base(std::env::var("SUNRISE_TAILSCALE_API").ok()),
+            token,
+        )
     }
 
     /// The API at another address (a stand-in in tests).
