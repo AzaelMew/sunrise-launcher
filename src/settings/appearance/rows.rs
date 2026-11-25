@@ -371,7 +371,7 @@ impl Launcher {
                                     return;
                                 }
                                 match std::fs::create_dir_all(&dir) {
-                                    Ok(()) => crate::glass_toast::open(cx, &dir),
+                                    Ok(()) => crate::toast::open(cx, &dir),
                                     Err(e) => {
                                         this.ui.settings.appearance.error =
                                             Some(format!("{}: {e}", dir.display()))

@@ -173,7 +173,7 @@ impl Launcher {
             Fix::ShowLog => {
                 self.servers.tab = Tab::Overview;
                 if let Some(dir) = &self.servers.open {
-                    crate::glass_toast::open(cx, &dir.join("logs"));
+                    crate::toast::open(cx, &dir.join("logs"));
                 }
             }
         }

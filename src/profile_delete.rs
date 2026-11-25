@@ -130,7 +130,7 @@ impl Launcher {
                         recovery: None,
                     })
                 } else {
-                    crate::glass_toast::say(heading);
+                    crate::toast::say(heading);
                     None
                 }
             }

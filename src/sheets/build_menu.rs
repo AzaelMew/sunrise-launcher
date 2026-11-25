@@ -238,7 +238,7 @@ impl Launcher {
             )
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                 this.close_sheet();
-                crate::glass_toast::open(cx, &home);
+                crate::toast::open(cx, &home);
                 cx.notify();
             }));
         let body = div()
