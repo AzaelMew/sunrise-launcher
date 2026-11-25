@@ -38,6 +38,8 @@ use tokio::{
 
 pub const CANCELLED: &str = "Download cancelled. Download again to go on where it stopped.";
 const MAX_RETRY_AFTER: Duration = Duration::from_secs(60);
+/// A stable partial older than this is a download the player abandoned, not one to resume.
+const PARTIAL_AGE: Duration = Duration::from_secs(7 * 24 * 3600);
 type Sweeps = HashMap<PathBuf, Arc<tokio::sync::OnceCell<()>>>;
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -376,6 +378,7 @@ impl Downloader {
         path: &Path,
         bounds: Option<(u64, u64, u64)>,
         validator: Option<&str>,
+        file_offset: u64,
     ) -> Result<Option<String>, Failure> {
         let mut copied = 0;
         let mut hash = crate::hashing::Sha1::new();
@@ -446,10 +449,11 @@ impl Downloader {
                     return Err(Failure::range("Inconsistent Content-Length"));
                 }
                 let mut file = fs::OpenOptions::new().write(true).open(path).await?;
-                if !ranged {
+                if file_offset == 0 && copied == 0 {
                     file.set_len(0).await?;
                 }
-                file.seek(std::io::SeekFrom::Start(start + copied)).await?;
+                file.seek(std::io::SeekFrom::Start(file_offset + copied))
+                    .await?;
                 let mut writer = BufWriter::with_capacity(self.config.buffer, file);
                 let mut received = 0;
                 let body = async {
@@ -523,24 +527,42 @@ impl Downloader {
                         && probe.response.chunk().await.is_ok_and(|c| c.is_none());
                     drop(probe);
                     if valid {
-                        fs::OpenOptions::new()
-                            .write(true)
-                            .open(path)
-                            .await?
-                            .set_len(size)
-                            .await?;
                         // More chunks than connections let a fast stream take over a slow one's remaining work.
                         let chunk = self
                             .config
                             .minimum_segment
                             .max(size.div_ceil((self.config.segments * 4) as u64));
-                        let result = stream::iter((0..size.div_ceil(chunk)).map(|i| {
-                            self.piece(
-                                artifact,
-                                path,
-                                Some((i * chunk, ((i + 1) * chunk).min(size) - 1, size)),
-                                validator.as_deref(),
-                            )
+                        let chunks = path.with_extension("segments");
+                        fs::create_dir_all(&chunks).await?;
+                        let count = size.div_ceil(chunk);
+                        let result = stream::iter((0..count).map(|i| {
+                            let file = chunks.join(format!("{i}.seg"));
+                            let (start, end) = (i * chunk, ((i + 1) * chunk).min(size) - 1);
+                            let validator = validator.clone();
+                            async move {
+                                // A chunk from an interrupted run is already complete: keep it.
+                                if fs::metadata(&file)
+                                    .await
+                                    .is_ok_and(|m| m.len() == end - start + 1)
+                                {
+                                    return Ok(());
+                                }
+                                fs::OpenOptions::new()
+                                    .create(true)
+                                    .truncate(false)
+                                    .write(true)
+                                    .open(&file)
+                                    .await?;
+                                self.piece(
+                                    artifact,
+                                    &file,
+                                    Some((start, end, size)),
+                                    validator.as_deref(),
+                                    0,
+                                )
+                                .await
+                                .map(|_| ())
+                            }
                         }))
                         .buffer_unordered(self.config.segments)
                         .collect::<Vec<_>>()
@@ -548,8 +570,26 @@ impl Downloader {
                         .into_iter()
                         .collect::<Result<Vec<_>, _>>();
                         match result {
-                            Ok(_) => return Ok(None),
-                            Err(e) if e.range => {}
+                            Ok(_) => {
+                                let mut output = fs::OpenOptions::new()
+                                    .create(true)
+                                    .write(true)
+                                    .truncate(true)
+                                    .open(path)
+                                    .await?;
+                                for i in 0..count {
+                                    let mut part =
+                                        fs::File::open(chunks.join(format!("{i}.seg"))).await?;
+                                    tokio::io::copy(&mut part, &mut output).await?;
+                                }
+                                output.flush().await?;
+                                drop(output);
+                                let _ = fs::remove_dir_all(&chunks).await;
+                                return Ok(None);
+                            }
+                            Err(e) if e.range => {
+                                let _ = fs::remove_dir_all(&chunks).await;
+                            }
                             Err(e) => return Err(e),
                         }
                     }
@@ -560,13 +600,33 @@ impl Downloader {
                 }
             }
         }
+        let mut have = fs::metadata(path).await.map(|m| m.len()).unwrap_or(0);
+        if let Some(size) = artifact.size.filter(|&size| size > 0) {
+            // A finished .part only needs its hash checked by the caller.
+            if have == size {
+                return Ok(None);
+            }
+            if have > size {
+                have = 0;
+            }
+            if have > 0 {
+                match self
+                    .piece(artifact, path, Some((have, size - 1, size)), None, have)
+                    .await
+                {
+                    Ok(_) => return Ok(None),
+                    Err(e) if e.range => {}
+                    Err(e) => return Err(e),
+                }
+            }
+        }
         fs::OpenOptions::new()
             .write(true)
             .open(path)
             .await?
             .set_len(0)
             .await?;
-        match self.piece(artifact, path, None, None).await {
+        match self.piece(artifact, path, None, None, 0).await {
             Err(e) if e.range => {
                 fs::OpenOptions::new()
                     .write(true)
@@ -574,7 +634,7 @@ impl Downloader {
                     .await?
                     .set_len(0)
                     .await?;
-                self.piece(artifact, path, None, None).await
+                self.piece(artifact, path, None, None, 0).await
             }
             result => result,
         }
@@ -623,26 +683,22 @@ impl Downloader {
                 return Ok(());
             }
             fs::create_dir_all(parent).await?;
-            let mut nonce = [0; 8];
-            getrandom::fill(&mut nonce).map_err(Failure::permanent)?;
-            let temporary = parent.join(format!(
-                ".sunrise-download-{}-{:x}.part",
-                std::process::id(),
-                u64::from_ne_bytes(nonce)
-            ));
+            let partial = partial_path(artifact);
             fs::OpenOptions::new()
-                .create_new(true)
+                .create(true)
+                .truncate(false)
                 .write(true)
-                .open(&temporary)
+                .open(&partial)
                 .await?;
-            let scratch = Scratch(temporary);
             let result = async {
-                let streamed = self.transfer(artifact, &scratch.0).await?;
+                let streamed = self.transfer(artifact, &partial).await?;
                 let matches = match streamed {
                     Some(hash) => hash.eq_ignore_ascii_case(&artifact.sha1),
-                    None => valid(artifact, &scratch.0, self.config.buffer).await?,
+                    None => valid(artifact, &partial, self.config.buffer).await?,
                 };
                 if !matches {
+                    let _ = fs::remove_file(&partial).await;
+                    let _ = fs::remove_dir_all(partial.with_extension("segments")).await;
                     return Err(Failure::permanent(
                         "Downloaded size or SHA-1 does not match the manifest",
                     ));
@@ -650,11 +706,11 @@ impl Downloader {
                 if cancel.load(Relaxed) {
                     return Err(Failure::permanent(CANCELLED));
                 }
-                fs::rename(&scratch.0, &artifact.path).await?;
+                fs::rename(&partial, &artifact.path).await?;
+                let _ = fs::remove_dir_all(partial.with_extension("segments")).await;
                 Ok(())
             }
             .await;
-            let _ = fs::remove_file(&scratch.0).await;
             result
         };
         let result = tokio::select! {biased; _=cancelled(cancel)=>Err(Failure::permanent(CANCELLED)),result=operation=>result};
@@ -831,31 +887,66 @@ fn sweep_partials(parent: &Path) {
     let Ok(entries) = std::fs::read_dir(parent) else {
         return;
     };
+    let now = SystemTime::now();
     for entry in entries.flatten() {
         let name = entry.file_name();
-        let Some((pid, nonce)) = name
-            .to_str()
-            .and_then(|s| s.strip_prefix(".sunrise-download-"))
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        if let Some(stem) = name
+            .strip_prefix(".sunrise-download-")
             .and_then(|s| s.strip_suffix(".part"))
-            .and_then(|s| s.split_once('-'))
-        else {
-            continue;
-        };
-        let Ok(pid) = pid.parse::<u32>() else {
-            continue;
-        };
-        if pid == 0
-            || nonce.is_empty()
-            || nonce.len() > 16
-            || !nonce.bytes().all(|b| b.is_ascii_hexdigit())
         {
-            continue;
-        }
-        if entry.file_type().is_ok_and(|kind| kind.is_file()) && !crate::backend::process_alive(pid)
+            // Generated by an older launcher: safe to remove once its process is gone.
+            if let Some((pid, nonce)) = stem.split_once('-') {
+                if let Ok(pid) = pid.parse::<u32>() {
+                    if pid != 0
+                        && !nonce.is_empty()
+                        && nonce.len() <= 16
+                        && nonce.bytes().all(|b| b.is_ascii_hexdigit())
+                        && entry.file_type().is_ok_and(|kind| kind.is_file())
+                        && !crate::backend::process_alive(pid)
+                    {
+                        let _ = std::fs::remove_file(entry.path());
+                    }
+                    continue;
+                }
+            }
+            if stable_stem(stem) && aged(&entry, now) {
+                let path = entry.path();
+                let _ = std::fs::remove_file(&path);
+                let _ = std::fs::remove_dir_all(path.with_extension("segments"));
+            }
+        } else if let Some(stem) = name
+            .strip_prefix(".sunrise-download-")
+            .and_then(|s| s.strip_suffix(".segments"))
         {
-            let _ = std::fs::remove_file(entry.path());
+            if stable_stem(stem) && aged(&entry, now) {
+                let path = entry.path();
+                let _ = std::fs::remove_dir_all(&path);
+                let _ = std::fs::remove_file(path.with_extension("part"));
+            }
         }
     }
+}
+
+/// A partial this version names: the artifact's SHA-1, a dash, then the destination's SHA-1.
+fn stable_stem(stem: &str) -> bool {
+    stem.len() == 81
+        && stem.as_bytes()[40] == b'-'
+        && stem
+            .bytes()
+            .enumerate()
+            .all(|(i, b)| i == 40 || b.is_ascii_hexdigit())
+}
+
+fn aged(entry: &std::fs::DirEntry, now: SystemTime) -> bool {
+    entry
+        .metadata()
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| now.duration_since(t).ok())
+        .is_some_and(|age| age > PARTIAL_AGE)
 }
 fn strong_etag(response: &Response) -> Option<String> {
     response
@@ -894,17 +985,21 @@ async fn valid(artifact: &Artifact, path: &Path, buffer: usize) -> Result<bool, 
     }
     Ok(hash.hex().eq_ignore_ascii_case(&artifact.sha1))
 }
-/// On dropped/cancelled futures, unlink asynchronously after all stream handles have dropped.
-struct Scratch(PathBuf);
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let path = self.0.clone();
-        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
-            runtime.spawn(async move {
-                let _ = fs::remove_file(path).await;
-            });
-        }
-    }
+/// The `.part` that survives cancellation and restart: named for the destination and the bytes it
+/// must become, so a different download never resumes another one's bytes.
+fn partial_path(artifact: &Artifact) -> PathBuf {
+    let parent = artifact
+        .path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let mut hash = crate::hashing::Sha1::new();
+    hash.update(artifact.path.as_os_str().as_encoded_bytes());
+    parent.join(format!(
+        ".sunrise-download-{}-{}.part",
+        artifact.sha1.to_ascii_lowercase(),
+        hash.hex()
+    ))
 }
 static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
 pub fn run<F: std::future::Future>(future: F) -> F::Output {
