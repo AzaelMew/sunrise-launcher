@@ -24,6 +24,7 @@ use crate::{
     },
     i18n::{tr, trf},
     instances::{Instance, Kind as InstanceKind},
+    jars,
     managed_play::{self, FirstBuild, Profile, ScannedPackage},
     native_mods,
     profile_txn::Identity,
@@ -40,7 +41,7 @@ use sunrise_launcher_smod::{
     dependencies::parse_version,
     index::{self, MAX_FILE},
     index_v2::{self, FitVerdict, Index, Kind as V2Kind, Project, Release, Revoked},
-    manifest::Side,
+    manifest::{collect_jar_requirements, Side},
 };
 
 mod switch_v2;
@@ -1735,6 +1736,24 @@ fn v2_edit_with(
         }
         cancelled.check().map_err(InstallError::Unproved)?;
     }
+
+    // Every original jar the new set of registry mods lists is in the cache before anything is
+    // published; a jar Modrinth no longer has fails the edit here.
+    let staged = inventory_v2(next.path(), &index)?;
+    let listed = collect_jar_requirements(
+        staged
+            .values()
+            .filter(|item| item.enabled && item.ownership.is_owned())
+            .map(|item| {
+                (
+                    item.package.manifest.id.as_str(),
+                    item.package.manifest.jar.as_slice(),
+                )
+            }),
+    )
+    .map_err(|error| InstallError::Refused(jars::LaunchError::Conflict(error).to_string()))?;
+    jars::fetch_listed(&backend::game_home(), &listed)
+        .map_err(|error| InstallError::Download(error.to_string()))?;
 
     (hooks.install.progress)(InstallProgress::Preparing);
     edit.prepare_first(&super::preparation_line(hooks.install.progress))
