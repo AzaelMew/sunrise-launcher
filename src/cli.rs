@@ -23,6 +23,7 @@ mod content;
 use content::{game_packs, screenshots, worlds, PacksCmd, ScreenshotsCmd, WorldsCmd};
 
 mod builds;
+mod storage;
 use clap::{Parser, Subcommand};
 use sunrise_launcher::account::{self, Accounts};
 use sunrise_launcher::backend::{self, Release};
@@ -523,21 +524,7 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, Error> {
         Cmd::Versions { installed: true } => builds::installed(as_json)?,
         Cmd::Versions { installed: false } => return builds::releases(as_json),
         Cmd::Install { tag } => builds::install(tag, as_json)?,
-        Cmd::Storage { clear } => {
-            let storage = Storage::open().map_err(native_mods::cache_error)?;
-            let (row, all) = match clear {
-                Some(ClearStorage::Row(row)) => (Some(row), false),
-                Some(ClearStorage::All) => (None, true),
-                None => (None, false),
-            };
-            let report = storage.report(row, all).map_err(native_mods::cache_error)?;
-            println!("{}", serde_json::to_string_pretty(&report).unwrap());
-            if row.is_some() || all {
-                if let Some(kept) = report.rows.iter().flat_map(|row| &row.kept).next() {
-                    return Err(kept.reason.clone().into());
-                }
-            }
-        }
+        Cmd::Storage { clear } => storage::report(clear)?,
         Cmd::NativeLock {
             folder,
             update_lock,
