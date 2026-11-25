@@ -586,11 +586,17 @@ fn resolved_prefix(path: &Path) -> Result<(PathBuf, Vec<std::ffi::OsString>)> {
     }
     let mut existing = path;
     let mut rest = Vec::new();
+    let mut looked_again = false;
     loop {
         match fs::canonicalize(existing) {
             Ok(real) => return Ok((plain_drive(real), rest)),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 match fs::symlink_metadata(existing) {
+                    // Made since `canonicalize` looked (another launcher starting): look again.
+                    Ok(meta) if !meta.file_type().is_symlink() && !looked_again => {
+                        looked_again = true;
+                        continue;
+                    }
                     Ok(_) => return Err(problem(existing, e)), // Not missing: a dangling link.
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
                     Err(error) => return Err(problem(existing, error)),
