@@ -1,0 +1,152 @@
+//! Settings › Game: how the game starts.
+use super::*;
+
+impl Launcher {
+    pub(super) fn settings_game(&mut self, cx: &mut Context<Self>) -> Div {
+        use backend::WhilePlaying;
+        let current = self.settings.while_playing.here();
+        let mut ways = vec![
+            (WhilePlaying::Stay, "Stay open"),
+            (WhilePlaying::Minimize, "Minimise"),
+        ];
+        if cfg!(target_os = "macos") {
+            ways.push((WhilePlaying::Hide, "Hide"));
+        }
+        let ways = ways
+            .into_iter()
+            .map(|(way, label)| {
+                let pick: Choose = Rc::new(move |this, _| {
+                    this.settings.while_playing = way;
+                    this.save_settings();
+                });
+                (tr(label).into(), way == current, pick)
+            })
+            .collect();
+        let picker = div().child(choices("alt-while-playing", ways, cx).gap(px(6.)));
+        let while_playing = row(
+            tr("While you play"),
+            tr(match current {
+                WhilePlaying::Stay => "The launcher stays open beside the game.",
+                WhilePlaying::Minimize => {
+                    "The launcher goes down when the game starts, and comes back when it closes."
+                }
+                WhilePlaying::Hide => {
+                    "The launcher hides when the game starts, and comes back when it closes."
+                }
+            }),
+            picker,
+        );
+        let minecraft = self.settings.minecraft_dir.as_deref().map_or_else(
+            || {
+                tr("Not found yet. Sunrise reads the game's own files from your Minecraft folder.")
+                    .to_string()
+            },
+            short,
+        );
+        let source = row(
+            tr("Minecraft folder"),
+            minecraft,
+            div().child(
+                button("alt-minecraft-folder", tr("Choose…"))
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.choose_folder(cx))),
+            ),
+        );
+        let args = self.settings_field(
+            "alt-game-args",
+            self.args_focus.clone(),
+            self.args_focused,
+            &self.args_input,
+            "For example --server-thread",
+            |this| &mut this.args_input,
+            |this| {
+                this.settings.game_args = this.args_input.text().to_string();
+                this.save_settings();
+            },
+            cx,
+        );
+        let args = stacked(
+            tr("Game arguments"),
+            tr("Extra arguments for the game, passed through as they are. They apply the next time it starts."),
+            args,
+        );
+        let asking = self.ui.settings.setup;
+        let mut setup = row(
+            tr("Profiles"),
+            tr("A profile keeps its own mods, worlds and servers. Switch between profiles in the sidebar."),
+            div().child(
+                button("alt-create", tr(if asking { "Cancel" } else { "New profile…" })).on_click(
+                    cx.listener(|this, _: &ClickEvent, _, cx| {
+                        this.ui.settings.setup = !this.ui.settings.setup;
+                        this.ui.settings.note = None;
+                        cx.notify();
+                    }),
+                ),
+            ),
+        );
+        if asking {
+            let input = self.field(
+                servers_page::Field::InstanceName,
+                tr("Profile name"),
+                250.,
+                cx,
+            );
+            setup = div().flex().flex_col().gap(px(12.)).child(setup).child(
+                div().flex().items_center().gap(px(8.)).child(input).child(
+                    button("alt-create-empty", tr("Create profile")).on_click(cx.listener(
+                        |this, _: &ClickEvent, _, cx| {
+                            let name = this.servers.value(servers_page::Field::InstanceName).trim();
+                            match instances::create(name, None) {
+                                Ok(_) => {
+                                    this.reload_instances();
+                                    this.ui.settings.setup = false;
+                                    this.servers
+                                        .text(servers_page::Field::InstanceName)
+                                        .set(String::new());
+                                    this.ui.settings.note = Some(
+                                        tr("Profile created. Select it in the sidebar.").into(),
+                                    );
+                                }
+                                Err(e) => this.ui.settings.note = Some(e),
+                            };
+                            cx.notify();
+                        },
+                    )),
+                ),
+            );
+        }
+        if let Some(note) = self.ui.settings.note.clone() {
+            setup = div()
+                .flex()
+                .flex_col()
+                .gap(px(8.))
+                .child(setup)
+                .child(hint(note));
+        }
+        let mut profiles = vec![setup];
+        if let Some(profile) = self
+            .selected_instance()
+            .filter(|p| p.kind == instances::Kind::Own && !self.location_unavailable)
+        {
+            let target = profile.clone();
+            profiles.push(row(
+                trf("Selected profile: {name}", &[("name", &target.name)]),
+                "",
+                div().child(
+                    danger(button("settings-delete-profile", tr("Delete profile…"))).on_click(
+                        cx.listener(move |this, _, _, cx| {
+                            this.confirm_profile_delete(&target);
+                            cx.notify();
+                        }),
+                    ),
+                ),
+            ));
+        }
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(14.))
+            .child(group(vec![while_playing, args]))
+            .child(group(vec![source]))
+            .child(group(profiles))
+    }
+}
