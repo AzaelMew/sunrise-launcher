@@ -403,7 +403,7 @@ fn last_known_source_offer_stays_visible_while_offline_but_requires_fresh_catalo
                 };
                 let mut rows = InstalledRows::default();
                 rows.local.push(local);
-                launcher.ui.mods.snapshot = Some(Snapshot {
+                launcher.mods_state.snapshot = Some(Snapshot {
                     home: home.to_path_buf(),
                     key: key.clone(),
                     rows,
@@ -413,7 +413,7 @@ fn last_known_source_offer_stays_visible_while_offline_but_requires_fresh_catalo
                 });
                 let mut candidates = BTreeMap::new();
                 candidates.insert(origin.id.clone(), (origin.clone(), prepared));
-                launcher.ui.mods.nightly.work.updates = Some(CheckedUpdates {
+                launcher.mods_state.nightly.work.updates = Some(CheckedUpdates {
                     scope,
                     inputs: key.clone(),
                     proof: Some(proof),
@@ -426,7 +426,7 @@ fn last_known_source_offer_stays_visible_while_offline_but_requires_fresh_catalo
                     ),
                 });
                 // Catalogue failed / offline: nightly_catalogue_current() is false.
-                launcher.ui.mods.nightly.catalogue = Some(Catalogue {
+                launcher.mods_state.nightly.catalogue = Some(Catalogue {
                     sources: Vec::new().into(),
                     collections: Vec::new().into(),
                     saved_at: None,
@@ -446,7 +446,7 @@ fn last_known_source_offer_stays_visible_while_offline_but_requires_fresh_catalo
                 assert!(launcher.take_source_updates(None).is_none());
 
                 // Once the catalogue is current again, applying takes the prepared offer.
-                launcher.ui.mods.nightly.catalogue = Some(Catalogue {
+                launcher.mods_state.nightly.catalogue = Some(Catalogue {
                     sources: Vec::new().into(),
                     collections: Vec::new().into(),
                     saved_at: Some(SystemTime::now()),

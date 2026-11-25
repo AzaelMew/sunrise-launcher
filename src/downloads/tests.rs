@@ -1,8 +1,18 @@
+use super::resume::*;
 use super::*;
 use crate::hashing::sha1_hex;
-use std::sync::atomic::AtomicUsize;
+use reqwest::{Client, Url};
+use std::{
+    path::Path,
+    sync::{
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering::Relaxed},
+        Arc, Mutex,
+    },
+    time::{Duration, Instant, SystemTime},
+};
 use tokio::{
-    io::{AsyncBufReadExt, BufReader},
+    fs,
+    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
     net::TcpListener,
 };
 

@@ -25,7 +25,7 @@ impl Launcher {
             return;
         }
         let added = self.added_sources();
-        let state = &self.ui.mods.nightly;
+        let state = &self.mods_state.nightly;
         let (Some(open), Some(catalogue)) = (&state.collection, &state.catalogue) else {
             return;
         };
@@ -53,10 +53,10 @@ impl Launcher {
             self.source_activity().map(|a| (a.ids.to_vec(), a.progress));
         let added = self.added_sources();
         let can_start = self.nightly_catalogue_current() && !self.nightly_busy();
-        let state = &self.ui.mods.nightly;
+        let state = &self.mods_state.nightly;
         let back = super::super::project::back(tr("Nightly mods")).on_click(cx.listener(
             |this, _, _, cx| {
-                this.ui.mods.nightly.collection = None;
+                this.mods_state.nightly.collection = None;
                 this.choose_view(Page::Discover);
                 cx.notify();
             },
@@ -169,7 +169,7 @@ impl Launcher {
                 ],
             ))
             .on_click(cx.listener(move |this, _, _, cx| {
-                if let Some(open) = this.ui.mods.nightly.collection.as_mut() {
+                if let Some(open) = this.mods_state.nightly.collection.as_mut() {
                     if all_ids.iter().all(|id| open.ticked.contains(id)) {
                         open.ticked.clear();
                     } else {
@@ -195,7 +195,7 @@ impl Launcher {
                 // The row's own press ticks it: this one only opens the page.
                 .on_click(cx.listener(move |this, _, _, cx| {
                     cx.stop_propagation();
-                    this.ui.mods.nightly.collection = None;
+                    this.mods_state.nightly.collection = None;
                     this.inspect_nightly(open.clone(), false);
                     cx.notify();
                 }));
@@ -273,7 +273,7 @@ impl Launcher {
                         if installed {
                             return;
                         }
-                        if let Some(open) = this.ui.mods.nightly.collection.as_mut() {
+                        if let Some(open) = this.mods_state.nightly.collection.as_mut() {
                             if !open.ticked.remove(&member) {
                                 open.ticked.insert(member.clone());
                             }

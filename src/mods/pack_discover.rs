@@ -13,6 +13,7 @@
 //! it stays blocked while the game or another change runs, and holds Play and setup changes
 //! through the shared busy flag (`mutating`).
 use super::discover::MenuOption;
+use super::state::Menu;
 use super::ui::{added_mark, browse_card, c, card, columns, dim, muted, tag};
 use super::*;
 use crate::frame::button;
@@ -172,7 +173,7 @@ impl Launcher {
 
     /// Switches Discover to `scope`.
     pub(super) fn pack_scope(&mut self, scope: Scope) {
-        let p = &mut self.ui.mods.packs;
+        let p = &mut self.mods_state.packs;
         if p.scope == scope && !matches!(p.status, Status::Idle) {
             return;
         }
@@ -183,7 +184,7 @@ impl Launcher {
         p.results.clear();
         p.status = Status::Idle;
         p.seq += 1;
-        self.ui.mods.menu = None;
+        self.mods_state.menu = None;
         self.pack_search();
     }
 
@@ -192,12 +193,12 @@ impl Launcher {
     pub(super) fn find_data_packs(&mut self, world: Option<PathBuf>) {
         self.choose_view(Page::PackFind);
         self.pack_scope(Scope::Data);
-        self.ui.mods.packs.hint = world;
+        self.mods_state.packs.hint = world;
     }
 
     /// The setup changed: nothing chosen for the old one carries over.
     pub(super) fn pack_setup_moved(&mut self) {
-        let p = &mut self.ui.mods.packs;
+        let p = &mut self.mods_state.packs;
         p.hint = None;
         p.open = None;
         p.results.clear();
@@ -207,14 +208,14 @@ impl Launcher {
 
     /// Searches Modrinth for the scope's kind with the header's text, in a worker.
     pub(super) fn pack_search(&mut self) {
-        let text = self.ui.mods.find.text().to_owned();
+        let text = self.mods_state.find.text().to_owned();
         let game = self.mods_game();
-        let p = &mut self.ui.mods.packs;
+        let p = &mut self.mods_state.packs;
         let q = query(p.scope, &text, &game, &p.filters);
         p.seq += 1;
         p.status = Status::Searching;
         let read_categories = p.categories.as_ref().is_none_or(|(s, _)| *s != p.scope);
-        let (seq, scope, tx) = (p.seq, p.scope, self.ui.mods.tx.clone());
+        let (seq, scope, tx) = (p.seq, p.scope, self.mods_state.tx.clone());
         std::thread::spawn(move || {
             let result = browser::modrinth::Modrinth
                 .search(&q)
@@ -229,13 +230,13 @@ impl Launcher {
     }
 
     pub(super) fn pack_categories(&mut self, scope: Scope, found: Vec<String>) {
-        self.ui.mods.packs.categories = Some((scope, found));
+        self.mods_state.packs.categories = Some((scope, found));
     }
 
     /// The filter row, the one Mods › Discover draws: a category of the scope, Show all, sort.
     /// Each choice searches again.
     fn pack_filter_bar(&self, cx: &mut Context<Self>) -> Div {
-        let p = &self.ui.mods.packs;
+        let p = &self.mods_state.packs;
         let f = p.filters.clone();
         let categories = match &p.categories {
             Some((scope, found)) if *scope == p.scope => found.clone(),
@@ -248,7 +249,7 @@ impl Launcher {
         let category_options = || -> Vec<MenuOption> {
             let pick = |category: Option<String>| -> Box<dyn Fn(&mut Launcher)> {
                 Box::new(move |this: &mut Launcher| {
-                    this.ui.mods.packs.filters.category = category.clone();
+                    this.mods_state.packs.filters.category = category.clone();
                     this.pack_search();
                 })
             };
@@ -270,7 +271,7 @@ impl Launcher {
             sort: f.sort,
             ..Default::default()
         }
-        .sort(self.ui.mods.find.text());
+        .sort(self.mods_state.find.text());
         let sort_options = || -> Vec<MenuOption> {
             Sort::ALL
                 .into_iter()
@@ -279,7 +280,7 @@ impl Launcher {
                         tr(s.label()).into(),
                         sort_now == s,
                         Box::new(move |this: &mut Launcher| {
-                            this.ui.mods.packs.filters.sort = Some(s);
+                            this.mods_state.packs.filters.sort = Some(s);
                             this.pack_search();
                         }) as Box<dyn Fn(&mut Launcher)>,
                     )
@@ -292,7 +293,7 @@ impl Launcher {
             category_menu,
             f.show_all,
             |this| {
-                let filters = &mut this.ui.mods.packs.filters;
+                let filters = &mut this.mods_state.packs.filters;
                 filters.show_all = !filters.show_all;
                 this.pack_search();
             },
@@ -302,7 +303,7 @@ impl Launcher {
     }
 
     pub(super) fn pack_answer(&mut self, seq: u64, result: Result<Vec<Project>, String>) {
-        let p = &mut self.ui.mods.packs;
+        let p = &mut self.mods_state.packs;
         if seq != p.seq {
             return;
         }
@@ -320,20 +321,19 @@ impl Launcher {
 
     /// A pack install ended: its words; what lists packs is read again.
     pub(super) fn pack_installed(&mut self, result: Result<String, String>) {
-        self.ui.mods.busy = None;
-        self.ui.mods.notice = Some(result);
+        self.mods_state.busy = None;
+        self.mods_state.notice = Some(result);
         self.game_packs.stale();
         self.world_packs.reread();
-        self.ui.mods.data.reread();
+        self.mods_state.data.reread();
     }
 
     /// Add on a result: a data pack asks which worlds; a resource or shader pack is checked
     /// against the scope and the selected setup, then installed in a worker.
     pub(super) fn pack_install(&mut self, source: SourceId, id: &str) {
-        let scope = self.ui.mods.packs.scope;
+        let scope = self.mods_state.packs.scope;
         let Some(project) = self
-            .ui
-            .mods
+            .mods_state
             .packs
             .results
             .iter()
@@ -343,7 +343,7 @@ impl Launcher {
             return;
         };
         if project.kind == Kind::DataPack {
-            let hint = self.ui.mods.packs.hint.clone();
+            let hint = self.mods_state.packs.hint.clone();
             self.pick_worlds(super::data_packs::What::Project(project), hint);
             return;
         }
@@ -351,12 +351,12 @@ impl Launcher {
             return;
         }
         let Some((_, home)) = self.pack_setup() else {
-            self.ui.mods.notice = Some(Err(tr("Select a Sunrise profile first.").to_string()));
+            self.mods_state.notice = Some(Err(tr("Select a Sunrise profile first.").to_string()));
             return;
         };
         self.dismiss_notice();
-        self.ui.mods.busy = Some((tr("Checking the pack…").into(), 0.));
-        let (tx, game) = (self.ui.mods.tx.clone(), self.mods_game());
+        self.mods_state.busy = Some((tr("Checking the pack…").into(), 0.));
+        let (tx, game) = (self.mods_state.tx.clone(), self.mods_game());
         std::thread::spawn(move || {
             let result = install(&project, &home, &game, &|line, f| {
                 let _ = tx.send(Event::Progress(line.to_owned(), f));
@@ -368,7 +368,7 @@ impl Launcher {
     /// Where data packs come from and how much of one Sunrise runs, said once for every card:
     /// the short of it, and the whole list behind a "?".
     fn data_pack_line(&self, cx: &mut Context<Self>) -> AnyElement {
-        let (over, pinned) = self.ui.mods.packs.help;
+        let (over, pinned) = self.mods_state.packs.help;
         let help = div()
             .id("alt-data-help")
             .tab_index(0)
@@ -404,12 +404,12 @@ impl Launcher {
                     .child("?"),
             )
             .on_hover(cx.listener(|this, over: &bool, _, cx| {
-                this.ui.mods.packs.help.0 = *over;
+                this.mods_state.packs.help.0 = *over;
                 cx.notify();
             }))
             // A press pins it open, for keyboards and touch; another press closes it.
             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                let pinned = &mut this.ui.mods.packs.help.1;
+                let pinned = &mut this.mods_state.packs.help.1;
                 *pinned = !*pinned;
                 cx.notify();
             }));
@@ -450,10 +450,10 @@ impl Launcher {
         focus: &FocusHandle,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        if matches!(self.ui.mods.packs.status, Status::Idle) {
+        if matches!(self.mods_state.packs.status, Status::Idle) {
             self.pack_search();
         }
-        let scope = self.ui.mods.packs.scope;
+        let scope = self.mods_state.packs.scope;
         let kinds = Scope::ALL
             .into_iter()
             .map(|kind| {
@@ -482,8 +482,7 @@ impl Launcher {
             .child(from)
             .child(filters);
         let added: HashSet<(SourceId, String)> = self
-            .ui
-            .mods
+            .mods_state
             .snapshot
             .as_ref()
             .map(|s| {
@@ -493,9 +492,9 @@ impl Launcher {
                     .collect()
             })
             .unwrap_or_default();
-        let working = self.ui.mods.busy.is_some();
-        let results = self.ui.mods.packs.results.clone();
-        let body: AnyElement = match &self.ui.mods.packs.status {
+        let working = self.mods_state.busy.is_some();
+        let results = self.mods_state.packs.results.clone();
+        let body: AnyElement = match &self.mods_state.packs.status {
             Status::Searching | Status::Idle => muted(tr("Searching…")).into_any_element(),
             Status::Failed(e) => card()
                 .p(px(20.))
@@ -535,7 +534,7 @@ impl Launcher {
                     }
                     hash.finish()
                 });
-                let scroll = self.ui.mods.packs.scroll.clone();
+                let scroll = self.mods_state.packs.scroll.clone();
                 cull.column(
                     &scroll,
                     row_count,
@@ -586,7 +585,7 @@ impl Launcher {
                             }
                             facts.push(muted(model::downloads(p.downloads)));
                             if data {
-                                match self.ui.mods.data.worlds_with(p.source, &p.id) {
+                                match self.mods_state.data.worlds_with(p.source, &p.id) {
                                     0 => {}
                                     1 => facts.push(muted(tr("In 1 world"))),
                                     n => facts.push(muted(trf(
@@ -622,10 +621,10 @@ impl Launcher {
                 .into_any_element()
             }
         };
-        crate::frame::scrolls_with(&self.ui.mods.packs.scroll);
+        crate::frame::scrolls_with(&self.mods_state.packs.scroll);
         page.child(crate::scrollbar::wrap_handle(
             "pack-discover",
-            self.ui.mods.packs.scroll.clone(),
+            self.mods_state.packs.scroll.clone(),
             div()
                 .id("alt-pack-scroll")
                 .flex_1()

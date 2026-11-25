@@ -3,7 +3,7 @@ use super::*;
 
 impl Storage {
     pub fn report(&self, clear: Option<Category>, all: bool) -> Result<Report, Error> {
-        let registry_entries = match fs::read_dir(backend::data_dir().join("run-leases")) {
+        let registry_entries = match fs::read_dir(self.data.join("run-leases")) {
             Ok(mut entries) => entries.try_fold(0usize, |count, entry| entry.map(|_| count + 1))?,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => 0,
             Err(error) => return Err(error.into()),
@@ -19,7 +19,7 @@ impl Storage {
         self.lease.bytes()?;
         if clear.is_some() || all {
             use sunrise_launcher_smod::runtime_leases::{cleanup::Cleanup, Error as LeaseError};
-            match Cleanup::existing(&backend::data_dir()) {
+            match Cleanup::existing(&self.data) {
                 Ok(cleanup) => {
                     cleanup.collect_records()?;
                 }

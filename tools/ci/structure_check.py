@@ -11,6 +11,7 @@ import sys
 
 RETIRED_PREFIXES = ("glass_", "blocks_", "alt_", "launcher_")
 LONG_FILE = 1000
+LONG_FUNCTION = 80
 
 PATH_ATTRIBUTE = re.compile(r"#\[\s*path\s*=")
 ALLOW = re.compile(r"#!?\[\s*(?:cfg_attr\s*\(.*?,\s*)?allow\s*\(([^()]*)\)")
@@ -24,10 +25,29 @@ TEST_MODULE = re.compile(
 MODULE_FILE = re.compile(r"^[ \t]*((?:#\[[^\]]*\]\s*)*)(?:pub(?:\s*\([^)]*\))?\s+)?mod\s+(\w+)\s*;", re.M)
 PATH_VALUE = re.compile(r'#\[\s*path\s*=\s*"([^"]+)"\s*\]')
 FN = re.compile(r"\bfn\s+([A-Za-z_][A-Za-z0-9_]*)")
+# A function item at the start of a line, past its visibility and qualifiers.
+FUNCTION = re.compile(
+    r"^[ \t]*(?:pub(?:\s*\([^)]*\))?\s+)?"
+    r"(?:(?:const|async|unsafe|default)\s+)*"
+    r"(?:extern\s+\"[^\"]*\"\s+)?"
+    r"fn\s+[A-Za-z_][A-Za-z0-9_]*",
+    re.M,
+)
+CRATE_PATH = re.compile(r"\bcrate\s*::\s*([A-Za-z_][A-Za-z0-9_]*)")
+CRATE_GROUP = re.compile(r"\bcrate\s*::\s*\{([^{}]*)\}")
+CFG_TEST_ATTR = re.compile(r"cfg\s*\(\s*test\s*\)")
+GPUI = re.compile(r"\b(?:use\s+gpui\b|gpui\s*::)")
 
 LABELS = {
     "src_files": "files directly under src/",
     "long_files": f".rs files over {LONG_FILE} lines",
+    "long_functions": f"non-test fns over {LONG_FUNCTION} lines",
+    "cyclic_modules": "lib.rs modules in an import cycle",
+    "mutual_imports": "lib.rs mutual module import pairs",
+    "ui_cyclic_modules": "main.rs modules in an import cycle",
+    "ui_mutual_imports": "main.rs mutual module import pairs",
+    "gpui_files": "non-test files using gpui",
+    "lib_gpui_files": "files using gpui that lib.rs reaches",
     "path_attributes": "#[path attributes",
     "allow_dead_code": "#[allow(dead_code)]",
     "allow_clippy": "#[allow(clippy::…)]",
@@ -144,6 +164,91 @@ def non_test_code(text: str) -> str:
     return "".join(kept)
 
 
+def long_functions(code: str) -> int:
+    """Function items whose body spans more than `LONG_FUNCTION` lines."""
+    count = 0
+    for found in FUNCTION.finditer(code):
+        brace = code.find("{", found.end())
+        semicolon = code.find(";", found.end())
+        if brace < 0 or 0 <= semicolon < brace:
+            continue
+        # One line per newline plus the line the item starts on.
+        if code.count("\n", found.start(), item_end(code, brace)) >= LONG_FUNCTION:
+            count += 1
+    return count
+
+
+def declared_modules(text: str) -> list[tuple[str, str]]:
+    """`(attributes, name)` for each `mod name;` declaration that is not a test module."""
+    return [(attributes, name) for attributes, name in MODULE_FILE.findall(text)
+            if not CFG_TEST_ATTR.search(attributes)]
+
+
+def module_tree(root: str, texts: dict[str, str]) -> dict[str, set[str]]:
+    """The files of each top-level module declared in `root`, following its `mod` declarations."""
+    modules = {}
+    for attributes, name in declared_modules(texts[root]):
+        files, pending = set(), module_paths(root, name, attributes)
+        while pending:
+            path = pending.pop()
+            if path in files or path not in texts:
+                continue
+            files.add(path)
+            pending += [child for attributes, child in declared_modules(texts[path])
+                        for child in module_paths(path, child, attributes)]
+        modules[name] = files
+    return modules
+
+
+def module_edges(files: set[str], nodes: set[str], texts: dict[str, str]) -> set[str]:
+    """The top-level modules that `files` name through `crate::`."""
+    found = set()
+    for path in files:
+        code = non_test_code(texts[path])
+        found.update(name for name in CRATE_PATH.findall(code) if name in nodes)
+        for group in CRATE_GROUP.findall(code):
+            found.update(item.strip().split("::")[0] for item in group.split(",")
+                         if item.strip().split("::")[0] in nodes)
+    return found
+
+
+def cycles(modules: dict[str, set[str]], texts: dict[str, str]) -> tuple[int, int]:
+    """Modules in a cycle, and mutual module pairs (`a` names `b` and `b` names `a`)."""
+    nodes = set(modules)
+    edges = {name: module_edges(files, nodes, texts) for name, files in modules.items()}
+    index, low, stack, on_stack = {}, {}, [], set()
+    cyclic, at = 0, 0
+
+    def visit(node: str) -> None:
+        nonlocal at, cyclic
+        index[node] = low[node] = at
+        at += 1
+        stack.append(node)
+        on_stack.add(node)
+        for child in edges[node]:
+            if child not in index:
+                visit(child)
+                low[node] = min(low[node], low[child])
+            elif child in on_stack:
+                low[node] = min(low[node], index[child])
+        if low[node] == index[node]:
+            component = []
+            while True:
+                child = stack.pop()
+                on_stack.discard(child)
+                component.append(child)
+                if child == node:
+                    break
+            if len(component) > 1:
+                cyclic += len(component)
+
+    for node in nodes:
+        if node not in index:
+            visit(node)
+    mutual = sum(1 for name in edges for child in edges[name] if name in edges[child]) // 2
+    return cyclic, mutual
+
+
 def string_errors(text: str) -> int:
     """`Result<T, String>` with any T, nested generics included."""
     count = 0
@@ -187,6 +292,9 @@ def measure(rev: str) -> dict[str, int]:
     counts["retired_names"] = sum(1 for _, path in files if has_retired_name(path))
     texts = dict(zip((path for _, path in rust), blobs([blob for blob, _ in rust])))
     tests = test_files(texts)
+    modules = module_tree("src/lib.rs", texts) if "src/lib.rs" in texts else {}
+    ui_modules = module_tree("src/main.rs", texts) if "src/main.rs" in texts else {}
+    lib_files = set().union(*modules.values()) if modules else set()
     functions = set()
     for path, text in texts.items():
         counts["long_files"] += len(text.splitlines()) > LONG_FILE
@@ -196,9 +304,16 @@ def measure(rev: str) -> dict[str, int]:
                 counts["allow_dead_code"] += lint == "dead_code"
                 counts["allow_clippy"] += lint.startswith("clippy::")
         code = "" if path in tests else non_test_code(text)
+        counts["long_functions"] += long_functions(code)
         counts["unwraps"] += code.count(".unwrap()")
         counts["string_errors"] += string_errors(code)
+        if path.startswith("src/") and GPUI.search(code):
+            counts["gpui_files"] += 1
+            if path in lib_files:
+                counts["lib_gpui_files"] += 1
         functions.update(FN.findall(text))
+    counts["cyclic_modules"], counts["mutual_imports"] = cycles(modules, texts)
+    counts["ui_cyclic_modules"], counts["ui_mutual_imports"] = cycles(ui_modules, texts)
     manual = [blob for blob, path in files if path == "tools/ci/manual-tests.txt"]
     if manual:
         names = manual_test_names(blobs(manual)[0])

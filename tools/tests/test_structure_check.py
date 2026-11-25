@@ -62,6 +62,7 @@ class StructureCheck(unittest.TestCase):
         self.assertEqual(counts["unwraps"], 1)
         self.assertEqual(counts["string_errors"], 1)
         self.assertEqual(counts["stale_manual_tests"], 1)
+        self.assertEqual((counts["ui_cyclic_modules"], counts["ui_mutual_imports"]), (0, 0))
 
     def test_a_count_going_up_fails(self):
         head = self.repo.commit({
@@ -139,6 +140,72 @@ class StructureCheck(unittest.TestCase):
         })
         counts = check.measure(head)
         self.assertEqual((counts["unwraps"], counts["string_errors"]), (2, 1))
+
+    def test_only_functions_over_the_line_budget_are_counted(self):
+        def item(name: str, body_lines: int) -> str:
+            return f"fn {name}() {{\n" + "    let x = 1;\n" * body_lines + "}\n"
+
+        head = self.repo.commit({
+            # Start line, 78 body lines and the closing brace: 80 lines exactly.
+            "src/net.rs": item("at_the_limit", 78) + item("over_the_limit", 79),
+        })
+        counts = check.measure(head)
+        self.assertEqual(counts["long_functions"], 1)
+
+    def test_test_functions_are_left_out_of_the_length_count(self):
+        body = "fn t() {\n" + "    let x = 1;\n" * 100 + "}\n"
+        head = self.repo.commit({
+            "src/net.rs": BASE_FILES["src/net.rs"] + "#[cfg(test)]\nmod tests {\n" + body + "}\n",
+            "src/net/tests.rs": body,
+        })
+        self.assertEqual(check.measure(head)["long_functions"], 0)
+
+    def test_module_cycles_are_counted_from_crate_paths(self):
+        head = self.repo.commit({
+            "src/lib.rs": "mod a;\nmod b;\nmod c;\nmod d;\n",
+            "src/a.rs": "use crate::b::thing;\nuse crate::{c, d};\n",
+            "src/b.rs": "use crate::a::Thing;\n",
+            "src/c.rs": "fn local() {}\n",
+            "src/d.rs": "fn local() {}\n",
+        })
+        counts = check.measure(head)
+        self.assertEqual((counts["cyclic_modules"], counts["mutual_imports"]), (2, 1))
+
+    def test_ui_module_cycles_are_counted_separately_from_lib(self):
+        head = self.repo.commit({
+            "src/lib.rs": "mod library;\n",
+            "src/library.rs": "use crate::library::Item;\n",
+            "src/main.rs": "mod page_a;\nmod page_b;\nfn main() {}\n",
+            "src/page_a.rs": "use crate::page_b::Widget;\n",
+            "src/page_b.rs": "use crate::page_a::Widget;\n",
+        })
+        counts = check.measure(head)
+        self.assertEqual((counts["cyclic_modules"], counts["mutual_imports"]), (0, 0))
+        self.assertEqual((counts["ui_cyclic_modules"], counts["ui_mutual_imports"]), (2, 1))
+
+    def test_a_ui_cycle_going_up_fails_the_ratchet(self):
+        head = self.repo.commit({
+            "src/main.rs": "mod page_a;\nmod page_b;\nfn main() {}\n",
+            "src/page_a.rs": "use crate::page_b::Widget;\n",
+            "src/page_b.rs": "use crate::page_a::Widget;\n",
+        })
+        code, out = self.run_check(head)
+        self.assertEqual(code, 1)
+        self.assertIn("main.rs mutual module import pairs", out)
+        self.assertIn("went up", out)
+
+    def test_gpui_under_lib_fails_the_ratchet_and_comments_do_not_count(self):
+        head = self.repo.commit({
+            "src/lib.rs": "mod core_mod;\n",
+            "src/core_mod.rs": "// gpui is used by the window, not here.\nuse gpui::App;\n",
+            "src/main.rs": BASE_FILES["src/main.rs"] + "mod page;\n",
+            "src/page.rs": "use gpui::Render;\n// gpui::Window in a comment.\n",
+        })
+        code, out = self.run_check(head)
+        self.assertEqual(code, 1)
+        counts = check.measure(head)
+        self.assertEqual((counts["gpui_files"], counts["lib_gpui_files"]), (2, 1))
+        self.assertIn("files using gpui that lib.rs reaches", out)
 
     def test_a_test_only_fn_in_the_middle_hides_only_itself(self):
         handler = "fn handler() -> Result<(), String> { Ok(()) }\n"

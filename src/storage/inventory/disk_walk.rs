@@ -322,12 +322,12 @@ impl Storage {
                 }
             }
         }
-        let data = Root::open(&backend::data_dir())?;
-        let played: HashSet<_> = instances::list()
+        let data = Root::open(&self.data)?;
+        let played: HashSet<_> = instances::list_in(&self.game, &self.data)
             .into_iter()
             .filter_map(|instance| instance.resolve_version(None).ok())
             .collect();
-        for version in backend::installed() {
+        for version in backend::installed_in(&self.data.join("versions")) {
             if native_mods::is_native(&version)
                 && !played.contains(&version)
                 && native_mods::resource_dependent(&version).is_none()
@@ -365,7 +365,7 @@ impl Storage {
         for relative in ["cache/github", "mod-browser", "profile-heads"] {
             add(&mut entries, &data, relative, Category::OtherCaches)?;
         }
-        for instance in instances::list() {
+        for instance in instances::list_in(&self.game, &self.data) {
             // A missing version cannot prove that the instance is idle. Keep its caches.
             let Ok(version) = instance.resolve_version(None) else {
                 continue;

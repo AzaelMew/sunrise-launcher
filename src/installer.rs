@@ -15,6 +15,7 @@
 use crate::backend;
 use crate::data_location::{self, Roots};
 use crate::shortcut;
+use crate::windows_runtime::wide;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -300,11 +301,6 @@ fn step_aside(own: &Path, dir: &Path) -> io::Result<()> {
         }
     }
     Err(last)
-}
-
-fn wide(path: &Path) -> Vec<u16> {
-    use std::os::windows::ffi::OsStrExt;
-    path.as_os_str().encode_wide().chain([0]).collect()
 }
 
 fn hide(path: &Path) {

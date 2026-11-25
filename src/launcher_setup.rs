@@ -79,6 +79,7 @@ impl Launcher {
         let (location_error, location_unavailable) = location_page::startup_location();
         let mut this = Self {
             ui: Default::default(),
+            mods_state: Default::default(),
             theme: crate::theme::from_settings(&settings, window.appearance()),
             page: Page::from_env(),
             behind: Page::Play,

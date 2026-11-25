@@ -55,7 +55,7 @@ pub(in crate::mods) struct Work {
 impl Launcher {
     pub(in crate::mods) fn nightly_event(&mut self, event: Event) {
         let mut add = false;
-        let state = &mut self.ui.mods.nightly;
+        let state = &mut self.mods_state.nightly;
         match event {
             Event::Catalogue(catalogue) => {
                 state.reading = false;
@@ -99,18 +99,18 @@ impl Launcher {
     /// first, and added at the commit that read finds.
     pub(in crate::mods) fn reread_and_add(&mut self, source: Source) {
         self.inspect_nightly(source, true);
-        if let Some(open) = &mut self.ui.mods.nightly.open {
+        if let Some(open) = &mut self.mods_state.nightly.open {
             open.add_when_read = true;
         }
     }
 
     pub(in crate::mods) fn refresh_nightly_scope(&mut self) {
-        let state = &self.ui.mods.nightly;
+        let state = &self.mods_state.nightly;
         if state.open.is_none() && state.work.updates.is_none() {
             return;
         }
         let scope = self.mods_page_scope();
-        let state = &mut self.ui.mods.nightly;
+        let state = &mut self.mods_state.nightly;
         if state.open.as_ref().is_some_and(|open| open.scope != scope) {
             let from = state.open.take().map_or(Page::Discover, |open| open.from);
             if self.ui.page == Page::Project {
@@ -129,8 +129,7 @@ impl Launcher {
 
     pub(in crate::mods) fn inspect_nightly(&mut self, source: Source, refresh: bool) {
         let from = self
-            .ui
-            .mods
+            .mods_state
             .nightly
             .open
             .as_ref()
@@ -148,9 +147,9 @@ impl Launcher {
         let scope = self.mods_page_scope();
         self.ui.page = Page::Project;
         if from != Page::Installed {
-            self.ui.mods.open = None;
+            self.mods_state.open = None;
         }
-        let state = &mut self.ui.mods.nightly;
+        let state = &mut self.mods_state.nightly;
         if state.open.as_ref().is_none_or(|open| open.source != source) {
             crate::frame::scrolls("project").set_offset(gpui::point(px(0.), px(0.)));
         }
@@ -168,7 +167,7 @@ impl Launcher {
         if refresh {
             self.read_nightly_catalogue(true);
         }
-        let tx = self.ui.mods.tx.clone();
+        let tx = self.mods_state.tx.clone();
         std::thread::spawn(move || {
             let data = sources::details(&source, refresh);
             let _ = tx.send(super::super::Event::Nightly(Event::Detail(
@@ -180,12 +179,12 @@ impl Launcher {
 
     pub(super) fn request_nightly_icon(&mut self, icon: sources::SourceIcon) {
         use std::collections::hash_map::Entry;
-        let Entry::Vacant(entry) = self.ui.mods.nightly.work.icons.entry(icon.clone()) else {
+        let Entry::Vacant(entry) = self.mods_state.nightly.work.icons.entry(icon.clone()) else {
             return;
         };
         entry.insert(None);
-        let tx = self.ui.mods.tx.clone();
-        let misses = self.ui.mods.nightly.work.icon_misses.clone();
+        let tx = self.mods_state.tx.clone();
+        let misses = self.mods_state.nightly.work.icon_misses.clone();
         std::thread::spawn(move || {
             let path = icon.load(&misses);
             let _ = tx.send(super::super::Event::Nightly(Event::Icon(icon, path)));
@@ -196,16 +195,14 @@ impl Launcher {
         self.mods_locked().is_some()
             || (!self.mutating()
                 && self
-                    .ui
-                    .mods
+                    .mods_state
                     .snapshot
                     .as_ref()
                     .is_none_or(|snap| !snap.ready()))
     }
 
     pub(crate) fn source_picks_listed(&self, picks: &[Source]) -> bool {
-        self.ui
-            .mods
+        self.mods_state
             .nightly
             .catalogue
             .as_ref()
@@ -218,8 +215,7 @@ impl Launcher {
         }
         let scope = self.mods_page_scope();
         let Some(open) = self
-            .ui
-            .mods
+            .mods_state
             .nightly
             .open
             .as_ref()
@@ -234,7 +230,7 @@ impl Launcher {
             return;
         }
         if !self.source_picks_listed(std::slice::from_ref(&open.source)) {
-            self.ui.mods.notice = Some(Err(tr(
+            self.mods_state.notice = Some(Err(tr(
                 "This source listing changed. Open it again from Discover.",
             )
             .into()));
@@ -251,29 +247,33 @@ impl Launcher {
     }
 
     pub(crate) fn nightly_catalogue_current(&self) -> bool {
-        self.ui.mods.nightly.catalogue.as_ref().is_some_and(|list| {
-            list.saved_at.is_some()
-                && list.error.is_none()
-                && list.checked_at.elapsed().is_ok_and(|age| age < FRESH)
-        })
+        self.mods_state
+            .nightly
+            .catalogue
+            .as_ref()
+            .is_some_and(|list| {
+                list.saved_at.is_some()
+                    && list.error.is_none()
+                    && list.checked_at.elapsed().is_ok_and(|age| age < FRESH)
+            })
     }
 
     pub(in crate::mods) fn check_source_updates(&mut self, only: Option<&Origin>) {
-        if self.ui.mods.nightly.work.checking || !self.guard() {
+        if self.mods_state.nightly.work.checking || !self.guard() {
             return;
         }
         let scope = self.mods_page_scope();
         let target = match self.source_target() {
             Ok(target) => target,
             Err(error) => {
-                self.ui.mods.notice = Some(Err(error));
+                self.mods_state.notice = Some(Err(error));
                 return;
             }
         };
         let Some(rows) = self.discover_installed() else {
             return;
         };
-        let Some(inputs) = self.ui.mods.snapshot.as_ref().map(|s| s.key.clone()) else {
+        let Some(inputs) = self.mods_state.snapshot.as_ref().map(|s| s.key.clone()) else {
             return;
         };
         let origins = tracked_origins(&rows.local, only);
@@ -282,9 +282,9 @@ impl Launcher {
         }
         let only = only.map(|origin| origin.id.clone());
         // The last findings stay until this check answers (`merge_checked`).
-        self.ui.mods.nightly.work.checking = true;
+        self.mods_state.nightly.work.checking = true;
         let refresh_catalogue = !self.nightly_catalogue_current();
-        let tx = self.ui.mods.tx.clone();
+        let tx = self.mods_state.tx.clone();
         std::thread::spawn(move || {
             let proof =
                 SourceProof::capture(target.instance(), target.identity(), target.base()).ok();
@@ -379,7 +379,7 @@ impl Launcher {
     }
 
     pub(in crate::mods) fn source_updates_checking(&self) -> bool {
-        self.ui.mods.nightly.work.checking
+        self.mods_state.nightly.work.checking
     }
 
     pub(in crate::mods) fn source_update_version(&self, origin: &Origin) -> Option<&str> {
@@ -393,7 +393,7 @@ impl Launcher {
 
     pub(in crate::mods) fn source_update_notice(&self, only: Option<&str>) -> Option<&str> {
         // A check under way says so itself; the last one's outcome would contradict it.
-        if self.ui.mods.nightly.work.checking {
+        if self.mods_state.nightly.work.checking {
             return None;
         }
         let checked = self.source_updates_here()?;
@@ -415,9 +415,8 @@ impl Launcher {
 
     /// The last findings, while the installed mods are still the ones they were proved against.
     fn source_updates_here(&self) -> Option<&CheckedUpdates> {
-        let now = &self.ui.mods.snapshot.as_ref()?.key;
-        self.ui
-            .mods
+        let now = &self.mods_state.snapshot.as_ref()?.key;
+        self.mods_state
             .nightly
             .work
             .updates
@@ -431,7 +430,7 @@ impl Launcher {
         }
         if let Some((target, sources)) = self.take_source_updates(Some(id)) {
             if let Err(error) = self.queue_sources(target, sources) {
-                self.ui.mods.notice = Some(Err(error));
+                self.mods_state.notice = Some(Err(error));
             }
         }
     }
@@ -451,10 +450,10 @@ impl Launcher {
             .collect();
         // Source mods and registry mods update as two jobs, sources first.
         if let Some((target, sources)) = self.take_source_updates(None) {
-            self.ui.mods.notice = None;
+            self.mods_state.notice = None;
             self.mods.message = None;
             if let Err(error) = self.queue_sources(target, sources) {
-                self.ui.mods.notice = Some(Err(error));
+                self.mods_state.notice = Some(Err(error));
                 return;
             }
         }
@@ -475,8 +474,7 @@ impl Launcher {
         }
         let scope = self.mods_page_scope();
         let installed = self
-            .ui
-            .mods
+            .mods_state
             .snapshot
             .as_ref()
             .into_iter()
@@ -484,15 +482,14 @@ impl Launcher {
             .filter_map(|local| local.github.as_ref())
             .filter(|origin| !origin.is_manual());
         let checked = self
-            .ui
-            .mods
+            .mods_state
             .nightly
             .work
             .updates
             .as_mut()
             .filter(|updates| updates.scope == scope)
             .filter(|updates| {
-                self.ui.mods.snapshot.as_ref().map(|s| &s.key) == Some(&updates.inputs)
+                self.mods_state.snapshot.as_ref().map(|s| &s.key) == Some(&updates.inputs)
             })?;
         let target = checked.target.clone()?;
         let wanted: Vec<_> = installed

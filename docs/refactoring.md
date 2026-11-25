@@ -265,6 +265,16 @@ commit it's based on, and fails if any of these counts goes **up**:
 
 - files directly under `src/`
 - `.rs` files over 1000 lines
+- functions in non-test code over 80 lines, with the same non-test rules as below
+- top-level modules of `lib.rs` in an import cycle, and mutual import pairs between them. The
+  graph follows each module's `mod` declarations; an edge is a `crate::module` path in non-test
+  code. An SCC may split in two without lowering the number of modules in cycles, so both counts
+  are tracked separately.
+- the same two counts for the UI's own root, `main.rs`. They are separate from `lib.rs` so a move
+  between the window's modules cannot hide in the library's graph; V3 measures its decoupling
+  against them.
+- non-test files that use `gpui`, and, separately, the ones `lib.rs` reaches, which stay at zero
+  (§4). A comment that mentions `gpui` does not count.
 - `#[path` attributes
 - `#[allow(dead_code)]` and `#[allow(clippy::…)]`
 - `.unwrap()` and `Result<_, String>` in non-test code. The check's non-test code is stricter than

@@ -1,5 +1,6 @@
 //! Mods › Discover: browses the signed v2 registry index for the selected profile's exact build.
 use super::model::discover_v2::{self, V2Sort};
+use super::state::Menu;
 use super::ui::*;
 use super::*;
 use crate::frame::button;
@@ -22,7 +23,7 @@ impl Launcher {
     ) -> AnyElement {
         let mut page = self.discover_shell(window, focus, cx);
         let (cards, collections, categories, build_listed, stale_warning, from_cache) =
-            match &self.ui.mods.v2_catalog {
+            match &self.mods_state.v2_catalog {
                 V2Catalog::Ready {
                     cards,
                     collections,
@@ -70,7 +71,7 @@ impl Launcher {
                 }
             };
 
-        let f = self.ui.mods.filters.clone();
+        let f = self.mods_state.filters.clone();
         let mut shown = discover_v2::discover(&cards, &f);
         discover_v2::fold_members(&mut shown, &collections, &f);
         let total = shown.len();
@@ -101,8 +102,8 @@ impl Launcher {
                 tr("All categories").into(),
                 f.category.is_none(),
                 Box::new(|this: &mut Launcher| {
-                    this.ui.mods.filters.category = None;
-                    this.ui.mods.limit = 0;
+                    this.mods_state.filters.category = None;
+                    this.mods_state.limit = 0;
                 }) as Box<dyn Fn(&mut Launcher)>,
             ))
             .chain(categories.iter().map(|k| {
@@ -111,8 +112,8 @@ impl Launcher {
                     category_label(k).into(),
                     f.category.as_ref() == Some(k),
                     Box::new(move |this: &mut Launcher| {
-                        this.ui.mods.filters.category = Some(key.clone());
-                        this.ui.mods.limit = 0;
+                        this.mods_state.filters.category = Some(key.clone());
+                        this.mods_state.limit = 0;
                     }) as Box<dyn Fn(&mut Launcher)>,
                 )
             }))
@@ -126,8 +127,8 @@ impl Launcher {
                         s.label().into(),
                         f.sort == s,
                         Box::new(move |this: &mut Launcher| {
-                            this.ui.mods.filters.sort = s;
-                            this.ui.mods.limit = 0;
+                            this.mods_state.filters.sort = s;
+                            this.mods_state.limit = 0;
                         }) as Box<dyn Fn(&mut Launcher)>,
                     )
                 })
@@ -139,8 +140,8 @@ impl Launcher {
             category_menu,
             f.show_all,
             |this| {
-                this.ui.mods.filters.show_all = !this.ui.mods.filters.show_all;
-                this.ui.mods.limit = 0;
+                this.mods_state.filters.show_all = !this.mods_state.filters.show_all;
+                this.mods_state.limit = 0;
             },
             sort_menu,
             cx,
@@ -262,7 +263,7 @@ impl Launcher {
         }
 
         // The cards grid, culled by grid row so expanding "Show more" only builds cards near view.
-        let limit = self.ui.mods.limit.max(PAGE).min(total);
+        let limit = self.mods_state.limit.max(PAGE).min(total);
         // Competing ports sharing an in-game ID render as alternatives, never as one install.
         let port_groups = self.discover_port_groups();
         let grouped_ids = super::ports::grouped_project_ids(&port_groups);
@@ -327,7 +328,7 @@ impl Launcher {
                     // An install that just ended keeps saying so until the installed list it
                     // changed has been read again, rather than offering Install for a moment.
                     let rereading = installed_version.is_none()
-                        && self.ui.mods.snapshot.as_ref().is_some_and(|s| s.reading)
+                        && self.mods_state.snapshot.as_ref().is_some_and(|s| s.reading)
                         && matches!(
                             self.registry_card(&id),
                             Some(crate::mods_page::install::Card::Done(outcome))
@@ -446,8 +447,8 @@ impl Launcher {
         let show_all = |cx: &mut Context<Self>| {
             primary("alt-discover-show-all", tr("Show all")).on_click(cx.listener(
                 |this, _: &ClickEvent, _, cx| {
-                    this.ui.mods.filters.show_all = true;
-                    this.ui.mods.limit = 0;
+                    this.mods_state.filters.show_all = true;
+                    this.mods_state.limit = 0;
                     cx.notify();
                 },
             ))
@@ -511,10 +512,10 @@ impl Launcher {
         let action = has_filters.then(|| {
             button("alt-discover-clear", tr("Clear filters")).on_click(cx.listener(
                 |this, _: &ClickEvent, _, cx| {
-                    this.ui.mods.filters.text.clear();
-                    this.ui.mods.filters.category = None;
-                    this.ui.mods.find.set(String::new());
-                    this.ui.mods.limit = 0;
+                    this.mods_state.filters.text.clear();
+                    this.mods_state.filters.category = None;
+                    this.mods_state.find.set(String::new());
+                    this.mods_state.limit = 0;
                     cx.notify();
                 },
             ))
@@ -594,7 +595,7 @@ impl Launcher {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, _, _, cx| {
-                    if this.ui.mods.menu.take().is_some() {
+                    if this.mods_state.menu.take().is_some() {
                         cx.notify();
                     }
                 }),
@@ -732,7 +733,7 @@ impl Launcher {
         empty: AnyElement,
         cx: &mut Context<Self>,
     ) -> Div {
-        let limit = self.ui.mods.limit.max(PAGE).min(total);
+        let limit = self.mods_state.limit.max(PAGE).min(total);
         let results = div()
             .id("mods-discover-results")
             .flex_1()
@@ -758,7 +759,8 @@ impl Launcher {
                                 )
                                 .on_click(cx.listener(
                                     |this, _: &ClickEvent, _, cx| {
-                                        this.ui.mods.limit = this.ui.mods.limit.max(PAGE) + PAGE;
+                                        this.mods_state.limit =
+                                            this.mods_state.limit.max(PAGE) + PAGE;
                                         cx.notify();
                                     },
                                 )),
@@ -777,7 +779,7 @@ impl Launcher {
         cx: &mut Context<Self>,
     ) -> Div {
         let p = palette();
-        let open = self.ui.mods.menu == Some(which);
+        let open = self.mods_state.menu == Some(which);
         let popover =
             |items: Vec<MenuOption>, left: bool, cx: &mut Context<Self>| {
                 deferred(
@@ -815,7 +817,7 @@ impl Launcher {
                                     .child(text)
                                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                                         pick(this);
-                                        this.ui.mods.menu = None;
+                                        this.mods_state.menu = None;
                                         cx.notify();
                                     }))
                             },
@@ -856,7 +858,7 @@ impl Launcher {
                     ))
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        this.ui.mods.menu = match this.ui.mods.menu {
+                        this.mods_state.menu = match this.mods_state.menu {
                             Some(m) if m == which => None,
                             _ => Some(which),
                         };
@@ -869,8 +871,7 @@ impl Launcher {
     /// Never label cards from another profile or from an incomplete installed read.
     pub(super) fn discover_installed(&self) -> Option<&InstalledRows> {
         let home = self.mods_home();
-        self.ui
-            .mods
+        self.mods_state
             .snapshot
             .as_ref()
             // While a re-read runs, the profile's last confirmed rows stay shown.

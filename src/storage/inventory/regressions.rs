@@ -257,7 +257,13 @@ fn capable_units_delete_only_after_the_last_game_lease_and_mixed_builds_stay_res
     assert!(!cache.exists());
     assert_eq!(command().status().unwrap().code(), Some(78));
     fs::remove_file(install.join(".installed")).unwrap();
-    let storage = Storage::at(&root.join("data")).unwrap();
+    // This child has data and game folders of its own, which the walk must see.
+    let storage = Storage::at_in(
+        &root.join("data"),
+        backend::data_dir(),
+        backend::game_home(),
+    )
+    .unwrap();
     assert!(
         storage
             .entries()

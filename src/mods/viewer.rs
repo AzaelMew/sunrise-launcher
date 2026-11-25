@@ -2,8 +2,8 @@
 //! gallery with ‹ › or the arrow keys, zooms in where it is clicked, and shrinks back into its
 //! tile on Esc, ✕ or a click on the dark around it. Pictures load as they are shown, so a pack's
 //! long gallery isn't fetched on opening its page.
-use super::ui::*;
 use super::*;
+use crate::frame::c;
 use crate::paint::palette;
 use gpui::{
     img, AnimationExt, Bounds, ElementId, MouseButton, ObjectFit, Pixels, Point, ScrollHandle, Size,
@@ -169,8 +169,8 @@ impl Launcher {
 
     /// Opens the gallery `urls` at picture `at`, growing it out of its tile.
     pub(super) fn viewer_open(&mut self, urls: Rc<[Picture]>, at: usize) {
-        let turn = self.ui.mods.viewer.as_ref().map_or(0, |v| v.turn + 1);
-        self.ui.mods.viewer = Some(Viewer {
+        let turn = self.mods_state.viewer.as_ref().map_or(0, |v| v.turn + 1);
+        self.mods_state.viewer = Some(Viewer {
             urls,
             at,
             closing: false,
@@ -183,7 +183,7 @@ impl Launcher {
 
     /// Shrinks the picture back into its thumbnail; the viewer goes once it has.
     pub(crate) fn viewer_close(&mut self, cx: &mut Context<Self>) -> bool {
-        let Some(v) = self.ui.mods.viewer.as_mut().filter(|v| !v.closing) else {
+        let Some(v) = self.mods_state.viewer.as_mut().filter(|v| !v.closing) else {
             return false;
         };
         v.closing = true;
@@ -193,8 +193,13 @@ impl Launcher {
         cx.spawn(async move |this, cx| {
             cx.background_executor().timer(GROW.duration()).await;
             let _ = this.update(cx, |this, cx| {
-                if this.ui.mods.viewer.as_ref().is_some_and(|v| v.turn == turn) {
-                    this.ui.mods.viewer = None;
+                if this
+                    .mods_state
+                    .viewer
+                    .as_ref()
+                    .is_some_and(|v| v.turn == turn)
+                {
+                    this.mods_state.viewer = None;
                     cx.notify();
                 }
             });
@@ -206,7 +211,7 @@ impl Launcher {
 
     /// Shows the next (`by` 1) or the previous (`by` -1) picture, round the ends.
     pub(crate) fn viewer_step(&mut self, by: isize, cx: &mut Context<Self>) -> bool {
-        let Some(v) = self.ui.mods.viewer.as_mut().filter(|v| !v.closing) else {
+        let Some(v) = self.mods_state.viewer.as_mut().filter(|v| !v.closing) else {
             return false;
         };
         let n = v.urls.len() as isize;
@@ -222,7 +227,7 @@ impl Launcher {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        let v = self.ui.mods.viewer.as_ref()?;
+        let v = self.mods_state.viewer.as_ref()?;
         let (at, count) = (v.at, v.urls.len());
         let picture = v.urls.get(at)?.clone();
         let caption = match &picture {
@@ -311,7 +316,7 @@ impl Launcher {
             .occlude()
             .cursor_pointer()
             .on_click(cx.listener(move |this, ev: &ClickEvent, _, cx| {
-                if let Some(v) = this.ui.mods.viewer.as_mut().filter(|v| !v.closing) {
+                if let Some(v) = this.mods_state.viewer.as_mut().filter(|v| !v.closing) {
                     v.toggle_zoom(over(ev.position()));
                     cx.notify();
                 }

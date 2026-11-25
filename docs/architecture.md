@@ -41,9 +41,10 @@ Names in this table are relative to [`src/`](../src/). The binary and the shared
 | Directories | What lives there |
 | --- | --- |
 | `src/account/` | Microsoft sign-in (in the foreground and on its own thread), accounts.json, the owner gate and the game's session file, session status, secret storage (the `SecretStore` trait and its layered keychain-then-file store, the secrets file, the OS keychain on each platform) and account tests. |
-| `src/backend/` | The data and build folders, installation, release assets and selection, update selection, settings helpers, Play logging, and message types. |
+| `src/backend/` | The data and build folders, the game architecture, HTTP fetching, releases and the update check, downloading and installing builds, installation, release assets and selection, update selection, settings helpers, Play logging, and message types. |
 | `src/browser/`, `src/browser/installed/`, `src/browser/sunrise/`, `src/browser/sunrise/auto/` | Source-specific browser operations, installed-pack tests, Sunrise dependency and pack handling, and registry auto-update tests. |
 | `src/cli/`, `src/cli/native_permission_impl/` | One module per group of subcommands (accounts, data, mods, instances and modpacks, worlds and packs, servers, settings, toolchains, update, developer builds), progress, settings JSON output, the native-build permission prompt, and the CLI's tests. |
+| `src/instances/` | An instance's listing and Play selection, creation and copying, edits, deletion, and runs; its lifecycle gates, interrupted-deletion recovery and tests. |
 | `src/instances_page/` | Which sections of the instance settings dialog hold edits Save has not kept. |
 | `src/internet/`, `src/servers/`, `src/servers_page/` | Hosting share UI; the dedicated server's parts (`servers/`: `list`, `programs`, `runner`, `new_server`, `files`, `api`), remote server control and its tests (`servers/remote/`); and the Servers page's children: hosting, the Create a server dialog and text helpers. |
 | `src/jars/`, `src/zip_intake/` | Jar download and launch preparation, and the ZIP intake source adapter and tests. |
@@ -54,7 +55,7 @@ Names in this table are relative to [`src/`](../src/). The binary and the shared
 | `src/skins_page/` | The Skins tab: its jobs and queues, each account's page state and edits, opening the page and reading the profile, choosing and saving, the drawing, saved and default skins on disk, and its tests. |
 | `src/storage/`, `src/storage/inventory/`, `src/theme_files/`, `src/theme_files/fixtures/` | Storage inventory, its regression tests, and eviction. Theme file tests and their image fixture. |
 | `src/appearance/`, `src/cache_cleanup/`, `src/data_location/`, `src/downloads/`, `src/github/`, `src/github_mods/`, `src/i18n/`, `src/java/`, `src/launch/`, `src/launch_state/`, `src/mac_update/`, `src/mojang/`, `src/native_cache/`, `src/native_status/`, `src/relocation/`, `src/shortcut/`, `src/sources/`, `src/themes/` | Tests alongside their matching infrastructure modules. |
-| `src/datapacks/`, `src/export/`, `src/game_log/`, `src/home/`, `src/import/`, `src/instances/`, `src/join/`, `src/packs/`, `src/server_list/`, `src/tailscale/`, `src/worlds/` | Tests alongside their matching feature modules. |
+| `src/datapacks/`, `src/export/`, `src/game_log/`, `src/home/`, `src/import/`, `src/join/`, `src/packs/`, `src/server_list/`, `src/tailscale/`, `src/worlds/` | Tests alongside their matching feature modules. |
 
 ### Scenery, shared crates, and tools
 

@@ -174,6 +174,9 @@ const LOG_LINES: usize = 2000;
 
 struct Launcher {
     ui: frame::State,
+    /// The Mods page's own state, kept by the launcher rather than the frame so the frame
+    /// draws the page without depending on the Mods module (`mods/state.rs`).
+    mods_state: mods::ModsState,
     theme: Theme,
     page: Page,
     /// The page under the glass Settings dialog: the last one shown before it opened.

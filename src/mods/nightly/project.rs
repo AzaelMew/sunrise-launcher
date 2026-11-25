@@ -6,7 +6,7 @@ use sunrise_launcher::browser::sunrise::SourceError;
 
 impl Launcher {
     pub(in crate::mods) fn nightly_project(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        let state = &self.ui.mods.nightly;
+        let state = &self.mods_state.nightly;
         let open = state.open.as_ref().expect("a Nightly detail is open");
         let source = &open.source;
         let inspection = open.inspection.as_ref();
@@ -138,7 +138,7 @@ impl Launcher {
             let controls = installed_row.as_ref().map(|row| {
                 let cells = model::cells(
                     row,
-                    self.ui.mods.errors.get(&row.id).map(String::as_str),
+                    self.mods_state.errors.get(&row.id).map(String::as_str),
                     self.build_here()
                         .filter(|_| row.on)
                         .and_then(|run| run.state_of(&row.id, &row.version)),
@@ -281,7 +281,7 @@ impl Launcher {
                 ))
             }))
             .children(
-                (!busy && missing && offline && !self.ui.mods.nightly.reading)
+                (!busy && missing && offline && !self.mods_state.nightly.reading)
                     .then(|| retry("nightly-refresh-catalogue", cx)),
             )
             .children(failure_panel)
@@ -330,7 +330,7 @@ impl Launcher {
         let name = name.to_owned();
         button("nightly-build-log", tr("View build log")).on_click(cx.listener(
             move |this, _, _, cx| {
-                this.ui.mods.nightly.work.log = Some((name.clone(), log.clone()));
+                this.mods_state.nightly.work.log = Some((name.clone(), log.clone()));
                 this.open_sheet(crate::sheets::Sheet::NightlySourceLog);
                 cx.notify();
             },
@@ -338,7 +338,7 @@ impl Launcher {
     }
 
     pub(crate) fn source_log_body(&self, cx: &mut Context<Self>) -> Option<Div> {
-        let (name, log) = self.ui.mods.nightly.work.log.as_ref()?;
+        let (name, log) = self.mods_state.nightly.work.log.as_ref()?;
         let title = trf("{mod} build log", &[("mod", name)]);
         let log = log.to_string();
         Some(

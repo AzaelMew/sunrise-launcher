@@ -49,7 +49,7 @@ impl Launcher {
             to,
             Installed::Mods | Installed::ModsOff | Installed::Mod(_) | Installed::ModNamed(_)
         ));
-        self.ui.page = self.ui.mods.enter(&to);
+        self.ui.page = self.mods_state.enter(&to);
         self.game_packs.confirm_remove = None;
         self.game_packs.stale();
         self.mods_refresh();

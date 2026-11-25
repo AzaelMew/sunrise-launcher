@@ -52,7 +52,6 @@ pub(super) struct State {
     pub page: Page,
     pub home: crate::home::HomeState,
     pub backdrop: crate::backdrop::Backdrop,
-    pub mods: crate::mods::ModsState,
     pub sheet: Option<Sheet>,
     pub sheets: crate::sheets::SheetsState,
     pub settings: crate::settings::SettingsView,
@@ -174,6 +173,152 @@ impl<T: InteractiveElement + ParentElement + Styled> Reach for T {
                 .inset_0(),
         )
     }
+}
+
+pub(crate) fn c(x: u32) -> gpui::Hsla {
+    gpui::rgb(x).into()
+}
+
+pub(crate) fn mix(a: gpui::Hsla, b: gpui::Hsla, v: f32) -> gpui::Hsla {
+    let (a, b) = (gpui::Rgba::from(a), gpui::Rgba::from(b));
+    let m = |x: f32, y: f32| x + (y - x) * v;
+    gpui::Hsla::from(gpui::Rgba {
+        r: m(a.r, b.r),
+        g: m(a.g, b.g),
+        b: m(a.b, b.b),
+        a: m(a.a, b.a),
+    })
+}
+
+/// Two views of one page side by side as underline sub-tabs (`id`, `label`, chosen, its page):
+/// Mods' Installed | Discover and Servers' Join | Host. The pair is one Tab stop, and the arrow
+/// keys go to the other view, as a click on it would; `go` opens a view.
+pub(crate) fn segmented<P: Copy + 'static>(
+    id: &'static str,
+    views: [(&'static str, SharedString, bool, P); 2],
+    go: fn(&mut Launcher, P),
+    cx: &mut Context<Launcher>,
+) -> Stateful<Div> {
+    let other = views
+        .iter()
+        .find(|(_, _, on, _)| !*on)
+        .map(|(_, _, _, page)| *page);
+    let second_on = views[1].2;
+    let slide = crate::motion::sliding(id, second_on);
+    let mut pair = div()
+        .id(id)
+        .tab_index(0)
+        .flex()
+        .flex_none()
+        .items_center()
+        .gap(px(24.))
+        .px(px(4.))
+        .mx(px(-4.))
+        .mb(px(-2.))
+        .rounded(tokens::r(tokens::R_SMALL))
+        .border_1()
+        .border_color(gpui::transparent_black())
+        .focus_visible(|s| s.border_color(c(palette().focus)))
+        .on_key_down(cx.listener(move |this, ev: &KeyDownEvent, _, cx| {
+            if !matches!(ev.keystroke.key.as_str(), "left" | "right" | "up" | "down") {
+                return;
+            }
+            if let Some(page) = other {
+                go(this, page);
+            }
+            cx.stop_propagation();
+            cx.notify();
+        }));
+    let active_color = c(palette().text);
+    let muted_color = c(palette().muted);
+    let accent_color = c(palette().accent);
+    for (idx, (view, label, on, page)) in views.into_iter().enumerate() {
+        let bar: Option<AnyElement> = match slide {
+            Some(slide) => {
+                // Directional glide: when moving 0 -> 1, tab 0 retracts toward the right while
+                // tab 1 extends from the left; when moving 1 -> 0, the reverse.
+                let retract_right = idx == 0;
+                Some(
+                    div()
+                        .absolute()
+                        .bottom_0()
+                        .h(px(2.))
+                        .rounded(tokens::r(tokens::R_BAR))
+                        .bg(accent_color)
+                        .with_animation(
+                            ElementId::named_usize(format!("{view}-bar"), slide),
+                            crate::motion::slide_motion(),
+                            move |d, p| {
+                                if on {
+                                    if retract_right {
+                                        d.right_0().left(gpui::relative(1. - p)).opacity(p)
+                                    } else {
+                                        d.left_0().right(gpui::relative(1. - p)).opacity(p)
+                                    }
+                                } else if retract_right {
+                                    d.right_0().left(gpui::relative(p)).opacity(1. - p)
+                                } else {
+                                    d.left_0().right(gpui::relative(p)).opacity(1. - p)
+                                }
+                            },
+                        )
+                        .into_any_element(),
+                )
+            }
+            None if on => Some(
+                div()
+                    .absolute()
+                    .bottom_0()
+                    .left_0()
+                    .right_0()
+                    .h(px(2.))
+                    .rounded(tokens::r(tokens::R_BAR))
+                    .bg(accent_color)
+                    .into_any_element(),
+            ),
+            None => None,
+        };
+        let label_el: AnyElement = match slide {
+            Some(slide) => div()
+                .child(label)
+                .with_animation(
+                    ElementId::named_usize(format!("{view}-label"), slide),
+                    crate::motion::slide_motion(),
+                    move |d, p| {
+                        let v = if on { p } else { 1. - p };
+                        d.text_color(mix(muted_color, active_color, v))
+                    },
+                )
+                .into_any_element(),
+            None => div().child(label).into_any_element(),
+        };
+        pair = pair.child(
+            div()
+                .id(view)
+                .relative()
+                .pt(px(2.))
+                .pb(px(10.))
+                .flex()
+                .items_center()
+                .text_size(px(tokens::BODY))
+                .font_weight(FontWeight::MEDIUM)
+                .cursor_pointer()
+                .when(slide.is_none() && on, |d| d.text_color(active_color))
+                .when(slide.is_none() && !on, |d| {
+                    d.text_color(muted_color)
+                        .hover(move |s| s.text_color(active_color))
+                })
+                .child(label_el)
+                .children(bar)
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    if !on {
+                        go(this, page);
+                    }
+                    cx.notify();
+                })),
+        );
+    }
+    pair
 }
 
 fn focus_mark() -> gpui::Hsla {
@@ -730,25 +875,28 @@ impl Launcher {
                         .items_center()
                         .border_b_1()
                         .border_color(rgb(palette().divider))
-                        .child(crate::mods::segmented(
-                            "servers-tabs",
-                            [
-                                (
-                                    "servers-join",
-                                    tr("Join").into(),
-                                    page == Page::Join,
-                                    Page::Join,
-                                ),
-                                (
-                                    "servers-host",
-                                    tr("Host").into(),
-                                    page == Page::Hosting,
-                                    Page::Hosting,
-                                ),
-                            ],
-                            Launcher::navigate,
-                            cx,
-                        )),
+                        .child(
+                            segmented(
+                                "servers-tabs",
+                                [
+                                    (
+                                        "servers-join",
+                                        tr("Join").into(),
+                                        page == Page::Join,
+                                        Page::Join,
+                                    ),
+                                    (
+                                        "servers-host",
+                                        tr("Host").into(),
+                                        page == Page::Hosting,
+                                        Page::Hosting,
+                                    ),
+                                ],
+                                Launcher::navigate,
+                                cx,
+                            )
+                            .seen(),
+                        ),
                 );
                 div()
                     .flex()
