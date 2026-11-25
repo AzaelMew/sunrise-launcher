@@ -619,13 +619,13 @@ fn an_owner_plays_with_a_session() {
 /// A keychain that reads but refuses to keep anything new (#3249).
 struct Refusing(MemoryStore);
 impl SecretStore for Refusing {
-    fn get(&self, key: &str) -> Result<Option<String>, String> {
+    fn get(&self, key: &str) -> Result<Option<String>, StoreError> {
         self.0.get(key)
     }
-    fn set(&self, _: &str, _: &str) -> Result<(), String> {
+    fn set(&self, _: &str, _: &str) -> Result<(), StoreError> {
         Err("the keyring is locked".into())
     }
-    fn delete(&self, key: &str) -> Result<(), String> {
+    fn delete(&self, key: &str) -> Result<(), StoreError> {
         self.0.delete(key)
     }
     fn persistent(&self) -> bool {
@@ -933,10 +933,10 @@ struct FullItems {
     room: usize,
 }
 impl Items for FullItems {
-    fn read(&self, key: &str) -> Result<Option<String>, String> {
+    fn read(&self, key: &str) -> Result<Option<String>, StoreError> {
         Ok(self.items.lock().unwrap().get(key).cloned())
     }
-    fn write(&self, key: &str, piece: &str) -> Result<(), String> {
+    fn write(&self, key: &str, piece: &str) -> Result<(), StoreError> {
         let mut items = self.items.lock().unwrap();
         if !items.contains_key(key) && items.len() >= self.room {
             return Err(credential_manager_says(8).unwrap().into());
@@ -944,7 +944,7 @@ impl Items for FullItems {
         items.insert(key.into(), piece.into());
         Ok(())
     }
-    fn remove(&self, key: &str) -> Result<bool, String> {
+    fn remove(&self, key: &str) -> Result<bool, StoreError> {
         Ok(self.items.lock().unwrap().remove(key).is_some())
     }
 }
@@ -961,7 +961,7 @@ fn a_secret_the_keychain_cant_finish_keeps_the_old_one() {
     // A renewal three pieces long: the first two overwrite, the third finds the store full.
     let new = "n".repeat(2 * PIECE + 1);
     let said = set_pieces(&items, UUID, &new).unwrap_err();
-    assert_eq!(said, CREDENTIAL_MANAGER_FULL);
+    assert_eq!(said.0, CREDENTIAL_MANAGER_FULL);
     assert_eq!(get_pieces(&items, UUID).unwrap(), Some(old));
     // A sign-in into a full store keeps nothing, and says why.
     let full = FullItems {
@@ -969,7 +969,7 @@ fn a_secret_the_keychain_cant_finish_keeps_the_old_one() {
         room: 0,
     };
     assert_eq!(
-        set_pieces(&full, UUID, "s").unwrap_err(),
+        set_pieces(&full, UUID, "s").unwrap_err().0,
         CREDENTIAL_MANAGER_FULL
     );
     assert_eq!(get_pieces(&full, UUID).unwrap(), None);
@@ -1010,14 +1010,14 @@ struct RefusedDeletes {
     left: Mutex<usize>,
 }
 impl Items for RefusedDeletes {
-    fn read(&self, key: &str) -> Result<Option<String>, String> {
+    fn read(&self, key: &str) -> Result<Option<String>, StoreError> {
         Ok(self.items.lock().unwrap().get(key).cloned())
     }
-    fn write(&self, key: &str, piece: &str) -> Result<(), String> {
+    fn write(&self, key: &str, piece: &str) -> Result<(), StoreError> {
         self.items.lock().unwrap().insert(key.into(), piece.into());
         Ok(())
     }
-    fn remove(&self, key: &str) -> Result<bool, String> {
+    fn remove(&self, key: &str) -> Result<bool, StoreError> {
         let mut left = self.left.lock().unwrap();
         if *left == 0 {
             return Err("the keychain refused the delete".into());
@@ -1051,7 +1051,7 @@ fn a_refused_delete_puts_the_split_secret_back() {
         // A writer's set over the split layout fails the same way, and reads back the same.
         *items.left.lock().unwrap() = left;
         assert_eq!(
-            set_item(&items, UUID, "new").unwrap_err(),
+            set_item(&items, UUID, "new").unwrap_err().0,
             "the keychain refused the delete"
         );
         assert_eq!(get_item(&items, UUID).unwrap(), Some(old.clone()));
@@ -1075,14 +1075,14 @@ fn a_refused_delete_puts_the_split_secret_back() {
 /// The keys `has_owner` asked for, in order (each read can ask for the keychain on macOS).
 struct Reading<'a>(&'a MemoryStore, Mutex<Vec<String>>);
 impl SecretStore for Reading<'_> {
-    fn get(&self, key: &str) -> Result<Option<String>, String> {
+    fn get(&self, key: &str) -> Result<Option<String>, StoreError> {
         self.1.lock().unwrap().push(key.into());
         self.0.get(key)
     }
-    fn set(&self, key: &str, secret: &str) -> Result<(), String> {
+    fn set(&self, key: &str, secret: &str) -> Result<(), StoreError> {
         self.0.set(key, secret)
     }
-    fn delete(&self, key: &str) -> Result<(), String> {
+    fn delete(&self, key: &str) -> Result<(), StoreError> {
         self.0.delete(key)
     }
     fn persistent(&self) -> bool {
@@ -1378,7 +1378,7 @@ fn a_broken_secrets_file_is_an_error_that_never_shows_it() {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         let sealed = store.seal(broken.as_bytes()).unwrap();
         std::fs::write(&path, &sealed).unwrap();
-        let said = store.get("a").unwrap_err();
+        let said = store.get("a").unwrap_err().0;
         assert!(!said.contains("leaked-secret"), "{said}");
         assert!(said.contains("line 1"), "{said}");
         // Never written over: the secrets in it aren't lost in silence.
@@ -1405,7 +1405,7 @@ fn the_secrets_file_is_never_plain_text() {
     *changed.last_mut().unwrap() ^= 1;
     for other in [b"{\"a\":\"leaked-secret\"}".to_vec(), changed] {
         std::fs::write(&path, &other).unwrap();
-        let said = store.get("a").unwrap_err();
+        let said = store.get("a").unwrap_err().0;
         assert!(!said.contains("leaked-secret"), "{said}");
         assert!(said.contains("Remove it and sign in again"), "{said}");
         assert!(store.set("c", "four").is_err());
@@ -1432,7 +1432,7 @@ fn the_key_takes_the_install_secret_beside_the_file() {
     let elsewhere = FileStore::new(other.clone());
     elsewhere.set("b", "other-secret").unwrap();
     std::fs::copy(&path, &other).unwrap();
-    let said = elsewhere.get("a").unwrap_err();
+    let said = elsewhere.get("a").unwrap_err().0;
     assert!(said.contains("Remove it and sign in again"), "{said}");
     // Without its secret, the file can't be read either: no key is left to work out.
     std::fs::remove_file(&secret).unwrap();
@@ -1573,11 +1573,11 @@ impl Keychain {
 struct Shared(Arc<Keychain>);
 
 impl SecretStore for Shared {
-    fn get(&self, key: &str) -> Result<Option<String>, String> {
+    fn get(&self, key: &str) -> Result<Option<String>, StoreError> {
         self.0.answer()?;
         self.0.kept.get(key)
     }
-    fn set(&self, key: &str, secret: &str) -> Result<(), String> {
+    fn set(&self, key: &str, secret: &str) -> Result<(), StoreError> {
         self.0.answer()?;
         if self.0.refuses.lock().unwrap().iter().any(|k| k == key) {
             return Err("the keychain is full".into());
@@ -1587,7 +1587,7 @@ impl SecretStore for Shared {
         }
         self.0.kept.set(key, secret)
     }
-    fn delete(&self, key: &str) -> Result<(), String> {
+    fn delete(&self, key: &str) -> Result<(), StoreError> {
         self.0.answer()?;
         self.0.kept.delete(key)
     }
@@ -1930,15 +1930,15 @@ impl Silent {
 }
 
 impl SecretStore for Silent {
-    fn get(&self, _: &str) -> Result<Option<String>, String> {
+    fn get(&self, _: &str) -> Result<Option<String>, StoreError> {
         self.answer();
         Ok(None)
     }
-    fn set(&self, _: &str, _: &str) -> Result<(), String> {
+    fn set(&self, _: &str, _: &str) -> Result<(), StoreError> {
         self.answer();
         Ok(())
     }
-    fn delete(&self, _: &str) -> Result<(), String> {
+    fn delete(&self, _: &str) -> Result<(), StoreError> {
         self.answer();
         Ok(())
     }
@@ -2038,13 +2038,13 @@ fn a_keyring_given_up_on_is_not_asked_again_until_it_answers() {
         SILENT_WAIT,
     );
     let started = Instant::now();
-    assert_eq!(keyring.get("A"), Err(keyring_no_answer(SILENT_WAIT)));
+    assert_eq!(keyring.get("A"), Err(keyring_no_answer(SILENT_WAIT).into()));
     assert!(started.elapsed() >= SILENT_WAIT);
     // Still stuck: the next calls fail at once, without a second call piling up behind it.
     let again = Instant::now();
     assert_eq!(
         keyring.set("A", "secret-a"),
-        Err(keyring_no_answer(SILENT_WAIT))
+        Err(keyring_no_answer(SILENT_WAIT).into())
     );
     assert!(again.elapsed() < SILENT_WAIT);
     assert_eq!(asked.load(std::sync::atomic::Ordering::SeqCst), 1);
@@ -2357,13 +2357,13 @@ fn a_damaged_saved_sign_in_is_not_overwritten_or_exposed() {
 fn an_unreadable_keychain_is_retryable_without_any_write() {
     struct Locked;
     impl SecretStore for Locked {
-        fn get(&self, _: &str) -> Result<Option<String>, String> {
+        fn get(&self, _: &str) -> Result<Option<String>, StoreError> {
             Err("locked-keychain-details".into())
         }
-        fn set(&self, _: &str, _: &str) -> Result<(), String> {
+        fn set(&self, _: &str, _: &str) -> Result<(), StoreError> {
             panic!("must not overwrite an unreadable credential")
         }
-        fn delete(&self, _: &str) -> Result<(), String> {
+        fn delete(&self, _: &str) -> Result<(), StoreError> {
             panic!("must not delete an unreadable credential")
         }
         fn persistent(&self) -> bool {

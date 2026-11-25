@@ -48,7 +48,7 @@ pub fn token_for(
     let keep = |secrets: &Secrets| {
         serde_json::to_string(secrets)
             .map_err(|e| e.to_string())
-            .and_then(|text| store.set(&account.uuid, &text))
+            .and_then(|text| store.set(&account.uuid, &text).map_err(String::from))
     };
     match check(ep, client_id, account, secrets) {
         Check::Owns(_, secrets) => {
@@ -101,7 +101,7 @@ pub fn launch(
                 // says this instead.
                 let said = crate::i18n::trf(
                     "Can't read {name}'s sign-in: {why}",
-                    &[("name", &account.name), ("why", &why)],
+                    &[("name", &account.name), ("why", &why.0)],
                 );
                 eprintln!("Sunrise: {said}");
                 if plays {
