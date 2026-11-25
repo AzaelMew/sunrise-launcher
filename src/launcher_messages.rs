@@ -654,7 +654,7 @@ impl Launcher {
                                             );
                                         })
                                     {
-                                        eprintln!(
+                                        sunrise_launcher::elog!(
                                             "{}",
                                             trf(
                                                 "Play time not saved: {error}",

@@ -386,7 +386,7 @@ impl Launcher {
                     });
                     if let Some(list) = &final_releases {
                         if let Err(error) = backend::note_play_catalogue(list) {
-                            eprintln!("Could not remember the current installed Nightly: {error}");
+                            sunrise_launcher::elog!("Could not remember the current installed Nightly: {error}");
                         }
                     }
                     Msg::Updates(Box::new(updates))

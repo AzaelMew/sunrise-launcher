@@ -771,7 +771,7 @@ fn list_snapshot(
         }
         if housekeeping && (retained != before || store.instances.len() != retained) {
             if let Err(error) = store.save(data) {
-                eprintln!("Sunrise: instances.json is not saved: {error}");
+                crate::elog!("Sunrise: instances.json is not saved: {error}");
             }
         }
     }
@@ -811,7 +811,7 @@ fn list_snapshot(
     }
     if admitted && housekeeping && recovered_choices {
         if let Err(error) = store.save(data) {
-            eprintln!("Sunrise: instances.json is not saved: {error}");
+            crate::elog!("Sunrise: instances.json is not saved: {error}");
         }
     }
     let mut out: Vec<Instance> = found
@@ -1385,7 +1385,7 @@ fn create_with_publish(
                 }
                 Err(error) => {
                     // The sidecar is already durable. Do not unpublish or discard it.
-                    eprintln!("Sunrise: instances.json is not saved: {error}");
+                    crate::elog!("Sunrise: instances.json is not saved: {error}");
                 }
             }
             Ok(())

@@ -809,7 +809,7 @@ impl Bounded {
         use std::sync::atomic::Ordering::SeqCst;
         let no_answer = || {
             let said = keyring_no_answer(self.wait);
-            eprintln!("Sunrise: {said}");
+            crate::elog!("Sunrise: {said}");
             Err(said)
         };
         if self.stuck.load(SeqCst) > 0 {
@@ -2193,7 +2193,7 @@ pub fn launch(
                     "Can't read {name}'s sign-in: {why}",
                     &[("name", &account.name), ("why", &why)],
                 );
-                eprintln!("Sunrise: {said}");
+                crate::elog!("Sunrise: {said}");
                 if plays {
                     pass.offline = Some(said.clone());
                 }
@@ -2567,7 +2567,7 @@ pub fn session_for_game(game_home: &Path) -> Result<GameSession, NoOwner> {
         &mut accounts,
     )?;
     if let Err(e) = accounts.save_renewed() {
-        eprintln!("Sunrise: the accounts are not saved: {e}");
+        crate::elog!("Sunrise: the accounts are not saved: {e}");
     }
     Ok(session_file(game_home, pass))
 }
@@ -2586,7 +2586,7 @@ pub fn session_for_game_accepted(game_home: &Path, accepted: &str) -> Result<Gam
         accepted,
     )?;
     if let Err(e) = accounts.save_renewed() {
-        eprintln!("Sunrise: the accounts are not saved: {e}");
+        crate::elog!("Sunrise: the accounts are not saved: {e}");
     }
     Ok(session_file(game_home, pass))
 }
@@ -2634,7 +2634,7 @@ pub fn session_for_game_as(game_home: &Path, who: &str) -> Result<GameSession, S
         who,
     );
     if let Err(e) = accounts.save_renewed() {
-        eprintln!("Sunrise: the accounts are not saved: {e}");
+        crate::elog!("Sunrise: the accounts are not saved: {e}");
     }
     Ok(session_file(game_home, pass?))
 }

@@ -2105,7 +2105,7 @@ fn resources_compatible(from: &Path, to: &Path, resources: &Path, legacy: &[(&st
     }
     let declared = |root: &Path| {
         output_version_at(root).inspect_err(|error| {
-            eprintln!("{}: {}", root.display(), preparer_source_error(error));
+            crate::elog!("{}: {}", root.display(), preparer_source_error(error));
         })
     };
     let (Ok(source), Ok(target)) = (declared(from), declared(to)) else {
@@ -2400,7 +2400,7 @@ fn reuse_prepared_for_cancellable(tag: &str, stop: Option<&crate::native_mods::C
     }
     if check_prepared(tag) {
         if let Err(error) = finish_preparation_cancellable(tag, &preparation, stop) {
-            eprintln!("{tag}: {error}");
+            crate::elog!("{tag}: {error}");
         }
     }
     drop(preparation);
@@ -2412,11 +2412,11 @@ fn reuse_prepared_for_cancellable(tag: &str, stop: Option<&crate::native_mods::C
         .name("Prepared data file".into())
         .spawn(move || {
             if let Err(e) = write_data_file(&root, &resources) {
-                eprintln!("{}: not written: {e}", resources.display());
+                crate::elog!("{}: not written: {e}", resources.display());
             }
         });
     if let Err(e) = spawned {
-        eprintln!("{tag}: the data file was not written: {e}");
+        crate::elog!("{tag}: the data file was not written: {e}");
     }
 }
 
@@ -2460,7 +2460,7 @@ pub fn reuse_prepared_everywhere() -> Vec<(String, String)> {
         refill_own_store(&tag, &handoff);
         if reused.iter().any(|(prepared, _)| prepared == &tag) {
             if let Err(error) = finish_preparation(&tag, &preparation) {
-                eprintln!("{tag}: {error}");
+                crate::elog!("{tag}: {error}");
             }
         } else {
             complete_assets_staged(&tag, &handoff);
@@ -2570,7 +2570,7 @@ pub(crate) fn complete_assets_staged(tag: &str, handoff: &crate::preparer::Hando
         &versions_dir(),
         tag,
         minecraft_folders,
-        &|line| eprintln!("{line}"),
+        &|line| crate::elog!("{line}"),
         Some(handoff),
     );
 }
@@ -2625,8 +2625,8 @@ fn refill_own_store(tag: &str, handoff: &crate::preparer::Handoff<'_>) {
             .map_err(|e| e.to_string())?;
         Ok(body)
     };
-    if let Err(e) = download_for_owner(&pins, &own, &fetch, None, &|line| eprintln!("{line}")) {
-        eprintln!("{tag}: the missing assets were not downloaded: {e}");
+    if let Err(e) = download_for_owner(&pins, &own, &fetch, None, &|line| crate::elog!("{line}")) {
+        crate::elog!("{tag}: the missing assets were not downloaded: {e}");
     }
 }
 
@@ -3629,7 +3629,7 @@ pub(crate) fn client_program(tag: &str) -> PathBuf {
     #[cfg(target_os = "macos")]
     match crate::game_app::ensure(&dir) {
         Ok(program) => return program,
-        Err(e) => eprintln!("Starting the game outside {}: {e}", crate::game_app::APP),
+        Err(e) => crate::elog!("Starting the game outside {}: {e}", crate::game_app::APP),
     }
     dir.join(CLIENT)
 }
@@ -4270,7 +4270,7 @@ fn install_selected_release(
     let before = installed();
     let outcome = install(release)?;
     if let Some(warning) = outcome.receipt_warning() {
-        eprintln!("{warning}");
+        crate::elog!("{warning}");
     }
     if matches!(outcome, InstallOutcome::ReceiptOnly(_)) {
         return Ok(release.tag.clone());
@@ -4284,7 +4284,7 @@ fn install_selected_release(
     }
     if let Some(releases) = catalog {
         for (tag, error) in version_storage::prune_old_versions(releases, &release.tag) {
-            eprintln!("Could not remove old game build {tag}: {error}");
+            crate::elog!("Could not remove old game build {tag}: {error}");
         }
     }
     Ok(release.tag.clone())

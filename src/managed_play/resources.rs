@@ -131,7 +131,7 @@ impl Resources {
                     Err(error)
                 }
                 Err(error) => {
-                    eprintln!("{error}");
+                    crate::elog!("{error}");
                     Ok(None)
                 }
             }

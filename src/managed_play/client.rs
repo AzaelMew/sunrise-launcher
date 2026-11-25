@@ -473,7 +473,7 @@ fn turn_off_mods(
         .collect();
     let mut worlds = crate::worlds::review_risk(home, &suspects)
         .map_err(|error| {
-            eprintln!("checking saved worlds before turning off mods: {error}");
+            crate::elog!("checking saved worlds before turning off mods: {error}");
             crate::i18n::tr("Sunrise couldn't check the saved worlds. No mods were turned off.")
                 .to_owned()
         })?
