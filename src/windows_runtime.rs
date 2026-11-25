@@ -5,6 +5,12 @@ use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
 use std::{fs, io, io::Write, path::Path, process::Command};
 
 use crate::run_leases::SOURCE;
+
+/// A path as a nul-terminated UTF-16 string, for the Windows API calls that take one.
+pub(crate) fn wide(path: &Path) -> Vec<u16> {
+    use std::os::windows::ffi::OsStrExt;
+    path.as_os_str().encode_wide().chain([0]).collect()
+}
 pub(crate) const SLOT: &str = "SUNRISE_WINDOWS_RUNTIME_SLOT";
 
 pub(crate) struct Guard {
