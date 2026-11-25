@@ -15,8 +15,6 @@ use sunrise_launcher_theme::glass::radius;
 
 #[path = "glass_server_dialog.rs"]
 mod glass_server_dialog;
-#[path = "glass_servers.rs"]
-mod glass_servers;
 
 mod hosting;
 #[path = "servers_format.rs"]
