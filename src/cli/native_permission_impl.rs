@@ -123,5 +123,4 @@ fn github_native_from(
 }
 
 #[cfg(all(unix, test))]
-#[path = "cli_native_permission/tests.rs"]
 mod tests;
