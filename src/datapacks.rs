@@ -136,9 +136,13 @@ pub fn add(world: &Path, file: &Path) -> Result<DataPack, String> {
             n => dir.join(format!("{stem} ({n}).zip")),
         })
         .find(|p| !p.exists())
-        .unwrap();
+        .expect("a folder can't hold a pack under every numbered name");
     fs::copy(file, &target).map_err(|e| format!("Could not copy {}: {e}", file.display()))?;
-    let file_name = target.file_name().unwrap().to_string_lossy().into_owned();
+    let file_name = target
+        .file_name()
+        .expect("the target is a name joined onto datapacks/")
+        .to_string_lossy()
+        .into_owned();
     // A pack of the same name removed while it was disabled would stay off.
     forget(world, &file_name)?;
     list(world)
@@ -186,7 +190,7 @@ fn forget(world: &Path, file: &str) -> Result<(), String> {
     if !changed {
         return Ok(());
     }
-    let text = serde_json::to_string_pretty(&s).unwrap();
+    let text = serde_json::to_string_pretty(&s).expect("a JSON value always serialises");
     fs::write(world.join(SETTINGS), text).map_err(|e| format!("{SETTINGS}: {e}"))
 }
 
