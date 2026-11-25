@@ -719,6 +719,7 @@ mod tests {
             include_str!("settings.rs"),
             include_str!("settings/account_section.rs"),
             include_str!("settings/appearance.rs"),
+            include_str!("settings/appearance/rows.rs"),
             include_str!("settings/game.rs"),
             include_str!("settings/launcher.rs"),
             include_str!("settings/privacy.rs"),
