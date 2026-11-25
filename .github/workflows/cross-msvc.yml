@@ -1,0 +1,99 @@
+name: cross-compile experiment, windows msvc
+
+on:
+  push:
+    branches: [infra/cross-msvc-experiment]
+
+env:
+  CARGO_INCREMENTAL: "0"
+  XWIN_CACHE_DIR: /keep/xwin
+  XWIN_ACCEPT_LICENSE: "1"
+  XWIN_ARCH: x86_64
+
+jobs:
+  launcher:
+    runs-on: dyna-large
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Tools (rustup, llvm-mingw for clang and lld, cargo-xwin)
+        run: |
+          set -euxo pipefail
+          T=/keep/cross-tools/msvc1
+          if [ ! -d "$T/llvm-mingw" ]; then
+            rm -rf "$T.tmp"; mkdir -p "$T.tmp/bin" "$T.tmp/shim"; cd "$T.tmp"
+            curl -fsSL -o m.tar.xz https://github.com/mstorsjo/llvm-mingw/releases/download/20261117/llvm-mingw-20261117-ucrt-ubuntu-22.04-x86_64.tar.xz
+            echo "e7a15a49a2ea95e9f3d8a9d0cfabe5052a4b10fb4777cc54de5a8c27b64bb701  m.tar.xz" | sha256sum -c -
+            mkdir llvm-mingw && tar xf m.tar.xz -C llvm-mingw --strip-components=1 && rm m.tar.xz
+            curl -fsSL -o xw.tar.gz https://github.com/rust-cross/cargo-xwin/releases/download/v0.24.1/cargo-xwin-v0.24.1.x86_64-unknown-linux-musl.tar.gz
+            echo "207ec5436db138b60d90cb41513ce2e3db4893a9c4e25da6209790c1a2db88cf  xw.tar.gz" | sha256sum -c -
+            tar xf xw.tar.gz -C bin && rm xw.tar.gz
+            ln -s ../llvm-mingw/bin/clang-23 shim/clang-cl
+            mkdir -p /keep/cross-tools && mv "$T.tmp" "$T"
+          fi
+          export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
+          command -v rustup >/dev/null || curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain "$(cat tools/ci/rust-version)"
+          rustup toolchain install "$(cat tools/ci/rust-version)" --profile minimal -t x86_64-pc-windows-msvc
+          rustup default "$(cat tools/ci/rust-version)"
+          echo "$T/shim" >> "$GITHUB_PATH"; echo "$T/bin" >> "$GITHUB_PATH"; echo "$T/llvm-mingw/bin" >> "$GITHUB_PATH"
+          echo "${CARGO_HOME:-$HOME/.cargo}/bin" >> "$GITHUB_PATH"
+      - name: Microsoft CRT and Windows SDK into /keep/xwin (licence accepted by the owner; never leaves /keep)
+        run: |
+          date +%s > /tmp/t0
+          if [ -d /keep/xwin/xwin ]; then echo "present before this step"; fi
+          cargo xwin env --target x86_64-pc-windows-msvc > /tmp/xwin.env 2> /tmp/xwin.err || { tail -5 /tmp/xwin.err; exit 1; }
+          echo "elapsed $(( $(date +%s) - $(cat /tmp/t0) ))s"
+          du -sh /keep/xwin
+      - name: cargo check
+        continue-on-error: true
+        run: |
+          eval "$(grep '^export\|^unset' /tmp/xwin.env)"
+          date +%s > /tmp/t0
+          cargo check --release --locked --target x86_64-pc-windows-msvc 2>&1 | tail -15 | cut -c1-250
+          echo "elapsed $(( $(date +%s) - $(cat /tmp/t0) ))s"
+      - name: Release build as the release workflow builds the Windows launcher (cold, no sccache)
+        continue-on-error: true
+        env:
+          RUSTC_WRAPPER: ""
+          CARGO_TARGET_DIR: /keep/cross-target-msvc-launcher
+          SUNRISE_LAUNCHER_VERSION: 0.0.0
+          SUNRISE_LAUNCHER_TAG: v0.0.0
+        run: |
+          eval "$(grep '^export\|^unset' /tmp/xwin.env)"
+          export RUSTFLAGS="-C target-feature=+crt-static"
+          date +%s > /tmp/t0
+          cargo build --release --locked --target x86_64-pc-windows-msvc --message-format short > /tmp/build.log 2>&1 || echo "BUILD FAILED"
+          echo "elapsed $(( $(date +%s) - $(cat /tmp/t0) ))s"
+          grep -E "^error|undefined|lld-link: error|fatal error" /tmp/build.log | sort | uniq -c | head -20 || true
+          tail -4 /tmp/build.log | cut -c1-250
+          mkdir -p /keep/msvc-launcher-out && cp "$CARGO_TARGET_DIR"/x86_64-pc-windows-msvc/release/sunrise-launcher.exe /keep/msvc-launcher-out/ 2>/dev/null || true
+          ls /keep/msvc-launcher-out | wc -l
+      - name: Test binaries compile (they cannot run on Linux)
+        continue-on-error: true
+        env:
+          RUSTC_WRAPPER: ""
+          CARGO_TARGET_DIR: /keep/cross-target-msvc-launcher
+        run: |
+          eval "$(grep '^export\|^unset' /tmp/xwin.env)"
+          export RUSTFLAGS="-C target-feature=+crt-static"
+          date +%s > /tmp/t0
+          cargo test --release --locked --no-run --target x86_64-pc-windows-msvc --message-format short 2>&1 | tail -6 | cut -c1-250
+          echo "elapsed $(( $(date +%s) - $(cat /tmp/t0) ))s"
+      - name: The release workflow's PE checks and packaging on the Linux-built launcher
+        continue-on-error: true
+        run: |
+          set -x
+          B=/keep/msvc-launcher-out
+          python3 tools/check_pe_arch.py x64 $B/sunrise-launcher.exe
+          python3 tools/check_imports.py $B/sunrise-launcher.exe
+          python3 tools/test_launcher_dll_search.py $B/sunrise-launcher.exe || true
+          mkdir -p /tmp/dist /tmp/out && cp $B/sunrise-launcher.exe LICENSE /tmp/dist/
+          (cd /tmp/dist && 7z a ../out/sunrise-launcher-windows-x64.zip sunrise-launcher.exe LICENSE > /dev/null || zip -q ../out/sunrise-launcher-windows-x64.zip sunrise-launcher.exe LICENSE)
+          cp $B/sunrise-launcher.exe /tmp/out/sunrise-launcher-setup.exe
+          ls -l /tmp/out
+          rm -rf /keep/cross-target-msvc-launcher /tmp/dist /tmp/out
