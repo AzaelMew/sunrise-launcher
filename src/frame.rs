@@ -62,10 +62,9 @@ impl Launcher {
         self.scale_factor = self.scale;
         self.window_long_side = self.window_width.max(self.window_height);
         let page = self.ui.page;
-        // Tint the frame from the very same decoded picture that will be drawn behind Home.
-        let photo = (page == Page::Home)
-            .then(|| self.home_photo(window, cx))
-            .flatten();
+        // Tint the frame from the very same decoded picture that will be drawn behind the page.
+        // The picture is behind every page, not Home's alone, so leaving Home keeps it.
+        let photo = self.home_photo(window, cx);
         crate::paint::begin(
             &self.settings,
             &self.theme,

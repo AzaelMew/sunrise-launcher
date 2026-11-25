@@ -1,4 +1,4 @@
-//! Settings' accent colour and Home background rows (`sunrise_launcher::themes`).
+//! Settings' accent colour and custom background rows (`sunrise_launcher::themes`).
 use super::*;
 
 impl Launcher {

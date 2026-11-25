@@ -7,7 +7,7 @@ use std::sync::Arc;
 use sunrise_launcher::themes;
 use sunrise_launcher_scenery::{coast, sky::Sky};
 
-/// How much of the page colour lies over a picture behind Home.
+/// How much of the page colour lies over a picture behind the pages.
 const PICTURE_WASH: f32 = 0.12;
 
 #[derive(Default)]

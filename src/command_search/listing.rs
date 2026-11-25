@@ -98,7 +98,7 @@ pub(super) const SETTINGS_ROWS: [(&str, Section); 17] = [
     ("Profiles", Section::Game),
     ("Theme", Section::Appearance),
     ("Accent", Section::Appearance),
-    ("Home background", Section::Appearance),
+    ("Custom background", Section::Appearance),
     ("Worlds on Home", Section::Appearance),
     ("Your themes", Section::Appearance),
     ("Show the cat", Section::Appearance),
