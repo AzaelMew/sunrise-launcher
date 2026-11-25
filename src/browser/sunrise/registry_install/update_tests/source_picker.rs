@@ -104,10 +104,10 @@ fn pasted_sources_prove_only_the_selected_packages_together() {
             let sources = fixture.root.join("sources.json");
             fs::write(&sources, br#"{"format":1,"sources":[]}"#).unwrap();
             std::env::set_var("SUNRISE_MOD_SOURCES", sources);
-            let identity = install_target(&fixture.instance).unwrap();
+            let identity = fixture.identity();
             let check = |ids: &[&str]| {
                 prepare_pasted_sources(
-                    &fixture.instance,
+                    &fixture.target(),
                     identity,
                     BUILD,
                     packages
@@ -135,7 +135,7 @@ fn pasted_sources_prove_only_the_selected_packages_together() {
             );
             // The paste goes through real deferred publication and leaves a readable receipt.
             apply_sources(
-                &fixture.instance,
+                &fixture.target(),
                 identity,
                 &offered,
                 || FirstBuild::installed(BUILD),
@@ -265,16 +265,16 @@ fn pasted_source_same_repo_refreshes_and_other_repo_stays_refused() {
                 assets: Vec::new(),
             };
             let cancel = native_mods::Cancellation::default();
-            let identity = install_target(&fixture.instance).unwrap();
+            let identity = fixture.identity();
             super::native::configure_tool(&fixture);
 
             let read_v1 = read_pasted_sources(&link_v1, &found_v1, &cancel).unwrap();
             let prep_v1 =
-                prepare_pasted_sources(&fixture.instance, identity, BUILD, read_v1, &cancel)
+                prepare_pasted_sources(&fixture.target(), identity, BUILD, read_v1, &cancel)
                     .unwrap();
             assert!(!prep_v1[0].is_update());
             apply_sources(
-                &fixture.instance,
+                &fixture.target(),
                 identity,
                 &prep_v1,
                 || FirstBuild::installed(BUILD),
@@ -294,7 +294,7 @@ fn pasted_source_same_repo_refreshes_and_other_repo_stays_refused() {
             // Pasting the exact same commit again is refused without changing the install.
             let repeat = read_pasted_sources(&link_v1, &found_v1, &cancel).unwrap();
             let repeat_err =
-                prepare_pasted_sources(&fixture.instance, identity, BUILD, repeat, &cancel)
+                prepare_pasted_sources(&fixture.target(), identity, BUILD, repeat, &cancel)
                     .err()
                     .expect("same archive should be refused");
             assert!(
@@ -317,12 +317,12 @@ fn pasted_source_same_repo_refreshes_and_other_repo_stays_refused() {
             };
             let read_v2 = read_pasted_sources(&link_v2, &found_v2, &cancel).unwrap();
             let prep_v2 =
-                prepare_pasted_sources(&fixture.instance, identity, BUILD, read_v2, &cancel)
+                prepare_pasted_sources(&fixture.target(), identity, BUILD, read_v2, &cancel)
                     .unwrap();
             assert!(prep_v2[0].is_update());
             let reviewed = std::sync::atomic::AtomicBool::new(false);
             apply_sources(
-                &fixture.instance,
+                &fixture.target(),
                 identity,
                 &prep_v2,
                 || FirstBuild::installed(BUILD),
@@ -361,7 +361,7 @@ fn pasted_source_same_repo_refreshes_and_other_repo_stays_refused() {
             };
             let read_other = read_pasted_sources(&link_other, &found_other, &cancel).unwrap();
             let other_err =
-                prepare_pasted_sources(&fixture.instance, identity, BUILD, read_other, &cancel)
+                prepare_pasted_sources(&fixture.target(), identity, BUILD, read_other, &cancel)
                     .err()
                     .expect("different repository collision should be refused");
             assert!(!other_err.to_string().contains("Use Update"), "{other_err}");
@@ -412,7 +412,7 @@ fn manual_release_refresh_publishes_on_approval_and_keeps_old_files_on_decline()
                 }],
             };
 
-            let identity = install_target(&fixture.instance).unwrap();
+            let identity = fixture.identity();
             let home = fixture.home().to_owned();
             let archive = home.join(ARCHIVE);
             let sidecar = github_mods::origin_path(&home, ID);
@@ -434,7 +434,7 @@ fn manual_release_refresh_publishes_on_approval_and_keeps_old_files_on_decline()
             let found_v1 = make_release("v1.0.0", &v1);
             let checked_v1 = github_mods::fetch_with(&found_v1, |_| Ok(v1.clone())).unwrap();
             let installed_v1 = install_github_manual(
-                &fixture.instance,
+                &fixture.target(),
                 identity,
                 ManualRelease {
                     found: &found_v1,
@@ -460,7 +460,7 @@ fn manual_release_refresh_publishes_on_approval_and_keeps_old_files_on_decline()
             let checked_v2 = github_mods::fetch_with(&found_v2, |_| Ok(v2.clone())).unwrap();
             let asked = std::sync::atomic::AtomicBool::new(false);
             let declined = install_github_manual(
-                &fixture.instance,
+                &fixture.target(),
                 identity,
                 ManualRelease {
                     found: &found_v2,
@@ -481,7 +481,7 @@ fn manual_release_refresh_publishes_on_approval_and_keeps_old_files_on_decline()
 
             // 3. Approving the refresh publishes both the replacement archive and its new origin receipt.
             let approved = install_github_manual(
-                &fixture.instance,
+                &fixture.target(),
                 identity,
                 ManualRelease {
                     found: &found_v2,

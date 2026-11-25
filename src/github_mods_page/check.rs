@@ -186,7 +186,7 @@ impl Launcher {
                 }));
                 std::thread::spawn(move || {
                     let result = sunrise::prepare_pasted_sources(
-                        target.instance(),
+                        target.profile_target(),
                         target.identity(),
                         target.base(),
                         selected,

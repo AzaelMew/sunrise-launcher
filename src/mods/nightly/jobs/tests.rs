@@ -163,7 +163,7 @@ fn setup_prepared_offer(
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
     sunrise::add_sources(
-        target.instance(),
+        target.profile_target(),
         target.identity(),
         target.base(),
         packed,
@@ -207,7 +207,7 @@ fn setup_prepared_offer(
 
     let pin2 = sources::resolve(&source, true).unwrap();
     let prepared = sunrise::prepare_source(
-        target.instance(),
+        target.profile_target(),
         target.identity(),
         target.base(),
         SourceRequest::Update {
@@ -229,7 +229,8 @@ fn a_check_keeps_only_findings_proved_against_the_same_mods() {
             const BASE: &str = "developer-local";
             let (target, origin, prepared, unpacked_data, client_path) =
                 setup_prepared_offer(home, BASE);
-            let proof1 = SourceProof::capture(target.instance(), target.identity(), BASE).unwrap();
+            let proof1 =
+                SourceProof::capture(target.profile_target(), target.identity(), BASE).unwrap();
             assert_eq!(prepared.proof(), &proof1);
             let fingerprint1 = native_status::fingerprint(home, Some(BASE));
 
@@ -278,7 +279,7 @@ fn a_check_keeps_only_findings_proved_against_the_same_mods() {
                 let source = source_for_update(&origin).unwrap().unwrap();
                 let pin = sources::resolve(&source, true).unwrap();
                 sunrise::prepare_source(
-                    target.instance(),
+                    target.profile_target(),
                     target.identity(),
                     BASE,
                     SourceRequest::Update {
@@ -340,7 +341,7 @@ fn a_check_keeps_only_findings_proved_against_the_same_mods() {
             fs::write(&unpacked_data, b"edited-content").unwrap();
             assert_eq!(native_status::fingerprint(home, Some(BASE)), fingerprint1);
             let proof_after_edit =
-                SourceProof::capture(target.instance(), target.identity(), BASE).unwrap();
+                SourceProof::capture(target.profile_target(), target.identity(), BASE).unwrap();
             assert_ne!(proof_after_edit, proof1);
             let merged = merge_checked(
                 Some(before_edit),
@@ -356,7 +357,7 @@ fn a_check_keeps_only_findings_proved_against_the_same_mods() {
             fs::write(&client_path, b"base-arm64-binary").unwrap();
             assert_eq!(native_status::fingerprint(home, Some(BASE)), fingerprint1);
             let proof_after_reinstall =
-                SourceProof::capture(target.instance(), target.identity(), BASE).unwrap();
+                SourceProof::capture(target.profile_target(), target.identity(), BASE).unwrap();
             assert_ne!(proof_after_reinstall, proof1);
             let merged = merge_checked(
                 Some(before_reinstall),
@@ -383,7 +384,7 @@ fn last_known_source_offer_stays_visible_while_offline_but_requires_fresh_catalo
             const BASE: &str = "developer-local";
             let (target, origin, prepared, _, _) = setup_prepared_offer(home, BASE);
             let proof =
-                SourceProof::capture(target.instance(), target.identity(), BASE).unwrap();
+                SourceProof::capture(target.profile_target(), target.identity(), BASE).unwrap();
             let key = native_status::fingerprint(home, Some(BASE));
 
             let mut app = gpui::TestAppContext::single();

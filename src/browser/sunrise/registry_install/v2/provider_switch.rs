@@ -5,7 +5,7 @@ use super::*;
 /// Explicitly switch an installed mod slot (`mod_id`) to a different v2 project (`to_project_id`),
 /// previewing affected dependents and saved-world risks before committing.
 pub fn switch_provider_v2(
-    instance: &Instance,
+    target: &Target,
     identity: Identity,
     mod_id: &str,
     to_project_id: &str,
@@ -17,7 +17,7 @@ pub fn switch_provider_v2(
         catalogue_v2::change_index().map_err(|error| InstallError::Unproved(error.to_string()))?;
     switch_provider_v2_with(
         V2EditRequest {
-            instance,
+            target,
             identity,
             index: local_fit_filled(&catalog.index),
             options,
@@ -42,7 +42,7 @@ pub(crate) fn switch_provider_v2_with(
     hooks: V2ProviderSwitchHooks<'_>,
 ) -> Result<InstalledBatch, InstallError> {
     let V2EditRequest {
-        instance,
+        target,
         identity,
         index,
         mut options,
@@ -50,8 +50,8 @@ pub(crate) fn switch_provider_v2_with(
     } = request;
     options
         .jar_cache
-        .get_or_insert_with(|| instance.home.join("jars"));
-    if instance.kind == InstanceKind::Pack {
+        .get_or_insert_with(|| target.home().join("jars"));
+    if target.is_pack() {
         return Err(InstallError::Refused(
             tr("No registry mods to install in this profile.").into(),
         ));
@@ -81,7 +81,7 @@ pub(crate) fn switch_provider_v2_with(
 
     (hooks.install.install.progress)(InstallProgress::Checking);
     let mut profile =
-        Profile::open_for(&instance.home, None, Some(identity)).map_err(String::from)?;
+        Profile::open_for(target.home(), None, Some(identity)).map_err(String::from)?;
     let edit = profile.begin_edit(choose, |f| {
         (hooks.install.install.progress)(InstallProgress::Downloading(f))
     })?;
@@ -230,7 +230,7 @@ pub(crate) fn switch_provider_v2_with(
     let dep_steps = if dep_queue.is_empty() {
         Vec::new()
     } else {
-        let chosen_pins = chosen(&instance.home);
+        let chosen_pins = chosen(target.home());
         resolve_v2_queue(
             &ResolveContext {
                 index: &index,
@@ -288,7 +288,7 @@ pub(crate) fn switch_provider_v2_with(
     let proof = prove_edit(
         &edit,
         next.path(),
-        instance,
+        target,
         cancelled,
         &hooks.install.install,
     )
@@ -301,7 +301,7 @@ pub(crate) fn switch_provider_v2_with(
     })?;
 
     let (suspect, _) = mutations::update_worlds(next.path(), std::iter::once(&current.package))?;
-    let worlds = mutations::world_evidence(&instance.home, &suspect)?;
+    let worlds = mutations::world_evidence(target.home(), &suspect)?;
     let preview = ProviderSwitchPreview {
         mod_id: mod_id.to_owned(),
         from_project: current.ownership.project_id().map(str::to_owned),
@@ -318,7 +318,7 @@ pub(crate) fn switch_provider_v2_with(
     (hooks.install.install.progress)(InstallProgress::Publishing);
     cancelled.check().map_err(|_| InstallError::Cancelled)?;
     commit_pending_pins(&pin_dir, &pending_pins).map_err(InstallError::Unproved)?;
-    let authorize = || mutations::bind_worlds(&instance.home, &suspect, &worlds);
+    let authorize = || mutations::bind_worlds(target.home(), &suspect, &worlds);
     edit.publish_install(proof, cancelled, &BTreeSet::new(), authorize)?;
 
     let mut result = InstalledBatch::default();

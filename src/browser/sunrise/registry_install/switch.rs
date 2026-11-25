@@ -153,36 +153,7 @@ pub enum Switched {
     Changed(Box<Active>),
 }
 
-/// What the picker is asking the profile to follow after the switch.
-#[derive(Clone, Copy)]
-pub enum BuildChoice {
-    Follow(crate::instances::Channel),
-    Keep,
-}
-
-/// Persist the picker's channel/pin choice to `instances.json` when the active build itself does
-/// not need to change.
-pub fn save_build_choice(instance_id: &str, tag: &str, choice: BuildChoice) -> Result<(), String> {
-    crate::instances::edit(instance_id, |meta| match choice {
-        BuildChoice::Follow(channel) => {
-            meta.version = None;
-            meta.channel = Some(channel);
-        }
-        BuildChoice::Keep => {
-            meta.version = Some(tag.into());
-            if let Some(channel) = crate::instances::Channel::of_build(tag) {
-                meta.channel = Some(channel);
-            }
-        }
-    })
-    .map(|_| ())
-    .map_err(|error| {
-        trf(
-            "The build is ready, but the profile choice could not be saved: {error}",
-            &[("error", &error)],
-        )
-    })
-}
+pub use crate::managed_play::BuildChoice;
 
 pub(super) fn sha256_bytes(hex: &str) -> Result<[u8; 32], String> {
     let mut bytes = [0; 32];

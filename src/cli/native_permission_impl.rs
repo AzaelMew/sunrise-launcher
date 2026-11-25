@@ -56,7 +56,8 @@ fn github_native_from(
     if instance.kind == instances::Kind::Pack {
         return Err(tr("This pack controls which mods it installs.").into());
     }
-    let identity = sunrise::install_target(instance)?;
+    let target = sunrise::Target::of(instance)?;
+    let identity = target.identity();
     println!("{}", found.label());
     println!("Source, to read: {}", found.source_url());
     eprintln!("{}", github_mods::WARNING);
@@ -65,19 +66,19 @@ fn github_native_from(
     let mut fresh = Vec::new();
     let mut replacements = Vec::new();
     for package in github_mods::choose(&mods, only, all)? {
-        let target = instance
+        let path = instance
             .home
             .join(native_mods::INSTALLED)
             .join(format!("{}.smod", package.id));
         if update {
             replacements.push(package);
         } else {
-            match std::fs::symlink_metadata(&target) {
+            match std::fs::symlink_metadata(&path) {
                 Ok(_) => replacements.push(package),
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                     fresh.push(package.clone());
                 }
-                Err(error) => return Err(format!("{}: {error}", target.display())),
+                Err(error) => return Err(format!("{}: {error}", path.display())),
             }
         }
     }
@@ -97,7 +98,7 @@ fn github_native_from(
         );
     };
     if !fresh.is_empty() {
-        let installed = sunrise::add_github(instance, identity, found, &fresh, None, choose, hooks)
+        let installed = sunrise::add_github(&target, identity, found, &fresh, None, choose, hooks)
             .map_err(|error| error.to_string())?;
         for origin in installed {
             report("Installed", origin);
@@ -105,7 +106,7 @@ fn github_native_from(
     }
     for package in replacements {
         let origin = sunrise::update_github(
-            instance,
+            &target,
             identity,
             found,
             package,

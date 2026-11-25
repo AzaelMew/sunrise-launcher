@@ -9,7 +9,7 @@ use sunrise_launcher::{
     browser::sunrise::{
         BuildNotice, ChangeImpact, InstallError, InstallHooks, InstallProgress, InstalledBatch,
         PreparedSource, ProviderChoiceNeeded, PublisherChangeQuestion, SourceDependency,
-        SourceError, SourceHooks, V2Hooks, V2InstallOptions,
+        SourceError, SourceHooks, Target, V2Hooks, V2InstallOptions,
     },
     github_mods::{AddedFrom, Origin},
     managed_play::FirstBuild,
@@ -83,6 +83,7 @@ struct Running {
 struct Request {
     profile: instances::Instance,
     identity: Identity,
+    profile_target: Target,
     target: Option<String>,
     release: Option<backend::Release>,
     displayed_names: BTreeMap<String, String>,
@@ -107,6 +108,7 @@ impl Request {
 pub(crate) struct GithubTarget {
     profile: instances::Instance,
     identity: Identity,
+    profile_target: Target,
     target: Option<String>,
     release: Option<backend::Release>,
 }
@@ -133,6 +135,7 @@ impl GithubTarget {
         Ok(SourceTarget {
             profile: self.profile.clone(),
             identity: self.identity,
+            profile_target: self.profile_target.clone(),
             base: self
                 .target
                 .clone()
@@ -148,6 +151,7 @@ impl GithubTarget {
         Self {
             profile: request.profile,
             identity: request.identity,
+            profile_target: request.profile_target,
             target: request.target,
             release: None,
         }
@@ -159,6 +163,7 @@ impl GithubTarget {
 pub(crate) struct SourceTarget {
     profile: instances::Instance,
     identity: Identity,
+    profile_target: Target,
     base: String,
 }
 
@@ -170,14 +175,15 @@ impl SourceTarget {
         Self {
             profile: request.profile,
             identity: request.identity,
+            profile_target: request.profile_target,
             base: base.into(),
         }
     }
 }
 
 impl SourceTarget {
-    pub(crate) fn instance(&self) -> &instances::Instance {
-        &self.profile
+    pub(crate) fn profile_target(&self) -> &Target {
+        &self.profile_target
     }
     pub(crate) fn identity(&self) -> Identity {
         self.identity
