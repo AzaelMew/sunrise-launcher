@@ -1,3 +1,4 @@
+use super::items::{installed_items_key, InstalledItem};
 use super::*;
 
 /// Runs `test` again in a child process with scratch homes, as the other window tests do:
