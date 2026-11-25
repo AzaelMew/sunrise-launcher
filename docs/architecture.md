@@ -40,7 +40,7 @@ Names in this table are relative to [`src/`](../src/). The binary and the shared
 
 | Directories | What lives there |
 | --- | --- |
-| `src/account/` | Session status and account tests. |
+| `src/account/` | Session status, secret storage (the `SecretStore` trait and its layered keychain-then-file store, the secrets file, the OS keychain on each platform) and account tests. |
 | `src/backend/` | The data and build folders, installation, release assets and selection, update selection, settings helpers, Play logging, and message types. |
 | `src/browser/`, `src/browser/installed/`, `src/browser/sunrise/`, `src/browser/sunrise/auto/` | Source-specific browser operations, installed-pack tests, Sunrise dependency and pack handling, and registry auto-update tests. |
 | `src/cli/`, `src/cli/native_permission_impl/` | Developer build commands, progress, settings JSON output, the native-build permission prompt, and catalog, server and storage tests. |
