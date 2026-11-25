@@ -1444,18 +1444,6 @@ fn resolve_build_dependencies(
         .map_err(|error| format!("code link requirements refused: {error}"))
 }
 
-/// The pipeline both targets build with ([`build`], [`build_server`]): `folder`'s mods on the
-/// Sunrise revision they pin (else `base`'s, the installed version whose game files the build
-/// reuses: a native build's own revision when it is one, [`base_for`]), compiled as `target`
-/// (the game, or the headless engine) and installed as its own version,
-/// `native-<revision>-<key>` (the key hashes the revision, the mods' files, the tool's commit,
-/// the profile and the target). A build already made is used again. A mod pinned to another
-/// Sunrise revision is refused: the error starts with [`MISMATCH`] and names the mismatched pins.
-/// Building never changes a mod's Sunrise pin to match the installed game. Isolation leaves out
-/// only a mod blamed by mixin or compiler diagnostics and its required dependents; servers refuse
-/// failures without leaving anything out.
-/// Nothing of the player's outside the launcher's data is touched: no instance is edited and
-/// no version selected here.
 /// [`build_stages`] as one step of the launcher log, so a build that hangs shows in the Logs panel.
 fn pipeline(
     lease: &crate::native_cache::Cache,
@@ -1475,6 +1463,18 @@ fn pipeline(
     built
 }
 
+/// The pipeline both targets build with ([`build`], [`build_server`]): `folder`'s mods on the
+/// Sunrise revision they pin (else `base`'s, the installed version whose game files the build
+/// reuses: a native build's own revision when it is one, [`base_for`]), compiled as `target`
+/// (the game, or the headless engine) and installed as its own version,
+/// `native-<revision>-<key>` (the key hashes the revision, the mods' files, the tool's commit,
+/// the profile and the target). A build already made is used again. A mod pinned to another
+/// Sunrise revision is refused: the error starts with [`MISMATCH`] and names the mismatched pins.
+/// Building never changes a mod's Sunrise pin to match the installed game. Isolation leaves out
+/// only a mod blamed by mixin or compiler diagnostics and its required dependents; servers refuse
+/// failures without leaving anything out.
+/// Nothing of the player's outside the launcher's data is touched: no instance is edited and
+/// no version selected here.
 fn build_stages(
     lease: &crate::native_cache::Cache,
     base: &str,

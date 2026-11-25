@@ -30,7 +30,7 @@ pub(crate) struct LogsPanel {
     /// The last open or close, so the panel slides from wherever it had got to.
     fade: Option<crate::motion::Fade>,
     tab: Tab,
-    /// The launcher's lines read so far, scrubbed, and the ring's revision they come up to.
+    /// The launcher's lines read so far, and the ring's revision they come up to.
     launcher: VecDeque<String>,
     revision: u64,
     /// The game's lines, scrubbed, for the `(log_revision, length)` of `prepare_log` they were made from.
@@ -79,7 +79,8 @@ impl Launcher {
         logs.revision = revision;
         let any = !lines.is_empty();
         for line in lines {
-            logs.launcher.push_back(launcher_log::scrub(&line));
+            // Scrubbed already, as the log wrote it.
+            logs.launcher.push_back(line);
             if logs.launcher.len() > KEEP {
                 logs.launcher.pop_front();
             }
