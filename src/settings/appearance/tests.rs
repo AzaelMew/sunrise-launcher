@@ -65,6 +65,45 @@ fn a_typed_accent_is_taken_when_the_field_is_left_without_enter() {
     assert_eq!(accent(), Accent::TEAL);
 }
 
+/// The player's own picture is behind every page, not Home's alone: on Settings it is read
+/// and decoded for the backdrop just as it is on Home.
+#[test]
+fn the_players_picture_is_behind_pages_other_than_home() {
+    use sunrise_launcher::appearance;
+    use sunrise_launcher::backend::{self, Settings};
+    let Some(root) = scratch_child("the_players_picture_is_behind_pages_other_than_home") else {
+        return;
+    };
+    let mine = root.join("mine.png");
+    RgbaImage::from_pixel(80, 80, Rgba([40, 120, 200, 255]))
+        .save(&mine)
+        .unwrap();
+    let mut settings = Settings::load();
+    appearance::set_background(&mut settings, &backend::data_dir(), &mine).unwrap();
+    let kept = backend::data_dir().join(settings.background.as_deref().unwrap());
+    let mut app = gpui::TestAppContext::single();
+    let (shell, cx) = app.add_window_view(crate::window_root::Shell::new);
+    let launcher = shell.read_with(cx, |shell, _| shell.launcher());
+    launcher.update(cx, |l, cx| {
+        l.navigate(crate::frame::Page::Settings);
+        cx.notify();
+    });
+    cx.run_until_parked();
+    // Chosen while Settings is open, so Home has never drawn it.
+    launcher.update(cx, |l, cx| {
+        l.settings.background = settings.background.clone();
+        cx.notify();
+    });
+    cx.run_until_parked();
+    launcher.read_with(cx, |l, _| {
+        let photo = l.ui.settings.appearance.photo.as_ref();
+        assert!(
+            photo.is_some_and(|(path, decoded)| *path == kept && decoded.is_some()),
+            "the picture is decoded for the backdrop on Settings"
+        );
+    });
+}
+
 #[test]
 fn picture_tone_is_weighted_by_visible_coverage() {
     let mut image = RgbaImage::from_pixel(3, 1, Rgba([255, 0, 0, 0]));

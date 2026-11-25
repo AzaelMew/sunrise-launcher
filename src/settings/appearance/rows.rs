@@ -598,11 +598,11 @@ impl Launcher {
         )
     }
 
-    /// What is behind Home: where it comes from, a picture of the player's own, the way back
+    /// What is behind the pages: where it comes from, a picture of the player's own, the way back
     /// to the theme's, and the switch for all of it.
     fn background_row(&mut self, cx: &mut Context<Self>) -> Div {
         let data = backend::data_dir();
-        // A kept copy Home could not decode is not what is behind Home.
+        // A kept copy the launcher could not decode is not what is behind the pages.
         let unshown = self
             .ui
             .settings
@@ -620,8 +620,8 @@ impl Launcher {
         let lost = appearance::background_lost(&self.settings, &data);
         let source = match &behind {
             Behind::Plain => tr("Off: the theme's plain background."),
-            Behind::Personal(_) => tr("Your picture, on Home."),
-            Behind::Theme(_) => tr("The theme's picture, on Home."),
+            Behind::Personal(_) => tr("Your picture, behind every page."),
+            Behind::Theme(_) => tr("The theme's picture, behind every page."),
             Behind::Scene => tr("The theme's scene."),
         };
         let about = if unshown {
@@ -693,7 +693,7 @@ impl Launcher {
             off(theirs)
         };
         self.wide_row(
-            tr("Home background"),
+            tr("Custom background"),
             about,
             div().child(choose).child(theirs),
         )

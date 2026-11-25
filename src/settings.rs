@@ -82,7 +82,7 @@ impl Section {
         match self {
             Section::Account => "Who plays, and the Microsoft accounts signed in here.",
             Section::Game => "How the game starts. Its build is chosen beside Play on Home.",
-            Section::Appearance => "The theme, its accent and what is behind Home.",
+            Section::Appearance => "The theme, its accent and what is behind the pages.",
             Section::Storage => "Manage game builds, downloads and where your files are kept.",
             Section::Privacy => "What Sunrise sends, and what it never does.",
             Section::Launcher => "Language, network and this version.",

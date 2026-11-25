@@ -1206,7 +1206,6 @@
   "Colours and scenery for the whole launcher. Play uses white text in every theme.": "Colours and scenery for the whole launcher. Play uses white text in every theme.",
   "Deep Ocean": "Deep Ocean",
   "Falling leaves at dusk": "Falling leaves at dusk",
-  "Home background": "Home background",
   "Hypr Neon": "Hypr Neon",
   "Light through deep water": "Light through deep water",
   "Midnight Aurora": "Midnight Aurora",
@@ -1240,14 +1239,11 @@
   "The name must be 1 to 64 characters of plain text on one line.": "The name must be 1 to 64 characters of plain text on one line.",
   "The picture you chose is no longer there; choose it again or use the theme's.": "The picture you chose is no longer there; choose it again or use the theme's.",
   "The picture {name} isn't in the theme's folder.": "The picture {name} isn't in the theme's folder.",
-  "The theme's picture, on Home.": "The theme's picture, on Home.",
   "The theme's scene.": "The theme's scene.",
-  "The theme, its accent and what is behind Home.": "The theme, its accent and what is behind Home.",
   "The {what} is a link. A theme's files must be in its own folder.": "The {what} is a link. A theme's files must be in its own folder.",
   "Theme": "Theme",
   "There is no theme.toml in this folder.": "There is no theme.toml in this folder.",
   "Use theme background": "Use theme background",
-  "Your picture, on Home.": "Your picture, on Home.",
   "Your theme · {folder}": "Your theme · {folder}",
   "Your themes": "Your themes",
   "[palette] must set at least one of background, card, chrome, text, muted and accent.": "[palette] must set at least one of background, card, chrome, text, muted and accent.",
@@ -2452,5 +2448,9 @@
   "{value}: say {one} or {other}": "{value}: say {one} or {other}",
   "{version} · {size}": "{version} · {size}",
   "{warning} Try again in Settings → Storage.": "{warning} Try again in Settings → Storage.",
-  "↑ ↓ to move · Enter to open · Esc to close": "↑ ↓ to move · Enter to open · Esc to close"
+  "↑ ↓ to move · Enter to open · Esc to close": "↑ ↓ to move · Enter to open · Esc to close",
+  "Custom background": "Custom background",
+  "Your picture, behind every page.": "Your picture, behind every page.",
+  "The theme's picture, behind every page.": "The theme's picture, behind every page.",
+  "The theme, its accent and what is behind the pages.": "The theme, its accent and what is behind the pages."
 }

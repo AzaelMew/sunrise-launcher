@@ -36,9 +36,9 @@ pub(crate) struct State {
     pub(super) error: Option<String>,
     /// What Reload found.
     pub(super) note: Option<String>,
-    /// What is behind Home for the settings it was worked out from (theme, picture, scenery).
+    /// What is behind the pages for the settings it was worked out from (theme, picture, scenery).
     pub(super) behind: Option<(BehindKey, Behind)>,
-    /// The picture behind Home: its file, and the picture once it is decoded (None: it could
+    /// The picture behind the pages: its file, and the picture once it is decoded (None: it could
     /// not be).
     pub(super) photo: Option<(PathBuf, Option<HomePhoto>)>,
     pub(super) decoding: bool,
