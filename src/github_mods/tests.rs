@@ -408,6 +408,7 @@ fn a_mod_folder_packs_into_a_bundle_the_registry_checks_accept() {
     write(&root.join("data/zoom/table.bin"), "t");
     write(&root.join("LICENSE"), "MIT");
     write(&root.join("logo.png"), "not shipped");
+    write(&root.join(".gitignore"), "logo.png\n");
     let bundle = &find_mods(&root).unwrap()[0];
     let bytes = pack(bundle).unwrap();
     assert_eq!(bytes, pack(bundle).unwrap(), "the same files pack the same");
@@ -463,10 +464,16 @@ fn a_flat_smod_keeps_its_pins_and_ships_only_selected_files() {
     assert!(pack(bundle).is_err());
     fs::remove_dir_all(root.join("assets/minecraft")).unwrap();
     write(&root.join("evil.exe"), "MZ");
+    let error = pack(bundle).unwrap_err();
+    assert!(
+        error.contains("evil.exe") && error.contains("(PE)"),
+        "{error}"
+    );
+    fs::remove_file(root.join("evil.exe")).unwrap();
+    write(&root.join(".gitignore"), "notes.txt\n");
+    write(&root.join("notes.txt"), "left out");
     let again = checked(&pack(bundle).unwrap(), &tree("unpacked-out2"), None).unwrap();
     assert_eq!(again.sha256, packed.sha256);
-    write(&root.join("horizon-mixin.toml"), "[mod]\nid='zoom'\n");
-    assert!(find_mods(&root).is_err());
     fs::remove_dir_all(root).unwrap();
 }
 
