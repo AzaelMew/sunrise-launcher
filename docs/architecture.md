@@ -51,7 +51,7 @@ Names in this table are relative to [`src/`](../src/). The binary and the shared
 | `src/process/`, `src/process/leases/`, `src/process/leases/tests/`, `src/process/supervisor/`, `src/run_leases/` | Child process ownership and supervision, launch and tree locks, and platform tests. |
 | `src/settings/`, `src/sheets/` | Appearance controls and the version chooser. |
 | `src/storage/`, `src/storage/inventory/`, `src/theme_files/`, `src/theme_files/fixtures/` | Storage inventory, its regression tests, and eviction. Theme file tests and their image fixture. |
-| `src/appearance/`, `src/cache_cleanup/`, `src/data_location/`, `src/downloads/`, `src/github/`, `src/github_mods/`, `src/i18n/`, `src/java/`, `src/launch/`, `src/launch_state/`, `src/mac_update/`, `src/mojang/`, `src/native_cache/`, `src/relocation/`, `src/shortcut/`, `src/sources/`, `src/themes/` | Tests alongside their matching infrastructure modules. |
+| `src/appearance/`, `src/cache_cleanup/`, `src/data_location/`, `src/downloads/`, `src/github/`, `src/github_mods/`, `src/i18n/`, `src/java/`, `src/launch/`, `src/launch_state/`, `src/mac_update/`, `src/mojang/`, `src/native_cache/`, `src/native_status/`, `src/relocation/`, `src/shortcut/`, `src/sources/`, `src/themes/` | Tests alongside their matching infrastructure modules. |
 | `src/datapacks/`, `src/export/`, `src/game_log/`, `src/home/`, `src/import/`, `src/instances/`, `src/join/`, `src/packs/`, `src/server_list/`, `src/tailscale/`, `src/worlds/` | Tests alongside their matching feature modules. |
 
 ### Scenery, shared crates, and tools
