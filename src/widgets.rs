@@ -477,7 +477,6 @@ pub(crate) fn short(path: &std::path::Path) -> String {
 
 /// A thin bar. A known fraction eases from its previous value; an unknown one shuttles slowly.
 /// Progress: a plate-coloured track filling with the accent; work of unknown length shuttles.
-#[cfg_attr(not(windows), allow(dead_code))] // the Windows setup window
 pub(crate) fn progress_bar(fraction: Option<(f32, f32)>, t: &Theme) -> Div {
     // Night: a thin accent line on a plate's colour, square like the art. Glass: the mockup's
     // `Bar`, 4 px and round, in the accent's soft shade on white at 12 %.
