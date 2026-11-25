@@ -7,7 +7,10 @@ impl Storage {
             if !entry.path.starts_with(&self.root) || !entry.path.is_dir() {
                 continue;
             }
-            let relative = entry.path.strip_prefix(&self.root).unwrap();
+            let relative = entry
+                .path
+                .strip_prefix(&self.root)
+                .expect("checked to start with the root just above");
             if !(relative == Path::new("cargo")
                 || relative == Path::new("tmp")
                 || (relative.starts_with("rust")
@@ -192,7 +195,7 @@ impl Storage {
                 .rows
                 .iter_mut()
                 .find(|row| row.category == entry.category)
-                .unwrap();
+                .expect("the report has a row for every category");
             if selected.contains(&index) {
                 before_clear(&entry.path);
                 let result = if entry.path == self.root.join("native/target") {
