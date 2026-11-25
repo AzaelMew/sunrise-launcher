@@ -3848,10 +3848,8 @@ mod tests {
 }
 
 #[cfg(test)]
-#[path = "cli_catalog_tests.rs"]
 mod catalog_tests;
 
-#[path = "cli_native_permission.rs"]
 mod native_permission_impl;
 use native_permission_impl::{
     github_native, native_permission, trust_unreviewed_builds, GithubInstall,

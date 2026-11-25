@@ -31,7 +31,7 @@ Names in this table are relative to [`src/`](../src/). The binary and the shared
 | Servers | `join.rs`, `server_list.rs`, `multiplayer_page.rs`, `internet.rs`, `tailscale.rs` | Join and manage saved servers and show Tailscale sharing controls. |
 | Rendering and motion | `backdrop.rs`, `blocks.rs`, `cat.rs`, `glass_ui.rs`, `widgets.rs`, `plate.rs`, `motion.rs`, `paint.rs`, `tokens.rs`, `theme.rs` | Draw scenery and controls and apply the palette, metrics, and motion curves. |
 | Rendering and motion | `appearance.rs`, `themes.rs`, `theme_files.rs`, `picture_cache.rs`, `pictures.rs`, `perf.rs` | Resolve themes and background art, manage decoded pictures, and measure the window. |
-| CLI and MCP | `cli.rs`, `cli_tools.rs`, `cli_catalog_tests.rs`, `cli_native_permission.rs`, `console.rs`, `mcp.rs`, `game_tools.rs` | Parse and run commands, attach terminal streams, generate MCP tools, and bridge to game control. |
+| CLI and MCP | `cli.rs`, `cli_tools.rs`, `console.rs`, `mcp.rs`, `game_tools.rs` | Parse and run commands, attach terminal streams, generate MCP tools, and bridge to game control. |
 | Utilities | `code_box.rs`, `cull.rs`, `line_edit.rs`, `markdown.rs`, `scrollbar.rs`, `selectable.rs`, `slider.rs`, `sticky.rs` | Supply reusable text, list, and input behavior. |
 | Utilities | `i18n.rs`, `net.rs`, `proxy.rs`, `desktop.rs`, `desktop_seams.rs`, `zip_intake.rs`, `test_support.rs` | Provide translation, network and desktop helpers, ZIP intake, and test support. |
 | Utilities | `bug_report.rs`, `game_log.rs`, `telemetry.rs`, `no_ai.rs` | Handle reports, game logs, telemetry, and the shared No AI setting. |
@@ -43,7 +43,7 @@ Names in this table are relative to [`src/`](../src/). The binary and the shared
 | `src/account/` | Session status and account tests. |
 | `src/backend/` | The data and build folders, installation, release assets and selection, update selection, settings helpers, Play logging, and message types. |
 | `src/browser/`, `src/browser/installed/`, `src/browser/sunrise/`, `src/browser/sunrise/auto/` | Source-specific browser operations, installed-pack tests, Sunrise dependency and pack handling, and registry auto-update tests. |
-| `src/cli/` | Developer build commands, progress, settings JSON output, and storage tests. |
+| `src/cli/`, `src/cli/native_permission_impl/` | Developer build commands, progress, settings JSON output, the native-build permission prompt, and catalog, server and storage tests. |
 | `src/internet/`, `src/servers/`, `src/servers_page/` | Hosting share UI, remote server control and tests, and hosting page composition. |
 | `src/jars/`, `src/zip_intake/` | Jar download and launch preparation, and the ZIP intake source adapter and tests. |
 | `src/mods/`, `src/mods/data_packs/`, `src/mods/model/`, `src/mods/pack_discover/`, `src/mods_page/` | Mods UI and state, pack discovery, and tests for these paths. |
