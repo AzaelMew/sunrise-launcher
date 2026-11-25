@@ -399,7 +399,8 @@ fn allocated_forty_gib_cleanup_proof() {
             sunrise_launcher_smod::locks::LockMode::Shared,
         )
         .unwrap();
-    let storage = Storage::at(&home.0).unwrap();
+    // The proof root is the launcher data folder itself (asserted above).
+    let storage = Storage::at_in(&home.0, backend::data_dir(), backend::game_home()).unwrap();
     assert!(matches!(Cache::acquire(&home.0), Err(Error::Busy)));
     let before = allocated_bytes(&home.0).unwrap();
     let now = std::time::SystemTime::now();

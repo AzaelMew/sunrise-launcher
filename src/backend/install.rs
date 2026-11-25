@@ -50,7 +50,7 @@ pub fn note_play_catalogue(releases: &[Release]) -> Result<(), String> {
     Ok(())
 }
 
-pub(super) fn installed_in(versions: &Path) -> Vec<String> {
+pub(crate) fn installed_in(versions: &Path) -> Vec<String> {
     let mut tags: Vec<_> = fs::read_dir(versions)
         .into_iter()
         .flatten()

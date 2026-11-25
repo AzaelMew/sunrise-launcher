@@ -21,6 +21,8 @@ impl Storage {
             directory: Dir::open_ambient_dir(&root, cap_std::ambient_authority())?,
             root,
             lease: cache.share()?,
+            data: backend::data_dir(),
+            game: backend::game_home(),
         };
         storage.stamp_build()?;
         storage.evict()

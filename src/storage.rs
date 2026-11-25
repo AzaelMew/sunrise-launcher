@@ -143,14 +143,30 @@ pub struct Storage {
     root: PathBuf,
     lease: Cache,
     directory: Dir,
+    /// The launcher's data folder and the game folder whose builds, profiles and caches the
+    /// inventory also walks: `backend::data_dir()` and `backend::game_home()`, except in tests.
+    data: PathBuf,
+    game: PathBuf,
 }
 
 impl Storage {
     pub fn open() -> Result<Self, Error> {
-        Self::at(&crate::backend::build_dir())
+        Self::at_in(
+            &crate::backend::build_dir(),
+            crate::backend::data_dir(),
+            crate::backend::game_home(),
+        )
     }
 
+    /// A build folder of a test's own, with a data and a game folder of its own inside it, so
+    /// parallel tests that install versions or make profiles in the shared ones can't race the
+    /// inventory's walk of them.
+    #[cfg(test)]
     fn at(root: &Path) -> Result<Self, Error> {
+        Self::at_in(root, root.join(".test-data"), root.join(".test-game"))
+    }
+
+    fn at_in(root: &Path, data: PathBuf, game: PathBuf) -> Result<Self, Error> {
         checked(root, true)?;
         fs::create_dir_all(root)?;
         let directory = Dir::open_ambient_dir(root, cap_std::ambient_authority())?;
@@ -159,6 +175,8 @@ impl Storage {
             root: root.canonicalize()?,
             directory,
             lease,
+            data,
+            game,
         };
         storage.validate_root()?;
         Ok(storage)
