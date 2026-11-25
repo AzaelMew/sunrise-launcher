@@ -15,7 +15,7 @@ Names in this table are relative to [`src/`](../src/). The binary and the shared
 | UI pages | `home.rs`, `home_mods.rs`, `instances_page.rs`, `instance_icons.rs`, `glass_instance.rs`, `profile_dialog.rs`, `launch_page.rs` | Show Home and the selected profile, manage profile dialogs and icons, and edit per-instance launch options. |
 | UI pages | `worlds_page.rs`, `datapacks_page.rs`, `packs_page.rs`, `screenshots_page.rs`, `console_page.rs` | Display an instance's worlds, packs, screenshots, and game output. |
 | UI pages | `settings.rs`, `location_page.rs`, `storage_report.rs`, `themes_page.rs`, `language_page.rs`, `collection.rs` | Draw settings, storage and relocation controls, appearance, language, and data collection. |
-| UI pages | `glass_versions.rs`, `glass_sheet.rs`, `glass_toast.rs`, `sheets.rs`, `setup_page.rs` | Draw versions, instance settings, toasts, shared dialogs, and Windows setup. |
+| UI pages | `glass_versions.rs`, `glass_toast.rs`, `sheets.rs`, `setup_page.rs` | Draw versions, instance settings, toasts, shared dialogs, and Windows setup. |
 | Backend | `lib.rs`, `backend.rs`, `launcher_setup.rs`, `launcher_messages.rs`, `launcher_play.rs`, `wake.rs` | Connect shared operations to the desktop's startup, task handlers, and message pump. |
 | Backend | `github.rs`, `nightly.rs`, `signed.rs`, `build_import.rs`, `developer_install.rs` | Discover releases, verify downloads, and install imported or checkout builds. |
 | Backend | `downloads.rs`, `download_retry.rs`, `mojang.rs`, `mojang_tests.rs`, `sources.rs`, `sources_tests.rs`, `preparer.rs`, `java.rs`, `jdk.rs` | Find or fetch Minecraft files and Java, run the preparer, and test the file and download paths. |
@@ -44,6 +44,7 @@ Names in this table are relative to [`src/`](../src/). The binary and the shared
 | `src/backend/` | The data and build folders, installation, release assets and selection, update selection, settings helpers, Play logging, and message types. |
 | `src/browser/`, `src/browser/installed/`, `src/browser/sunrise/`, `src/browser/sunrise/auto/` | Source-specific browser operations, installed-pack tests, Sunrise dependency and pack handling, and registry auto-update tests. |
 | `src/cli/` | Developer build commands, progress, settings JSON output, and storage tests. |
+| `src/instances_page/` | Which sections of the instance settings dialog hold edits Save has not kept. |
 | `src/internet/`, `src/servers/`, `src/servers_page/` | Hosting share UI, remote server control and tests, and hosting page composition. |
 | `src/jars/`, `src/zip_intake/` | Jar download and launch preparation, and the ZIP intake source adapter and tests. |
 | `src/mods/`, `src/mods/data_packs/`, `src/mods/model/`, `src/mods/pack_discover/`, `src/mods_page/` | Mods UI and state, pack discovery, and tests for these paths. |
