@@ -75,24 +75,7 @@ pub(super) fn client(args: PlayArgs) -> Result<i32, Error> {
         })
         .transpose()?;
     let selected = account.or_else(|| accounts.selected());
-    let add_arguments = |cmd: &mut Command| -> Result<(), String> {
-        if let Some(code) = join {
-            backend::join_friend(cmd, &code)?;
-        }
-        if let Some(world) = world {
-            cmd.arg("--world").arg(world);
-        }
-        if let Some(server) = server {
-            let list = server_list::List::load(&instance.home);
-            let ip = server_list::find(&list, &server).map_or(server, |(_, s)| s.ip);
-            cmd.arg("--server").arg(ip);
-        }
-        if creative {
-            cmd.arg("--creative");
-        }
-        cmd.args(arg);
-        Ok(())
-    };
+    let add_arguments = game_arguments(join, world, server, creative, arg, &instance.home);
     let jar_permission = jars::Permission::headless(allow_jar_downloads);
     let vars = instance.vars();
     let (started, played, finished) = {
@@ -147,4 +130,34 @@ pub(super) fn client(args: PlayArgs) -> Result<i32, Error> {
         );
     }
     played.map_err(Error::from)
+}
+
+/// What a run adds to the game's command line: a friend's world, a world, a server of the list
+/// (looked up in `home`), creative mode and the player's own arguments.
+fn game_arguments(
+    join: Option<String>,
+    world: Option<String>,
+    server: Option<String>,
+    creative: bool,
+    arg: Vec<String>,
+    home: &Path,
+) -> impl FnOnce(&mut Command) -> Result<(), String> + '_ {
+    move |cmd: &mut Command| {
+        if let Some(code) = join {
+            backend::join_friend(cmd, &code)?;
+        }
+        if let Some(world) = world {
+            cmd.arg("--world").arg(world);
+        }
+        if let Some(server) = server {
+            let list = server_list::List::load(home);
+            let ip = server_list::find(&list, &server).map_or(server, |(_, s)| s.ip);
+            cmd.arg("--server").arg(ip);
+        }
+        if creative {
+            cmd.arg("--creative");
+        }
+        cmd.args(arg);
+        Ok(())
+    }
 }
