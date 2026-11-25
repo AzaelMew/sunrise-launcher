@@ -8,6 +8,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use sunrise_launcher::instances::{self, Icon, Instance, Kind as InstanceKind};
 
+mod unsaved_edits;
+
 /// The dialog: a new instance (`editing` None) or one being changed. Its name and group are the
 /// text fields `Field::InstanceName` and `Field::InstanceGroup`.
 pub(super) struct InstanceDialog {
