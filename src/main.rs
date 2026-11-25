@@ -7,11 +7,10 @@
 use sunrise_launcher_scenery::coast;
 use sunrise_launcher_scenery::{art, clock, glass};
 mod account_chip;
+mod app;
 mod launcher_messages;
 mod launcher_play;
-mod launcher_render;
-mod launcher_setup;
-mod launcher_update;
+mod updates;
 pub(crate) use widgets::*;
 mod backdrop;
 mod blocks;
