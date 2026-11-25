@@ -235,7 +235,10 @@ pub fn java_runtime(
                 ));
             }
             let _ = fs::remove_file(path);
-            fs::create_dir_all(path.parent().unwrap())
+            let folder = path
+                .parent()
+                .ok_or_else(|| format!("{}: not a file path", path.display()))?;
+            fs::create_dir_all(folder)
                 .and_then(|_| std::os::unix::fs::symlink(target, path))
                 .map_err(|e| format!("{}: {e}", path.display()))?;
         }
@@ -426,7 +429,8 @@ fn fetch_each(
         }
     });
     TOTAL.store(0, Relaxed);
-    match failed.into_inner().unwrap() {
+    // As recover() does for the workers: a worker that panicked leaves at most its error here.
+    match failed.into_inner().unwrap_or_else(|e| e.into_inner()) {
         Some(e) if !stop_on_error && e != CANCELLED => Err(format!(
             "{} of {} files failed, the first: {e}",
             errors.load(Relaxed),
