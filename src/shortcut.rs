@@ -469,5 +469,4 @@ pub fn remove(id: &str) -> Result<Vec<PathBuf>, String> {
 }
 
 #[cfg(test)]
-#[path = "shortcut/tests.rs"]
 mod tests;

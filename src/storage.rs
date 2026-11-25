@@ -378,5 +378,4 @@ fn allocation(path: &Path, _meta: &fs::Metadata) -> Result<((u64, u64), u64), Er
 }
 
 #[cfg(test)]
-#[path = "storage/tests.rs"]
 mod tests;

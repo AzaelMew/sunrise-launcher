@@ -549,5 +549,4 @@ impl Launcher {
 }
 
 #[cfg(test)]
-#[path = "join/tests.rs"]
 mod tests;

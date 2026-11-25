@@ -311,5 +311,4 @@ pub fn install(need: &Need, log: &dyn Fn(String)) -> Result<Runtime, String> {
 }
 
 #[cfg(test)]
-#[path = "java/tests.rs"]
 mod tests;

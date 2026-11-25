@@ -341,5 +341,4 @@ pub fn coverage(file: &Path) -> Result<Coverage, String> {
 }
 
 #[cfg(test)]
-#[path = "datapacks/tests.rs"]
 mod tests;

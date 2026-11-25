@@ -705,5 +705,4 @@ impl Launcher {
 }
 
 #[cfg(test)]
-#[path = "launch_state/tests.rs"]
 mod tests;

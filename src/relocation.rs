@@ -235,5 +235,4 @@ pub fn run_worker() -> Option<i32> {
 }
 
 #[cfg(test)]
-#[path = "relocation/tests.rs"]
 mod tests;

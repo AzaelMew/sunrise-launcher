@@ -994,5 +994,4 @@ fn delete_world(world: &World) -> Result<(), String> {
 }
 
 #[cfg(test)]
-#[path = "worlds/tests.rs"]
 mod tests;

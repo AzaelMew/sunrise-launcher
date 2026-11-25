@@ -955,5 +955,4 @@ pub fn background(dir: &Path, name: Option<&str>) -> Option<PathBuf> {
 }
 
 #[cfg(test)]
-#[path = "themes/tests.rs"]
 mod tests;

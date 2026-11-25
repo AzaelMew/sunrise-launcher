@@ -646,5 +646,4 @@ pub fn apply_environment(command: &mut Command, launch: &Launch) {
 }
 
 #[cfg(test)]
-#[path = "launch/tests.rs"]
 mod tests;
