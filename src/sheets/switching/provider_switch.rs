@@ -9,13 +9,14 @@ impl Launcher {
         let Some(instance) = self.selected_instance().cloned() else {
             return;
         };
-        let identity = match install_target(&instance) {
-            Ok(identity) => identity,
+        let target_profile = match Target::of(&instance) {
+            Ok(target) => target,
             Err(error) => {
-                self.open_notice(error, Some(WayOut::ProfileFolder(instance.home)));
+                self.open_notice(error.into(), Some(WayOut::ProfileFolder(instance.home)));
                 return;
             }
         };
+        let identity = target_profile.identity();
         let target = self.version_of(&instance).cloned();
         let release = target
             .as_deref()
@@ -54,7 +55,7 @@ impl Launcher {
                 tx.send(send(answer)).is_ok() && reply.recv().unwrap_or(false)
             };
             let outcome = switch_provider_v2(
-                &instance,
+                &target_profile,
                 identity,
                 &switch.mod_id,
                 &switch.to_project_id,

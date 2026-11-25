@@ -597,6 +597,21 @@ pub struct Instance {
 }
 
 impl Instance {
+    /// Admit this exact profile before a mod-browser operation queues: the folder exists and
+    /// its filesystem identity still matches the one listed with the instance.
+    pub(crate) fn admit(&self) -> Result<Identity, String> {
+        if self.kind == Kind::Default && self.incarnation.is_none() {
+            fs::create_dir_all(&self.home).map_err(|e| format!("{}: {e}", self.home.display()))?;
+        }
+        let identity = Identity::of(&self.home)?;
+        match self.incarnation {
+            Some(expected) => expected.check(self, identity)?,
+            None if self.kind == Kind::Default => (),
+            None => return Err(lifecycle::changed()),
+        }
+        Ok(identity)
+    }
+
     /// Preserve the accepted selection, or stamp the default directory created by first Play.
     pub(crate) fn after_admission(&self, home: Identity) -> Self {
         let mut instance = self.clone();

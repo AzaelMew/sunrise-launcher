@@ -1,6 +1,9 @@
 //! Where a build's resources are, whether they are prepared (and the short-lived cache of that
 //! answer), and the step a preparation is at.
-use super::*;
+use super::{check_play_resources, preparer_source_error, server_only_resources};
+use crate::backend::{game_version_at, read_json, version_dir};
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 /// The version whose folder holds `tag`'s prepared resources: a native build shares its base's
 /// (`copy_base` leaves `.local` out), any other version keeps its own.

@@ -1,6 +1,6 @@
 //! Exercise real staged Update with a local catalogue vouched for only by this test module.
 use super::*;
-use crate::{attestation, backend};
+use crate::{attestation, backend, instances::Instance};
 use serde_json::json;
 use std::{path::PathBuf, process::Command};
 use sunrise_launcher_nbt::{self as nbt, Limits, NamedTag, Tag};
@@ -56,6 +56,15 @@ fn fixture_workflow() -> String {
 }
 
 impl Fixture {
+    fn target(&self) -> Target {
+        Target::of(&self.instance).unwrap()
+    }
+
+    #[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
+    fn identity(&self) -> Identity {
+        self.target().identity()
+    }
+
     fn run(test: &str, scenario: impl FnOnce(Self)) {
         // Scope launcher paths to one libtest process, not the other unit tests. The
         // launcher binary has neither this worker nor the test authority constructor.
@@ -244,9 +253,10 @@ impl Fixture {
     }
 
     fn apply_on(&self, base: &str, action: Action<'_>) -> Result<InstalledBatch, InstallError> {
+        let target = self.target();
         let request = V2EditRequest {
-            instance: &self.instance,
-            identity: install_target(&self.instance).unwrap(),
+            target: &target,
+            identity: target.identity(),
             index: self.index_for(base),
             options: V2InstallOptions::default(),
             transfer: V2Transfer {

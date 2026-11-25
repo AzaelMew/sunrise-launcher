@@ -1,6 +1,6 @@
 //! Hydrate listed source pins for a source mod's required dependencies.
 use super::*;
-use crate::{browser::sunrise::sources, instances::Channel};
+use crate::browser::sunrise::sources;
 
 #[derive(Clone)]
 pub struct SourceDependency {
@@ -15,7 +15,7 @@ pub(in crate::browser::sunrise::registry_install) struct SourceAdd {
 }
 
 pub(in crate::browser::sunrise::registry_install) fn complete_source_add(
-    instance: &Instance,
+    target: &Target,
     home: &Path,
     base: &str,
     roots: &[Entry<'_>],
@@ -65,7 +65,7 @@ pub(in crate::browser::sunrise::registry_install) fn complete_source_add(
             if let Some(reason) = unavailable.get(&id) {
                 return Err(SourceError::Catalogue(reason.clone()));
             }
-            if instance.channel == Channel::Stable {
+            if target.is_stable() {
                 return Err(SourceError::Catalogue(trf(
                     "Required mod {mod} isn't installed. Install it from Discover first, then try again.",
                     &[("mod", &id)],

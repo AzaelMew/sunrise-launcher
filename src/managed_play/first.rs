@@ -257,7 +257,7 @@ impl Profile {
                 Ok((manifest, references))
             })?;
         let _manifest = game_lock(home)?;
-        crate::browser::installed::recover_game_install(home)
+        crate::managed_play::recover_game_install(home)
             .map_err(super::client::StartError::Journal)?;
         Ok(Self(profile))
     }
@@ -405,7 +405,7 @@ impl Profile {
         let home = self.home().to_owned();
         let (old, epoch, stage) = {
             let _manifest = game_lock(&home)?;
-            crate::browser::installed::recover_game_install(&home).map_err(String::from)?;
+            crate::managed_play::recover_game_install(&home).map_err(String::from)?;
             let Some(old) = self.active()? else {
                 return Ok(None);
             };
@@ -433,7 +433,7 @@ impl Profile {
             log,
         )?;
         let _manifest = game_lock(&home)?;
-        crate::browser::installed::recover_game_install(&home).map_err(String::from)?;
+        crate::managed_play::recover_game_install(&home).map_err(String::from)?;
         let _references = ReferencePublication::begin(&home)?;
         let active = Active::capture(
             old.base(),
@@ -464,7 +464,7 @@ impl Profile {
     ) -> Result<T, E> {
         let home = self.home();
         let _manifest = game_lock(home)?;
-        crate::browser::installed::recover_game_install(home).map_err(String::from)?;
+        crate::managed_play::recover_game_install(home).map_err(String::from)?;
         if self.active()?.as_ref() != Some(active) || inputs(home)? != active.inputs {
             return Err(unsettled!().into());
         }
@@ -635,7 +635,7 @@ impl FirstAttempt<'_> {
         self.bound.verify_image()?;
         let resources = Resources::capture(self.base(), &self.stage)?;
         let _manifest = game_lock(&self.home)?;
-        crate::browser::installed::recover_game_install(&self.home)?;
+        crate::managed_play::recover_game_install(&self.home)?;
         let _references = ReferencePublication::begin(&self.home)?;
         self.bound.verify_image()?;
         let active = Active::capture(

@@ -1,6 +1,10 @@
 use super::*;
+use crate::{account, mojang, sources};
 use std::cmp::Ordering::*;
 use std::ffi::OsStr;
+use std::io::Read;
+use std::path::PathBuf;
+use std::process::Stdio;
 
 fn settings_file_reads(data: &Path) -> u64 {
     SETTINGS_FILE_READS
@@ -66,6 +70,7 @@ fn settings_cache_is_per_data_folder() {
 #[cfg(unix)]
 #[test]
 fn a_cancellable_zip_unpack_keeps_every_executable_runnable_and_stops_when_asked() {
+    use std::io::Write;
     use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();
     let zip_path = dir.path().join("game.zip");

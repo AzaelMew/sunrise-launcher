@@ -32,10 +32,10 @@ impl Launcher {
         if let Some(running) = &self.ui.sheets.switching.running {
             let pending = running.pending.as_ref().expect("switch download is queued");
             if running.stop.is_stopped() {
-                let home = pending.instance.home.clone();
+                let home = pending.target.home().to_owned();
                 self.switch_finished(&home, Ok(Switched::Stayed));
             } else if let Err(error) = result {
-                let home = pending.instance.home.clone();
+                let home = pending.target.home().to_owned();
                 self.switch_finished(&home, Err(error.clone()));
             } else {
                 self.prepare_switch();
@@ -73,13 +73,14 @@ impl Launcher {
         let Some(instance) = self.selected_instance().cloned() else {
             return;
         };
-        let identity = match install_target(&instance) {
-            Ok(identity) => identity,
+        let target = match Target::of(&instance) {
+            Ok(target) => target,
             Err(error) => {
-                self.open_notice(error, Some(WayOut::ProfileFolder(instance.home)));
+                self.open_notice(error.into(), Some(WayOut::ProfileFolder(instance.home)));
                 return;
             }
         };
+        let identity = target.identity();
         // Changing only the channel/pin preference when the profile is already on `tag` (and has
         // no pending recovery or first-Play bootstrap) needs no switch modal, registry fetch, or
         // mod rebuild. Keep artifact hashing off the UI thread.
@@ -93,8 +94,8 @@ impl Launcher {
             self.installed.contains(&tag),
         ) {
             if let Some(choice) = choice {
-                if let Err(error) = save_build_choice(&instance.id, &tag, choice) {
-                    self.open_notice(error, Some(WayOut::ProfileFolder(instance.home)));
+                if let Err(error) = target.save_build_choice(&tag, choice) {
+                    self.open_notice(error.into(), Some(WayOut::ProfileFolder(instance.home)));
                     return;
                 }
                 self.reload_instances();
@@ -110,7 +111,7 @@ impl Launcher {
             from,
             back: self.ui.sheet,
             pending: Some(Pending {
-                instance,
+                target,
                 identity,
                 choice,
             }),
@@ -182,10 +183,10 @@ impl Launcher {
         };
         let error = self.prepare_error.take();
         if running.stop.is_stopped() {
-            let home = pending.instance.home.clone();
+            let home = pending.target.home().to_owned();
             self.switch_finished(&home, Ok(Switched::Stayed));
         } else if let Some(error) = error {
-            let home = pending.instance.home.clone();
+            let home = pending.target.home().to_owned();
             self.switch_finished(&home, Err(error));
         } else {
             self.start_switch_worker();
@@ -201,7 +202,7 @@ impl Launcher {
             .as_mut()
             .expect("switch queued");
         let Pending {
-            instance,
+            target,
             identity,
             choice,
         } = running.pending.take().expect("switch queued");
@@ -234,7 +235,7 @@ impl Launcher {
             };
             // Mods installed before the signed registry keep their exact bytes through it.
             let outcome = switch_profile_build_v2(
-                &instance,
+                &target,
                 identity,
                 &tag,
                 choice,
@@ -252,7 +253,7 @@ impl Launcher {
                     pin_dir: None,
                 },
             );
-            let _ = tx.send(Msg::Switched(instance.home, Box::new(outcome)));
+            let _ = tx.send(Msg::Switched(target.home().to_owned(), Box::new(outcome)));
         });
     }
 

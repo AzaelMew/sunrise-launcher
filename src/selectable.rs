@@ -409,7 +409,7 @@ impl Element for Selectable {
                                 crate::widgets::copy_to_clipboard(cx, item);
                             } else {
                                 crate::widgets::copy_quietly(cx, item);
-                                crate::glass_toast::say(crate::i18n::tr("Copied"));
+                                crate::toast::say(crate::i18n::tr("Copied"));
                             }
                         }
                     }

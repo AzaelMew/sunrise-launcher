@@ -1,6 +1,15 @@
 //! The commands that start the game and the server, and the steps the window, CLI and MCP share
 //! before playing: the version to run, the EULA, what must be prepared, and joining a friend.
-use super::*;
+use super::{
+    check_build_preparation, client_as, complete_reports, data_dir, dedicated,
+    default_minecraft_dir, game_architecture_launch_error, game_home, game_version, installed,
+    prepare_command, prepare_lock, resources, server_root, version_dir, versions_dir, RuntimeGuard,
+    Settings, CLIENT, COMPLETE,
+};
+use std::fs;
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
 /// Splits the player's extra game arguments (Settings' one line) into words, the way a shell
 /// would: spaces separate them, single or double quotes group a word with spaces in it, and a

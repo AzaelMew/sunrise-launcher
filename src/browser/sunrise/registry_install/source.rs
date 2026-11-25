@@ -46,12 +46,8 @@ impl PartialEq for SourceProof {
 impl Eq for SourceProof {}
 
 impl SourceProof {
-    pub fn capture(
-        instance: &Instance,
-        identity: Identity,
-        base: &str,
-    ) -> Result<Self, SourceError> {
-        if instance.kind == InstanceKind::Pack {
+    pub fn capture(target: &Target, identity: Identity, base: &str) -> Result<Self, SourceError> {
+        if target.is_pack() {
             return Err(SourceError::Changed(
                 tr("This pack controls which mods it installs.").into(),
             ));
@@ -60,16 +56,16 @@ impl SourceProof {
         if checked_base.base_tag() != base {
             return Err(changed_source_target());
         }
-        let _lock = crate::browser::lock_home(&instance.home).map_err(|e| e.to_string())?;
-        let active = managed_play::display_active(&instance.home)?;
-        if Identity::of(&instance.home)? != identity
+        let _lock = crate::browser::lock_home(target.home()).map_err(|e| e.to_string())?;
+        let active = managed_play::display_active(target.home())?;
+        if Identity::of(target.home())? != identity
             || active
                 .as_ref()
                 .is_some_and(|current| current.base() != base)
         {
             return Err(changed_source_target());
         }
-        let before = managed_play::inputs(&instance.home)?;
+        let before = managed_play::inputs(target.home())?;
         Ok(Self {
             identity,
             base: base.into(),
@@ -205,7 +201,7 @@ pub(super) fn changed_source_target() -> SourceError {
 }
 
 pub fn prepare_source(
-    instance: &Instance,
+    target: &Target,
     identity: Identity,
     base: &str,
     request: SourceRequest,
@@ -230,7 +226,7 @@ pub fn prepare_source(
             origin.added_from = Some(AddedFrom::Discover);
         }
         prepare_packages(
-            instance,
+            target,
             identity,
             base,
             vec![(PastedSource { package, origin }, predecessor)],
@@ -306,14 +302,14 @@ pub fn read_pasted_sources(
 /// Check the selected set with the profile's catalogue. The queued worker repeats this
 /// fit check against the same profile inputs, and only its exact staged set goes to consent.
 pub fn prepare_pasted_sources(
-    instance: &Instance,
+    target: &Target,
     identity: Identity,
     base: &str,
     selected: Vec<PastedSource>,
     cancellation: &native_mods::Cancellation,
 ) -> Result<Vec<PreparedSource>, SourceError> {
     let result = prepare_packages(
-        instance,
+        target,
         identity,
         base,
         selected
@@ -332,7 +328,7 @@ pub fn prepare_pasted_sources(
 }
 
 fn prepare_packages(
-    instance: &Instance,
+    target: &Target,
     identity: Identity,
     base: &str,
     packages: Vec<(PastedSource, Option<Origin>)>,
@@ -342,7 +338,7 @@ fn prepare_packages(
 ) -> Result<Vec<PreparedSource>, SourceError> {
     let stage = tempfile::tempdir().map_err(|e| e.to_string())?;
     let (result, origins) = bind_packages(
-        instance,
+        target,
         identity,
         base,
         packages,
@@ -360,7 +356,7 @@ fn prepare_packages(
     )?;
     if follow_catalogue && origins.is_empty() {
         complete_source_add(
-            instance,
+            target,
             stage.path(),
             base,
             &entries,
@@ -375,14 +371,14 @@ fn prepare_packages(
 
 /// Install exact source bytes after one fit check and consent, leaving the build for Play.
 pub fn add_sources(
-    instance: &Instance,
+    target: &Target,
     identity: Identity,
     base: &str,
     selected: Vec<PastedSource>,
     hooks: SourceHooks<'_>,
 ) -> Result<(), SourceError> {
     let (prepared, _) = bind_packages(
-        instance,
+        target,
         identity,
         base,
         selected.into_iter().map(|entry| (entry, None)).collect(),
@@ -394,7 +390,7 @@ pub fn add_sources(
         return hooks.cancellation.check().map_err(SourceError::from);
     }
     apply_sources(
-        instance,
+        target,
         identity,
         &prepared,
         || FirstBuild::installed(base),
@@ -415,7 +411,7 @@ fn same_manual_source(installed: &Origin, next: &Origin) -> bool {
 }
 
 fn bind_packages(
-    instance: &Instance,
+    target: &Target,
     identity: Identity,
     base: &str,
     packages: Vec<(PastedSource, Option<Origin>)>,
@@ -426,7 +422,7 @@ fn bind_packages(
     if packages.is_empty() {
         return Err(SourceError::Cancelled);
     }
-    if instance.kind == InstanceKind::Pack {
+    if target.is_pack() {
         return Err(SourceError::Changed(
             tr("This pack controls which mods it installs.").into(),
         ));
@@ -437,21 +433,21 @@ fn bind_packages(
         return Err(changed_source_target());
     }
     {
-        let _lock = crate::browser::lock_home(&instance.home).map_err(|e| e.to_string())?;
-        let active = managed_play::display_active(&instance.home)?;
-        if Identity::of(&instance.home)? != identity
+        let _lock = crate::browser::lock_home(target.home()).map_err(|e| e.to_string())?;
+        let active = managed_play::display_active(target.home())?;
+        if Identity::of(target.home())? != identity
             || active
                 .as_ref()
                 .is_some_and(|current| current.base() != base)
         {
             return Err(changed_source_target());
         }
-        let before = managed_play::inputs(&instance.home)?;
+        let before = managed_play::inputs(target.home())?;
         let mut selected = Vec::with_capacity(packages.len());
         for (pasted, mut predecessor) in packages {
             // An earlier Add only satisfies a pick after publishing these exact bytes.
             // A checked preview/update has predecessor rules of its own and never skips here.
-            if copy_to.is_none() && source_is_published(instance, active.as_ref(), &pasted.origin) {
+            if copy_to.is_none() && source_is_published(target, active.as_ref(), &pasted.origin) {
                 continue;
             }
             if refresh_manual
@@ -459,7 +455,7 @@ fn bind_packages(
                 && pasted.origin.added_from == Some(AddedFrom::Github)
             {
                 if let Ok(existing) =
-                    github::installed_origin(&instance.home, &pasted.origin.id, |_| true)
+                    github::installed_origin(target.home(), &pasted.origin.id, |_| true)
                 {
                     if same_manual_source(&existing, &pasted.origin) {
                         if existing.sha256.eq_ignore_ascii_case(&pasted.origin.sha256) {
@@ -490,10 +486,10 @@ fn bind_packages(
                 .iter()
                 .map(PreparedSource::entry)
                 .collect::<Vec<_>>();
-            let origins = github::predecessors(&instance.home, &entries)?;
-            managed_play::copy_install_inputs(&instance.home, stage)?;
+            let origins = github::predecessors(target.home(), &entries)?;
+            managed_play::copy_install_inputs(target.home(), stage)?;
             if managed_play::inputs(stage)? != before
-                || managed_play::inputs(&instance.home)? != before
+                || managed_play::inputs(target.home())? != before
             {
                 return Err(changed_source_target());
             }
@@ -506,11 +502,11 @@ fn bind_packages(
 }
 
 fn source_is_published(
-    instance: &Instance,
+    target: &Target,
     active: Option<&managed_play::Active>,
     origin: &Origin,
 ) -> bool {
-    let home = &instance.home;
+    let home = target.home();
     let Some(recorded) = github_mods::origin(home, &origin.id) else {
         return false;
     };
@@ -536,7 +532,7 @@ pub type SourceAuthorization<'a> =
     dyn Fn(&[PreparedSource], &[SourceDependency]) -> Result<bool, String> + 'a;
 
 pub fn apply_sources(
-    instance: &Instance,
+    target: &Target,
     identity: Identity,
     prepared: &[PreparedSource],
     choose: impl FnOnce() -> Result<FirstBuild, String>,
@@ -560,7 +556,7 @@ pub fn apply_sources(
         return Err(changed_source_target());
     }
     let result = github::edit_github(
-        instance,
+        target,
         identity,
         &prepared
             .iter()

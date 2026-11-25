@@ -1,7 +1,6 @@
 //! Package edits and explicit Switch use the exact profile journal and staged compiler.
 use super::*;
 use crate::{
-    browser::installed::MANIFEST,
     i18n::tr,
     managed_play::{digest_file, Held, Receipt, ReceiptReport},
 };
@@ -217,7 +216,10 @@ pub(crate) fn copy_install_inputs(home: &Path, destination: &Path) -> Result<(),
             Err(error) => return Err(at(&dir, error)),
         }
     }
-    for name in [MANIFEST, mod_list::FILE] {
+    for name in [
+        sunrise_launcher_smod::index::browser_state::MANIFEST,
+        mod_list::FILE,
+    ] {
         if let Some(bytes) = super::super::optional_bytes(&home.join(name))? {
             fs::write(destination.join(name), bytes).map_err(|e| at(destination, e))?;
         }
@@ -295,7 +297,7 @@ impl Edit<'_> {
         authorize: impl FnOnce() -> Result<G, String>,
     ) -> Result<(), String> {
         let _manifest = game_lock(&self.home)?;
-        crate::browser::installed::recover_game_install(&self.home)?;
+        crate::managed_play::recover_game_install(&self.home)?;
         let _references = ReferencePublication::begin(&self.home)?;
         let stage = match self.basis {
             Basis::Active(_, stage) | Basis::Pending(stage) => stage,
@@ -451,7 +453,7 @@ impl Edit<'_> {
             Basis::Active(..) | Basis::Pending(_) | Basis::Switch { .. } => None,
         };
         let _manifest = game_lock(&self.home)?;
-        crate::browser::installed::recover_game_install(&self.home)?;
+        crate::managed_play::recover_game_install(&self.home)?;
         let _references = ReferencePublication::begin(&self.home)?;
         if inputs(&self.home)? != self.before {
             return Err(unsettled!());
@@ -574,7 +576,10 @@ pub(crate) fn changed_files(
     home: &Path,
     candidate: &Path,
 ) -> Result<Vec<(PathBuf, Option<PathBuf>)>, String> {
-    let mut names = BTreeSet::from([PathBuf::from(MANIFEST), PathBuf::from(mod_list::FILE)]);
+    let mut names = BTreeSet::from([
+        PathBuf::from(sunrise_launcher_smod::index::browser_state::MANIFEST),
+        PathBuf::from(mod_list::FILE),
+    ]);
     for root in [mod_list::DIR, mod_list::NATIVE_DIR] {
         for profile in [home, candidate] {
             let dir = profile.join(root);

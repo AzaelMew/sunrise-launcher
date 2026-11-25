@@ -192,7 +192,7 @@ impl Launcher {
                 self.bar = (0., 0.);
                 self.refresh_installed();
                 if let Some(warning) = self.record_nightly_receipt_outcome(&tag, &result) {
-                    glass_toast::say(trf(
+                    toast::say(trf(
                         "{warning} Try again in Settings → Storage.",
                         &[("warning", &warning)],
                     ));
@@ -640,7 +640,7 @@ impl Launcher {
 
     /// Says why a locked account action did nothing.
     pub(crate) fn say_account_locked(&self) {
-        crate::glass_toast::say(tr("Wait for the game to start before changing accounts."));
+        crate::toast::say(tr("Wait for the game to start before changing accounts."));
     }
 
     /// Generic Add account and targeted re-sign-in share the launcher-owned device-code flow.
@@ -762,7 +762,7 @@ impl SignInHost for Launcher {
         match refusal {
             SignInRefusal::Busy => self.say_account_locked(),
             SignInRefusal::AccountRemoved => {
-                crate::glass_toast::say(tr("This account was signed out. Add it again to sign in."))
+                crate::toast::say(tr("This account was signed out. Add it again to sign in."))
             }
         }
     }

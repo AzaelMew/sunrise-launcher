@@ -1,6 +1,7 @@
 //! The game's own folders: its home, the No AI switch, its logs and crash reports, and the
 //! graphics fallback after a crashed start.
-use super::*;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 /// Where the game keeps saves and options.txt: `SUNRISE_HOME`, else `sunrise` in the platform's
 /// data folder (~/.local/share/sunrise on Linux, as the release folders' sunrise.sh uses). It is

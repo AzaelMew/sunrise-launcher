@@ -1,6 +1,15 @@
 //! The game's own files: assets, the vanilla jars downloaded for the account that owns the game,
 //! the server jar and the sounds.
-use super::*;
+use super::{
+    resources_at, resources_owner, server_profile, set_prepare_step, PrepareStep,
+    RESOURCES_MANIFEST,
+};
+use crate::backend::{data_dir, get, prepare_lock, read_json, version_dir, versions_dir, Settings};
+use crate::managed_play::Resources;
+use crate::{account, mojang, sources};
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 /// Adds the extras a prepared version lacks (packs, panorama, fonts, languages, sounds), through its own
 /// `sunrise-prepare extras`: a new version reuses the resources of the one before (`reuse_prepared`), which may

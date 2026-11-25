@@ -154,10 +154,10 @@ impl Launcher {
                 Some(Err(tr("The selected profile changed. Try again.").into()));
             return;
         };
-        let identity = match Identity::of(&home) {
-            Ok(identity) => identity,
+        let target = match sunrise_launcher::browser::sunrise::Target::of(&instance) {
+            Ok(target) => target,
             Err(error) => {
-                self.mods_state.notice = Some(Err(error));
+                self.mods_state.notice = Some(Err(error.into()));
                 return;
             }
         };
@@ -171,8 +171,8 @@ impl Launcher {
         let (id, title) = (row.id.clone(), row.title.clone());
         std::thread::spawn(move || {
             let result = sunrise_launcher::browser::sunrise::restore_held(
-                &instance,
-                identity,
+                &target,
+                target.identity(),
                 &id,
                 &sunrise_launcher::native_mods::Cancellation::default(),
             )

@@ -782,7 +782,7 @@ fn free_name(dir: &Path, base: &str, suffix: &str, first: u32) -> String {
             n => format!("{safe} ({n}){suffix}"),
         })
         .find(|name| !dir.join(name).exists())
-        .unwrap()
+        .expect("a folder can't hold a world under every numbered name")
 }
 
 /// Zips the world into the game folder's `backups/`, as vanilla's Make Backup does. Returns the

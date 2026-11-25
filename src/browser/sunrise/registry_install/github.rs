@@ -7,7 +7,7 @@ use std::io::ErrorKind;
 /// Explicitly replace an existing GitHub release archive. The reviewed path and digest
 /// are the installed predecessor, not metadata from the update check. No fresh Add here.
 pub fn update_github(
-    instance: &Instance,
+    target: &Target,
     identity: Identity,
     found: &github_mods::Resolved,
     packed: &github_mods::Packed,
@@ -19,7 +19,7 @@ pub fn update_github(
         InstallError::Refused(tr("GitHub Update needs a checked release asset.").into())
     })?;
     edit_github(
-        instance,
+        target,
         identity,
         &[Entry {
             package: packed,
@@ -46,7 +46,7 @@ pub struct ManualRelease<'a> {
 /// release predecessor goes through the checked update path (with world review), while
 /// other-source collisions stay refused.
 pub fn install_github_manual(
-    instance: &Instance,
+    target: &Target,
     identity: Identity,
     release: ManualRelease<'_>,
     choose: impl FnOnce() -> Result<FirstBuild, String>,
@@ -72,7 +72,7 @@ pub fn install_github_manual(
         })
         .collect::<Result<Vec<_>, InstallError>>()?;
     edit_github(
-        instance,
+        target,
         identity,
         &packages,
         choose,
@@ -89,7 +89,7 @@ pub fn install_github_manual(
 /// Install all selected packages together. Fresh Add never silently upgrades or claims an
 /// existing file, even when it came from the same repository; use checked Update for that.
 pub fn add_github(
-    instance: &Instance,
+    target: &Target,
     identity: Identity,
     found: &github_mods::Resolved,
     selected: &[github_mods::Packed],
@@ -111,7 +111,7 @@ pub fn add_github(
         })
         .collect::<Result<Vec<_>, InstallError>>()?;
     edit_github(
-        instance,
+        target,
         identity,
         &packages,
         choose,
@@ -154,7 +154,7 @@ pub(super) struct SourceBatch<'a> {
 }
 
 pub(super) fn edit_github(
-    instance: &Instance,
+    target: &Target,
     identity: Identity,
     packages: &[Entry<'_>],
     choose: impl FnOnce() -> Result<FirstBuild, String>,
@@ -166,7 +166,7 @@ pub(super) fn edit_github(
         Check::Source(source) => Some(source),
         _ => None,
     };
-    if instance.kind == InstanceKind::Pack {
+    if target.is_pack() {
         return Err(InstallError::Refused(
             tr("This pack controls which mods it installs.").into(),
         ));
@@ -182,11 +182,11 @@ pub(super) fn edit_github(
     cancellation.check()?;
     (hooks.progress)(InstallProgress::Checking);
     let mut profile =
-        Profile::open_for(&instance.home, None, Some(identity)).map_err(String::from)?;
+        Profile::open_for(target.home(), None, Some(identity)).map_err(String::from)?;
     let previous = {
         let _home = profile.lock_inputs()?;
         if let Some(source) = source {
-            if managed_play::inputs(&instance.home)? != source.before
+            if managed_play::inputs(target.home())? != source.before
                 || profile.active()?.as_ref() != source.active
             {
                 return Err(InstallError::Source(super::source::changed_source_target()));
@@ -196,7 +196,7 @@ pub(super) fn edit_github(
                 return Err(InstallError::Source(super::source::changed_source_target()));
             }
         }
-        predecessors(&instance.home, packages)?
+        predecessors(target.home(), packages)?
     };
     let edit = profile.begin_edit(choose, |f| {
         (hooks.progress)(InstallProgress::Downloading(f))
@@ -223,7 +223,7 @@ pub(super) fn edit_github(
     }
     let additions = match source {
         Some(source) if previous.is_empty() => super::source::complete_source_add(
-            instance,
+            target,
             home,
             edit.base(),
             packages,
@@ -259,14 +259,14 @@ pub(super) fn edit_github(
             InstallError::Refused(tr("Review the update before building.").into())
         })?;
         let (impact, suspect) = if source.is_some() || packages.len() != 1 || previous.len() != 1 {
-            source_review(&instance.home, old.path(), home, &previous, packages)?
+            source_review(target.home(), old.path(), home, &previous, packages)?
         } else {
             let before = inventory(old.path())?;
             let id = &packages[0].origin.id;
             let prior = before.get(id).ok_or_else(|| changed(id))?;
             let (suspect, unchecked) = mutations::update_worlds(home, [&prior.package])?;
             let impact = ChangeImpact::read(
-                &instance.home,
+                target.home(),
                 mutations::Change::GithubUpdate {
                     target: mutations::ReviewedMod {
                         name: prior.package.manifest.name.clone(),
@@ -305,7 +305,7 @@ pub(super) fn edit_github(
         return edit
             .publish_pending(home, reviewed_inputs, cancellation, || {
                 unchanged_candidate()?;
-                predecessors(&instance.home, packages).map_err(|e| e.to_string())?;
+                predecessors(target.home(), packages).map_err(|e| e.to_string())?;
                 (hooks.progress)(InstallProgress::Publishing);
                 Ok(())
             })
@@ -327,7 +327,7 @@ pub(super) fn edit_github(
         };
         let proof = edit.prove(
             home,
-            instance.native_profile,
+            target.native_profile(),
             cancellation,
             |step| build_progress(step, proof_hooks.progress),
             None,
@@ -385,14 +385,14 @@ pub(super) fn edit_github(
         &staged.retired,
         || {
             unchanged_candidate()?;
-            if predecessors(&instance.home, packages).map_err(|e| e.to_string())? != previous {
+            if predecessors(target.home(), packages).map_err(|e| e.to_string())? != previous {
                 return Err(tr(
                     "An installed GitHub archive changed. Nothing was changed; try again.",
                 )
                 .into());
             }
             if let Some((suspect, evidence)) = &review {
-                mutations::bind_worlds(&instance.home, suspect, evidence).map(Some)
+                mutations::bind_worlds(target.home(), suspect, evidence).map(Some)
             } else {
                 Ok(None)
             }

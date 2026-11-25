@@ -31,7 +31,6 @@ mod eta;
 mod frame;
 mod game_tools;
 mod github_mods_page;
-mod glass_toast;
 mod glass_ui;
 mod home;
 mod home_mods;
@@ -85,6 +84,7 @@ mod switch_page;
 mod theme;
 mod themes_page;
 mod titlebar;
+mod toast;
 mod tokens;
 mod wake;
 mod while_playing;
@@ -289,7 +289,7 @@ struct Launcher {
     /// Its Friends over the internet panel (`internet.rs`).
     internet: internet::Internet,
     /// The window's own focus, so Tab reaches the controls when nothing else has the keyboard.
-    /// The toast last drawn (`glass_toast`), by its number.
+    /// The toast last drawn (`toast`), by its number.
     toast_seen: Option<u64>,
     root_focus: FocusHandle,
     /// Microsoft accounts (accounts.json), the sign-in under way and what it last showed.

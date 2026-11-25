@@ -24,7 +24,7 @@ impl Launcher {
             ),
             WayOut::ProfileFolder(home) => {
                 main(tr("Open folder").into()).on_click(move |_, _, cx| {
-                    glass_toast::open(cx, &home);
+                    toast::open(cx, &home);
                 })
             }
             WayOut::Newest(channel) => main(match channel {

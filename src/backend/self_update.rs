@@ -1,6 +1,13 @@
 //! The launcher replacing itself: finding what runs, staging a signed update beside it, placing
 //! it, and restarting.
-use super::*;
+use super::{
+    compare_versions, data_dir, download, fetch_small, launcher_version, plain, unpack,
+    LauncherCheckError, Release, LAUNCHER_APPIMAGE_ASSET, LAUNCHER_ASSET, LAUNCHER_BINARY, VERSION,
+};
+use std::fs;
+use std::io::Read;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 
 /// The launcher's own path, read once at start: after a self-update the running file is gone.
 pub fn exe_path() -> &'static Path {

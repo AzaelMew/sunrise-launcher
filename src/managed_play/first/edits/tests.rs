@@ -74,7 +74,7 @@ fn world_locks_span_live_publication_and_undo() {
         .commit(BASE, &cancellation)
         .unwrap();
     let before = profile_txn::references(&home).unwrap().pointer.unwrap();
-    let live_manifest = home.join(MANIFEST);
+    let live_manifest = home.join(sunrise_launcher_smod::index::browser_state::MANIFEST);
     let sources = BTreeMap::from([("lantern".into(), BTreeSet::new())]);
     let reviewed = worlds::review_risk(&home, &sources).unwrap();
     assert_eq!(reviewed.len(), 1);
@@ -85,7 +85,13 @@ fn world_locks_span_live_publication_and_undo() {
             .begin_edit(|| panic!("must use active base"), |_| {})
             .unwrap();
         let candidate = edit.candidate().unwrap();
-        fs::write(candidate.path().join(MANIFEST), POSTIMAGE).unwrap();
+        fs::write(
+            candidate
+                .path()
+                .join(sunrise_launcher_smod::index::browser_state::MANIFEST),
+            POSTIMAGE,
+        )
+        .unwrap();
         let proof = edit
             .prove(
                 candidate.path(),
