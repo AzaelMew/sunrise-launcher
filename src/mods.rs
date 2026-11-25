@@ -40,7 +40,7 @@ mod pack_discover;
 mod pack_project;
 mod packs;
 mod ports;
-pub(crate) use ports::PortSwitch;
+pub(crate) use crate::sheets::PortSwitch;
 mod project;
 mod rating;
 pub(crate) mod refused;

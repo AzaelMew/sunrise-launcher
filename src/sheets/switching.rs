@@ -1,5 +1,4 @@
 use super::*;
-use crate::mods::PortSwitch;
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -18,6 +17,19 @@ use sunrise_launcher::{
 mod build_switch;
 mod provider_switch;
 mod receipt;
+
+/// A switch the player can start from another port's row: the in-game ID, and both publishers
+/// as the player reads them. The backend re-reads the release from the signed index.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct PortSwitch {
+    pub(crate) mod_id: String,
+    pub(crate) mod_name: String,
+    pub(crate) from_repo: String,
+    pub(crate) from_version: String,
+    pub(crate) to_project_id: String,
+    pub(crate) to_repo: String,
+    pub(crate) to_version: String,
+}
 
 #[derive(Default)]
 pub(crate) struct State {
