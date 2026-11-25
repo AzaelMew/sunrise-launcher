@@ -24,6 +24,7 @@ use instance::{after_exit, instance, modpack, InstanceCmd, ModpackCmd};
 mod content;
 use content::{game_packs, screenshots, worlds, PacksCmd, ScreenshotsCmd, WorldsCmd};
 
+mod about;
 mod builds;
 mod logs;
 mod native;
@@ -435,22 +436,9 @@ fn release_json(r: &Release) -> serde_json::Value {
 }
 
 fn execute(command: Cmd, as_json: bool) -> Result<i32, Error> {
-    if matches!(command, Cmd::Versions { .. } | Cmd::Update { .. }) {
-        for (tag, from) in backend::reuse_prepared_everywhere() {
-            if !as_json {
-                eprintln!("Prepared {tag} with the resources of {from}.");
-            }
-        }
-    }
+    builds::reuse_prepared(&command, as_json);
     match command {
-        Cmd::Completions { shell } => {
-            clap_complete::generate(
-                shell,
-                &mut self::command(),
-                "sunrise-launcher",
-                &mut std::io::stdout(),
-            );
-        }
+        Cmd::Completions { shell } => about::completions(shell),
         Cmd::Versions { installed: true } => builds::installed(as_json)?,
         Cmd::Versions { installed: false } => return builds::releases(as_json),
         Cmd::Install { tag } => builds::install(tag, as_json)?,
@@ -473,10 +461,7 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, Error> {
             version,
         } => return builds::prepare(minecraft, download, version),
         Cmd::Play(args) => return play::client(args),
-        Cmd::Switch { tag, profile } => {
-            let instance = instances::read_profile(profile.as_deref())?;
-            switch::run(&instance, &tag, as_json)?;
-        }
+        Cmd::Switch { tag, profile } => switch::profile(tag, profile, as_json)?,
         Cmd::Server {
             dir,
             version,
@@ -486,29 +471,8 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, Error> {
         Cmd::Notes { tag } => builds::notes(tag, as_json)?,
         Cmd::Account { action } => account_command(action.unwrap_or(AccountCmd::List), as_json)?,
         Cmd::Data { action } => data(action.unwrap_or(DataCmd::Status), as_json)?,
-        Cmd::Benchmark { repeats } => {
-            let path = crate::perf::benchmark(repeats.max(1))?;
-            if as_json {
-                json(serde_json::json!({ "report": path }));
-            } else {
-                println!("{}", path.display());
-            }
-        }
-        Cmd::Links => {
-            let links = backend::links();
-            if as_json {
-                json(serde_json::to_value(&links).unwrap());
-            } else {
-                for (name, url) in [
-                    ("Website", &links.website),
-                    ("Roadmap", &links.roadmap),
-                    ("Documentation", &links.docs),
-                    ("Discord", &links.discord),
-                ] {
-                    println!("{name:<8} {}", if url.is_empty() { "(none)" } else { url });
-                }
-            }
-        }
+        Cmd::Benchmark { repeats } => about::benchmark(repeats, as_json)?,
+        Cmd::Links => about::links(as_json),
         Cmd::NoAi { state } => settings::no_ai(state, as_json)?,
         Cmd::Settings { key, value } => settings::show(key, value, as_json)?,
         Cmd::GameArgs { args } => settings::game_args(args, as_json)?,

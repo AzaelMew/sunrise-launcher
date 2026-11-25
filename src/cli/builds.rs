@@ -115,3 +115,14 @@ pub(super) fn notes(tag: Option<String>, as_json: bool) -> Result<(), Error> {
     }
     Ok(())
 }
+
+/// Before `versions` and `update`: builds that can share another build's prepared resources do.
+pub(super) fn reuse_prepared(command: &Cmd, as_json: bool) {
+    if matches!(command, Cmd::Versions { .. } | Cmd::Update { .. }) {
+        for (tag, from) in backend::reuse_prepared_everywhere() {
+            if !as_json {
+                eprintln!("Prepared {tag} with the resources of {from}.");
+            }
+        }
+    }
+}
