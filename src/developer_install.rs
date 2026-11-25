@@ -16,18 +16,20 @@ pub fn uses_developer(version: &str) -> bool {
         || crate::build_import::about(version).is_some_and(|a| is_developer(&a.base))
 }
 
+/// A local build's name, or a test build's ([`crate::draft_releases::label`]).
 pub fn label(version: &str) -> Option<String> {
-    uses_developer(version).then(|| {
-        let base = crate::native_mods::about(version)
-            .map(|a| a.base)
-            .or_else(|| crate::build_import::about(version).map(|a| a.base))
-            .unwrap_or_else(|| version.to_owned());
-        let commit = revision(&base).unwrap_or_else(|_| tr("Unknown commit").into());
-        trf(
-            "Local unsigned developer build · {commit} · {id}",
-            &[("commit", &commit), ("id", version)],
-        )
-    })
+    if !uses_developer(version) {
+        return crate::draft_releases::label(version);
+    }
+    let base = crate::native_mods::about(version)
+        .map(|a| a.base)
+        .or_else(|| crate::build_import::about(version).map(|a| a.base))
+        .unwrap_or_else(|| version.to_owned());
+    let commit = revision(&base).unwrap_or_else(|_| tr("Unknown commit").into());
+    Some(trf(
+        "Local unsigned developer build · {commit} · {id}",
+        &[("commit", &commit), ("id", version)],
+    ))
 }
 
 /// The instance row keeps the trust warning even before resources have been prepared.
