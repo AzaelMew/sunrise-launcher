@@ -3,7 +3,6 @@ use super::{catalogue, first::game_lock, unsettled, Active, FirstBuild, Profile}
 use crate::{
     account::{self, Accounts, NoOwner},
     backend::{self, installation::BoundVariant, RuntimeGuard},
-    browser::installed::GameInstallProblem,
     developer_offline, instances, native_mods,
     process::child::Child,
 };
@@ -31,7 +30,7 @@ pub enum Progress {
 
 #[derive(Debug)]
 pub enum StartError {
-    Journal(GameInstallProblem),
+    Journal(super::GameInstallProblem),
     Account(NoOwner),
     Native(native_mods::Failed, Option<Arc<FailedBuild>>),
     Hook(crate::launch::PreLaunchError),
@@ -327,7 +326,7 @@ impl Client<'_> {
             // Legacy writers still use the game lock, not profile admission. Keep
             // them out until refresh has staged the exact set we checked.
             let _manifest = game_lock(&home)?;
-            crate::browser::installed::recover_game_install(&home).map_err(StartError::Journal)?;
+            super::recover_game_install(&home).map_err(StartError::Journal)?;
             let notices = catalogue::inspect(&home, load_index)?;
             let active = profile
                 .refresh(
@@ -351,8 +350,7 @@ impl Client<'_> {
             first.prepare(&|line| progress(Progress::Line(line)))?;
             let (image, notices) = {
                 let _manifest = game_lock(&home)?;
-                crate::browser::installed::recover_game_install(&home)
-                    .map_err(StartError::Journal)?;
+                super::recover_game_install(&home).map_err(StartError::Journal)?;
                 first.verify_inputs()?;
                 let notices = catalogue::inspect(&home, load_index)?;
                 let image = first

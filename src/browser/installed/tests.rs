@@ -3,6 +3,7 @@ use crate::browser::{download, FileRef, Query};
 use sha2::Digest;
 use std::collections::HashMap;
 use std::sync::Mutex;
+use sunrise_launcher_smod::index::browser_state::{self, RecoveryProblem};
 const GAME: &str = crate::backend::PINNED_GAME;
 
 #[test]

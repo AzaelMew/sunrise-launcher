@@ -12,59 +12,9 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 pub(crate) use sunrise_launcher_smod::index::browser_state::MANIFEST;
-use sunrise_launcher_smod::index::browser_state::{self, RecoveryProblem};
 
-/// A game-owned install not safe to finish. The full diagnostic belongs in Details, not in a banner.
-#[derive(Debug)]
-pub struct GameInstallProblem {
-    detail: String,
-    may_have_changed: bool,
-}
-
-impl GameInstallProblem {
-    fn from_recovery(home: &Path, error: RecoveryProblem) -> Self {
-        let may_have_changed = matches!(error, RecoveryProblem::Durability { .. });
-        let error = error.details(crate::i18n::trf);
-        // Relative file names and the cause are useful; the host's local path is not.
-        let folder = home.display().to_string();
-        let prefix = format!("{folder}{}", std::path::MAIN_SEPARATOR);
-        let detail = error.strip_prefix(&prefix).map_or_else(
-            || error.strip_prefix(&format!("{folder}: ")).unwrap_or(&error),
-            |relative| relative,
-        );
-        Self {
-            detail: detail.to_owned(),
-            may_have_changed,
-        }
-    }
-
-    pub fn summary(&self) -> &'static str {
-        if self.may_have_changed {
-            crate::i18n::tr(
-                "A mod install the game started was interrupted and couldn't be finished.",
-            )
-        } else {
-            crate::i18n::tr("A mod install the game started was interrupted and couldn't be finished. Your mods and files were left as they are.")
-        }
-    }
-
-    pub fn details(&self) -> String {
-        format!("{}\n{}", self.summary(), self.detail)
-    }
-}
-
-impl From<GameInstallProblem> for String {
-    fn from(value: GameInstallProblem) -> Self {
-        value.details()
-    }
-}
-
-/// Settle the game's sidecar using its own home lock. Callers that mutate the profile
-/// hold the same, reentrant lock through their changes. No launcher journal is involved.
-pub fn recover_game_install(home: &Path) -> Result<(), GameInstallProblem> {
-    browser_state::reconcile(home).map_err(|error| GameInstallProblem::from_recovery(home, error))
-}
-
+/// The profile's install journal owns this type and its recovery entry point.
+pub use crate::managed_play::{recover_game_install, GameInstallProblem};
 /// The folders the browser installs into: an entry's `file` is always inside one of them.
 const FOLDERS: [&str; 5] = [
     "mods",
@@ -76,27 +26,8 @@ const FOLDERS: [&str; 5] = [
 /// How deep required dependencies are followed.
 pub(super) const MAX_DEPTH: usize = 4;
 
-/// Verified GitHub repository and release workflow identity recorded from a Sigstore attestation
-/// for a schema-2 Sunrise registry install.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct VerifiedRepository {
-    pub id: u64,
-    pub name: String,
-    pub path: String,
-    pub workflow: String,
-}
-
-impl VerifiedRepository {
-    pub fn valid(&self) -> bool {
-        self.id > 0
-            && !self.name.trim().is_empty()
-            && !self.name.chars().any(char::is_control)
-            && !self.path.trim().is_empty()
-            && !self.path.chars().any(char::is_control)
-            && !self.workflow.trim().is_empty()
-            && !self.workflow.chars().any(char::is_control)
-    }
-}
+/// The profile's install record owns this type, so the browser and the saved build locks agree.
+pub use crate::managed_play::VerifiedRepository;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Entry {
