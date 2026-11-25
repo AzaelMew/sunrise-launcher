@@ -117,325 +117,18 @@ impl Launcher {
             return sheets::frame("github-add-sheet", 500., body, cx);
         }
 
-        let body = div().flex().flex_col();
         let picker = match &self.github.stage {
             Stage::Pick(pick) => Some((pick.as_ref(), false)),
             Stage::Checking(check) => Some((check.pick.as_ref(), true)),
             _ => None,
         };
         let (body, back_action, action) = if let Some((pick, checking)) = picker {
-            let rows = div()
-                .id("github-add-list")
-                .max_h(px(184.))
-                .overflow_y_scroll()
-                .rounded(crate::tokens::r(tokens::R_CARD))
-                .border_1()
-                .border_color(rgb(palette().divider))
-                .children(pick.input.rows().into_iter().enumerate().map(
-                    |(i, (id, name, version))| {
-                        let id = id.to_owned();
-                        div()
-                            .id(("github-add-choice", i))
-                            .reach()
-                            .flex()
-                            .items_center()
-                            .gap(px(10.))
-                            .px(px(12.))
-                            .h(px(48.))
-                            .cursor_pointer()
-                            .when(i > 0, |r| {
-                                r.border_t_1().border_color(rgb(palette().divider))
-                            })
-                            .hover(|s| s.bg(rgb(palette().hover)))
-                            .child(
-                                crate::mods::checkbox(
-                                    ("github-add-check", i),
-                                    pick.selected.contains(&id),
-                                )
-                                .tab_stop(false),
-                            )
-                            .child(crate::mod_icons::tile(
-                                None::<gpui::ImageSource>,
-                                &id,
-                                name,
-                                26.,
-                            ))
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .truncate()
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .child(name.to_owned()),
-                            )
-                            .child(muted(version).flex_none())
-                            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                if let Stage::Pick(pick) = &mut this.github.stage {
-                                    pick.toggle(&id);
-                                }
-                                cx.notify();
-                            }))
-                    },
-                ));
-            let next = primary(
-                "github-add-install",
-                if checking {
-                    tr("Checking fit…")
-                } else {
-                    tr("Continue")
-                },
-            );
-            let next = if checking || pick.error.is_some() || pick.selected.is_empty() {
-                widgets::disabled(next)
-            } else {
-                next.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                    this.github_pick();
-                    cx.notify();
-                }))
-            };
-            (
-                body.child(sheets::title(tr("Choose mods to install").into()))
-                    .child(muted(&pick.input.subtitle()).truncate())
-                    .child(muted(tr(github_mods::WARNING)))
-                    .child(rows)
-                    .children(pick.error.as_ref().map(|error| {
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap(px(8.))
-                            .child(
-                                div()
-                                    .text_size(px(tokens::LABEL))
-                                    .text_color(rgb(palette().danger))
-                                    .child(error.line.clone()),
-                            )
-                            .children((!error.detail.is_empty()).then(|| {
-                                div().flex().child(
-                                    crate::frame::button(
-                                        "github-pick-details",
-                                        crate::mods::refused::details_label(pick.details),
-                                    )
-                                    .on_click(cx.listener(
-                                        |this, _: &ClickEvent, _, cx| {
-                                            if let Stage::Pick(pick) = &mut this.github.stage {
-                                                pick.details ^= true;
-                                            }
-                                            cx.notify();
-                                        },
-                                    )),
-                                )
-                            }))
-                            .children((pick.details && !error.detail.is_empty()).then(|| {
-                                crate::mods::refused::details_box(
-                                    "github-pick-error-detail",
-                                    error.detail.clone(),
-                                )
-                            }))
-                    })),
-                None,
-                next,
-            )
+            self.pick_body(pick, checking, cx)
         } else {
-            let resolving = self.github.busy();
-            let checked_failure = match &self.github.stage {
-                Stage::InstallFailed(failure, _) => Some(failure.as_ref()),
-                _ => None,
-            };
-            let mut body = if let Some(failure) = checked_failure {
-                let selected = match &failure.retry.selection {
-                    GithubSelection::Add(packages) => {
-                        packages.iter().map(|p| p.name.as_str()).collect::<Vec<_>>()
-                    }
-                    GithubSelection::Source(packages) => {
-                        packages.iter().map(PreparedSource::name).collect()
-                    }
-                };
-                body.child(sheets::title(tr("Add from source").into()))
-                    .child(muted(&failure.retry.source.label()).truncate())
-                    .child(muted(&selected.join(", ")).truncate())
-            } else {
-                let focused = !resolving && focus.is_focused(window);
-                let mut field_theme = crate::mods::field_theme(self.theme);
-                field_theme.glass = true;
-                let field = input(focused)
-                    .id("github-add-field")
-                    .h(px(tokens::ACTION))
-                    .px(px(12.))
-                    .text_size(px(tokens::BODY))
-                    .child(line_edit::content_with(
-                        &self.github.text,
-                        &field_theme,
-                        focused,
-                        false,
-                        false,
-                        "https://github.com/owner/repo".into(),
-                    ));
-                let field = if resolving {
-                    field.opacity(0.55)
-                } else {
-                    let field = field
-                        .track_focus(&focus)
-                        .seen()
-                        .cursor_text()
-                        .on_click(cx.listener(move |_, _: &ClickEvent, window, cx| {
-                            window.focus(&focus, cx);
-                            cx.notify();
-                        }))
-                        .on_key_down(cx.listener(|this, e: &KeyDownEvent, _, cx| {
-                            match line_edit::handle(&mut this.github.text, e, cx) {
-                                line_edit::Key::Pass | line_edit::Key::Escape => return,
-                                line_edit::Key::Enter => this.github_resolve(),
-                                line_edit::Key::Edited
-                                | line_edit::Key::Paste
-                                | line_edit::Key::Cut(_) => {
-                                    this.github.stage = Stage::Repository;
-                                }
-                                _ => {}
-                            }
-                            cx.stop_propagation();
-                            cx.notify();
-                        }));
-                    line_edit::mouse(field, cx, |this| &mut this.github.text)
-                };
-                let choose_folder = {
-                    let btn = button("add-source-pick-folder", tr("Choose local folder…"));
-                    if resolving {
-                        widgets::disabled(btn)
-                    } else {
-                        btn.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                            this.pick_local_folder(cx);
-                            cx.notify();
-                        }))
-                    }
-                };
-                body.child(sheets::title(tr("Add from source").into()))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap(px(10.))
-                            .child(muted(tr(
-                                "Paste a GitHub link to a repository, release, tag, branch or commit, or choose a mod folder on this computer.",
-                            )))
-                            .child(field)
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(10.))
-                                    .child(choose_folder)
-                                    .child(muted(tr("Marked From source · no auto-updates"))),
-                            ),
-                    )
-            };
-            if resolving {
-                body = body.child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(px(8.))
-                        .child(muted(tr("Checking GitHub…")))
-                        .child(widgets::progress_bar(None, &self.theme)),
-                );
-            }
-            let error = match &self.github.stage {
-                Stage::Failed {
-                    error, expanded, ..
-                } => Some((error, expanded)),
-                Stage::InstallFailed(failure, expanded) => Some((&failure.error, expanded)),
-                _ => None,
-            };
-            if let Some((error, expanded)) = error {
-                body = body.child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .gap(px(8.))
-                        .child(
-                            div()
-                                .text_size(px(tokens::LABEL))
-                                .text_color(rgb(palette().danger))
-                                .child(error.line.clone()),
-                        )
-                        .children((!error.detail.is_empty()).then(|| {
-                            button(
-                                "github-add-details",
-                                crate::mods::refused::details_label(*expanded),
-                            )
-                            .on_click(cx.listener(
-                                |this, _: &ClickEvent, _, cx| {
-                                    match &mut this.github.stage {
-                                        Stage::Failed { expanded, .. }
-                                        | Stage::InstallFailed(_, expanded) => *expanded ^= true,
-                                        _ => (),
-                                    }
-                                    cx.notify();
-                                },
-                            ))
-                        })),
-                );
-                if *expanded {
-                    body = body.child(crate::mods::refused::details_box(
-                        "github-add-error-detail",
-                        error.detail.clone(),
-                    ));
-                }
-            }
-            let back = (checked_failure.is_none() && !resolving).then(|| {
-                button("add-source-back", tr("Back")).on_click(cx.listener(
-                    |this, _: &ClickEvent, _, cx| {
-                        this.github.clear_picker();
-                        this.github.stage = Stage::Choose(SourceChoice::Repository);
-                        cx.notify();
-                    },
-                ))
-            });
-            let next = primary(
-                "github-add-continue",
-                if checked_failure.is_some()
-                    || matches!(
-                        &self.github.stage,
-                        Stage::Failed { error, .. } if error.retry
-                    )
-                {
-                    tr("Try again")
-                } else {
-                    tr("Continue")
-                },
-            );
-            let next = if checked_failure.is_some() {
-                next.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                    this.github_retry();
-                    cx.notify();
-                }))
-            } else if self.github.target.is_some() && self.github.can_resolve() {
-                next.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                    this.github_resolve();
-                    cx.notify();
-                }))
-            } else {
-                widgets::disabled(next)
-            };
-            (body, back, next)
+            let (body, resolving, checked) = self.source_body(focus, window, cx);
+            self.source_footer(body, resolving, checked, cx)
         };
-        let body = body.child(
-            div()
-                .flex()
-                .items_center()
-                .gap(px(8.))
-                .children(back_action)
-                .child(div().flex_1())
-                .child(
-                    button("github-add-cancel", tr("Cancel")).on_click(cx.listener(
-                        |this, _: &ClickEvent, _, cx| {
-                            actions::cancel(this);
-                            cx.notify();
-                        },
-                    )),
-                )
-                .child(action),
-        );
+        let body = self.footer(body, back_action, action, cx);
         sheets::frame("github-add-sheet", 520., body, cx)
     }
 
@@ -525,12 +218,8 @@ impl Launcher {
                         .child(primary("add-source-continue", tr("Continue")).on_click(
                             cx.listener(move |this, _: &ClickEvent, _, cx| {
                                 match choice {
-                                    SourceChoice::Repository => {
-                                        this.github.clear_picker();
-                                        this.github.stage = Stage::Repository;
-                                        this.github.repo_needs_focus = true;
-                                    }
-                                    SourceChoice::LocalFile => this.pick_local_smod(cx),
+                                    SourceChoice::Repository => actions::start_repository(this),
+                                    SourceChoice::LocalFile => actions::read_local(this, cx),
                                 }
                                 cx.notify();
                             }),
@@ -631,5 +320,358 @@ impl Launcher {
         } else {
             unreachable!("failed_body is only called from a failed choose step")
         }
+    }
+
+    fn pick_body(
+        &self,
+        pick: &Pick,
+        checking: bool,
+        cx: &mut Context<Self>,
+    ) -> (Div, Option<Stateful<Div>>, Stateful<Div>) {
+        let body = div().flex().flex_col();
+        let rows =
+            div()
+                .id("github-add-list")
+                .max_h(px(184.))
+                .overflow_y_scroll()
+                .rounded(crate::tokens::r(tokens::R_CARD))
+                .border_1()
+                .border_color(rgb(palette().divider))
+                .children(pick.input.rows().into_iter().enumerate().map(
+                    |(i, (id, name, version))| {
+                        let id = id.to_owned();
+                        div()
+                            .id(("github-add-choice", i))
+                            .reach()
+                            .flex()
+                            .items_center()
+                            .gap(px(10.))
+                            .px(px(12.))
+                            .h(px(48.))
+                            .cursor_pointer()
+                            .when(i > 0, |r| {
+                                r.border_t_1().border_color(rgb(palette().divider))
+                            })
+                            .hover(|s| s.bg(rgb(palette().hover)))
+                            .child(
+                                crate::mods::checkbox(
+                                    ("github-add-check", i),
+                                    pick.selected.contains(&id),
+                                )
+                                .tab_stop(false),
+                            )
+                            .child(crate::mod_icons::tile(
+                                None::<gpui::ImageSource>,
+                                &id,
+                                name,
+                                26.,
+                            ))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .truncate()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child(name.to_owned()),
+                            )
+                            .child(muted(version).flex_none())
+                            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                if let Stage::Pick(pick) = &mut this.github.stage {
+                                    pick.toggle(&id);
+                                }
+                                cx.notify();
+                            }))
+                    },
+                ));
+        let next = primary(
+            "github-add-install",
+            if checking {
+                tr("Checking fit…")
+            } else {
+                tr("Continue")
+            },
+        );
+        let next = if checking || pick.error.is_some() || pick.selected.is_empty() {
+            widgets::disabled(next)
+        } else {
+            next.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                actions::pick(this);
+                cx.notify();
+            }))
+        };
+        (
+            body.child(sheets::title(tr("Choose mods to install").into()))
+                .child(muted(&pick.input.subtitle()).truncate())
+                .child(muted(tr(github_mods::WARNING)))
+                .child(rows)
+                .children(pick.error.as_ref().map(|error| {
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(8.))
+                        .child(
+                            div()
+                                .text_size(px(tokens::LABEL))
+                                .text_color(rgb(palette().danger))
+                                .child(error.line.clone()),
+                        )
+                        .children((!error.detail.is_empty()).then(|| {
+                            div().flex().child(
+                                crate::frame::button(
+                                    "github-pick-details",
+                                    crate::mods::refused::details_label(pick.details),
+                                )
+                                .on_click(cx.listener(
+                                    |this, _: &ClickEvent, _, cx| {
+                                        if let Stage::Pick(pick) = &mut this.github.stage {
+                                            pick.details ^= true;
+                                        }
+                                        cx.notify();
+                                    },
+                                )),
+                            )
+                        }))
+                        .children((pick.details && !error.detail.is_empty()).then(|| {
+                            crate::mods::refused::details_box(
+                                "github-pick-error-detail",
+                                error.detail.clone(),
+                            )
+                        }))
+                })),
+            None,
+            next,
+        )
+    }
+
+    fn source_field(
+        &self,
+        focus: FocusHandle,
+        window: &mut Window,
+        resolving: bool,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let focused = !resolving && focus.is_focused(window);
+        let mut field_theme = crate::mods::field_theme(self.theme);
+        field_theme.glass = true;
+        let field = input(focused)
+            .id("github-add-field")
+            .h(px(tokens::ACTION))
+            .px(px(12.))
+            .text_size(px(tokens::BODY))
+            .child(line_edit::content_with(
+                &self.github.text,
+                &field_theme,
+                focused,
+                false,
+                false,
+                "https://github.com/owner/repo".into(),
+            ));
+        let field = if resolving {
+            field.opacity(0.55)
+        } else {
+            let field = field
+                .track_focus(&focus)
+                .seen()
+                .cursor_text()
+                .on_click(cx.listener(move |_, _: &ClickEvent, window, cx| {
+                    window.focus(&focus, cx);
+                    cx.notify();
+                }))
+                .on_key_down(cx.listener(|this, e: &KeyDownEvent, _, cx| {
+                    match line_edit::handle(&mut this.github.text, e, cx) {
+                        line_edit::Key::Pass | line_edit::Key::Escape => return,
+                        line_edit::Key::Enter => actions::resolve(this),
+                        line_edit::Key::Edited | line_edit::Key::Paste | line_edit::Key::Cut(_) => {
+                            this.github.stage = Stage::Repository;
+                        }
+                        _ => {}
+                    }
+                    cx.stop_propagation();
+                    cx.notify();
+                }));
+            line_edit::mouse(field, cx, |this| &mut this.github.text)
+        };
+        let choose_folder = {
+            let btn = button("add-source-pick-folder", tr("Choose local folder…"));
+            if resolving {
+                widgets::disabled(btn)
+            } else {
+                btn.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                    actions::pick_folder(this, cx);
+                    cx.notify();
+                }))
+            }
+        };
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(10.))
+            .child(muted(tr(
+                "Paste a GitHub link to a repository, release, tag, branch or commit, or choose a mod folder on this computer.",
+            )))
+            .child(field)
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(10.))
+                    .child(choose_folder)
+                    .child(muted(tr("Marked From source · no auto-updates"))),
+            )
+    }
+
+    fn source_body(
+        &self,
+        focus: FocusHandle,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> (Div, bool, bool) {
+        let resolving = self.github.busy();
+        let checked_failure = match &self.github.stage {
+            Stage::InstallFailed(failure, _) => Some(failure.as_ref()),
+            _ => None,
+        };
+        let body = div().flex().flex_col();
+        let mut body = if let Some(failure) = checked_failure {
+            let selected = match &failure.retry.selection {
+                GithubSelection::Add(packages) => {
+                    packages.iter().map(|p| p.name.as_str()).collect::<Vec<_>>()
+                }
+                GithubSelection::Source(packages) => {
+                    packages.iter().map(PreparedSource::name).collect()
+                }
+            };
+            body.child(sheets::title(tr("Add from source").into()))
+                .child(muted(&failure.retry.source.label()).truncate())
+                .child(muted(&selected.join(", ")).truncate())
+        } else {
+            body.child(sheets::title(tr("Add from source").into()))
+                .child(self.source_field(focus, window, resolving, cx))
+        };
+        if resolving {
+            body = body.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.))
+                    .child(muted(tr("Checking GitHub…")))
+                    .child(widgets::progress_bar(None, &self.theme)),
+            );
+        }
+        let error = match &self.github.stage {
+            Stage::Failed {
+                error, expanded, ..
+            } => Some((error, expanded)),
+            Stage::InstallFailed(failure, expanded) => Some((&failure.error, expanded)),
+            _ => None,
+        };
+        if let Some((error, expanded)) = error {
+            body = body.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap(px(8.))
+                    .child(
+                        div()
+                            .text_size(px(tokens::LABEL))
+                            .text_color(rgb(palette().danger))
+                            .child(error.line.clone()),
+                    )
+                    .children((!error.detail.is_empty()).then(|| {
+                        button(
+                            "github-add-details",
+                            crate::mods::refused::details_label(*expanded),
+                        )
+                        .on_click(cx.listener(
+                            |this, _: &ClickEvent, _, cx| {
+                                match &mut this.github.stage {
+                                    Stage::Failed { expanded, .. }
+                                    | Stage::InstallFailed(_, expanded) => *expanded ^= true,
+                                    _ => (),
+                                }
+                                cx.notify();
+                            },
+                        ))
+                    })),
+            );
+            if *expanded {
+                body = body.child(crate::mods::refused::details_box(
+                    "github-add-error-detail",
+                    error.detail.clone(),
+                ));
+            }
+        }
+        (body, resolving, checked_failure.is_some())
+    }
+
+    fn source_footer(
+        &self,
+        body: Div,
+        resolving: bool,
+        checked: bool,
+        cx: &mut Context<Self>,
+    ) -> (Div, Option<Stateful<Div>>, Stateful<Div>) {
+        let back = (!checked && !resolving).then(|| {
+            button("add-source-back", tr("Back")).on_click(cx.listener(
+                |this, _: &ClickEvent, _, cx| {
+                    actions::back_to_repository(this);
+                    cx.notify();
+                },
+            ))
+        });
+        let next = primary(
+            "github-add-continue",
+            if checked
+                || matches!(
+                    &self.github.stage,
+                    Stage::Failed { error, .. } if error.retry
+                )
+            {
+                tr("Try again")
+            } else {
+                tr("Continue")
+            },
+        );
+        let next = if checked {
+            next.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                actions::retry(this);
+                cx.notify();
+            }))
+        } else if self.github.target.is_some() && self.github.can_resolve() {
+            next.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                actions::resolve(this);
+                cx.notify();
+            }))
+        } else {
+            widgets::disabled(next)
+        };
+        (body, back, next)
+    }
+
+    fn footer(
+        &self,
+        body: Div,
+        back_action: Option<Stateful<Div>>,
+        action: Stateful<Div>,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        body.child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(8.))
+                .children(back_action)
+                .child(div().flex_1())
+                .child(
+                    button("github-add-cancel", tr("Cancel")).on_click(cx.listener(
+                        |this, _: &ClickEvent, _, cx| {
+                            actions::cancel(this);
+                            cx.notify();
+                        },
+                    )),
+                )
+                .child(action),
+        )
     }
 }
