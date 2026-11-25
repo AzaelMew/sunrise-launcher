@@ -6399,6 +6399,7 @@ dependencies = [
  "sunrise-launcher-addresses",
  "sunrise-launcher-bench",
  "sunrise-launcher-friends",
+ "sunrise-launcher-jar-fetch",
  "sunrise-launcher-mcp",
  "sunrise-launcher-nbt",
  "sunrise-launcher-proxy",
@@ -6445,6 +6446,15 @@ dependencies = [
 name = "sunrise-launcher-friends"
 version = "0.1.0"
 dependencies = [
+ "sha2",
+]
+
+[[package]]
+name = "sunrise-launcher-jar-fetch"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
  "sha2",
 ]
 
