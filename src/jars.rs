@@ -1,5 +1,4 @@
 //! Resolve a mod set's passive Java jars before a launcher-managed launch.
-mod download;
 mod launch;
 use crate::browser::installed::Installed;
 use crate::i18n::{tr, trf};
@@ -9,7 +8,57 @@ use std::{
     fmt, fs, io,
     path::{Path, PathBuf},
 };
+use sunrise_launcher_jar_fetch::{Http, Modrinth};
 use sunrise_launcher_smod::manifest::{JarRef, JarRequirement, MissingJar};
+use ureq::OrAnyStatus;
+
+/// Where jars are found and downloaded from: Modrinth's API, and only its CDN.
+const MODRINTH: Modrinth<'static> = Modrinth {
+    api: crate::browser::modrinth::API,
+    cdn_host: "cdn.modrinth.com",
+};
+
+/// `sunrise-launcher-jar-fetch`'s transport: the launcher's proxy settings, and no hop off the
+/// requested `https` host.
+struct Transport;
+
+impl Http for Transport {
+    fn get(&self, url: &str) -> Result<Option<Box<dyn io::Read>>, String> {
+        let host = url::Url::parse(url)
+            .ok()
+            .and_then(|url| url.host_str().map(str::to_owned))
+            .ok_or_else(|| format!("{url}: no host"))?;
+        Ok(crate::net::get_from_hosts(url, &[&host])?
+            .map(|response| -> Box<dyn io::Read> { response.into_reader() }))
+    }
+
+    fn post_json(&self, url: &str, body: &str) -> Result<Box<dyn io::Read>, String> {
+        let response =
+            crate::proxy::agent("jar-version-files", url, |builder| builder.redirects(0))?
+                .post(url)
+                .set("User-Agent", crate::proxy::USER_AGENT)
+                .set("Content-Type", "application/json")
+                .send_string(body)
+                .or_any_status()
+                .map_err(|e| format!("{url}: {}", e.kind()))?;
+        let status = response.status();
+        if status >= 300 {
+            return Err(format!("{url}: HTTP {status}"));
+        }
+        Ok(response.into_reader())
+    }
+}
+
+/// The CDN address of each jar, by its SHA-512, in one exact-hash request (after download consent).
+fn jar_urls(jars: &[&JarRef]) -> Result<BTreeMap<String, String>, String> {
+    let hashes: Vec<&str> = jars.iter().map(|jar| jar.sha512()).collect();
+    sunrise_launcher_jar_fetch::file_urls(&Transport, MODRINTH, &hashes)
+}
+
+/// Downloads exactly `jar` from Modrinth's CDN to `dest`, published only once its SHA-512 matches.
+fn download_jar(url: &str, jar: &JarRef, dest: &Path) -> Result<(), String> {
+    sunrise_launcher_jar_fetch::download(&Transport, MODRINTH, url, jar.sha512(), dest)
+}
 
 /// Download consent for this mod set, never a permission to execute Java code. It decides only
 /// jars that no installed Sunrise registry mod lists: those are fetched without asking.
@@ -137,8 +186,8 @@ pub fn prepare(
         jars,
         registry_mods,
         permission,
-        download::jar_urls,
-        download::download_jar,
+        jar_urls,
+        download_jar,
     )
 }
 
@@ -146,7 +195,7 @@ pub fn prepare(
 /// asks nothing: each listing mod is a reviewed registry release. A jar Modrinth no longer has
 /// fails with [`PrepareError::NoLongerOnModrinth`].
 pub fn fetch_listed(home: &Path, jars: &[JarRequirement]) -> Result<(), PrepareError> {
-    fetch_listed_with(home, jars, download::jar_urls, download::download_jar)
+    fetch_listed_with(home, jars, jar_urls, download_jar)
 }
 
 fn fetch_listed_with(
@@ -177,8 +226,8 @@ pub fn export(
         jars,
         registry_mods,
         permission,
-        download::jar_urls,
-        download::download_jar,
+        jar_urls,
+        download_jar,
     )
 }
 
@@ -240,12 +289,11 @@ fn prepare_with(
         match fs::File::open(&path) {
             Ok(file) => {
                 let hash =
-                    download::hash_reader::<sha2::Sha512>(file, io::sink()).map_err(|source| {
-                        PrepareError::Io {
+                    sunrise_launcher_jar_fetch::hash_reader::<sha2::Sha512>(file, io::sink())
+                        .map_err(|source| PrepareError::Io {
                             path: path.clone(),
                             source,
-                        }
-                    })?;
+                        })?;
                 let actual = format!("{hash:x}");
                 if actual != jar.sha512() {
                     return Err(PrepareError::HashMismatch {
