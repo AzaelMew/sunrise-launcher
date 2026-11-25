@@ -14,7 +14,8 @@ const PASTE_ENV: &str = "SUNRISE_LAUNCHER_PASTE_URL";
 const MAX_LINES: usize = 25_000;
 const MAX_BYTES: usize = 10 << 20;
 
-fn api() -> String {
+/// The paste API to share with: `SUNRISE_LAUNCHER_PASTE_URL` when it is set, else mclo.gs's.
+pub fn api() -> String {
     std::env::var(PASTE_ENV)
         .ok()
         .filter(|u| !u.is_empty())
@@ -121,13 +122,13 @@ pub struct Shared {
     pub token: String,
 }
 
-/// Uploads `text` (already [`private`]) and returns its link.
-pub fn share(text: &str) -> Result<Shared, String> {
-    if api().is_empty() {
+/// Uploads `text` (already [`private`]) to the paste API at `api` ([`api`]) and returns its link.
+pub fn share(api: &str, text: &str) -> Result<Shared, String> {
+    if api.is_empty() {
         return Err("Log sharing is not configured for this build.".into());
     }
     let body = serde_json::json!({ "content": fit(text), "source": "Sunrise launcher" });
-    let answer: serde_json::Value = ureq::post(&format!("{}/log", api()))
+    let answer: serde_json::Value = ureq::post(&format!("{api}/log"))
         .send_json(body)
         .map_err(|e| format!("mclo.gs didn't take the log: {e}"))?
         .into_json()
@@ -147,9 +148,9 @@ pub fn share(text: &str) -> Result<Shared, String> {
     }
 }
 
-/// Deletes a log shared from here.
-pub fn unshare(shared: &Shared) -> Result<(), String> {
-    ureq::delete(&format!("{}/log/{}", api(), shared.id))
+/// Deletes a log shared from here, at the paste API at `api` ([`api`]).
+pub fn unshare(api: &str, shared: &Shared) -> Result<(), String> {
+    ureq::delete(&format!("{api}/log/{}", shared.id))
         .set("Authorization", &format!("Bearer {}", shared.token))
         .call()
         .map_err(|e| format!("mclo.gs didn't delete it: {e}"))?;
