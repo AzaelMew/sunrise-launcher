@@ -89,6 +89,21 @@ impl Launcher {
                 | Msg::Progress(_, _)
                 | Msg::Installed(_, _)
                 | Msg::ConfirmUnreviewed(_, _) => self.on_install_message(msg),
+                Msg::Playing(_)
+                | Msg::PlayStep(_)
+                | Msg::ManagedBuild { .. }
+                | Msg::ManagedBuildLog(_)
+                | Msg::ManagedClient { .. }
+                | Msg::PlayRecorded
+                | Msg::GameExitSettled
+                | Msg::PlayAdmission(_, _) => self.on_play_message(msg, cx),
+                Msg::Session(_)
+                | Msg::JarConsent { .. }
+                | Msg::JarClient { .. }
+                | Msg::Line(_, _)
+                | Msg::ClientObservationLost(_) => self.on_session_message(msg, window, cx),
+                Msg::SwitchProgress(_) | Msg::SwitchQuestion(_, _) | Msg::Switched(_, _) => {
+                    self.on_switch_message(msg)
                 }
                 Msg::ProviderSwitchProgress(_)
                 | Msg::ProviderSwitchQuestion(_, _)
@@ -96,6 +111,8 @@ impl Launcher {
                 | Msg::ProviderChoice(_, _)
                 | Msg::PublisherChangeQuestion(_, _)
                 | Msg::ReceiptAcknowledged(_, _) => self.on_provider_message(msg),
+                Msg::NightlyReceiptRetried(_, _) | Msg::NativeProgress(_) | Msg::Native(_) => {
+                    self.on_native_message(msg)
                 }
                 Msg::Removed(_)
                 | Msg::BuildInventory(_, _)
@@ -106,7 +123,6 @@ impl Launcher {
                 | Msg::LauncherChecked(_)
                 | Msg::LauncherProgress(_)
                 | Msg::LauncherUpdated(_) => self.on_update_message(msg),
-                }
                 Msg::Exit(_, _) => self.on_game_exit_message(msg, cx),
             }
         }
