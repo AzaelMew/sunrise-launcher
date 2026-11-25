@@ -19,7 +19,8 @@ MOD = re.compile(r"^(?:pub(?:\([^)]*\))?\s+)?mod\s+(\w+)\s*;")
 PATH_ATTR = re.compile(r'^\s*#\[path\s*=\s*"([^"]+)"\s*\]')
 # The macro's own eprintln! must stay.
 LOGGER = SRC / "launcher_log.rs"
-CALL = re.compile(r"(?<![\w:])eprintln!\(")
+# `eprintln!()` (a bare newline, as after a progress line) has nothing to log and stays.
+CALL = re.compile(r"(?<![\w:])eprintln!\((?!\))")
 
 
 def children(file: Path):
