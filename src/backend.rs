@@ -5477,6 +5477,28 @@ mod tests {
         assert_eq!(settings_file_reads(dir.path()) - before, 3);
     }
 
+    /// The parsed cache is keyed by data folder, so two homes (or a test's scratch home and the
+    /// player's) never see each other's settings, and the first answer stays stable.
+    #[test]
+    fn settings_cache_is_per_data_folder() {
+        let first = tempfile::tempdir().unwrap();
+        let second = tempfile::tempdir().unwrap();
+        fs::write(
+            first.path().join(crate::paths::SETTINGS),
+            r#"{"selected":"one"}"#,
+        )
+        .unwrap();
+        fs::write(
+            second.path().join(crate::paths::SETTINGS),
+            r#"{"selected":"two"}"#,
+        )
+        .unwrap();
+        let selected = |data: &Path| Settings::load_cached_from(data).selected;
+        assert_eq!(selected(first.path()).as_deref(), Some("one"));
+        assert_eq!(selected(second.path()).as_deref(), Some("two"));
+        assert_eq!(selected(first.path()).as_deref(), Some("one"));
+    }
+
     #[cfg(unix)]
     #[test]
     fn a_cancellable_zip_unpack_keeps_every_executable_runnable_and_stops_when_asked() {
