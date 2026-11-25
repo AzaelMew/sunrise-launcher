@@ -281,10 +281,11 @@ commit it's based on, and fails if any of these counts goes **up**:
 - `#[allow(dead_code)]` and `#[allow(clippy::…)]`
 - `.unwrap()` and `Result<_, String>` in non-test code. The check's non-test code is stricter than
   the table at the top. It leaves out test files by name (`tests/`, `tests.rs`, `*_tests.rs`,
-  `test_support`), files pulled in by a `#[cfg(test)] mod x;` (and the modules they declare in turn),
-  each other `#[cfg(test)]` item, and a file from its first inline `#[cfg(test)] mod x { … }` on.
+  `test_support`), files pulled in by a `#[cfg(test)] mod x;`, every module a test file declares in
+  turn, each other `#[cfg(test)]` item, and a file from its first inline `#[cfg(test)] mod x { … }` on.
   A `#[cfg(test)] mod x;` line no longer hides the code after it, so splitting a file doesn't
-  raise the count.
+  raise the count. "`#[cfg(test)]`" here means any `cfg` that only test builds satisfy: `cfg(test)`,
+  `cfg(all(test, …))`, or an `any(…)` of such. `any(test, …)` and `not(test)` don't count.
 - paths with retired prefixes (`glass_`, `blocks_`, `alt_`, `launcher_`)
 - entries in `manual-tests.txt` that name no existing test
 

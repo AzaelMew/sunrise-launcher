@@ -15,12 +15,11 @@ LONG_FUNCTION = 80
 
 PATH_ATTRIBUTE = re.compile(r"#\[\s*path\s*=")
 ALLOW = re.compile(r"#!?\[\s*(?:cfg_attr\s*\(.*?,\s*)?allow\s*\(([^()]*)\)")
-CFG_TEST = re.compile(r"^[ \t]*#\[\s*cfg\s*\(\s*test\s*\)\s*\]", re.M)
-# `#[cfg(test)]`, any further attributes, then `mod name;` or `mod name {`, at the start of a line.
-TEST_MODULE = re.compile(
-    r"^[ \t]*#\[\s*cfg\s*\(\s*test\s*\)\s*\]((?:\s*#\[[^\]]*\])*)\s*(?:pub(?:\s*\([^)]*\))?\s+)?mod\s+(\w+)\s*([;{])",
-    re.M,
-)
+# A `#[cfg(` attribute at the start of a line; `test_gate` reads its predicate.
+CFG = re.compile(r"^[ \t]*#\[\s*cfg\s*\(", re.M)
+CFG_TOKEN = re.compile(r'\s*(?:"(?:\\.|[^"\\])*"|\w+|.)')
+# After a test gate: any further attributes, then `mod name;` or `mod name {`.
+TEST_MODULE = re.compile(r"((?:\s*#\[[^\]]*\])*)\s*(?:pub(?:\s*\([^)]*\))?\s+)?mod\s+(\w+)\s*([;{])")
 # Any `mod name;` declaration with its attributes, at the start of a line.
 MODULE_FILE = re.compile(r"^[ \t]*((?:#\[[^\]]*\]\s*)*)(?:pub(?:\s*\([^)]*\))?\s+)?mod\s+(\w+)\s*;", re.M)
 PATH_VALUE = re.compile(r'#\[\s*path\s*=\s*"([^"]+)"\s*\]')
@@ -119,13 +118,14 @@ def module_paths(declaring: str, name: str, attributes: str) -> list[str]:
 
 
 def test_files(texts: dict[str, str]) -> set[str]:
-    """Test files by name, files a `#[cfg(test)] mod name;` pulls in, and every module those declare in turn."""
-    found = {path for path in texts if is_test_file(path)}
-    waiting = []
+    """Test files by name, files a test-gated `mod name;` pulls in, and every module any of those declare in turn."""
+    found = set()
+    waiting = [path for path in texts if is_test_file(path)]
     for path, text in texts.items():
-        for attributes, name, opens in TEST_MODULE.findall(text):
-            if opens == ";":
-                waiting += module_paths(path, name, attributes)
+        for _, end in test_gates(text):
+            module = TEST_MODULE.match(text, end)
+            if module and module.group(3) == ";":
+                waiting += module_paths(path, module.group(2), module.group(1))
     while waiting:
         path = waiting.pop()
         if path in texts and path not in found:
@@ -152,19 +152,66 @@ def item_end(text: str, at: int) -> int:
     return at
 
 
+def requires_test(tokens: list[str]) -> bool:
+    """Whether a `cfg` predicate, as tokens, holds only in test builds: `test`, an `all(…)` with such an
+    argument, or an `any(…)` whose every argument is one. `not(…)`, other options and `key = "value"` never are."""
+    def predicate(at: int) -> tuple[bool, int]:
+        word = tokens[at]
+        if word in ("all", "any", "not") and at + 1 < len(tokens) and tokens[at + 1] == "(":
+            parts, at = [], at + 2
+            while tokens[at] != ")":
+                part, at = predicate(at)
+                parts.append(part)
+                if tokens[at] == ",":
+                    at += 1
+            at += 1
+            if word == "all":
+                return any(parts), at
+            if word == "any":
+                return bool(parts) and all(parts), at
+            return False, at
+        if at + 2 < len(tokens) and tokens[at + 1] == "=":
+            return False, at + 3
+        return word == "test", at + 1
+    try:
+        held, end = predicate(0)
+        return held and end == len(tokens)
+    except IndexError:
+        return False
+
+
+def test_gates(text: str) -> list[tuple[int, int]]:
+    """`(start, end)` of each `#[cfg(…)]` at the start of a line whose predicate requires `test`."""
+    gates = []
+    for found in CFG.finditer(text):
+        tokens, at, depth = [], found.end(), 1
+        while at < len(text) and depth:
+            token = CFG_TOKEN.match(text, at)
+            at = token.end()
+            word = token.group(0).strip()
+            depth += {"(": 1, ")": -1}.get(word, 0)
+            if depth:
+                tokens.append(word)
+        close = re.compile(r"\s*\]").match(text, at)
+        if close and requires_test(tokens):
+            gates.append((found.start(), close.end()))
+    return gates
+
+
 def non_test_code(text: str) -> str:
-    """A non-test file's non-test code: none of its `#[cfg(test)]` items, and nothing from its first inline
-    `#[cfg(test)] mod name { … }` on. A `#[cfg(test)] mod name;` declaration's file is a test file ([`test_files`]).
+    """A non-test file's non-test code: none of its test-gated items, and nothing from its first inline test-gated
+    `mod name { … }` on. A test-gated `mod name;` declaration's file is a test file ([`test_files`]). An item is
+    test-gated by a `#[cfg(…)]` that requires `test` ([`requires_test`]): `cfg(test)`, `cfg(all(test, …))`.
     """
     kept, at = [], 0
-    for found in CFG_TEST.finditer(text):
-        if found.start() < at:
+    for start, end in test_gates(text):
+        if start < at:
             continue
-        kept.append(text[at:found.start()])
-        module = TEST_MODULE.match(text, found.start())
+        kept.append(text[at:start])
+        module = TEST_MODULE.match(text, end)
         if module and module.group(3) == "{":
             return "".join(kept)
-        at = item_end(text, found.end())
+        at = item_end(text, end)
     kept.append(text[at:])
     return "".join(kept)
 

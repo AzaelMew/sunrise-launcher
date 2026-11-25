@@ -232,6 +232,42 @@ class StructureCheck(unittest.TestCase):
         # src/net.rs from the base adds one of each.
         self.assertEqual((counts["unwraps"], counts["string_errors"]), (1, 5))
 
+    def test_a_cfg_that_requires_test_gates_like_cfg_test(self):
+        test_code = "fn t() -> Result<(), String> { x.unwrap(); Ok(()) }\n"
+        head = self.repo.commit({
+            "src/store.rs": (
+                "#[cfg(all(test, debug_assertions, unix))]\nmod update_checks;\n"
+                "#[cfg(all(test, unix))]\nfn helper() { y.unwrap(); }\n"
+                "fn kept() { z.unwrap(); }\n"
+                "#[cfg(all(unix, test))]\nmod tests {\n    fn u() { w.unwrap(); }\n}\n"
+            ),
+            "src/store/update_checks.rs": test_code,
+        })
+        counts = check.measure(head)
+        # src/net.rs from the base adds one unwrap and one Result<_, String>; store.rs keeps `kept`'s.
+        self.assertEqual((counts["unwraps"], counts["string_errors"]), (2, 1))
+
+    def test_a_cfg_that_test_builds_need_not_hold_is_not_a_test_gate(self):
+        head = self.repo.commit({
+            "src/store.rs": (
+                '#[cfg(any(test, feature = "bench"))]\nfn shared() { a.unwrap(); }\n'
+                "#[cfg(not(test))]\nfn release_only() { b.unwrap(); }\n"
+                "#[cfg(all(unix, not(test)))]\nmod live {\n    fn c() { c.unwrap(); }\n}\n"
+                '#[cfg(feature = "test")]\nfn featured() { d.unwrap(); }\n'
+            ),
+        })
+        counts = check.measure(head)
+        self.assertEqual(counts["unwraps"], 1 + 4)
+
+    def test_modules_a_test_file_declares_are_test_files(self):
+        head = self.repo.commit({
+            "src/install.rs": "#[cfg(all(test, unix))]\nmod update_tests;\n",
+            "src/install/update_tests.rs": "mod native;\nfn t() { x.unwrap(); }\n",
+            "src/install/update_tests/native.rs": "fn n() -> Result<(), String> { y.unwrap(); Ok(()) }\n",
+        })
+        counts = check.measure(head)
+        self.assertEqual((counts["unwraps"], counts["string_errors"]), (1, 1))
+
 
 if __name__ == "__main__":
     unittest.main()
