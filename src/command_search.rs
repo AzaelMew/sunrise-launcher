@@ -717,7 +717,12 @@ mod tests {
     fn the_settings_rows_are_the_ones_settings_has() {
         let source = concat!(
             include_str!("settings.rs"),
+            include_str!("settings/account_section.rs"),
             include_str!("settings/appearance.rs"),
+            include_str!("settings/game.rs"),
+            include_str!("settings/launcher.rs"),
+            include_str!("settings/privacy.rs"),
+            include_str!("settings/storage_section.rs"),
             include_str!("storage_builds.rs")
         );
         for (title, _) in SETTINGS_ROWS {
