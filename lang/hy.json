@@ -1933,5 +1933,14 @@
   "{var} names {folder}, which isn't a folder.": "{var} names {folder}, which isn't a folder.",
   "{url} is not a release file {var} can stand in for.": "{url} is not a release file {var} can stand in for.",
   "{var} is set, and {release} isn't a folder: put the release's files there, or unset {var}.": "{var} is set, and {release} isn't a folder: put the release's files there, or unset {var}.",
-  "{build} · Test build from local files": "{build} · Test build from local files"
+  "{build} · Test build from local files": "{build} · Test build from local files",
+  "Logs": "Logs",
+  "Copy all": "Copy all",
+  "Save to file": "Save to file",
+  "Open logs folder": "Open logs folder",
+  "Copied the log": "Copied the log",
+  "Log saved": "Log saved",
+  "Couldn't save the log: {reason}": "Couldn't save the log: {reason}",
+  "Nothing has been logged yet.": "Nothing has been logged yet.",
+  "The game's output shows here while it runs.": "The game's output shows here while it runs."
 }
