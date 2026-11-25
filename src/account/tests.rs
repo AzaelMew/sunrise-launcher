@@ -458,7 +458,10 @@ fn login_with_xbox_signs_in_when_launcher_login_refuses() {
         access: "ms-access-1".into(),
         refresh: "r".into(),
     };
-    assert_eq!(finish_sign_in(&ep, ms).unwrap_err(), DOES_NOT_OWN);
+    assert_eq!(
+        finish_sign_in(&ep, ms).unwrap_err().to_string(),
+        DOES_NOT_OWN
+    );
 }
 
 fn notch() -> Account {
@@ -529,7 +532,7 @@ fn refresh_only_when_the_token_runs_out() {
     };
     assert!(matches!(
         check(&ep, Some("test-client"), &notch(), revoked),
-        Check::NoAnswer(e, s) if e == SIGN_IN_AGAIN && s.owns
+        Check::NoAnswer(e, s) if e == SignInError::SignInAgain && s.owns
     ));
 }
 
@@ -543,7 +546,7 @@ fn a_refresh_token_of_another_app_registration_asks_to_sign_in_again() {
     };
     assert!(matches!(
         check(&ep, Some("test-client"), &notch(), other),
-        Check::NoAnswer(e, s) if e == SIGN_IN_AGAIN && s.sign_in_required
+        Check::NoAnswer(e, s) if e == SignInError::SignInAgain && s.sign_in_required
     ));
 }
 
@@ -825,29 +828,72 @@ fn refusals_have_messages() {
     let (_, ep) = mock(|m| m.xerr = Some(2148916233));
     assert!(finish_sign_in(&ep, tokens())
         .unwrap_err()
+        .to_string()
         .contains("no Xbox profile"));
     let (_, ep) = mock(|m| m.xerr = Some(2148916238));
     assert!(finish_sign_in(&ep, tokens())
         .unwrap_err()
+        .to_string()
         .contains("child account (error 2148916238)"));
     let (_, ep) = mock(|m| m.xerr = Some(2148916238));
     assert!(finish_sign_in(&ep, tokens())
         .unwrap_err()
+        .to_string()
         .contains("https://account.microsoft.com/family"));
     let (_, ep) = mock(|m| m.owns_game = false);
-    assert_eq!(finish_sign_in(&ep, tokens()).unwrap_err(), DOES_NOT_OWN);
+    assert_eq!(
+        finish_sign_in(&ep, tokens()).unwrap_err().to_string(),
+        DOES_NOT_OWN
+    );
     let (_, ep) = mock(|m| m.no_profile = true);
     assert!(finish_sign_in(&ep, tokens())
         .unwrap_err()
+        .to_string()
         .contains("no Minecraft profile"));
     assert_eq!(
-        oauth_error(&json!({"error": "authorization_declined"})),
+        oauth_error(&json!({"error": "authorization_declined"})).to_string(),
         "Sign-in was declined in the browser."
     );
     // Nothing listening: a message, not a URL.
     assert_eq!(
-        device_code(&offline(), "x").unwrap_err(),
+        device_code(&offline(), "x").unwrap_err().to_string(),
         "Could not reach Microsoft. Check your internet connection."
+    );
+}
+
+/// Each case reads as the very text it was a String before: the window translates sign-in errors
+/// by that text, and the CLI and MCP print it.
+#[test]
+fn sign_in_errors_read_as_before() {
+    for (error, before) in [
+        (SignInError::SignInAgain, "Your Microsoft sign-in expired. Sign in again."),
+        (SignInError::DamagedSignIn, "Could not read the saved sign-in. Sign in again."),
+        (
+            SignInError::NotConfigured,
+            "This build of the launcher has no Microsoft sign-in (SUNRISE_MSA_CLIENT_ID), so it can't start the game.",
+        ),
+        (SignInError::DoesNotOwn, "This account doesn't own Minecraft: Java Edition."),
+        (
+            SignInError::NoProfile,
+            "This account has no Minecraft profile yet. Create one at minecraft.net, then sign in again.",
+        ),
+        (
+            SignInError::OtherProfile,
+            "The Microsoft account now has another Minecraft profile. Sign in again.",
+        ),
+        (SignInError::Other("Sign-in cancelled.".into()), "Sign-in cancelled."),
+    ] {
+        assert_eq!(error.to_string(), before);
+        assert_eq!(String::from(error), before);
+    }
+    // The cases the code acts on come from the answers that meant them.
+    assert_eq!(
+        oauth_error(&json!({"error": "invalid_grant"})),
+        SignInError::SignInAgain
+    );
+    assert_eq!(
+        oauth_error(&json!({"error": "expired_token"})),
+        SignInError::Other("The sign-in code expired. Start again.".into())
     );
 }
 
@@ -856,7 +902,9 @@ fn cancelling_stops_the_wait() {
     let (_, ep) = mock(|m| m.pending = 100);
     let code = device_code(&ep, "test-client").unwrap();
     assert_eq!(
-        wait_for_sign_in(&ep, "test-client", &code, &|| true).unwrap_err(),
+        wait_for_sign_in(&ep, "test-client", &code, &|| true)
+            .unwrap_err()
+            .to_string(),
         "Sign-in cancelled."
     );
 }

@@ -61,7 +61,7 @@ pub fn token_for(
         }
         Check::NoAnswer(e, secrets) => {
             let _ = keep(&secrets);
-            Err(e)
+            Err(e.into())
         }
     }
 }
@@ -123,7 +123,7 @@ pub fn launch(
         let before = serde_json::to_string(&secrets).ok();
         let checked = match &operation {
             Ok(_) => check(ep, client_id, &account, secrets),
-            Err(e) => Check::NoAnswer(e.clone(), secrets),
+            Err(e) => Check::NoAnswer(e.clone().into(), secrets),
         };
         let (said, secrets) = match checked {
             Check::Owns(renewed, secrets) => {
@@ -135,7 +135,7 @@ pub fn launch(
                 (None, secrets)
             }
             Check::DoesNot(secrets) => (Some(DOES_NOT_OWN.to_string()), secrets),
-            Check::NoAnswer(e, secrets) => (Some(e), secrets),
+            Check::NoAnswer(e, secrets) => (Some(e.to_string()), secrets),
         };
         owned = secrets.owns;
         if plays {
