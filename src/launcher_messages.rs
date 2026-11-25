@@ -83,65 +83,21 @@ impl Launcher {
                 Msg::Links(links) => self.links = links,
                 // The page reads is_prepared when drawn; `changed` redraws it.
                 Msg::Reused(_) => self.refresh_installed(),
-                Msg::Keychain(said) => self.keychain = said,
-                Msg::Owner(owns) => self.owner = Some(owns),
-                Msg::AccountHead(uuid, url, face, failed) => {
-                    self.profile_heads.loaded(&uuid, &url, face, failed)
-                }
-                Msg::SkinsProfile(uuid, id, result) => self.skins_profile(uuid, id, result),
-                Msg::Picture(url, png) => self.skins_picture(url, png),
-                Msg::LookSaved(uuid, id, outcome) => self.look_saved(uuid, id, *outcome),
-                Msg::SkinsAdded(uuid, added, listing) => self.skins_added(uuid, added, listing),
-                Msg::SkinsListed(uuid, listing) => self.skins_listed(uuid, listing),
-                Msg::LookRecorded(uuid, record, recorded) => {
-                    self.look_recorded(uuid, record, recorded)
-                }
-                Msg::SkinRemoved(uuid, id, removed, listing) => {
-                    self.skin_removed(uuid, id, removed, listing)
-                }
-                Msg::SkinFile(key, id, png) => self.skins_file(key, id, png),
-                Msg::SkinKept(uuid, url, kept, listing) => {
-                    self.skins_kept(uuid, url, kept, listing)
-                }
-                Msg::AccountProgress(uuid, generation, phase) => {
-                    if self.auth_busy.get(&uuid) == Some(&generation) {
-                        self.auth_progress.insert(uuid, phase);
-                    }
-                }
-                Msg::AccountStatus(uuid, generation, status) => {
-                    if self.auth_busy.get(&uuid) != Some(&generation) {
-                        continue;
-                    }
-                    self.auth_busy.remove(&uuid);
-                    self.auth_progress.remove(&uuid);
-                    if self.accounts.find(&uuid).is_some() {
-                        if status.state == account::session::State::Ready {
-                            self.owner = Some(true);
-                        }
-                        self.auth_status.insert(uuid, status);
-                        // A refresh may have saved a new name or skin: show it now.
-                        let saved = Accounts::load();
-                        if saved != self.accounts {
-                            self.accounts = saved;
-                            self.load_profile_heads();
-                        }
-                    }
-                }
-                Msg::AccountRemoved(uuid, generation, result) => {
-                    if self.auth_busy.get(&uuid) != Some(&generation) {
-                        continue;
-                    }
-                    self.auth_busy.remove(&uuid);
-                    self.auth_progress.remove(&uuid);
-                    match result {
-                        Ok(owns) => {
-                            self.accounts = Accounts::load();
-                            self.auth_status.remove(&uuid);
-                            self.owner = Some(owns);
-                        }
-                        Err(e) => self.sign_in_state = Some(SignInState::Done(Err(e))),
-                    }
-                }
+                Msg::Keychain(_)
+                | Msg::Owner(_)
+                | Msg::AccountHead(_, _, _, _)
+                | Msg::SkinsProfile(_, _, _)
+                | Msg::Picture(_, _)
+                | Msg::LookSaved(_, _, _)
+                | Msg::SkinsAdded(_, _, _)
+                | Msg::SkinsListed(_, _)
+                | Msg::LookRecorded(_, _, _)
+                | Msg::SkinRemoved(_, _, _, _)
+                | Msg::SkinFile(_, _, _)
+                | Msg::SkinKept(_, _, _, _)
+                | Msg::AccountProgress(_, _, _)
+                | Msg::AccountStatus(_, _, _)
+                | Msg::AccountRemoved(_, _, _) => self.on_account_message(msg),
                 Msg::Playing(playing) => self.playing = playing,
                 Msg::PlayStep(step) => {
                     if self.starting_client.is_some() {
