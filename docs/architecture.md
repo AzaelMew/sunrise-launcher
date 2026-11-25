@@ -18,7 +18,7 @@ Names in this table are relative to [`src/`](../src/). The binary and the shared
 | UI pages | `glass_versions.rs`, `glass_sheet.rs`, `glass_toast.rs`, `sheets.rs`, `setup_page.rs` | Draw versions, instance settings, toasts, shared dialogs, and Windows setup. |
 | Backend | `lib.rs`, `backend.rs`, `launcher_setup.rs`, `launcher_messages.rs`, `launcher_play.rs`, `wake.rs` | Connect shared operations to the desktop's startup, task handlers, and message pump. |
 | Backend | `github.rs`, `nightly.rs`, `signed.rs`, `build_import.rs`, `developer_install.rs` | Discover releases, verify downloads, and install imported or checkout builds. |
-| Backend | `downloads.rs`, `download_retry.rs`, `mojang.rs`, `mojang_tests.rs`, `sources.rs`, `sources_tests.rs`, `preparer.rs`, `java.rs`, `jdk.rs` | Find or fetch Minecraft files and Java, run the preparer, and test the file and download paths. |
+| Backend | `downloads.rs`, `download_retry.rs`, `mojang.rs`, `mojang/tests.rs`, `sources.rs`, `sources/tests.rs`, `preparer.rs`, `java.rs`, `jdk.rs` | Find or fetch Minecraft files and Java, run the preparer, and test the file and download paths. |
 | Backend | `launch.rs`, `launch_state.rs`, `process.rs`, `run_leases.rs`, `game_app.rs`, `windows_runtime.rs`, `developer_offline.rs`, `developer_play.rs`, `while_playing.rs` | Assemble and supervise game launches, manage platform-specific execution, and surface launch state. |
 | Backend | `installer.rs`, `setup_args.rs`, `uninstall_aside.rs`, `update_handoff.rs`, `update_recovery.rs`, `mac_update.rs`, `notices.rs` | Handle launcher setup, removal, self-update, and bundled notices. |
 | Backend | `identity.rs`, `data_location.rs`, `relocation.rs`, `carry_over.rs`, `storage.rs`, `cache_cleanup.rs` | Resolve data roots, migrate or move data, and inventory and reclaim managed storage. |
@@ -50,8 +50,8 @@ Names in this table are relative to [`src/`](../src/). The binary and the shared
 | `src/native_mods/`, `src/native_mods/bundle/`, `src/native_mods/mixins/`, `src/native_mods/workspace/`, `src/native_mods/tests/` | Native build planning, SDK cache, bundle packaging, mixin support, and build and runtime tests. |
 | `src/process/`, `src/process/leases/`, `src/process/leases/tests/`, `src/process/supervisor/`, `src/run_leases/` | Child process ownership and supervision, launch and tree locks, and platform tests. |
 | `src/settings/`, `src/sheets/` | Appearance controls and the version chooser. |
-| `src/storage/`, `src/theme_files/`, `src/theme_files/fixtures/` | Storage inventory and eviction. Theme file tests and their image fixture. |
-| `src/appearance/`, `src/cache_cleanup/`, `src/data_location/`, `src/downloads/`, `src/github/`, `src/github_mods/`, `src/i18n/`, `src/java/`, `src/launch/`, `src/launch_state/`, `src/mac_update/`, `src/native_cache/`, `src/relocation/`, `src/shortcut/`, `src/themes/` | Tests alongside their matching infrastructure modules. |
+| `src/storage/`, `src/storage/inventory/`, `src/theme_files/`, `src/theme_files/fixtures/` | Storage inventory, its regression tests, and eviction. Theme file tests and their image fixture. |
+| `src/appearance/`, `src/cache_cleanup/`, `src/data_location/`, `src/downloads/`, `src/github/`, `src/github_mods/`, `src/i18n/`, `src/java/`, `src/launch/`, `src/launch_state/`, `src/mac_update/`, `src/mojang/`, `src/native_cache/`, `src/relocation/`, `src/shortcut/`, `src/sources/`, `src/themes/` | Tests alongside their matching infrastructure modules. |
 | `src/datapacks/`, `src/export/`, `src/game_log/`, `src/home/`, `src/import/`, `src/instances/`, `src/join/`, `src/packs/`, `src/server_list/`, `src/tailscale/`, `src/worlds/` | Tests alongside their matching feature modules. |
 
 ### Scenery, shared crates, and tools
