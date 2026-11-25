@@ -79,8 +79,8 @@ impl Launcher {
         logs.revision = revision;
         let any = !lines.is_empty();
         for line in lines {
-            // Scrubbed already, as the log wrote it.
-            logs.launcher.push_back(line);
+            // Again: a name hidden since the line was written is hidden here too.
+            logs.launcher.push_back(launcher_log::scrub(&line));
             if logs.launcher.len() > KEEP {
                 logs.launcher.pop_front();
             }
