@@ -352,6 +352,13 @@ impl Launcher {
         self.native_cancellation = Some(cancellation.clone());
         let tx = self.tx.clone();
         std::thread::spawn(move || {
+            // Download progress arrives many times; each step is said once, when it begins.
+            let announced = std::cell::Cell::new(None);
+            let announce = |step: backend::PlayStep, what: &str| {
+                if announced.replace(Some(step)) != Some(step) {
+                    backend::play_step(what);
+                }
+            };
             let result = Client {
                 instance: &instance,
                 accepted_account: intent.account.as_deref(),
@@ -386,17 +393,29 @@ impl Launcher {
                 &cancellation,
                 |progress| {
                     let msg = match progress {
-                        Progress::Download(_) => Msg::PlayStep(backend::PlayStep::Download),
-                        Progress::Prepare => Msg::PlayStep(backend::PlayStep::Prepare),
-                        Progress::NativeBuild { base, mods } => Msg::ManagedBuild {
-                            instance: instance.id.clone(),
-                            profile: instance.name.clone(),
-                            base,
-                            mods,
-                        },
+                        Progress::Download(_) => {
+                            announce(backend::PlayStep::Download, "downloading the game");
+                            Msg::PlayStep(backend::PlayStep::Download)
+                        }
+                        Progress::Prepare => {
+                            announce(backend::PlayStep::Prepare, "preparing the game's files");
+                            Msg::PlayStep(backend::PlayStep::Prepare)
+                        }
+                        Progress::NativeBuild { base, mods } => {
+                            announce(backend::PlayStep::Native, "building mods");
+                            Msg::ManagedBuild {
+                                instance: instance.id.clone(),
+                                profile: instance.name.clone(),
+                                base,
+                                mods,
+                            }
+                        }
                         Progress::Native(step) => Msg::NativeProgress(step),
                         Progress::NativeLog(output) => Msg::ManagedBuildLog(output),
-                        Progress::SignIn => Msg::PlayStep(backend::PlayStep::SignIn),
+                        Progress::SignIn => {
+                            announce(backend::PlayStep::SignIn, "reading the sign-in");
+                            Msg::PlayStep(backend::PlayStep::SignIn)
+                        }
                         Progress::Line(line) | Progress::HookLine(line) => {
                             Msg::Line(Job::Prepare, line)
                         }
