@@ -183,6 +183,10 @@ pub struct Settings {
     /// Explicit glass panel opacity; unset preserves the theme's existing material.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub panel_opacity: Option<u8>,
+    /// Whether the panels' outlines and the rules between their rows fade with a chosen panel
+    /// opacity. Unset is on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fade_panel_lines: Option<bool>,
     /// The launcher theme (`themes::theme`): its sky behind the light appearance. Unset is Dawn;
     /// the indigo one is `themes::TWILIGHT`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -416,6 +420,10 @@ impl Settings {
         }
         look_settings::settle(&mut settings);
         settings
+    }
+    /// Whether panel outlines and rules fade with a chosen panel opacity.
+    pub fn fade_panel_lines(&self) -> bool {
+        self.fade_panel_lines.unwrap_or(true)
     }
     /// Whether the corner cat shows.
     pub fn show_cat(&self) -> bool {

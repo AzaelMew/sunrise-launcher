@@ -279,7 +279,7 @@ impl Launcher {
                 .children(gone)
                 .child(cards),
         );
-        let mut rows = vec![self.panel_opacity_row(cx), theme];
+        let mut rows = vec![self.panel_opacity_row(cx), self.fade_lines_row(cx), theme];
         if !bad.is_empty() {
             rows.push(div().flex().flex_col().gap(px(10.)).children(bad));
         }
@@ -457,6 +457,25 @@ impl Launcher {
                         .child(format!("{percent}%")),
                 )
                 .child(reset),
+        )
+    }
+
+    /// Whether the panels' outlines and the rules between their rows fade with the opacity
+    /// above, or stay solid.
+    fn fade_lines_row(&self, cx: &mut Context<Self>) -> Div {
+        let on = self.settings.fade_panel_lines();
+        let fade = switch("alt-fade-panel-lines", on)
+            .seen()
+            .tooltip(crate::glass_ui::tip(tr("Fade panel outlines")))
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                this.settings.fade_panel_lines = Some(!on);
+                this.save_settings();
+                cx.notify();
+            }));
+        row(
+            tr("Fade panel outlines"),
+            tr("Panel outlines and the lines between rows fade with the panel opacity you chose."),
+            div().child(fade),
         )
     }
 

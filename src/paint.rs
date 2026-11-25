@@ -105,6 +105,10 @@ pub(crate) struct Palette {
     pub alpha: f32,
     /// How opaque the dialogs' scrim is.
     pub scrim_alpha: f32,
+    /// How opaque the rules and outlines on the plates are: the player's panel opacity when
+    /// they chose one and Fade panel outlines is on, so the lines fade with the panels; else
+    /// solid.
+    pub rule_alpha: f32,
 }
 
 /// The colours of a picture's stand-in ([`Palette::tile`]): its fill, and the letter on it.
@@ -167,6 +171,7 @@ impl Inputs {
             play_seed: theme.play_seed,
             tint: settings.glass_tint(),
             plates,
+            fade_lines: settings.fade_panel_lines(),
         }
     }
 }
@@ -250,6 +255,8 @@ struct Inputs {
     play_seed: Option<u32>,
     tint: f32,
     plates: Plates,
+    /// Outlines and rules fade with a chosen panel opacity.
+    fade_lines: bool,
 }
 
 impl Inputs {
@@ -262,6 +269,7 @@ impl Inputs {
             play_seed,
             tint,
             plates,
+            fade_lines,
         } = *self;
         // Light text on dark surfaces fits lighter; dark text on light ones fits darker.
         let lighter = n.dark;
@@ -485,6 +493,7 @@ impl Inputs {
             warning,
             alpha,
             scrim_alpha,
+            rule_alpha: custom.filter(|_| fade_lines).map_or(1., |(alpha, _)| alpha),
         }
     }
 }
@@ -501,6 +510,7 @@ impl Palette {
             play_seed: None,
             tint,
             plates: Plates::Opaque,
+            fade_lines: false,
         }
         .palette()
     }
@@ -547,6 +557,12 @@ impl Palette {
         Tile { fill, ink }
     }
 
+    /// A rule between rows on a plate, or a plate's outline: the divider, fading with the
+    /// plates when the player chose their opacity.
+    pub(crate) fn rule(&self) -> Hsla {
+        Hsla::from(rgb(self.divider)).opacity(self.rule_alpha)
+    }
+
     /// A card, caption or plate: the theme's tint at the plates' opacity.
     pub(crate) fn card(&self) -> Hsla {
         Hsla::from(rgb(self.card_color)).opacity(self.alpha)
@@ -578,6 +594,13 @@ impl Palette {
     /// A resting input's outline: faint. The focus ring, not this line, marks the one in use.
     pub(crate) fn input_edge(&self) -> Hsla {
         Hsla::from(rgb(self.text)).opacity(0.14)
+    }
+
+    /// The input edge drawn as a plate's outline: it fades with the plates, as [`rule`] does.
+    ///
+    /// [`rule`]: Palette::rule
+    pub(crate) fn plate_edge(&self) -> Hsla {
+        self.input_edge().opacity(self.rule_alpha)
     }
 
     /// What a dialog dims the launcher with.

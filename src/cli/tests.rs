@@ -174,6 +174,18 @@ fn panel_opacity_takes_every_percent_and_can_reset() {
 }
 
 #[test]
+fn fade_panel_lines_is_on_until_turned_off() {
+    let mut settings = backend::Settings::default();
+    assert_eq!(settings_json(&settings)["fade_panel_lines"], true);
+    set_setting(&mut settings, "fade-panel-lines", "off").unwrap();
+    assert_eq!(settings.fade_panel_lines, Some(false));
+    assert_eq!(settings_json(&settings)["fade_panel_lines"], false);
+    assert!(set_setting(&mut settings, "fade-panel-lines", "maybe").is_err());
+    set_setting(&mut settings, "fade-panel-lines", "on").unwrap();
+    assert!(settings.fade_panel_lines());
+}
+
+#[test]
 fn reduced_graphics_cli_sets_and_reads_the_shared_choice() {
     let mut settings = backend::Settings::parse(
         r#"{"blur":8.5,"reduce_motion":false,"cat":true,

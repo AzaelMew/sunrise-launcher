@@ -739,3 +739,23 @@ fn begin_sets_the_frames_palette_from_the_inputs() {
     assert_eq!(palette(), pa);
     assert_eq!(pa.accent, glass::ACCENT);
 }
+
+/// A plate's outlines and rules fade with a chosen opacity while Fade panel outlines is on (the
+/// default), stay solid when it is off, and stay solid without a chosen opacity either way.
+#[test]
+fn panel_lines_fade_with_a_chosen_opacity_unless_turned_off() {
+    let mut settings = Settings::default();
+    let theme = from_settings(&settings, WindowAppearance::Dark);
+    assert!(settings.fade_panel_lines());
+    assert_eq!(Palette::of(&settings, &theme).rule_alpha, 1.);
+    settings.set_panel_opacity(Some(30));
+    let p = Palette::of(&settings, &theme);
+    assert_eq!(p.rule_alpha, 0.3);
+    assert_eq!(p.rule().a, 0.3);
+    assert_eq!(p.plate_edge().a, p.input_edge().a * 0.3);
+    settings.fade_panel_lines = Some(false);
+    let p = Palette::of(&settings, &theme);
+    assert_eq!(p.alpha, 0.3, "the plates still take the opacity");
+    assert_eq!(p.rule_alpha, 1.);
+    assert_eq!(p.plate_edge(), p.input_edge());
+}
