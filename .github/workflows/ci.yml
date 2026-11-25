@@ -109,6 +109,17 @@ jobs:
           game=$(mktemp -d "$RUNNER_TEMP/sunrise-game.XXXXXX")
           tools/ci/game_at.sh "$(cat tools/ci/sunrise-commit)" "$game"
           SUNRISE_GAME_DIR="$game" python3 -m unittest tools/tests/test_game_copies.py
+      # The base's own checker, once it has one, so a pull request can't loosen the check it is held to.
+      - name: No refactor count rises (docs/refactoring.md §8)
+        if: github.event_name == 'pull_request'
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          python3 -m unittest tools/tests/test_structure_check.py
+          git fetch --no-tags --depth=1 origin "$BASE"
+          checker="$RUNNER_TEMP/structure_check.py"
+          git show "$BASE:tools/ci/structure_check.py" > "$checker" 2>/dev/null || cp tools/ci/structure_check.py "$checker"
+          python3 "$checker" --base "$BASE" --head HEAD
       - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master, 2026-11-15
         with:
           toolchain: ${{ needs.route.outputs.rust }}
