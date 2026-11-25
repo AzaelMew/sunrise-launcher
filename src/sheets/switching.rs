@@ -327,6 +327,16 @@ impl Launcher {
         }
     }
 
+    /// Build-switch messages routed from `launcher_messages::drain`.
+    pub(crate) fn on_switch_message(&mut self, msg: Msg) {
+        match msg {
+            Msg::SwitchProgress(stage) => self.switch_progress(stage),
+            Msg::SwitchQuestion(question, reply) => self.switch_question(question, reply),
+            Msg::Switched(home, result) => self.switch_finished(&home, *result),
+            _ => unreachable!("launcher_messages::drain only routes build-switch messages here"),
+        }
+    }
+
     pub(crate) fn switch_progress(&mut self, stage: InstallProgress) {
         if let Some(running) = &mut self.ui.sheets.switching.running {
             running.progress = stage;

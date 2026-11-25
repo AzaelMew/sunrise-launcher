@@ -304,9 +304,9 @@ impl Launcher {
                         }
                     }
                 }
-                Msg::SwitchProgress(stage) => self.switch_progress(stage),
-                Msg::SwitchQuestion(question, reply) => self.switch_question(question, reply),
-                Msg::Switched(home, result) => self.switch_finished(&home, *result),
+                Msg::SwitchProgress(_) | Msg::SwitchQuestion(_, _) | Msg::Switched(_, _) => {
+                    self.on_switch_message(msg)
+                }
                 Msg::ProviderSwitchProgress(stage) => self.provider_switch_progress(stage),
                 Msg::ProviderSwitchQuestion(question, reply) => {
                     self.provider_switch_question(question, reply)
