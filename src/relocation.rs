@@ -37,7 +37,7 @@ fn remap(value: &mut Value, source: &Roots, target: &Roots) {
 
 /// Only fields whose schema denotes a filesystem path; never commands, URLs or arbitrary text.
 pub fn prepare_paths(stage: &Roots, source: &Roots, target: &Roots) -> Result<(), String> {
-    for name in ["settings.json", "servers.json", "instances.json"] {
+    for name in [crate::paths::SETTINGS, "servers.json", "instances.json"] {
         let path = stage.launcher.join(name);
         let bytes = match fs::read(&path) {
             Ok(bytes) => bytes,
@@ -47,7 +47,7 @@ pub fn prepare_paths(stage: &Roots, source: &Roots, target: &Roots) -> Result<()
         let mut value: Value =
             serde_json::from_slice(&bytes).map_err(|e| format!("{}: {e}", path.display()))?;
         match name {
-            "settings.json" => {
+            crate::paths::SETTINGS => {
                 for key in ["minecraft_dir", "server_dir", "background"] {
                     if let Some(v) = value.get_mut(key) {
                         remap(v, source, target);

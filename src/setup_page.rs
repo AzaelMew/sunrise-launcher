@@ -96,8 +96,10 @@ impl Setup {
 
     /// The settings file's write time and size, to notice a change made in the launcher.
     fn settings_stamp() -> Option<(std::time::SystemTime, u64)> {
-        let meta =
-            std::fs::metadata(sunrise_launcher::backend::data_dir().join("settings.json")).ok()?;
+        let meta = std::fs::metadata(
+            sunrise_launcher::backend::data_dir().join(sunrise_launcher::paths::SETTINGS),
+        )
+        .ok()?;
         Some((meta.modified().ok()?, meta.len()))
     }
 

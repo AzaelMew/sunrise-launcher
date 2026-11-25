@@ -11,11 +11,11 @@
 //!
 //! Every other line of both files is written back as it was.
 use crate::i18n::{tr, trf};
+use crate::paths::OPTIONS;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-const OPTIONS: &str = "options.txt";
 const GRAPHICS: &str = "sunrise-graphics.txt";
 const SHADER_MANIFEST: &str = "sunrise-shaders.toml";
 const SHADER_PACKAGE: &str = "sshader";

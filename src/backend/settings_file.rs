@@ -3,6 +3,7 @@
 //! made.
 use super::{data_dir, write_private, Settings, SourceModGrant};
 use crate::i18n::tr;
+use crate::paths::SETTINGS;
 use serde_json::{Map, Value};
 use std::{
     collections::BTreeSet,
@@ -10,7 +11,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-const SETTINGS: &str = "settings.json";
 const SOURCE_GRANTS: &str = "source_mod_grants";
 const NATIVE_FILES: &str = "allowed_native_files";
 

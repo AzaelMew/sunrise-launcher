@@ -5440,7 +5440,7 @@ impl Settings {
         Self::load_from(&data_dir())
     }
     pub(crate) fn load_from(data: &Path) -> Self {
-        Self::parse(&fs::read_to_string(data.join("settings.json")).unwrap_or_default())
+        Self::parse(&fs::read_to_string(data.join(crate::paths::SETTINGS)).unwrap_or_default())
     }
     pub fn parse(text: &str) -> Self {
         let mut value = serde_json::from_str::<serde_json::Value>(text)
