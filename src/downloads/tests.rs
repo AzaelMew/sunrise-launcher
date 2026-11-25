@@ -5,6 +5,42 @@ use tokio::{
     io::{AsyncBufReadExt, BufReader},
     net::TcpListener,
 };
+
+/// A resumed download must only ever see its own bytes: the partial's name is a pure function of
+/// the destination and the expected digest, and differs when either does. No clock, no network.
+#[test]
+fn a_partial_is_named_for_its_own_destination_and_digest() {
+    let dir = tempfile::tempdir().unwrap();
+    let artifact = |name: &str, sha1: &str| Artifact {
+        url: String::new(),
+        path: dir.path().join(name),
+        sha1: sha1.to_owned(),
+        size: None,
+    };
+    let digest = "a".repeat(40);
+    let first = artifact("first.bin", &digest);
+    assert_eq!(
+        partial_path(&first),
+        partial_path(&artifact("first.bin", &digest)),
+        "a retry resumes the same partial"
+    );
+    assert_ne!(
+        partial_path(&first),
+        partial_path(&artifact("second.bin", &digest)),
+        "another destination never resumes it"
+    );
+    assert_ne!(
+        partial_path(&first),
+        partial_path(&artifact("first.bin", &"b".repeat(40))),
+        "another expected digest never resumes it"
+    );
+    assert_eq!(partial_path(&first).parent(), Some(dir.path()));
+    assert!(partial_path(&first)
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .starts_with(".sunrise-download-"));
+}
 type Request = (String, Option<(u64, u64)>);
 #[derive(Default)]
 struct State {
