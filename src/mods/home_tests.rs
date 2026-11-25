@@ -7,14 +7,17 @@ fn home_finds_resource_packs_after_leaving_a_different_installed_shelf() {
         |launcher| {
             for shelf in [Shelf::Shader, Shelf::Data] {
                 launcher.ui.page = Page::Home;
-                launcher.ui.mods.shelf = shelf;
-                launcher.ui.mods.packs.status = pack_discover::Status::Idle;
-                let before = launcher.ui.mods.packs.seq;
+                launcher.mods_state.shelf = shelf;
+                launcher.mods_state.packs.status = pack_discover::Status::Idle;
+                let before = launcher.mods_state.packs.seq;
                 launcher.show_resource_pack_discover();
                 assert!(launcher.ui.page == Page::PackFind);
-                assert_eq!(launcher.ui.mods.packs.scope, pack_discover::Scope::Resource);
                 assert_eq!(
-                    launcher.ui.mods.packs.seq,
+                    launcher.mods_state.packs.scope,
+                    pack_discover::Scope::Resource
+                );
+                assert_eq!(
+                    launcher.mods_state.packs.seq,
                     before + 2,
                     "one scope change and search"
                 );
@@ -32,7 +35,7 @@ fn home_labels_follow_installed_replies_with_the_same_inventory() {
             let key = native_status::fingerprint(&home, None);
             // The first Installed read has not answered.
             let inventory = 1;
-            launcher.ui.mods.snapshot = Some(Snapshot {
+            launcher.mods_state.snapshot = Some(Snapshot {
                 home,
                 key: key.clone(),
                 rows: InstalledRows::default(),
@@ -58,7 +61,7 @@ fn home_labels_follow_installed_replies_with_the_same_inventory() {
             assert!(launcher.home_mod_facts(inventory).is_empty());
             // No forwarding thread: every injected worker reply is available for this drain.
             let (tx, rx) = std::sync::mpsc::channel();
-            launcher.ui.mods.rx = rx;
+            launcher.mods_state.rx = rx;
             tx.send(Event::Local(
                 "old fingerprint".into(),
                 Box::new(Ok(Some((installed(), None)))),

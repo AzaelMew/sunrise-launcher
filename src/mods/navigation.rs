@@ -6,12 +6,11 @@ use super::*;
 impl Launcher {
     /// Opens a v2 registry mod's page from Discover.
     pub(crate) fn mods_show_v2_project(&mut self, id: String) {
-        self.ui.mods.nightly.open = None;
-        self.ui.mods.nightly.collection = None;
+        self.mods_state.nightly.open = None;
+        self.mods_state.nightly.collection = None;
         let from = match self.ui.page {
             Page::Project => self
-                .ui
-                .mods
+                .mods_state
                 .open
                 .as_ref()
                 .map_or(Page::Discover, |o| o.from),
@@ -33,8 +32,8 @@ impl Launcher {
             self.mods_show_v2_project(entry.project.clone());
             return;
         }
-        self.ui.mods.nightly.open = None;
-        self.ui.mods.nightly.collection = None;
+        self.mods_state.nightly.open = None;
+        self.mods_state.nightly.collection = None;
         let (id, installed) = match &row.local {
             Some(local) => (row.id.clone(), InstalledProject::Local(local.file.clone())),
             None => (
@@ -55,10 +54,10 @@ impl Launcher {
         if self.ui.page != Page::Project || self.mods_home() != home {
             return;
         }
-        let gone = self.ui.mods.open.as_ref().is_some_and(|open| {
+        let gone = self.mods_state.open.as_ref().is_some_and(|open| {
             ids.contains(&open.id) || open.removing.iter().any(|id| ids.contains(id))
         });
-        if let Some(open) = self.ui.mods.open.take_if(|_| gone) {
+        if let Some(open) = self.mods_state.open.take_if(|_| gone) {
             self.ui.page = open.from;
         }
     }
@@ -66,9 +65,9 @@ impl Launcher {
     pub(crate) fn show_resource_pack_discover(&mut self) {
         self.leave_section(true);
         // Enter Discover with the requested kind, not the shelf we last left open.
-        self.ui.mods.shelf = Shelf::Resource;
+        self.mods_state.shelf = Shelf::Resource;
         // Force one fresh search for the cleared query even when Resource was already selected.
-        self.ui.mods.packs.status = pack_discover::Status::Idle;
+        self.mods_state.packs.status = pack_discover::Status::Idle;
         self.choose_view(Page::PackFind);
     }
 
@@ -80,14 +79,13 @@ impl Launcher {
         if !matches!(
             self.ui.page,
             Page::Installed | Page::Discover | Page::Project
-        ) || !self.ui.mods.fingerprints.due(now)
+        ) || !self.mods_state.fingerprints.due(now)
         {
             return false;
         }
         let home = self.mods_home();
-        let key = self.ui.mods.fingerprints.read(&home, None, now);
-        self.ui
-            .mods
+        let key = self.mods_state.fingerprints.read(&home, None, now);
+        self.mods_state
             .snapshot
             .as_ref()
             .is_some_and(|snapshot| snapshot.home == home && snapshot.key != key)
@@ -95,7 +93,7 @@ impl Launcher {
 
     /// The play bar's quiet line about them: Mods › Installed, where each says why.
     pub(crate) fn show_installed_mods(&mut self) {
-        self.ui.mods.drawn = None;
+        self.mods_state.drawn = None;
         self.leave_section(false);
         self.mods_refresh();
         self.choose_view(Page::Installed);
@@ -110,7 +108,7 @@ impl Launcher {
     /// The Mods tab: where the player last was this session, else Installed.
     pub(crate) fn open_mods(&mut self) {
         self.leave_section(false);
-        self.ui.page = self.ui.mods.last_mods.unwrap_or_else(|| {
+        self.ui.page = self.mods_state.last_mods.unwrap_or_else(|| {
             self.mods_refresh();
             Page::Installed
         });
@@ -119,7 +117,7 @@ impl Launcher {
     /// The Packs tab: where the player last was this session, else Installed.
     pub(crate) fn open_packs(&mut self) {
         self.leave_section(true);
-        self.ui.page = self.ui.mods.last_packs.unwrap_or_else(|| {
+        self.ui.page = self.mods_state.last_packs.unwrap_or_else(|| {
             self.load_packs_list(self.mods_home());
             Page::Packs
         });
@@ -139,7 +137,7 @@ impl Launcher {
             return;
         }
         self.reset_pack_view();
-        let m = &mut self.ui.mods;
+        let m = &mut self.mods_state;
         m.find.set(String::new());
         m.filters.text.clear();
         m.menu = None;
@@ -149,7 +147,7 @@ impl Launcher {
 
     /// Discover or Installed, chosen on the header's switch: remembered for the session.
     pub(super) fn choose_view(&mut self, page: Page) {
-        let m = &mut self.ui.mods;
+        let m = &mut self.mods_state;
         m.nightly.open = None;
         m.nightly.collection = None;
         match page {
@@ -163,18 +161,18 @@ impl Launcher {
         self.game_packs.confirm_remove = None;
         // Packs keeps the kind across the switch.
         match page {
-            Page::PackFind => self.pack_scope(match self.ui.mods.shelf {
+            Page::PackFind => self.pack_scope(match self.mods_state.shelf {
                 Shelf::Resource => pack_discover::Scope::Resource,
                 Shelf::Shader => pack_discover::Scope::Shader,
                 Shelf::Data => pack_discover::Scope::Data,
             }),
             Page::Packs => {
-                self.ui.mods.shelf = match self.ui.mods.packs.scope {
+                self.mods_state.shelf = match self.mods_state.packs.scope {
                     pack_discover::Scope::Resource => Shelf::Resource,
                     pack_discover::Scope::Shader => Shelf::Shader,
                     pack_discover::Scope::Data => Shelf::Data,
                 };
-                self.ui.mods.data.reread();
+                self.mods_state.data.reread();
             }
             _ => {}
         }
@@ -191,9 +189,9 @@ impl Launcher {
     ) {
         crate::frame::scrolls("project").set_offset(gpui::point(px(0.), px(0.)));
         let scope = self.mods_page_scope();
-        self.ui.mods.page_request += 1;
-        let request = self.ui.mods.page_request;
-        self.ui.mods.open = Some(Open {
+        self.mods_state.page_request += 1;
+        let request = self.mods_state.page_request;
+        self.mods_state.open = Some(Open {
             id,
             installed,
             collection: false,
@@ -211,8 +209,8 @@ impl Launcher {
         crate::frame::scrolls("project").set_offset(gpui::point(px(0.), px(0.)));
         let scope = self.mods_page_scope();
         let exact_build = self.selected_exact_build();
-        self.ui.mods.page_request += 1;
-        let request = self.ui.mods.page_request;
+        self.mods_state.page_request += 1;
+        let request = self.mods_state.page_request;
         let immediate = sunrise::v2::known_index().map(|catalog| {
             let local = self.local_fits(&catalog.index, exact_build.as_deref());
             model::discover_v2::page(
@@ -226,7 +224,7 @@ impl Launcher {
             .ok_or_else(|| trf("{id} isn't a mod in Sunrise's registry.", &[("id", &id)]))
         });
         let needs_fetch = immediate.is_none();
-        self.ui.mods.open = Some(Open {
+        self.mods_state.open = Some(Open {
             id: id.clone(),
             installed: None,
             collection: false,
@@ -242,7 +240,7 @@ impl Launcher {
         if !needs_fetch {
             return;
         }
-        let tx = self.ui.mods.tx.clone();
+        let tx = self.mods_state.tx.clone();
         let home = self.mods_home();
         std::thread::spawn(move || {
             let result = sunrise::v2::index()

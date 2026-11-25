@@ -211,38 +211,40 @@ impl Launcher {
             .follow_home(self.selected_instance().map(|i| i.home.clone()));
         // Asked on every frame of the Mods pages: read again only when something moved.
         let key = self
-            .ui
-            .mods
+            .mods_state
             .fingerprints
             .read(&home, None, std::time::Instant::now());
         let moved = self
-            .ui
-            .mods
+            .mods_state
             .snapshot
             .as_ref()
             .is_some_and(|s| s.home != home);
         if moved {
             // Another setup: nothing reviewed or selected for the old one carries over.
-            let m = &mut self.ui.mods;
+            let m = &mut self.mods_state;
             m.selection.clear();
             m.anchor = None;
             m.errors.clear();
             m.notice = None;
             self.pack_setup_moved();
         }
-        if self.ui.mods.snapshot.as_ref().is_none_or(|s| s.key != key) {
-            self.ui.mods.home_mod_labels = None;
+        if self
+            .mods_state
+            .snapshot
+            .as_ref()
+            .is_none_or(|s| s.key != key)
+        {
+            self.mods_state.home_mod_labels = None;
             // Keep the same profile's confirmed rows and advisory until the worker answers.
             let (rows, backup_notice) = self
-                .ui
-                .mods
+                .mods_state
                 .snapshot
                 .take()
                 .filter(|s| s.home == home)
                 .map(|s| (s.rows, s.backup_notice))
                 .unwrap_or_default();
             let (tx, worker_home, worker_key) =
-                (self.ui.mods.tx.clone(), home.clone(), key.clone());
+                (self.mods_state.tx.clone(), home.clone(), key.clone());
             std::thread::spawn(move || {
                 let result = InstalledRows::read(&worker_home);
                 if matches!(result, Ok(None)) {
@@ -251,7 +253,7 @@ impl Launcher {
                 }
                 let _ = tx.send(Event::Local(worker_key, Box::new(result)));
             });
-            self.ui.mods.snapshot = Some(Snapshot {
+            self.mods_state.snapshot = Some(Snapshot {
                 key,
                 home,
                 rows,
@@ -260,7 +262,7 @@ impl Launcher {
                 backup_notice,
             });
         }
-        let snapshot = self.ui.mods.snapshot.as_ref();
+        let snapshot = self.mods_state.snapshot.as_ref();
         if matches!(self.ui.page, Page::Installed | Page::Project)
             && snapshot.is_some_and(|s| {
                 s.rows.local.iter().any(|local| {
@@ -274,8 +276,7 @@ impl Launcher {
             self.read_nightly_catalogue(false);
         }
         let has_registry_rows = self
-            .ui
-            .mods
+            .mods_state
             .snapshot
             .as_ref()
             .is_some_and(|s| !s.rows.entries.is_empty());
@@ -308,21 +309,21 @@ impl Launcher {
     /// Whether a mod change is in progress (mine or the shared install's), for the shared Play
     /// and setup gates. Reads only the Mods busy flags, never the launch state.
     pub(crate) fn mutating(&self) -> bool {
-        self.ui.mods.busy.is_some() || self.registry_stage().is_some()
+        self.mods_state.busy.is_some() || self.registry_stage().is_some()
     }
 
     /// A backup advisory should never eclipse either operation's own result.
     pub(super) fn notice(&self) -> Option<Result<String, String>> {
-        self.ui.mods.visible_notice(self.mods.message.as_ref())
+        self.mods_state.visible_notice(self.mods.message.as_ref())
     }
 
     pub(super) fn dismiss_notice(&mut self) {
-        if self.ui.mods.notice.is_none() && self.mods.message.is_none() {
-            if let Some(snapshot) = &mut self.ui.mods.snapshot {
+        if self.mods_state.notice.is_none() && self.mods.message.is_none() {
+            if let Some(snapshot) = &mut self.mods_state.snapshot {
                 snapshot.backup_notice = None;
             }
         }
-        self.ui.mods.notice = None;
+        self.mods_state.notice = None;
         self.mods.message = None;
     }
 }

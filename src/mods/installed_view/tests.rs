@@ -74,7 +74,7 @@ fn a_mod_rewritten_in_place_shows_on_an_idle_page_once_due() {
     };
     let read = |cx: &mut gpui::VisualTestContext| {
         launcher.read_with(cx, |l, _| {
-            l.ui.mods
+            l.mods_state
                 .snapshot
                 .as_ref()
                 .filter(|s| !s.reading)
@@ -154,7 +154,7 @@ fn a_mod_far_down_the_list_is_built_and_revealed() {
         launcher.update(cx, |_, cx| cx.notify());
         cx.run_until_parked();
     };
-    while !launcher.read_with(cx, |l, _| l.ui.mods.revealed.get()) {
+    while !launcher.read_with(cx, |l, _| l.mods_state.revealed.get()) {
         assert!(
             std::time::Instant::now() < deadline,
             "the mod was never scrolled to"
@@ -258,18 +258,18 @@ fn show_resource_pack_discover_re_searches_after_clearing_a_previous_resource_qu
     let (launcher, cx) = app.add_window_view(Launcher::new);
     launcher.update(cx, |l, _| {
         l.ui.page = Page::Home;
-        l.ui.mods.find.set("faithful".into());
-        l.ui.mods.packs.scope = pack_discover::Scope::Resource;
-        l.ui.mods.packs.status = pack_discover::Status::Done;
-        let seq_before = l.ui.mods.packs.seq;
+        l.mods_state.find.set("faithful".into());
+        l.mods_state.packs.scope = pack_discover::Scope::Resource;
+        l.mods_state.packs.status = pack_discover::Status::Done;
+        let seq_before = l.mods_state.packs.seq;
 
         l.show_resource_pack_discover();
 
         assert_eq!(l.ui.page, Page::PackFind);
-        assert_eq!(l.ui.mods.shelf, Shelf::Resource);
-        assert!(l.ui.mods.find.text().is_empty());
+        assert_eq!(l.mods_state.shelf, Shelf::Resource);
+        assert!(l.mods_state.find.text().is_empty());
         assert!(
-            l.ui.mods.packs.seq > seq_before,
+            l.mods_state.packs.seq > seq_before,
             "entering through Find resource packs must trigger a fresh search for the cleared query"
         );
     });

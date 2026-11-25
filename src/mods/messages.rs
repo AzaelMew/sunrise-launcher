@@ -44,9 +44,9 @@ impl Launcher {
     pub(crate) fn mods_drain(&mut self) -> bool {
         let mut changed = false;
         let mut local_fit_due = false;
-        while let Ok(event) = self.ui.mods.rx.try_recv() {
+        while let Ok(event) = self.mods_state.rx.try_recv() {
             changed = true;
-            let m = &mut self.ui.mods;
+            let m = &mut self.mods_state;
             match event {
                 Event::V2Catalog(build, result) => {
                     if m.v2_catalog_build.as_ref() == Some(&build) {
@@ -93,7 +93,7 @@ impl Launcher {
                         if ready {
                             let rows: HashSet<String> =
                                 self.rows().into_iter().map(|r| r.id).collect();
-                            self.ui.mods.selection.retain(|id| rows.contains(id));
+                            self.mods_state.selection.retain(|id| rows.contains(id));
                         }
                     }
                 }
@@ -102,10 +102,10 @@ impl Launcher {
                 }
                 Event::V2Page(request, page) => {
                     if page.is_ok() {
-                        self.ui.mods.v2_failure = None;
+                        self.mods_state.v2_failure = None;
                     }
                     let scope = self.mods_page_scope();
-                    if let Some(open) = self.ui.mods.open.as_mut() {
+                    if let Some(open) = self.mods_state.open.as_mut() {
                         open.finish_v2(request, &scope, page);
                     }
                 }
@@ -148,7 +148,7 @@ impl Launcher {
         }
         if local_fit_due {
             // A catalog read while a check runs drew its cards without it: draw them again.
-            if self.ui.mods.local_fit.running {
+            if self.mods_state.local_fit.running {
                 self.v2_cards_again();
             }
             self.start_local_fit();

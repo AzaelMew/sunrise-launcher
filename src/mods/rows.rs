@@ -7,7 +7,7 @@ impl Launcher {
     /// The installed mods as rows. Uses only the index served over HTTPS this run for registry
     /// names and statuses. Never asks the network or writes.
     pub(super) fn rows(&self) -> Vec<Row> {
-        let Some(snap) = &self.ui.mods.snapshot else {
+        let Some(snap) = &self.mods_state.snapshot else {
             return Vec::new();
         };
         let unfit_updates = snap
@@ -28,7 +28,7 @@ impl Launcher {
             &snap.rows.entries,
             &model::World {
                 v2: v2.as_ref().map(|catalog| &*catalog.index),
-                v2_failure: self.ui.mods.v2_failure.as_deref(),
+                v2_failure: self.mods_state.v2_failure.as_deref(),
                 build: build.as_deref(),
                 unfit_updates: &unfit_updates,
                 enabled: &snap.rows.enabled,
@@ -121,16 +121,21 @@ impl Launcher {
     /// current setup has confirmed rows, and rebuild them on the worker's next publication.
     pub(crate) fn home_mod_facts(&mut self, inventory: u64) -> Arc<HashMap<String, HomeModFacts>> {
         let unfit_revision = sunrise::unfit_updates_revision();
-        if let Some(labels) = &self.ui.mods.home_mod_labels {
+        if let Some(labels) = &self.mods_state.home_mod_labels {
             if labels.matches(inventory, unfit_revision) {
                 return labels.rows.clone();
             }
         }
         self.mods_refresh();
         let mut labels = HashMap::new();
-        if self.ui.mods.snapshot.as_ref().is_some_and(Snapshot::ready) {
+        if self
+            .mods_state
+            .snapshot
+            .as_ref()
+            .is_some_and(Snapshot::ready)
+        {
             for row in self.rows().into_iter().filter(|row| row.on) {
-                let error = self.ui.mods.errors.get(&row.id).map(String::as_str);
+                let error = self.mods_state.errors.get(&row.id).map(String::as_str);
                 let badge = row.manual_badge();
                 let cells = model::cells(&row, error, None);
                 labels.insert(
@@ -144,7 +149,7 @@ impl Launcher {
             }
         }
         let rows = Arc::new(labels);
-        self.ui.mods.home_mod_labels = Some(HomeModLabels {
+        self.mods_state.home_mod_labels = Some(HomeModLabels {
             inventory,
             unfit_revision,
             rows: rows.clone(),

@@ -52,7 +52,6 @@ pub(super) struct State {
     pub page: Page,
     pub home: crate::home::HomeState,
     pub backdrop: crate::backdrop::Backdrop,
-    pub mods: crate::mods::ModsState,
     pub sheet: Option<Sheet>,
     pub sheets: crate::sheets::SheetsState,
     pub settings: crate::settings::SettingsView,
@@ -730,25 +729,28 @@ impl Launcher {
                         .items_center()
                         .border_b_1()
                         .border_color(rgb(palette().divider))
-                        .child(crate::mods::segmented(
-                            "servers-tabs",
-                            [
-                                (
-                                    "servers-join",
-                                    tr("Join").into(),
-                                    page == Page::Join,
-                                    Page::Join,
-                                ),
-                                (
-                                    "servers-host",
-                                    tr("Host").into(),
-                                    page == Page::Hosting,
-                                    Page::Hosting,
-                                ),
-                            ],
-                            Launcher::navigate,
-                            cx,
-                        )),
+                        .child(
+                            crate::widgets::segmented(
+                                "servers-tabs",
+                                [
+                                    (
+                                        "servers-join",
+                                        tr("Join").into(),
+                                        page == Page::Join,
+                                        Page::Join,
+                                    ),
+                                    (
+                                        "servers-host",
+                                        tr("Host").into(),
+                                        page == Page::Hosting,
+                                        Page::Hosting,
+                                    ),
+                                ],
+                                Launcher::navigate,
+                                cx,
+                            )
+                            .seen(),
+                        ),
                 );
                 div()
                     .flex()

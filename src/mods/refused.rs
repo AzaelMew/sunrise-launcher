@@ -1,6 +1,5 @@
 //! A refused Add or Update, said once, in one modal: what it means for the player first, by the
 //! mod's name; the checker's own words and the build log behind Show details.
-use super::ui::*;
 use super::*;
 use crate::frame::button;
 use std::sync::Arc;
@@ -154,7 +153,7 @@ pub(crate) fn details_label(open: bool) -> &'static str {
 
 impl Launcher {
     pub(crate) fn open_refused(&mut self, refused: Refused) {
-        self.ui.mods.refused = Some(refused);
+        self.mods_state.refused = Some(refused);
         self.open_sheet(crate::sheets::Sheet::Refused);
     }
 
@@ -186,7 +185,7 @@ impl Launcher {
     }
 
     pub(crate) fn refused_sheet(&mut self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
-        let refused = self.ui.mods.refused.as_ref()?;
+        let refused = self.mods_state.refused.as_ref()?;
         let many = refused.mods.len() > 1;
         let mut list = div().flex().flex_col().gap(px(12.));
         for (i, refused_mod) in refused.mods.iter().enumerate() {
@@ -260,7 +259,7 @@ impl Launcher {
                     .children(has_details.then(|| {
                         button("refused-show-details", details_label(refused.details)).on_click(
                             cx.listener(|this, _, _, cx| {
-                                if let Some(refused) = &mut this.ui.mods.refused {
+                                if let Some(refused) = &mut this.mods_state.refused {
                                     refused.details ^= true;
                                 }
                                 cx.notify();

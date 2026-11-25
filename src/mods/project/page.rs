@@ -11,7 +11,7 @@ impl Launcher {
         use sunrise_launcher::browser::details::category_label;
 
         let p = palette();
-        let open_id = self.ui.mods.open.as_ref().map(|o| o.id.clone());
+        let open_id = self.mods_state.open.as_ref().map(|o| o.id.clone());
         // Opened from Installed or Discover alike, an installed mod keeps its own controls here.
         let (rows, _) = self.labeled_installed_rows();
         let installed_row = rows.iter().find(|row| {
@@ -24,15 +24,14 @@ impl Launcher {
         let busy = self.mods_busy()
             || self.mods_locked().is_some()
             || self
-                .ui
-                .mods
+                .mods_state
                 .snapshot
                 .as_ref()
                 .is_none_or(|snapshot| !snapshot.ready());
         let cells = installed_row.map(|row| {
             model::cells(
                 row,
-                self.ui.mods.errors.get(&row.id).map(String::as_str),
+                self.mods_state.errors.get(&row.id).map(String::as_str),
                 self.build_here()
                     .filter(|_| row.on)
                     .and_then(|run| run.state_of(&row.id, &row.version)),
@@ -41,7 +40,12 @@ impl Launcher {
         let controls = installed_row
             .zip(cells.as_ref())
             .map(|(row, cells)| self.installed_project_controls(row, cells, busy, cx));
-        let vp = match self.ui.mods.open.as_ref().and_then(|o| o.v2_page.as_ref()) {
+        let vp = match self
+            .mods_state
+            .open
+            .as_ref()
+            .and_then(|o| o.v2_page.as_ref())
+        {
             None => {
                 return page
                     .child(header)
@@ -685,7 +689,7 @@ impl Launcher {
         let tile_w = (avail - 10. * (columns - 1) as f32) / columns as f32;
         let max_h = if count == 1 { 320. } else { 240. };
         let height = (tile_w * (9. / 16.)).clamp(110., max_h).round();
-        let viewing = self.ui.mods.viewer.is_some();
+        let viewing = self.mods_state.viewer.is_some();
 
         let mut items = screenshots.iter().enumerate().map(|(i, shot)| {
             let photo = self.v2_mod_image(project_id, &shot.path, images::GALLERY);

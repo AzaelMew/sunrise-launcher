@@ -67,9 +67,9 @@ pub(crate) use state::ModsState;
 use state::*;
 use std::{rc::Rc, sync::Arc};
 use sunrise_launcher::native_mods::local_fit;
-pub(crate) use ui::{
-    checkbox, choices, empty_state, field_theme, reveal, segmented, switch, Choose,
-};
+pub(crate) use ui::{checkbox, choices, empty_state, field_theme, reveal, switch, Choose};
+
+pub(crate) use crate::widgets::segmented;
 
 use crate::paint::palette;
 use model::Row;

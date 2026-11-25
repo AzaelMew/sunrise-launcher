@@ -12,8 +12,7 @@ impl Launcher {
     /// The build window's build, when it is the selected profile's.
     pub(crate) fn build_here(&self) -> Option<&Run> {
         let selected = self.selected_instance()?;
-        self.ui
-            .mods
+        self.mods_state
             .build
             .as_ref()
             .filter(|run| run.instance == selected.id)
@@ -21,7 +20,7 @@ impl Launcher {
 
     /// The running build's progress. Pressing it opens the build window.
     pub(crate) fn build_line(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
-        let run = self.ui.mods.build.as_ref().filter(|run| run.running())?;
+        let run = self.mods_state.build.as_ref().filter(|run| run.running())?;
         self.native_step.as_ref()?;
         let fraction = run.fraction();
         Some(
@@ -45,7 +44,7 @@ impl Launcher {
 
     /// How the last build went, for the moment after it ended with its window closed.
     pub(crate) fn build_said(&self) -> Option<String> {
-        self.ui.mods.build.as_ref()?.said(Instant::now())
+        self.mods_state.build.as_ref()?.said(Instant::now())
     }
 }
 

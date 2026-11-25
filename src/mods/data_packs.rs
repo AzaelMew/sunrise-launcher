@@ -211,7 +211,7 @@ impl Launcher {
             true => self.worlds.list.clone(),
             false => Vec::new(),
         };
-        let d = &mut self.ui.mods.data;
+        let d = &mut self.mods_state.data;
         let current = d.list.as_ref().is_some_and(|l| {
             l.home == home
                 && l.worlds.len() == worlds.len()
@@ -248,7 +248,7 @@ impl Launcher {
     pub(crate) fn show_world_packs(&mut self, world: PathBuf) {
         self.leave_section(true);
         self.worlds.stale();
-        let m = &mut self.ui.mods;
+        let m = &mut self.mods_state;
         m.shelf = Shelf::Data;
         m.data.first = Some(world);
         m.data.reread();
@@ -262,8 +262,7 @@ impl Launcher {
             return;
         }
         let ticked = self
-            .ui
-            .mods
+            .mods_state
             .data
             .list
             .iter()
@@ -271,13 +270,13 @@ impl Launcher {
             .filter(|(w, packs)| Some(&w.path) == hint.as_ref() && !what.in_world(w, packs))
             .map(|(w, _)| w.path.clone())
             .collect();
-        self.ui.mods.data.pick = Some(Pick { what, ticked });
+        self.mods_state.data.pick = Some(Pick { what, ticked });
         self.open_sheet(crate::sheets::Sheet::Worlds);
     }
 
     /// The picker's Add: everything is checked again, then done in a worker.
     fn pick_confirm(&mut self) {
-        let Some(pick) = self.ui.mods.data.pick.take() else {
+        let Some(pick) = self.mods_state.data.pick.take() else {
             return;
         };
         self.close_sheet();
@@ -289,13 +288,12 @@ impl Launcher {
             .filter(|_| !self.location_unavailable)
             .cloned()
         else {
-            self.ui.mods.notice = Some(Err(tr("Select a Sunrise profile first.").to_string()));
+            self.mods_state.notice = Some(Err(tr("Select a Sunrise profile first.").to_string()));
             return;
         };
         // Only worlds of the setup on screen, in the order they are listed.
         let worlds: Vec<World> = self
-            .ui
-            .mods
+            .mods_state
             .data
             .list
             .iter()
@@ -308,8 +306,8 @@ impl Launcher {
             return;
         }
         self.dismiss_notice();
-        self.ui.mods.busy = Some((tr("Adding the data pack…").into(), 0.));
-        let (tx, game) = (self.ui.mods.tx.clone(), self.mods_game());
+        self.mods_state.busy = Some((tr("Adding the data pack…").into(), 0.));
+        let (tx, game) = (self.mods_state.tx.clone(), self.mods_game());
         std::thread::spawn(move || {
             let result = sunrise_launcher::managed_play::Profile::open_selected(&instance)
                 .and_then(|profile| {
@@ -324,11 +322,11 @@ impl Launcher {
     /// Remove on a row: the second press moves the pack to the trash.
     fn data_remove(&mut self, world: PathBuf, file: String) {
         let key = (world, file);
-        if self.ui.mods.data.confirm.as_ref() != Some(&key) {
-            self.ui.mods.data.confirm = Some(key);
+        if self.mods_state.data.confirm.as_ref() != Some(&key) {
+            self.mods_state.data.confirm = Some(key);
             return;
         }
-        self.ui.mods.data.reread();
+        self.mods_state.data.reread();
         if !self.guard() {
             return;
         }
@@ -349,17 +347,17 @@ impl Launcher {
                 .ok_or_else(|| tr("This pack changed. Check the refreshed list."))?;
             datapacks::remove(&world, &pack)
         })();
-        self.ui.mods.notice = result.err().map(Err);
+        self.mods_state.notice = result.err().map(Err);
         self.world_packs.reread();
     }
 
     /// Packs › Installed › Data packs: each world with what is in it.
     pub(super) fn installed_data_packs(&mut self, cx: &mut Context<Self>) -> Div {
         self.data_list(cx);
-        let query = self.ui.mods.have.text().trim().to_lowercase();
+        let query = self.mods_state.have.text().trim().to_lowercase();
         let editable =
             !self.location_unavailable && self.mods_locked().is_none() && !self.mutating();
-        let d = &self.ui.mods.data;
+        let d = &self.mods_state.data;
         let mut worlds: Vec<(World, Vec<Listed>)> =
             d.list.as_ref().map_or_else(Vec::new, |l| l.worlds.clone());
         // The world Home asked for leads; the rest keep the order Home has them in.
@@ -537,7 +535,7 @@ impl Launcher {
     /// The world picker: every world of the setup with a box, and one Add for all ticked.
     pub(crate) fn world_pick_sheet(&mut self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
         self.data_list(cx);
-        let d = &self.ui.mods.data;
+        let d = &self.mods_state.data;
         let pick = d.pick.as_ref()?;
         let worlds: &[(World, Vec<Listed>)] = d.list.as_ref().map_or(&[], |l| &l.worlds);
         let close = |label: &'static str| {
@@ -613,7 +611,7 @@ impl Launcher {
                     .cursor_pointer()
                     .hover(|s| s.bg(c(palette().hover)))
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        if let Some(pick) = &mut this.ui.mods.data.pick {
+                        if let Some(pick) = &mut this.mods_state.data.pick {
                             if !pick.ticked.remove(&path) {
                                 pick.ticked.insert(path.clone());
                             }

@@ -13,15 +13,15 @@ impl Launcher {
         let Some(catalog) = sunrise::v2::known_index() else {
             return;
         };
-        self.ui.mods.release_builds =
+        self.mods_state.release_builds =
             discover_v2::release_builds(&catalog.index, id, version, &local_fit::kept);
-        if self.ui.mods.release_builds.is_some() {
+        if self.mods_state.release_builds.is_some() {
             self.open_sheet(Sheet::ReleaseBuilds);
         }
     }
 
     pub(crate) fn release_builds_sheet(&mut self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
-        let shown = self.ui.mods.release_builds.as_ref()?;
+        let shown = self.mods_state.release_builds.as_ref()?;
         let profile_build = self.selected_exact_build();
         let p = palette();
         let section = |heading: &'static str, wanted: &[BuildFit]| {

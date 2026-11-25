@@ -28,7 +28,7 @@ impl Launcher {
         let columns = if self.window_width < 950. { 3 } else { 4 };
         let height = if count == 1 { 220. } else { 104. };
         // A tile's tooltip would float over its own picture once that is open.
-        let viewing = self.ui.mods.viewer.is_some();
+        let viewing = self.mods_state.viewer.is_some();
         let mut tiles = urls.iter().take(PREVIEWS).enumerate().map(|(i, url)| {
             let photo = self.picture(url, images::GALLERY);
             // No wider than the picture's own shape at the row's height: a wide window would
@@ -186,8 +186,7 @@ impl Launcher {
     ) -> Div {
         use crate::frame::button;
         let hold = self
-            .ui
-            .mods
+            .mods_state
             .snapshot
             .as_ref()
             .and_then(|snapshot| snapshot.switch_held.get(&row.id))
@@ -275,15 +274,14 @@ impl Launcher {
 
     pub(super) fn project(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let back_to = self
-            .ui
-            .mods
+            .mods_state
             .open
             .as_ref()
             .map_or(Page::Discover, |o| o.from);
-        let parent = self.ui.mods.open.as_ref().and_then(|o| o.parent.clone());
+        let parent = self.mods_state.open.as_ref().and_then(|o| o.parent.clone());
         let parent_name = parent
             .as_ref()
-            .and_then(|id| match &self.ui.mods.v2_catalog {
+            .and_then(|id| match &self.mods_state.v2_catalog {
                 V2Catalog::Ready { collections, .. } => collections
                     .iter()
                     .find(|c| c.id == *id)
@@ -313,7 +311,7 @@ impl Launcher {
             )
             .children(self.strip(cx));
         let page = project_frame();
-        let Some(open) = self.ui.mods.open.as_ref() else {
+        let Some(open) = self.mods_state.open.as_ref() else {
             return page
                 .child(header)
                 .child(muted(tr("No mod is open.")))
@@ -398,14 +396,13 @@ impl Launcher {
             || self.mods_busy()
             || self.mods_locked().is_some()
             || self
-                .ui
-                .mods
+                .mods_state
                 .snapshot
                 .as_ref()
                 .is_none_or(|snapshot| !snapshot.ready());
         let cells = model::cells(
             row,
-            self.ui.mods.errors.get(&row.id).map(String::as_str),
+            self.mods_state.errors.get(&row.id).map(String::as_str),
             self.build_here()
                 .filter(|_| row.on)
                 .and_then(|run| run.state_of(&row.id, &row.version)),

@@ -70,8 +70,7 @@ impl Launcher {
     /// Opens the page of a pack among Discover's results; its details are read in a worker.
     pub(super) fn pack_show(&mut self, source: SourceId, id: &str) {
         let Some(project) = self
-            .ui
-            .mods
+            .mods_state
             .packs
             .results
             .iter()
@@ -80,13 +79,13 @@ impl Launcher {
         else {
             return;
         };
-        self.ui.mods.menu = None;
-        self.ui.mods.packs.open = Some(PackOpen {
+        self.mods_state.menu = None;
+        self.mods_state.packs.open = Some(PackOpen {
             project: project.clone(),
             page: None,
         });
         self.ui.page = Page::PackProject;
-        let tx = self.ui.mods.tx.clone();
+        let tx = self.mods_state.tx.clone();
         std::thread::spawn(move || {
             let s = browser::modrinth::Modrinth;
             let result = (|| Ok(Box::new((s.details(&project)?, s.versions(&project)?))))();
@@ -95,7 +94,7 @@ impl Launcher {
     }
 
     pub(super) fn pack_page_answer(&mut self, key: (SourceId, String), page: PackPage) {
-        if let Some(open) = &mut self.ui.mods.packs.open {
+        if let Some(open) = &mut self.mods_state.packs.open {
             if (open.project.source, &open.project.id) == (key.0, &key.1) {
                 open.page = Some(page);
             }
@@ -117,7 +116,7 @@ impl Launcher {
                 })),
             )
             .children(self.strip(cx));
-        let Some(open) = &self.ui.mods.packs.open else {
+        let Some(open) = &self.mods_state.packs.open else {
             return page.child(muted(tr("No pack is open."))).into_any_element();
         };
         let p = open.project.clone();
@@ -181,7 +180,7 @@ impl Launcher {
 
         // The action, as on the card.
         let added = !data
-            && self.ui.mods.snapshot.as_ref().is_some_and(|s| {
+            && self.mods_state.snapshot.as_ref().is_some_and(|s| {
                 s.entries
                     .iter()
                     .any(|e| e.source == p.source && e.project == p.id)
@@ -203,7 +202,7 @@ impl Launcher {
             let b = primary("alt-pack-page-add", label)
                 .w_full()
                 .h(px(tokens::ACTION));
-            if !support.installable() || self.ui.mods.busy.is_some() {
+            if !support.installable() || self.mods_state.busy.is_some() {
                 dim(b).into_any_element()
             } else {
                 let (source, id) = (p.source, p.id.clone());
@@ -214,7 +213,7 @@ impl Launcher {
                 .into_any_element()
             }
         };
-        let within = match self.ui.mods.data.worlds_with(p.source, &p.id) {
+        let within = match self.mods_state.data.worlds_with(p.source, &p.id) {
             _ if !data => None,
             0 => None,
             1 => Some(tr("In 1 world of this profile.").to_string()),
