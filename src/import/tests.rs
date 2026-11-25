@@ -1,5 +1,6 @@
 use super::*;
 use crate::export::export;
+use crate::test_support::zip_file;
 use std::io::Write;
 use std::time::Duration;
 
@@ -11,17 +12,6 @@ fn scratch(name: &str) -> PathBuf {
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(&root).unwrap();
     root
-}
-
-fn zip_file(path: &Path, files: &[(&str, &[u8])]) {
-    fs::create_dir_all(path.parent().unwrap()).unwrap();
-    let mut zip = zip::ZipWriter::new(fs::File::create(path).unwrap());
-    for (name, bytes) in files {
-        zip.start_file(*name, zip::write::SimpleFileOptions::default())
-            .unwrap();
-        zip.write_all(bytes).unwrap();
-    }
-    zip.finish().unwrap();
 }
 
 fn put(path: &Path, bytes: &[u8]) {

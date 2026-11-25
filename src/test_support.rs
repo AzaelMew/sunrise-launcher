@@ -7,6 +7,19 @@ pub(crate) fn assert_holder_capability() {
     );
 }
 
+/// Writes a zip at `path` holding `files`, each a name and its bytes, making its folder first.
+pub(crate) fn zip_file(path: &std::path::Path, files: &[(&str, &[u8])]) {
+    use std::io::Write;
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let mut zip = zip::ZipWriter::new(std::fs::File::create(path).unwrap());
+    for (name, bytes) in files {
+        zip.start_file(*name, zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(bytes).unwrap();
+    }
+    zip.finish().unwrap();
+}
+
 #[test]
 fn current_binary_retains_holder_capability() {
     assert_holder_capability();
