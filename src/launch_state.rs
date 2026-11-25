@@ -6,8 +6,10 @@
 //! nothing read, so every row of it is tested. The launch itself is `play_game`'s, which owns
 //! the sign-in, install, prepare, build and trust gates.
 use super::*;
+use crate::launcher_messages::settle_managed_play_error;
 use crate::sheets::{Sheet, WayOut};
 use sunrise_launcher::browser::sunrise::InstallProgress;
+use sunrise_launcher::managed_play::StartError;
 
 /// What the launcher knows that Play depends on.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -535,6 +537,169 @@ impl Launcher {
             }
             StripAct::StopInstall => self.stop_registry_install(),
             StripAct::Home => self.navigate(crate::frame::Page::Home),
+        }
+    }
+    pub(crate) fn on_play_message(&mut self, msg: Msg, cx: &mut Context<Self>) {
+        match msg {
+            Msg::Playing(playing) => self.playing = playing,
+            Msg::PlayStep(step) => {
+                if self.starting_client.is_some() {
+                    self.play_step = Some(step);
+                }
+                if step == backend::PlayStep::SignIn && self.native_step.take().is_some() {
+                    self.native_progress = None;
+                    if let Some(run) = &mut self.ui.mods.build {
+                        run.done();
+                    }
+                    if self.ui.sheet == Some(crate::sheets::Sheet::ModBuild) {
+                        self.close_sheet();
+                    }
+                    self.refresh_installed();
+                }
+            }
+            Msg::ManagedBuild {
+                instance,
+                profile,
+                base,
+                mods,
+            } => {
+                let selected = self.selected_instance().is_some_and(|i| i.id == instance);
+                let lines = self.build_lines(mods, selected);
+                self.native_for = Some(instance.clone());
+                self.native_failed_mods.clear();
+                self.ui.mods.build = Some(crate::mods::build_run::Run::start(
+                    instance,
+                    profile,
+                    crate::sheets::build_name(&base),
+                    lines,
+                    true,
+                ));
+                self.open_sheet(crate::sheets::Sheet::ModBuild);
+            }
+            Msg::ManagedBuildLog(output) => {
+                if let Some(run) = self.ui.mods.build.as_mut().filter(|run| run.for_play) {
+                    run.log = Some(output);
+                }
+            }
+            Msg::ManagedClient { instance, result } => {
+                self.native_cancellation = None;
+                self.native_step = None;
+                self.native_progress = None;
+                let active_play_build = self
+                    .ui
+                    .mods
+                    .build
+                    .as_ref()
+                    .is_some_and(|run| run.for_play && run.running());
+                let cancelled = result.as_ref().as_ref().is_err_and(|error| {
+                    settle_managed_play_error(error, active_play_build, || {
+                        self.cancel_launcher_restart()
+                    })
+                });
+                let mut captured_build_error = false;
+                if let (Some(run), Err(error)) = (&mut self.ui.mods.build, result.as_ref()) {
+                    if active_play_build {
+                        match error {
+                            _ if cancelled => run.cancelled(),
+                            StartError::Native(error, build) => {
+                                run.failed_build = build.clone();
+                                run.native_failed(error, &[]);
+                            }
+                            StartError::Other(error) => {
+                                run.stopped(
+                                    tr("The build could not finish. No game was started.").into(),
+                                    error.clone(),
+                                );
+                                captured_build_error = true;
+                            }
+                            StartError::Journal(error) => {
+                                run.stopped(error.summary().into(), error.details())
+                            }
+                            _ => run.stopped(
+                                tr("The build could not be published.").into(),
+                                String::new(),
+                            ),
+                        }
+                    }
+                }
+                if !self.ui.mods.build.as_ref().is_some_and(|run| {
+                    run.for_play && matches!(run.end, Some(crate::mods::build_run::End::Stopped(_)))
+                }) {
+                    self.play_retry = None;
+                }
+                self.starting_client = None;
+                self.play_step = None;
+                self.accounts = Accounts::load();
+                self.load_auth_statuses(false);
+                match *result {
+                    Ok(game) => {
+                        self.client_error = game.notice;
+                        self.play_registry_notices = game.registry_notices;
+                        for notice in &self.play_registry_notices {
+                            console_page::keep_line(
+                                &mut self.prepare_log,
+                                &mut self.log_revision,
+                                notice.clone(),
+                            );
+                        }
+                        if game.owner {
+                            self.owner = Some(true);
+                        }
+                        self.refresh_installed();
+                        self.client_home = Some(game.instance.home.clone());
+                        self.client_run = Some((game.instance, Instant::now()));
+                        self.client = Some(backend::monitor_game(
+                            game.child,
+                            self.tx.clone(),
+                            game.runtime,
+                        ));
+                        if self.play_registry_notices.is_empty() {
+                            self.step_aside(cx);
+                        }
+                    }
+                    Err(StartError::Journal(problem)) => {
+                        self.play_install_recovery = Some((instance.home, problem.details()));
+                    }
+                    Err(StartError::Account(refused)) => {
+                        if refused.keyring.is_none() {
+                            self.owner = Some(false);
+                            self.sign_in_screen.open = true;
+                        }
+                        self.client_error = Some(refused.in_window());
+                    }
+                    Err(_) if cancelled => (),
+                    Err(StartError::Native(error, _)) => {
+                        self.native_for = Some(instance.id);
+                        if !active_play_build {
+                            self.native_failed(error.to_string(), &[]);
+                        }
+                    }
+                    Err(StartError::Hook(error)) => self.client_error = Some(error.to_string()),
+                    Err(StartError::Other(_)) if captured_build_error => (),
+                    Err(StartError::UnknownSpawn(error) | StartError::Other(error)) => {
+                        self.client_error = Some(error);
+                    }
+                }
+            }
+            Msg::PlayRecorded => self.reload_instances(),
+            Msg::GameExitSettled => self.finishing_game -= 1,
+            Msg::PlayAdmission(home, result) => {
+                let Some(intent) = self.play_admission.take() else {
+                    return;
+                };
+                if self
+                    .selected_instance()
+                    .is_none_or(|i| i.home != home || !intent.matches_profile(i))
+                {
+                    return;
+                }
+                self.play_install_recovery = None;
+                match result {
+                    Ok(()) => self.play_after_journal_check(intent, &home),
+                    Err(problem) => self.play_install_recovery = Some((home, problem.details())),
+                }
+            }
+            _ => unreachable!("not a play message"),
         }
     }
 }
