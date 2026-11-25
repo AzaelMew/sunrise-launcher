@@ -196,8 +196,8 @@ module path, and fix them in the same PR:
   name. Renaming a file in `tests/` means changing the workflows too.
 - **The game-copies tables** (§2): the paths in them, and the files their functions and
   constants are read from, are part of a CI check.
-- **Scripts with path lists:** `tools/glass_roles.py`, `tools/sizes_to_tokens.py` and other
-  `tools/` scripts that name `src/…` files.
+- **Scripts with path lists:** `tools/prune_unreachable_ui.py` and other `tools/` scripts that
+  name `src/…` files.
 - **Docs:** `docs/architecture.md`, README.md, AGENTS.md and CONTRIBUTING.md. Check with
   `git grep -n '<old path>'`. When the layout lands, `architecture.md` becomes a short map of the
   domains, not a table of 170 files.
