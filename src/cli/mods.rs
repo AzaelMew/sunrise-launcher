@@ -342,9 +342,10 @@ pub(super) fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                         trf("{mod} isn't in Sunrise's registry.", &[("mod", &project)])
                     })?;
                 let progress_line = progress(p.name.clone());
+                let target = sunrise::Target::of(&instance)?;
                 let installed = sunrise::install_registry_v2(
-                    &instance,
-                    sunrise::install_target(&instance)?,
+                    &target,
+                    target.identity(),
                     vec![p.id.clone()],
                     sunrise::V2InstallOptions::default(),
                     || sunrise_launcher::managed_play::headless_first(&instance),
@@ -475,8 +476,9 @@ pub(super) fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                     } else {
                         sunrise::UpdateRequest::Bulk(ids)
                     };
+                    let target = sunrise::Target::of(&instance)?;
                     let result = sunrise::update_registry_v2(
-                        &instance,
+                        &target,
                         identity?,
                         requested,
                         sunrise::V2InstallOptions::default(),
@@ -644,8 +646,9 @@ pub(super) fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                     return Err(tr("This pack controls which mods it installs.").into());
                 }
                 let id = installed.map_or(project, |row| row.project.clone());
+                let target = sunrise::Target::of(&instance)?;
                 let removed = sunrise::remove_mods(
-                    &instance,
+                    &target,
                     identity?,
                     &[id],
                     || sunrise_launcher::managed_play::headless_first(&instance),

@@ -40,7 +40,7 @@ pub(crate) struct V2Transfer<'a> {
 
 /// Shared inputs for schema-2 registry install, update, and provider-switch edits.
 pub(crate) struct V2EditRequest<'a> {
-    pub(crate) instance: &'a Instance,
+    pub(crate) target: &'a Target,
     pub(crate) identity: Identity,
     pub(crate) index: Arc<Index>,
     pub(crate) options: V2InstallOptions,

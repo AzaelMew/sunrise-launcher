@@ -37,6 +37,7 @@ impl Launcher {
         self.mods.installs.submit(Request {
             profile: target.profile,
             identity: target.identity,
+            profile_target: target.profile_target,
             target: Some(target.base),
             release: None,
             displayed_names: BTreeMap::new(),
@@ -158,6 +159,7 @@ impl Launcher {
         self.mods.installs.submit(Request {
             profile: target.profile,
             identity: target.identity,
+            profile_target: target.profile_target,
             target: Some(target.base),
             release: None,
             displayed_names: BTreeMap::new(),

@@ -68,24 +68,27 @@ fn a_failed_install_says_why_in_a_dialog_not_on_the_card() {
 
 pub(super) fn request(home: &Path, id: &str, target: &str) -> Request {
     let slug = home.file_name().unwrap().to_str().unwrap();
+    let profile = instances::Instance {
+        id: slug.into(),
+        name: slug.into(),
+        kind: instances::Kind::Own,
+        home: home.into(),
+        work: home.into(),
+        incarnation: None,
+        icon: None,
+        group: None,
+        version: None,
+        channel: Default::default(),
+        native_profile: Default::default(),
+        played: Default::default(),
+        last_played: None,
+        launch: Default::default(),
+    };
+    let identity = Identity::of(home).unwrap();
     Request {
-        identity: Identity::of(home).unwrap(),
-        profile: instances::Instance {
-            id: slug.into(),
-            name: slug.into(),
-            kind: instances::Kind::Own,
-            home: home.into(),
-            work: home.into(),
-            incarnation: None,
-            icon: None,
-            group: None,
-            version: None,
-            channel: Default::default(),
-            native_profile: Default::default(),
-            played: Default::default(),
-            last_played: None,
-            launch: Default::default(),
-        },
+        identity,
+        profile_target: sunrise_launcher::managed_play::Target::resumed(&profile, identity),
+        profile,
         target: Some(target.into()),
         release: None,
         displayed_names: BTreeMap::new(),
@@ -139,6 +142,7 @@ fn failed_github_add_retries_only_the_checked_subset_and_never_a_version_refusal
     let target = GithubTarget {
         profile: run.profile.clone(),
         identity: run.identity,
+        profile_target: Target::resumed(&run.profile, run.identity),
         target: run.target.clone(),
         release: None,
     };
@@ -380,6 +384,7 @@ fn local_install_stays_tracked_and_honours_cancellation() {
     let target = GithubTarget {
         profile: run.profile.clone(),
         identity: run.identity,
+        profile_target: Target::resumed(&run.profile, run.identity),
         target: run.target.clone(),
         release: None,
     };

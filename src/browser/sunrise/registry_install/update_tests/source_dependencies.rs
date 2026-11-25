@@ -99,8 +99,8 @@ fn add_with(
         .unwrap()
         .unwrap();
     add_sources(
-        &fixture.instance,
-        install_target(&fixture.instance).unwrap(),
+        &fixture.target(),
+        fixture.identity(),
         base,
         vec![packed],
         SourceHooks {
@@ -144,7 +144,7 @@ fn source_install(fixture: Fixture, approve: Option<bool>) {
         listings(&fixture, &[root.clone(), farmer, lib]);
     }
     let count = Cell::new(0);
-    install_target(&fixture.instance).unwrap();
+    fixture.identity();
     let before = managed_play::inputs(fixture.home()).unwrap();
     let result = add(&fixture, root, |roots, dependencies| {
         count.set(count.get() + 1);

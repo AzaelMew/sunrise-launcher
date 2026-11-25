@@ -493,19 +493,19 @@ fn raw_row_matches_archive(
 /// Explicit Remove approves the displayed path and digest, independent of archive origin.
 /// The required dependent closure is turned off, not deleted.
 pub fn remove_mods(
-    instance: &Instance,
+    target: &Target,
     identity: Identity,
     ids: &[String],
     choose: impl FnOnce() -> Result<FirstBuild, String>,
     hooks: InstallHooks<'_>,
     approve: &dyn Fn(&ChangeImpact) -> bool,
 ) -> Result<Vec<String>, InstallError> {
-    if instance.kind == InstanceKind::Pack || ids.is_empty() {
+    if target.is_pack() || ids.is_empty() {
         return Err(InstallError::Cancelled);
     }
     (hooks.progress)(InstallProgress::Checking);
     let mut profile =
-        Profile::open_for(&instance.home, None, Some(identity)).map_err(String::from)?;
+        Profile::open_for(target.home(), None, Some(identity)).map_err(String::from)?;
     let edit = profile.begin_edit(choose, |f| {
         (hooks.progress)(InstallProgress::Downloading(f))
     })?;
@@ -517,7 +517,7 @@ pub fn remove_mods(
     let ids = ids.iter().cloned().collect::<BTreeSet<_>>();
     let enabled = enabled(home)?;
     let mut staged = stage_removal(
-        &instance.home,
+        target.home(),
         home,
         edit.current(),
         ids.iter().map(String::as_str),
@@ -544,7 +544,7 @@ pub fn remove_mods(
         unavailable.iter().map(String::as_str),
     )?;
     let impact = ChangeImpact::read(
-        &instance.home,
+        target.home(),
         Change::Remove {
             removed: std::mem::take(&mut staged.archives),
             disabled: disabled
@@ -565,7 +565,7 @@ pub fn remove_mods(
     // Stop reaches a Remove that waits for another build to finish.
     let unstoppable = native_mods::Cancellation::default();
     let cancellation = hooks.cancellation.unwrap_or(&unstoppable);
-    let proof = prove_edit(&edit, home, instance, cancellation, &hooks).map_err(|e| {
+    let proof = prove_edit(&edit, home, target, cancellation, &hooks).map_err(|e| {
         if cancellation.is_stopped() {
             InstallError::Cancelled
         } else {
@@ -586,18 +586,18 @@ pub fn remove_mods(
             )
             .into());
         }
-        staged.revalidate(&instance.home)?;
-        bind_worlds(&instance.home, &suspect, &reviewed)
+        staged.revalidate(target.home())?;
+        bind_worlds(target.home(), &suspect, &reviewed)
     })?;
     // The removal is published. A jar goes from this profile's cache (the game reads
     // `<home>/jars`) unless a mod still in the profile lists it; when the profile can't be read,
     // every jar stays.
-    if let Ok(packages) = managed_play::scan_packages(&instance.home) {
+    if let Ok(packages) = managed_play::scan_packages(target.home()) {
         let kept: Vec<_> = packages
             .into_iter()
             .flat_map(|package| package.manifest.jar)
             .collect();
-        let _ = crate::jars::forget(&instance.home, &listed, &kept);
+        let _ = crate::jars::forget(target.home(), &listed, &kept);
     }
     Ok(removed)
 }

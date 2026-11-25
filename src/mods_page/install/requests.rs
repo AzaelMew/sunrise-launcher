@@ -65,8 +65,10 @@ impl Launcher {
         let release = target
             .as_deref()
             .and_then(|tag| self.release_to_install(tag));
+        let profile_target = sunrise::Target::of(&profile)?;
         Ok(GithubTarget {
-            identity: sunrise::install_target(&profile)?,
+            identity: profile_target.identity(),
+            profile_target,
             profile,
             target,
             release,
@@ -106,6 +108,7 @@ impl Launcher {
         self.mods.installs.submit(Request {
             identity: target.identity,
             profile: target.profile.clone(),
+            profile_target: target.profile_target.clone(),
             target: target.target.clone(),
             release: target.release.clone(),
             displayed_names: BTreeMap::new(),
@@ -135,6 +138,7 @@ impl Launcher {
         self.mods.installs.submit(Request {
             identity: target.identity,
             profile: target.profile.clone(),
+            profile_target: target.profile_target.clone(),
             target: target.target.clone(),
             release: target.release.clone(),
             displayed_names: BTreeMap::new(),
@@ -182,8 +186,10 @@ impl Launcher {
         let release = target
             .as_deref()
             .and_then(|tag| self.release_to_install(tag));
+        let profile_target = sunrise::Target::of(&instance)?;
         self.mods.installs.submit(Request {
-            identity: sunrise::install_target(&instance)?,
+            identity: profile_target.identity(),
+            profile_target,
             profile: instance,
             target,
             release,
@@ -356,7 +362,7 @@ impl Launcher {
             };
             let result = match kind {
                 Kind::InstallV2 => sunrise::install_registry_v2(
-                    &request.profile,
+                    &request.profile_target,
                     request.identity,
                     ids.clone(),
                     V2InstallOptions::default(),
@@ -364,7 +370,7 @@ impl Launcher {
                     v2_hooks,
                 ),
                 Kind::UpdateV2 | Kind::UpdateAllV2 => sunrise::update_registry_v2(
-                    &request.profile,
+                    &request.profile_target,
                     request.identity,
                     if kind == Kind::UpdateV2 {
                         sunrise::UpdateRequest::Strict(ids)
@@ -380,7 +386,7 @@ impl Launcher {
                     let input = request.github.as_ref().expect("a checked GitHub request");
                     match &input.selection {
                         GithubSelection::Add(packages) => sunrise::install_github_manual(
-                            &request.profile,
+                            &request.profile_target,
                             request.identity,
                             sunrise::ManualRelease {
                                 found: &input.source,
@@ -400,7 +406,7 @@ impl Launcher {
                 Kind::Local => {
                     let input = request.local.as_ref().expect("a checked local request");
                     sunrise::install_local(
-                        &request.profile,
+                        &request.profile_target,
                         request.identity,
                         &input.packages,
                         &cancellation,
@@ -480,7 +486,7 @@ impl Launcher {
                                 return Err(rejected.unwrap_or(SourceError::Cancelled));
                             }
                             let result = sunrise::add_sources(
-                                &request.profile,
+                                &request.profile_target,
                                 request.identity,
                                 request.target.as_deref().expect("source add has a target"),
                                 packages,
@@ -494,7 +500,7 @@ impl Launcher {
                         })()
                     } else {
                         sunrise::apply_sources(
-                            &request.profile,
+                            &request.profile_target,
                             request.identity,
                             request.source_inputs(),
                             choose,
@@ -506,7 +512,7 @@ impl Launcher {
                         .map_err(InstallError::Source)
                 }
                 Kind::Remove => sunrise::remove_mods(
-                    &request.profile,
+                    &request.profile_target,
                     request.identity,
                     &ids,
                     choose,

@@ -5,10 +5,9 @@ use std::{
 };
 use sunrise_launcher::{
     browser::sunrise::{
-        install_target, save_build_choice, switch_profile_build_v2, switch_provider_v2,
-        BuildChoice, InstallError, InstallHooks, InstallProgress, ProviderSwitchPreview,
-        SwitchDecision, SwitchHooks, SwitchQuestion, Switched, V2Hooks, V2InstallOptions,
-        V2ProviderSwitchHooks, V2SwitchHooks,
+        switch_profile_build_v2, switch_provider_v2, BuildChoice, InstallError, InstallHooks,
+        InstallProgress, ProviderSwitchPreview, SwitchDecision, SwitchHooks, SwitchQuestion,
+        Switched, Target, V2Hooks, V2InstallOptions, V2ProviderSwitchHooks, V2SwitchHooks,
     },
     managed_play::{self, Active, FirstBuild, Profile, ReceiptHint},
     profile_txn::Identity,
@@ -71,7 +70,7 @@ struct Running {
 
 /// The selected profile and build survive download and preparation, not a new read of Home.
 struct Pending {
-    instance: instances::Instance,
+    target: Target,
     identity: Identity,
     choice: Option<BuildChoice>,
 }

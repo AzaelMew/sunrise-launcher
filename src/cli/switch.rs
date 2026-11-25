@@ -5,7 +5,7 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
 };
 use sunrise_launcher::browser::sunrise::{
-    install_target, switch_build_v2, SwitchDecision, SwitchHooks, Switched, V2SwitchHooks,
+    switch_build_v2, SwitchDecision, SwitchHooks, Switched, Target, V2SwitchHooks,
 };
 
 static BEFORE_CUTOFF: AtomicBool = AtomicBool::new(true);
@@ -62,7 +62,8 @@ fn catch_interrupt() -> io::Result<()> {
 }
 
 pub(super) fn run(instance: &instances::Instance, tag: &str, as_json: bool) -> Result<(), String> {
-    let identity = install_target(instance)?;
+    let target = Target::of(instance)?;
+    let identity = target.identity();
     catch_interrupt().map_err(|error| error.to_string())?;
     let tty = io::stdin().is_terminal() && io::stderr().is_terminal();
     let cancellation = native_mods::Cancellation::default();
@@ -109,7 +110,7 @@ pub(super) fn run(instance: &instances::Instance, tag: &str, as_json: bool) -> R
         },
     };
     let result = switch_build_v2(
-        instance,
+        &target,
         identity,
         tag,
         V2SwitchHooks {

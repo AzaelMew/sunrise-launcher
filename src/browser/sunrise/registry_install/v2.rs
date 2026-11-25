@@ -23,9 +23,8 @@ use crate::{
         Kind, SourceId,
     },
     i18n::{tr, trf},
-    instances::{Instance, Kind as InstanceKind},
     jars,
-    managed_play::{self, FirstBuild, Profile, ScannedPackage},
+    managed_play::{self, FirstBuild, Profile, ScannedPackage, Target},
     native_mods,
     profile_txn::Identity,
 };

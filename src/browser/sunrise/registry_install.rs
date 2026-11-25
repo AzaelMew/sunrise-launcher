@@ -3,10 +3,8 @@ use super::installed;
 use crate::{
     browser::{mod_list, Kind, SourceId},
     i18n::{tr, trf},
-    instances::{Instance, Kind as InstanceKind},
     managed_play::{self, FirstBuild, Profile, ScannedPackage},
     native_mods,
-    profile_txn::Identity,
 };
 use serde_json::{Map, Value};
 use std::{
@@ -23,21 +21,21 @@ use sunrise_launcher_smod::{
 mod source;
 mod switch;
 pub mod v2;
+pub use crate::managed_play::Target;
+pub(super) use crate::profile_txn::Identity;
 pub use source::{
     add_sources, apply_sources, pack_sources, prepare_pasted_sources, prepare_source,
     read_pasted_sources, PastedSource, PreparedSource, SourceDependency, SourceError, SourceHooks,
     SourceProof, SourceRequest,
 };
-pub use switch::{
-    save_build_choice, BuildChoice, SwitchDecision, SwitchHooks, SwitchQuestion, Switched,
-};
+pub use switch::{BuildChoice, SwitchDecision, SwitchHooks, SwitchQuestion, Switched};
 pub use v2::{
     checked_switch_fit_v2, classify_v2_ownership, install_registry_v2, inventory_v2,
-    plan_v2_install, plan_v2_update, revoked_for_package, switch_build_v2, switch_profile_build_v2,
-    switch_provider_v2, turn_off_revoked_v2, update_registry_v2, InstalledV2Mod, PlannedV2Release,
-    ProviderCandidate, ProviderChoiceNeeded, ProviderConflict, ProviderSwitchPreview,
-    PublisherChangeQuestion, V2AffectedDependent, V2Hooks, V2InstallOptions, V2Ownership, V2Plan,
-    V2ProviderSwitchHooks, V2SwitchHooks,
+    plan_v2_install, plan_v2_update, switch_build_v2, switch_profile_build_v2, switch_provider_v2,
+    turn_off_revoked_v2, update_registry_v2, InstalledV2Mod, PlannedV2Release, ProviderCandidate,
+    ProviderChoiceNeeded, ProviderConflict, ProviderSwitchPreview, PublisherChangeQuestion,
+    V2AffectedDependent, V2Hooks, V2InstallOptions, V2Ownership, V2Plan, V2ProviderSwitchHooks,
+    V2SwitchHooks,
 };
 
 // Advisory only. Never use these in place of a fresh, admitted worker proof. Key by the
@@ -190,21 +188,6 @@ pub struct InstallHooks<'a> {
     pub cancellation: Option<&'a native_mods::Cancellation>,
 }
 
-/// Capture the Install target before it queues. The initial default profile may not have
-/// a game directory until its first operation; never recreate a named profile here.
-pub fn install_target(instance: &Instance) -> Result<Identity, String> {
-    if instance.kind == InstanceKind::Default && instance.incarnation.is_none() {
-        fs::create_dir_all(&instance.home).map_err(|e| at(&instance.home, e))?;
-    }
-    let identity = Identity::of(&instance.home)?;
-    match instance.incarnation {
-        Some(expected) => expected.check(instance, identity)?,
-        None if instance.kind == InstanceKind::Default => (),
-        None => return Err(crate::instances::lifecycle::changed()),
-    }
-    Ok(identity)
-}
-
 pub enum UpdateRequest {
     /// Every named root must advance, even if it is the only one requested.
     Strict(Vec<String>),
@@ -215,13 +198,13 @@ pub enum UpdateRequest {
 fn prove_edit(
     edit: &managed_play::Edit<'_>,
     candidate: &Path,
-    instance: &Instance,
+    target: &Target,
     cancellation: &native_mods::Cancellation,
     hooks: &InstallHooks<'_>,
 ) -> Result<managed_play::CandidateImage, native_mods::Failed> {
     edit.prove(
         candidate,
-        instance.native_profile,
+        target.native_profile(),
         cancellation,
         |step| build_progress(step, hooks.progress),
         None,

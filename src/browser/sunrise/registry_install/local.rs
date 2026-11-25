@@ -13,14 +13,14 @@ use sunrise_launcher_smod::{index::sha256_file, mod_list as smod_mod_list};
 /// Install validated local `.smod` or local-folder packages into `instance` as one checked,
 /// cancellable profile transaction.
 pub fn install_local(
-    instance: &Instance,
+    target: &Target,
     identity: Identity,
     packages: &[LocalPackage],
     cancellation: &native_mods::Cancellation,
     progress: &dyn Fn(InstallProgress),
     approve: &dyn Fn(&ChangeImpact) -> bool,
 ) -> Result<Vec<String>, InstallError> {
-    if instance.kind == InstanceKind::Pack {
+    if target.is_pack() {
         return Err(InstallError::Refused(
             tr("This pack controls which mods it installs.").into(),
         ));
@@ -31,13 +31,13 @@ pub fn install_local(
     check_cancelled(cancellation)?;
     progress(InstallProgress::Checking);
     let mut profile =
-        Profile::open_for(&instance.home, None, Some(identity)).map_err(String::from)?;
-    check_regular_mod_dirs(&instance.home)?;
+        Profile::open_for(target.home(), None, Some(identity)).map_err(String::from)?;
+    check_regular_mod_dirs(target.home())?;
     let edit = profile.begin_pending_edit()?;
     let next = edit.candidate()?;
     let active = edit.current();
     let staged = stage_and_review(
-        &instance.home,
+        target.home(),
         next.path(),
         active,
         packages,
@@ -49,9 +49,9 @@ pub fn install_local(
     check_cancelled(cancellation)?;
     progress(InstallProgress::Publishing);
     let result = edit.publish_pending(next.path(), checked_inputs, cancellation, || {
-        revalidate_claims(&instance.home, &staged.claim_checks)?;
+        revalidate_claims(target.home(), &staged.claim_checks)?;
         if let Some((suspect, reviewed)) = &staged.worlds {
-            mutations::bind_worlds(&instance.home, suspect, reviewed).map(Some)
+            mutations::bind_worlds(target.home(), suspect, reviewed).map(Some)
         } else {
             Ok(None)
         }
@@ -525,20 +525,20 @@ fn revalidate_claims(live: &Path, checks: &[(String, String)]) -> Result<(), Str
 /// check and build for the profile's current build, and only a proved image is published,
 /// retiring the hold. A failed check returns what it found, and nothing changes.
 pub fn restore_held(
-    instance: &Instance,
+    target: &Target,
     identity: Identity,
     id: &str,
     cancellation: &native_mods::Cancellation,
 ) -> Result<(), String> {
     let mut profile =
-        Profile::open_for(&instance.home, None, Some(identity)).map_err(String::from)?;
+        Profile::open_for(target.home(), None, Some(identity)).map_err(String::from)?;
     let edit = profile.begin_pending_edit()?;
     // A registry hold waits for its author's update; only local and source bytes are retried.
     let (title, digest) = edit
         .held(id)
         .filter(|hold| {
             !matches!(hold.source(), managed_play::HeldSource::Registry { .. })
-                && hold.matches_archive(&instance.home)
+                && hold.matches_archive(target.home())
         })
         .map(|hold| {
             let digest: String = hold.digest().iter().map(|b| format!("{b:02x}")).collect();
@@ -592,7 +592,7 @@ pub fn restore_held(
     let proof = edit
         .prove(
             next.path(),
-            instance.native_profile,
+            target.native_profile(),
             cancellation,
             |_| {},
             None,
