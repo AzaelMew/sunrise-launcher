@@ -43,7 +43,7 @@ Names in this table are relative to [`src/`](../src/). The binary and the shared
 | `src/account/` | Session status and account tests. |
 | `src/backend/` | The data and build folders, installation, release assets and selection, update selection, settings helpers, Play logging, and message types. |
 | `src/browser/`, `src/browser/installed/`, `src/browser/sunrise/`, `src/browser/sunrise/auto/` | Source-specific browser operations, installed-pack tests, Sunrise dependency and pack handling, and registry auto-update tests. |
-| `src/cli/`, `src/cli/native_permission_impl/` | Developer build commands, progress, settings JSON output, the native-build permission prompt, and catalog, server and storage tests. |
+| `src/cli/`, `src/cli/native_permission_impl/` | One module per group of subcommands (accounts, data, mods, instances and modpacks, worlds and packs, servers, settings, toolchains, update, developer builds), progress, settings JSON output, the native-build permission prompt, and the CLI's tests. |
 | `src/internet/`, `src/servers/`, `src/servers_page/` | Hosting share UI, remote server control and its tests (`servers/remote/`), and the Servers page's children: hosting, the Create a server dialog and text helpers. |
 | `src/jars/`, `src/zip_intake/` | Jar download and launch preparation, and the ZIP intake source adapter and tests. |
 | `src/mods/`, `src/mods/data_packs/`, `src/mods/model/`, `src/mods/pack_discover/`, `src/mods_page/` | Mods UI and state, pack discovery, and tests for these paths. |
@@ -136,7 +136,7 @@ For example, the startup release worker sends `Msg::Releases`. The setup code ru
 
 ## CLI and MCP
 
-[`src/cli.rs`](../src/cli.rs) defines subcommands and arguments with clap and dispatches to the shared operations. [`src/cli_tools.rs`](../src/cli_tools.rs) walks the same command tree to generate tool names and input schemas for eligible leaf commands. For example, `mods search` becomes `mods_search`. A generated tool converts arguments back to CLI words, runs the current executable with `--json`, and returns its output. Commands marked destructive require `confirm: true`.
+[`src/cli.rs`](../src/cli.rs) defines the command tree with clap and dispatches to the shared operations. Each group of subcommands, such as `mods …` or `instance …`, has its arguments and handler in a module of its own under [`src/cli/`](../src/cli). [`src/cli_tools.rs`](../src/cli_tools.rs) walks the same command tree to generate tool names and input schemas for eligible leaf commands. For example, `mods search` becomes `mods_search`. A generated tool converts arguments back to CLI words, runs the current executable with `--json`, and returns its output. Commands marked destructive require `confirm: true`.
 
 [`src/mcp.rs`](../src/mcp.rs) combines the generated catalog with session tools. Play, server control, and account sign-in can keep a process or operation alive between calls in that session. The protocol and stdio transport come from [`crates/mcp/`](../crates/mcp/). The generated [command reference](launcher-commands.md) describes the supported calls.
 
@@ -151,9 +151,9 @@ For example, the startup release worker sends `Msg::Releases`. The setup code ru
 
 | Task | First files to open |
 | --- | --- |
-| Add a setting | Define the persisted field and default in [`src/backend.rs`](../src/backend.rs). Add its row in [`src/settings.rs`](../src/settings.rs) or [`src/settings/appearance.rs`](../src/settings/appearance.rs) and follow the save path in [`src/launcher_setup.rs`](../src/launcher_setup.rs). If exposed in the CLI, update the setter and help in [`src/cli.rs`](../src/cli.rs) and check the [JSON output](../src/cli/settings_output.rs). |
+| Add a setting | Define the persisted field and default in [`src/backend.rs`](../src/backend.rs). Add its row in [`src/settings.rs`](../src/settings.rs) or [`src/settings/appearance.rs`](../src/settings/appearance.rs) and follow the save path in [`src/launcher_setup.rs`](../src/launcher_setup.rs). If exposed in the CLI, update the help in [`src/cli.rs`](../src/cli.rs) and the setter in [`src/cli/settings.rs`](../src/cli/settings.rs), and check the [JSON output](../src/cli/settings_output.rs). |
 | Add a page | Declare its module in [`src/main.rs`](../src/main.rs). Add the visible route to `frame::Page`, page dispatch, and navigation in [`src/frame.rs`](../src/frame.rs). Follow the relevant entry point in the header or [`src/rail.rs`](../src/rail.rs). |
-| Add a CLI command | Start with the clap definition and dispatch in [`src/cli.rs`](../src/cli.rs) and put shared behavior in the owning library module. Check how [`src/cli_tools.rs`](../src/cli_tools.rs) exposes the command and regenerate the [command reference](launcher-commands.md) with `SUNRISE_WRITE_DOCS=1 cargo test --locked --bin sunrise-launcher the_launcher_reference_is_up_to_date`. |
+| Add a CLI command | Add it to the command tree and dispatch in [`src/cli.rs`](../src/cli.rs), with its arguments and handler in the `src/cli/` module of its group, and put shared behavior in the owning library module. Check how [`src/cli_tools.rs`](../src/cli_tools.rs) exposes the command and regenerate the [command reference](launcher-commands.md) with `SUNRISE_WRITE_DOCS=1 cargo test --locked --bin sunrise-launcher the_launcher_reference_is_up_to_date`. |
 | Change an animation | Find the view or element doing the drawing, then check its curve in [`src/motion.rs`](../src/motion.rs) or [`crates/theme/`](../crates/theme/). Verify the end state under reduced motion and check which view gets invalidated. |
 | Add a translated string | Write the English key at the call site with `tr` or `trf`, seed it with [`tools/launcher_add_lang_keys.py`](../tools/launcher_add_lang_keys.py), and keep named placeholders consistent in [`lang/`](../lang/). |
 
