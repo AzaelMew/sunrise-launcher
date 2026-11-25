@@ -26,7 +26,7 @@ impl Launcher {
     }
 
     pub(crate) fn drain(&mut self, window: gpui::AnyWindowHandle, cx: &mut Context<Self>) {
-        let mut changed = false;
+        let mut changed = self.pull_logs();
         self.perf.tick();
         if self.bench.as_ref().is_some_and(perf::Bench::ready_for_idle) {
             // Finish one-time fallback font loading before the benchmark starts its idle sample.
