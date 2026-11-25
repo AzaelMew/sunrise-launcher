@@ -14,8 +14,8 @@ Names in this table are relative to [`src/`](../src/). The binary and the shared
 | UI shell | `rail.rs`, `shell.rs`, `titlebar.rs`, `status_strip.rs`, `command_search.rs` | Supply navigation, window chrome, Play status, and search shortcuts. |
 | UI pages | `home.rs`, `home_mods.rs`, `instances_page.rs`, `instance_icons.rs`, `profile_builds.rs`, `profile_dialog.rs`, `launch_page.rs` | Show Home and the selected profile, manage profile dialogs and icons, and edit per-instance launch options. |
 | UI pages | `worlds_page.rs`, `datapacks_page.rs`, `packs_page.rs`, `screenshots_page.rs`, `console_page.rs` | Display an instance's worlds, packs, screenshots, and game output. |
-| UI pages | `settings.rs`, `blocks_settings.rs`, `location_page.rs`, `glass_storage.rs`, `themes_page.rs`, `language_page.rs`, `collection.rs` | Draw settings, storage and relocation controls, appearance, language, and data collection. |
-| UI pages | `glass_sheet.rs`, `glass_toast.rs`, `sheets.rs`, `setup_page.rs` | Draw instance settings, toasts, shared dialogs, and Windows setup. |
+| UI pages | `settings.rs`, `location_page.rs`, `storage_report.rs`, `themes_page.rs`, `language_page.rs`, `collection.rs` | Draw settings, storage and relocation controls, appearance, language, and data collection. |
+| UI pages | `glass_toast.rs`, `sheets.rs`, `setup_page.rs` | Draw instance settings, toasts, shared dialogs, and Windows setup. |
 | Backend | `lib.rs`, `backend.rs`, `launcher_setup.rs`, `launcher_messages.rs`, `launcher_play.rs`, `wake.rs` | Connect shared operations to the desktop's startup, task handlers, and message pump. |
 | Backend | `github.rs`, `nightly.rs`, `signed.rs`, `build_import.rs`, `developer_install.rs` | Discover releases, verify downloads, and install imported or checkout builds. |
 | Backend | `downloads.rs`, `download_retry.rs`, `mojang.rs`, `mojang/tests.rs`, `sources.rs`, `sources/tests.rs`, `preparer.rs`, `java.rs`, `jdk.rs` | Find or fetch Minecraft files and Java, run the preparer, and test the file and download paths. |
@@ -44,12 +44,13 @@ Names in this table are relative to [`src/`](../src/). The binary and the shared
 | `src/backend/` | The data and build folders, installation, release assets and selection, update selection, settings helpers, Play logging, and message types. |
 | `src/browser/`, `src/browser/installed/`, `src/browser/sunrise/`, `src/browser/sunrise/auto/` | Source-specific browser operations, installed-pack tests, Sunrise dependency and pack handling, and registry auto-update tests. |
 | `src/cli/`, `src/cli/native_permission_impl/` | One module per group of subcommands (accounts, data, mods, instances and modpacks, worlds and packs, servers, settings, toolchains, update, developer builds), progress, settings JSON output, the native-build permission prompt, and the CLI's tests. |
+| `src/instances_page/` | Which sections of the instance settings dialog hold edits Save has not kept. |
 | `src/internet/`, `src/servers/`, `src/servers_page/` | Hosting share UI; the dedicated server's parts (`servers/`: `list`, `programs`, `runner`, `new_server`, `files`, `api`), remote server control and its tests (`servers/remote/`); and the Servers page's children: hosting, the Create a server dialog and text helpers. |
 | `src/jars/`, `src/zip_intake/` | Jar download and launch preparation, and the ZIP intake source adapter and tests. |
 | `src/mods/`, `src/mods/data_packs/`, `src/mods/model/`, `src/mods/pack_discover/`, `src/mods_page/` | Mods UI and state, pack discovery, and tests for these paths. |
 | `src/native_mods/`, `src/native_mods/bundle/`, `src/native_mods/mixins/`, `src/native_mods/workspace/`, `src/native_mods/tests/`, `src/rust_toolchain/` | Native build planning, SDK cache, bundle packaging, mixin support, the managed Rust toolchain's download and system checks, and build and runtime tests. |
 | `src/process/`, `src/process/leases/`, `src/process/leases/tests/`, `src/process/supervisor/`, `src/run_leases/` | Child process ownership and supervision, launch and tree locks, and platform tests. |
-| `src/settings/`, `src/sheets/` | Appearance controls and the version chooser. |
+| `src/settings/`, `src/sheets/` | Appearance controls, saving the proxy setting, and the version chooser. |
 | `src/storage/`, `src/storage/inventory/`, `src/theme_files/`, `src/theme_files/fixtures/` | Storage inventory, its regression tests, and eviction. Theme file tests and their image fixture. |
 | `src/appearance/`, `src/cache_cleanup/`, `src/data_location/`, `src/downloads/`, `src/github/`, `src/github_mods/`, `src/i18n/`, `src/java/`, `src/launch/`, `src/launch_state/`, `src/mac_update/`, `src/mojang/`, `src/native_cache/`, `src/relocation/`, `src/shortcut/`, `src/sources/`, `src/themes/` | Tests alongside their matching infrastructure modules. |
 | `src/datapacks/`, `src/export/`, `src/game_log/`, `src/home/`, `src/import/`, `src/instances/`, `src/join/`, `src/packs/`, `src/server_list/`, `src/tailscale/`, `src/worlds/` | Tests alongside their matching feature modules. |
