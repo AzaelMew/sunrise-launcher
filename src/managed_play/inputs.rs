@@ -86,7 +86,7 @@ pub(crate) fn inputs(home: &Path) -> Result<[u8; 32], String> {
         mod_list::DIR,
         mod_list::NATIVE_DIR,
         mod_list::FILE,
-        crate::browser::installed::MANIFEST,
+        sunrise_launcher_smod::index::browser_state::MANIFEST,
     ] {
         hash.update(rel.as_bytes());
         hash.update([0]);
