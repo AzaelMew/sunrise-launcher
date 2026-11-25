@@ -154,7 +154,7 @@ impl Launcher {
             "Sunrise Launcher {version}",
             &[("version", backend::VERSION)],
         );
-        use crate::launcher_update::Status;
+        use crate::updates::Status;
         let recovery = || {
             self.launcher_download_available().then(|| {
                 let url = backend::download_page(&self.links.website);

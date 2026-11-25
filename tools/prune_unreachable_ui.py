@@ -30,7 +30,7 @@ MAIN = "src/main.rs"
 CANDIDATES = [
     r"glass_.*", r"blocks(_.*)?", r"home(_.*)?", r".*_page", r"nav_strip", r"outline_.*",
     r"frame", r"titlebar", r"widgets", r"mods_project", r"instance_mods", r"new_instance",
-    r"welcome", r"specimen", r"island", r"launcher_render", r"native_registry_consent",
+    r"welcome", r"specimen", r"island", r"native_registry_consent",
 ]
 WINDOWS_ONLY = ["src/setup_page.rs"]
 KEEP = {"setup_page", "startup", "native_build"}

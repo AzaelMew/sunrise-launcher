@@ -63,10 +63,7 @@ fn a_save_on_any_page_holds_off_a_data_move_and_a_launcher_restart() {
             // Another account's page shown: the Save is still under way.
             l.skins.show("b09600dff4354d4fb56776eec1e55083", |_| true);
             assert!(l.location_busy());
-            assert_eq!(
-                l.launcher_update_wait(),
-                Some(crate::launcher_update::Wait::Work)
-            );
+            assert_eq!(l.launcher_update_wait(), Some(crate::updates::Wait::Work));
             l.skins.page_mut(UUID).unwrap().saving = None;
             assert_eq!((l.location_busy(), l.launcher_update_wait()), before);
             l.skins.disk_writes += 1;

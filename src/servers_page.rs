@@ -323,7 +323,7 @@ mod tests {
 
     #[test]
     fn an_update_waits_for_a_hosting_restore_until_the_worker_reports_completion() {
-        use crate::launcher_update::Wait;
+        use crate::updates::Wait;
         let mut servers = Servers::new();
         servers.statuses.insert(
             PathBuf::from("server"),
