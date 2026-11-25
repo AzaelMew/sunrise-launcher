@@ -5,8 +5,12 @@ use super::*;
 /// The configured Azure app, if any: the run-time variable wins over the build-time one, and an
 /// empty value means none.
 pub fn client_id() -> Option<String> {
-    std::env::var("SUNRISE_MSA_CLIENT_ID")
-        .ok()
+    client_id_from(std::env::var("SUNRISE_MSA_CLIENT_ID").ok())
+}
+
+/// [`client_id`] with the run-time variable's value given, so tests don't set it process-wide.
+pub(super) fn client_id_from(run_time: Option<String>) -> Option<String> {
+    run_time
         .or_else(|| option_env!("SUNRISE_MSA_CLIENT_ID").map(str::to_owned))
         .map(|id| id.trim().to_owned())
         .filter(|id| !id.is_empty())
