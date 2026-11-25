@@ -53,7 +53,7 @@ pub fn scan_packages(home: &Path) -> Result<Vec<ScannedPackage>, String> {
             // supply linked packages, and a managed native input must be archived.
             if package.is_native() && (meta.is_dir() || directory != mod_list::NATIVE_DIR) {
                 return Err(crate::i18n::trf(
-                    "Pack {mod} with `cargo sunrise-mod build` and put the .smod it writes in {folder} in place of its source folder.",
+                    "Put {mod} in {folder} as the .smod `cargo sunrise-mod build` packs from its source.",
                     &[
                         ("mod", &package.manifest.name),
                         (
