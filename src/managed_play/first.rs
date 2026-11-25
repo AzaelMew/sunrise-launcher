@@ -463,8 +463,9 @@ impl Profile {
         spawn: impl FnOnce(ProfileHandoff<'_>) -> Result<T, E>,
     ) -> Result<T, E> {
         let home = self.home();
-        let _manifest = game_lock(home)?;
         let checking = crate::launcher_log::step("Verifying the game and its prepared files");
+        let _manifest = game_lock(home)?;
+        checking.note("the profile's lock is held");
         let verified = (|| {
             crate::browser::installed::recover_game_install(home).map_err(String::from)?;
             if self.active()?.as_ref() != Some(active) || inputs(home)? != active.inputs {
