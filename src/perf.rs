@@ -257,6 +257,9 @@ pub enum Step {
     /// Open the build picker and scroll its list, a wheel step per frame (`sheets::bench_wheel`),
     /// while [`Bench::scrolling`].
     Scroll,
+    /// Install the local `.smod` [`start_install`](Bench::start_install) names, into the scratch
+    /// profile folder of [`installed`](Bench::installed). Never the network.
+    Install,
     Quit,
 }
 
@@ -272,6 +275,10 @@ const BENCH_ENV: &str = "SUNRISE_LAUNCHER_BENCH";
 /// Which list the benchmark scrolls ([`List`]): `installed` for Mods › Installed, else the
 /// build picker's.
 const LIST_ENV: &str = "SUNRISE_LAUNCHER_BENCH_LIST";
+/// The local `.smod` the benchmark installs after scrolling, and the scratch profile folder it
+/// installs into. `benchmark` writes both; nothing is fetched and no real profile is touched.
+const INSTALL_SMOD_ENV: &str = "SUNRISE_LAUNCHER_BENCH_INSTALL_SMOD";
+const INSTALL_HOME_ENV: &str = "SUNRISE_LAUNCHER_BENCH_INSTALL_HOME";
 
 /// The list a benchmark scrolls once page switching is over.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -323,9 +330,24 @@ pub struct Bench {
     /// doesn't move it, so a stall across both is timed from the first.
     awaiting: Option<Instant>,
     scroll: Option<Scroll>,
+    install: Option<Install>,
     idle_cpu: Option<(Instant, f64)>,
     pages_ms: Vec<f32>,
     scroll_ms: Vec<f32>,
+}
+
+/// A local install the benchmark runs after scrolling, against a scratch profile folder.
+struct Install {
+    smod: PathBuf,
+    home: PathBuf,
+    began: Option<Instant>,
+    outcome: Option<InstallOutcome>,
+}
+
+struct InstallOutcome {
+    ms: f32,
+    /// Why nothing was installed, when that is known; the benchmark records it, never fails.
+    error: Option<String>,
 }
 
 struct Scroll {
@@ -425,7 +447,19 @@ impl Bench {
 
     pub fn from_env() -> Option<Bench> {
         let out = std::env::var_os(BENCH_ENV)?;
-        Some(Bench::new(out.into(), List::from_env()))
+        let mut bench = Bench::new(out.into(), List::from_env());
+        if let (Some(smod), Some(home)) = (
+            std::env::var_os(INSTALL_SMOD_ENV),
+            std::env::var_os(INSTALL_HOME_ENV),
+        ) {
+            bench.install = Some(Install {
+                smod: smod.into(),
+                home: home.into(),
+                began: None,
+                outcome: None,
+            });
+        }
+        Some(bench)
     }
 
     fn new(out: PathBuf, list: List) -> Bench {
@@ -437,6 +471,7 @@ impl Bench {
             switched: None,
             awaiting: None,
             scroll: None,
+            install: None,
             idle_cpu: None,
             pages_ms: Vec::new(),
             scroll_ms: Vec::new(),
@@ -478,6 +513,34 @@ impl Bench {
     /// warm-up work (such as shaping language names) can finish before the idle sample begins.
     pub fn ready_for_idle(&self) -> bool {
         self.scroll.as_ref().is_some_and(|s| s.ended) && self.idle_cpu.is_none()
+    }
+
+    /// The local artifact and scratch profile folder for [`Step::Install`], once scrolling is
+    /// over and until [`installed`](Bench::installed) records how it went. The clock starts here.
+    pub fn start_install(&mut self) -> Option<(PathBuf, PathBuf)> {
+        let install = self.install.as_mut()?;
+        if install.outcome.is_some() {
+            return None;
+        }
+        install.began = Some(Instant::now());
+        Some((install.smod.clone(), install.home.clone()))
+    }
+
+    /// Records how the local install went: `None` once it is installed, else why not. A failure is
+    /// reported as `install_skipped`, never as a failed benchmark: a machine without a writable
+    /// scratch folder still measures the rest.
+    pub fn installed(&mut self, error: Option<String>) {
+        let Some(install) = self.install.as_mut() else {
+            return;
+        };
+        if install.outcome.is_some() {
+            return;
+        }
+        let elapsed = install.began.map_or_default(|began| began.elapsed());
+        install.outcome = Some(InstallOutcome {
+            ms: elapsed.as_secs_f32() * 1000.0,
+            error,
+        });
     }
 
     /// A frame drawn at `now`, `gap` after the one before ([`Perf::frame`]). Called while the
@@ -601,6 +664,15 @@ impl Bench {
             },
             Some(_) => {}
         }
+        if let Some(install) = &self.install {
+            if install.outcome.is_none() {
+                return if install.began.is_none() {
+                    Step::Install
+                } else {
+                    Step::Wait
+                };
+            }
+        }
         let pid = std::process::id();
         let Some((rested, cpu)) = self.idle_cpu else {
             self.idle_cpu = Some((
@@ -634,12 +706,32 @@ impl Bench {
                     .unwrap_or(Skip::NeverMoved)
                     .says()
             }),
+            "install_ms": self
+                .install
+                .as_ref()
+                .and_then(|i| i.outcome.as_ref())
+                .filter(|o| o.error.is_none())
+                .map(|o| o.ms),
+            // Why nothing was installed: no artifact was given, or the local read/install failed.
+            "install_skipped": match &self.install {
+                None => Some("no local .smod was given".to_owned()),
+                Some(i) => i.outcome.as_ref().and_then(|o| o.error.clone()),
+            },
             "rss_mb": sunrise_bench::rss_bytes(pid).map(|b| b as f64 / f64::from(1 << 20)),
             "cpu_idle_pct": cpu_idle_pct,
             "draws": perf.draws,
         });
         let _ = std::fs::write(&self.out, result.to_string());
         Step::Quit
+    }
+}
+
+/// A temp folder removed on drop, so `benchmark`'s early `?` returns clean up too.
+struct TempFolder(PathBuf);
+
+impl Drop for TempFolder {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
     }
 }
 
@@ -652,17 +744,33 @@ pub fn benchmark(repeats: usize) -> Result<PathBuf, String> {
     report.conditions.repeats = Some(repeats as u32);
     report.conditions.power = sunrise_bench::power_source().map(str::to_owned);
     report.conditions.load_avg_1m = sunrise_bench::load_average();
-    let (mut starts, mut rss, mut cpu) = (Vec::new(), Vec::new(), Vec::new());
+    let (mut starts, mut rss, mut cpu, mut installs) =
+        (Vec::new(), Vec::new(), Vec::new(), Vec::<f64>::new());
     // A `--features frame-stats` build's frame work (`draws`); none in other builds.
     let (mut draw_p50, mut draw_p95, mut draw_p99, mut late) =
         (Vec::new(), Vec::new(), Vec::new(), Vec::new());
     let scratch =
         std::env::temp_dir().join(format!("sunrise-launcher-bench-{}", std::process::id()));
+    // A tiny local package and a scratch profile folder, both under the temp dir and removed on
+    // every exit path, including the `?` returns below: the install step reads and writes only
+    // these, never the network or a real profile.
+    let install_dir = TempFolder(std::env::temp_dir().join(format!(
+        "sunrise-launcher-bench-install-{}",
+        std::process::id()
+    )));
+    let install_home = install_dir.0.join("profile");
+    std::fs::create_dir_all(&install_home).map_err(|e| e.to_string())?;
+    let smod = install_dir.0.join("bench-install.smod");
+    let manifest = "id = 'bench_install'\nname = 'Bench Install'\nversion = '0.1.0'\napi = '0.2'\nside = 'both'\n";
+    let bytes = sunrise_launcher_smod::Package::write_files(manifest, &[])?;
+    std::fs::write(&smod, bytes).map_err(|e| e.to_string())?;
     for repeat in 0..repeats {
         let _ = std::fs::remove_file(&scratch);
         let spawned = std::time::SystemTime::now();
         let mut child = std::process::Command::new(&exe)
             .env(BENCH_ENV, &scratch)
+            .env(INSTALL_SMOD_ENV, &smod)
+            .env(INSTALL_HOME_ENV, &install_home)
             .spawn()
             .map_err(|e| e.to_string())?;
         let deadline = Instant::now() + Duration::from_secs(90);
@@ -683,6 +791,9 @@ pub fn benchmark(repeats: usize) -> Result<PathBuf, String> {
             .map_err(|_| "the launcher window quit without measuring".to_owned())?;
         let _ = std::fs::remove_file(&scratch);
         let result: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+        if let Some(ms) = result["install_ms"].as_f64() {
+            installs.push(ms);
+        }
         let spawned_ms = spawned
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -729,6 +840,16 @@ pub fn benchmark(repeats: usize) -> Result<PathBuf, String> {
                 |f| summary(Some(f)),
             ),
         );
+        eprintln!(
+            "  install: {}",
+            result["install_ms"].as_f64().map_or_else(
+                || format!(
+                    "nothing: {}",
+                    result["install_skipped"].as_str().unwrap_or("unknown")
+                ),
+                |ms| format!("{ms:.1} ms"),
+            ),
+        );
         report.frames.extend(pages_frames);
         report.frames.extend(scroll_frames);
         if let Some(frames) = draws["frames"].as_u64() {
@@ -749,6 +870,7 @@ pub fn benchmark(repeats: usize) -> Result<PathBuf, String> {
     );
     report.metric("launcher.rss_mb", &rss);
     report.metric("launcher.cpu_idle_pct", &cpu);
+    report.metric("launcher.install_ms", &installs);
     if !draw_p50.is_empty() {
         report.metric("launcher.frame_work_p50_ms", &draw_p50);
         report.metric("launcher.frame_work_p95_ms", &draw_p95);

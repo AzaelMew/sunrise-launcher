@@ -62,6 +62,27 @@ impl Launcher {
                 let _ = cx.update_window(window, |_, w, _| crate::sheets::bench_wheel(launcher, w));
                 changed = true;
             }
+            Some(perf::Step::Install) => {
+                // A local `.smod` read and installed into the benchmark's scratch profile
+                // folder. Both paths come from `perf::benchmark`; nothing here touches the
+                // network or the player's profile.
+                let started = self.bench.as_mut().and_then(perf::Bench::start_install);
+                let result = match started {
+                    Some((smod, home)) => sunrise_launcher::github_mods::read_local_smod(&smod)
+                        .and_then(|package| {
+                            sunrise_launcher::github_mods::install_local_packages(
+                                &home,
+                                std::slice::from_ref(&package),
+                            )
+                            .map(|_| ())
+                        }),
+                    None => Err("the benchmark's install step had no artifact".to_owned()),
+                };
+                if let Some(bench) = self.bench.as_mut() {
+                    bench.installed(result.err());
+                }
+                changed = true;
+            }
             Some(perf::Step::Quit) => cx.quit(),
             Some(perf::Step::Wait) | None => {}
         }
