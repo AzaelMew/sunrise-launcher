@@ -63,6 +63,7 @@ impl SettingsFence {
         fs::File::open(dir)
             .and_then(|parent| parent.sync_all())
             .map_err(|e| format!("{}: {e}", self.path.display()))?;
+        super::forget_settings_cache(dir);
         Ok(())
     }
 }
