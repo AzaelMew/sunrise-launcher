@@ -22,6 +22,7 @@ use instance::{after_exit, instance, modpack, InstanceCmd, ModpackCmd};
 mod content;
 use content::{game_packs, screenshots, worlds, PacksCmd, ScreenshotsCmd, WorldsCmd};
 
+mod builds;
 use clap::{Parser, Subcommand};
 use sunrise_launcher::account::{self, Accounts};
 use sunrise_launcher::backend::{self, Release};
@@ -519,65 +520,9 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, Error> {
                 &mut std::io::stdout(),
             );
         }
-        Cmd::Versions { installed: true } => {
-            let installed = backend::installed();
-            let selected = backend::resolve_version(None).ok();
-            if as_json {
-                json(serde_json::json!({ "installed": installed, "selected": selected }));
-            } else if installed.is_empty() {
-                println!("No version is installed.");
-            }
-            for tag in installed.iter().filter(|_| !as_json) {
-                let mark = if selected.as_ref() == Some(tag) {
-                    "*"
-                } else {
-                    " "
-                };
-                let state = if !backend::check_prepared(tag) {
-                    "not prepared"
-                } else if backend::has_sounds(tag) {
-                    "prepared"
-                } else {
-                    "prepared, no sounds (prepare again)"
-                };
-                let label =
-                    sunrise_launcher::developer_install::label(tag).unwrap_or_else(|| tag.clone());
-                println!("{mark} {label}  {state}");
-            }
-        }
-        Cmd::Versions { installed: false } => {
-            let releases = backend::releases()?;
-            if as_json {
-                json(releases.iter().map(release_json).collect());
-                return Ok(0);
-            }
-            let installed = backend::installed();
-            for r in &releases {
-                let state = match (installed.contains(&r.tag), r.asset.is_some()) {
-                    (true, _) => "installed",
-                    (false, true) => "",
-                    (false, false) => "no build for this platform",
-                };
-                println!("{:<15} {}  {}", r.tag, r.date, state);
-            }
-        }
-        Cmd::Install { tag } => {
-            let label = format!("Installing {tag}");
-            let tag = backend::install_tag(&tag, false, progress(label))?;
-            if as_json {
-                json(
-                    serde_json::json!({ "installed": tag, "prepared": backend::check_prepared(&tag) }),
-                );
-            } else if backend::check_prepared(&tag) {
-                println!(
-                    "Installed {tag}. It is prepared already, from another installed version."
-                );
-            } else {
-                println!(
-                    "Installed {tag}. Prepare it next: sunrise-launcher prepare --version {tag}"
-                );
-            }
-        }
+        Cmd::Versions { installed: true } => builds::installed(as_json)?,
+        Cmd::Versions { installed: false } => return builds::releases(as_json),
+        Cmd::Install { tag } => builds::install(tag, as_json)?,
         Cmd::Storage { clear } => {
             let storage = Storage::open().map_err(native_mods::cache_error)?;
             let (row, all) = match clear {
@@ -748,10 +693,7 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, Error> {
             println!("{built}");
         }
         Cmd::DeveloperInstall(args) => developer_builds::install(args, as_json)?,
-        Cmd::Remove { tag } => {
-            backend::remove_version(&tag)?;
-            println!("Removed {tag}.");
-        }
+        Cmd::Remove { tag } => builds::remove(tag)?,
         Cmd::ImportBuild {
             path,
             version,
@@ -761,35 +703,7 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, Error> {
             minecraft,
             download,
             version,
-        } => {
-            let tag = backend::resolve_version(version.as_deref())?;
-            let minecraft = backend::minecraft_dir(minecraft)?;
-            let from = if download {
-                backend::MinecraftFrom::Mojang
-            } else {
-                backend::MinecraftFrom::Install
-            };
-            let preparation = backend::prepare_lock(&tag)?;
-            let (preparer, minecraft) = backend::preparer(
-                &tag,
-                &minecraft,
-                from,
-                &|line| eprintln!("{line}"),
-                &preparation,
-            )?;
-            backend::sounds(&tag, &minecraft, &|line| println!("{line}"), &preparation);
-            let (preparer, _runtime) = backend::prepare_command(preparer)?;
-            let status = preparation
-                .spawn_attached(preparer)
-                .and_then(|mut child| child.wait())
-                .map_err(|e| format!("Could not run the game's preparer: {e}"))?;
-            let code = attached_status(status)?;
-            if code != 0 {
-                return Ok(code);
-            }
-            backend::finish_preparation(&tag, &preparation)?;
-            println!("{tag} is prepared.");
-        }
+        } => return builds::prepare(minecraft, download, version),
         Cmd::Play {
             allow_jar_downloads,
             instance,
@@ -910,22 +824,7 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, Error> {
             let (cmd, _runtime) = backend::prepare_server_command(&tag, &dir, cmd)?;
             return attached_prepared(cmd).map_err(Error::from);
         }
-        Cmd::Notes { tag } => {
-            let r = backend::release_notes(tag.as_deref())?;
-            if as_json {
-                json(
-                    serde_json::json!({ "tag": r.tag, "name": r.name, "date": r.date, "notes": r.body }),
-                );
-            } else {
-                let title = if r.name.is_empty() { &r.tag } else { &r.name };
-                println!(
-                    "{title}\n{}  {}\n\n{}",
-                    r.tag,
-                    r.date,
-                    backend::markdown_to_text(&r.body)
-                );
-            }
-        }
+        Cmd::Notes { tag } => builds::notes(tag, as_json)?,
         Cmd::Account { action } => account_command(action.unwrap_or(AccountCmd::List), as_json)?,
         Cmd::Data { action } => data(action.unwrap_or(DataCmd::Status), as_json)?,
         Cmd::Benchmark { repeats } => {
