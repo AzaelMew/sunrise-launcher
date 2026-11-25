@@ -1,7 +1,7 @@
 //! Ordinary client Play keeps one admission on its worker through the actual spawn.
 use super::{catalogue, first::game_lock, unsettled, Active, FirstBuild, Profile};
 use crate::{
-    account::{self, Accounts, NoOwner},
+    account::{self, NoOwner},
     backend::{self, installation::BoundVariant, RuntimeGuard},
     browser::installed::GameInstallProblem,
     developer_offline, instances, native_mods,
@@ -24,6 +24,8 @@ pub enum Progress {
     },
     Native(native_mods::Step),
     NativeLog(std::sync::Arc<str>),
+    /// The installed files are being checked before the game starts.
+    Verify,
     SignIn,
     Line(String),
     HookLine(String),
@@ -217,34 +219,25 @@ impl Client<'_> {
         instances::apply(&mut cmd, self.instance)?;
         let vars = self.instance.vars();
         cmd.envs(vars.iter().map(|(key, value)| (key, value)));
-        progress(Progress::SignIn);
-        let notice;
-        let session_file = if offline {
+        let mut notice = None;
+        let mut session_file = None;
+        let plays = if offline {
             developer_offline::require_capability(tag)?;
             developer_offline::mark(&mut cmd);
             notice = Some(crate::i18n::tr(developer_offline::NOTICE).into());
             None
         } else {
-            let uuid = self
-                .accepted_account
-                .ok_or_else(|| StartError::Account(NoOwner::default()))?;
-            let session = account::session_for_game_accepted(&backend::game_home(), uuid)
-                .map_err(StartError::Account)?;
-            let session_file = session.file.clone();
-            notice = if let Some(reason) = session.apply(&mut cmd) {
-                Some(crate::i18n::trf(
-                    "Playing offline: {reason}",
-                    &[("reason", &reason)],
-                ))
-            } else {
-                account::take_unsaved()
-            };
-            session_file
+            Some(
+                self.accepted_account
+                    .ok_or_else(|| StartError::Account(NoOwner::default()))?,
+            )
         };
-        account::retain_launch_session(session_file.as_deref());
         let launch = &self.instance.launch;
         let started = (|| {
             arguments(&mut cmd)?;
+            // The window says what the check of the files (their hashes can take minutes on a
+            // slow disk) is doing; the session is made after it.
+            progress(Progress::Verify);
             profile.spawn_checked_account(
                 &active,
                 cancellation,
@@ -253,10 +246,21 @@ impl Client<'_> {
                     progress(Progress::HookLine(line))
                 }),
                 prepare_jars,
-                || {
-                    if let Some(uuid) = self.accepted_account.filter(|_| !offline) {
-                        account::check_launch_account(&Accounts::load(), uuid)
-                            .map_err(|refused| refused.in_window())?;
+                |cmd| {
+                    // The game refuses a session file older than two minutes, so it is made
+                    // last, right before the spawn, and only a player with a session plays.
+                    // This also stops Play when the account was signed out meanwhile.
+                    if let Some(uuid) = plays {
+                        progress(Progress::SignIn);
+                        let session =
+                            account::session_for_game_accepted(&backend::game_home(), uuid)
+                                .map_err(StartError::Account)?;
+                        session_file = session.file.clone();
+                        if let Some(why) = session.apply(cmd) {
+                            return Err(why.into());
+                        }
+                        notice = account::take_unsaved();
+                        account::retain_launch_session(session_file.as_deref());
                     }
                     Ok(())
                 },

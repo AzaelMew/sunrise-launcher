@@ -41,6 +41,10 @@ struct Mock {
     /// Every skin upload, as the services would parse it: its content type's boundary and its
     /// form parts, by name.
     uploads: Vec<Upload>,
+    /// What the token endpoint answers a refresh with instead of a token (an outage).
+    refresh_refused: Option<u16>,
+    /// What the entitlements endpoint answers with instead of the entitlements.
+    entitlements_refused: Option<u16>,
     /// Every request: method, path and body.
     log: Vec<(String, String, String)>,
 }
@@ -168,6 +172,9 @@ fn route(mock: &mut Mock, method: &str, path: &str, auth: &str, body: &str) -> (
                     json!({"access_token": "ms-access-1", "refresh_token": "ms-refresh-1", "expires_in": 3600}),
                 )
             }
+            Some("refresh_token") if mock.refresh_refused.is_some() => {
+                reply(mock.refresh_refused.unwrap(), json!({}))
+            }
             Some("refresh_token") if form("refresh_token").as_deref() == Some("ms-refresh-1") => {
                 reply(
                     200,
@@ -225,6 +232,9 @@ fn route(mock: &mut Mock, method: &str, path: &str, auth: &str, body: &str) -> (
                 200,
                 json!({"username": "mock", "access_token": "mc-token", "token_type": "Bearer", "expires_in": 86400}),
             )
+        }
+        ("GET", "/mc/entitlements/mcstore") if mock.entitlements_refused.is_some() => {
+            reply(mock.entitlements_refused.unwrap(), json!({}))
         }
         ("GET", "/mc/entitlements/mcstore") => {
             assert_eq!(auth, "Bearer mc-token");
@@ -815,6 +825,75 @@ fn the_game_plays_only_as_an_account_that_owns_it() {
     let mut accounts = signed_in(&store, &secrets("mc-token", true));
     let refused = launch_for_game(&ep, Some("test-client"), &store, &mut accounts);
     assert_eq!(refused.unwrap_err(), NoOwner::default());
+}
+
+/// Secrets whose Minecraft token has `left` seconds to live.
+fn expiring_in(left: u64) -> Secrets {
+    Secrets {
+        minecraft_expires_at: now() + left,
+        ..secrets("mc-token", true)
+    }
+}
+
+#[test]
+fn a_failed_refresh_of_an_expired_token_stops_play() {
+    let store = MemoryStore::default();
+    for secrets in [expiring_in(0), expiring_in(200)] {
+        let mut accounts = signed_in(&store, &secrets);
+        for refused in [503, 401] {
+            let (_, ep) = mock(|m| m.refresh_refused = Some(refused));
+            let outcome = launch_accepted(&ep, Some("test-client"), &store, &mut accounts, UUID);
+            // A refusal is no pass, and only a pass is turned into a session file.
+            let why = outcome.expect_err("an expired token is no session").keyring;
+            assert!(why.is_some_and(|why| !why.is_empty()));
+        }
+    }
+    // Offline too: the answer is the one the check produced.
+    let mut accounts = signed_in(&store, &expiring_in(0));
+    let refused = launch_for_game(&offline(), Some("test-client"), &store, &mut accounts);
+    assert!(refused
+        .unwrap_err()
+        .keyring
+        .unwrap()
+        .contains("Could not reach"));
+}
+
+#[test]
+fn a_failed_refresh_with_a_token_good_for_five_minutes_plays_with_the_stored_token() {
+    let store = MemoryStore::default();
+    let mut accounts = signed_in(&store, &expiring_in(1800));
+    let (_, ep) = mock(|m| m.refresh_refused = Some(503));
+    let pass = launch_for_game(&ep, Some("test-client"), &store, &mut accounts).unwrap();
+    let (account, secrets) = pass.session.unwrap();
+    assert_eq!(account.uuid, UUID);
+    assert_eq!(secrets.minecraft_token, "mc-token");
+    assert!(pass.offline.is_none());
+    // Not for a token inside the five minutes.
+    let mut accounts = signed_in(&store, &expiring_in(299));
+    assert!(launch_for_game(&ep, Some("test-client"), &store, &mut accounts).is_err());
+    // Nor once Microsoft has said the sign-in is over.
+    let mut accounts = signed_in(
+        &store,
+        &Secrets {
+            sign_in_required: true,
+            ..expiring_in(1800)
+        },
+    );
+    let refused = launch_for_game(&ep, Some("test-client"), &store, &mut accounts);
+    assert_eq!(refused.unwrap_err().keyring.as_deref(), Some(SIGN_IN_AGAIN));
+}
+
+#[test]
+fn an_entitlements_timeout_with_a_valid_token_plays_with_the_stored_token() {
+    let store = MemoryStore::default();
+    let mut accounts = signed_in(&store, &secrets("mc-token", true));
+    let (_, ep) = mock(|m| m.entitlements_refused = Some(503));
+    let pass = launch_for_game(&ep, Some("test-client"), &store, &mut accounts).unwrap();
+    assert_eq!(pass.session.unwrap().1.minecraft_token, "mc-token");
+    assert!(pass.offline.is_none());
+    // The services unreachable altogether: the same.
+    let pass = launch_for_game(&offline(), Some("test-client"), &store, &mut accounts).unwrap();
+    assert!(pass.session.is_some() && pass.offline.is_none());
 }
 
 #[test]
@@ -2569,7 +2648,7 @@ fn a_launch_as_another_account_leaves_the_selected_one() {
     assert_eq!(accounts.selected.as_deref(), Some(UUID));
     // Notch plays with the last answer while the services can't be reached.
     let pass = launch_as(&offline(), Some("test-client"), &store, &mut accounts, UUID).unwrap();
-    assert!(pass.session.is_none() && pass.offline.is_some());
+    assert!(pass.session.is_some() && pass.offline.is_none());
     // An account that isn't in the launcher is refused, and changes nothing either.
     let gone = launch_as(
         &offline(),
@@ -2605,7 +2684,7 @@ fn play_starts_as_the_account_it_was_pressed_for_whoever_is_selected_since() {
     // The accepted account plays, and the switcher's choice stays.
     let pass =
         launch_accepted(&offline(), Some("test-client"), &store, &mut accounts, UUID).unwrap();
-    assert!(pass.offline.is_some());
+    assert!(pass.session.is_some() && pass.offline.is_none());
     assert_eq!(accounts.selected.as_deref(), Some(alex));
     // Signed out before the game started: nobody plays in its place.
     accounts.remove(&store, UUID).unwrap();

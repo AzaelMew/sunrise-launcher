@@ -414,6 +414,10 @@ impl Launcher {
                         }
                         Progress::Native(step) => Msg::NativeProgress(step),
                         Progress::NativeLog(output) => Msg::ManagedBuildLog(output),
+                        Progress::Verify => {
+                            announce(backend::PlayStep::Assets, "checking the game's files");
+                            Msg::PlayStep(backend::PlayStep::Assets)
+                        }
                         Progress::SignIn => {
                             announce(backend::PlayStep::SignIn, "reading the sign-in");
                             Msg::PlayStep(backend::PlayStep::SignIn)
