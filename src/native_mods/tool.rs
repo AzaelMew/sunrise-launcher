@@ -319,8 +319,9 @@ pub(super) fn build(
     )
 }
 
-/// A success or an attributed failure is useful only after the whole compiler tree stops.
-/// In particular, macOS only has leader exit today; the private directory must not be read.
+/// A success or an attributed failure is useful only after the whole compiler tree stops: on
+/// Linux its subreaper, on Windows its job object, on macOS its session (with the gap
+/// [`crate::process::compiler_session`] names) proves it; the private directory is not read before.
 fn compiler_handoff(terminal: Result<Built, Failure>, quiescent: bool) -> Result<Built, Failure> {
     match terminal {
         Err(failure) if quiescent || failure.blame.is_none() => Err(failure),
@@ -360,7 +361,9 @@ fn run(
         .is_ok_and(crate::process::compiler_worker::proved);
     #[cfg(windows)]
     let quiescent = status.is_ok(); // WindowsChild::wait checked the compiler Job.
-    #[cfg(not(any(target_os = "linux", windows)))]
+    #[cfg(target_os = "macos")]
+    let quiescent = status.is_ok() && crate::process::compiler_session::ended(child.child().id());
+    #[cfg(not(any(target_os = "linux", windows, target_os = "macos")))]
     let quiescent = false;
     if let Some(workspace) = workspace.as_deref_mut() {
         #[cfg(target_os = "linux")]
@@ -559,7 +562,15 @@ fn start(
     profile: Option<ProfileHandoff<'_>>,
 ) -> Result<(crate::process::owned::Owned, mpsc::Receiver<String>), String> {
     command.stderr(Stdio::piped());
-    #[cfg(unix)]
+    // The compiler leads a session on macOS, which is also its process group: `run` proves
+    // its workers stopped by that session.
+    #[cfg(target_os = "macos")]
+    if compiler {
+        crate::process::compiler_session::lead(&mut command);
+    } else {
+        std::os::unix::process::CommandExt::process_group(&mut command, 0);
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
     std::os::unix::process::CommandExt::process_group(&mut command, 0);
     // Stop either prevents the spawn or sees the PID. It cannot fall between them.
     let mut state = cancellation.state();
