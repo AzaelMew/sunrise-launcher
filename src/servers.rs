@@ -53,7 +53,6 @@ impl Entry {
     }
 }
 
-#[path = "servers/remote.rs"]
 pub mod remote;
 
 /// The game mode a server's `server.toml` sets (`[world] game_mode`), read from the file
@@ -1447,5 +1446,4 @@ pub fn poll_hosting(
 }
 
 #[cfg(test)]
-#[path = "servers/tests.rs"]
 mod tests;

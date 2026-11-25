@@ -612,5 +612,4 @@ pub fn junction(target: &Path, link: &Path) -> std::io::Result<()> {
 }
 
 #[cfg(test)]
-#[path = "sources_tests.rs"]
 mod tests;

@@ -717,5 +717,4 @@ pub fn find(id: &str) -> Option<Local> {
 }
 
 #[cfg(test)]
-#[path = "theme_files/tests.rs"]
 mod tests;

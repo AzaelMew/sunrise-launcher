@@ -375,5 +375,4 @@ fn write_kept(file: &Path, url: &str, etag: &str, page: &Page, saved: u64) {
 }
 
 #[cfg(test)]
-#[path = "github/tests.rs"]
 mod tests;

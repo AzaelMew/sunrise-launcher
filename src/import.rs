@@ -238,5 +238,4 @@ fn prism_instance<S: AsRef<str>>(names: &[S]) -> bool {
 }
 
 #[cfg(test)]
-#[path = "import/tests.rs"]
 mod tests;

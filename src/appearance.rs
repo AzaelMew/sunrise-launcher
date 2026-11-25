@@ -193,5 +193,4 @@ pub fn background_lost(settings: &Settings, data: &Path) -> bool {
 }
 
 #[cfg(test)]
-#[path = "appearance/tests.rs"]
 mod tests;

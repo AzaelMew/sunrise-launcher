@@ -15,10 +15,10 @@ Names in this table are relative to [`src/`](../src/). The binary and the shared
 | UI pages | `home.rs`, `home_mods.rs`, `instances_page.rs`, `instance_icons.rs`, `glass_instance.rs`, `profile_dialog.rs`, `launch_page.rs` | Show Home and the selected profile, manage profile dialogs and icons, and edit per-instance launch options. |
 | UI pages | `worlds_page.rs`, `datapacks_page.rs`, `packs_page.rs`, `screenshots_page.rs`, `console_page.rs` | Display an instance's worlds, packs, screenshots, and game output. |
 | UI pages | `settings.rs`, `blocks_settings.rs`, `location_page.rs`, `glass_storage.rs`, `themes_page.rs`, `language_page.rs`, `collection.rs` | Draw settings, storage and relocation controls, appearance, language, and data collection. |
-| UI pages | `glass_versions.rs`, `glass_sheet.rs`, `glass_toast.rs`, `sheets.rs`, `setup_page.rs` | Draw versions, instance settings, toasts, shared dialogs, and Windows setup. |
+| UI pages | `glass_sheet.rs`, `glass_toast.rs`, `sheets.rs`, `setup_page.rs` | Draw instance settings, toasts, shared dialogs, and Windows setup. |
 | Backend | `lib.rs`, `backend.rs`, `launcher_setup.rs`, `launcher_messages.rs`, `launcher_play.rs`, `wake.rs` | Connect shared operations to the desktop's startup, task handlers, and message pump. |
 | Backend | `github.rs`, `nightly.rs`, `signed.rs`, `build_import.rs`, `developer_install.rs` | Discover releases, verify downloads, and install imported or checkout builds. |
-| Backend | `downloads.rs`, `download_retry.rs`, `mojang.rs`, `mojang_tests.rs`, `sources.rs`, `sources_tests.rs`, `preparer.rs`, `java.rs`, `jdk.rs` | Find or fetch Minecraft files and Java, run the preparer, and test the file and download paths. |
+| Backend | `downloads.rs`, `download_retry.rs`, `mojang.rs`, `mojang/tests.rs`, `sources.rs`, `sources/tests.rs`, `preparer.rs`, `java.rs`, `jdk.rs` | Find or fetch Minecraft files and Java, run the preparer, and test the file and download paths. |
 | Backend | `launch.rs`, `launch_state.rs`, `process.rs`, `run_leases.rs`, `game_app.rs`, `windows_runtime.rs`, `developer_offline.rs`, `developer_play.rs`, `while_playing.rs` | Assemble and supervise game launches, manage platform-specific execution, and surface launch state. |
 | Backend | `installer.rs`, `setup_args.rs`, `uninstall_aside.rs`, `update_handoff.rs`, `update_recovery.rs`, `mac_update.rs`, `notices.rs` | Handle launcher setup, removal, self-update, and bundled notices. |
 | Backend | `identity.rs`, `data_location.rs`, `relocation.rs`, `carry_over.rs`, `storage.rs`, `cache_cleanup.rs` | Resolve data roots, migrate or move data, and inventory and reclaim managed storage. |
@@ -27,11 +27,11 @@ Names in this table are relative to [`src/`](../src/). The binary and the shared
 | Mods | `browser.rs`, `mods.rs`, `mods_page.rs`, `mods_project.rs`, `mod_icons.rs`, `github_mods.rs`, `github_mods_page.rs` | Provide registry and pack discovery, installation, project details and pictures, and the GitHub mod flow. |
 | Mods | `native_mods.rs`, `native_cache.rs`, `native_fit.rs`, `native_status.rs`, `rust_toolchain.rs`, `native_build.rs`, `native_log_page.rs`, `build.rs`, `build_mode.rs` | Build and track native mods, manage the toolchain and cache, and show compatibility and progress. |
 | Mods | `jars.rs`, `jar_launch.rs`, `jars_tests.rs` | Resolve mods' original Java asset and data jars, including the launch consent bridge and tests. |
-| Servers | `servers.rs`, `servers_page.rs`, `glass_servers.rs`, `glass_server_dialog.rs`, `servers_format.rs`, `heads.rs` | Drive the dedicated server and draw its hosting controls, status, and player heads. |
+| Servers | `servers.rs`, `servers_page.rs` (with `servers_page/dialog.rs`, `servers_page/format.rs`), `heads.rs` | Drive the dedicated server and draw its hosting controls, status, and player heads. |
 | Servers | `join.rs`, `server_list.rs`, `multiplayer_page.rs`, `internet.rs`, `tailscale.rs` | Join and manage saved servers and show Tailscale sharing controls. |
 | Rendering and motion | `backdrop.rs`, `blocks.rs`, `cat.rs`, `glass_ui.rs`, `widgets.rs`, `plate.rs`, `motion.rs`, `paint.rs`, `tokens.rs`, `theme.rs` | Draw scenery and controls and apply the palette, metrics, and motion curves. |
 | Rendering and motion | `appearance.rs`, `themes.rs`, `theme_files.rs`, `picture_cache.rs`, `pictures.rs`, `perf.rs` | Resolve themes and background art, manage decoded pictures, and measure the window. |
-| CLI and MCP | `cli.rs`, `cli_tools.rs`, `cli_catalog_tests.rs`, `cli_native_permission.rs`, `console.rs`, `mcp.rs`, `game_tools.rs` | Parse and run commands, attach terminal streams, generate MCP tools, and bridge to game control. |
+| CLI and MCP | `cli.rs`, `cli_tools.rs`, `console.rs`, `mcp.rs`, `game_tools.rs` | Parse and run commands, attach terminal streams, generate MCP tools, and bridge to game control. |
 | Utilities | `code_box.rs`, `cull.rs`, `line_edit.rs`, `markdown.rs`, `scrollbar.rs`, `selectable.rs`, `slider.rs`, `sticky.rs` | Supply reusable text, list, and input behavior. |
 | Utilities | `i18n.rs`, `net.rs`, `proxy.rs`, `desktop.rs`, `desktop_seams.rs`, `zip_intake.rs`, `test_support.rs` | Provide translation, network and desktop helpers, ZIP intake, and test support. |
 | Utilities | `bug_report.rs`, `game_log.rs`, `telemetry.rs`, `no_ai.rs` | Handle reports, game logs, telemetry, and the shared No AI setting. |
@@ -43,15 +43,15 @@ Names in this table are relative to [`src/`](../src/). The binary and the shared
 | `src/account/` | Session status and account tests. |
 | `src/backend/` | The data and build folders, installation, release assets and selection, update selection, settings helpers, Play logging, and message types. |
 | `src/browser/`, `src/browser/installed/`, `src/browser/sunrise/`, `src/browser/sunrise/auto/` | Source-specific browser operations, installed-pack tests, Sunrise dependency and pack handling, and registry auto-update tests. |
-| `src/cli/` | Developer build commands, progress, settings JSON output, and storage tests. |
-| `src/internet/`, `src/servers/`, `src/servers_page/` | Hosting share UI, remote server control and tests, and hosting page composition. |
+| `src/cli/`, `src/cli/native_permission_impl/` | Developer build commands, progress, settings JSON output, the native-build permission prompt, and catalog, server and storage tests. |
+| `src/internet/`, `src/servers/`, `src/servers_page/` | Hosting share UI, remote server control and its tests (`servers/remote/`), and the Servers page's children: hosting, the Create a server dialog and text helpers. |
 | `src/jars/`, `src/zip_intake/` | Jar download and launch preparation, and the ZIP intake source adapter and tests. |
 | `src/mods/`, `src/mods/data_packs/`, `src/mods/model/`, `src/mods/pack_discover/`, `src/mods_page/` | Mods UI and state, pack discovery, and tests for these paths. |
 | `src/native_mods/`, `src/native_mods/bundle/`, `src/native_mods/mixins/`, `src/native_mods/workspace/`, `src/native_mods/tests/` | Native build planning, SDK cache, bundle packaging, mixin support, and build and runtime tests. |
 | `src/process/`, `src/process/leases/`, `src/process/leases/tests/`, `src/process/supervisor/`, `src/run_leases/` | Child process ownership and supervision, launch and tree locks, and platform tests. |
 | `src/settings/`, `src/sheets/` | Appearance controls and the version chooser. |
-| `src/storage/`, `src/theme_files/`, `src/theme_files/fixtures/` | Storage inventory and eviction. Theme file tests and their image fixture. |
-| `src/appearance/`, `src/cache_cleanup/`, `src/data_location/`, `src/downloads/`, `src/github/`, `src/github_mods/`, `src/i18n/`, `src/java/`, `src/launch/`, `src/launch_state/`, `src/mac_update/`, `src/native_cache/`, `src/relocation/`, `src/shortcut/`, `src/themes/` | Tests alongside their matching infrastructure modules. |
+| `src/storage/`, `src/storage/inventory/`, `src/theme_files/`, `src/theme_files/fixtures/` | Storage inventory, its regression tests, and eviction. Theme file tests and their image fixture. |
+| `src/appearance/`, `src/cache_cleanup/`, `src/data_location/`, `src/downloads/`, `src/github/`, `src/github_mods/`, `src/i18n/`, `src/java/`, `src/launch/`, `src/launch_state/`, `src/mac_update/`, `src/mojang/`, `src/native_cache/`, `src/relocation/`, `src/shortcut/`, `src/sources/`, `src/themes/` | Tests alongside their matching infrastructure modules. |
 | `src/datapacks/`, `src/export/`, `src/game_log/`, `src/home/`, `src/import/`, `src/instances/`, `src/join/`, `src/packs/`, `src/server_list/`, `src/tailscale/`, `src/worlds/` | Tests alongside their matching feature modules. |
 
 ### Scenery, shared crates, and tools
@@ -65,7 +65,7 @@ Names in this table are relative to [`src/`](../src/). The binary and the shared
 | `crates/mcp/`, `crates/mcp/src/` | Shared MCP protocol and stdio transport. |
 | `crates/nbt/`, `crates/nbt/src/` | Java Edition NBT used for files such as `level.dat` and `servers.dat`. |
 | `crates/release-verify/`, `crates/release-verify/src/`, `crates/release-verify/src/bin/`, `crates/release-verify/keys/` | Release signature verification, trust keys, and the signing utility. |
-| `crates/release-verify/tests/`, `crates/release-verify/tests/signed/`, `crates/release-verify/tests/signed/native-build/`, `crates/release-verify/tests/signed/nightly/`, `crates/release-verify/tests/signed/release/`, `crates/release-verify/tests/signed/sdk/`, `crates/release-verify/tests/signed/snapshot/` | Release signing and verification tests and channel-specific fixtures. |
+| `crates/release-verify/tests/`, `crates/release-verify/tests/signed/`, `crates/release-verify/tests/signed/dev/`, `crates/release-verify/tests/signed/native-build/`, `crates/release-verify/tests/signed/nightly/`, `crates/release-verify/tests/signed/release/`, `crates/release-verify/tests/signed/sdk/` | Release signing and verification tests and channel-specific fixtures. |
 | `crates/resolver/`, `crates/resolver/src/` | Minecraft server SRV resolution. |
 | `crates/sdk/`, `crates/sdk/src/`, `crates/sdk/src/sdk/` | Signed SDK index and verified SDK slice unpacking. |
 | `crates/shader-api/`, `crates/shader-api/src/` | Sunrise shader pack format and validation. |

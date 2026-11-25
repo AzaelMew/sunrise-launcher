@@ -35,17 +35,21 @@ What makes it hard to maintain:
   `home_mods.rs`, `github_mods*`, `native_mods*` and `browser/`.
 - **God files and god functions.** `backend.rs` alone holds 277 top-level functions.
 - **Copied helpers.** `fn sha256(bytes: &[u8]) -> String` is defined three times
-  (`crates/smod/src/index.rs`, `src/github_mods.rs`, `src/native_mods/sdk_cache.rs`).
+  (`crates/smod/src/index.rs`, `src/github_mods.rs`, `src/native_mods/sdk_cache.rs`). Done: #427
+  centralised them.
 - **Drift.**
-  - `docs/architecture.md` lists `glass_versions.rs`, which no longer exists.
+  - `docs/architecture.md` lists `glass_versions.rs`, which no longer exists. Done in #491.
   - `tools/ci/manual-tests.txt` names three tests that no longer exist: two `loaders::…` tests
-    and `mods::model::tests::benchmark_discover_search`.
+    and `mods::model::tests::benchmark_discover_search`. Done in #488.
   - The `MIRRORED` table in `tools/tests/test_game_copies.py` labels two launcher files that
     don't exist: `src/other_launchers.rs` and `src/browser/java.rs`.
   - `packaging/executable_link.rs` and `packaging/windows/exe.rs` aren't built by anything in
-    this repository, and they point at `crates/sunrise-guest-stack`, which isn't here.
+    this repository, and they point at `crates/sunrise-guest-stack`, which isn't here. Done: #484
+    deleted them, with the game's DXC notice.
   - `tools/rename_alt_modules.py` has done its job: no `alt` modules are left. Check
-    `prune_unreachable_ui.py` and `sizes_to_tokens.py` before deciding the same about them.
+    `prune_unreachable_ui.py` and `sizes_to_tokens.py` before deciding the same about them. Done:
+    #493 deleted `rename_alt_modules.py`, `sizes_to_tokens.py` and `glass_roles.py`;
+    `prune_unreachable_ui.py` stays until the old-UI delete phase ends.
 
 ## 1. Golden rules
 
@@ -196,8 +200,8 @@ module path, and fix them in the same PR:
   name. Renaming a file in `tests/` means changing the workflows too.
 - **The game-copies tables** (§2): the paths in them, and the files their functions and
   constants are read from, are part of a CI check.
-- **Scripts with path lists:** `tools/glass_roles.py`, `tools/sizes_to_tokens.py` and other
-  `tools/` scripts that name `src/…` files.
+- **Scripts with path lists:** `tools/prune_unreachable_ui.py` and other `tools/` scripts that
+  name `src/…` files.
 - **Docs:** `docs/architecture.md`, README.md, AGENTS.md and CONTRIBUTING.md. Check with
   `git grep -n '<old path>'`. When the layout lands, `architecture.md` becomes a short map of the
   domains, not a table of 170 files.

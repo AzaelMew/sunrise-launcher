@@ -13,15 +13,11 @@ use sunrise_launcher::servers::{
 };
 use sunrise_launcher_theme::glass::radius;
 
-#[path = "glass_server_dialog.rs"]
-mod glass_server_dialog;
-#[path = "glass_servers.rs"]
-mod glass_servers;
+mod dialog;
 
+mod format;
 mod hosting;
-#[path = "servers_format.rs"]
-mod servers_format;
-use servers_format::{backup_label, bytes, uptime};
+use format::{backup_label, bytes, uptime};
 
 /// One consent boundary for every launcher-managed start/restart route.
 fn run_managed_server(

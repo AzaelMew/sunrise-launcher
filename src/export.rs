@@ -193,5 +193,4 @@ pub fn free_path(dir: &Path, name: &str) -> PathBuf {
 }
 
 #[cfg(test)]
-#[path = "export/tests.rs"]
 mod tests;

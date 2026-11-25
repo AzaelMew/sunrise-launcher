@@ -31,7 +31,6 @@ pub const CONTROL: f32 = 34.;
 pub const PAGE_GUTTER: f32 = 32.;
 
 /// Motion: short and eased out, never bouncy.
-#[cfg_attr(not(windows), allow(dead_code))] // the Windows setup window
 pub const MOVE: Duration = tokens::MOVE.duration();
 
 #[derive(Clone, Copy)]
