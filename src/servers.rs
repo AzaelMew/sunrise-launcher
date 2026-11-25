@@ -528,7 +528,8 @@ pub fn run_streamed(dir: &Path, args: &[&str], line: &dyn Fn(String)) -> Result<
 }
 
 /// Launcher-managed Start/Restart: prepare data using the supervisor's own command description.
-/// The standalone supervisor still has no jar downloader or consent policy.
+/// The standalone supervisor still has no jar downloader or consent policy; a missing jar listed
+/// by a registry mod of the server's folder downloads here without asking, like a client's start.
 pub fn run_managed(
     dir: &Path,
     args: &[&str],

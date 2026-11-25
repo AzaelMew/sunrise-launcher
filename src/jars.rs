@@ -162,6 +162,52 @@ fn fetch_listed_with(
     prepare_with(home, jars, &owners, Permission::Refuse, lookup, download)
 }
 
+/// Prepares `jars` like [`prepare`], then copies each into `to`'s own `jars` folder: the home a
+/// server exported there reads them from. The export is the operator's own copy.
+pub fn export(
+    home: &Path,
+    to: &Path,
+    jars: &[JarRequirement],
+    registry_mods: &BTreeSet<String>,
+    permission: Permission<'_>,
+) -> Result<(), PrepareError> {
+    export_with(
+        home,
+        to,
+        jars,
+        registry_mods,
+        permission,
+        download::jar_urls,
+        download::download_jar,
+    )
+}
+
+fn export_with(
+    home: &Path,
+    to: &Path,
+    jars: &[JarRequirement],
+    registry_mods: &BTreeSet<String>,
+    permission: Permission<'_>,
+    lookup: impl FnMut(&[&JarRef]) -> Result<BTreeMap<String, String>, String>,
+    download: impl FnMut(&str, &JarRef, &Path) -> Result<(), String>,
+) -> Result<(), PrepareError> {
+    prepare_with(home, jars, registry_mods, permission, lookup, download)?;
+    if jars.is_empty() {
+        return Ok(());
+    }
+    let (cache, folder) = (home.join("jars"), to.join("jars"));
+    fs::create_dir_all(&folder).map_err(|source| PrepareError::Io {
+        path: folder.clone(),
+        source,
+    })?;
+    for requirement in jars {
+        let path = requirement.jar.cache_path(&folder);
+        fs::copy(requirement.jar.cache_path(&cache), &path)
+            .map_err(|source| PrepareError::Io { path, source })?;
+    }
+    Ok(())
+}
+
 /// Deletes from the cache each jar in `removed` that no jar in `kept` names. A cache file that
 /// `removed` does not list is left alone.
 pub fn forget(home: &Path, removed: &[JarRef], kept: &[JarRef]) -> io::Result<()> {
