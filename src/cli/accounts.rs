@@ -28,7 +28,7 @@ pub(super) enum AccountCmd {
 }
 
 /// `account …`: names and UUIDs only; tokens are never printed.
-pub(super) fn account_command(action: AccountCmd, as_json: bool) -> Result<(), String> {
+pub(super) fn account_command(action: AccountCmd, as_json: bool) -> Result<(), Error> {
     let mut accounts = Accounts::load();
     let find = |accounts: &Accounts, who: &str| {
         accounts
@@ -82,7 +82,7 @@ pub(super) fn account_command(action: AccountCmd, as_json: bool) -> Result<(), S
             if as_json {
                 json(serde_json::to_value(&status).map_err(|e| e.to_string())?);
             } else if status.state != account::session::State::Ready {
-                return Err(format!("{}: {}", status.label(), status.message));
+                return Err(format!("{}: {}", status.label(), status.message).into());
             } else {
                 println!("{}: {}", status.label(), status.message);
             }
@@ -93,7 +93,7 @@ pub(super) fn account_command(action: AccountCmd, as_json: bool) -> Result<(), S
                 (Ok(file), true) => json(serde_json::json!({ "session_file": file })),
                 (Ok(file), false) => println!("{}", file.display()),
                 (Err(status), true) => json(serde_json::json!({ "authentication": status })),
-                (Err(status), false) => return Err(status.message),
+                (Err(status), false) => return Err(status.message.into()),
             }
         }
         AccountCmd::SignIn { target: Some(who) } => {

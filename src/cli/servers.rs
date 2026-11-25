@@ -56,7 +56,7 @@ pub(super) enum ServersCmd {
     Forget { server: String },
 }
 
-pub(super) fn servers(action: ServersCmd, as_json: bool) -> Result<(), String> {
+pub(super) fn servers(action: ServersCmd, as_json: bool) -> Result<(), Error> {
     use sunrise_launcher::servers::{self, NewServer, World};
     let find = |which: &str| {
         servers::list()
@@ -146,7 +146,7 @@ pub(super) fn servers(action: ServersCmd, as_json: bool) -> Result<(), String> {
                 .status()
                 .map_err(|e| e.to_string())?;
             if !status.success() {
-                return Err(format!("sunrise-server exited with {status}"));
+                return Err(format!("sunrise-server exited with {status}").into());
             }
         }
         ServersCmd::Forget { server } => {
@@ -188,7 +188,7 @@ pub(super) enum MultiplayerCmd {
     },
 }
 
-pub(super) fn multiplayer(action: MultiplayerCmd, as_json: bool) -> Result<(), String> {
+pub(super) fn multiplayer(action: MultiplayerCmd, as_json: bool) -> Result<(), Error> {
     let home = |instance: Option<String>| -> Result<PathBuf, String> {
         Ok(match instance {
             Some(name) => instances::find(&name)?.home,
