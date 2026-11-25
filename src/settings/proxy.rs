@@ -1,4 +1,4 @@
-//! The blocky look's Settings page and the settings rows.
+//! Saving the Proxy field of Settings.
 use super::*;
 
 impl Launcher {

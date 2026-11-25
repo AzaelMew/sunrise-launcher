@@ -419,7 +419,7 @@ impl Launcher {
     fn ports_build(&self) -> Option<String> {
         let raw = self.profile_target(self.selected_instance()?)?;
         if native_mods::is_native(&raw) {
-            crate::glass_instance::native_base(&raw).or(Some(raw))
+            crate::profile_builds::native_base(&raw).or(Some(raw))
         } else {
             Some(raw)
         }
