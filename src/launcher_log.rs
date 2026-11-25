@@ -177,12 +177,13 @@ pub fn line(text: impl AsRef<str>) {
     }
 }
 
-/// A long step. Logs "▶ {what}" now; `done` logs "✓ {what} ({duration}){: detail}", `failed`
-/// logs "✗ {what} ({duration}): {why}", and a Step dropped without either logs
-/// "■ {what} ended ({duration})". Duration as "850 ms" under a second, else "12.3 s".
+/// A long step. Logs "{what}: started" now; `done` logs "{what}: done in {duration}{: detail}",
+/// `failed` logs "{what}: failed after {duration}: {why}", and a Step dropped without either
+/// logs "{what}: ended after {duration} with no result". Duration as "850 ms" under a second,
+/// else "12.3 s". Plain words, so any font shows them and a search finds them.
 pub fn step(what: impl Into<String>) -> Step {
     let what = what.into();
-    line(format!("▶ {what}"));
+    line(format!("{what}: started"));
     Step {
         what,
         started: Instant::now(),
@@ -201,7 +202,7 @@ pub struct Step {
 impl Step {
     /// Progress inside the step.
     pub fn note(&self, text: impl AsRef<str>) {
-        line(format!("… {}: {}", self.what, text.as_ref()));
+        line(format!("{}: {}", self.what, text.as_ref()));
     }
 
     pub fn done(mut self, detail: impl AsRef<str>) {
@@ -209,7 +210,7 @@ impl Step {
         let detail = detail.as_ref();
         let sep = if detail.is_empty() { "" } else { ": " };
         line(format!(
-            "✓ {} ({}){sep}{detail}",
+            "{}: done in {}{sep}{detail}",
             self.what,
             duration_text(self.started.elapsed())
         ));
@@ -218,7 +219,7 @@ impl Step {
     pub fn failed(mut self, why: impl AsRef<str>) {
         self.finished = true;
         line(format!(
-            "✗ {} ({}): {}",
+            "{}: failed after {}: {}",
             self.what,
             duration_text(self.started.elapsed()),
             why.as_ref()
@@ -230,7 +231,7 @@ impl Drop for Step {
     fn drop(&mut self) {
         if !self.finished {
             line(format!(
-                "■ {} ended ({})",
+                "{}: ended after {} with no result",
                 self.what,
                 duration_text(self.started.elapsed())
             ));
@@ -434,7 +435,7 @@ mod tests {
         hide("Steve_Tester");
         let jwt = "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.c2lnbmF0dXJlMTIzNDU2";
         let trace = [
-            "▶ Signing in: login.microsoftonline.com".to_owned(),
+            "Signing in: login.microsoftonline.com".to_owned(),
             "POST login.microsoftonline.com 200".to_owned(),
             "POST user.auth.xboxlive.com 200".to_owned(),
             "POST xsts.auth.xboxlive.com 401".to_owned(),
@@ -546,10 +547,10 @@ mod tests {
         step("drop-test step gamma").failed("no reason");
         let (_, lines) = since(before);
         let has = |text: &str| lines.iter().any(|l| l.contains(text));
-        assert!(has("■ drop-test step alpha ended ("));
-        assert!(has("✓ drop-test step beta ("));
-        assert!(has("✗ drop-test step gamma ("));
-        assert!(!has("drop-test step beta ended"));
-        assert!(!has("drop-test step gamma ended"));
+        assert!(has("drop-test step alpha: ended after "));
+        assert!(has("drop-test step beta: done in "));
+        assert!(has("drop-test step gamma: failed after "));
+        assert!(!has("drop-test step beta: ended"));
+        assert!(!has("drop-test step gamma: ended"));
     }
 }
