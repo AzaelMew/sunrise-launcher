@@ -149,7 +149,7 @@ pub(super) fn worlds(action: WorldsCmd, as_json: bool) -> Result<(), String> {
                 sunrise_launcher::managed_play::Profile::open_selected(&profile(instance)?)?;
             let w = worlds::find(profile.home(), &world)?;
             let p = datapacks::find(&w.path, &pack)?;
-            datapacks::remove(&w.path, &p)?;
+            datapacks::remove(&w.path, &p, None)?;
             println!("{} is in the trash.", p.file);
         }
     }
