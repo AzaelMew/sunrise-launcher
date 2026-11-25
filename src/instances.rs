@@ -240,11 +240,12 @@ impl Channel {
         }
     }
 
-    /// The installed build on this channel, from the newest-first on-disk list.
+    /// The installed build on this channel, from the newest-first on-disk list. A test build
+    /// from a draft's files is chosen only by its exact tag, never as the newest.
     pub fn newest_installed(self, installed: &[String]) -> Option<&String> {
-        installed
-            .iter()
-            .find(|tag| Self::of_build(tag) == Some(self))
+        installed.iter().find(|tag| {
+            Self::of_build(tag) == Some(self) && !crate::draft_releases::is_test_build(tag)
+        })
     }
 
     /// The downloadable releases on this channel, in catalogue order (newest first).

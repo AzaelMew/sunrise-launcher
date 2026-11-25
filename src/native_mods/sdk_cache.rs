@@ -285,23 +285,25 @@ impl Base {
     /// `Ok(None)` when the base has no such file. `tag` and `name` are plain names: a tag this
     /// module makes, and a name `sdk.json` lists (`Asset::parts_of` accepts only plain ones).
     fn open(&self, tag: &str, name: &str) -> Result<Option<Box<dyn Read>>, Unread> {
+        let file = |path: PathBuf| match fs::File::open(&path) {
+            Ok(file) => Ok(Some(Box::new(file) as Box<dyn Read>)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(Unread::Local(format!("{}: {error}", path.display()))),
+        };
         match self {
             Self::Url(url) => {
-                match crate::backend::get_unless_missing(&format!("{url}/{tag}/{name}")) {
+                let address = format!("{url}/{tag}/{name}");
+                if let Some(path) = crate::draft_releases::local(&address).map_err(Unread::Local)? {
+                    return file(path);
+                }
+                match crate::backend::get_unless_missing(&address) {
                     Ok(Some(response)) => Ok(Some(Box::new(response.into_reader()))),
                     Ok(None) => Ok(None),
                     Err(why) if why.starts_with("No connection") => Err(Unread::Offline),
                     Err(why) => Err(Unread::Failed(why)),
                 }
             }
-            Self::Folder(folder) => {
-                let path = folder.join(tag).join(name);
-                match fs::File::open(&path) {
-                    Ok(file) => Ok(Some(Box::new(file))),
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-                    Err(error) => Err(Unread::Local(format!("{}: {error}", path.display()))),
-                }
-            }
+            Self::Folder(folder) => file(folder.join(tag).join(name)),
         }
     }
 
