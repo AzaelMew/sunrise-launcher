@@ -675,11 +675,12 @@ pub(crate) fn resource_dependent(tag: &str) -> Option<String> {
         .find(|version| about(version).is_some_and(|about| about.base.eq_ignore_ascii_case(tag)))
 }
 
-/// The newest installed release or Nightly in the launcher's newest-first build list.
+/// The newest installed release or Nightly in the launcher's newest-first build list (a test
+/// build from a draft's files only by its exact tag).
 pub fn newest_installed(installed: &[String]) -> Option<&String> {
-    installed
-        .iter()
-        .find(|t| crate::instances::Channel::of_build(t).is_some())
+    installed.iter().find(|t| {
+        crate::instances::Channel::of_build(t).is_some() && !crate::draft_releases::is_test_build(t)
+    })
 }
 
 /// The installed version a build for an instance that plays `current` starts from: `current`

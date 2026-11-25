@@ -1382,6 +1382,9 @@ pub(crate) fn fetch_small_cancellable(
     if let Some(stop) = stop {
         stop.check()?;
     }
+    if let Some(path) = crate::draft_releases::local(url)? {
+        return crate::draft_releases::read(&path, 1 << 20);
+    }
     let response = match get(url) {
         Ok(response) => response,
         Err(e) if e.ends_with("answered 404") => return Ok(None),
@@ -1425,6 +1428,19 @@ pub(crate) fn download_cancellable(
     stop: Option<&crate::native_mods::Cancellation>,
     progress: &impl Fn(f32),
 ) -> Result<(), String> {
+    if let Some(path) = crate::draft_releases::local(url)? {
+        if let Some(stop) = stop {
+            stop.check()?;
+        }
+        let file = fs::File::open(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let size = file.metadata().map_or(size, |meta| meta.len());
+        let name = url.rsplit('/').next().unwrap_or(url);
+        let saved = match stop {
+            Some(stop) => save_checked(stop.reader(file), size, name, sha256, to, progress),
+            None => save_checked(file, size, name, sha256, to, progress),
+        };
+        return saved.map_err(Into::into);
+    }
     let Some(stop) = stop else {
         let response = get(url)?;
         let size = match size {
@@ -4128,7 +4144,14 @@ pub fn install_tag(tag: &str, as_update: bool, progress: impl Fn(f32)) -> Result
     let download = |release: &Release| install(release, progress);
     if let Some(dev) = release_selection::dev(tag)? {
         // The exact tag is sufficient to install, but not to decide which builds other profiles use.
-        return install_selected_release(&dev, None, as_update, download);
+        let drafts = crate::draft_releases::folder()?;
+        return install_selected_release(&dev, None, as_update, |release| {
+            let outcome = download(release)?;
+            if let (Some(folder), InstallOutcome::Installed(_)) = (&drafts, &outcome) {
+                crate::draft_releases::mark(&release.tag, folder)?;
+            }
+            Ok(outcome)
+        });
     }
     if tag == "latest" {
         return install_offered_tag(&releases()?, tag, as_update, download);

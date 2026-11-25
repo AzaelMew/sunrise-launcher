@@ -17,12 +17,15 @@ pub(super) fn dev(tag: &str) -> Result<Option<Release>, String> {
         ));
     }
     let missing = || crate::i18n::trf("No Sunrise Dev build is tagged {tag}.", &[("tag", tag)]);
-    let release = crate::github::json_optional(&format!(
-        "{}/repos/{}/releases/tags/{tag}",
-        crate::github::API,
-        super::GAME_REPO
-    ))?
-    .ok_or_else(missing)?;
+    let release = match crate::draft_releases::release(tag)? {
+        Some(draft) => draft,
+        None => crate::github::json_optional(&format!(
+            "{}/repos/{}/releases/tags/{tag}",
+            crate::github::API,
+            super::GAME_REPO
+        ))?
+        .ok_or_else(missing)?,
+    };
     let settings = super::Settings::load();
     let assets = super::game_assets_for(
         std::env::consts::OS,
