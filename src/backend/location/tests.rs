@@ -1,6 +1,24 @@
 use super::*;
 use std::path::{Path, PathBuf};
 
+/// `SUNRISE_LAUNCHER_HOME` is the launch script's (and every test's) way to keep the launcher away
+/// from the player's folder; `data_dir` must read the override set in this process, every call.
+#[test]
+fn the_launcher_home_override_is_read_in_this_process() {
+    let previous = std::env::var_os("SUNRISE_LAUNCHER_HOME");
+    let home = tempfile::tempdir().expect("a scratch home");
+    std::env::set_var("SUNRISE_LAUNCHER_HOME", home.path());
+    let resolved = data_dir();
+    let production_path = resolve_data_dir();
+    if let Some(previous) = previous {
+        std::env::set_var("SUNRISE_LAUNCHER_HOME", previous);
+    } else {
+        std::env::remove_var("SUNRISE_LAUNCHER_HOME");
+    }
+    assert_eq!(resolved, home.path().to_path_buf());
+    assert_eq!(production_path, home.path().to_path_buf());
+}
+
 #[test]
 fn with_every_name_taken_the_fallback_is_never_a_claimed_folder() {
     let temp = Path::new("/scratch/tmp");
