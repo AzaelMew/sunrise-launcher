@@ -146,6 +146,9 @@ the long version, and the CI ratchet (`tools/ci/structure_check.py`) enforces th
   in its notes, so nobody redoes the work.
 - **Leave the file better than you found it**, but only the part you're working in. The
   broad clean-up is done. From here, tidy what your change touches and nothing more.
+- Before starting refactor work, read the **Status** section of
+  [docs/refactoring.md](docs/refactoring.md): it lists what's still planned (with its PR) and
+  what's been skipped on purpose. Don't redo either.
 
 ## Project specifics
 

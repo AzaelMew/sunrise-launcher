@@ -4,7 +4,45 @@ The rules for the launcher clean-up. Many agents, working for more than one pers
 the same time. [AGENTS.md](../AGENTS.md) and [CONTRIBUTING.md](../CONTRIBUTING.md) still apply in full.
 This file adds what a large, parallel, behaviour-preserving refactor needs on top of them.
 
-## Where the repository stands (`origin/main` at `97d18a651`, 2026-11-24)
+## Status (2026-11-25): what's done, what's left, what's skipped on purpose
+
+The broad clean-up ran as Rollups 19–25 (#496–#534) and is wound down. Main at `5ee3486db`,
+against the start (`7f3ef5531`):
+- `backend.rs`: 8,586 → 571 lines
+- files over 1,000 lines: 55 → 18
+- `#[path]`: 55 → 16
+- `.unwrap()` (counted): 500 → 412
+- `Result<_, String>`: 1,261 → 1,179
+- retired prefixes: 18 → 10
+
+**Still planned**, with an owner or an open PR. Check the PR before you start anything here:
+- **CLI handler cuts** (`cli::mods::mods`, `cli::instance::instance`): #538, to be redone on
+  current main.
+- **#530** (Prepare offered by an error's text): the fix is written in the issue.
+- **Last big test files** (`instances/tests.rs`, `registry_install/v2/tests.rs`,
+  `mods/model/tests.rs`): split as was done for `account/tests/`.
+- **lib.rs import cycles (V3.5c2, V3.5b, V3.4):** see closed #536 and darkliro's plan. V3.5b and
+  V3.4 wait on #465/#466 (native_mods).
+- **#439** (the core crate and the domain folders, §4): one decision, then done together, once.
+
+**Skipped on purpose. Don't start these as separate work:**
+- **Renaming `glass_ui` (35 users) and `blocks` (19):** churn across many UI files for a nicer
+  name. Rename one only if you're rewriting that UI anyway.
+- **Moving `launcher_play.rs` into `app/`:** it pulls `plate` into an import cycle without a
+  real new edge. Leave it until the cycle work changes that graph. `launcher_messages.rs` stays
+  too.
+- **Typed errors where nothing acts on the error** (§7): `profile_txn`, `servers`, `mods` and
+  `worlds` were checked, and their errors are messages only. Only add a type when code needs to
+  act on a specific case.
+- **A pass over the remaining `.unwrap()` and long functions:** fix them in the code you're
+  already changing. The ratchet stops new ones.
+- **Splitting `registry_install/v2/switch_v2.rs`'s build-switch code, and `crates/nbt`:**
+  dropped (`crates/` are game copies, §2).
+- **Moving the other loose `src/` files into folders one by one:** wait for #439 and do it once.
+
+From here, tidy only what your change touches (AGENTS.md, "Keep it organized").
+
+## Where the repository stood (`origin/main` at `97d18a651`, 2026-11-24)
 
 | Measure | Now |
 | --- | --- |
