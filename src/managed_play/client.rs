@@ -221,7 +221,7 @@ impl Client<'_> {
         cmd.envs(vars.iter().map(|(key, value)| (key, value)));
         let mut notice = None;
         let mut session_file = None;
-        let account = if offline {
+        let plays = if offline {
             developer_offline::require_capability(tag)?;
             developer_offline::mark(&mut cmd);
             notice = Some(crate::i18n::tr(developer_offline::NOTICE).into());
@@ -250,7 +250,7 @@ impl Client<'_> {
                     // The game refuses a session file older than two minutes, so it is made
                     // last, right before the spawn, and only a player with a session plays.
                     // This also stops Play when the account was signed out meanwhile.
-                    if let Some(uuid) = account {
+                    if let Some(uuid) = plays {
                         progress(Progress::SignIn);
                         let session =
                             account::session_for_game_accepted(&backend::game_home(), uuid)
