@@ -165,6 +165,103 @@ impl Launcher {
             .filter(|s| self.installed.contains(s))
     }
 
+    pub(crate) fn on_install_message(&mut self, msg: Msg) {
+        match msg {
+            Msg::Releases(r) => {
+                if let (Ok(_), Some(checked)) = (&r, self.checked) {
+                    self.perf.record_since("launcher.release_list_ms", checked);
+                }
+                let loaded = r.is_ok();
+                self.releases = r.map_or_else(Load::Failed, Load::Ready);
+                if loaded {
+                    self.refresh_installed();
+                } else {
+                    self.refresh_open_storage_builds();
+                }
+            }
+            Msg::Links(links) => self.links = links,
+            // The page reads is_prepared when drawn; `changed` redraws it.
+            Msg::Reused(_) => self.refresh_installed(),
+            Msg::Progress(tag, p) => {
+                self.bar = (self.bar.1, p);
+                self.switch_download_progress(&tag, p);
+                self.installing = Some((tag, p));
+            }
+            Msg::Installed(tag, result) => {
+                self.installing = None;
+                self.bar = (0., 0.);
+                self.refresh_installed();
+                if let Some(warning) = self.record_nightly_receipt_outcome(&tag, &result) {
+                    glass_toast::say(trf(
+                        "{warning} Try again in Settings → Storage.",
+                        &[("warning", &warning)],
+                    ));
+                }
+                if self.finish_switch_download(&tag, &result) {
+                    self.install_started = None;
+                    if let Some(next) = self.install_next.take() {
+                        self.install_for_instance(next);
+                    }
+                    return;
+                }
+                let receipt_only = matches!(&result, Ok(backend::InstallOutcome::ReceiptOnly(_)));
+                let result = result.map(|_| ());
+                let repair = self.architecture_reinstall.take().is_some_and(|t| t == tag);
+                let for_instance = self.instance_install.take_if(|t| *t == tag).is_some();
+                if let (Ok(()), Some(started)) = (&result, self.install_started.take()) {
+                    self.perf.record_since("launcher.install_ms", started);
+                }
+                let resume = self
+                    .ui
+                    .after_install
+                    .take()
+                    .filter(|(_, wanted)| result.is_ok() && *wanted == tag);
+                match result {
+                    Ok(()) if repair || receipt_only => {}
+                    Ok(()) => {
+                        if self.updates.sunrise.as_ref().is_some_and(|r| r.tag == tag) {
+                            self.updates.sunrise = None;
+                        }
+                        // An instance's own download leaves other selections alone.
+                        let select = !for_instance || self.launcher_version().is_none();
+                        if select {
+                            self.settings.selected = Some(tag.clone());
+                        }
+                        // Pruning reads settings from disk: protect the selection only once
+                        // it has been saved there. A failed save leaves all versions in place.
+                        if self.save_settings() && self.settings.auto_prune() {
+                            let tx = self.tx.clone();
+                            let releases = self.game_releases().to_vec();
+                            let installed = tag.clone();
+                            std::thread::spawn(move || {
+                                let errors = backend::version_storage::prune_old_versions(
+                                    &releases, &installed,
+                                );
+                                let _ = tx.send(Msg::Pruned(errors));
+                            });
+                        }
+                    }
+                    Err(e) => self.install_error = Some((tag, e)),
+                }
+                if let Some((intent, _)) =
+                    resume.filter(|(_, wanted)| self.selected() == Some(wanted))
+                {
+                    self.resume_play(intent);
+                }
+                if let Some(next) = self.install_next.take() {
+                    self.install_for_instance(next);
+                }
+            }
+            Msg::ConfirmUnreviewed(found, reply) => {
+                let pending = crate::github_mods_page::PendingUnreviewed::new(found, reply);
+                if let Some(earlier) = self.ui.sheets.unreviewed.replace(pending) {
+                    earlier.refuse();
+                }
+            }
+            _ => unreachable!("not an install message"),
+        }
+    }
+
     /// Installs `release` for an instance made or edited to play it, after the install running
     /// now if there is one.
     pub(crate) fn install_for_instance(&mut self, release: Release) {
