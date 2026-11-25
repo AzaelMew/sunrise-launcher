@@ -7,12 +7,12 @@ fn native_build_catalog_requires_a_folder_and_refuses_build_or_sync_options() {
     };
     assert!(matches!(
         parse(&["mod", "--trust-native-code"]).unwrap().command,
-        Some(Cmd::NativeBuild {
+        Some(Cmd::NativeBuild(native::NativeBuildArgs {
             catalog: true,
             sync_internals: false,
             folder: Some(_),
             ..
-        })
+        }))
     ));
     assert!(parse(&[]).is_err());
     for args in [
