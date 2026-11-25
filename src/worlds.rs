@@ -180,6 +180,11 @@ pub fn list(home: &Path) -> Vec<World> {
             .cmp(&a.played)
             .then_with(|| a.world.folder.cmp(&b.world.folder))
     });
+    // A world made since the launcher started is hidden from its log as well.
+    for scanned in &worlds {
+        crate::launcher_log::hide(scanned.world.folder.as_str());
+        crate::launcher_log::hide(scanned.world.name.as_str());
+    }
     worlds.into_iter().map(|s| s.world).collect()
 }
 
