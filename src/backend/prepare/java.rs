@@ -1,5 +1,8 @@
 //! The Java a preparation runs with: found on this computer or Minecraft's own, downloaded.
-use super::*;
+use crate::backend::{data_dir, fetch_bytes_cancellable, read_json};
+use crate::{mojang, sources};
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
 /// The Java home for this version: a runtime for precompiled exporters, a JDK for older
 /// preparers or changed sources. Forward the selection to external preparers too.

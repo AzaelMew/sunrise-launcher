@@ -3,11 +3,9 @@
 //! block; the GUI runs them on threads and reads their messages.
 use crate::backend::lock::recover;
 use crate::process::child::Child;
-use crate::{account, managed_play::Resources, mojang, sources};
 use std::fs;
-use std::io::{BufRead, BufReader, Read, Write};
-use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::path::Path;
+use std::process::Command;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 

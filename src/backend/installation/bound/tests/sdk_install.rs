@@ -3,6 +3,8 @@ use crate::native_mods::sdk_cache::{
     tests::{index_of, publish, COMMIT},
     BASE_VAR,
 };
+use std::io::Write;
+use std::path::PathBuf;
 use sunrise_launcher_release_verify::{sha256_hex, SigningKey};
 use sunrise_launcher_sdk::{Asset, Kind, Side};
 

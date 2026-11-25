@@ -1,5 +1,11 @@
 //! Installing builds: the versions folder, downloading, checking and unpacking an archive, and removing.
-use super::*;
+use super::{
+    compare_game_versions, data_dir, dev_date, forget_prepared, get, in_use, installation,
+    reuse_prepared_for_cancellable, InstallOutcome, Release,
+};
+use std::fs;
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
 
 pub(crate) fn versions_dir() -> PathBuf {
     data_dir().join("versions")
