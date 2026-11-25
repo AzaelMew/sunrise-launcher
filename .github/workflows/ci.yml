@@ -279,13 +279,90 @@ jobs:
         if: always()
         run: cat "$home/native/build.log" 2>/dev/null | tail -200 || true
 
+  # A real native mod build on an Apple-chip Mac: the launcher hands the build's files over only once it
+  # has proved every worker the tool started has exited (src/process/compiler_session.rs).
+  macos-native-build:
+    needs: route
+    if: needs.route.outputs.full == 'true'
+    runs-on: macos-15
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    env:
+      SUNRISE_LAUNCHER_NO_SELF_UPDATE: "1"
+      BUILD: dev-2026-11-25-bdad86d
+      SUNRISE_GITHUB_TOKEN: ${{ needs.route.outputs.trusted == 'true' && github.token || '' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.route.outputs.sha }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master, 2026-11-15
+        with:
+          toolchain: ${{ needs.route.outputs.rust }}
+      - run: cargo build --locked --bin sunrise-launcher
+      - name: The build, on a Dev profile
+        run: |
+          home="$RUNNER_TEMP/home/launcher"
+          for name in SUNRISE_LAUNCHER_HOME SUNRISE_HOME XDG_DATA_HOME XDG_CONFIG_HOME SUNRISE_LAUNCHER_TRASH SUNRISE_LAUNCHER_CLIPBOARD SUNRISE_LAUNCHER_DESKTOP; do
+            export "$name=$RUNNER_TEMP/home/$name"
+            echo "$name=$RUNNER_TEMP/home/$name" >> "$GITHUB_ENV"
+          done
+          export SUNRISE_LAUNCHER_HOME="$home"
+          { echo "SUNRISE_LAUNCHER_HOME=$home"; echo "home=$home"; } >> "$GITHUB_ENV"
+          target/debug/sunrise-launcher install "$BUILD"
+          echo '{"instances":{"sunrise":{"channel":"dev"}}}' > "$home/instances.json"
+          # Mojang's files never reach CI: only the preparation's manifest and stamp, which a
+          # native build checks for, and no game starts here.
+          version=$(ls -d "$home"/versions/*/ | head -1)
+          echo "version=$version" | tee -a "$GITHUB_ENV"
+          output=$(sed -n 's/^pub const OUTPUT_VERSION: u32 = \([0-9]*\);$/\1/p' "$version/crates/sunrise-prepare/src/lib.rs")
+          [[ -n "$output" ]] || { echo "::error::no OUTPUT_VERSION in $version/crates/sunrise-prepare/src/lib.rs"; exit 1; }
+          resources="$version/.local/sunrise-client/26.3"
+          mkdir -p "$resources"
+          echo '{}' > "$resources/sunrise-resources.json"
+          echo "{\"output_version\":$output}" > "$resources/sunrise-prepare.json"
+      - name: Build an API-only mod with a crates.io dependency
+        run: |
+          mods="$RUNNER_TEMP/mods"
+          mkdir -p "$mods"
+          # The Windows leg's mod without its mixin row: Cargo still runs several compilers for it.
+          cp -r tools/ci/long-path-mod "$mods/apionly"
+          rm -r "$mods/apionly/src/mixins"
+          COMMIT=$(grep -o '"commit": *"[0-9a-f]\{40\}"' "$version/sunrise-release.json" | grep -o '[0-9a-f]\{40\}')
+          [[ -n "$COMMIT" ]] || { echo "::error::no commit in $version/sunrise-release.json"; exit 1; }
+          python3 - "$mods/apionly" "$COMMIT" <<'EOF'
+          import pathlib, re, sys
+          mod, commit = pathlib.Path(sys.argv[1]), sys.argv[2]
+          toml = (mod / "sunrise-mod.toml").read_text().split("\n# Replaces")[0]
+          toml = re.sub(r'^id = "wpm"', 'id = "apionly"', toml, flags=re.M)
+          toml = re.sub(r'^sunrise = "[^"]*"', f'sunrise = "{commit}"', toml, flags=re.M)
+          (mod / "sunrise-mod.toml").write_text(toml)
+          cargo = (mod / "Cargo.toml").read_text().replace('name = "mod-wpm"', 'name = "mod-apionly"')
+          (mod / "Cargo.toml").write_text(cargo)
+          EOF
+          cat "$mods/apionly/sunrise-mod.toml"
+          target/debug/sunrise-launcher native-lock "$mods/apionly"
+          status=0
+          target/debug/sunrise-launcher native-build "$mods" --trust-native-code 2>&1 | tee "$RUNNER_TEMP/native-build.out" || status=$?
+          ! grep -q "couldn't prove all native build workers stopped" "$RUNNER_TEMP/native-build.out" ||
+            { echo "::error::the launcher couldn't prove the build's workers stopped"; exit 1; }
+          [[ "$status" == 0 ]] || { echo "::error::native-build exited $status"; exit 1; }
+          grep -q "built and selected for its profile" "$RUNNER_TEMP/native-build.out" ||
+            { echo "::error::the build was not installed"; exit 1; }
+          ls -d "$home"/versions/native-*
+      - name: The build log
+        if: always()
+        run: cat "$home/native/build.log" 2>/dev/null | tail -200 || true
+
   # The one check branch protection requires, on the commit it tested: a fork's pull request names it otherwise until a maintainer's dispatch posts `build`, and a dispatch's own run (on main) never names it.
   build:
     name: >-
       ${{ inputs.pr && format('checks of PR #{0}', inputs.pr) ||
       github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository &&
       'format (full checks wait for a maintainer)' || 'build' }}
-    needs: [route, format, check, windows-native-build]
+    needs: [route, format, check, windows-native-build, macos-native-build]
     if: always()
     runs-on: ubuntu-latest
     permissions: {}
@@ -297,6 +374,7 @@ jobs:
           FORMAT: ${{ needs.format.result }}
           CHECK: ${{ needs.check.result }}
           WINDOWS_BUILD: ${{ needs.windows-native-build.result }}
+          MACOS_BUILD: ${{ needs.macos-native-build.result }}
           PR: ${{ github.event.pull_request.number }}
         run: |
           [[ "$ROUTE" == success ]] || { echo "::error::routing $ROUTE"; exit 1; }
@@ -304,6 +382,7 @@ jobs:
           if [[ "$FULL" == true ]]; then
             [[ "$CHECK" == success ]] || { echo "::error::systems $CHECK"; exit 1; }
             [[ "$WINDOWS_BUILD" == success ]] || { echo "::error::Windows native build $WINDOWS_BUILD"; exit 1; }
+            [[ "$MACOS_BUILD" == success ]] || { echo "::error::macOS native build $MACOS_BUILD"; exit 1; }
           elif [[ "$FULL" == false ]]; then
             echo "::notice::A fork's pull request: a maintainer runs the full checks with gh workflow run ci.yml -R $GITHUB_REPOSITORY --ref main -f pr=$PR"
           else
