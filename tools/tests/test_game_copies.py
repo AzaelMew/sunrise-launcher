@@ -258,6 +258,18 @@ SAME_ITEMS = (
         "pub const WINDOWS_X64_TARGET", "pub const SCRUBBED", "const IOPRIO_WHO_PROCESS", "const LOW_IO",
     )),
     ("crates/sunrise-mod-surface/src/uses.rs", "src/native_mods/uses.rs", (), ("pub enum ItemKind",)),
+    # The launcher reads a project's own manifest too, which may leave out what the mod tool fills in.
+    ("crates/sunrise-mod-package/src/manifest.rs", "crates/smod/src/manifest.rs", (
+        ('#[serde(deserialize_with = "version_from_str")] pub version: semver::Version,', "pub version: String,"),
+        ('#[serde(default, deserialize_with = "policy_map")]', "#[serde(default)]"),
+        ('#[serde(default, deserialize_with = "load_before_ids")]', "#[serde(default)]"),
+        ("pub dependencies: BTreeMap<", "pub dependencies: std::collections::BTreeMap<"),
+        ("pub incompatible: BTreeMap<", "pub incompatible: std::collections::BTreeMap<"),
+        ("pub discouraged: BTreeMap<", "pub discouraged: std::collections::BTreeMap<"),
+    ), ("pub const API", "fn api", "pub struct Manifest", "pub struct Native", "pub enum Capability")),
+    ("crates/sunrise-mod-package/src/index/registry/builds.rs", "crates/smod/src/index/library_identity.rs", (), (
+        "pub struct LibraryIdentity", "impl<'a> LibraryIdentity", "pub fn library_identity",
+    )),
 )
 
 

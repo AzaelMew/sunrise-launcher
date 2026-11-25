@@ -308,6 +308,129 @@ fn an_sdk_can_only_supply_its_own_files_and_the_exact_requested_mods() {
     }
 }
 
+/// Since sunrise#5136 a library's identity also names its mod's files and, for each native mod it
+/// links, the SHA-256 of the identity that mod's library was built with.
+#[test]
+fn a_library_names_the_identities_of_the_mods_it_links() {
+    use sunrise_launcher_smod::index::library_identity::library_identity;
+    let dir = tempfile::tempdir().unwrap();
+    let stage = Workspace::new(dir.path()).unwrap();
+    let package = Package::at(&stage.path().join("package"));
+    let rust = crate::rust_toolchain::Toolchain {
+        dir: dir.path().join("rust"),
+        host: crate::rust_toolchain::hosts().first().unwrap(),
+    };
+    let work = stage.work();
+    let bin = package.runtime.join("bin");
+    fs::create_dir_all(&work).unwrap();
+    fs::create_dir_all(&bin).unwrap();
+    let binary = bin.join(crate::backend::CLIENT);
+    fs::write(&binary, b"bytes").unwrap();
+    let rust_version = crate::rust_toolchain::VERSION;
+    // As the tool stamps them: `base` first, then `dependent`, which links it.
+    let base = format!(
+        "{} unwind",
+        library_identity(
+            ["fixture-build", "base", "1.0.0", rust_version],
+            "s1+g1",
+            []
+        )
+    );
+    let dependent = |base: &str| {
+        format!(
+            "{} unwind",
+            library_identity(
+                ["fixture-build", "dependent", "2.0.0", rust_version],
+                "s2",
+                [("base", base)]
+            )
+        )
+    };
+    let mut built = tool::Built {
+        route: tool::CheckRoute::PrebuiltApi,
+        binary,
+        libraries: Vec::new(),
+        mods: vec!["base".into(), "dependent".into()],
+        records: Vec::new(),
+        internals: Default::default(),
+    };
+    for (id, identity) in [("base", base.clone()), ("dependent", dependent(&base))] {
+        let lib = work.join(format!("{id}.dll"));
+        fs::write(&lib, id.as_bytes()).unwrap();
+        built.records.push(tool::LibraryRecord {
+            file: format!("{id}.dll"),
+            sha256: sha256_file(&lib).unwrap(),
+            kind: tool::LibraryKind::Mod,
+            mod_id: id.into(),
+            identity,
+        });
+        built.libraries.push(lib);
+    }
+    let manifest = |id: &str, version: &str| {
+        Manifest::parse(&format!(
+            "id = '{id}'\nname = 'M'\nversion = '{version}'\n[native]\ngame = '26.3'\nsunrise = 'a123456789012345678901234567890123456789'\n"
+        ))
+        .unwrap()
+    };
+    let manifests = [manifest("base", "1.0.0"), manifest("dependent", "2.0.0")];
+    let verify = |built: &tool::Built| {
+        stage.verify_outputs(
+            built,
+            &package,
+            &rust,
+            Some(tool::CheckRoute::PrebuiltApi),
+            "fixture-build",
+            manifests.iter(),
+        )
+    };
+    assert!(verify(&built).is_ok());
+    let mut refused = |identity: String, why: &str| {
+        let kept = std::mem::replace(&mut built.records[1].identity, identity);
+        assert!(verify(&built).is_err(), "{why}");
+        built.records[1].identity = kept;
+    };
+    refused(
+        dependent(&base.replace("s1+g1", "s1b+g1")),
+        "built against another build of base",
+    );
+    refused(
+        dependent(&base).replace("base=", "absent="),
+        "links a mod this build did not make",
+    );
+    refused(
+        dependent(&base).replace(" base=", " base"),
+        "a malformed dependency list",
+    );
+    refused(
+        dependent(&base).replace(" unwind", " abort"),
+        "another panic strategy",
+    );
+    refused(
+        dependent(&base).replace("fixture-build", "other-build"),
+        "another game build",
+    );
+    refused(
+        dependent(&base).replace(" 2.0.0 ", " 2.0.1 "),
+        "another mod version",
+    );
+    refused(
+        format!(
+            "{} unwind extra",
+            dependent(&base).trim_end_matches(" unwind")
+        ),
+        "an eighth field",
+    );
+    // An SDK from before sunrise#5136 stamps the five-field identity.
+    for (row, (id, version)) in built
+        .records
+        .iter_mut()
+        .zip([("base", "1.0.0"), ("dependent", "2.0.0")])
+    {
+        row.identity = format!("fixture-build {id} {version} {rust_version} unwind");
+    }
+    assert!(verify(&built).is_ok());
+}
+
 #[test]
 fn a_build_too_deep_for_windows_is_found_before_it_starts() {
     let home = |user: &str| {
