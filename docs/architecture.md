@@ -15,7 +15,7 @@ Names in this table are relative to [`src/`](../src/). The binary and the shared
 | UI pages | `home.rs`, `home_mods.rs`, `instances_page.rs`, `instance_icons.rs`, `glass_instance.rs`, `profile_dialog.rs`, `launch_page.rs` | Show Home and the selected profile, manage profile dialogs and icons, and edit per-instance launch options. |
 | UI pages | `worlds_page.rs`, `datapacks_page.rs`, `packs_page.rs`, `screenshots_page.rs`, `console_page.rs` | Display an instance's worlds, packs, screenshots, and game output. |
 | UI pages | `settings.rs`, `blocks_settings.rs`, `location_page.rs`, `glass_storage.rs`, `themes_page.rs`, `language_page.rs`, `collection.rs` | Draw settings, storage and relocation controls, appearance, language, and data collection. |
-| UI pages | `glass_versions.rs`, `glass_sheet.rs`, `glass_toast.rs`, `sheets.rs`, `setup_page.rs` | Draw versions, instance settings, toasts, shared dialogs, and Windows setup. |
+| UI pages | `glass_sheet.rs`, `glass_toast.rs`, `sheets.rs`, `setup_page.rs` | Draw instance settings, toasts, shared dialogs, and Windows setup. |
 | Backend | `lib.rs`, `backend.rs`, `launcher_setup.rs`, `launcher_messages.rs`, `launcher_play.rs`, `wake.rs` | Connect shared operations to the desktop's startup, task handlers, and message pump. |
 | Backend | `github.rs`, `nightly.rs`, `signed.rs`, `build_import.rs`, `developer_install.rs` | Discover releases, verify downloads, and install imported or checkout builds. |
 | Backend | `downloads.rs`, `download_retry.rs`, `mojang.rs`, `mojang_tests.rs`, `sources.rs`, `sources_tests.rs`, `preparer.rs`, `java.rs`, `jdk.rs` | Find or fetch Minecraft files and Java, run the preparer, and test the file and download paths. |
@@ -65,7 +65,7 @@ Names in this table are relative to [`src/`](../src/). The binary and the shared
 | `crates/mcp/`, `crates/mcp/src/` | Shared MCP protocol and stdio transport. |
 | `crates/nbt/`, `crates/nbt/src/` | Java Edition NBT used for files such as `level.dat` and `servers.dat`. |
 | `crates/release-verify/`, `crates/release-verify/src/`, `crates/release-verify/src/bin/`, `crates/release-verify/keys/` | Release signature verification, trust keys, and the signing utility. |
-| `crates/release-verify/tests/`, `crates/release-verify/tests/signed/`, `crates/release-verify/tests/signed/native-build/`, `crates/release-verify/tests/signed/nightly/`, `crates/release-verify/tests/signed/release/`, `crates/release-verify/tests/signed/sdk/`, `crates/release-verify/tests/signed/snapshot/` | Release signing and verification tests and channel-specific fixtures. |
+| `crates/release-verify/tests/`, `crates/release-verify/tests/signed/`, `crates/release-verify/tests/signed/dev/`, `crates/release-verify/tests/signed/native-build/`, `crates/release-verify/tests/signed/nightly/`, `crates/release-verify/tests/signed/release/`, `crates/release-verify/tests/signed/sdk/` | Release signing and verification tests and channel-specific fixtures. |
 | `crates/resolver/`, `crates/resolver/src/` | Minecraft server SRV resolution. |
 | `crates/sdk/`, `crates/sdk/src/`, `crates/sdk/src/sdk/` | Signed SDK index and verified SDK slice unpacking. |
 | `crates/shader-api/`, `crates/shader-api/src/` | Sunrise shader pack format and validation. |
