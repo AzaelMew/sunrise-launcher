@@ -48,6 +48,11 @@ pub enum PrepareError {
         path: PathBuf,
         reason: String,
     },
+    /// Modrinth's exact-hash lookup returned no file for this jar.
+    NoLongerOnModrinth {
+        jar: Box<JarRef>,
+        path: PathBuf,
+    },
     HashMismatch {
         path: PathBuf,
         expected: String,
@@ -76,6 +81,10 @@ impl fmt::Display for PrepareError {
             Self::Download { jar, path, reason } => f.write_str(&trf(
                 "Jar {id} {version}: {reason}. Put the original file with this exact SHA-512 at {path}, then retry.",
                 &[("id", jar.id()), ("version", jar.version()), ("reason", reason), ("path", &path.display().to_string())],
+            )),
+            Self::NoLongerOnModrinth { jar, path } => f.write_str(&trf(
+                "The original file {id} {version} is no longer on Modrinth. Put the original file with this exact SHA-512 at {path} to use it.",
+                &[("id", jar.id()), ("version", jar.version()), ("path", &path.display().to_string())],
             )),
             Self::HashMismatch { path, expected, actual } => f.write_str(&trf(
                 "SHA-512 mismatch at {path}: expected {expected}, got {actual}. Replace this cache entry with the exact original file, or remove it and retry with --allow-jar-downloads.",
@@ -131,6 +140,42 @@ pub fn prepare(
         download::jar_urls,
         download::download_jar,
     )
+}
+
+/// Fetches every jar of `jars` into the cache for an install or update of registry mods, which
+/// asks nothing: each listing mod is a reviewed registry release. A jar Modrinth no longer has
+/// fails with [`PrepareError::NoLongerOnModrinth`].
+pub fn fetch_listed(home: &Path, jars: &[JarRequirement]) -> Result<(), PrepareError> {
+    fetch_listed_with(home, jars, download::jar_urls, download::download_jar)
+}
+
+fn fetch_listed_with(
+    home: &Path,
+    jars: &[JarRequirement],
+    lookup: impl FnMut(&[&JarRef]) -> Result<BTreeMap<String, String>, String>,
+    download: impl FnMut(&str, &JarRef, &Path) -> Result<(), String>,
+) -> Result<(), PrepareError> {
+    let owners: BTreeSet<String> = jars
+        .iter()
+        .flat_map(|requirement| requirement.owners.iter().cloned())
+        .collect();
+    prepare_with(home, jars, &owners, Permission::Refuse, lookup, download)
+}
+
+/// Deletes from the cache each jar in `removed` that no jar in `kept` names. A cache file that
+/// `removed` does not list is left alone.
+pub fn forget(home: &Path, removed: &[JarRef], kept: &[JarRef]) -> io::Result<()> {
+    let cache = home.join("jars");
+    for jar in removed {
+        if kept.iter().any(|other| other.sha512() == jar.sha512()) {
+            continue;
+        }
+        match fs::remove_file(jar.cache_path(&cache)) {
+            Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 fn prepare_with(
@@ -219,10 +264,9 @@ fn prepare_with(
         .iter()
         .map(|jar| {
             urls.get(jar.sha512())
-                .ok_or_else(|| PrepareError::Download {
+                .ok_or_else(|| PrepareError::NoLongerOnModrinth {
                     jar: Box::new((*jar).clone()),
                     path: jar.cache_path(&cache),
-                    reason: tr("no exact file on Modrinth").into(),
                 })
         })
         .collect::<Result<_, _>>()?;

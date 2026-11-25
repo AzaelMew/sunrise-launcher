@@ -216,7 +216,7 @@ fn one_unresolved_hash_refuses_the_whole_batch_before_any_download() {
         |_, _, _| panic!("an incomplete lookup must not download any file"),
     )
     .unwrap_err();
-    let PrepareError::Download { jar, path, .. } = error else {
+    let PrepareError::NoLongerOnModrinth { jar, path } = error else {
         panic!("the unresolved file must be named");
     };
     assert_eq!(*jar, second);
@@ -362,7 +362,7 @@ fn declined_consent_and_missing_or_failed_lookup_never_download() {
         let expected = if result.is_err() {
             "transport failed"
         } else {
-            "no exact file"
+            "is no longer on Modrinth"
         };
         let error = prepare_with(
             &home.0,
@@ -376,12 +376,12 @@ fn declined_consent_and_missing_or_failed_lookup_never_download() {
             |_, _, _| panic!("lookup failed"),
         )
         .unwrap_err();
-        let reason = match (&result, error) {
-            (Ok(_), PrepareError::Download { reason, .. })
-            | (Err(_), PrepareError::Lookup { reason, .. }) => reason,
+        let text = match (&result, &error) {
+            (Ok(_), PrepareError::NoLongerOnModrinth { .. })
+            | (Err(_), PrepareError::Lookup { .. }) => error.to_string(),
             _ => panic!("metadata and per-file lookup failures must remain distinct"),
         };
-        assert!(reason.contains(expected));
+        assert!(text.contains(expected));
     }
     assert!(!home.0.join("jars").exists());
 }
@@ -455,6 +455,73 @@ fn failed_metadata_lookup_names_every_missing_jar_but_not_cache_hits() {
             assert!(!cache.exists());
         }
     }
+}
+
+#[test]
+fn install_fetches_a_listed_jar_into_the_cache() {
+    let home = Scratch::new();
+    let (jar, bytes) = source(b"listed by the installed mod");
+    let cache_file = home.0.join("jars").join(format!("{}.jar", jar.sha512()));
+    fetch_listed_with(
+        &home.0,
+        &requirements(std::slice::from_ref(&jar)),
+        |missing| {
+            assert_eq!(missing, [&jar]);
+            Ok(BTreeMap::from([(jar.sha512().into(), "exact.jar".into())]))
+        },
+        |url, wanted, dest| {
+            assert_eq!(url, "exact.jar");
+            assert_eq!(wanted, &jar);
+            fs::write(dest, &bytes).map_err(|error| error.to_string())
+        },
+    )
+    .unwrap();
+    assert_eq!(fs::read(cache_file).unwrap(), bytes);
+}
+
+#[test]
+fn install_of_a_jar_modrinth_no_longer_has_fails_naming_it_and_downloads_nothing() {
+    let home = Scratch::new();
+    let (gone, _) = source(b"removed from Modrinth");
+    let error = fetch_listed_with(
+        &home.0,
+        &requirements(std::slice::from_ref(&gone)),
+        |_| Ok(BTreeMap::new()),
+        |_, _, _| panic!("a jar without a file must not download"),
+    )
+    .unwrap_err();
+    let PrepareError::NoLongerOnModrinth { jar, .. } = &error else {
+        panic!("a missing exact file has its own error");
+    };
+    assert_eq!(**jar, gone);
+    let text = error.to_string();
+    assert!(text.contains("is no longer on Modrinth"));
+    assert!(text.contains("example 1"));
+    assert!(!home.0.join("jars").exists());
+}
+
+#[test]
+fn forgetting_removed_jars_keeps_one_a_remaining_mod_lists_and_unrelated_files() {
+    let home = Scratch::new();
+    let cache = home.0.join("jars");
+    fs::create_dir_all(&cache).unwrap();
+    let (only_removed, _) = source(b"only the removed mod lists it");
+    let (shared, _) = source(b"another profile's mod lists it too");
+    let (unrelated, _) = source(b"no removed mod listed it");
+    for jar in [&only_removed, &shared, &unrelated] {
+        fs::write(jar.cache_path(&cache), b"cached").unwrap();
+    }
+    forget(
+        &home.0,
+        &[only_removed.clone(), shared.clone()],
+        std::slice::from_ref(&shared),
+    )
+    .unwrap();
+    assert!(!only_removed.cache_path(&cache).exists());
+    assert!(shared.cache_path(&cache).exists());
+    assert!(unrelated.cache_path(&cache).exists());
+    // A jar the cache never had is not an error.
+    forget(&home.0, &[only_removed], &[]).unwrap();
 }
 
 #[test]
