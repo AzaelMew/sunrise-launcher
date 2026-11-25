@@ -12,6 +12,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(windows)]
+use crate::windows_runtime::wide;
+
 type Result<T> = std::result::Result<T, String>;
 
 mod root_leases;
@@ -801,12 +804,6 @@ pub(crate) fn sync_dir(path: &Path) -> Result<()> {
 #[cfg(not(windows))]
 fn atomic_replace(from: &Path, to: &Path) -> Result<()> {
     fs::rename(from, to).map_err(|e| problem(to, e))
-}
-
-#[cfg(windows)]
-fn wide(path: &Path) -> Vec<u16> {
-    use std::os::windows::ffi::OsStrExt;
-    path.as_os_str().encode_wide().chain([0]).collect()
 }
 
 #[cfg(windows)]
