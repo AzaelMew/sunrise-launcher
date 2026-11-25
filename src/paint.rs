@@ -11,8 +11,10 @@
 //! Every `u32` is an opaque `0xRRGGBB`, so a field, a menu, a selection or a tooltip reads on
 //! its own, whatever is behind it. Only the plates are see-through: [`Palette::card`] and
 //! [`Palette::chrome_plate`] take the scene or photo's tint. Automatic opacity guards against
-//! the theme's sky and stays solid over a photo. An explicit opacity fits ink against the worst
-//! possible backdrop instead. Without scenery the plates stay solid.
+//! the theme's sky and stays solid over a photo. An explicit opacity is the player's, down to 0%:
+//! it is drawn as chosen, and the ink is fitted against the worst possible backdrop as far as
+//! that plate allows, so a thin plate over a bright picture may not read. Without scenery the
+//! plates stay solid.
 use crate::{settings::HomePhoto, theme::Theme};
 use gpui::{rgb, Hsla};
 use std::cell::Cell;
@@ -328,20 +330,19 @@ impl Inputs {
         // Solid fills blend encoded sRGB (`over`); white and black bound all possible backdrop
         // pixels, including scenery. Use that bound rather than trusting the picture's wash.
         let backdrop = if lighter { 0xffffff } else { 0 };
-        let ink_end = if lighter { 1. } else { 0. };
         let custom = if let Plates::Custom(percent) = plates {
-            // An installed local theme can need more opacity than any built-in palette does.
-            (percent..=100).find_map(|percent| {
-                let alpha = f32::from(percent) / 100.;
-                let card = luminance(over(card_color, alpha, backdrop));
-                let chrome = luminance(over(chrome, alpha, backdrop));
-                let worst = if lighter {
-                    card.max(chrome)
-                } else {
-                    card.min(chrome)
-                };
-                reads_over(ink_end, worst, lighter, TEXT).then_some((alpha, worst))
-            })
+            // The player's opacity is drawn as chosen. Where no ink can read over the worst
+            // backdrop under a plate that thin, `fit` takes the inks to their end (white or
+            // black): the most any text can do there.
+            let alpha = f32::from(percent) / 100.;
+            let card = luminance(over(card_color, alpha, backdrop));
+            let chrome = luminance(over(chrome, alpha, backdrop));
+            let worst = if lighter {
+                card.max(chrome)
+            } else {
+                card.min(chrome)
+            };
+            Some((alpha, worst))
         } else {
             None
         };
@@ -419,7 +420,7 @@ impl Inputs {
             shade_alpha,
         };
 
-        // Keep the legacy automatic path unchanged. An unsatisfiable local override stays solid.
+        // Keep the legacy automatic path unchanged.
         let alpha = if let Some((alpha, _)) = custom {
             alpha
         } else if plates == Plates::Automatic {
