@@ -13,6 +13,7 @@ mod launcher_play;
 mod launcher_render;
 mod launcher_setup;
 mod launcher_update;
+mod logs_panel;
 pub(crate) use widgets::*;
 mod backdrop;
 mod blocks;

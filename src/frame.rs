@@ -57,6 +57,8 @@ pub(super) struct State {
     pub sheets: crate::sheets::SheetsState,
     pub settings: crate::settings::SettingsView,
     pub cat: crate::cat::CatState,
+    /// The Logs panel: open or not, its tab and the lines it has read.
+    pub logs: crate::logs_panel::LogsPanel,
     pub last_server: Option<Page>,
     pub after_install: Option<(crate::launcher_play::PlayIntent, String)>,
     /// A Play (including a destination) that explicitly asked for the sign-in now under way.
@@ -892,6 +894,7 @@ impl Launcher {
                         this.instance_escape();
                     }
                     "escape" if this.ui.page == Page::Hosting && this.hosting_escape() => {}
+                    "escape" if this.close_logs() => {}
                     _ => return,
                 }
                 cx.stop_propagation();
@@ -919,6 +922,7 @@ impl Launcher {
                             .child(pane),
                     ),
             );
+        frame = frame.children(self.logs_layer(window, cx));
         // What lies over the page, bottom to top. The top one has the keyboard (`modal`).
         self.versions_focus(window);
         let create = (page == Page::Hosting)
