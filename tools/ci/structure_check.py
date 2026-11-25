@@ -4,6 +4,7 @@ Both revisions are read as git objects, so neither needs a checkout. There is no
 the baseline, and a pull request that lowers a count needs nothing extra.
 """
 import argparse
+import posixpath
 import re
 import subprocess
 import sys
@@ -13,7 +14,15 @@ LONG_FILE = 1000
 
 PATH_ATTRIBUTE = re.compile(r"#\[\s*path\s*=")
 ALLOW = re.compile(r"#!?\[\s*(?:cfg_attr\s*\(.*?,\s*)?allow\s*\(([^()]*)\)")
-CFG_TEST = re.compile(r"#\[\s*cfg\s*\(\s*test\s*\)\s*\]")
+CFG_TEST = re.compile(r"^[ \t]*#\[\s*cfg\s*\(\s*test\s*\)\s*\]", re.M)
+# `#[cfg(test)]`, any further attributes, then `mod name;` or `mod name {`, at the start of a line.
+TEST_MODULE = re.compile(
+    r"^[ \t]*#\[\s*cfg\s*\(\s*test\s*\)\s*\]((?:\s*#\[[^\]]*\])*)\s*(?:pub(?:\s*\([^)]*\))?\s+)?mod\s+(\w+)\s*([;{])",
+    re.M,
+)
+# Any `mod name;` declaration with its attributes, at the start of a line.
+MODULE_FILE = re.compile(r"^[ \t]*((?:#\[[^\]]*\]\s*)*)(?:pub(?:\s*\([^)]*\))?\s+)?mod\s+(\w+)\s*;", re.M)
+PATH_VALUE = re.compile(r'#\[\s*path\s*=\s*"([^"]+)"\s*\]')
 FN = re.compile(r"\bfn\s+([A-Za-z_][A-Za-z0-9_]*)")
 
 LABELS = {
@@ -62,6 +71,7 @@ def blobs(ids: list[str]) -> list[str]:
 
 
 def is_test_file(path: str) -> bool:
+    """A test file by its name or folder."""
     parts = path.split("/")
     name = parts[-1]
     return (
@@ -72,12 +82,66 @@ def is_test_file(path: str) -> bool:
     )
 
 
-def non_test_code(path: str, text: str) -> str:
-    """The part of a file that counts as non-test code: none of a test file, and nothing from the first #[cfg(test)]."""
-    if is_test_file(path):
-        return ""
-    found = CFG_TEST.search(text)
-    return text[:found.start()] if found else text
+def module_paths(declaring: str, name: str, attributes: str) -> list[str]:
+    """Where `mod name;` in `declaring` may live: its `#[path]`, else `name.rs` or `name/mod.rs` beside it."""
+    directory = posixpath.dirname(declaring)
+    given = PATH_VALUE.search(attributes)
+    if given:
+        return [posixpath.normpath(posixpath.join(directory, given.group(1)))]
+    stem = posixpath.basename(declaring).removesuffix(".rs")
+    folder = directory if stem in ("lib", "main", "mod") else posixpath.join(directory, stem)
+    return [posixpath.join(folder, f"{name}.rs"), posixpath.join(folder, name, "mod.rs")]
+
+
+def test_files(texts: dict[str, str]) -> set[str]:
+    """Test files by name, files a `#[cfg(test)] mod name;` pulls in, and every module those declare in turn."""
+    found = {path for path in texts if is_test_file(path)}
+    waiting = []
+    for path, text in texts.items():
+        for attributes, name, opens in TEST_MODULE.findall(text):
+            if opens == ";":
+                waiting += module_paths(path, name, attributes)
+    while waiting:
+        path = waiting.pop()
+        if path in texts and path not in found:
+            found.add(path)
+            waiting += [child for attributes, name in MODULE_FILE.findall(texts[path])
+                        for child in module_paths(path, name, attributes)]
+    return found
+
+
+def item_end(text: str, at: int) -> int:
+    """Where the item starting at `at` ends: after its first `;` or its outermost `{ … }`."""
+    depth = 0
+    while at < len(text):
+        char = text[at]
+        if char in "([{":
+            depth += 1
+        elif char in ")]}":
+            depth -= 1
+            if char == "}" and depth == 0:
+                return at + 1
+        elif char == ";" and depth == 0:
+            return at + 1
+        at += 1
+    return at
+
+
+def non_test_code(text: str) -> str:
+    """A non-test file's non-test code: none of its `#[cfg(test)]` items, and nothing from its first inline
+    `#[cfg(test)] mod name { … }` on. A `#[cfg(test)] mod name;` declaration's file is a test file ([`test_files`]).
+    """
+    kept, at = [], 0
+    for found in CFG_TEST.finditer(text):
+        if found.start() < at:
+            continue
+        kept.append(text[at:found.start()])
+        module = TEST_MODULE.match(text, found.start())
+        if module and module.group(3) == "{":
+            return "".join(kept)
+        at = item_end(text, found.end())
+    kept.append(text[at:])
+    return "".join(kept)
 
 
 def string_errors(text: str) -> int:
@@ -121,15 +185,17 @@ def measure(rev: str) -> dict[str, int]:
     counts = dict.fromkeys(LABELS, 0)
     counts["src_files"] = sum(1 for _, path in files if path.startswith("src/") and path.count("/") == 1)
     counts["retired_names"] = sum(1 for _, path in files if has_retired_name(path))
+    texts = dict(zip((path for _, path in rust), blobs([blob for blob, _ in rust])))
+    tests = test_files(texts)
     functions = set()
-    for (_, path), text in zip(rust, blobs([blob for blob, _ in rust])):
+    for path, text in texts.items():
         counts["long_files"] += len(text.splitlines()) > LONG_FILE
         counts["path_attributes"] += len(PATH_ATTRIBUTE.findall(text))
         for lints in ALLOW.findall(text):
             for lint in (part.strip() for part in lints.split(",")):
                 counts["allow_dead_code"] += lint == "dead_code"
                 counts["allow_clippy"] += lint.startswith("clippy::")
-        code = non_test_code(path, text)
+        code = "" if path in tests else non_test_code(text)
         counts["unwraps"] += code.count(".unwrap()")
         counts["string_errors"] += string_errors(code)
         functions.update(FN.findall(text))
