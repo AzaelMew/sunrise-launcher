@@ -1890,7 +1890,8 @@ capabilities = ["registries"]
         );
         write("rust-toolchain.toml", "[toolchain]\nchannel='nightly'\n");
         // A name packing could not encode is left out, and is no bar.
-        #[cfg(unix)]
+        // macOS's file systems refuse a name that is not UTF-8, so only Linux can make one.
+        #[cfg(target_os = "linux")]
         {
             use std::os::unix::ffi::OsStrExt;
             let junk = folder.path().join("node_modules");
@@ -1903,8 +1904,6 @@ capabilities = ["registries"]
                 "",
             )
             .unwrap();
-            // On Unix a `\` is part of a file name, never a separator.
-            std::fs::write(folder.path().join("src").join("a\\b.rs"), "").unwrap();
             std::fs::write(
                 folder
                     .path()
@@ -1914,6 +1913,9 @@ capabilities = ["registries"]
             )
             .unwrap();
         }
+        // On Unix a `\` is part of a file name, never a separator.
+        #[cfg(unix)]
+        std::fs::write(folder.path().join("src").join("a\\b.rs"), "").unwrap();
 
         let bytes = Package::pack_directory(folder.path()).unwrap();
         let archive = folder.path().join("butterflies.smod");
