@@ -6398,6 +6398,7 @@ dependencies = [
  "sunrise-attestation",
  "sunrise-launcher-addresses",
  "sunrise-launcher-bench",
+ "sunrise-launcher-domain",
  "sunrise-launcher-friends",
  "sunrise-launcher-mcp",
  "sunrise-launcher-nbt",
@@ -6439,6 +6440,15 @@ dependencies = [
  "serde",
  "serde_json",
  "sunrise-launcher-system",
+]
+
+[[package]]
+name = "sunrise-launcher-domain"
+version = "0.1.0"
+dependencies = [
+ "semver",
+ "serde",
+ "sunrise-launcher-release-verify",
 ]
 
 [[package]]

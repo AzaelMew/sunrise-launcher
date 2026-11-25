@@ -3,6 +3,8 @@
 //! verification. Updating that channel is explicit; an exact profile pin remains exact.
 use crate::backend::{self, Release};
 use std::{fs, path::Path};
+pub use sunrise_launcher_domain::date_of;
+use sunrise_launcher_domain::nightly::is_date;
 use sunrise_launcher_release_verify::{is_nightly, NIGHTLY};
 
 /// The version a nightly installs as: `nightly-2026-10-28-0c02067`, from its title
@@ -21,12 +23,6 @@ pub fn version_of(release: &Release) -> String {
         Some(commit) => format!("{NIGHTLY}-{date}-{commit}"),
         None => format!("{NIGHTLY}-{date}"),
     }
-}
-
-/// The date of a nightly's version (`nightly-2026-10-28-0c02067`), or None for any other version.
-pub fn date_of(version: &str) -> Option<&str> {
-    let date = version.strip_prefix("nightly-")?.get(..10)?;
-    is_date(date).then_some(date)
 }
 
 /// The localized name of a dated Nightly, such as "Nightly · Nov 20".
@@ -369,17 +365,6 @@ pub fn short_commit(version: &str) -> String {
     } else {
         version.to_owned()
     }
-}
-
-fn is_date(text: &str) -> bool {
-    text.len() == 10
-        && text.chars().enumerate().all(|(i, c)| {
-            if i == 4 || i == 7 {
-                c == '-'
-            } else {
-                c.is_ascii_digit()
-            }
-        })
 }
 
 #[cfg(test)]

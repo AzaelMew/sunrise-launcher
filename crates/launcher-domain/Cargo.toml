@@ -1,0 +1,12 @@
+[package]
+name = "sunrise-launcher-domain"
+version = "0.1.0"
+edition = "2021"
+license = "PolyForm-Shield-1.0.0"
+description = "The launcher's pure types: release catalogue entries, their ordering, and the channels builds belong to. No filesystem, network, process or UI."
+publish = false
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+semver = "1"
+sunrise-launcher-release-verify = { path = "../release-verify" }
