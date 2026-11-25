@@ -44,7 +44,7 @@ impl Storage {
                             .rows
                             .iter_mut()
                             .find(|row| row.category == entry.category)
-                            .unwrap()
+                            .expect("the rows have one for every category")
                             .kept
                             .push(Kept {
                                 bytes,
@@ -123,7 +123,7 @@ impl Storage {
                         let row = rows
                             .iter_mut()
                             .find(|row| row.category == entry.category)
-                            .unwrap();
+                            .expect("the rows have one for every category");
                         row.kept.push(Kept {
                             bytes: trees[index].size(&mut HashSet::new()),
                             reason: native_mods::cache_error(error),
@@ -180,7 +180,7 @@ fn refused(entries: Vec<Entry>, rows: &mut [Row]) -> Result<(Vec<Entry>, Vec<Tre
             Err(error @ Error::Unsafe(_)) => rows
                 .iter_mut()
                 .find(|row| row.category == entry.category)
-                .unwrap()
+                .expect("the rows have one for every category")
                 .kept
                 .push(Kept {
                     bytes: 0,
