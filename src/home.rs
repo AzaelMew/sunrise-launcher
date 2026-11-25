@@ -634,7 +634,7 @@ impl Launcher {
         let base = version
             .as_deref()
             .filter(|t| native_mods::is_native(t))
-            .and_then(crate::glass_instance::native_base);
+            .and_then(crate::profile_builds::native_base);
         let build = version.as_ref().map_or_else(
             // Dev never falls back to another channel, so say it has nothing to play yet.
             || match instance.channel {

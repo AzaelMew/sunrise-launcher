@@ -12,7 +12,7 @@ Names in this table are relative to [`src/`](../src/). The binary and the shared
 | --- | --- | --- |
 | UI shell | `main.rs`, `startup.rs`, `window_root.rs`, `launcher_render.rs`, `frame.rs` | Define the launcher entity, dispatch startup, and assemble the desktop frame. |
 | UI shell | `rail.rs`, `shell.rs`, `titlebar.rs`, `status_strip.rs`, `command_search.rs` | Supply navigation, window chrome, Play status, and search shortcuts. |
-| UI pages | `home.rs`, `home_mods.rs`, `instances_page.rs`, `instance_icons.rs`, `glass_instance.rs`, `profile_dialog.rs`, `launch_page.rs` | Show Home and the selected profile, manage profile dialogs and icons, and edit per-instance launch options. |
+| UI pages | `home.rs`, `home_mods.rs`, `instances_page.rs`, `instance_icons.rs`, `profile_builds.rs`, `profile_dialog.rs`, `launch_page.rs` | Show Home and the selected profile, manage profile dialogs and icons, and edit per-instance launch options. |
 | UI pages | `worlds_page.rs`, `datapacks_page.rs`, `packs_page.rs`, `screenshots_page.rs`, `console_page.rs` | Display an instance's worlds, packs, screenshots, and game output. |
 | UI pages | `settings.rs`, `location_page.rs`, `storage_report.rs`, `themes_page.rs`, `language_page.rs`, `collection.rs` | Draw settings, storage and relocation controls, appearance, language, and data collection. |
 | UI pages | `glass_versions.rs`, `glass_toast.rs`, `sheets.rs`, `setup_page.rs` | Draw versions, instance settings, toasts, shared dialogs, and Windows setup. |
