@@ -25,6 +25,7 @@ mod content;
 use content::{game_packs, screenshots, worlds, PacksCmd, ScreenshotsCmd, WorldsCmd};
 
 mod builds;
+mod logs;
 mod storage;
 use clap::{Parser, Subcommand};
 use sunrise_launcher::account::{self, Accounts};
@@ -842,65 +843,11 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, Error> {
         Cmd::NoAi { state } => settings::no_ai(state, as_json)?,
         Cmd::Settings { key, value } => settings::show(key, value, as_json)?,
         Cmd::GameArgs { args } => settings::game_args(args, as_json)?,
-        Cmd::ShareLog { instance } => {
-            use sunrise_launcher::game_log;
-            let i = match instance {
-                Some(name) => instances::find(&name)?,
-                None => instances::selection()?,
-            };
-            let path = i.home.join("logs/latest.log");
-            let text =
-                std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-            let names = game_log::names(&[&i.home, &backend::game_home()]);
-            let text = game_log::private(&text, dirs::home_dir().as_deref(), &names);
-            let shared = game_log::share(&game_log::api(), &text)?;
-            if as_json {
-                json(serde_json::json!({
-                    "url": shared.url, "delete": format!("{}:{}", shared.id, shared.token),
-                }));
-            } else {
-                println!("{}", shared.url);
-                println!(
-                    "Delete it: sunrise-launcher unshare-log {}:{}",
-                    shared.id, shared.token
-                );
-            }
-        }
-        Cmd::UnshareLog { shared } => {
-            let (id, token) = shared
-                .split_once(':')
-                .ok_or("Give the \"<id>:<token>\" share-log printed.")?;
-            let api = sunrise_launcher::game_log::api();
-            sunrise_launcher::game_log::unshare(
-                &api,
-                &sunrise_launcher::game_log::Shared {
-                    url: String::new(),
-                    id: id.into(),
-                    token: token.into(),
-                },
-            )?;
-            println!("Deleted the shared log {id}.");
-        }
-        Cmd::Logs { lines, crash } => {
-            let (path, text) = backend::read_logs(lines, crash)?;
-            if as_json {
-                json(serde_json::json!({ "path": path, "text": text }));
-            } else {
-                print!("{text}");
-            }
-        }
+        Cmd::ShareLog { instance } => logs::share(instance, as_json)?,
+        Cmd::UnshareLog { shared } => logs::unshare(shared)?,
+        Cmd::Logs { lines, crash } => logs::show(lines, crash, as_json)?,
         Cmd::Update { check } => update(check, as_json)?,
-        Cmd::BugReport { text, log } => {
-            let path = sunrise_launcher::bug_report::write(&text, log)?;
-            if as_json {
-                json(serde_json::json!({ "path": path }));
-            } else {
-                println!(
-                    "Wrote {}: read it, then attach it to your issue.",
-                    path.display()
-                );
-            }
-        }
+        Cmd::BugReport { text, log } => logs::bug_report(text, log, as_json)?,
         Cmd::DesktopEntry { remove } => settings::desktop_entry(remove)?,
         Cmd::Worlds { action } => worlds(
             action.unwrap_or(WorldsCmd::List { instance: None }),
