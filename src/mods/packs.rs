@@ -216,7 +216,7 @@ impl Launcher {
         let open = if folder.is_dir() || editable {
             open.on_click(cx.listener(move |this, _, _, cx| {
                 match std::fs::create_dir_all(&folder) {
-                    Ok(()) => crate::glass_toast::open(cx, &folder),
+                    Ok(()) => crate::toast::open(cx, &folder),
                     Err(e) => this.mods_state.notice = Some(Err(e.to_string())),
                 }
                 cx.notify();

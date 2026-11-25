@@ -328,11 +328,11 @@ pub(crate) fn button(
 /// (`sunrise_launcher::desktop_seams`).
 pub(crate) fn copy_to_clipboard(cx: &mut App, item: gpui::ClipboardItem) {
     match item.text().as_deref().map(copied) {
-        Some(Copied::Text(shown)) => glass_toast::say_with("Copied {text}", &shown),
+        Some(Copied::Text(shown)) => toast::say_with("Copied {text}", &shown),
         Some(Copied::Lines(n)) => {
-            glass_toast::say(trf("Copied {count} lines", &[("count", &n.to_string())]))
+            toast::say(trf("Copied {count} lines", &[("count", &n.to_string())]))
         }
-        None => glass_toast::say(tr("Copied the picture")),
+        None => toast::say(tr("Copied the picture")),
     }
     copy_quietly(cx, item);
 }

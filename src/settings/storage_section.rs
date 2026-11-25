@@ -10,7 +10,7 @@ impl Launcher {
             div().child({
                 let dir = game.clone();
                 button("alt-open-game", tr("Open folder"))
-                    .on_click(move |_, _, cx| glass_toast::open(cx, &dir))
+                    .on_click(move |_, _, cx| toast::open(cx, &dir))
             }),
         );
 
