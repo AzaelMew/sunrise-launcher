@@ -990,7 +990,7 @@ impl Launcher {
                 Some(category) => trf(
                     "Clear {category}? Up to {size} is freed. Files a game or build is using stay.",
                     &[
-                        ("category", tr(glass_storage::category_label(category))),
+                        ("category", tr(storage_report::category_label(category))),
                         ("size", &size),
                     ],
                 ),
@@ -1064,11 +1064,11 @@ impl Launcher {
                 trf(
                     "{category} · {size}",
                     &[
-                        ("category", tr(glass_storage::category_label(category))),
+                        ("category", tr(storage_report::category_label(category))),
                         ("size", &size),
                     ],
                 ),
-                tr(glass_storage::category_about(category)),
+                tr(storage_report::category_about(category)),
                 div().child(if empty {
                     off(clear)
                 } else {
