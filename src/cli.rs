@@ -12,7 +12,9 @@ use accounts::{account_command, AccountCmd};
 mod data;
 use data::{data, DataCmd};
 mod settings;
-use settings::{on_off, set_setting, SETTING_KEYS};
+#[cfg(test)]
+use settings::set_setting;
+use settings::{on_off, SETTING_KEYS};
 mod servers;
 use servers::{multiplayer, servers, MultiplayerCmd, ServersCmd};
 mod mods;
@@ -837,54 +839,9 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, Error> {
                 }
             }
         }
-        Cmd::NoAi { state } => {
-            if let Some(state) = state {
-                backend::set_no_ai(state == "on")?;
-            }
-            let on = backend::no_ai();
-            if as_json {
-                json(serde_json::json!({ "no_ai": on }));
-            } else if on {
-                println!("No AI is on: every AI feature is hidden and off.");
-            } else {
-                println!("No AI is off: AI features are available.");
-            }
-        }
-        Cmd::Settings { key, value } => {
-            let mut settings = backend::Settings::load();
-            if let Some(key) = key {
-                let value = value.ok_or("settings KEY VALUE: the value is missing")?;
-                set_setting(&mut settings, &key, &value)?;
-                settings.save()?;
-                sunrise_launcher::proxy::announce(settings.proxy.clone());
-            }
-            let all = settings_json(&settings);
-            if as_json {
-                json(all);
-            } else {
-                for (key, value) in all.as_object().into_iter().flatten() {
-                    println!("{key}: {value}");
-                }
-            }
-        }
-        Cmd::GameArgs { args } => {
-            let mut settings = backend::Settings::load();
-            if let Some(line) = args {
-                settings.game_args = line;
-                settings.save()?;
-            }
-            let line = settings.game_args;
-            if as_json {
-                json(serde_json::json!({
-                    "game_args": line,
-                    "parsed": backend::split_args(&line),
-                }));
-            } else if line.is_empty() {
-                println!("No extra game arguments.");
-            } else {
-                println!("Game arguments: {line}");
-            }
-        }
+        Cmd::NoAi { state } => settings::no_ai(state, as_json)?,
+        Cmd::Settings { key, value } => settings::show(key, value, as_json)?,
+        Cmd::GameArgs { args } => settings::game_args(args, as_json)?,
         Cmd::ShareLog { instance } => {
             use sunrise_launcher::game_log;
             let i = match instance {
@@ -940,18 +897,7 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, Error> {
                 );
             }
         }
-        Cmd::DesktopEntry { remove } => {
-            let mut settings = backend::Settings::load();
-            settings.desktop_entry = Some(!remove);
-            settings.save()?;
-            if remove {
-                sunrise_launcher::desktop::remove()?;
-                println!("Removed Sunrise from the applications menu.");
-            } else {
-                sunrise_launcher::desktop::install(backend::exe_path())?;
-                println!("Sunrise is in the applications menu.");
-            }
-        }
+        Cmd::DesktopEntry { remove } => settings::desktop_entry(remove)?,
         Cmd::Worlds { action } => worlds(
             action.unwrap_or(WorldsCmd::List { instance: None }),
             as_json,
