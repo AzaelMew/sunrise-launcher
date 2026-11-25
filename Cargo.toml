@@ -133,6 +133,12 @@ gpui = { package = "gpui-fast", version = "0.1.13", features = ["test-support"] 
 [profile.release]
 strip = true
 
+# Line tables only, so panics and backtraces keep file:line while dev and test builds (the test
+# profile inherits this) write far less debug info. For a debugger, build with
+# CARGO_PROFILE_DEV_DEBUG=true.
+[profile.dev]
+debug = "line-tables-only"
+
 # The scenery's pixel loops (blurring a sky, baking the frosted plates) are optimised in debug
 # builds too: unoptimised, one Blur step took 0.7-1 s and one Glass step 70 ms.
 [profile.dev.package.sunrise-launcher-scenery]
