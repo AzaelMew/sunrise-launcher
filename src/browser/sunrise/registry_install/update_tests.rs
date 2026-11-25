@@ -226,6 +226,7 @@ impl Fixture {
                 fits,
                 does_not_fit: Vec::new(),
                 jar_unavailable: Vec::new(),
+                dependency_unavailable: Vec::new(),
                 file: index_v2::File {
                     url: format!("file://{}", archive.display()),
                     size: bytes.len() as u64,

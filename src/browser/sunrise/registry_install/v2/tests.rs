@@ -52,6 +52,7 @@ fn make_release(
         fits: fits.iter().map(|s| (*s).into()).collect(),
         does_not_fit: does_not_fit.iter().map(|s| (*s).into()).collect(),
         jar_unavailable: Vec::new(),
+        dependency_unavailable: Vec::new(),
         file: V2File {
             url: format!("https://github.com/{repo_name}/releases/download/v{version}/mod.smod"),
             size: bytes.len() as u64,
