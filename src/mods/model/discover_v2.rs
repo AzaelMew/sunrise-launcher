@@ -77,6 +77,12 @@ pub(in crate::mods) enum CardFit {
     /// No release can be installed, and the newest one fits but lists original jars that
     /// Modrinth no longer serves and this computer has not cached.
     JarUnavailable(Vec<JarRef>),
+    /// No release can be installed, and the newest one fits but needs mods that have no release
+    /// for the build, as the index lists in `dependency_unavailable`.
+    DependencyUnavailable {
+        build_label: String,
+        mods: Vec<String>,
+    },
     /// The selected profile has no game build yet.
     NoBuild,
 }
@@ -133,6 +139,9 @@ impl CardFit {
             }
             CardFit::Revoked(why) => Some(trf("Taken down: {reason}", &[("reason", why)])),
             CardFit::JarUnavailable(jars) => Some(jars_gone(jars)),
+            CardFit::DependencyUnavailable { build_label, mods } => {
+                Some(dependencies_gone(mods, build_label))
+            }
             CardFit::NoBuild => Some(tr("No game build selected").to_owned()),
         }
     }
@@ -149,6 +158,29 @@ fn jars_gone(jars: &[JarRef]) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// One line per required mod that has no release for the build.
+fn dependencies_gone(mods: &[String], build_label: &str) -> String {
+    mods.iter()
+        .map(|mod_id| {
+            trf(
+                "Needs {mod}, which has no release for Sunrise {build}.",
+                &[("mod", mod_id), ("build", build_label)],
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The required mods the index lists as having no release for `build`, for `release`.
+fn unavailable_dependencies(release: &Release, build: &str) -> Vec<String> {
+    release
+        .dependency_unavailable
+        .iter()
+        .filter(|entry| entry.build == build)
+        .map(|entry| entry.mod_id.clone())
+        .collect()
 }
 
 /// One mod card on Discover built from the v2 index.
@@ -197,6 +229,11 @@ pub(in crate::mods) enum ReleaseVerdict {
     Revoked(String),
     /// Fits, but lists original jars Modrinth no longer serves that this computer has not cached.
     JarUnavailable(Vec<JarRef>),
+    /// Fits, but needs mods that have no release for the build.
+    DependencyUnavailable {
+        build_label: String,
+        mods: Vec<String>,
+    },
     NoBuild,
 }
 
@@ -303,6 +340,9 @@ impl ReleaseVerdict {
             }
             ReleaseVerdict::Revoked(why) => Some(trf("Taken down: {reason}", &[("reason", why)])),
             ReleaseVerdict::JarUnavailable(jars) => Some(jars_gone(jars)),
+            ReleaseVerdict::DependencyUnavailable { build_label, mods } => {
+                Some(dependencies_gone(mods, build_label))
+            }
             ReleaseVerdict::NoBuild => Some(tr("No game build selected").to_owned()),
         }
     }
@@ -430,6 +470,9 @@ pub(in crate::mods) struct V2Dependency {
     pub(in crate::mods) range: Option<String>,
     pub(in crate::mods) required: bool,
     pub(in crate::mods) provider: V2Provider,
+    /// The selected build's label when the release lists this dependency in
+    /// `dependency_unavailable` for it: the provider has no release for that build.
+    pub(in crate::mods) no_release_for: Option<String>,
 }
 
 /// Which registry project provides a dependency, found the way an install finds it.
@@ -528,6 +571,13 @@ fn release_verdict(
     if verdict.fits() && !gone.is_empty() {
         return ReleaseVerdict::JarUnavailable(gone);
     }
+    let missing = unavailable_dependencies(release, build);
+    if verdict.fits() && !missing.is_empty() {
+        return ReleaseVerdict::DependencyUnavailable {
+            build_label: build_label(build),
+            mods: missing,
+        };
+    }
     verdict
 }
 
@@ -571,11 +621,11 @@ fn project_fit(
         return (CardFit::NoBuild, newest_active.published.clone());
     };
 
-    if let Some(fitting) = active
-        .iter()
-        .copied()
-        .find(|r| r.fit_verdict(build) == FitVerdict::Fits && local.unavailable_jars(r).is_empty())
-    {
+    if let Some(fitting) = active.iter().copied().find(|r| {
+        r.fit_verdict(build) == FitVerdict::Fits
+            && local.unavailable_jars(r).is_empty()
+            && unavailable_dependencies(r, build).is_empty()
+    }) {
         return (
             CardFit::Fits {
                 version: fitting.version.clone(),
@@ -609,6 +659,9 @@ fn project_fit(
         ReleaseVerdict::DoesNotFitHere(build_label) => CardFit::DoesNotFitHere { build_label },
         ReleaseVerdict::Checking(build_label) => CardFit::Checking { build_label },
         ReleaseVerdict::JarUnavailable(jars) => CardFit::JarUnavailable(jars),
+        ReleaseVerdict::DependencyUnavailable { build_label, mods } => {
+            CardFit::DependencyUnavailable { build_label, mods }
+        }
         _ => CardFit::NotCheckedYet {
             build_label: build_label(build),
         },
@@ -966,8 +1019,8 @@ pub(in crate::mods) fn page(
         })
         .collect();
     let repository_url = SourceLink::read(&format!("https://github.com/{}", p.repository.name));
-    let mut dependencies: Vec<V2Dependency> = picked
-        .or(sorted.first().copied())
+    let release_of_page = picked.or(sorted.first().copied());
+    let mut dependencies: Vec<V2Dependency> = release_of_page
         .map_or(&[][..], |release| &release.dependencies)
         .iter()
         .map(|dep| V2Dependency {
@@ -975,6 +1028,12 @@ pub(in crate::mods) fn page(
             range: (dep.version != semver::VersionReq::STAR).then(|| dep.version.to_string()),
             required: dep.required,
             provider: provider(index, dep),
+            no_release_for: exact_build
+                .filter(|build| {
+                    release_of_page
+                        .is_some_and(|r| unavailable_dependencies(r, build).contains(&dep.mod_id))
+                })
+                .map(build_label),
         })
         .collect();
     dependencies.sort_by_key(|dep| !dep.required);
@@ -1044,6 +1103,7 @@ mod tests {
             fits: fits.iter().map(|s| (*s).to_owned()).collect(),
             does_not_fit: does_not_fit.iter().map(|s| (*s).to_owned()).collect(),
             jar_unavailable: Vec::new(),
+            dependency_unavailable: Vec::new(),
             file: File {
                 url: format!("https://github.com/example/mod/releases/download/v{version}/m.smod"),
                 size: 120_000,
@@ -1767,5 +1827,140 @@ mod tests {
         );
         let p = page(&index, "Ab3dE9xQ", Some(build), &label_build, &have).unwrap();
         assert_eq!(p.will_install.unwrap().verdict, ReleaseVerdict::Fits);
+    }
+
+    /// A project whose only release fits `build` but lists `needs` as having no release for it.
+    fn dependant(id: &str, slug: &str, build: &str, needs: &[&str], sha_ch: char) -> Project {
+        let mut release = make_release("1.0.0", "2026-11-10", build, &[build], &[], sha_ch);
+        release.dependency_unavailable = needs
+            .iter()
+            .map(|m| index_v2::DependencyUnavailable {
+                build: build.to_owned(),
+                mod_id: (*m).to_owned(),
+            })
+            .collect();
+        make_project(id, slug, slug, "A block set.", &[], vec![release])
+    }
+
+    #[test]
+    fn a_collection_whose_base_has_no_release_for_the_build_installs_the_others_and_greys_the_dependants(
+    ) {
+        let build = "26.3-0.1.0";
+        let mut index = sample_index(
+            vec![
+                // The base has no release for the build at all.
+                make_project(
+                    "Ab3dE9xQ",
+                    "macaws_lib",
+                    "Macaws Lib",
+                    "",
+                    &[],
+                    vec![make_release(
+                        "1.0.0",
+                        "2026-11-10",
+                        build,
+                        &[],
+                        &[build],
+                        '1',
+                    )],
+                ),
+                dependant("Bc4eF0yR", "doors", build, &["macaws_lib"], '2'),
+                dependant("Cd5fG1zS", "roofs", build, &["macaws_lib"], '3'),
+                dependant("De6gH2aT", "fences", build, &[], '4'),
+            ],
+            vec![],
+        );
+        let member = |project: &str| Member {
+            project: project.to_owned(),
+            default: true,
+        };
+        index.collections = vec![Collection {
+            id: "Qm4tZ81c".to_owned(),
+            name: "Macaw's Builds".to_owned(),
+            summary: String::new(),
+            description: String::new(),
+            publisher: "author".to_owned(),
+            icon: format!("pages/Qm4tZ81c/{}.png", hex64('9')),
+            members: ["Ab3dE9xQ", "Bc4eF0yR", "Cd5fG1zS", "De6gH2aT"]
+                .map(member)
+                .into(),
+        }];
+        let cards = cards(&index, Some(build), &label_build, &LocalFits::default());
+        let found = collections(&index, &cards);
+        let collection = &found[0];
+
+        // Only the member with nothing missing is picked and installed.
+        assert_eq!(collection.fitting(&cards), 1);
+        assert_eq!(
+            collection.initial_picks(&cards),
+            BTreeSet::from(["De6gH2aT".to_owned()])
+        );
+        let all = ["Ab3dE9xQ", "Bc4eF0yR", "Cd5fG1zS", "De6gH2aT"]
+            .map(str::to_owned)
+            .into();
+        assert_eq!(
+            collection.to_install(&cards, &all, &|_| false),
+            ["De6gH2aT"]
+        );
+
+        // The dependants are greyed with the reason; the one with nothing missing shows none.
+        let reason = Some("Needs macaws_lib, which has no release for Sunrise Stable · 0.1.0.");
+        for dependants in [&cards[1], &cards[2]] {
+            assert!(dependants.fit.faded());
+            assert_eq!(dependants.fit.reason().as_deref(), reason);
+        }
+        assert!(!cards[3].fit.faded() && cards[3].fit.reason().is_none());
+    }
+
+    #[test]
+    fn the_mod_page_shows_the_reason_when_a_required_dependency_has_no_release_for_the_build() {
+        let build = "26.3-0.1.0";
+        let mut doors = dependant("Bc4eF0yR", "doors", build, &["macaws_lib"], '2');
+        doors.releases[0].dependencies = vec![index_v2::Dependency {
+            mod_id: "macaws_lib".to_owned(),
+            version: semver::VersionReq::STAR,
+            project: None,
+            required: true,
+        }];
+        let index = sample_index(vec![doors], vec![]);
+        let p = page(
+            &index,
+            "Bc4eF0yR",
+            Some(build),
+            &label_build,
+            &LocalFits::default(),
+        )
+        .unwrap();
+        let reason = "Needs macaws_lib, which has no release for Sunrise Stable · 0.1.0.";
+        assert!(!p.fit.fits());
+        assert_eq!(p.fit.reason().as_deref(), Some(reason));
+        // Install is unavailable: no release is picked, and the release row says why.
+        assert!(p.will_install.is_none() && p.fitting_versions.is_empty());
+        assert_eq!(
+            p.other_versions[0].verdict.reason().as_deref(),
+            Some(reason)
+        );
+        // The dependency row says the provider has no release for this build.
+        assert_eq!(
+            p.dependencies[0].no_release_for.as_deref(),
+            Some("Stable · 0.1.0")
+        );
+
+        // On a build the release isn't listed for, nothing is marked.
+        let other = "nightly-2026-11-20-abcdef0";
+        let mut fits_other = index.clone();
+        fits_other.projects[0].releases[0]
+            .fits
+            .push(other.to_owned());
+        let p = page(
+            &fits_other,
+            "Bc4eF0yR",
+            Some(other),
+            &label_build,
+            &LocalFits::default(),
+        )
+        .unwrap();
+        assert!(p.fit.fits());
+        assert!(p.dependencies[0].no_release_for.is_none());
     }
 }

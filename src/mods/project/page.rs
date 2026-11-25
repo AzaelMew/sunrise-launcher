@@ -581,6 +581,13 @@ impl Launcher {
                 Some(tr("Not on the registry").to_owned()),
             ),
         };
+        let detail = match &dep.no_release_for {
+            Some(build) => Some(trf(
+                "Has no release for Sunrise {build}.",
+                &[("build", build)],
+            )),
+            None => detail,
+        };
         let mut title = div()
             .id(("alt-v2-dependency", n))
             .truncate()
