@@ -42,11 +42,12 @@ SAME_BYTES = (
     ("crates/sunrise-prepare/tests/support/java_probe.rs", "tests/support/java_probe.rs"),
     ("crates/sunrise-port-pack/src/zip_intake/source.rs", "src/zip_intake/source.rs"),
     ("crates/sunrise-port-pack/src/zip_intake/tests.rs", "src/zip_intake/tests.rs"),
-    ("crates/sunrise-attestation/src/lib.rs", "crates/attestation/src/lib.rs"),
     ("crates/sunrise-attestation/src/trusted_root.json", "crates/attestation/src/trusted_root.json"),
     ("crates/sunrise-attestation/LICENSE-APACHE-SIGSTORE", "crates/attestation/LICENSE-APACHE-SIGSTORE"),
-    ("crates/sunrise-attestation/tests/verify.rs", "crates/attestation/tests/verify.rs"),
     ("crates/sunrise-attestation/tests/fixtures", "crates/attestation/tests/fixtures"),
+    ("crates/sunrise-mod-package/src/library_identity.rs", "crates/smod/src/index/library_identity.rs"),
+    # The release/launcher-1.3 patch line keeps 1.3.1's attestation verifier: the game's lib.rs and its
+    # test now also require the owner ID claim, which launcher main carries.
 )
 
 # (the game's source, the launcher's copy, the edits that turn one into the other): compared as code, ignoring
@@ -265,10 +266,7 @@ SAME_ITEMS = (
         ("pub dependencies: BTreeMap<", "pub dependencies: std::collections::BTreeMap<"),
         ("pub incompatible: BTreeMap<", "pub incompatible: std::collections::BTreeMap<"),
         ("pub discouraged: BTreeMap<", "pub discouraged: std::collections::BTreeMap<"),
-    ), ("pub const API", "fn api", "pub struct Manifest", "pub struct Native", "pub enum Capability")),
-    ("crates/sunrise-mod-package/src/index/registry/builds.rs", "crates/smod/src/index/library_identity.rs", (), (
-        "pub struct LibraryIdentity", "impl<'a> LibraryIdentity", "pub fn library_identity",
-    )),
+    ), ("pub const API", "fn api", "pub struct Manifest", "pub enum Capability")),
 )
 
 
