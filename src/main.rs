@@ -7,7 +7,6 @@
 use sunrise_launcher_scenery::coast;
 use sunrise_launcher_scenery::{art, clock, glass};
 mod account_chip;
-mod blocks_settings;
 mod launcher_messages;
 mod launcher_play;
 mod launcher_render;

@@ -12,6 +12,7 @@ use sunrise_launcher::telemetry;
 use sunrise_launcher_telemetry::Choices;
 
 mod appearance;
+mod proxy;
 pub(crate) use appearance::HomePhoto;
 
 #[derive(Clone, Copy, Default, Eq, PartialEq)]

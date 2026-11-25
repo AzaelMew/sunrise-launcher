@@ -14,7 +14,7 @@ Names in this table are relative to [`src/`](../src/). The binary and the shared
 | UI shell | `rail.rs`, `shell.rs`, `titlebar.rs`, `status_strip.rs`, `command_search.rs` | Supply navigation, window chrome, Play status, and search shortcuts. |
 | UI pages | `home.rs`, `home_mods.rs`, `instances_page.rs`, `instance_icons.rs`, `glass_instance.rs`, `profile_dialog.rs`, `launch_page.rs` | Show Home and the selected profile, manage profile dialogs and icons, and edit per-instance launch options. |
 | UI pages | `worlds_page.rs`, `datapacks_page.rs`, `packs_page.rs`, `screenshots_page.rs`, `console_page.rs` | Display an instance's worlds, packs, screenshots, and game output. |
-| UI pages | `settings.rs`, `blocks_settings.rs`, `location_page.rs`, `glass_storage.rs`, `themes_page.rs`, `language_page.rs`, `collection.rs` | Draw settings, storage and relocation controls, appearance, language, and data collection. |
+| UI pages | `settings.rs`, `location_page.rs`, `glass_storage.rs`, `themes_page.rs`, `language_page.rs`, `collection.rs` | Draw settings, storage and relocation controls, appearance, language, and data collection. |
 | UI pages | `glass_versions.rs`, `glass_sheet.rs`, `glass_toast.rs`, `sheets.rs`, `setup_page.rs` | Draw versions, instance settings, toasts, shared dialogs, and Windows setup. |
 | Backend | `lib.rs`, `backend.rs`, `launcher_setup.rs`, `launcher_messages.rs`, `launcher_play.rs`, `wake.rs` | Connect shared operations to the desktop's startup, task handlers, and message pump. |
 | Backend | `github.rs`, `nightly.rs`, `signed.rs`, `build_import.rs`, `developer_install.rs` | Discover releases, verify downloads, and install imported or checkout builds. |
@@ -49,7 +49,7 @@ Names in this table are relative to [`src/`](../src/). The binary and the shared
 | `src/mods/`, `src/mods/data_packs/`, `src/mods/model/`, `src/mods/pack_discover/`, `src/mods_page/` | Mods UI and state, pack discovery, and tests for these paths. |
 | `src/native_mods/`, `src/native_mods/bundle/`, `src/native_mods/mixins/`, `src/native_mods/workspace/`, `src/native_mods/tests/` | Native build planning, SDK cache, bundle packaging, mixin support, and build and runtime tests. |
 | `src/process/`, `src/process/leases/`, `src/process/leases/tests/`, `src/process/supervisor/`, `src/run_leases/` | Child process ownership and supervision, launch and tree locks, and platform tests. |
-| `src/settings/`, `src/sheets/` | Appearance controls and the version chooser. |
+| `src/settings/`, `src/sheets/` | Appearance controls, saving the proxy setting, and the version chooser. |
 | `src/storage/`, `src/theme_files/`, `src/theme_files/fixtures/` | Storage inventory and eviction. Theme file tests and their image fixture. |
 | `src/appearance/`, `src/cache_cleanup/`, `src/data_location/`, `src/downloads/`, `src/github/`, `src/github_mods/`, `src/i18n/`, `src/java/`, `src/launch/`, `src/launch_state/`, `src/mac_update/`, `src/native_cache/`, `src/relocation/`, `src/shortcut/`, `src/themes/` | Tests alongside their matching infrastructure modules. |
 | `src/datapacks/`, `src/export/`, `src/game_log/`, `src/home/`, `src/import/`, `src/instances/`, `src/join/`, `src/packs/`, `src/server_list/`, `src/tailscale/`, `src/worlds/` | Tests alongside their matching feature modules. |
