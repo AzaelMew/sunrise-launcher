@@ -91,40 +91,67 @@ pub(super) fn build(args: NativeBuildArgs) -> Result<i32, Error> {
         }
     };
     if let Some(output) = server_output {
-        native_permission(trust_native_code)?;
-        // Export mode: a standalone server engine in `output`. No instance is read
-        // or changed, and no launcher config is written; `folder` is required (clap).
-        let folder = folder.unwrap();
-        let base = match &version {
-            Some(v) => backend::resolve_version(Some(v))?,
-            // The instance's version is never looked at here: the newest installed
-            // release or Nightly, never a native build.
-            None => native_mods::base_for(None, &backend::installed(), false)
-                .ok_or_else(backend::no_version_installed)?,
-        };
-        let built = native_mods::build_server(
-            &base,
-            &folder,
-            &output,
+        return export_server(
+            folder,
+            output,
+            version,
             profile,
             allow_jar_downloads,
+            trust_native_code,
             steps,
-        )?;
-        let built = std::path::absolute(&built).unwrap_or(built);
-        let path = built.display().to_string();
-        println!(
-            "{}",
-            trf("Built the server engine: {path}", &[("path", &path)])
         );
-        println!(
-            "{}",
-            tr(
-                "Point the server at it: set engine.path to this file in the server's \
-                server.toml (docs/hosting.md); the launcher writes nothing itself."
-            )
-        );
-        return Ok(0);
     }
+    build_profile(folder, instance, version, trust_native_code, profile, steps)
+}
+
+/// Export mode: a standalone server engine in `output`, from a mod `folder`.
+fn export_server(
+    folder: Option<PathBuf>,
+    output: PathBuf,
+    version: Option<String>,
+    profile: Option<native_mods::Profile>,
+    allow_jar_downloads: bool,
+    trust_native_code: bool,
+    steps: impl Fn(native_mods::Step),
+) -> Result<i32, Error> {
+    native_permission(trust_native_code)?;
+    // Export mode: a standalone server engine in `output`. No instance is read
+    // or changed, and no launcher config is written; `folder` is required (clap).
+    let folder = folder.unwrap();
+    let base = match &version {
+        Some(v) => backend::resolve_version(Some(v))?,
+        // The instance's version is never looked at here: the newest installed
+        // release or Nightly, never a native build.
+        None => native_mods::base_for(None, &backend::installed(), false)
+            .ok_or_else(backend::no_version_installed)?,
+    };
+    let built =
+        native_mods::build_server(&base, &folder, &output, profile, allow_jar_downloads, steps)?;
+    let built = std::path::absolute(&built).unwrap_or(built);
+    let path = built.display().to_string();
+    println!(
+        "{}",
+        trf("Built the server engine: {path}", &[("path", &path)])
+    );
+    println!(
+        "{}",
+        tr(
+            "Point the server at it: set engine.path to this file in the server's \
+            server.toml (docs/hosting.md); the launcher writes nothing itself."
+        )
+    );
+    Ok(0)
+}
+
+/// A profile's own build: its mods (or `folder`) against its game build, which it then plays.
+fn build_profile(
+    folder: Option<PathBuf>,
+    instance: Option<String>,
+    version: Option<String>,
+    trust_native_code: bool,
+    profile: Option<native_mods::Profile>,
+    steps: impl Fn(native_mods::Step),
+) -> Result<i32, Error> {
     let target = match &instance {
         Some(name) => instances::find(name)?,
         None => instances::selection()?,
@@ -179,30 +206,43 @@ pub(super) fn build(args: NativeBuildArgs) -> Result<i32, Error> {
         None => native_mods::installed_mods(&target.home)?,
     };
     let profile = explicit.then_some(target.native_profile);
-    let built =
-        match native_mods::build(&base, &folder, &target, profile, false, &native_mods::Cancellation::default(), steps, || backend::releases().ok()) {
-            // A content mod needs no build: the instance stays as it is.
-            Err(nothing @ native_mods::Failed::Nothing) => {
-                println!("{nothing}");
-                return Ok(0);
-            }
-            result => result,
+    let built = match native_mods::build(
+        &base,
+        &folder,
+        &target,
+        profile,
+        false,
+        &native_mods::Cancellation::default(),
+        steps,
+        || backend::releases().ok(),
+    ) {
+        // A content mod needs no build: the instance stays as it is.
+        Err(nothing @ native_mods::Failed::Nothing) => {
+            println!("{nothing}");
+            return Ok(0);
         }
-        .map_err(|error| {
-            if let native_mods::Failed::Worlds(stake) = &error {
-                return trf(
-                    "{error}\n{stay}: nothing changed.",
-                    &[
-                        ("error", &stake.text),
-                        ("stay", &native_mods::fit::stay(&stake.stay)),
-                    ],
-                );
-            }
-            let error = String::from(error);
-            if error.starts_with(native_mods::MISMATCH) {
-                trf("{error} Run `cargo sunrise-mod update --sunrise {commit}` in each mod's folder to pin it to this game, then build again.", &[("error", &error), ("commit", &base)])
-            } else { error }
-        })?;
+        result => result,
+    }
+    .map_err(|error| build_failure(error, &base))?;
     println!("{built}");
     Ok(0)
+}
+
+/// The message for a failed build: what the worlds at stake keep, or how to pin a mod to `base`.
+fn build_failure(error: native_mods::Failed, base: &str) -> String {
+    if let native_mods::Failed::Worlds(stake) = &error {
+        return trf(
+            "{error}\n{stay}: nothing changed.",
+            &[
+                ("error", &stake.text),
+                ("stay", &native_mods::fit::stay(&stake.stay)),
+            ],
+        );
+    }
+    let error = String::from(error);
+    if error.starts_with(native_mods::MISMATCH) {
+        trf("{error} Run `cargo sunrise-mod update --sunrise {commit}` in each mod's folder to pin it to this game, then build again.", &[("error", &error), ("commit", base)])
+    } else {
+        error
+    }
 }
