@@ -62,6 +62,7 @@ class StructureCheck(unittest.TestCase):
         self.assertEqual(counts["unwraps"], 1)
         self.assertEqual(counts["string_errors"], 1)
         self.assertEqual(counts["stale_manual_tests"], 1)
+        self.assertEqual((counts["ui_cyclic_modules"], counts["ui_mutual_imports"]), (0, 0))
 
     def test_a_count_going_up_fails(self):
         head = self.repo.commit({
@@ -169,6 +170,29 @@ class StructureCheck(unittest.TestCase):
         })
         counts = check.measure(head)
         self.assertEqual((counts["cyclic_modules"], counts["mutual_imports"]), (2, 1))
+
+    def test_ui_module_cycles_are_counted_separately_from_lib(self):
+        head = self.repo.commit({
+            "src/lib.rs": "mod library;\n",
+            "src/library.rs": "use crate::library::Item;\n",
+            "src/main.rs": "mod page_a;\nmod page_b;\nfn main() {}\n",
+            "src/page_a.rs": "use crate::page_b::Widget;\n",
+            "src/page_b.rs": "use crate::page_a::Widget;\n",
+        })
+        counts = check.measure(head)
+        self.assertEqual((counts["cyclic_modules"], counts["mutual_imports"]), (0, 0))
+        self.assertEqual((counts["ui_cyclic_modules"], counts["ui_mutual_imports"]), (2, 1))
+
+    def test_a_ui_cycle_going_up_fails_the_ratchet(self):
+        head = self.repo.commit({
+            "src/main.rs": "mod page_a;\nmod page_b;\nfn main() {}\n",
+            "src/page_a.rs": "use crate::page_b::Widget;\n",
+            "src/page_b.rs": "use crate::page_a::Widget;\n",
+        })
+        code, out = self.run_check(head)
+        self.assertEqual(code, 1)
+        self.assertIn("main.rs mutual module import pairs", out)
+        self.assertIn("went up", out)
 
     def test_gpui_under_lib_fails_the_ratchet_and_comments_do_not_count(self):
         head = self.repo.commit({

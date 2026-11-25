@@ -270,6 +270,9 @@ commit it's based on, and fails if any of these counts goes **up**:
   graph follows each module's `mod` declarations; an edge is a `crate::module` path in non-test
   code. An SCC may split in two without lowering the number of modules in cycles, so both counts
   are tracked separately.
+- the same two counts for the UI's own root, `main.rs`. They are separate from `lib.rs` so a move
+  between the window's modules cannot hide in the library's graph; V3 measures its decoupling
+  against them.
 - non-test files that use `gpui`, and, separately, the ones `lib.rs` reaches, which stay at zero
   (§4). A comment that mentions `gpui` does not count.
 - `#[path` attributes
