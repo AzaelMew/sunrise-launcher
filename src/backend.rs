@@ -1069,16 +1069,13 @@ pub fn data_dir() -> PathBuf {
 /// and some tools stat `\\?\C:` — the volume itself — and fail. A drive path loses its `\\?\`;
 /// any other path is left as it is.
 pub(crate) fn plain(path: PathBuf) -> PathBuf {
-    match path.to_str().and_then(|p| p.strip_prefix(r"\\?\")) {
-        Some(rest) if rest.as_bytes().get(1) == Some(&b':') => PathBuf::from(rest),
-        _ => path,
-    }
+    crate::data_location::plain_drive(path)
 }
 
 /// `path` spelled only in ASCII: what Windows' MinGW-w64 tools can open (they read paths
 /// through ANSI APIs, so a Cyrillic user name in %APPDATA% breaks them, #5189).
 fn ascii(path: &Path) -> bool {
-    path.as_os_str().to_str().is_some_and(str::is_ascii)
+    crate::data_location::ascii(path)
 }
 
 /// `path` as Windows' MinGW-w64 tools can take it: [`ascii`], and on Windows without a space.

@@ -583,3 +583,30 @@ fn copy_tree_except_skips_only_root_entries_and_keeps_the_root_private_while_cop
         );
     }
 }
+
+#[test]
+fn verbatim_drive_paths_lose_only_a_drives_prefix() {
+    let drive = PathBuf::from(r"\\?\C:\Users\me\sunrise");
+    assert_eq!(
+        plain_drive(drive.clone()),
+        PathBuf::from(r"C:\Users\me\sunrise")
+    );
+    // The launcher's own spelling and the resolver agree on every shape.
+    for path in [
+        drive,
+        PathBuf::from(r"\\?\UNC\server\share"),
+        PathBuf::from(r"\\?\Volume{1234}\"),
+        PathBuf::from(r"C:\Users\me"),
+        PathBuf::from("/home/me"),
+        PathBuf::new(),
+    ] {
+        assert_eq!(crate::backend::plain(path.clone()), plain_drive(path));
+    }
+}
+
+#[test]
+fn the_tool_path_test_reads_ascii_and_spaces_the_same_way() {
+    assert!(ascii(Path::new(r"C:\Users\Jane Doe")));
+    assert!(!ascii(Path::new("/høme/me")));
+    assert!(!ascii(Path::new(r"C:\Users\Кириченко Павло")));
+}

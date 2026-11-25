@@ -547,8 +547,7 @@ fn checked_path(path: &Path) -> Result<PathBuf> {
 }
 
 /// `canonicalize`'s verbatim `\\?\C:\…` as the plain drive path the other roots use.
-fn plain_drive(path: PathBuf) -> PathBuf {
-    #[cfg(windows)]
+pub(crate) fn plain_drive(path: PathBuf) -> PathBuf {
     if let Some(rest) = path.to_str().and_then(|s| s.strip_prefix(r"\\?\")) {
         if rest.as_bytes().get(1) == Some(&b':') {
             return PathBuf::from(rest);
@@ -625,11 +624,17 @@ fn reject_link(path: &Path, meta: &fs::Metadata) -> Result<()> {
     Ok(())
 }
 
+/// `path` spelled only in ASCII: what Windows' MinGW-w64 tools can open.
+pub(crate) fn ascii(path: &Path) -> bool {
+    path.as_os_str().to_str().is_some_and(str::is_ascii)
+}
+
 fn tool_safe(path: &Path) -> Result<()> {
     if cfg!(windows)
-        && !path
-            .to_str()
-            .is_some_and(|s| s.is_ascii() && !s.bytes().any(|b| b.is_ascii_whitespace()))
+        && !(ascii(path)
+            && !path
+                .to_str()
+                .is_some_and(|s| s.bytes().any(|b| b.is_ascii_whitespace())))
     {
         return Err(
             "Choose a destination with only ASCII characters and no spaces for Windows build tools"
