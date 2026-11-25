@@ -1,5 +1,6 @@
 //! Mods › Discover: browses the signed v2 registry index for the selected profile's exact build.
 use super::model::discover_v2::{self, V2Sort};
+use super::state::Menu;
 use super::ui::*;
 use super::*;
 use crate::frame::button;
