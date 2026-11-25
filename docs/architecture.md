@@ -47,7 +47,7 @@ Names in this table are relative to [`src/`](../src/). The binary and the shared
 | `src/internet/`, `src/servers/`, `src/servers_page/` | Hosting share UI, remote server control and its tests (`servers/remote/`), and the Servers page's children: hosting, the Create a server dialog and text helpers. |
 | `src/jars/`, `src/zip_intake/` | Jar download and launch preparation, and the ZIP intake source adapter and tests. |
 | `src/mods/`, `src/mods/data_packs/`, `src/mods/model/`, `src/mods/pack_discover/`, `src/mods_page/` | Mods UI and state, pack discovery, and tests for these paths. |
-| `src/native_mods/`, `src/native_mods/bundle/`, `src/native_mods/mixins/`, `src/native_mods/workspace/`, `src/native_mods/tests/` | Native build planning, SDK cache, bundle packaging, mixin support, and build and runtime tests. |
+| `src/native_mods/`, `src/native_mods/bundle/`, `src/native_mods/mixins/`, `src/native_mods/workspace/`, `src/native_mods/tests/`, `src/rust_toolchain/` | Native build planning, SDK cache, bundle packaging, mixin support, the managed Rust toolchain's download and system checks, and build and runtime tests. |
 | `src/process/`, `src/process/leases/`, `src/process/leases/tests/`, `src/process/supervisor/`, `src/run_leases/` | Child process ownership and supervision, launch and tree locks, and platform tests. |
 | `src/settings/`, `src/sheets/` | Appearance controls and the version chooser. |
 | `src/storage/`, `src/storage/inventory/`, `src/theme_files/`, `src/theme_files/fixtures/` | Storage inventory, its regression tests, and eviction. Theme file tests and their image fixture. |
