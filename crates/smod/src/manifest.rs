@@ -63,6 +63,10 @@ pub const USES_FILE: &str = "uses.json";
 pub const MAX_USES: u64 = 4 << 20;
 /// The content manifest API this build loads.
 pub const API: &str = "0.2";
+
+fn api() -> String {
+    API.to_owned()
+}
 /// Namespaces no mod may claim: vanilla's, the convention tags' (mods add
 /// to those, docs/modding/src/how-to/content-mods.md) and the game's own.
 const RESERVED_NAMESPACES: [&str; 3] = ["minecraft", "c", "sunrise"];
@@ -98,7 +102,8 @@ pub struct Manifest {
     /// Where to report problems, the Mods screen's Issues button.
     #[serde(default)]
     pub issues: Option<String>,
-    /// The content API line: `0.2`.
+    /// The content API line; the tool writes it into the packed package. Absent, it is [`API`].
+    #[serde(default = "api")]
     pub api: String,
     #[serde(default)]
     pub side: Side,
@@ -1451,6 +1456,18 @@ mod tests {
             (Side::Client, DependencyOrder::After)
         );
         assert!(serde_json::from_str::<Side>("\"Both\"").is_err());
+    }
+
+    /// The mod tool writes the API line into the package, so a project's manifest may leave it out.
+    #[test]
+    fn a_manifest_without_an_api_line_reads_the_api_this_build_loads() {
+        let manifest = Manifest::parse(
+            "id='runes'\nname='Runes'\nversion='1.0.0'\n[native]\ngame='26.3'\nsunrise='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\n",
+        )
+        .unwrap();
+        assert_eq!(manifest.api, "0.2");
+        let other = Manifest::parse("id='runes'\nname='Runes'\nversion='1.0.0'\napi='0.1'\n");
+        assert!(other.unwrap_err().contains("unsupported content API"));
     }
 
     #[test]

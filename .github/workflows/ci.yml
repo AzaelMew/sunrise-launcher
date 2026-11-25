@@ -211,7 +211,7 @@ jobs:
           # The Nightly players run, whichever it is today (#396 failed on its SDK), and a Dev build.
           - build: nightly
             channel: nightly
-          - build: dev-2026-11-24-f8aa80e
+          - build: dev-2026-11-25-bdad86d
             channel: dev
     defaults:
       run:
