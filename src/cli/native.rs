@@ -180,13 +180,7 @@ fn build_profile(
                 .ok_or_else(backend::no_version_installed)?
         }
     };
-    if let Some(requested) = version.as_deref().filter(|tag| *tag != base) {
-        return Err(trf(
-            "This profile uses {build}, not {requested}. Use Switch to change its game build.",
-            &[("build", &base), ("requested", requested)],
-        )
-        .into());
-    }
+    check_version(version.as_deref(), &base)?;
     // A folder of source is code nobody reviewed. A profile's own mods build when the
     // registry verified them or the player confirmed them; the rest, such as files
     // copied in by hand, only when this run trusts them.
@@ -245,4 +239,16 @@ fn build_failure(error: native_mods::Failed, base: &str) -> String {
     } else {
         error
     }
+}
+
+/// `--version` for a profile asserts its current base, and never switches it.
+fn check_version(version: Option<&str>, base: &str) -> Result<(), Error> {
+    if let Some(requested) = version.filter(|tag| *tag != base) {
+        return Err(trf(
+            "This profile uses {build}, not {requested}. Use Switch to change its game build.",
+            &[("build", base), ("requested", requested)],
+        )
+        .into());
+    }
+    Ok(())
 }
