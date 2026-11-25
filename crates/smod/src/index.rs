@@ -1125,6 +1125,7 @@ pub mod browser_state;
 mod collections;
 pub use collections::{Collection, MAX_COLLECTION_MEMBERS, Member};
 mod dependencies;
+pub mod library_identity;
 pub mod native;
 pub mod page;
 pub mod resolve;

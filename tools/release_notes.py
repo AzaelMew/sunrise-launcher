@@ -48,13 +48,13 @@ def decide(head: str) -> dict:
     return {"version": current, "tag": tag, "head": head}
 
 
-def merged_since(tag: str | None, head: str) -> list[dict]:
-    """The pull requests merged into main after `tag` (all, before the first release), from GitHub, newest first."""
+def merged_since(tag: str | None, head: str, base: str = "main") -> list[dict]:
+    """The pull requests merged into `base` after `tag` (all, before the first release), from GitHub, newest first."""
     since = ""
     if tag:
         since = subprocess.run(["git", "-C", str(ROOT), "log", "-1", "--format=%cI", tag],
                                capture_output=True, text=True, check=True).stdout.strip()
-    search = "is:merged base:main" + (f" merged:>{since}" if since else "")
+    search = f"is:merged base:{base}" + (f" merged:>{since}" if since else "")
     out = subprocess.run(["gh", "pr", "list", "-R", REPOSITORY, "--state", "merged", "--search", search,
                           "--limit", "200", "--json", "number,title,labels,mergeCommit"],
                          capture_output=True, text=True, check=True).stdout
@@ -86,13 +86,15 @@ def main(argv: list[str]) -> int:
     n = sub.add_parser("notes")
     n.add_argument("--tag", required=True)
     n.add_argument("--head", required=True)
+    # The branch released from: main, or a patch line whose pull requests target it.
+    n.add_argument("--base", default="main")
     n.add_argument("--out", type=Path, required=True)
     args = parser.parse_args(argv)
     if args.command == "decide":
         print(json.dumps(decide(args.head)))
         return 0
     earlier = [t for t in tags() if t != args.tag]
-    title, body = notes(args.tag, merged_since(earlier[0] if earlier else None, args.head))
+    title, body = notes(args.tag, merged_since(earlier[0] if earlier else None, args.head, args.base))
     args.out.mkdir(parents=True, exist_ok=True)
     (args.out / "title.txt").write_text(title + "\n")
     (args.out / "body.md").write_text(body)
