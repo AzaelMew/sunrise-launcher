@@ -2460,6 +2460,6 @@
   "Your picture, behind every page.": "Your picture, behind every page.",
   "The theme's picture, behind every page.": "The theme's picture, behind every page.",
   "The theme, its accent and what is behind the pages.": "The theme, its accent and what is behind the pages.",
-  "Fade panel outlines": "Fade panel outlines",
-  "Panel outlines and the lines between rows fade with the panel opacity you chose.": "Panel outlines and the lines between rows fade with the panel opacity you chose."
+  "Fade outlines out completely": "Fade outlines out completely",
+  "Panel outlines fade as far as the panels and are gone at 0%. When off, they fade more slowly and stay visible.": "Panel outlines fade as far as the panels and are gone at 0%. When off, they fade more slowly and stay visible."
 }

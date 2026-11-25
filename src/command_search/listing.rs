@@ -99,7 +99,7 @@ pub(super) const SETTINGS_ROWS: [(&str, Section); 18] = [
     ("Theme", Section::Appearance),
     ("Accent", Section::Appearance),
     ("Custom background", Section::Appearance),
-    ("Fade panel outlines", Section::Appearance),
+    ("Fade outlines out completely", Section::Appearance),
     ("Worlds on Home", Section::Appearance),
     ("Your themes", Section::Appearance),
     ("Show the cat", Section::Appearance),

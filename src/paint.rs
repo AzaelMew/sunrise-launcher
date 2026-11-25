@@ -36,6 +36,10 @@ pub(crate) const PLAY_TONE: f32 = 0.15;
 /// Text reads at this contrast on its surface; edges, marks and the focus ring at the other.
 const TEXT: f32 = 4.5;
 const MARK: f32 = 3.;
+/// How fast the plates' outlines and rules fade, against the plates themselves, under a chosen
+/// panel opacity: slower, so a clear panel keeps its outline (at 0%, the lines are at 40%).
+/// Fade outlines out completely takes them as far as the plates.
+const LINE_FADE: f32 = 0.6;
 /// The least the Home backdrop is shaded directly behind the unboxed profile.
 pub(crate) const HERO_SHADE_ALPHA: f32 = 0.58;
 
@@ -105,9 +109,9 @@ pub(crate) struct Palette {
     pub alpha: f32,
     /// How opaque the dialogs' scrim is.
     pub scrim_alpha: f32,
-    /// How opaque the rules and outlines on the plates are: the player's panel opacity when
-    /// they chose one and Fade panel outlines is on, so the lines fade with the panels; else
-    /// solid.
+    /// How opaque the rules and outlines on the plates are. Under a chosen panel opacity they
+    /// fade [`LINE_FADE`] as fast as the plates, so the panels stay drawn, or as far as the
+    /// plates with Fade outlines out completely on; else solid.
     pub rule_alpha: f32,
 }
 
@@ -171,7 +175,7 @@ impl Inputs {
             play_seed: theme.play_seed,
             tint: settings.glass_tint(),
             plates,
-            fade_lines: settings.fade_panel_lines(),
+            lines_fully: settings.fade_lines_fully(),
         }
     }
 }
@@ -255,8 +259,8 @@ struct Inputs {
     play_seed: Option<u32>,
     tint: f32,
     plates: Plates,
-    /// Outlines and rules fade with a chosen panel opacity.
-    fade_lines: bool,
+    /// Outlines and rules fade as far as a chosen panel opacity, not [`LINE_FADE`] as fast.
+    lines_fully: bool,
 }
 
 impl Inputs {
@@ -269,7 +273,7 @@ impl Inputs {
             play_seed,
             tint,
             plates,
-            fade_lines,
+            lines_fully,
         } = *self;
         // Light text on dark surfaces fits lighter; dark text on light ones fits darker.
         let lighter = n.dark;
@@ -493,7 +497,13 @@ impl Inputs {
             warning,
             alpha,
             scrim_alpha,
-            rule_alpha: custom.filter(|_| fade_lines).map_or(1., |(alpha, _)| alpha),
+            rule_alpha: custom.map_or(1., |(alpha, _)| {
+                if lines_fully {
+                    alpha
+                } else {
+                    1. - LINE_FADE * (1. - alpha)
+                }
+            }),
         }
     }
 }
@@ -510,7 +520,7 @@ impl Palette {
             play_seed: None,
             tint,
             plates: Plates::Opaque,
-            fade_lines: false,
+            lines_fully: false,
         }
         .palette()
     }

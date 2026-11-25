@@ -174,15 +174,15 @@ fn panel_opacity_takes_every_percent_and_can_reset() {
 }
 
 #[test]
-fn fade_panel_lines_is_on_until_turned_off() {
+fn fade_lines_fully_is_off_until_turned_on() {
     let mut settings = backend::Settings::default();
-    assert_eq!(settings_json(&settings)["fade_panel_lines"], true);
-    set_setting(&mut settings, "fade-panel-lines", "off").unwrap();
-    assert_eq!(settings.fade_panel_lines, Some(false));
-    assert_eq!(settings_json(&settings)["fade_panel_lines"], false);
-    assert!(set_setting(&mut settings, "fade-panel-lines", "maybe").is_err());
-    set_setting(&mut settings, "fade-panel-lines", "on").unwrap();
-    assert!(settings.fade_panel_lines());
+    assert_eq!(settings_json(&settings)["fade_lines_fully"], false);
+    set_setting(&mut settings, "fade-lines-fully", "on").unwrap();
+    assert_eq!(settings.fade_lines_fully, Some(true));
+    assert_eq!(settings_json(&settings)["fade_lines_fully"], true);
+    assert!(set_setting(&mut settings, "fade-lines-fully", "maybe").is_err());
+    set_setting(&mut settings, "fade-lines-fully", "off").unwrap();
+    assert!(!settings.fade_lines_fully());
 }
 
 #[test]

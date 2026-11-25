@@ -740,22 +740,34 @@ fn begin_sets_the_frames_palette_from_the_inputs() {
     assert_eq!(pa.accent, glass::ACCENT);
 }
 
-/// A plate's outlines and rules fade with a chosen opacity while Fade panel outlines is on (the
-/// default), stay solid when it is off, and stay solid without a chosen opacity either way.
+/// Under a chosen opacity a plate's outlines and rules fade more slowly than the plate (at 0%
+/// they are at 40%), or as far as the plate with Fade outlines out completely on. Without a
+/// chosen opacity they are solid either way.
 #[test]
-fn panel_lines_fade_with_a_chosen_opacity_unless_turned_off() {
+fn panel_lines_fade_slower_than_the_plates_unless_fading_fully() {
+    let near = |a: f32, b: f32| assert!((a - b).abs() < 1e-5, "{a} != {b}");
     let mut settings = Settings::default();
     let theme = from_settings(&settings, WindowAppearance::Dark);
-    assert!(settings.fade_panel_lines());
+    assert!(!settings.fade_lines_fully());
     assert_eq!(Palette::of(&settings, &theme).rule_alpha, 1.);
+    settings.set_panel_opacity(Some(0));
+    near(Palette::of(&settings, &theme).rule_alpha, 0.4);
+    settings.set_panel_opacity(Some(50));
+    let p = Palette::of(&settings, &theme);
+    near(p.rule_alpha, 0.7);
+    near(p.rule().a, 0.7);
+    near(p.plate_edge().a, p.input_edge().a * 0.7);
+    settings.set_panel_opacity(Some(100));
+    assert_eq!(Palette::of(&settings, &theme).rule_alpha, 1.);
+    settings.fade_lines_fully = Some(true);
+    settings.set_panel_opacity(Some(0));
+    let p = Palette::of(&settings, &theme);
+    assert_eq!(p.rule_alpha, 0.);
+    assert_eq!(p.plate_edge().a, 0.);
     settings.set_panel_opacity(Some(30));
     let p = Palette::of(&settings, &theme);
+    assert_eq!(p.alpha, 0.3);
     assert_eq!(p.rule_alpha, 0.3);
-    assert_eq!(p.rule().a, 0.3);
-    assert_eq!(p.plate_edge().a, p.input_edge().a * 0.3);
-    settings.fade_panel_lines = Some(false);
-    let p = Palette::of(&settings, &theme);
-    assert_eq!(p.alpha, 0.3, "the plates still take the opacity");
-    assert_eq!(p.rule_alpha, 1.);
-    assert_eq!(p.plate_edge(), p.input_edge());
+    settings.set_panel_opacity(None);
+    assert_eq!(Palette::of(&settings, &theme).rule_alpha, 1.);
 }

@@ -460,21 +460,21 @@ impl Launcher {
         )
     }
 
-    /// Whether the panels' outlines and the rules between their rows fade with the opacity
-    /// above, or stay solid.
+    /// Whether the panels' outlines and the rules between their rows fade as far as the
+    /// opacity above, gone at 0%, or more slowly so the panels stay drawn.
     fn fade_lines_row(&self, cx: &mut Context<Self>) -> Div {
-        let on = self.settings.fade_panel_lines();
-        let fade = switch("alt-fade-panel-lines", on)
+        let on = self.settings.fade_lines_fully();
+        let fade = switch("alt-fade-lines-fully", on)
             .seen()
-            .tooltip(crate::glass_ui::tip(tr("Fade panel outlines")))
+            .tooltip(crate::glass_ui::tip(tr("Fade outlines out completely")))
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                this.settings.fade_panel_lines = Some(!on);
+                this.settings.fade_lines_fully = Some(!on);
                 this.save_settings();
                 cx.notify();
             }));
         row(
-            tr("Fade panel outlines"),
-            tr("Panel outlines and the lines between rows fade with the panel opacity you chose."),
+            tr("Fade outlines out completely"),
+            tr("Panel outlines fade as far as the panels and are gone at 0%. When off, they fade more slowly and stay visible."),
             div().child(fade),
         )
     }
