@@ -632,3 +632,30 @@ fn information_requests_do_not_read_packages_or_create_a_cache() {
         assert!(!root.0.join("cache").exists());
     }
 }
+
+#[test]
+fn a_server_export_writes_the_jar_its_mod_lists_into_the_export_with_a_stub_download() {
+    let home = Scratch::new();
+    let export = Scratch::new();
+    let (jar, bytes) = source(b"listed by the exported mod");
+    export_with(
+        &home.0,
+        &export.0,
+        &requirements(std::slice::from_ref(&jar)),
+        &BTreeSet::from(["example".to_owned()]),
+        Permission::Refuse,
+        |missing| {
+            assert_eq!(missing, [&jar]);
+            Ok(BTreeMap::from([(jar.sha512().into(), "exact.jar".into())]))
+        },
+        |url, wanted, dest| {
+            assert_eq!(url, "exact.jar");
+            assert_eq!(wanted, &jar);
+            fs::write(dest, &bytes).map_err(|error| error.to_string())
+        },
+    )
+    .unwrap();
+    let name = format!("{}.jar", jar.sha512());
+    assert_eq!(fs::read(export.0.join("jars").join(&name)).unwrap(), bytes);
+    assert_eq!(fs::read(home.0.join("jars").join(name)).unwrap(), bytes);
+}

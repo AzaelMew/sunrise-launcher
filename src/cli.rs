@@ -728,8 +728,9 @@ enum Cmd {
             requires = "folder"
         )]
         server_output: Option<PathBuf>,
-        /// Allow exact-hash jar downloads into the local cache for the server export;
-        /// jar bytes are never included in the exported folder
+        /// Allow exact-hash jar downloads into the local cache for the server export, which
+        /// copies the jars its mods list into its own jars folder (the operator's copy; nothing we
+        /// publish contains one); jars of mods from the Sunrise registry download without this
         #[arg(long, requires = "server_output")]
         allow_jar_downloads: bool,
         /// The profile whose installed native mods to build, and which then plays the build
