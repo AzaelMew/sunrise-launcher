@@ -82,7 +82,7 @@ impl Storage {
         let mut revisions = HashSet::new();
         let mut unknown_revision = false;
         let mut native_enabled = false;
-        for instance in instances::list() {
+        for instance in instances::list_in(&self.game, &self.data) {
             for bundle in crate::native_status::bundles_on(&instance.home) {
                 if let Some(native) = bundle.manifest.native {
                     native_enabled = true;

@@ -702,7 +702,7 @@ pub(crate) fn profile_homes_strict(game: &Path) -> Result<Vec<PathBuf>, String> 
     Ok(homes)
 }
 
-fn list_in(game_home: &Path, data: &Path) -> Vec<Instance> {
+pub(crate) fn list_in(game_home: &Path, data: &Path) -> Vec<Instance> {
     list_with_snapshot(game_home, data, true, || {})
 }
 
