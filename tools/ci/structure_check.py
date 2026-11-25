@@ -43,7 +43,9 @@ LABELS = {
     "long_files": f".rs files over {LONG_FILE} lines",
     "long_functions": f"non-test fns over {LONG_FUNCTION} lines",
     "cyclic_modules": "lib.rs modules in an import cycle",
-    "mutual_imports": "mutual module import pairs",
+    "mutual_imports": "lib.rs mutual module import pairs",
+    "ui_cyclic_modules": "main.rs modules in an import cycle",
+    "ui_mutual_imports": "main.rs mutual module import pairs",
     "gpui_files": "non-test files using gpui",
     "lib_gpui_files": "files using gpui that lib.rs reaches",
     "path_attributes": "#[path attributes",
@@ -291,6 +293,7 @@ def measure(rev: str) -> dict[str, int]:
     texts = dict(zip((path for _, path in rust), blobs([blob for blob, _ in rust])))
     tests = test_files(texts)
     modules = module_tree("src/lib.rs", texts) if "src/lib.rs" in texts else {}
+    ui_modules = module_tree("src/main.rs", texts) if "src/main.rs" in texts else {}
     lib_files = set().union(*modules.values()) if modules else set()
     functions = set()
     for path, text in texts.items():
@@ -310,6 +313,7 @@ def measure(rev: str) -> dict[str, int]:
                 counts["lib_gpui_files"] += 1
         functions.update(FN.findall(text))
     counts["cyclic_modules"], counts["mutual_imports"] = cycles(modules, texts)
+    counts["ui_cyclic_modules"], counts["ui_mutual_imports"] = cycles(ui_modules, texts)
     manual = [blob for blob, path in files if path == "tools/ci/manual-tests.txt"]
     if manual:
         names = manual_test_names(blobs(manual)[0])
