@@ -13,6 +13,7 @@
 //! it stays blocked while the game or another change runs, and holds Play and setup changes
 //! through the shared busy flag (`mutating`).
 use super::discover::MenuOption;
+use super::state::Menu;
 use super::ui::{added_mark, browse_card, c, card, columns, dim, muted, tag};
 use super::*;
 use crate::frame::button;
