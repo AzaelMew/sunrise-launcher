@@ -2215,6 +2215,10 @@ pub fn launch(
 /// The owner gate before the game starts: [`launch`], where the account that plays (the selected
 /// one, else the first) must own the game itself, by the services' answer or, when they can't be
 /// asked, its last one. Never another account's ownership for a name of its own.
+///
+/// The game never starts without that account's session. When the services can't be asked, it
+/// gets the stored Minecraft token if that is still good for five minutes (the game's own
+/// `expired()` margin is one); otherwise this refuses with what the check said.
 pub fn launch_for_game(
     ep: &Endpoints,
     client_id: Option<&str>,
@@ -2224,12 +2228,21 @@ pub fn launch_for_game(
     if accounts.selected().is_none() {
         accounts.selected = accounts.accounts.first().map(|a| a.uuid.clone());
     }
-    let pass = launch(ep, client_id, store, accounts)?;
-    let owns = accounts
+    let mut pass = launch(ep, client_id, store, accounts)?;
+    let stored = accounts
         .selected()
-        .and_then(|a| secrets_in(store, &a.uuid))
-        .is_some_and(|s| s.owns);
-    if owns {
+        .and_then(|a| Some((a.clone(), secrets_in(store, &a.uuid)?)))
+        .filter(|(_, s)| s.owns);
+    if let Some((account, secrets)) = stored {
+        if pass.session.is_none() {
+            if secrets.sign_in_required || secrets.minecraft_expires_at <= now() + 300 {
+                return Err(NoOwner {
+                    keyring: pass.offline,
+                });
+            }
+            pass.session = Some((account, secrets));
+            pass.offline = None;
+        }
         Ok(pass)
     } else {
         // Why that account can't play (it doesn't own the game, signed out, an unread keyring).
