@@ -461,6 +461,49 @@ fn login_with_xbox_signs_in_when_launcher_login_refuses() {
     assert_eq!(finish_sign_in(&ep, ms).unwrap_err(), DOES_NOT_OWN);
 }
 
+/// A whole sign-in leaves each stage and each request's service, host and status in the launcher
+/// log, and none of the tokens, the account's ids or its name.
+#[test]
+fn a_sign_in_logs_its_stages_and_requests_and_no_secret() {
+    let (_, ep) = mock(|_| {});
+    let before = crate::launcher_log::since(0).0;
+    let ms = MsTokens {
+        access: "ms-access-1".into(),
+        refresh: "ms-refresh-1".into(),
+    };
+    finish_sign_in(&ep, ms).unwrap();
+    // Other tests log beside this one: keep the sign-in's own lines.
+    let (_, lines) = crate::launcher_log::since(before);
+    let log: Vec<&String> = lines
+        .iter()
+        .filter(|l| l.contains("Sign-in: ") || l.contains(" -> "))
+        .collect();
+    let has = |text: &str| log.iter().any(|l| l.contains(text));
+    for kept in [
+        "Sign-in: Xbox Live user authentication: done in ",
+        "Sign-in: XSTS authorization: done in ",
+        "Sign-in: Minecraft login: done in ",
+        "Sign-in: reading the Minecraft profile: done in ",
+        "Xbox Live: POST ",
+        " -> 200 (",
+    ] {
+        assert!(has(kept), "{kept:?} missing in {log:#?}");
+    }
+    for secret in [
+        "ms-access-1",
+        "ms-refresh-1",
+        "xbl-token",
+        "xsts-token",
+        "uhs-1",
+        "2535400000000000",
+        "mc-token",
+        UUID,
+        "Notch",
+    ] {
+        assert!(!has(secret), "{secret:?} in {log:#?}");
+    }
+}
+
 fn notch() -> Account {
     Account {
         uuid: UUID.into(),
