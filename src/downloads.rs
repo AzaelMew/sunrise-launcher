@@ -18,6 +18,7 @@
 //!
 //! Redirect targets must use HTTPS. Retry-After delays are capped at 60 seconds. Each destination
 //! directory is swept once before use for generated partials whose owning process has exited.
+use crate::launcher_log;
 use futures_util::{stream, StreamExt};
 use reqwest::{header, Client, Response, StatusCode, Url};
 use sha1::{Digest, Sha1};
@@ -38,6 +39,10 @@ use tokio::{
 
 pub const CANCELLED: &str = "Download cancelled. Download again to go on where it stopped.";
 const MAX_RETRY_AFTER: Duration = Duration::from_secs(60);
+/// A file this big gets a line of its own in the launcher log; smaller ones only count in their batch.
+const LOGGED_FILE_SIZE: u64 = 1_000_000;
+/// A batch this long is one step in the launcher log, with progress.
+const LOGGED_BATCH_FILES: usize = 10;
 type Sweeps = HashMap<PathBuf, Arc<tokio::sync::OnceCell<()>>>;
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -623,6 +628,7 @@ impl Downloader {
                 .open(&temporary)
                 .await?;
             let scratch = Scratch(temporary);
+            let began = Instant::now();
             let result = async {
                 self.transfer(artifact, &scratch.0).await?;
                 if !valid(artifact, &scratch.0, self.config.buffer).await? {
@@ -634,6 +640,15 @@ impl Downloader {
                     return Err(Failure::permanent(CANCELLED));
                 }
                 fs::rename(&scratch.0, &artifact.path).await?;
+                if let Some(size) = artifact.size.filter(|size| *size >= LOGGED_FILE_SIZE) {
+                    launcher_log::line(format!(
+                        "Downloaded {} from {}: {} in {:.1} s",
+                        file_name(artifact),
+                        host_of(&artifact.url),
+                        crate::storage::format_bytes(size),
+                        began.elapsed().as_secs_f64()
+                    ));
+                }
                 Ok(())
             }
             .await;
@@ -665,6 +680,16 @@ impl Downloader {
             }
             Err(e) => {
                 self.metrics.counters.failed.fetch_add(1, Relaxed);
+                if artifact.size.is_some_and(|size| size >= LOGGED_FILE_SIZE)
+                    && e.message != CANCELLED
+                {
+                    launcher_log::line(format!(
+                        "Download of {} from {} failed: {}",
+                        file_name(artifact),
+                        host_of(&artifact.url),
+                        e.message
+                    ));
+                }
                 Err(if e.message == CANCELLED {
                     e.message
                 } else {
@@ -721,6 +746,17 @@ impl Downloader {
         fail_fast: bool,
     ) -> Result<(), String> {
         self.register(artifacts);
+        let step = (artifacts.len() >= LOGGED_BATCH_FILES).then(|| {
+            let mut hosts: Vec<String> = artifacts.iter().map(|a| host_of(&a.url)).collect();
+            hosts.sort();
+            hosts.dedup();
+            launcher_log::step(format!(
+                "Downloading {} files from {}",
+                artifacts.len(),
+                hosts.join(", ")
+            ))
+        });
+        let mut finished = 0;
         let mut first = None;
         let mut pending = BatchPending {
             metrics: self.metrics.clone(),
@@ -733,9 +769,27 @@ impl Downloader {
             pending.remaining -= 1;
             if let Err(e) = result {
                 if fail_fast {
+                    if let Some(step) = step {
+                        step.failed(&e);
+                    }
                     return Err(e);
                 }
                 first.get_or_insert(e);
+            }
+            if let Some(step) = &step {
+                let tenths = |files: usize| files * 10 / artifacts.len();
+                finished += 1;
+                if tenths(finished) > tenths(finished - 1) {
+                    step.note(format!("{finished} of {} files", artifacts.len()));
+                }
+            }
+        }
+        if let Some(step) = step {
+            match &first {
+                Some(e) => step.failed(e),
+                None => step.done(crate::storage::format_bytes(
+                    artifacts.iter().filter_map(|a| a.size).sum(),
+                )),
             }
         }
         first.map_or(Ok(()), Err)
@@ -789,6 +843,19 @@ impl Downloader {
         };
         tokio::select! {biased; _=cancelled(cancel)=>Err(CANCELLED.into()),result=operation=>result}
     }
+}
+/// The host of `url` for the launcher log: never the path or query, which can hold a token.
+pub(crate) fn host_of(url: &str) -> String {
+    Url::parse(url)
+        .ok()
+        .and_then(|url| url.host_str().map(str::to_owned))
+        .unwrap_or_else(|| "an unknown host".into())
+}
+fn file_name(artifact: &Artifact) -> String {
+    artifact
+        .path
+        .file_name()
+        .map_or_else(String::new, |name| name.to_string_lossy().into_owned())
 }
 fn redirect_target(url: &Url, location: &str) -> Result<Url, Failure> {
     let target = url.join(location).map_err(Failure::permanent)?;

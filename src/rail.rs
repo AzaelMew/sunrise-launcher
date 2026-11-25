@@ -461,6 +461,12 @@ impl Launcher {
                 self.links.website.clone(),
             ),
             (
+                "sidebar-logs",
+                tr("Logs"),
+                "computer-terminal-01",
+                String::new(),
+            ),
+            (
                 "sidebar-settings",
                 tr("Settings"),
                 "sliders-horizontal",
@@ -468,11 +474,12 @@ impl Launcher {
             ),
         ] {
             let settings = id == "sidebar-settings";
+            let logs = id == "sidebar-logs";
             rail = rail.child(
                 row(
                     id.into(),
                     label.into(),
-                    settings && self.ui.page == Page::Settings,
+                    (settings && self.ui.page == Page::Settings) || (logs && self.logs_open()),
                 )
                 .child(icon_slot(crate::glass_ui::icon(
                     icon,
@@ -480,9 +487,11 @@ impl Launcher {
                     rgb(p.chrome_muted).into(),
                 )))
                 .when(labelled, |d| d.child(txt(label.into())))
-                .when(settings || !url.is_empty(), |d| {
+                .when(settings || logs || !url.is_empty(), |d| {
                     d.on_click(cx.listener(move |this, _, _, cx| {
-                        if settings {
+                        if logs {
+                            this.toggle_logs();
+                        } else if settings {
                             this.navigate(Page::Settings);
                         } else {
                             Self::open_url(&url, cx);

@@ -695,7 +695,14 @@ pub fn compare_versions(a: &str, b: &str) -> std::cmp::Ordering {
 
 /// Every published release of the game, from GitHub or its configured mirror.
 fn release_list() -> Result<Vec<serde_json::Value>, String> {
-    crate::github::release_list(GAME_REPO, crate::github::CachePolicy::PreferCache)
+    let host = crate::github::API.trim_start_matches("https://");
+    let step = crate::launcher_log::step(format!("Fetching the release list from {host}"));
+    let list = crate::github::release_list(GAME_REPO, crate::github::CachePolicy::PreferCache);
+    match &list {
+        Ok(list) => step.done(format!("{} releases", list.len())),
+        Err(why) => step.failed(why),
+    }
+    list
 }
 
 /// The game's releases in `list` whose tag passes `keep`, with assets in preference order.
@@ -2098,7 +2105,7 @@ fn resources_compatible(from: &Path, to: &Path, resources: &Path, legacy: &[(&st
     }
     let declared = |root: &Path| {
         output_version_at(root).inspect_err(|error| {
-            eprintln!("{}: {}", root.display(), preparer_source_error(error));
+            crate::elog!("{}: {}", root.display(), preparer_source_error(error));
         })
     };
     let (Ok(source), Ok(target)) = (declared(from), declared(to)) else {
@@ -2393,7 +2400,7 @@ fn reuse_prepared_for_cancellable(tag: &str, stop: Option<&crate::native_mods::C
     }
     if check_prepared(tag) {
         if let Err(error) = finish_preparation_cancellable(tag, &preparation, stop) {
-            eprintln!("{tag}: {error}");
+            crate::elog!("{tag}: {error}");
         }
     }
     drop(preparation);
@@ -2405,11 +2412,11 @@ fn reuse_prepared_for_cancellable(tag: &str, stop: Option<&crate::native_mods::C
         .name("Prepared data file".into())
         .spawn(move || {
             if let Err(e) = write_data_file(&root, &resources) {
-                eprintln!("{}: not written: {e}", resources.display());
+                crate::elog!("{}: not written: {e}", resources.display());
             }
         });
     if let Err(e) = spawned {
-        eprintln!("{tag}: the data file was not written: {e}");
+        crate::elog!("{tag}: the data file was not written: {e}");
     }
 }
 
@@ -2453,7 +2460,7 @@ pub fn reuse_prepared_everywhere() -> Vec<(String, String)> {
         refill_own_store(&tag, &handoff);
         if reused.iter().any(|(prepared, _)| prepared == &tag) {
             if let Err(error) = finish_preparation(&tag, &preparation) {
-                eprintln!("{tag}: {error}");
+                crate::elog!("{tag}: {error}");
             }
         } else {
             complete_assets_staged(&tag, &handoff);
@@ -2563,7 +2570,7 @@ pub(crate) fn complete_assets_staged(tag: &str, handoff: &crate::preparer::Hando
         &versions_dir(),
         tag,
         minecraft_folders,
-        &|line| eprintln!("{line}"),
+        &|line| crate::elog!("{line}"),
         Some(handoff),
     );
 }
@@ -2618,8 +2625,8 @@ fn refill_own_store(tag: &str, handoff: &crate::preparer::Handoff<'_>) {
             .map_err(|e| e.to_string())?;
         Ok(body)
     };
-    if let Err(e) = download_for_owner(&pins, &own, &fetch, None, &|line| eprintln!("{line}")) {
-        eprintln!("{tag}: the missing assets were not downloaded: {e}");
+    if let Err(e) = download_for_owner(&pins, &own, &fetch, None, &|line| crate::elog!("{line}")) {
+        crate::elog!("{tag}: the missing assets were not downloaded: {e}");
     }
 }
 
@@ -2650,10 +2657,18 @@ fn complete_assets_in(
     let Some(binary) = crate::preparer::binary(&root) else {
         return;
     };
+    let checking = crate::launcher_log::step("Checking game files");
     let lacking = match crate::preparer::missing_extras(&binary, &root, &resources, handoff) {
-        Ok(Some(lacking)) if !lacking.is_empty() => lacking,
-        Ok(_) => return,
-        Err(e) => return log(format!("{tag}: {e}")),
+        Ok(Some(lacking)) if !lacking.is_empty() => {
+            checking.done(format!("{} to fetch", lacking.len()));
+            lacking
+        }
+        Ok(Some(_)) => return checking.done("nothing to fetch"),
+        Ok(None) => return checking.done("this version's preparer cannot check"),
+        Err(e) => {
+            checking.failed(&e);
+            return log(format!("{tag}: {e}"));
+        }
     };
     if stopped() {
         return;
@@ -2666,8 +2681,16 @@ fn complete_assets_in(
         return log(format!("{tag}: {error}"));
     }
     let kinds: Vec<String> = lacking.iter().map(|(kind, _)| kind.clone()).collect();
+    let fetching = crate::launcher_log::step(format!(
+        "Fetching missing game files ({})",
+        kinds.join(", ")
+    ));
     let result =
         crate::preparer::add_extras(&binary, &root, &resources, &kinds, &folders(), log, handoff);
+    match &result {
+        Ok(_) => fetching.done(""),
+        Err(e) => fetching.failed(e),
+    }
     if !stopped() {
         tried.push(root.clone());
     }
@@ -3606,7 +3629,7 @@ pub(crate) fn client_program(tag: &str) -> PathBuf {
     #[cfg(target_os = "macos")]
     match crate::game_app::ensure(&dir) {
         Ok(program) => return program,
-        Err(e) => eprintln!("Starting the game outside {}: {e}", crate::game_app::APP),
+        Err(e) => crate::elog!("Starting the game outside {}: {e}", crate::game_app::APP),
     }
     dir.join(CLIENT)
 }
@@ -3836,7 +3859,7 @@ pub enum PlayStep {
 /// Says on stderr which step Play is at, one line each: a terminal run shows where it stops when
 /// it never gets to the game (#12179).
 pub fn play_step(step: &str) {
-    eprintln!("Sunrise: Play: {step}…");
+    crate::elog!("Sunrise: Play: {step}…");
 }
 
 /// The client's command, once the owner gate lets it start and its resources are prepared. Past
@@ -4047,7 +4070,8 @@ fn launcher_update_from(releases: &[Release], own: &str) -> Option<Release> {
 /// Both release lists and both update kinds: static game releases published before launcher
 /// updates and SDK lookups, and neither feed's failure stopping the other's check.
 pub fn releases_and_updates(on_releases: impl FnMut(Result<Vec<Release>, String>)) -> Updates {
-    releases_and_updates_with(
+    let step = crate::launcher_log::step("Checking for updates");
+    let updates = releases_and_updates_with(
         release_list,
         installed,
         crate::instances::selection()
@@ -4055,7 +4079,29 @@ pub fn releases_and_updates(on_releases: impl FnMut(Result<Vec<Release>, String>
             .and_then(|instance| instance.version.is_none().then_some(instance.channel)),
         || checked_launcher_update(crate::github::CachePolicy::PreferCache),
         on_releases,
-    )
+    );
+    let newest = |release: &Option<Release>| {
+        release
+            .as_ref()
+            .map_or_else(|| "none".to_owned(), |r| r.tag.clone())
+    };
+    let errors: Vec<String> = [
+        updates.sunrise_error.clone(),
+        updates.launcher_error.as_ref().map(ToString::to_string),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    if errors.is_empty() {
+        step.done(format!(
+            "game update: {}; launcher update: {}",
+            newest(&updates.sunrise),
+            newest(&updates.launcher)
+        ));
+    } else {
+        step.failed(errors.join("; "));
+    }
+    updates
 }
 
 fn releases_and_updates_with(
@@ -4224,7 +4270,7 @@ fn install_selected_release(
     let before = installed();
     let outcome = install(release)?;
     if let Some(warning) = outcome.receipt_warning() {
-        eprintln!("{warning}");
+        crate::elog!("{warning}");
     }
     if matches!(outcome, InstallOutcome::ReceiptOnly(_)) {
         return Ok(release.tag.clone());
@@ -4238,7 +4284,7 @@ fn install_selected_release(
     }
     if let Some(releases) = catalog {
         for (tag, error) in version_storage::prune_old_versions(releases, &release.tag) {
-            eprintln!("Could not remove old game build {tag}: {error}");
+            crate::elog!("Could not remove old game build {tag}: {error}");
         }
     }
     Ok(release.tag.clone())
@@ -5106,6 +5152,7 @@ fn monitor(
     stop: Option<crate::native_mods::Cancellation>,
 ) -> Running {
     let pid = child.id();
+    let began = std::time::Instant::now();
     let group = matches!(job, Job::Prepare);
     if group {
         crate::process::owned::CHILDREN.track_group(pid);
@@ -5163,6 +5210,21 @@ fn monitor(
             let _ = readers_done.recv_timeout(std::time::Duration::from_millis(200));
         }
         *forwarding.lock().unwrap() = false;
+        if let (Job::Client, Ok(status)) = (job, &status) {
+            #[cfg(unix)]
+            let signal = std::os::unix::process::ExitStatusExt::signal(status);
+            #[cfg(not(unix))]
+            let signal: Option<i32> = None;
+            let how = match (status.code(), signal) {
+                (Some(code), _) => format!("exited with code {code}"),
+                (None, Some(signal)) => format!("was stopped by signal {signal}"),
+                (None, None) => "ended without an exit code".into(),
+            };
+            crate::launcher_log::line(format!(
+                "The game {how} after {} s",
+                began.elapsed().as_secs()
+            ));
+        }
         if relayed {
             if let Err(error) = status {
                 let _ = tx.send(Msg::ClientObservationLost(

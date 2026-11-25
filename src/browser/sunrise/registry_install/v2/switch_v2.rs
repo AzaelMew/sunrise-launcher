@@ -177,7 +177,7 @@ pub(crate) fn switch_profile_build_v2_with(
             {
                 // The choice is already durable in active-build.json; listing or
                 // editing the profile recovers instances.json on the next write.
-                eprintln!("Sunrise: instances.json is not saved: {error}");
+                crate::elog!("Sunrise: instances.json is not saved: {error}");
             }
         }
     }

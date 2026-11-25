@@ -57,6 +57,8 @@ pub(super) struct State {
     pub sheets: crate::sheets::SheetsState,
     pub settings: crate::settings::SettingsView,
     pub cat: crate::cat::CatState,
+    /// The Logs panel: open or not, its tab and the lines it has read.
+    pub logs: crate::logs_panel::LogsPanel,
     pub last_server: Option<Page>,
     pub after_install: Option<(crate::launcher_play::PlayIntent, String)>,
     /// A Play (including a destination) that explicitly asked for the sign-in now under way.
@@ -881,6 +883,8 @@ impl Launcher {
                         }
                     }
                     "escape" if this.viewer_close(cx) => {}
+                    // The Logs panel lies over every dialog while it is open.
+                    "escape" if this.close_logs() => {}
                     "left" if this.viewer_step(-1, cx) => {}
                     "right" if this.viewer_step(1, cx) => {}
                     "escape" if this.sign_in_screen.open => {
@@ -933,6 +937,8 @@ impl Launcher {
             .collect();
         let top = self.modal(layers.pop(), window, cx);
         frame = frame.children(layers).children(top);
+        // Over the dialogs too, so a sign-in that hangs shows its step while its dialog is up.
+        frame = frame.children(self.logs_layer(window, cx));
         frame = frame.children(self.viewer(window, cx));
         frame = frame.children(self.toast_float());
         self.pictures.free_retired(window);

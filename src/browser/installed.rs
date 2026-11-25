@@ -231,9 +231,10 @@ fn readable_entries<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<Entry>
         .filter(|e| {
             let kept = in_folders(&e.file);
             if !kept {
-                eprintln!(
+                crate::elog!(
                     "{MANIFEST}: left out {:?}, whose file {:?} isn't in a pack or mod folder",
-                    e.title, e.file
+                    e.title,
+                    e.file
                 );
             }
             kept

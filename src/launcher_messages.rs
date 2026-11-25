@@ -26,7 +26,7 @@ impl Launcher {
     }
 
     pub(crate) fn drain(&mut self, window: gpui::AnyWindowHandle, cx: &mut Context<Self>) {
-        let mut changed = false;
+        let mut changed = self.pull_logs();
         self.perf.tick();
         if self.bench.as_ref().is_some_and(perf::Bench::ready_for_idle) {
             // Finish one-time fallback font loading before the benchmark starts its idle sample.
@@ -249,6 +249,11 @@ impl Launcher {
                                 self.owner = Some(true);
                             }
                             self.refresh_installed();
+                            sunrise_launcher::launcher_log::line(format!(
+                                "Starting the game: {}",
+                                self.profile_target(&game.instance)
+                                    .unwrap_or_else(|| "an unknown version".into())
+                            ));
                             self.client_home = Some(game.instance.home.clone());
                             self.client_run = Some((game.instance, Instant::now()));
                             self.client = Some(backend::monitor_game(
@@ -349,6 +354,12 @@ impl Launcher {
                     });
                     match started {
                         Ok(r) => {
+                            sunrise_launcher::launcher_log::line(format!(
+                                "Starting the game: {}",
+                                run.as_deref()
+                                    .and_then(|instance| self.profile_target(instance))
+                                    .unwrap_or_else(|| "an unknown version".into())
+                            ));
                             self.client = Some(r);
                             self.client_run = run.map(|instance| (*instance, Instant::now()));
                             // Do not hide or minimize the window when the registry has
@@ -643,7 +654,7 @@ impl Launcher {
                                             );
                                         })
                                     {
-                                        eprintln!(
+                                        sunrise_launcher::elog!(
                                             "{}",
                                             trf(
                                                 "Play time not saved: {error}",
@@ -693,6 +704,9 @@ impl Launcher {
                                         })
                                     })
                                     .unwrap_or_default();
+                                sunrise_launcher::launcher_log::line(format!(
+                                    "The game crashed: {summary}"
+                                ));
                                 let summary = match other_profile {
                                     Some(profile) => trf(
                                         "The game stopped in {profile}. {reason}",
