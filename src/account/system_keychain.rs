@@ -6,7 +6,7 @@ use super::*;
 pub struct SystemStore;
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 impl SystemStore {
-    fn keyring() -> Result<oo7::Keyring, String> {
+    fn keyring() -> Result<oo7::Keyring, StoreError> {
         futures_lite::future::block_on(async {
             // `oo7::Keyring::new` takes `GTK_USE_PORTAL=1` (set by many KDE desktops) for a
             // sandbox, and then keeps the secrets in a file under a key the Secret portal gives
@@ -33,7 +33,7 @@ impl SystemStore {
 }
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 impl SecretStore for SystemStore {
-    fn get(&self, key: &str) -> Result<Option<String>, String> {
+    fn get(&self, key: &str) -> Result<Option<String>, StoreError> {
         let keyring = Self::keyring()?;
         let read = |service| {
             futures_lite::future::block_on(async {
@@ -52,7 +52,7 @@ impl SecretStore for SystemStore {
         };
         get_carried(read(SERVICE)?, read, |secret| self.set(key, secret))
     }
-    fn set(&self, key: &str, secret: &str) -> Result<(), String> {
+    fn set(&self, key: &str, secret: &str) -> Result<(), StoreError> {
         let keyring = Self::keyring()?;
         futures_lite::future::block_on(async {
             let attributes = vec![("service", SERVICE), ("account", key)];
@@ -64,14 +64,17 @@ impl SecretStore for SystemStore {
                     true,
                 )
                 .await
-                .map_err(|e| e.to_string())
+                .map_err(|e| e.to_string().into())
         })
     }
-    fn delete(&self, key: &str) -> Result<(), String> {
+    fn delete(&self, key: &str) -> Result<(), StoreError> {
         let keyring = Self::keyring()?;
         futures_lite::future::block_on(async {
             let attributes = vec![("service", SERVICE), ("account", key)];
-            keyring.delete(&attributes).await.map_err(|e| e.to_string())
+            keyring
+                .delete(&attributes)
+                .await
+                .map_err(|e| e.to_string().into())
         })
     }
     fn persistent(&self) -> bool {
@@ -124,14 +127,14 @@ pub(super) fn split_secret(mut secret: &str) -> Vec<&str> {
 /// One keychain item per key: what a secret's pieces are kept in.
 #[cfg(any(target_os = "macos", target_os = "windows", test))]
 pub(super) trait Items {
-    fn read(&self, key: &str) -> Result<Option<String>, String>;
-    fn write(&self, key: &str, piece: &str) -> Result<(), String>;
+    fn read(&self, key: &str) -> Result<Option<String>, StoreError>;
+    fn write(&self, key: &str, piece: &str) -> Result<(), StoreError>;
     /// Removes one item; false when there was none.
-    fn remove(&self, key: &str) -> Result<bool, String>;
+    fn remove(&self, key: &str) -> Result<bool, StoreError>;
 }
 
 #[cfg(any(target_os = "windows", target_os = "macos", test))]
-pub(super) fn get_pieces(items: &dyn Items, key: &str) -> Result<Option<String>, String> {
+pub(super) fn get_pieces(items: &dyn Items, key: &str) -> Result<Option<String>, StoreError> {
     let Some(mut secret) = items.read(key)? else {
         return Ok(None);
     };
@@ -145,7 +148,7 @@ pub(super) fn get_pieces(items: &dyn Items, key: &str) -> Result<Option<String>,
 }
 
 #[cfg(any(target_os = "windows", test))]
-pub(super) fn set_pieces(items: &dyn Items, key: &str, secret: &str) -> Result<(), String> {
+pub(super) fn set_pieces(items: &dyn Items, key: &str, secret: &str) -> Result<(), StoreError> {
     let before = get_pieces(items, key).ok().flatten();
     let pieces = split_secret(secret);
     for (n, piece) in pieces.iter().enumerate() {
@@ -185,7 +188,7 @@ pub(super) fn set_pieces(items: &dyn Items, key: &str, secret: &str) -> Result<(
 }
 
 #[cfg(any(target_os = "macos", target_os = "windows", test))]
-pub(super) fn delete_pieces(items: &dyn Items, key: &str) -> Result<(), String> {
+pub(super) fn delete_pieces(items: &dyn Items, key: &str) -> Result<(), StoreError> {
     for n in 0.. {
         if !items.remove(&piece_key(key, n))? {
             break;
@@ -198,7 +201,7 @@ pub(super) fn delete_pieces(items: &dyn Items, key: &str) -> Result<(), String> 
 /// `key.2`, ... reads whole and folds into the one item, so a read touches a single item — and asks
 /// once — from then on. A merged item also reads fine as "piece 0" to launchers that still split.
 #[cfg(any(target_os = "macos", test))]
-pub(super) fn get_item(items: &dyn Items, key: &str) -> Result<Option<String>, String> {
+pub(super) fn get_item(items: &dyn Items, key: &str) -> Result<Option<String>, StoreError> {
     let Some(mut secret) = items.read(key)? else {
         return Ok(None);
     };
@@ -223,7 +226,7 @@ pub(super) fn get_item(items: &dyn Items, key: &str) -> Result<Option<String>, S
 /// back: the merged secret beside the pieces left would read as a longer, unparseable one, and
 /// pieces removed before the failure can't be had again except from here.
 #[cfg(any(target_os = "macos", test))]
-pub(super) fn set_item(items: &dyn Items, key: &str, secret: &str) -> Result<(), String> {
+pub(super) fn set_item(items: &dyn Items, key: &str, secret: &str) -> Result<(), StoreError> {
     let mut before = Vec::new();
     if let Some(piece) = items.read(key)? {
         before.push((key.to_string(), piece));
@@ -313,9 +316,9 @@ pub(super) fn write_error(e: keyring::Error) -> String {
 /// next read.
 pub(super) fn get_carried(
     own: Option<String>,
-    earlier: impl Fn(&'static str) -> Result<Option<String>, String>,
-    keep: impl FnOnce(&str) -> Result<(), String>,
-) -> Result<Option<String>, String> {
+    earlier: impl Fn(&'static str) -> Result<Option<String>, StoreError>,
+    keep: impl FnOnce(&str) -> Result<(), StoreError>,
+) -> Result<Option<String>, StoreError> {
     if own.is_some() {
         return Ok(own);
     }
@@ -334,23 +337,23 @@ struct KeyringItems(&'static str);
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 impl Items for KeyringItems {
-    fn read(&self, key: &str) -> Result<Option<String>, String> {
+    fn read(&self, key: &str) -> Result<Option<String>, StoreError> {
         match keyring::Entry::new(self.0, key).and_then(|e| e.get_password()) {
             Ok(secret) => Ok(Some(secret)),
             Err(keyring::Error::NoEntry) => Ok(None),
-            Err(e) => Err(e.to_string()),
+            Err(e) => Err(e.to_string().into()),
         }
     }
-    fn write(&self, key: &str, piece: &str) -> Result<(), String> {
+    fn write(&self, key: &str, piece: &str) -> Result<(), StoreError> {
         keyring::Entry::new(self.0, key)
             .and_then(|e| e.set_password(piece))
-            .map_err(write_error)
+            .map_err(|e| write_error(e).into())
     }
-    fn remove(&self, key: &str) -> Result<bool, String> {
+    fn remove(&self, key: &str) -> Result<bool, StoreError> {
         match keyring::Entry::new(self.0, key).and_then(|e| e.delete_credential()) {
             Ok(()) => Ok(true),
             Err(keyring::Error::NoEntry) => Ok(false),
-            Err(e) => Err(e.to_string()),
+            Err(e) => Err(e.to_string().into()),
         }
     }
 }
@@ -358,7 +361,7 @@ impl Items for KeyringItems {
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 impl SecretStore for SystemStore {
     #[cfg(target_os = "macos")]
-    fn get(&self, key: &str) -> Result<Option<String>, String> {
+    fn get(&self, key: &str) -> Result<Option<String>, StoreError> {
         get_carried(
             get_item(&KeyringItems(SERVICE), key)?,
             |service| get_pieces(&KeyringItems(service), key),
@@ -366,7 +369,7 @@ impl SecretStore for SystemStore {
         )
     }
     #[cfg(target_os = "windows")]
-    fn get(&self, key: &str) -> Result<Option<String>, String> {
+    fn get(&self, key: &str) -> Result<Option<String>, StoreError> {
         get_carried(
             get_pieces(&KeyringItems(SERVICE), key)?,
             |service| get_pieces(&KeyringItems(service), key),
@@ -374,14 +377,14 @@ impl SecretStore for SystemStore {
         )
     }
     #[cfg(target_os = "macos")]
-    fn set(&self, key: &str, secret: &str) -> Result<(), String> {
+    fn set(&self, key: &str, secret: &str) -> Result<(), StoreError> {
         set_item(&KeyringItems(SERVICE), key, secret)
     }
     #[cfg(target_os = "windows")]
-    fn set(&self, key: &str, secret: &str) -> Result<(), String> {
+    fn set(&self, key: &str, secret: &str) -> Result<(), StoreError> {
         set_pieces(&KeyringItems(SERVICE), key, secret)
     }
-    fn delete(&self, key: &str) -> Result<(), String> {
+    fn delete(&self, key: &str) -> Result<(), StoreError> {
         delete_pieces(&KeyringItems(SERVICE), key)
     }
     fn persistent(&self) -> bool {

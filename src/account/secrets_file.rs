@@ -28,7 +28,7 @@ impl FileStore {
     }
 
     /// Runs `f` holding the file's lock (`account-secrets.lock`): other processes wait.
-    fn locked<T>(&self, f: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+    fn locked<T>(&self, f: impl FnOnce() -> Result<T, StoreError>) -> Result<T, StoreError> {
         self.holding("lock", f)
     }
 
@@ -36,8 +36,8 @@ impl FileStore {
     pub(super) fn holding<T>(
         &self,
         name: &str,
-        f: impl FnOnce() -> Result<T, String>,
-    ) -> Result<T, String> {
+        f: impl FnOnce() -> Result<T, StoreError>,
+    ) -> Result<T, StoreError> {
         if let Some(dir) = self.path.parent() {
             std::fs::create_dir_all(dir).map_err(|e| self.shown(e))?;
         }
@@ -58,7 +58,7 @@ impl FileStore {
             .is_ok_and(|secrets| secrets.values().any(|secret| secret != SIGNED_OUT))
     }
 
-    fn read(&self) -> Result<std::collections::BTreeMap<String, String>, String> {
+    fn read(&self) -> Result<std::collections::BTreeMap<String, String>, StoreError> {
         match std::fs::read(&self.path) {
             // Only where the file breaks: serde's own message can quote what the file holds.
             Ok(bytes) => {
@@ -86,16 +86,19 @@ impl FileStore {
                 Ok(secrets)
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Default::default()),
-            Err(e) => Err(self.shown(e)),
+            Err(e) => Err(self.shown(e).into()),
         }
     }
 
     /// Replaces the file with `secrets` through a temporary file of this write's own beside it, so
     /// a crash leaves the old file or the new one; removes it when there are none left.
-    fn write(&self, secrets: &std::collections::BTreeMap<String, String>) -> Result<(), String> {
+    fn write(
+        &self,
+        secrets: &std::collections::BTreeMap<String, String>,
+    ) -> Result<(), StoreError> {
         if secrets.is_empty() {
             return match std::fs::remove_file(&self.path) {
-                Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(self.shown(e)),
+                Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(self.shown(e).into()),
                 _ => Ok(()),
             };
         }
@@ -116,13 +119,13 @@ impl FileStore {
         });
         if let Err(e) = written.and_then(|()| std::fs::rename(&tmp, &self.path)) {
             let _ = std::fs::remove_file(&tmp);
-            return Err(self.shown(e));
+            return Err(self.shown(e).into());
         }
         Ok(())
     }
 
     /// The file's entry for `key`, if the file is there.
-    pub(super) fn entry(&self, key: &str) -> Result<Option<String>, String> {
+    pub(super) fn entry(&self, key: &str) -> Result<Option<String>, StoreError> {
         if !self.path.exists() {
             return Ok(None);
         }
@@ -130,14 +133,14 @@ impl FileStore {
     }
 
     /// Everything the file holds, if it is there.
-    pub(super) fn entries(&self) -> Result<std::collections::BTreeMap<String, String>, String> {
+    pub(super) fn entries(&self) -> Result<std::collections::BTreeMap<String, String>, StoreError> {
         if !self.path.exists() {
             return Ok(Default::default());
         }
         self.locked(|| self.read())
     }
 
-    pub(super) fn put(&self, key: &str, value: &str) -> Result<(), String> {
+    pub(super) fn put(&self, key: &str, value: &str) -> Result<(), StoreError> {
         self.locked(|| {
             let mut secrets = self.read()?;
             secrets.insert(key.into(), value.into());
@@ -148,7 +151,7 @@ impl FileStore {
     /// The keychain took `key`: removes its entry if it still holds `before`, what was read before
     /// the keychain call. Whether the file still has an entry for it: one another process wrote
     /// since stays, and is read first.
-    pub(super) fn settle(&self, key: &str, before: Option<&str>) -> Result<bool, String> {
+    pub(super) fn settle(&self, key: &str, before: Option<&str>) -> Result<bool, StoreError> {
         if !self.path.exists() {
             return Ok(false);
         }
@@ -166,7 +169,7 @@ impl FileStore {
     /// The install's own secret beside the file (`account-secrets.key`): 32 random bytes, readable
     /// and writable by the player only, made at the first write when `make`. `None` when it isn't
     /// there and not made.
-    fn install_secret(&self, make: bool) -> Result<Option<[u8; 32]>, String> {
+    fn install_secret(&self, make: bool) -> Result<Option<[u8; 32]>, StoreError> {
         let path = self.path.with_extension("key");
         match std::fs::read(&path) {
             Ok(bytes) => <[u8; 32]>::try_from(bytes).map(Some).map_err(|_| {
@@ -175,6 +178,7 @@ impl FileStore {
                     path.display(),
                     self.path.display()
                 )
+                .into()
             }),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound && make => {
                 let mut secret = [0u8; 32];
@@ -191,17 +195,17 @@ impl FileStore {
                 });
                 if let Err(e) = written.and_then(|()| std::fs::rename(&tmp, &path)) {
                     let _ = std::fs::remove_file(&tmp);
-                    return Err(format!("{}: {e}", path.display()));
+                    return Err(format!("{}: {e}", path.display()).into());
                 }
                 Ok(Some(secret))
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(e) => Err(format!("{}: {e}", path.display())),
+            Err(e) => Err(format!("{}: {e}", path.display()).into()),
         }
     }
 
     /// `json` sealed for the file ([`SEALED`]), under [`file_key`] with this install's secret.
-    pub(super) fn seal(&self, json: &[u8]) -> Result<Vec<u8>, String> {
+    pub(super) fn seal(&self, json: &[u8]) -> Result<Vec<u8>, StoreError> {
         use chacha20poly1305::{aead::Aead, KeyInit};
         let key = file_key(&self.install_secret(true)?.expect("made"));
         let mut nonce = [0u8; 12];
@@ -215,7 +219,7 @@ impl FileStore {
     /// What [`Self::seal`] sealed, and whether it was sealed in format 1 ([`SEALED_V1`]), to seal
     /// again; `None` for a file in another format, changed, sealed on another computer or by
     /// another install, or whose install secret is gone.
-    fn unseal(&self, bytes: &[u8]) -> Result<Option<(Vec<u8>, bool)>, String> {
+    fn unseal(&self, bytes: &[u8]) -> Result<Option<(Vec<u8>, bool)>, StoreError> {
         use chacha20poly1305::{aead::Aead, KeyInit};
         let (key, old, rest) = if let Some(rest) = bytes.strip_prefix(SEALED) {
             let Some(secret) = self.install_secret(false)? else {
@@ -287,17 +291,17 @@ pub(super) fn file_key_v1() -> chacha20poly1305::Key {
 pub(super) const SIGNED_OUT: &str = "";
 
 impl SecretStore for FileStore {
-    fn get(&self, key: &str) -> Result<Option<String>, String> {
+    fn get(&self, key: &str) -> Result<Option<String>, StoreError> {
         self.locked(|| Ok(self.read()?.remove(key)))
     }
-    fn set(&self, key: &str, secret: &str) -> Result<(), String> {
+    fn set(&self, key: &str, secret: &str) -> Result<(), StoreError> {
         self.locked(|| {
             let mut secrets = self.read()?;
             secrets.insert(key.into(), secret.into());
             self.write(&secrets)
         })
     }
-    fn delete(&self, key: &str) -> Result<(), String> {
+    fn delete(&self, key: &str) -> Result<(), StoreError> {
         self.locked(|| {
             let mut secrets = self.read()?;
             if secrets.remove(key).is_none() {

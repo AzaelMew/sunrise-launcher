@@ -94,6 +94,63 @@ impl ureq::Resolver for System {
     }
 }
 
+/// Why signing in, or renewing a sign-in, failed. The cases the launcher acts on are their own
+/// variants (a refusal only a new sign-in mends marks the account "sign in again"; a saved sign-in
+/// that can't be read asks for one); every other failure is its message as the player reads it.
+/// Shown, each is the same English text as before: the window translates it by that text.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SignInError {
+    /// Microsoft refused the sign-in's refresh credential.
+    SignInAgain,
+    /// The saved sign-in couldn't be read.
+    DamagedSignIn,
+    /// This build has no Microsoft sign-in.
+    NotConfigured,
+    DoesNotOwn,
+    NoProfile,
+    /// The Microsoft account now has another Minecraft profile than the one signed in.
+    OtherProfile,
+    Other(String),
+}
+
+impl std::fmt::Display for SignInError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::SignInAgain => SIGN_IN_AGAIN,
+            Self::DamagedSignIn => session::DAMAGED_SIGN_IN,
+            Self::NotConfigured => NOT_CONFIGURED,
+            Self::DoesNotOwn => DOES_NOT_OWN,
+            Self::NoProfile => NO_PROFILE,
+            Self::OtherProfile => OTHER_PROFILE,
+            Self::Other(message) => message,
+        })
+    }
+}
+
+impl From<String> for SignInError {
+    fn from(message: String) -> Self {
+        Self::Other(message)
+    }
+}
+
+impl From<&str> for SignInError {
+    fn from(message: &str) -> Self {
+        Self::Other(message.into())
+    }
+}
+
+impl From<StoreError> for SignInError {
+    fn from(error: StoreError) -> Self {
+        Self::Other(error.0)
+    }
+}
+
+impl From<SignInError> for String {
+    fn from(error: SignInError) -> Self {
+        error.to_string()
+    }
+}
+
 /// Keep the short connect timeout and interleaved addresses so a dead IPv6 route
 /// falls back to IPv4 before the whole sign-in request times out.
 pub(super) fn sign_in_agent(builder: ureq::AgentBuilder) -> ureq::AgentBuilder {
@@ -180,7 +237,7 @@ pub enum Poll {
     Done(MsTokens),
 }
 
-pub fn device_code(ep: &Endpoints, client_id: &str) -> Result<DeviceCode, String> {
+pub fn device_code(ep: &Endpoints, client_id: &str) -> Result<DeviceCode, SignInError> {
     let (status, v) = send(
         request_to("POST", &format!("{}/devicecode", ep.microsoft))?,
         Some(Body::Form(vec![("client_id", client_id), ("scope", SCOPE)])),
@@ -214,22 +271,22 @@ pub fn device_code(ep: &Endpoints, client_id: &str) -> Result<DeviceCode, String
 }
 
 /// The OAuth error codes as messages for the player.
-pub(super) fn oauth_error(v: &Value) -> String {
+pub(super) fn oauth_error(v: &Value) -> SignInError {
     match v.get("error").and_then(Value::as_str) {
         Some("authorization_declined") => "Sign-in was declined in the browser.".into(),
         Some("expired_token") => "The sign-in code expired. Start again.".into(),
         Some("bad_verification_code") => "The sign-in code was not recognised. Start again.".into(),
-        Some("invalid_grant") => SIGN_IN_AGAIN.into(),
+        Some("invalid_grant") => SignInError::SignInAgain,
         Some("invalid_client" | "unauthorized_client") => {
             "Microsoft refused this launcher's app registration (client ID).".into()
         }
-        Some(other) => format!("Microsoft sign-in failed ({other})."),
+        Some(other) => format!("Microsoft sign-in failed ({other}).").into(),
         None => "Microsoft sign-in failed.".into(),
     }
 }
 
 /// One poll of the token endpoint while the player signs in.
-pub fn poll(ep: &Endpoints, client_id: &str, code: &DeviceCode) -> Result<Poll, String> {
+pub fn poll(ep: &Endpoints, client_id: &str, code: &DeviceCode) -> Result<Poll, SignInError> {
     let (status, v) = send(
         request_to("POST", &format!("{}/token", ep.microsoft))?,
         Some(Body::Form(vec![
@@ -247,7 +304,7 @@ pub fn poll(ep: &Endpoints, client_id: &str, code: &DeviceCode) -> Result<Poll, 
     ms_tokens(status, &v).map(Poll::Done)
 }
 
-fn ms_tokens(status: u16, v: &Value) -> Result<MsTokens, String> {
+fn ms_tokens(status: u16, v: &Value) -> Result<MsTokens, SignInError> {
     match (
         status,
         str_field(v, "access_token"),
@@ -265,7 +322,7 @@ pub fn wait_for_sign_in(
     client_id: &str,
     code: &DeviceCode,
     cancelled: &dyn Fn() -> bool,
-) -> Result<MsTokens, String> {
+) -> Result<MsTokens, SignInError> {
     let mut interval = code.interval;
     loop {
         let until = std::time::Instant::now() + Duration::from_secs(interval);
@@ -286,7 +343,7 @@ pub fn wait_for_sign_in(
     }
 }
 
-fn refresh_ms(ep: &Endpoints, client_id: &str, refresh: &str) -> Result<MsTokens, String> {
+fn refresh_ms(ep: &Endpoints, client_id: &str, refresh: &str) -> Result<MsTokens, SignInError> {
     let (status, v) = send(
         request_to("POST", &format!("{}/token", ep.microsoft))?,
         Some(Body::Form(vec![
@@ -300,7 +357,7 @@ fn refresh_ms(ep: &Endpoints, client_id: &str, refresh: &str) -> Result<MsTokens
     // A refresh token issued to another app registration (the launcher's client ID changed
     // since the player signed in) is refused as the client's; only a new sign-in mends it.
     match v.get("error").and_then(Value::as_str) {
-        Some("invalid_client" | "unauthorized_client") => Err(SIGN_IN_AGAIN.into()),
+        Some("invalid_client" | "unauthorized_client") => Err(SignInError::SignInAgain),
         _ => ms_tokens(status, &v),
     }
 }
@@ -335,7 +392,7 @@ fn minecraft_login(
     ep: &Endpoints,
     ms_access: &str,
     progress: &dyn Fn(session::Phase),
-) -> Result<Minecraft, String> {
+) -> Result<Minecraft, SignInError> {
     progress(session::Phase::Xbox);
     let (status, xbl) = send(
         request_to("POST", &ep.xbox_user)?,
@@ -363,7 +420,7 @@ fn minecraft_login(
         "Xbox Live",
     )?;
     if let Some(code) = xsts.get("XErr").and_then(Value::as_u64) {
-        return Err(xsts_error(code));
+        return Err(xsts_error(code).into());
     }
     let claims = xsts.pointer("/DisplayClaims/xui/0");
     let (Some(xsts_token), Some(uhs)) = (
@@ -387,7 +444,7 @@ fn minecraft_login(
 /// joining an online-mode server answers "Profile not found" (found and diagnosed by
 /// martipops). `login_with_xbox` stays the fallback, so a sign-in that worked before still does
 /// when the other refuses.
-fn minecraft_token(ep: &Endpoints, xtoken: &str) -> Result<(String, u64), String> {
+fn minecraft_token(ep: &Endpoints, xtoken: &str) -> Result<(String, u64), SignInError> {
     let lifetime = |v: &Value| v.get("expires_in").and_then(Value::as_u64).unwrap_or(86400);
     let launcher = send(
         request_to("POST", &format!("{}/launcher/login", ep.minecraft))?,
@@ -426,7 +483,7 @@ pub(super) fn bearer(request: ureq::Request, token: &str) -> ureq::Request {
 }
 
 /// Whether the account owns Minecraft: Java Edition (Game Pass included).
-fn owns_game(ep: &Endpoints, token: &str) -> Result<bool, String> {
+fn owns_game(ep: &Endpoints, token: &str) -> Result<bool, SignInError> {
     let (status, v) = send(
         bearer(
             request_to("GET", &format!("{}/entitlements/mcstore", ep.minecraft))?,
@@ -464,7 +521,7 @@ pub struct Account {
 }
 
 /// The profile; none when the account has none (it doesn't own the game, or never made one).
-fn profile(ep: &Endpoints, token: &str) -> Result<Option<Account>, String> {
+fn profile(ep: &Endpoints, token: &str) -> Result<Option<Account>, SignInError> {
     let (status, v) = send(
         bearer(
             request_to("GET", &format!("{}/minecraft/profile", ep.minecraft))?,
@@ -529,7 +586,7 @@ impl std::fmt::Debug for Secrets {
 }
 
 /// From Microsoft tokens to a ready account: Xbox, XSTS, Minecraft, ownership, profile.
-pub fn finish_sign_in(ep: &Endpoints, ms: MsTokens) -> Result<(Account, Secrets), String> {
+pub fn finish_sign_in(ep: &Endpoints, ms: MsTokens) -> Result<(Account, Secrets), SignInError> {
     finish_sign_in_with_progress(ep, ms, &|_| {})
 }
 
@@ -537,14 +594,14 @@ pub fn finish_sign_in_with_progress(
     ep: &Endpoints,
     ms: MsTokens,
     progress: &dyn Fn(session::Phase),
-) -> Result<(Account, Secrets), String> {
+) -> Result<(Account, Secrets), SignInError> {
     let mc = minecraft_login(ep, &ms.access, progress)?;
     progress(session::Phase::Ownership);
     if !owns_game(ep, &mc.token)? {
-        return Err(DOES_NOT_OWN.into());
+        return Err(SignInError::DoesNotOwn);
     }
     progress(session::Phase::Profile);
-    let account = profile(ep, &mc.token)?.ok_or(NO_PROFILE)?;
+    let account = profile(ep, &mc.token)?.ok_or(SignInError::NoProfile)?;
     Ok((account, Secrets::new(ms.refresh, mc)))
 }
 
@@ -568,7 +625,7 @@ pub(super) enum Check {
     /// The services said it doesn't own the game (or has no profile any more).
     DoesNot(Secrets),
     /// No answer (no network, a sign-in that can't be renewed): the last answer stands.
-    NoAnswer(String, Secrets),
+    NoAnswer(SignInError, Secrets),
 }
 
 /// Asks whether `account` owns the game, with a Minecraft token renewed through the refresh token
@@ -591,17 +648,17 @@ pub(super) fn check_with(
     progress: &dyn Fn(session::Phase),
 ) -> Check {
     if secrets.sign_in_required {
-        return Check::NoAnswer(SIGN_IN_AGAIN.into(), secrets);
+        return Check::NoAnswer(SignInError::SignInAgain, secrets);
     }
     if force || secrets.minecraft_expires_at <= now() + RENEW_BEFORE {
         progress(session::Phase::Microsoft);
         let renewed = client_id
-            .ok_or_else(|| NOT_CONFIGURED.to_string())
+            .ok_or(SignInError::NotConfigured)
             .and_then(|id| refresh_ms(ep, id, &secrets.refresh_token));
         let ms = match renewed {
             Ok(ms) => ms,
             Err(e) => {
-                secrets.sign_in_required = e == SIGN_IN_AGAIN;
+                secrets.sign_in_required = matches!(e, SignInError::SignInAgain);
                 return Check::NoAnswer(e, secrets);
             }
         };
@@ -632,7 +689,7 @@ pub(super) fn check_with(
             ..secrets
         }),
         Ok(Some(p)) if p.uuid != account.uuid => Check::NoAnswer(
-            OTHER_PROFILE.into(),
+            SignInError::OtherProfile,
             Secrets {
                 sign_in_required: true,
                 ..secrets

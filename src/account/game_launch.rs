@@ -48,7 +48,7 @@ pub fn token_for(
     let keep = |secrets: &Secrets| {
         serde_json::to_string(secrets)
             .map_err(|e| e.to_string())
-            .and_then(|text| store.set(&account.uuid, &text))
+            .and_then(|text| store.set(&account.uuid, &text).map_err(String::from))
     };
     match check(ep, client_id, account, secrets) {
         Check::Owns(_, secrets) => {
@@ -61,7 +61,7 @@ pub fn token_for(
         }
         Check::NoAnswer(e, secrets) => {
             let _ = keep(&secrets);
-            Err(e)
+            Err(e.into())
         }
     }
 }
@@ -101,7 +101,7 @@ pub fn launch(
                 // says this instead.
                 let said = crate::i18n::trf(
                     "Can't read {name}'s sign-in: {why}",
-                    &[("name", &account.name), ("why", &why)],
+                    &[("name", &account.name), ("why", &why.0)],
                 );
                 eprintln!("Sunrise: {said}");
                 if plays {
@@ -123,7 +123,7 @@ pub fn launch(
         let before = serde_json::to_string(&secrets).ok();
         let checked = match &operation {
             Ok(_) => check(ep, client_id, &account, secrets),
-            Err(e) => Check::NoAnswer(e.clone(), secrets),
+            Err(e) => Check::NoAnswer(e.clone().into(), secrets),
         };
         let (said, secrets) = match checked {
             Check::Owns(renewed, secrets) => {
@@ -135,7 +135,7 @@ pub fn launch(
                 (None, secrets)
             }
             Check::DoesNot(secrets) => (Some(DOES_NOT_OWN.to_string()), secrets),
-            Check::NoAnswer(e, secrets) => (Some(e), secrets),
+            Check::NoAnswer(e, secrets) => (Some(e.to_string()), secrets),
         };
         owned = secrets.owns;
         if plays {
