@@ -990,7 +990,7 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
                 std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
             let names = game_log::names(&[&i.home, &backend::game_home()]);
             let text = game_log::private(&text, dirs::home_dir().as_deref(), &names);
-            let shared = game_log::share(&text)?;
+            let shared = game_log::share(&game_log::api(), &text)?;
             if as_json {
                 json(serde_json::json!({
                     "url": shared.url, "delete": format!("{}:{}", shared.id, shared.token),
@@ -1007,11 +1007,15 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
             let (id, token) = shared
                 .split_once(':')
                 .ok_or("Give the \"<id>:<token>\" share-log printed.")?;
-            sunrise_launcher::game_log::unshare(&sunrise_launcher::game_log::Shared {
-                url: String::new(),
-                id: id.into(),
-                token: token.into(),
-            })?;
+            let api = sunrise_launcher::game_log::api();
+            sunrise_launcher::game_log::unshare(
+                &api,
+                &sunrise_launcher::game_log::Shared {
+                    url: String::new(),
+                    id: id.into(),
+                    token: token.into(),
+                },
+            )?;
             println!("Deleted the shared log {id}.");
         }
         Cmd::Logs { lines, crash } => {
