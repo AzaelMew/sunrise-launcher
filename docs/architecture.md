@@ -27,7 +27,7 @@ Names in this table are relative to [`src/`](../src/). The binary and the shared
 | Mods | `browser.rs`, `mods.rs`, `mods_page.rs`, `mods_project.rs`, `mod_icons.rs`, `github_mods.rs`, `github_mods_page.rs` | Provide registry and pack discovery, installation, project details and pictures, and the GitHub mod flow. |
 | Mods | `native_mods.rs`, `native_cache.rs`, `native_fit.rs`, `native_status.rs`, `rust_toolchain.rs`, `native_build.rs`, `native_log_page.rs`, `build.rs`, `build_mode.rs` | Build and track native mods, manage the toolchain and cache, and show compatibility and progress. |
 | Mods | `jars.rs`, `jar_launch.rs`, `jars_tests.rs` | Resolve mods' original Java asset and data jars, including the launch consent bridge and tests. |
-| Servers | `servers.rs`, `servers_page.rs` (with `servers_page/glass_server_dialog.rs`, `servers_page/servers_format.rs`), `heads.rs` | Drive the dedicated server and draw its hosting controls, status, and player heads. |
+| Servers | `servers.rs`, `servers_page.rs` (with `servers_page/dialog.rs`, `servers_page/format.rs`), `heads.rs` | Drive the dedicated server and draw its hosting controls, status, and player heads. |
 | Servers | `join.rs`, `server_list.rs`, `multiplayer_page.rs`, `internet.rs`, `tailscale.rs` | Join and manage saved servers and show Tailscale sharing controls. |
 | Rendering and motion | `backdrop.rs`, `blocks.rs`, `cat.rs`, `glass_ui.rs`, `widgets.rs`, `plate.rs`, `motion.rs`, `paint.rs`, `tokens.rs`, `theme.rs` | Draw scenery and controls and apply the palette, metrics, and motion curves. |
 | Rendering and motion | `appearance.rs`, `themes.rs`, `theme_files.rs`, `picture_cache.rs`, `pictures.rs`, `perf.rs` | Resolve themes and background art, manage decoded pictures, and measure the window. |
