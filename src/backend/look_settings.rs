@@ -34,7 +34,7 @@ pub(super) fn tidy(fields: &mut Map<String, Value>) {
         fields.remove("panel_opacity");
     }
     // A switch that isn't on or off is as if never set, not a reason to lose the rest.
-    for key in ["performance", "reduce_motion", "cat", "fade_lines_fully"] {
+    for key in ["performance", "reduce_motion", "cat"] {
         if fields
             .get(key)
             .is_some_and(|v| !v.is_boolean() && !v.is_null())

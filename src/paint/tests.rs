@@ -740,34 +740,33 @@ fn begin_sets_the_frames_palette_from_the_inputs() {
     assert_eq!(pa.accent, glass::ACCENT);
 }
 
-/// Under a chosen opacity a plate's outlines and rules fade more slowly than the plate (at 0%
-/// they are at 40%), or as far as the plate with Fade outlines out completely on. Without a
-/// chosen opacity they are solid either way.
+/// Under a chosen opacity a plate's outlines and rules fade along its square root: slower than
+/// the plate, so a thin panel keeps its edge, and gone with it at 0%. Without a chosen opacity
+/// they are solid.
 #[test]
-fn panel_lines_fade_slower_than_the_plates_unless_fading_fully() {
-    let near = |a: f32, b: f32| assert!((a - b).abs() < 1e-5, "{a} != {b}");
+fn panel_lines_fade_slower_than_the_plates_and_go_with_them_at_zero() {
+    let near = |a: f32, b: f32| assert!((a - b).abs() < 1e-3, "{a} != {b}");
     let mut settings = Settings::default();
     let theme = from_settings(&settings, WindowAppearance::Dark);
-    assert!(!settings.fade_lines_fully());
     assert_eq!(Palette::of(&settings, &theme).rule_alpha, 1.);
-    settings.set_panel_opacity(Some(0));
-    near(Palette::of(&settings, &theme).rule_alpha, 0.4);
-    settings.set_panel_opacity(Some(50));
-    let p = Palette::of(&settings, &theme);
-    near(p.rule_alpha, 0.7);
-    near(p.rule().a, 0.7);
-    near(p.plate_edge().a, p.input_edge().a * 0.7);
-    settings.set_panel_opacity(Some(100));
-    assert_eq!(Palette::of(&settings, &theme).rule_alpha, 1.);
-    settings.fade_lines_fully = Some(true);
-    settings.set_panel_opacity(Some(0));
-    let p = Palette::of(&settings, &theme);
-    assert_eq!(p.rule_alpha, 0.);
-    assert_eq!(p.plate_edge().a, 0.);
-    settings.set_panel_opacity(Some(30));
-    let p = Palette::of(&settings, &theme);
-    assert_eq!(p.alpha, 0.3);
-    assert_eq!(p.rule_alpha, 0.3);
+    for (percent, lines) in [
+        (100, 1.),
+        (82, 0.906),
+        (50, 0.707),
+        (25, 0.5),
+        (4, 0.2),
+        (0, 0.),
+    ] {
+        settings.set_panel_opacity(Some(percent));
+        let p = Palette::of(&settings, &theme);
+        near(p.rule_alpha, lines);
+        near(p.rule().a, lines);
+        near(p.plate_edge().a, p.input_edge().a * lines);
+        assert!(
+            p.rule_alpha >= p.alpha,
+            "{percent}%: lines never fainter than the plate"
+        );
+    }
     settings.set_panel_opacity(None);
     assert_eq!(Palette::of(&settings, &theme).rule_alpha, 1.);
 }

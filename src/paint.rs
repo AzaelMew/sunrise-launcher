@@ -36,10 +36,6 @@ pub(crate) const PLAY_TONE: f32 = 0.15;
 /// Text reads at this contrast on its surface; edges, marks and the focus ring at the other.
 const TEXT: f32 = 4.5;
 const MARK: f32 = 3.;
-/// How fast the plates' outlines and rules fade, against the plates themselves, under a chosen
-/// panel opacity: slower, so a clear panel keeps its outline (at 0%, the lines are at 40%).
-/// Fade outlines out completely takes them as far as the plates.
-const LINE_FADE: f32 = 0.6;
 /// The least the Home backdrop is shaded directly behind the unboxed profile.
 pub(crate) const HERO_SHADE_ALPHA: f32 = 0.58;
 
@@ -110,8 +106,8 @@ pub(crate) struct Palette {
     /// How opaque the dialogs' scrim is.
     pub scrim_alpha: f32,
     /// How opaque the rules and outlines on the plates are. Under a chosen panel opacity they
-    /// fade [`LINE_FADE`] as fast as the plates, so the panels stay drawn, or as far as the
-    /// plates with Fade outlines out completely on; else solid.
+    /// fade along its square root: slower than the plates, so a thin panel keeps its outline
+    /// (at 50% the lines are at 71%), and gone with them at 0%. Else solid.
     pub rule_alpha: f32,
 }
 
@@ -175,7 +171,6 @@ impl Inputs {
             play_seed: theme.play_seed,
             tint: settings.glass_tint(),
             plates,
-            lines_fully: settings.fade_lines_fully(),
         }
     }
 }
@@ -259,8 +254,6 @@ struct Inputs {
     play_seed: Option<u32>,
     tint: f32,
     plates: Plates,
-    /// Outlines and rules fade as far as a chosen panel opacity, not [`LINE_FADE`] as fast.
-    lines_fully: bool,
 }
 
 impl Inputs {
@@ -273,7 +266,6 @@ impl Inputs {
             play_seed,
             tint,
             plates,
-            lines_fully,
         } = *self;
         // Light text on dark surfaces fits lighter; dark text on light ones fits darker.
         let lighter = n.dark;
@@ -497,13 +489,7 @@ impl Inputs {
             warning,
             alpha,
             scrim_alpha,
-            rule_alpha: custom.map_or(1., |(alpha, _)| {
-                if lines_fully {
-                    alpha
-                } else {
-                    1. - LINE_FADE * (1. - alpha)
-                }
-            }),
+            rule_alpha: custom.map_or(1., |(alpha, _)| alpha.sqrt()),
         }
     }
 }
@@ -520,7 +506,6 @@ impl Palette {
             play_seed: None,
             tint,
             plates: Plates::Opaque,
-            lines_fully: false,
         }
         .palette()
     }

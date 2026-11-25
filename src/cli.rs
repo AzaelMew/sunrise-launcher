@@ -198,8 +198,6 @@ enum Cmd {
     /// hue; "theme" goes back to the theme's own), background PATH (your picture behind every page;
     /// "default" goes back to the theme's), scenery on|off (whether anything is behind the
     /// pages), panel-opacity PERCENT|default (glass panels over the background),
-    /// fade-lines-fully on|off (the panels' outlines fade as far as a chosen opacity, gone at
-    /// 0%; off, they fade more slowly and stay visible),
     /// reduced-graphics on|off (no glass blur or decorative motion), cache-limit-gib N (managed cache limit
     /// in GiB: 10, 25 (default), 50, 100; 0 disables automatic cleanup)
     #[command(after_help = tr("worlds rows|tiles: how Home lists the worlds under Continue playing."))]
