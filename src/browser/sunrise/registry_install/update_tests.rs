@@ -60,6 +60,7 @@ impl Fixture {
         Target::of(&self.instance).unwrap()
     }
 
+    #[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
     fn identity(&self) -> Identity {
         self.target().identity()
     }
