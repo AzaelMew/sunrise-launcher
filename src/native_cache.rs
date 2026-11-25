@@ -224,5 +224,4 @@ impl Cache {
 }
 
 #[cfg(test)]
-#[path = "native_cache/tests.rs"]
 mod tests;

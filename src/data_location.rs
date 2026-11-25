@@ -884,5 +884,4 @@ fn problem(path: &Path, error: impl std::fmt::Display) -> String {
 }
 
 #[cfg(test)]
-#[path = "data_location/tests.rs"]
 mod tests;

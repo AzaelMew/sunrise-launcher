@@ -894,5 +894,4 @@ pub fn remove(home: &Path, pack: &Pack) -> Result<(), String> {
 }
 
 #[cfg(test)]
-#[path = "packs/tests.rs"]
 mod tests;

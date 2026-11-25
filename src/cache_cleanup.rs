@@ -361,7 +361,6 @@ impl Plan {
 }
 
 #[cfg(test)]
-#[path = "cache_cleanup/tests.rs"]
 mod tests;
 
 /// Game-visible units are detached whole while exclusively leased, never partially cleared.

@@ -1872,7 +1872,6 @@ mod enabled_tests {
 }
 
 #[cfg(test)]
-#[path = "mods/home_tests.rs"]
 mod home_tests;
 
 #[cfg(test)]

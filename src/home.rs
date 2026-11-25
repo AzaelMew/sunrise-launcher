@@ -936,5 +936,4 @@ impl Launcher {
 }
 
 #[cfg(test)]
-#[path = "home/tests.rs"]
 mod tests;
